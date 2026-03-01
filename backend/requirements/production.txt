@@ -1,0 +1,11 @@
+# Production dependencies
+-r base.txt
+
+# WSGI server
+gunicorn==23.0.0
+
+# Static files
+whitenoise==6.8.2
+
+# Monitoring
+sentry-sdk==2.19.2

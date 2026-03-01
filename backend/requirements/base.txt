@@ -1,0 +1,43 @@
+# ============================================================
+# BASE REQUIREMENTS - All environments
+# ============================================================
+
+# Core Django
+Django==5.1.4
+djangorestframework==3.15.2
+django-cors-headers==4.6.0
+
+# Authentication
+djangorestframework-simplejwt==5.3.1
+django-allauth==65.3.0
+
+# Database
+psycopg2-binary==2.9.10
+django-db-geventpool==4.0.8
+
+# Caching & Async
+redis==5.2.1
+django-redis==5.4.0
+celery==5.4.0
+kombu==5.4.2
+
+# Filtering & Search
+django-filter==24.3
+drf-spectacular==0.28.0
+
+# Utilities
+python-decouple==3.8
+pillow==11.1.0
+python-dateutil==2.9.0
+pytz==2024.2
+
+# Reporting
+reportlab==4.2.5
+openpyxl==3.1.5
+
+# Security
+cryptography==44.0.0
+django-ratelimit==4.1.0
+
+# Logging
+structlog==24.4.0

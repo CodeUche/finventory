@@ -1,0 +1,60 @@
+from django.db import IntegrityError
+
+from rest_framework import status, viewsets
+from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+
+from apps.core.mixins import TenantFilterMixin
+from apps.core.permissions import IsStaff
+
+from .models import PurchaseOrder
+from .serializers import PurchaseOrderSerializer, ReceiveItemSerializer
+from .services import PurchaseService
+
+
+class PurchaseOrderViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+    """
+    Manage purchase orders.
+
+    POST /purchases/orders/{id}/receive/ — Mark goods as received.
+    """
+
+    queryset = PurchaseOrder.objects.select_related("supplier", "warehouse").prefetch_related("items__product")
+    serializer_class = PurchaseOrderSerializer
+    permission_classes = [IsAuthenticated, IsStaff]
+    filterset_fields = ["status", "supplier"]
+    search_fields = ["po_number", "supplier__name"]
+    ordering_fields = ["order_date", "total_amount"]
+
+    def perform_create(self, serializer):
+        org = self.request.organisation
+        po_number = PurchaseOrder.generate_number(org)
+        try:
+            serializer.save(
+                organisation=org,
+                po_number=po_number,
+                created_by=self.request.user,
+            )
+        except IntegrityError:
+            # po_number collision (rare race condition) — retry with a larger offset
+            po_number = PurchaseOrder.generate_number(org) + "-R"
+            try:
+                serializer.save(
+                    organisation=org,
+                    po_number=po_number,
+                    created_by=self.request.user,
+                )
+            except IntegrityError as e:
+                raise ValidationError({"detail": f"Could not generate a unique PO number: {e}"})
+
+    @action(detail=True, methods=["post"])
+    def receive(self, request, pk=None):
+        """POST /api/v1/purchases/orders/{id}/receive/"""
+        po = self.get_object()
+        serializer = ReceiveItemSerializer(data=request.data.get("items", []), many=True)
+        serializer.is_valid(raise_exception=True)
+
+        po = PurchaseService.receive_purchase_order(po, serializer.validated_data, request.user)
+        return Response(PurchaseOrderSerializer(po).data)
