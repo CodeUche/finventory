@@ -10,7 +10,7 @@ from rest_framework.response import Response
 from apps.core.mixins import TenantFilterMixin
 from apps.core.permissions import IsStaff
 from apps.customers.models import Customer
-from apps.inventory.models import Warehouse
+from apps.inventory.models import Product, Warehouse
 
 from .models import Invoice, RecurringInvoice
 from .serializers import (
@@ -85,6 +85,8 @@ class InvoiceViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
         except (Warehouse.DoesNotExist, Customer.DoesNotExist) as e:
             return Response({"error": str(e)}, status=404)
+        except Product.DoesNotExist as e:
+            return Response({"error": f"Product not found: {e}"}, status=422)
         except ValueError as e:
             return Response({"error": str(e)}, status=422)
 

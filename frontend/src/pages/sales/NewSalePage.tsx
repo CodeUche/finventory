@@ -14,7 +14,7 @@ interface CartItem {
   discount_percent: number
 }
 
-const PAYMENT_METHODS = ['cash', 'card', 'bank_transfer', 'credit']
+const PAYMENT_METHODS = ['cash', 'pos', 'bank_transfer', 'credit']
 
 export default function NewSalePage() {
   const navigate = useNavigate()
@@ -414,7 +414,7 @@ export default function NewSalePage() {
                       : 'border-surface-600 text-slate-400 hover:border-surface-500'
                   }`}
                 >
-                  {m.replace('_', ' ')}
+                  {m === 'pos' ? 'Card / POS' : m.replace('_', ' ')}
                 </button>
               ))}
             </div>

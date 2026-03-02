@@ -32,6 +32,7 @@ class QuoteSerializer(serializers.ModelSerializer):
 class CreateQuoteSerializer(serializers.Serializer):
     customer = serializers.UUIDField(required=False, allow_null=True)
     warehouse = serializers.UUIDField()
+    status = serializers.ChoiceField(choices=Quote.STATUS_CHOICES, required=False, default=Quote.DRAFT)
     issue_date = serializers.DateField()
     valid_until = serializers.DateField()
     notes = serializers.CharField(required=False, allow_blank=True, default='')

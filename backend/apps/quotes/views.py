@@ -52,6 +52,7 @@ class QuoteViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         quote_data = {
             'customer': customer,
             'warehouse': warehouse,
+            'status': d.get('status', Quote.DRAFT),
             'issue_date': d['issue_date'],
             'valid_until': d['valid_until'],
             'notes': d.get('notes', ''),

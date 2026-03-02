@@ -29,6 +29,7 @@ const BLANK_LINE: QuoteLineForm = { product: '', product_name: '', quantity: '1'
 interface QuoteForm {
   customer: string
   warehouse: string
+  status: string
   issue_date: string
   valid_until: string
   notes: string
@@ -39,7 +40,7 @@ const today = new Date().toISOString().split('T')[0]
 const inTwoWeeks = new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0]
 
 const BLANK_FORM: QuoteForm = {
-  customer: '', warehouse: '', issue_date: today, valid_until: inTwoWeeks, notes: '', terms: '',
+  customer: '', warehouse: '', status: 'draft', issue_date: today, valid_until: inTwoWeeks, notes: '', terms: '',
 }
 
 export default function QuotesPage() {
@@ -303,6 +304,15 @@ export default function QuotesPage() {
                 <select className="input" value={form.warehouse} onChange={(e) => setForm({ ...form, warehouse: e.target.value })}>
                   <option value="">— Select —</option>
                   {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Status</label>
+                <select className="input" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
+                  <option value="draft">Draft</option>
+                  <option value="sent">Sent</option>
+                  <option value="accepted">Accepted</option>
+                  <option value="rejected">Rejected</option>
                 </select>
               </div>
               <div>

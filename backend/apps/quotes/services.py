@@ -57,16 +57,18 @@ class QuoteService:
                 'unit_price': qi.unit_price,
                 'discount_percent': qi.discount_percent,
             })
-        sale_data = {
-            'warehouse': quote.warehouse,
-            'customer': quote.customer,
-            'issue_date': timezone.now().date(),
-            'payment_method': 'credit',
-            'notes': quote.notes,
-            'items': items,
-            'organisation': quote.organisation,
-        }
-        invoice = SaleService.create_sale_from_quote(sale_data, user)
+        # Use credit if there's a named customer, bank_transfer otherwise
+        payment_method = 'credit' if quote.customer else 'bank_transfer'
+        invoice = SaleService.create_sale(
+            organisation=quote.organisation,
+            created_by=user,
+            customer=quote.customer,
+            warehouse=quote.warehouse,
+            items=items,
+            payment_method=payment_method,
+            notes=quote.notes,
+            issue_date=timezone.now().date(),
+        )
         quote.status = Quote.CONVERTED
         quote.converted_invoice = invoice
         quote.save()

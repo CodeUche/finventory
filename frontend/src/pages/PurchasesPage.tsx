@@ -106,7 +106,15 @@ export default function PurchasesPage() {
   const addItem = () => setItems((prev) => [...prev, { ...BLANK_ITEM }])
   const removeItem = (i: number) => setItems((prev) => prev.filter((_, idx) => idx !== i))
   const updateItem = (i: number, field: keyof POItem, value: string) =>
-    setItems((prev) => prev.map((item, idx) => idx === i ? { ...item, [field]: value } : item))
+    setItems((prev) => prev.map((item, idx) => {
+      if (idx !== i) return item
+      const updated = { ...item, [field]: value }
+      if (field === 'product_id' && value) {
+        const product = products.find((p) => p.id === value)
+        if (product) updated.unit_cost = formatAmountInput(String(product.cost_price))
+      }
+      return updated
+    }))
   const poSubtotal = items.reduce((sum, item) => {
     return sum + (parseFloat(item.quantity) || 0) * (parseFloat(stripCommas(item.unit_cost)) || 0)
   }, 0)
