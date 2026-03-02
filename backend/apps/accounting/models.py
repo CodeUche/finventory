@@ -122,10 +122,17 @@ class FixedAsset(TenantAwareModel):
     @property
     def annual_depreciation(self):
         from decimal import Decimal
-        depreciable = self.purchase_cost - self.residual_value
-        if self.depreciation_method == self.SL and self.useful_life_years > 0:
-            return depreciable / self.useful_life_years
-        return Decimal('0')
+        if self.useful_life_years <= 0:
+            return Decimal('0')
+        if self.depreciation_method == self.SL:
+            depreciable = self.purchase_cost - self.residual_value
+            return max(Decimal('0'), depreciable) / self.useful_life_years
+        # Reducing balance: current NBV × (1 / useful_life)
+        current_nbv = self.net_book_value
+        depreciable_remaining = current_nbv - self.residual_value
+        if depreciable_remaining <= Decimal('0'):
+            return Decimal('0')
+        return depreciable_remaining * (Decimal('1') / self.useful_life_years)
 
     @property
     def accumulated_depreciation(self):

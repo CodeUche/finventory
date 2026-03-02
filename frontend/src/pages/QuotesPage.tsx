@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Plus, X, ClipboardList, Loader2, FileText, ChevronDown, ChevronUp, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { quoteApi, customerApi, inventoryApi } from '@/services/api'
-import { formatCurrency, formatDate } from '@/lib/utils'
+import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
 import type { Quote, Customer, Warehouse, Product } from '@/types'
 
 type StatusFilter = 'all' | 'draft' | 'sent' | 'accepted' | 'rejected' | 'expired' | 'converted'
@@ -88,7 +88,7 @@ export default function QuotesPage() {
         items: lines.map((l) => ({
           product_id: l.product,
           quantity: parseFloat(l.quantity) || 1,
-          unit_price: parseFloat(l.unit_price) || 0,
+          unit_price: parseFloat(stripCommas(l.unit_price)) || 0,
           discount_percent: parseFloat(l.discount_percent) || 0,
         })),
       })
@@ -124,8 +124,9 @@ export default function QuotesPage() {
       const updated = { ...l, [field]: value }
       if (field === 'product') {
         const p = products.find((pr) => pr.id === value)
-        if (p) { updated.product_name = p.name; updated.unit_price = p.selling_price }
+        if (p) { updated.product_name = p.name; updated.unit_price = formatAmountInput(p.selling_price) }
       }
+      if (field === 'unit_price') updated.unit_price = formatAmountInput(value)
       return updated
     }))
   }
@@ -330,7 +331,7 @@ export default function QuotesPage() {
                       <input type="number" min="1" className="input py-1.5 text-sm" placeholder="Qty" value={line.quantity} onChange={(e) => updateLine(i, 'quantity', e.target.value)} />
                     </div>
                     <div className="col-span-3">
-                      <input type="number" min="0" step="0.01" className="input py-1.5 text-sm" placeholder="Unit Price" value={line.unit_price} onChange={(e) => updateLine(i, 'unit_price', e.target.value)} />
+                      <input type="text" inputMode="decimal" className="input py-1.5 text-sm" placeholder="Unit Price" value={line.unit_price} onChange={(e) => updateLine(i, 'unit_price', e.target.value)} />
                     </div>
                     <div className="col-span-2">
                       <input type="number" min="0" max="100" className="input py-1.5 text-sm" placeholder="Disc%" value={line.discount_percent} onChange={(e) => updateLine(i, 'discount_percent', e.target.value)} />

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Plus, X, BookMarked, Loader2, ChevronDown, ChevronUp, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { accountingApi } from '@/services/api'
-import { formatCurrency, formatDate } from '@/lib/utils'
+import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
 import type { JournalEntry, Account } from '@/types'
 
 interface JournalLineForm {
@@ -44,14 +44,14 @@ export default function JournalPage() {
 
   useEffect(() => { load() }, [])
 
-  const totalDebits = lines.reduce((s, l) => s + (parseFloat(l.debit) || 0), 0)
-  const totalCredits = lines.reduce((s, l) => s + (parseFloat(l.credit) || 0), 0)
+  const totalDebits = lines.reduce((s, l) => s + (parseFloat(stripCommas(l.debit)) || 0), 0)
+  const totalCredits = lines.reduce((s, l) => s + (parseFloat(stripCommas(l.credit)) || 0), 0)
   const isBalanced = Math.abs(totalDebits - totalCredits) < 0.01 && totalDebits > 0
 
   const handleCreate = async () => {
     if (!form.description.trim()) { toast.error('Description is required'); return }
     if (!isBalanced) { toast.error('Journal entry must be balanced (debits = credits)'); return }
-    const validLines = lines.filter((l) => l.account && (parseFloat(l.debit) > 0 || parseFloat(l.credit) > 0))
+    const validLines = lines.filter((l) => l.account && (parseFloat(stripCommas(l.debit)) > 0 || parseFloat(stripCommas(l.credit)) > 0))
     if (validLines.length < 2) { toast.error('At least 2 lines required'); return }
     setSaving(true)
     try {
@@ -60,8 +60,8 @@ export default function JournalPage() {
         lines: validLines.map((l) => ({
           account: l.account,
           description: l.description,
-          debit: parseFloat(l.debit) || 0,
-          credit: parseFloat(l.credit) || 0,
+          debit: parseFloat(stripCommas(l.debit)) || 0,
+          credit: parseFloat(stripCommas(l.credit)) || 0,
         })),
       })
       toast.success('Journal entry created')
@@ -82,7 +82,8 @@ export default function JournalPage() {
   const updateLine = (i: number, field: keyof JournalLineForm, value: string) => {
     setLines(lines.map((l, idx) => {
       if (idx !== i) return l
-      const updated = { ...l, [field]: value }
+      const formatted = (field === 'debit' || field === 'credit') ? formatAmountInput(value) : value
+      const updated = { ...l, [field]: formatted }
       // Mutual exclusion: if setting debit, clear credit and vice versa
       if (field === 'debit' && value) updated.credit = ''
       if (field === 'credit' && value) updated.debit = ''
@@ -235,10 +236,10 @@ export default function JournalPage() {
                           <input className="input py-1.5 text-sm" placeholder="Note (optional)" value={line.description} onChange={(e) => updateLine(i, 'description', e.target.value)} />
                         </td>
                         <td className="px-2 py-1.5">
-                          <input type="number" min="0" step="0.01" className="input py-1.5 text-sm" placeholder="0.00" value={line.debit} onChange={(e) => updateLine(i, 'debit', e.target.value)} />
+                          <input type="text" inputMode="decimal" className="input py-1.5 text-sm" placeholder="0.00" value={line.debit} onChange={(e) => updateLine(i, 'debit', e.target.value)} />
                         </td>
                         <td className="px-2 py-1.5">
-                          <input type="number" min="0" step="0.01" className="input py-1.5 text-sm" placeholder="0.00" value={line.credit} onChange={(e) => updateLine(i, 'credit', e.target.value)} />
+                          <input type="text" inputMode="decimal" className="input py-1.5 text-sm" placeholder="0.00" value={line.credit} onChange={(e) => updateLine(i, 'credit', e.target.value)} />
                         </td>
                         <td className="px-2 py-1.5">
                           {lines.length > 2 && (

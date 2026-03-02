@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Plus, X, RefreshCw, Loader2, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { recurringApi, customerApi, inventoryApi } from '@/services/api'
-import { formatDate } from '@/lib/utils'
+import { formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
 import type { RecurringInvoice, Customer, Warehouse, Product } from '@/types'
 
 interface RecurringForm {
@@ -72,7 +72,7 @@ export default function RecurringInvoicesPage() {
         items: lines.filter((l) => l.product).map((l) => ({
           product: l.product,
           quantity: parseFloat(l.quantity) || 1,
-          unit_price: parseFloat(l.unit_price) || 0,
+          unit_price: parseFloat(stripCommas(l.unit_price)) || 0,
         })),
       })
       toast.success('Recurring invoice created')
@@ -104,8 +104,9 @@ export default function RecurringInvoicesPage() {
       const updated = { ...l, [field]: value }
       if (field === 'product') {
         const p = products.find((pr) => pr.id === value)
-        if (p) updated.unit_price = p.selling_price
+        if (p) updated.unit_price = formatAmountInput(p.selling_price)
       }
+      if (field === 'unit_price') updated.unit_price = formatAmountInput(value)
       return updated
     }))
   }
@@ -252,7 +253,7 @@ export default function RecurringInvoicesPage() {
                       <input type="number" min="1" className="input py-1.5 text-sm" placeholder="Qty" value={line.quantity} onChange={(e) => updateLine(i, 'quantity', e.target.value)} />
                     </div>
                     <div className="col-span-3">
-                      <input type="number" min="0" step="0.01" className="input py-1.5 text-sm" placeholder="Price" value={line.unit_price} onChange={(e) => updateLine(i, 'unit_price', e.target.value)} />
+                      <input type="text" inputMode="decimal" className="input py-1.5 text-sm" placeholder="Price" value={line.unit_price} onChange={(e) => updateLine(i, 'unit_price', e.target.value)} />
                     </div>
                     <div className="col-span-1 flex justify-center">
                       <button onClick={() => setLines(lines.filter((_, idx) => idx !== i))} className="p-1 text-slate-500 hover:text-red-400 transition-colors"><Trash2 size={14} /></button>

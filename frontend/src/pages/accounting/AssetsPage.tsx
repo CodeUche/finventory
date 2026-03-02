@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Plus, X, Landmark, Loader2, ChevronDown, ChevronUp } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { accountingApi } from '@/services/api'
-import { formatCurrency, formatDate } from '@/lib/utils'
+import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
 import type { FixedAsset, Account } from '@/types'
 
 const CATEGORIES = ['land', 'building', 'vehicle', 'equipment', 'furniture', 'other'] as const
@@ -84,9 +84,9 @@ export default function AssetsPage() {
       const payload = {
         ...form,
         account: form.account || null,
-        purchase_cost: parseFloat(form.purchase_cost),
+        purchase_cost: parseFloat(stripCommas(form.purchase_cost)),
         useful_life_years: parseInt(form.useful_life_years),
-        residual_value: parseFloat(form.residual_value) || 0,
+        residual_value: parseFloat(stripCommas(form.residual_value)) || 0,
       }
       if (editId) { await accountingApi.updateAsset(editId, payload); toast.success('Asset updated') }
       else { await accountingApi.createAsset(payload); toast.success('Asset created') }
@@ -250,7 +250,7 @@ export default function AssetsPage() {
               </div>
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Purchase Cost (₦) *</label>
-                <input type="number" min="0" step="0.01" className="input" value={form.purchase_cost} onChange={(e) => setForm({ ...form, purchase_cost: e.target.value })} />
+                <input type="text" inputMode="decimal" className="input" value={form.purchase_cost} onChange={(e) => setForm({ ...form, purchase_cost: formatAmountInput(e.target.value) })} />
               </div>
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Depreciation Method</label>
@@ -265,7 +265,7 @@ export default function AssetsPage() {
               </div>
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Residual Value (₦)</label>
-                <input type="number" min="0" step="0.01" className="input" value={form.residual_value} onChange={(e) => setForm({ ...form, residual_value: e.target.value })} />
+                <input type="text" inputMode="decimal" className="input" value={form.residual_value} onChange={(e) => setForm({ ...form, residual_value: formatAmountInput(e.target.value) })} />
               </div>
             </div>
             <div className="flex gap-3 pt-1">

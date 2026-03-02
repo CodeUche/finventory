@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Plus, X, PieChart, Loader2, ChevronDown, ChevronUp, HelpCircle } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { budgetApi } from '@/services/api'
-import { formatCurrency } from '@/lib/utils'
+import { formatCurrency, formatAmountInput, stripCommas } from '@/lib/utils'
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from '@/lib/categories'
 import type { Budget, BudgetLine } from '@/types'
 
@@ -16,14 +16,6 @@ const BLANK_LINE: LineForm = { category_name: '', custom_name: '', category_type
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const STATUS_BADGE: Record<string, string> = { draft: 'badge-slate', active: 'badge-green', closed: 'badge-red' }
-
-function formatAmountInput(raw: string): string {
-  const clean = raw.replace(/[^0-9.]/g, '')
-  const parts = clean.split('.')
-  parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',')
-  return parts.slice(0, 2).join('.')
-}
-function stripCommas(v: string): string { return v.replace(/,/g, '') }
 
 export default function BudgetPage() {
   const [budgets, setBudgets] = useState<Budget[]>([])

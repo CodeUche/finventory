@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Plus, Search, Package, AlertTriangle, X, Pencil, Loader2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { inventoryApi, taxApi } from '@/services/api'
-import { formatCurrency } from '@/lib/utils'
+import { formatCurrency, formatAmountInput, stripCommas } from '@/lib/utils'
 import type { Product, TaxClass } from '@/types'
 
 const BLANK = {
@@ -52,8 +52,8 @@ export default function ProductsPage() {
       name: p.name,
       brand: p.brand ?? '',
       unit_of_measure: p.unit_of_measure,
-      cost_price: p.cost_price,
-      selling_price: p.selling_price,
+      cost_price: formatAmountInput(p.cost_price),
+      selling_price: formatAmountInput(p.selling_price),
       reorder_level: String(p.reorder_level),
       alcohol_percentage: String(p.alcohol_percentage ?? ''),
       volume_ml: String(p.volume_ml ?? ''),
@@ -67,7 +67,11 @@ export default function ProductsPage() {
     e.preventDefault()
     setSaving(true)
     // Strip empty optional numeric fields — DRF rejects '' for DecimalField/IntegerField
-    const payload: Record<string, unknown> = { ...form }
+    const payload: Record<string, unknown> = {
+      ...form,
+      cost_price: stripCommas(form.cost_price),
+      selling_price: stripCommas(form.selling_price),
+    }
     if (!payload.alcohol_percentage) delete payload.alcohol_percentage
     if (!payload.volume_ml) delete payload.volume_ml
     // Send null for tax_class when empty, or when is_taxable is false
@@ -210,11 +214,11 @@ export default function ProductsPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="label">Cost Price *</label>
-                  <input type="number" step="0.01" className="input" value={form.cost_price} onChange={upd('cost_price')} required placeholder="5500.00" />
+                  <input type="text" inputMode="decimal" className="input" value={form.cost_price} onChange={(e) => setForm((f) => ({ ...f, cost_price: formatAmountInput(e.target.value) }))} required placeholder="5,500.00" />
                 </div>
                 <div>
                   <label className="label">Selling Price *</label>
-                  <input type="number" step="0.01" className="input" value={form.selling_price} onChange={upd('selling_price')} required placeholder="8500.00" />
+                  <input type="text" inputMode="decimal" className="input" value={form.selling_price} onChange={(e) => setForm((f) => ({ ...f, selling_price: formatAmountInput(e.target.value) }))} required placeholder="8,500.00" />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">

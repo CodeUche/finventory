@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Plus, Search, Truck, X, Loader2, UploadCloud, FileText, Edit2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { purchaseApi, supplierApi, inventoryApi } from '@/services/api'
-import { formatCurrency, formatDate } from '@/lib/utils'
+import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
 import type { Product, PurchaseOrder } from '@/types'
 
 interface Supplier { id: string; name: string }
@@ -108,7 +108,7 @@ export default function PurchasesPage() {
   const updateItem = (i: number, field: keyof POItem, value: string) =>
     setItems((prev) => prev.map((item, idx) => idx === i ? { ...item, [field]: value } : item))
   const poSubtotal = items.reduce((sum, item) => {
-    return sum + (parseFloat(item.quantity) || 0) * (parseFloat(item.unit_cost) || 0)
+    return sum + (parseFloat(item.quantity) || 0) * (parseFloat(stripCommas(item.unit_cost)) || 0)
   }, 0)
 
   const handleCreate = async () => {
@@ -117,11 +117,11 @@ export default function PurchasesPage() {
     setSaving(true)
     try {
       const validItems = items
-        .filter((i) => i.product_id && parseFloat(i.quantity) > 0 && parseFloat(i.unit_cost) > 0)
+        .filter((i) => i.product_id && parseFloat(i.quantity) > 0 && parseFloat(stripCommas(i.unit_cost)) > 0)
         .map((i) => ({
           product: i.product_id,
           quantity_ordered: parseFloat(i.quantity),
-          unit_cost: parseFloat(i.unit_cost),
+          unit_cost: parseFloat(stripCommas(i.unit_cost)),
         }))
       const payload: Record<string, unknown> = {
         supplier: form.supplier,
@@ -474,7 +474,6 @@ export default function PurchasesPage() {
                       <span>Product</span><span>Qty</span><span>Unit Cost (₦)</span><span>Total</span><span />
                     </div>
                     {items.map((item, idx) => {
-                      const lineTotal = (parseFloat(item.quantity) || 0) * (parseFloat(item.unit_cost) || 0)
                       return (
                         <div key={idx} className="grid grid-cols-[1fr_72px_96px_76px_20px] gap-2 items-center">
                           <select
@@ -494,13 +493,15 @@ export default function PurchasesPage() {
                             onChange={(e) => updateItem(idx, 'quantity', e.target.value)}
                           />
                           <input
-                            type="number" min="0" step="0.01" placeholder="0.00"
+                            type="text" inputMode="decimal" placeholder="0.00"
                             className="input text-xs py-1.5"
                             value={item.unit_cost}
-                            onChange={(e) => updateItem(idx, 'unit_cost', e.target.value)}
+                            onChange={(e) => updateItem(idx, 'unit_cost', formatAmountInput(e.target.value))}
                           />
                           <span className="text-xs text-slate-300 font-mono truncate">
-                            {lineTotal > 0 ? formatCurrency(String(lineTotal)) : '—'}
+                            {(parseFloat(item.quantity) || 0) * (parseFloat(stripCommas(item.unit_cost)) || 0) > 0
+                              ? formatCurrency(String((parseFloat(item.quantity) || 0) * (parseFloat(stripCommas(item.unit_cost)) || 0)))
+                              : '—'}
                           </span>
                           <button type="button" onClick={() => removeItem(idx)}
                             className="text-slate-600 hover:text-red-400 transition-colors">

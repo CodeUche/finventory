@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Plus, X, Receipt, Loader2, Search, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { billApi, supplierApi } from '@/services/api'
-import { formatCurrency, formatDate } from '@/lib/utils'
+import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
 import type { Bill } from '@/types'
 
 interface Supplier { id: string; name: string }
@@ -89,11 +89,11 @@ export default function BillsPage() {
     try {
       await billApi.create({
         ...form,
-        tax_amount: parseFloat(form.tax_amount) || 0,
+        tax_amount: parseFloat(stripCommas(form.tax_amount)) || 0,
         items: lines.map((l) => ({
           description: l.description,
           quantity: parseFloat(l.quantity) || 1,
-          unit_cost: parseFloat(l.unit_cost) || 0,
+          unit_cost: parseFloat(stripCommas(l.unit_cost)) || 0,
         })),
       })
       toast.success('Bill created')
@@ -120,7 +120,7 @@ export default function BillsPage() {
     if (!payBillId || !payForm.amount) { toast.error('Enter amount'); return }
     setPaying(true)
     try {
-      await billApi.pay(payBillId, { ...payForm, amount: parseFloat(payForm.amount) })
+      await billApi.pay(payBillId, { ...payForm, amount: parseFloat(stripCommas(payForm.amount)) })
       toast.success('Payment recorded')
       setPayBillId(null)
       setPayForm(BLANK_PAY)
@@ -130,7 +130,8 @@ export default function BillsPage() {
   }
 
   const updateLine = (i: number, field: keyof BillLineForm, value: string) => {
-    setLines(lines.map((l, idx) => idx === i ? { ...l, [field]: value } : l))
+    const formatted = field === 'unit_cost' ? formatAmountInput(value) : value
+    setLines(lines.map((l, idx) => idx === i ? { ...l, [field]: formatted } : l))
   }
 
   // Summary
@@ -231,7 +232,7 @@ export default function BillsPage() {
                         <button onClick={() => handleApprove(b.id)} className="text-xs px-2.5 py-1 rounded-lg bg-brand-500/15 text-brand-400 hover:bg-brand-500/25 transition-colors">Approve</button>
                       )}
                       {(b.status === 'approved' || b.status === 'partially_paid' || b.status === 'overdue') && (
-                        <button onClick={() => { setPayBillId(b.id); setPayForm({ ...BLANK_PAY, amount: b.amount_due }) }} className="text-xs px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 transition-colors">Pay</button>
+                        <button onClick={() => { setPayBillId(b.id); setPayForm({ ...BLANK_PAY, amount: formatAmountInput(b.amount_due) }) }} className="text-xs px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 transition-colors">Pay</button>
                       )}
                       {b.status !== 'voided' && b.status !== 'paid' && (
                         <button onClick={() => handleVoid(b.id)} className="p-1 text-slate-500 hover:text-red-400 transition-colors"><Trash2 size={13} /></button>
@@ -283,7 +284,7 @@ export default function BillsPage() {
               </div>
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Tax Amount</label>
-                <input type="number" min="0" step="0.01" className="input" value={form.tax_amount} onChange={(e) => setForm({ ...form, tax_amount: e.target.value })} />
+                <input type="text" inputMode="decimal" className="input" value={form.tax_amount} onChange={(e) => setForm({ ...form, tax_amount: formatAmountInput(e.target.value) })} />
               </div>
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Issue Date</label>
@@ -307,7 +308,7 @@ export default function BillsPage() {
                       <input type="number" min="1" className="input py-1.5 text-sm" placeholder="Qty" value={line.quantity} onChange={(e) => updateLine(i, 'quantity', e.target.value)} />
                     </div>
                     <div className="col-span-3">
-                      <input type="number" min="0" step="0.01" className="input py-1.5 text-sm" placeholder="Unit Cost" value={line.unit_cost} onChange={(e) => updateLine(i, 'unit_cost', e.target.value)} />
+                      <input type="text" inputMode="decimal" className="input py-1.5 text-sm" placeholder="Unit Cost" value={line.unit_cost} onChange={(e) => updateLine(i, 'unit_cost', e.target.value)} />
                     </div>
                     <div className="col-span-1 flex justify-center">
                       <button onClick={() => setLines(lines.filter((_, idx) => idx !== i))} className="p-1 text-slate-500 hover:text-red-400 transition-colors"><Trash2 size={14} /></button>
@@ -347,7 +348,7 @@ export default function BillsPage() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Amount *</label>
-                <input type="number" min="0" step="0.01" className="input" value={payForm.amount} onChange={(e) => setPayForm({ ...payForm, amount: e.target.value })} />
+                <input type="text" inputMode="decimal" className="input" value={payForm.amount} onChange={(e) => setPayForm({ ...payForm, amount: formatAmountInput(e.target.value) })} />
               </div>
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Date</label>

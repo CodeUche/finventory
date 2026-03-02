@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { CreditCard, Search, Plus, X, Loader2, TrendingDown, TrendingUp, AlertCircle } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { creditApi, customerApi } from '@/services/api'
-import { formatCurrency, formatDate } from '@/lib/utils'
+import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
 import type { CreditTransaction, Customer } from '@/types'
 
 const TYPE_COLORS: Record<string, string> = {
@@ -70,10 +70,10 @@ export default function CreditsPage() {
 
   const handleRecordPayment = async () => {
     if (!payForm.customer_id) { toast.error('Select a customer'); return }
-    if (!payForm.amount || parseFloat(payForm.amount) <= 0) { toast.error('Enter a valid amount'); return }
+    if (!payForm.amount || parseFloat(stripCommas(payForm.amount)) <= 0) { toast.error('Enter a valid amount'); return }
     setSaving(true)
     try {
-      await creditApi.recordPayment(payForm)
+      await creditApi.recordPayment({ ...payForm, amount: stripCommas(payForm.amount) })
       toast.success('Payment recorded')
       setShowPayModal(false)
       setPayForm({ customer_id: '', amount: '', description: '' })
@@ -238,8 +238,8 @@ export default function CreditsPage() {
               </div>
               <div>
                 <label className="label">Amount (₦) *</label>
-                <input type="number" step="0.01" min="0" className="input" placeholder="0.00"
-                  value={payForm.amount} onChange={(e) => setPayForm({ ...payForm, amount: e.target.value })} />
+                <input type="text" inputMode="decimal" className="input" placeholder="0.00"
+                  value={payForm.amount} onChange={(e) => setPayForm({ ...payForm, amount: formatAmountInput(e.target.value) })} />
               </div>
               <div>
                 <label className="label">Description</label>

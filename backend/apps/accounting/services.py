@@ -82,11 +82,37 @@ class AccountingService:
         assets = FixedAsset.objects.filter(organisation=organisation, is_active=True, disposal_date__isnull=True)
         entries = []
         for asset in assets:
+            # Skip if already processed for this period
             if DepreciationEntry.objects.filter(asset=asset, period_year=year, period_month=month).exists():
                 continue
-            monthly_dep = asset.annual_depreciation / 12
+
+            current_nbv = asset.net_book_value
+            depreciable_remaining = current_nbv - asset.residual_value
+
+            # Skip if fully depreciated (NBV already at or below residual value)
+            if depreciable_remaining <= Decimal('0'):
+                continue
+
+            if asset.depreciation_method == FixedAsset.SL:
+                # Straight-line: spread (cost - residual) evenly over useful life
+                total_months = asset.useful_life_years * 12
+                if total_months <= 0:
+                    continue
+                monthly_dep = (asset.purchase_cost - asset.residual_value) / total_months
+            else:
+                # Reducing balance: apply annual rate to current NBV each month
+                if asset.useful_life_years <= 0:
+                    continue
+                annual_rate = Decimal('1') / asset.useful_life_years
+                monthly_dep = current_nbv * annual_rate / 12
+
+            # Never depreciate below residual value
+            monthly_dep = min(monthly_dep, depreciable_remaining)
+            monthly_dep = max(Decimal('0'), monthly_dep)
+
             accumulated = asset.accumulated_depreciation + monthly_dep
-            nbv = asset.purchase_cost - accumulated
+            nbv = max(asset.residual_value, asset.purchase_cost - accumulated)
+
             entry = DepreciationEntry.objects.create(
                 organisation=organisation,
                 asset=asset,
@@ -94,7 +120,7 @@ class AccountingService:
                 period_month=month,
                 depreciation_amount=monthly_dep,
                 accumulated_to_date=accumulated,
-                net_book_value=max(Decimal('0'), nbv),
+                net_book_value=nbv,
             )
             entries.append(entry)
         return entries

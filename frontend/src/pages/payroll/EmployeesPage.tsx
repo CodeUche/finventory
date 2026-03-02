@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Plus, X, UsersRound, Loader2, Search, Edit2, ChevronDown, CheckCircle2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { payrollApi } from '@/services/api'
-import { formatCurrency } from '@/lib/utils'
+import { formatCurrency, formatAmountInput, stripCommas } from '@/lib/utils'
 import type { Employee } from '@/types'
 
 interface EmployeeForm {
@@ -97,11 +97,11 @@ export default function EmployeesPage() {
 
   const gross = (f: EmployeeForm) => {
     return (
-      (parseFloat(f.basic_salary) || 0) +
-      (parseFloat(f.housing_allowance) || 0) +
-      (parseFloat(f.transport_allowance) || 0) +
-      (parseFloat(f.leave_allowance) || 0) +
-      (parseFloat(f.other_allowances) || 0)
+      (parseFloat(stripCommas(f.basic_salary)) || 0) +
+      (parseFloat(stripCommas(f.housing_allowance)) || 0) +
+      (parseFloat(stripCommas(f.transport_allowance)) || 0) +
+      (parseFloat(stripCommas(f.leave_allowance)) || 0) +
+      (parseFloat(stripCommas(f.other_allowances)) || 0)
     )
   }
 
@@ -115,8 +115,8 @@ export default function EmployeesPage() {
     setForm({
       first_name: e.first_name, last_name: e.last_name, email: e.email, phone: e.phone,
       job_title: e.job_title, department: e.department, employment_type: e.employment_type, hire_date: e.hire_date,
-      basic_salary: e.basic_salary, housing_allowance: e.housing_allowance, transport_allowance: e.transport_allowance,
-      leave_allowance: e.leave_allowance, other_allowances: e.other_allowances,
+      basic_salary: formatAmountInput(e.basic_salary), housing_allowance: formatAmountInput(e.housing_allowance), transport_allowance: formatAmountInput(e.transport_allowance),
+      leave_allowance: formatAmountInput(e.leave_allowance), other_allowances: formatAmountInput(e.other_allowances),
       bank_name: e.bank_name, account_number: e.account_number, account_name: e.account_name,
       pfa_name: e.pfa_name, pfa_number: e.pfa_number, tin: e.tin,
     })
@@ -131,16 +131,16 @@ export default function EmployeesPage() {
 
   const handleSave = async () => {
     if (!form.first_name.trim() || !form.last_name.trim()) { toast.error('Name is required'); return }
-    if (!form.basic_salary || parseFloat(form.basic_salary) <= 0) { toast.error('Basic salary must be > 0'); return }
+    if (!form.basic_salary || parseFloat(stripCommas(form.basic_salary)) <= 0) { toast.error('Basic salary must be > 0'); return }
     setSaving(true)
     try {
       const payload = {
         ...form,
-        basic_salary: parseFloat(form.basic_salary),
-        housing_allowance: parseFloat(form.housing_allowance) || 0,
-        transport_allowance: parseFloat(form.transport_allowance) || 0,
-        leave_allowance: parseFloat(form.leave_allowance) || 0,
-        other_allowances: parseFloat(form.other_allowances) || 0,
+        basic_salary: parseFloat(stripCommas(form.basic_salary)),
+        housing_allowance: parseFloat(stripCommas(form.housing_allowance)) || 0,
+        transport_allowance: parseFloat(stripCommas(form.transport_allowance)) || 0,
+        leave_allowance: parseFloat(stripCommas(form.leave_allowance)) || 0,
+        other_allowances: parseFloat(stripCommas(form.other_allowances)) || 0,
       }
       if (editId) { await payrollApi.updateEmployee(editId, payload); toast.success('Employee updated') }
       else { await payrollApi.createEmployee(payload); toast.success('Employee added') }
@@ -322,11 +322,11 @@ export default function EmployeesPage() {
             {formTab === 'salary' && (
               <div className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
-                  <div><label className="text-xs text-slate-400 mb-1 block">Basic Salary (₦) *</label><input type="number" min="0" step="0.01" className="input" value={form.basic_salary} onChange={(e) => setForm({ ...form, basic_salary: e.target.value })} /></div>
-                  <div><label className="text-xs text-slate-400 mb-1 block">Housing Allowance (₦)</label><input type="number" min="0" step="0.01" className="input" value={form.housing_allowance} onChange={(e) => setForm({ ...form, housing_allowance: e.target.value })} /></div>
-                  <div><label className="text-xs text-slate-400 mb-1 block">Transport Allowance (₦)</label><input type="number" min="0" step="0.01" className="input" value={form.transport_allowance} onChange={(e) => setForm({ ...form, transport_allowance: e.target.value })} /></div>
-                  <div><label className="text-xs text-slate-400 mb-1 block">Leave Allowance (₦)</label><input type="number" min="0" step="0.01" className="input" value={form.leave_allowance} onChange={(e) => setForm({ ...form, leave_allowance: e.target.value })} /></div>
-                  <div className="col-span-2"><label className="text-xs text-slate-400 mb-1 block">Other Allowances (₦)</label><input type="number" min="0" step="0.01" className="input" value={form.other_allowances} onChange={(e) => setForm({ ...form, other_allowances: e.target.value })} /></div>
+                  <div><label className="text-xs text-slate-400 mb-1 block">Basic Salary (₦) *</label><input type="text" inputMode="decimal" className="input" value={form.basic_salary} onChange={(e) => setForm({ ...form, basic_salary: formatAmountInput(e.target.value) })} /></div>
+                  <div><label className="text-xs text-slate-400 mb-1 block">Housing Allowance (₦)</label><input type="text" inputMode="decimal" className="input" value={form.housing_allowance} onChange={(e) => setForm({ ...form, housing_allowance: formatAmountInput(e.target.value) })} /></div>
+                  <div><label className="text-xs text-slate-400 mb-1 block">Transport Allowance (₦)</label><input type="text" inputMode="decimal" className="input" value={form.transport_allowance} onChange={(e) => setForm({ ...form, transport_allowance: formatAmountInput(e.target.value) })} /></div>
+                  <div><label className="text-xs text-slate-400 mb-1 block">Leave Allowance (₦)</label><input type="text" inputMode="decimal" className="input" value={form.leave_allowance} onChange={(e) => setForm({ ...form, leave_allowance: formatAmountInput(e.target.value) })} /></div>
+                  <div className="col-span-2"><label className="text-xs text-slate-400 mb-1 block">Other Allowances (₦)</label><input type="text" inputMode="decimal" className="input" value={form.other_allowances} onChange={(e) => setForm({ ...form, other_allowances: formatAmountInput(e.target.value) })} /></div>
                 </div>
                 <div className="p-3 bg-brand-500/10 border border-brand-500/20 rounded-xl">
                   <p className="text-xs text-slate-400">Computed Gross Salary</p>

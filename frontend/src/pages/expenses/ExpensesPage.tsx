@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { ArrowDownCircle, ArrowUpCircle, Plus, Search, X, Pencil, Loader2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { expenseApi } from '@/services/api'
-import { formatCurrency, formatDate } from '@/lib/utils'
+import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from '@/lib/categories'
 import type { Expense } from '@/types'
 
@@ -12,14 +12,6 @@ const PAYMENT_METHODS: { value: string; label: string }[] = [
   { value: 'card', label: 'Card' },
   { value: 'cheque', label: 'Cheque' },
 ]
-
-function formatAmountInput(raw: string): string {
-  const clean = raw.replace(/[^0-9.]/g, '')
-  const parts = clean.split('.')
-  parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',')
-  return parts.slice(0, 2).join('.')
-}
-function stripCommas(v: string): string { return v.replace(/,/g, '') }
 
 interface ExpenseForm {
   category_label: string

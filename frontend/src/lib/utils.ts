@@ -38,6 +38,19 @@ export function formatDate(dateStr: string): string {
   }).format(new Date(dateStr))
 }
 
+/** Strip commas before sending a formatted amount to the API */
+export function stripCommas(v: string): string {
+  return v.replace(/,/g, '')
+}
+
+/** Format a raw string as a comma-separated number while the user types */
+export function formatAmountInput(raw: string): string {
+  const cleaned = raw.replace(/[^0-9.]/g, '').replace(/^(\d*\.?\d*).*$/, '$1')
+  const [intPart, decPart] = cleaned.split('.')
+  const formatted = intPart ? Number(intPart).toLocaleString('en') : ''
+  return decPart !== undefined ? `${formatted}.${decPart}` : formatted
+}
+
 export function getStatusColor(status: string): string {
   const map: Record<string, string> = {
     paid: 'badge-green',
