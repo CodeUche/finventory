@@ -16,6 +16,7 @@ interface NotificationsCtx {
   count: number
   dismiss: (id: string) => void
   dismissAll: () => void
+  refetch: () => void
 }
 
 const Ctx = createContext<NotificationsCtx>({
@@ -23,12 +24,14 @@ const Ctx = createContext<NotificationsCtx>({
   count: 0,
   dismiss: () => {},
   dismissAll: () => {},
+  refetch: () => {},
 })
 
 export function NotificationsProvider({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
   const [alerts, setAlerts] = useState<StockAlert[]>([])
-  const prevIdsRef = useRef<Set<string>>(new Set())
+  const prevIdsRef   = useRef<Set<string>>(new Set())
+  const firstPollRef = useRef(true)
 
   const poll = useCallback(async () => {
     if (!isAuthenticated) return
@@ -41,17 +44,28 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
         warehouse_name: i.warehouse_name,
         quantity_available: i.quantity_available,
       }))
-      // Detect newly low-stock items since last poll
-      const newItems = items.filter((i) => !prevIdsRef.current.has(i.id))
-      if (newItems.length > 0 && prevIdsRef.current.size > 0) {
-        // Only alert after the first poll (so we don't spam on app open)
+
+      if (firstPollRef.current) {
+        // On first poll: show one aggregated toast if any items are low
+        firstPollRef.current = false
+        if (items.length > 0) {
+          toast(
+            items.length === 1
+              ? `⚠️ Low stock: ${items[0].product_name} (${items[0].quantity_available} left)`
+              : `⚠️ ${items.length} products are low on stock`,
+            { duration: 6000 },
+          )
+        }
+      } else {
+        // On subsequent polls: toast only for newly low items
+        const newItems = items.filter((i) => !prevIdsRef.current.has(i.id))
         newItems.forEach((item) => {
-          toast(`Low stock: ${item.product_name} (${item.quantity_available} left)`, {
-            icon: '⚠️',
+          toast(`⚠️ Low stock: ${item.product_name} (${item.quantity_available} left)`, {
             duration: 5000,
           })
         })
       }
+
       prevIdsRef.current = new Set(items.map((i) => i.id))
       setAlerts(items)
     } catch {
@@ -76,8 +90,11 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     prevIdsRef.current = new Set()
   }, [])
 
+  // Exposed so pages can trigger an immediate re-poll (e.g. after a sale)
+  const refetch = useCallback(() => { poll() }, [poll])
+
   return (
-    <Ctx.Provider value={{ alerts, count: alerts.length, dismiss, dismissAll }}>
+    <Ctx.Provider value={{ alerts, count: alerts.length, dismiss, dismissAll, refetch }}>
       {children}
     </Ctx.Provider>
   )

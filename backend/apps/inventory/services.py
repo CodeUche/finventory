@@ -9,6 +9,7 @@ import logging
 from decimal import Decimal
 
 from django.db import transaction
+from django.db.models import F
 
 from .models import Batch, Product, StockItem, StockMovement, Warehouse
 
@@ -87,7 +88,7 @@ class InventoryService:
         return (
             StockItem.objects.filter(organisation=organisation)
             .select_related("product", "warehouse")
-            .extra(where=["quantity_on_hand <= apps_inventory_product.reorder_level"])
+            .filter(quantity_on_hand__lte=F("product__reorder_level"))
         )
 
     @staticmethod

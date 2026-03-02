@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Minus, Plus, Search, ShoppingCart, Trash2, User, Warehouse, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { customerApi, inventoryApi, salesApi } from '@/services/api'
-import { formatCurrency } from '@/lib/utils'
+import { formatCurrency, formatAmountInput, stripCommas } from '@/lib/utils'
+import { useNotifications } from '@/contexts/NotificationsContext'
 import type { Customer, Product, Warehouse as WarehouseType } from '@/types'
 
 interface CartItem {
@@ -17,6 +18,7 @@ const PAYMENT_METHODS = ['cash', 'card', 'bank_transfer', 'credit']
 
 export default function NewSalePage() {
   const navigate = useNavigate()
+  const { refetch: refetchAlerts } = useNotifications()
 
   // ── Product search ─────────────────────────────────────────────────────────
   const [productQuery, setProductQuery] = useState('')
@@ -119,6 +121,10 @@ export default function NewSalePage() {
   const [notes, setNotes] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
+  const tenderedNum = parseFloat(stripCommas(amountPaid)) || 0
+  const changeGiven = tenderedNum > grandTotal ? tenderedNum - grandTotal : 0
+  const balanceDue  = tenderedNum > 0 && tenderedNum < grandTotal ? grandTotal - tenderedNum : 0
+
   const handleSubmit = async () => {
     if (cart.length === 0) { toast.error('Add at least one product'); return }
     if (!selectedWarehouse) { toast.error('Select a warehouse first'); return }
@@ -130,11 +136,15 @@ export default function NewSalePage() {
 
     setSubmitting(true)
     try {
+      // Cap amount_paid at grandTotal — don't record over-tender as payment
+      const rawTendered = parseFloat(stripCommas(amountPaid)) || grandTotal
+      const actualPaid  = Math.min(rawTendered, grandTotal)
+
       const payload = {
         customer_id: selectedCustomer?.id ?? null,
         warehouse_id: selectedWarehouse,
         payment_method: paymentMethod,
-        amount_paid: paymentMethod === 'credit' ? '0' : (amountPaid || grandTotal.toFixed(2)),
+        amount_paid: paymentMethod === 'credit' ? '0' : actualPaid.toFixed(2),
         notes: notes,
         items: cart.map((c) => ({
           product_id: c.product.id,
@@ -146,6 +156,7 @@ export default function NewSalePage() {
 
       await salesApi.create(payload)
       toast.success('Sale recorded!')
+      refetchAlerts()       // Re-check stock levels immediately after sale
       navigate('/sales')
     } catch {
       toast.error('Failed to record sale')
@@ -412,19 +423,13 @@ export default function NewSalePage() {
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Amount Tendered</label>
                 <input
-                  type="number"
+                  type="text"
+                  inputMode="decimal"
                   className="input"
-                  placeholder={`${grandTotal.toFixed(2)}`}
+                  placeholder={formatCurrency(grandTotal)}
                   value={amountPaid}
-                  onChange={(e) => setAmountPaid(e.target.value)}
-                  min="0"
-                  step="0.01"
+                  onChange={(e) => setAmountPaid(formatAmountInput(e.target.value))}
                 />
-                {amountPaid && parseFloat(amountPaid) > grandTotal && (
-                  <p className="text-xs text-emerald-400 mt-1">
-                    Change: {formatCurrency(parseFloat(amountPaid) - grandTotal)}
-                  </p>
-                )}
               </div>
             )}
           </div>
@@ -449,6 +454,34 @@ export default function NewSalePage() {
                 <span>Total</span>
                 <span className="text-brand-400">{formatCurrency(grandTotal)}</span>
               </div>
+
+              {/* Tendered / change / balance — only when a tendered amount is entered */}
+              {paymentMethod !== 'credit' && tenderedNum > 0 && (
+                <>
+                  <div className="border-t border-surface-700/60 pt-2 flex justify-between text-sm text-slate-400">
+                    <span>Tendered</span>
+                    <span className="text-white">{formatCurrency(tenderedNum)}</span>
+                  </div>
+                  {changeGiven > 0 && (
+                    <div className="flex justify-between text-sm font-semibold">
+                      <span className="text-emerald-400">Change to Return</span>
+                      <span className="text-emerald-400">{formatCurrency(changeGiven)}</span>
+                    </div>
+                  )}
+                  {balanceDue > 0 && (
+                    <div className="flex justify-between text-sm font-semibold">
+                      <span className="text-red-400">Balance Still Owed</span>
+                      <span className="text-red-400">{formatCurrency(balanceDue)}</span>
+                    </div>
+                  )}
+                  {changeGiven === 0 && balanceDue === 0 && (
+                    <div className="flex justify-between text-sm font-semibold">
+                      <span className="text-emerald-400">Exact Amount</span>
+                      <span className="text-emerald-400">✓ Paid in full</span>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           </div>
 
