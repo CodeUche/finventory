@@ -20,6 +20,7 @@ from decouple import Csv, config
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 # ─── Core ─────────────────────────────────────────────────────────────────────
+# Never use this default in production — production.py raises ImproperlyConfigured if it detects it
 SECRET_KEY = config("SECRET_KEY", default="change-me-in-production-never-commit-real-key")
 DEBUG = config("DEBUG", default=False, cast=bool)
 ALLOWED_HOSTS: list[str] = config("ALLOWED_HOSTS", default="localhost,127.0.0.1", cast=Csv())
@@ -115,7 +116,8 @@ DATABASES = {
         "ENGINE": "django.db.backends.postgresql",
         "NAME": config("DB_NAME", default="finventory"),
         "USER": config("DB_USER", default="postgres"),
-        "PASSWORD": config("DB_PASSWORD", default="postgres"),
+        # Default to empty string — production.py will raise if this is missing/weak
+        "PASSWORD": config("DB_PASSWORD", default=""),
         "HOST": config("DB_HOST", default="localhost"),
         "PORT": config("DB_PORT", default="5432"),
         "CONN_MAX_AGE": config("DB_CONN_MAX_AGE", default=60, cast=int),
@@ -210,7 +212,7 @@ SIMPLE_JWT = {
     "BLACKLIST_AFTER_ROTATION": True,           # requires token_blacklist app
     "UPDATE_LAST_LOGIN": True,
     "ALGORITHM": "HS256",
-    "SIGNING_KEY": config("SECRET_KEY", default="change-me"),
+    "SIGNING_KEY": config("SECRET_KEY", default="change-me-in-production-never-commit-real-key"),
     "AUTH_HEADER_TYPES": ("Bearer",),
     "AUTH_HEADER_NAME": "HTTP_AUTHORIZATION",
     "USER_ID_FIELD": "id",
