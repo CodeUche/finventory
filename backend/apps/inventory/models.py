@@ -72,8 +72,8 @@ class Product(TenantAwareModel):
     """
     A product SKU.
 
-    Liquor-specific fields: alcohol_percentage, volume_ml.
-    Generic fields support future product line expansion.
+    Supports physical goods, services, and digital products via product_type.
+    Physical/digital items track inventory; service items do not.
     """
 
     class UnitOfMeasure(models.TextChoices):
@@ -82,8 +82,23 @@ class Product(TenantAwareModel):
         CASE = "case", "Case"
         LITRE = "litre", "Litre"
         UNIT = "unit", "Unit"
+        HOUR = "hour", "Hour"
+        DAY = "day", "Day"
+        KG = "kg", "Kilogram"
+        PIECE = "piece", "Piece"
+
+    class ProductType(models.TextChoices):
+        PHYSICAL = "physical", "Physical (tracked inventory)"
+        SERVICE = "service", "Service (no inventory)"
+        DIGITAL = "digital", "Digital (no inventory)"
 
     sku = models.CharField(max_length=100, db_index=True)
+    product_type = models.CharField(
+        max_length=20,
+        choices=ProductType.choices,
+        default=ProductType.PHYSICAL,
+        db_index=True,
+    )
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     category = models.ForeignKey(

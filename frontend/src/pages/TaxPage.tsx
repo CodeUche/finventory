@@ -6,6 +6,7 @@ import toast from 'react-hot-toast'
 import { taxApi, exciseApi, whtApi } from '@/services/api'
 import { formatCurrency } from '@/lib/utils'
 import type { TaxClass, TaxConfig, ExciseDuty, WHTRate, WHTTransaction } from '@/types'
+import DateInput from '@/components/DateInput'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -82,6 +83,7 @@ export default function TaxPage() {
   // ── Tools ────────────────────────────────────────────────────────────────────
   const [calcIncome, setCalcIncome] = useState('')
   const [calcYear, setCalcYear] = useState(String(new Date().getFullYear()))
+  const [calcType, setCalcType] = useState<'income' | 'corporate'>('income')
   const [calcResult, setCalcResult] = useState<Record<string, unknown> | null>(null)
   const [calculating, setCalculating] = useState(false)
 
@@ -252,6 +254,7 @@ export default function TaxPage() {
       const { data } = await taxApi.calculateIncomeTax({
         income: parseFloat(calcIncome),
         tax_year: parseInt(calcYear),
+        tax_type: calcType,
       })
       setCalcResult(data)
     } catch { toast.error('No income tax config found for this year. Add one in the Income Tax tab.') }
@@ -467,14 +470,35 @@ export default function TaxPage() {
           <div className="card p-6 space-y-4">
             <div className="flex items-center gap-2 mb-1">
               <Calculator size={18} className="text-brand-400" />
-              <h3 className="text-white font-semibold">Income Tax Calculator</h3>
+              <h3 className="text-white font-semibold">
+                {calcType === 'income' ? 'Personal Income Tax Calculator' : 'Corporate Income Tax Calculator'}
+              </h3>
             </div>
-            <p className="text-slate-500 text-xs">Uses the tax brackets you configured above.</p>
+            <div className="flex gap-2 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20">
+              <AlertCircle size={14} className="text-amber-400 shrink-0 mt-0.5" />
+              <p className="text-xs text-amber-300">
+                Requires a {calcType === 'income' ? 'Personal Income Tax' : 'Corporate Income Tax'} config with brackets set up in the{' '}
+                <button onClick={() => setTab('income')} className="underline hover:text-amber-200">Income Tax tab</button> for the selected year.
+              </p>
+            </div>
 
             <div className="space-y-3">
               <div>
                 <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">
-                  Annual Income
+                  Tax Type
+                </label>
+                <select
+                  className="input"
+                  value={calcType}
+                  onChange={(e) => { setCalcType(e.target.value as 'income' | 'corporate'); setCalcResult(null) }}
+                >
+                  <option value="income">Personal Income Tax (PIT)</option>
+                  <option value="corporate">Corporate Income Tax (CIT)</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">
+                  {calcType === 'income' ? 'Annual Gross Income' : 'Annual Taxable Profit'}
                 </label>
                 <input
                   type="number" className="input" placeholder="e.g. 5000000"
@@ -494,22 +518,41 @@ export default function TaxPage() {
                 onClick={handleCalculate} disabled={calculating}
                 className="btn-primary w-full disabled:opacity-50"
               >
-                {calculating ? 'Calculating…' : 'Calculate Tax'}
+                {calculating ? 'Calculating…' : `Calculate ${calcType === 'income' ? 'Personal' : 'Corporate'} Tax`}
               </button>
             </div>
 
             {calcResult && (
-              <div className="mt-4 space-y-2 border-t border-surface-700 pt-4">
-                {Object.entries(calcResult).map(([k, v]) => (
-                  <div key={k} className="flex justify-between text-sm">
-                    <span className="text-slate-400 capitalize">{k.replace(/_/g, ' ')}</span>
-                    <span className="text-white font-medium font-mono">
-                      {typeof v === 'number' || (typeof v === 'string' && !isNaN(+v))
-                        ? formatCurrency(String(v))
-                        : String(v)}
-                    </span>
+              <div className="mt-4 border-t border-surface-700 pt-4 space-y-4">
+                <div className="space-y-2">
+                  {(['config', 'tax_year', 'gross_income', 'total_allowances', 'net_taxable_income', 'effective_rate', 'tax_payable'] as const).map((k) => {
+                    const v = (calcResult as any)[k]
+                    if (v === undefined) return null
+                    const isMoney = ['gross_income', 'total_allowances', 'net_taxable_income', 'tax_payable'].includes(k)
+                    const isRate = k === 'effective_rate'
+                    return (
+                      <div key={k} className={`flex justify-between text-sm ${k === 'tax_payable' ? 'border-t border-surface-700 pt-2' : ''}`}>
+                        <span className="text-slate-400 capitalize">{k.replace(/_/g, ' ')}</span>
+                        <span className={`font-mono font-medium ${k === 'tax_payable' ? 'text-brand-400 text-base' : 'text-white'}`}>
+                          {isMoney ? formatCurrency(String(v)) : isRate ? `${parseFloat(String(v)).toFixed(2)}%` : String(v)}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+                {Array.isArray((calcResult as any).brackets) && (calcResult as any).brackets.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Bracket Breakdown</p>
+                    <div className="space-y-1">
+                      {((calcResult as any).brackets as any[]).map((b: any, i: number) => (
+                        <div key={i} className="flex justify-between text-xs p-2 rounded-lg bg-surface-700/30">
+                          <span className="text-slate-400">{b.bracket} @ {b.rate}%</span>
+                          <span className="font-mono text-white">{formatCurrency(String(b.tax))}</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                ))}
+                )}
               </div>
             )}
           </div>
@@ -527,19 +570,13 @@ export default function TaxPage() {
                 <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">
                   Period Start
                 </label>
-                <input
-                  type="date" className="input"
-                  value={vatStart} onChange={(e) => setVatStart(e.target.value)}
-                />
+                <DateInput value={vatStart} onChange={setVatStart} />
               </div>
               <div>
                 <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">
                   Period End
                 </label>
-                <input
-                  type="date" className="input"
-                  value={vatEnd} onChange={(e) => setVatEnd(e.target.value)}
-                />
+                <DateInput value={vatEnd} onChange={setVatEnd} />
               </div>
               <button
                 onClick={handleVatReport} disabled={vatLoading}
@@ -550,17 +587,27 @@ export default function TaxPage() {
             </div>
 
             {vatResult && (
-              <div className="mt-4 space-y-2 border-t border-surface-700 pt-4">
-                {Object.entries(vatResult).map(([k, v]) => (
-                  <div key={k} className="flex justify-between text-sm">
-                    <span className="text-slate-400 capitalize">{k.replace(/_/g, ' ')}</span>
-                    <span className="text-white font-medium font-mono">
-                      {typeof v === 'number' || (typeof v === 'string' && !isNaN(+v))
-                        ? formatCurrency(String(v))
-                        : String(v)}
-                    </span>
-                  </div>
-                ))}
+              <div className="mt-4 border-t border-surface-700 pt-4 space-y-2">
+                {[
+                  { key: 'period_start', label: 'Period Start', money: false },
+                  { key: 'period_end', label: 'Period End', money: false },
+                  { key: 'total_net_sales', label: 'Total Net Sales', money: true },
+                  { key: 'vat_output', label: 'VAT Output (collected)', money: true },
+                  { key: 'vat_input', label: 'VAT Input (on purchases)', money: true },
+                  { key: 'net_vat_payable', label: 'Net VAT Payable', money: true },
+                ].map(({ key, label, money }) => {
+                  const v = (vatResult as any)[key]
+                  if (v === undefined) return null
+                  const isPayable = key === 'net_vat_payable'
+                  return (
+                    <div key={key} className={`flex justify-between text-sm ${isPayable ? 'border-t border-surface-700 pt-2' : ''}`}>
+                      <span className="text-slate-400">{label}</span>
+                      <span className={`font-mono font-medium ${isPayable ? 'text-brand-400 text-base' : 'text-white'}`}>
+                        {money ? formatCurrency(String(v)) : String(v)}
+                      </span>
+                    </div>
+                  )
+                })}
               </div>
             )}
           </div>
@@ -941,7 +988,7 @@ export default function TaxPage() {
                 </div>
                 <div>
                   <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Effective Date</label>
-                  <input type="date" className="input" value={exciseForm.effective_date} onChange={(e) => setExciseForm({ ...exciseForm, effective_date: e.target.value })} />
+                  <DateInput value={exciseForm.effective_date} onChange={(v) => setExciseForm({ ...exciseForm, effective_date: v })} />
                 </div>
               </div>
               <div>

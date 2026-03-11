@@ -93,3 +93,89 @@
     @apply sidebar-item text-white bg-brand-500/15 border border-brand-500/30 shadow-glow-orange;
   }
 }
+
+/* ── Light Mode Overrides ──────────────────────────────────────────────────── */
+html.light body {
+  background-color: #f1f5f9;
+  color: #0f172a;
+}
+
+html.light .card {
+  background-color: #ffffff;
+  border-color: #e2e8f0;
+}
+
+html.light .card-sm {
+  background-color: #ffffff;
+  border-color: #e2e8f0;
+}
+
+html.light .input {
+  background-color: #f8fafc;
+  border-color: #cbd5e1;
+  color: #0f172a;
+}
+
+html.light .input::placeholder {
+  color: #94a3b8;
+}
+
+html.light .btn-secondary {
+  background-color: #e2e8f0;
+  color: #1e293b;
+}
+
+html.light .btn-ghost {
+  color: #475569;
+}
+
+html.light .btn-ghost:hover {
+  background-color: #e2e8f0;
+  color: #0f172a;
+}
+
+html.light aside {
+  background-color: #ffffff;
+  border-color: #e2e8f0;
+}
+
+html.light .sidebar-item {
+  color: #475569;
+}
+
+html.light .sidebar-item:hover {
+  background-color: #f1f5f9;
+  color: #0f172a;
+}
+
+html.light .sidebar-item-active {
+  background-color: rgba(249, 115, 22, 0.1);
+  border-color: rgba(249, 115, 22, 0.3);
+  color: #ea580c;
+}
+
+html.light .table-row {
+  border-color: #e2e8f0;
+}
+
+html.light .table-row:hover {
+  background-color: #f8fafc;
+}
+
+html.light .text-slate-100 { color: #0f172a; }
+html.light .text-slate-200 { color: #1e293b; }
+html.light .text-slate-300 { color: #334155; }
+html.light .text-slate-400 { color: #64748b; }
+html.light .text-slate-500 { color: #94a3b8; }
+html.light .text-white { color: #0f172a; }
+
+html.light .bg-surface-700\/30 { background-color: rgba(203, 213, 225, 0.3); }
+html.light .bg-surface-700\/50 { background-color: rgba(203, 213, 225, 0.5); }
+html.light .bg-surface-700\/60 { background-color: rgba(203, 213, 225, 0.6); }
+html.light .bg-surface-800 { background-color: #ffffff; }
+html.light .bg-surface-900 { background-color: #f8fafc; }
+html.light .bg-surface-950 { background-color: #f1f5f9; }
+html.light .border-surface-700 { border-color: #e2e8f0; }
+
+html.light ::-webkit-scrollbar-track { background-color: #f1f5f9; }
+html.light ::-webkit-scrollbar-thumb { background-color: #cbd5e1; }

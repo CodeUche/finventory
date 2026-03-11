@@ -4,6 +4,7 @@ import toast from 'react-hot-toast'
 import { payrollApi } from '@/services/api'
 import { formatCurrency, formatAmountInput, stripCommas } from '@/lib/utils'
 import type { Employee } from '@/types'
+import DateInput from '@/components/DateInput'
 
 interface EmployeeForm {
   first_name: string; last_name: string; email: string; phone: string
@@ -120,10 +121,10 @@ export default function EmployeesPage() {
       bank_name: e.bank_name, account_number: e.account_number, account_name: e.account_name,
       pfa_name: e.pfa_name, pfa_number: e.pfa_number, tin: e.tin,
     })
-    // Pre-populate bank combobox from saved bank_name
+    // Pre-populate bank combobox — prefer saved bank_code, fallback to matching by name
     const matched = NIGERIAN_BANKS.find((b) => b.name === e.bank_name)
     setBankSearch(e.bank_name)
-    setBankCode(matched?.code ?? '')
+    setBankCode((e as any).bank_code || matched?.code || '')
     setBankOpen(false)
     setFormTab('personal')
     setShowModal(true)
@@ -136,6 +137,7 @@ export default function EmployeesPage() {
     try {
       const payload = {
         ...form,
+        bank_code: bankCode,  // Save Paystack bank code alongside bank_name
         basic_salary: parseFloat(stripCommas(form.basic_salary)),
         housing_allowance: parseFloat(stripCommas(form.housing_allowance)) || 0,
         transport_allowance: parseFloat(stripCommas(form.transport_allowance)) || 0,
@@ -159,8 +161,11 @@ export default function EmployeesPage() {
       try {
         const { data } = await payrollApi.resolveAccount(form.account_number, bankCode)
         if (!cancelled) setForm((f) => ({ ...f, account_name: data.account_name }))
-      } catch {
-        // Silently fail — user can still type manually
+      } catch (err: any) {
+        if (!cancelled) {
+          const msg = err?.response?.data?.error ?? 'Could not verify account — enter name manually'
+          toast.error(msg, { duration: 4000 })
+        }
       } finally {
         if (!cancelled) setResolving(false)
       }
@@ -315,18 +320,18 @@ export default function EmployeesPage() {
                     <option value="contract">Contract</option>
                   </select>
                 </div>
-                <div><label className="text-xs text-slate-400 mb-1 block">Hire Date</label><input type="date" className="input" value={form.hire_date} onChange={(e) => setForm({ ...form, hire_date: e.target.value })} /></div>
+                <div><label className="text-xs text-slate-400 mb-1 block">Hire Date</label><DateInput value={form.hire_date} onChange={(v) => setForm({ ...form, hire_date: v })} /></div>
               </div>
             )}
 
             {formTab === 'salary' && (
               <div className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
-                  <div><label className="text-xs text-slate-400 mb-1 block">Basic Salary (₦) *</label><input type="text" inputMode="decimal" className="input" value={form.basic_salary} onChange={(e) => setForm({ ...form, basic_salary: formatAmountInput(e.target.value) })} /></div>
-                  <div><label className="text-xs text-slate-400 mb-1 block">Housing Allowance (₦)</label><input type="text" inputMode="decimal" className="input" value={form.housing_allowance} onChange={(e) => setForm({ ...form, housing_allowance: formatAmountInput(e.target.value) })} /></div>
-                  <div><label className="text-xs text-slate-400 mb-1 block">Transport Allowance (₦)</label><input type="text" inputMode="decimal" className="input" value={form.transport_allowance} onChange={(e) => setForm({ ...form, transport_allowance: formatAmountInput(e.target.value) })} /></div>
-                  <div><label className="text-xs text-slate-400 mb-1 block">Leave Allowance (₦)</label><input type="text" inputMode="decimal" className="input" value={form.leave_allowance} onChange={(e) => setForm({ ...form, leave_allowance: formatAmountInput(e.target.value) })} /></div>
-                  <div className="col-span-2"><label className="text-xs text-slate-400 mb-1 block">Other Allowances (₦)</label><input type="text" inputMode="decimal" className="input" value={form.other_allowances} onChange={(e) => setForm({ ...form, other_allowances: formatAmountInput(e.target.value) })} /></div>
+                  <div><label className="text-xs text-slate-400 mb-1 block">Basic Salary *</label><input type="text" inputMode="decimal" className="input" value={form.basic_salary} onChange={(e) => setForm({ ...form, basic_salary: formatAmountInput(e.target.value) })} /></div>
+                  <div><label className="text-xs text-slate-400 mb-1 block">Housing Allowance</label><input type="text" inputMode="decimal" className="input" value={form.housing_allowance} onChange={(e) => setForm({ ...form, housing_allowance: formatAmountInput(e.target.value) })} /></div>
+                  <div><label className="text-xs text-slate-400 mb-1 block">Transport Allowance</label><input type="text" inputMode="decimal" className="input" value={form.transport_allowance} onChange={(e) => setForm({ ...form, transport_allowance: formatAmountInput(e.target.value) })} /></div>
+                  <div><label className="text-xs text-slate-400 mb-1 block">Leave Allowance</label><input type="text" inputMode="decimal" className="input" value={form.leave_allowance} onChange={(e) => setForm({ ...form, leave_allowance: formatAmountInput(e.target.value) })} /></div>
+                  <div className="col-span-2"><label className="text-xs text-slate-400 mb-1 block">Other Allowances</label><input type="text" inputMode="decimal" className="input" value={form.other_allowances} onChange={(e) => setForm({ ...form, other_allowances: formatAmountInput(e.target.value) })} /></div>
                 </div>
                 <div className="p-3 bg-brand-500/10 border border-brand-500/20 rounded-xl">
                   <p className="text-xs text-slate-400">Computed Gross Salary</p>

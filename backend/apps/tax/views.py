@@ -58,6 +58,7 @@ class TaxConfigViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                 income=d["income"],
                 tax_year=d.get("tax_year"),
                 allowances=d.get("allowances"),
+                tax_type=d.get("tax_type"),
             )
             return Response(result)
         except ValueError as e:

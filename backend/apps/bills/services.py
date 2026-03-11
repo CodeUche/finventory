@@ -1,13 +1,22 @@
+import logging
 from decimal import Decimal
 from django.db import transaction
 from django.utils import timezone
 from .models import Bill, BillItem, BillPayment
+
+logger = logging.getLogger(__name__)
 
 
 class BillService:
     @staticmethod
     @transaction.atomic
     def create_bill(validated_data, items_data, organisation, user):
+        from apps.accounting.services import AccountingService
+        issue_date = validated_data.get('issue_date') or timezone.now().date()
+        if AccountingService.is_period_locked(organisation, issue_date):
+            from django.core.exceptions import PermissionDenied
+            raise PermissionDenied(f"The period {issue_date.year}-{issue_date.month:02d} is locked.")
+
         bill = Bill.objects.create(organisation=organisation, created_by=user, **validated_data)
         subtotal = Decimal('0')
         for item in items_data:
@@ -21,6 +30,8 @@ class BillService:
                 quantity=qty,
                 unit_cost=cost,
                 line_total=line,
+                expense_category_id=item.get('expense_category_id'),
+                account_id=item.get('account_id'),
             )
             subtotal += line
         bill.subtotal = subtotal
@@ -51,6 +62,14 @@ class BillService:
         elif bill.amount_paid > 0:
             bill.status = Bill.PARTIALLY_PAID
         bill.save()
+
+        # Auto-post journal entry (non-blocking)
+        try:
+            from apps.accounting.services import AccountingService
+            AccountingService.post_bill_payment_journal(bill.organisation, bill, payment, user)
+        except Exception as exc:
+            logger.warning("post_bill_payment_journal failed: %s", exc)
+
         return payment
 
     @staticmethod
@@ -59,4 +78,12 @@ class BillService:
         bill.status = Bill.APPROVED
         bill.approved_by = approver
         bill.save()
+
+        # Auto-post journal entry (non-blocking)
+        try:
+            from apps.accounting.services import AccountingService
+            AccountingService.post_bill_approved_journal(bill.organisation, bill, approver)
+        except Exception as exc:
+            logger.warning("post_bill_approved_journal failed: %s", exc)
+
         return bill

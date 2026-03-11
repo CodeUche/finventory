@@ -19,6 +19,18 @@ class QuoteViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
     def get_queryset(self):
         org = self._get_organisation()
+        # Auto-expire quotes whose valid_until date has passed
+        try:
+            from django.utils import timezone as tz
+            today = tz.now().date()
+            Quote.objects.filter(
+                organisation=org,
+                valid_until__lt=today,
+                status__in=[Quote.DRAFT, Quote.SENT],
+            ).update(status=Quote.EXPIRED)
+        except Exception:
+            pass
+
         qs = Quote.objects.filter(organisation=org).select_related('customer', 'warehouse', 'converted_invoice').prefetch_related('items__product')
         status_filter = self.request.query_params.get('status')
         if status_filter:
@@ -87,8 +99,16 @@ class QuoteViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def convert(self, request, pk=None):
         quote = self.get_object()
+        if quote.status == Quote.REJECTED:
+            return Response({'error': 'This quote was rejected and cannot be converted to an invoice.'}, status=400)
+        if quote.status == Quote.EXPIRED:
+            return Response({'error': 'This quote has expired. Please create a new quote.'}, status=400)
         try:
             invoice = QuoteService.convert_to_invoice(quote, request.user)
             return Response({'message': 'Converted successfully', 'invoice_id': str(invoice.id)})
         except ValueError as e:
             return Response({'error': str(e)}, status=400)
+        except Exception as e:
+            import logging as _log
+            _log.getLogger(__name__).exception("Unexpected error converting quote")
+            return Response({'error': f"[{type(e).__name__}] {str(e)}"}, status=400)

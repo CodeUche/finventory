@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Plus, Search, Truck, X, Pencil, Loader2 } from 'lucide-react'
+import { Plus, Search, Truck, X, Pencil, Loader2, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { supplierApi } from '@/services/api'
 
@@ -149,9 +149,21 @@ export default function SuppliersPage() {
                       {s.payment_terms_days === 0 ? 'COD' : `Net ${s.payment_terms_days}d`}
                     </td>
                     <td className="px-5 py-3.5">
-                      <button onClick={() => openEdit(s)} className="btn-ghost p-1.5 text-slate-400 hover:text-white">
-                        <Pencil size={14} />
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => openEdit(s)} className="btn-ghost p-1.5 text-slate-400 hover:text-white">
+                          <Pencil size={14} />
+                        </button>
+                        <button
+                          onClick={async () => {
+                            if (!confirm(`Delete supplier "${s.name}"?`)) return
+                            try { await supplierApi.delete(s.id); toast.success('Supplier deleted'); load() }
+                            catch { toast.error('Cannot delete supplier — may have linked purchase orders') }
+                          }}
+                          className="btn-ghost p-1.5 text-slate-400 hover:text-red-400"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))

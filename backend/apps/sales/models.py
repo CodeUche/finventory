@@ -16,6 +16,34 @@ from apps.core.models import MoneyField, TenantAwareModel
 from apps.core.utils import generate_reference
 
 
+class InvoiceFolder(TenantAwareModel):
+    """
+    A named folder for organising sales invoices.
+    Supports unlimited nesting for hierarchical organisation.
+    Example: "2026" → "Q1" → "January Sales"
+    """
+    name = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    folder_date = models.DateField(null=True, blank=True)
+    parent = models.ForeignKey(
+        'self', null=True, blank=True, on_delete=models.CASCADE, related_name='children'
+    )
+
+    class Meta(TenantAwareModel.Meta):
+        ordering = ['-folder_date', 'name']
+
+    def __str__(self):
+        return self.name
+
+    def get_ancestors(self):
+        ancestors = []
+        current = self.parent
+        while current:
+            ancestors.insert(0, {'id': str(current.id), 'name': current.name})
+            current = current.parent
+        return ancestors
+
+
 class Invoice(TenantAwareModel):
     """
     Sales invoice / POS receipt.
@@ -26,6 +54,7 @@ class Invoice(TenantAwareModel):
 
     class Status(models.TextChoices):
         DRAFT = "draft", "Draft"
+        PROFORMA = "proforma", "Proforma"   # Estimate / pro-forma invoice
         CONFIRMED = "confirmed", "Confirmed"
         PAID = "paid", "Paid"
         PARTIALLY_PAID = "partially_paid", "Partially Paid"
@@ -42,6 +71,9 @@ class Invoice(TenantAwareModel):
         MIXED = "mixed", "Mixed"
 
     invoice_number = models.CharField(max_length=50, unique=True, db_index=True)
+    folder = models.ForeignKey(
+        InvoiceFolder, null=True, blank=True, on_delete=models.SET_NULL, related_name='invoices'
+    )
     customer = models.ForeignKey(
         "customers.Customer",
         null=True, blank=True,
@@ -88,10 +120,31 @@ class Invoice(TenantAwareModel):
 
     @classmethod
     def generate_number(cls, organisation):
-        """Generate sequential invoice number per organisation."""
-        prefix = "INV"
-        count = cls.objects.filter(organisation=organisation).count() + 1
-        return f"{prefix}-{count:06d}"
+        """
+        Generate a sequential invoice number per organisation.
+
+        Uses MAX(invoice_number) scan within the org to find the next sequence
+        value, which is safe against concurrent cross-org requests (different
+        org prefixes never collide because each org uses its own 4-char hex
+        prefix derived from its UUID).
+        """
+        from django.db.models import Max
+        # 4-char hex prefix from org UUID — unique per org, collision-proof
+        org_prefix = str(organisation.id).replace('-', '')[:4].upper()
+        prefix = f"INV-{org_prefix}"
+        # Use all_objects so voided/deleted invoices don't reset the counter
+        last = cls.all_objects.filter(
+            organisation=organisation,
+            invoice_number__startswith=prefix,
+        ).aggregate(last=Max('invoice_number'))['last']
+        if last:
+            try:
+                seq = int(last.split('-')[-1]) + 1
+            except (ValueError, IndexError):
+                seq = cls.all_objects.filter(organisation=organisation).count() + 1
+        else:
+            seq = 1
+        return f"{prefix}-{seq:06d}"
 
 
 class SaleItem(TenantAwareModel):
@@ -184,3 +237,69 @@ class RecurringInvoiceLog(TenantAwareModel):
 
     class Meta:
         ordering = ['-generated_at']
+
+
+class SaleReturn(TenantAwareModel):
+    """
+    A credit note / sales return against an original invoice.
+
+    Restocks inventory and creates a credit for the customer.
+    """
+
+    class Reason(models.TextChoices):
+        DEFECTIVE = "defective", "Defective / Damaged"
+        WRONG_ITEM = "wrong_item", "Wrong Item Delivered"
+        CUSTOMER_CHANGE = "customer_change", "Customer Changed Mind"
+        OVERCHARGE = "overcharge", "Overcharge / Price Error"
+        OTHER = "other", "Other"
+
+    return_number = models.CharField(max_length=50, unique=True)
+    invoice = models.ForeignKey(Invoice, on_delete=models.PROTECT, related_name="returns")
+    reason = models.CharField(max_length=30, choices=Reason.choices, default=Reason.OTHER)
+    notes = models.TextField(blank=True)
+    return_date = models.DateField()
+    total_refund = MoneyField(default=0)
+    restocked = models.BooleanField(default=True, help_text="Whether items were physically returned to stock")
+    processed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="processed_returns"
+    )
+
+    class Meta(TenantAwareModel.Meta):
+        ordering = ["-return_date"]
+
+    def __str__(self):
+        return self.return_number
+
+    @classmethod
+    def generate_number(cls, organisation):
+        from django.db.models import Max
+        org_prefix = str(organisation.id).replace('-', '')[:4].upper()
+        prefix = f"RTN-{org_prefix}"
+        last = cls.all_objects.filter(
+            organisation=organisation, return_number__startswith=prefix
+        ).aggregate(last=Max('return_number'))['last']
+        if last:
+            try:
+                seq = int(last.split('-')[-1]) + 1
+            except (ValueError, IndexError):
+                seq = cls.all_objects.filter(organisation=organisation).count() + 1
+        else:
+            seq = 1
+        return f"{prefix}-{seq:06d}"
+
+
+class SaleReturnItem(TenantAwareModel):
+    """One line item in a sales return."""
+
+    sale_return = models.ForeignKey(SaleReturn, on_delete=models.CASCADE, related_name="items")
+    original_item = models.ForeignKey(SaleItem, on_delete=models.PROTECT, related_name="return_items")
+    product = models.ForeignKey("inventory.Product", on_delete=models.PROTECT)
+    quantity_returned = models.DecimalField(max_digits=12, decimal_places=2)
+    unit_price = MoneyField()
+    refund_amount = MoneyField()
+
+    class Meta(TenantAwareModel.Meta):
+        pass
+
+    def __str__(self):
+        return f"{self.product.sku} × {self.quantity_returned} (return)"

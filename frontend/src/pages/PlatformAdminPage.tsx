@@ -112,11 +112,15 @@ export default function PlatformAdminPage() {
             <div className="space-y-6">
               <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
                 {[
-                  { label: 'Total Organisations', value: stats.total_orgs, sub: `${stats.active_orgs} active`, icon: Building2, color: 'orange' },
-                  { label: 'Total Users', value: stats.total_users, sub: `${stats.superusers} superuser(s)`, icon: Users, color: 'blue' },
-                  { label: 'Total Platform Revenue', value: formatCurrency(stats.total_revenue), sub: `${stats.total_invoices} paid invoices`, icon: TrendingUp, color: 'green' },
+                  { label: 'Total Organisations', value: stats.total_orgs, sub: `${stats.active_orgs} active`, icon: Building2, color: 'orange', tabTarget: 'orgs' as const },
+                  { label: 'Total Users', value: stats.total_users, sub: `${stats.superusers} superuser(s)`, icon: Users, color: 'blue', tabTarget: 'users' as const },
+                  { label: 'Total Platform Revenue', value: formatCurrency(stats.total_revenue), sub: `${stats.total_invoices} paid invoices`, icon: TrendingUp, color: 'green', tabTarget: null },
                 ].map((c) => (
-                  <div key={c.label} className="card p-5">
+                  <button
+                    key={c.label}
+                    onClick={() => c.tabTarget && setTab(c.tabTarget)}
+                    className={`card p-5 text-left transition-all ${c.tabTarget ? 'cursor-pointer hover:border-brand-500/40' : 'cursor-default'}`}
+                  >
                     <div className={`w-10 h-10 rounded-xl flex items-center justify-center mb-3 ${
                       c.color === 'orange' ? 'bg-brand-500/15' : c.color === 'blue' ? 'bg-blue-500/15' : 'bg-emerald-500/15'
                     }`}>
@@ -125,7 +129,8 @@ export default function PlatformAdminPage() {
                     <p className="text-2xl font-bold text-white">{c.value}</p>
                     <p className="text-sm text-slate-400 mt-0.5">{c.label}</p>
                     <p className="text-xs text-slate-500 mt-0.5">{c.sub}</p>
-                  </div>
+                    {c.tabTarget && <p className="text-xs text-slate-600 mt-1">Click to view →</p>}
+                  </button>
                 ))}
               </div>
 

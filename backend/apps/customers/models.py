@@ -16,6 +16,12 @@ class Customer(TenantAwareModel):
         RETAIL = "retail", "Retail"
         WHOLESALE = "wholesale", "Wholesale"
         DISTRIBUTOR = "distributor", "Distributor"
+        CORPORATE = "corporate", "Corporate"
+        CLIENT = "client", "Client"
+        PASSENGER = "passenger", "Passenger"
+        VIP = "vip", "VIP"
+        GOVERNMENT = "government", "Government"
+        NGO = "ngo", "NGO"
 
     code = models.CharField(max_length=50, db_index=True)
     name = models.CharField(max_length=255)

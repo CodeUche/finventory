@@ -125,41 +125,56 @@ export default function NewSalePage() {
   const changeGiven = tenderedNum > grandTotal ? tenderedNum - grandTotal : 0
   const balanceDue  = tenderedNum > 0 && tenderedNum < grandTotal ? grandTotal - tenderedNum : 0
 
-  const handleSubmit = async () => {
+  const buildPayload = (isProforma = false) => {
+    const rawTendered = parseFloat(stripCommas(amountPaid)) || grandTotal
+    const actualPaid = Math.min(rawTendered, grandTotal)
+    const isCredit = paymentMethod === 'credit'
+    return {
+      customer_id: selectedCustomer?.id ?? null,
+      warehouse_id: selectedWarehouse,
+      payment_method: paymentMethod,
+      amount_paid: isCredit || isProforma ? '0' : actualPaid.toFixed(2),
+      amount_tendered: !isCredit && !isProforma && rawTendered > 0 ? rawTendered.toFixed(2) : null,
+      notes,
+      is_proforma: isProforma,
+      items: cart.map((c) => ({
+        product_id: c.product.id,
+        quantity: c.quantity,
+        unit_price: c.unit_price.toFixed(4),
+        discount_percent: c.discount_percent.toFixed(2),
+      })),
+    }
+  }
+
+  const handleSubmit = async (isProforma = false) => {
     if (cart.length === 0) { toast.error('Add at least one product'); return }
     if (!selectedWarehouse) { toast.error('Select a warehouse first'); return }
-
-    if (paymentMethod === 'credit' && !selectedCustomer) {
-      toast.error('Select a customer for credit sales')
-      return
+    if (paymentMethod === 'credit' && !selectedCustomer && !isProforma) {
+      toast.error('Select a customer for credit sales'); return
     }
-
     setSubmitting(true)
     try {
-      // Cap amount_paid at grandTotal — don't record over-tender as payment
-      const rawTendered = parseFloat(stripCommas(amountPaid)) || grandTotal
-      const actualPaid  = Math.min(rawTendered, grandTotal)
-
-      const payload = {
-        customer_id: selectedCustomer?.id ?? null,
-        warehouse_id: selectedWarehouse,
-        payment_method: paymentMethod,
-        amount_paid: paymentMethod === 'credit' ? '0' : actualPaid.toFixed(2),
-        notes: notes,
-        items: cart.map((c) => ({
-          product_id: c.product.id,
-          quantity: c.quantity,
-          unit_price: c.unit_price.toFixed(4),
-          discount_percent: c.discount_percent.toFixed(2),
-        })),
-      }
-
-      await salesApi.create(payload)
-      toast.success('Sale recorded!')
-      refetchAlerts()       // Re-check stock levels immediately after sale
+      await salesApi.create(buildPayload(isProforma))
+      toast.success(isProforma ? 'Proforma invoice created!' : 'Sale recorded!')
+      refetchAlerts()
       navigate('/sales')
-    } catch {
-      toast.error('Failed to record sale')
+    } catch (err: any) {
+      const data = err?.response?.data
+      let msg = 'Failed to record sale'
+      if (typeof data?.error === 'string') {
+        msg = data.error
+      } else if (data?.error?.message) {
+        msg = data.error.message
+      } else if (data && typeof data === 'object') {
+        const firstKey = Object.keys(data)[0]
+        if (firstKey) {
+          const val = (data as any)[firstKey]
+          msg = Array.isArray(val) ? String(val[0]) : String(val)
+        }
+      } else if (!err?.response) {
+        msg = 'Network error — check your connection'
+      }
+      toast.error(msg)
     } finally {
       setSubmitting(false)
     }
@@ -500,13 +515,22 @@ export default function NewSalePage() {
           </div>
 
           {/* Submit */}
-          <button
-            onClick={handleSubmit}
-            disabled={submitting || cart.length === 0}
-            className="btn-primary w-full py-3.5 text-base disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {submitting ? 'Processing…' : `Confirm Sale · ${formatCurrency(grandTotal)}`}
-          </button>
+          <div className="space-y-2">
+            <button
+              onClick={() => handleSubmit(false)}
+              disabled={submitting || cart.length === 0}
+              className="btn-primary w-full py-3.5 text-base disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {submitting ? 'Processing…' : `Confirm Sale · ${formatCurrency(grandTotal)}`}
+            </button>
+            <button
+              onClick={() => handleSubmit(true)}
+              disabled={submitting || cart.length === 0}
+              className="w-full py-2.5 rounded-xl border border-slate-600 text-slate-300 hover:bg-surface-700 text-sm font-medium transition-colors disabled:opacity-50"
+            >
+              Save as Proforma Invoice
+            </button>
+          </div>
         </div>
       </div>
     </div>

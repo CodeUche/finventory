@@ -14,17 +14,25 @@ venv/
 env/
 .venv/
 
-# Environment variables (NEVER commit these)
+# Environment variables — NEVER commit these
 .env
-.env.local
-.env.production
+.env.*
+!.env.example
+backend/.env
+backend/.env.*
+!backend/.env.example
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
 
 # Django
 *.log
+logs/
 local_settings.py
 db.sqlite3
 media/
 staticfiles/
+backend/logs/
 
 # IDE
 .vscode/

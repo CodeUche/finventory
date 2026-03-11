@@ -4,8 +4,8 @@ from apps.expenses.models import ExpenseCategory
 
 
 class Budget(TenantAwareModel):
-    MONTHLY = 'monthly'; QUARTERLY = 'quarterly'; ANNUAL = 'annual'
-    PERIOD_CHOICES = [(p, p) for p in [MONTHLY, QUARTERLY, ANNUAL]]
+    DAILY = 'daily'; WEEKLY = 'weekly'; MONTHLY = 'monthly'; QUARTERLY = 'quarterly'; ANNUAL = 'annual'
+    PERIOD_CHOICES = [(p, p) for p in [DAILY, WEEKLY, MONTHLY, QUARTERLY, ANNUAL]]
     DRAFT = 'draft'; ACTIVE = 'active'; CLOSED = 'closed'
     STATUS_CHOICES = [(s, s) for s in [DRAFT, ACTIVE, CLOSED]]
 
@@ -32,6 +32,9 @@ class BudgetLine(TenantAwareModel):
     category_type = models.CharField(max_length=20, choices=TYPE_CHOICES, default=EXPENSE)
     period_month = models.PositiveIntegerField(null=True, blank=True)  # null = annual
     budgeted_amount = MoneyField(default=0)
+    unit_price = MoneyField(null=True, blank=True)
+    quantity = models.DecimalField(max_digits=10, decimal_places=2, default=1)
+    description = models.CharField(max_length=500, blank=True)
 
     class Meta:
         ordering = ['category_name', 'period_month']

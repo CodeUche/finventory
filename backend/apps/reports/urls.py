@@ -1,5 +1,6 @@
 from django.urls import path
 from .views import (
+    ARAgingView,
     CashFlowView,
     ExpenseBreakdownView,
     InventoryValuationView,
@@ -7,6 +8,7 @@ from .views import (
     SalesSummaryView,
     TopCustomersView,
     TopProductsView,
+    VATSummaryView,
 )
 
 urlpatterns = [
@@ -17,4 +19,6 @@ urlpatterns = [
     path("expenses/", ExpenseBreakdownView.as_view(), name="report-expenses"),
     path("inventory/", InventoryValuationView.as_view(), name="report-inventory"),
     path("cash-flow/", CashFlowView.as_view(), name="report-cash-flow"),
+    path("ar-aging/", ARAgingView.as_view(), name="report-ar-aging"),
+    path("vat-summary/", VATSummaryView.as_view(), name="report-vat-summary"),
 ]

@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react'
 import toast from 'react-hot-toast'
-import { inventoryApi } from '@/services/api'
+import { inventoryApi, salesApi } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
 
 export interface StockAlert {
@@ -11,63 +11,136 @@ export interface StockAlert {
   quantity_available: string
 }
 
+export interface OverdueAlert {
+  id: string
+  invoice_number: string
+  customer_name: string | null
+  amount_due: string
+  due_date: string
+  days_overdue: number
+}
+
+export interface ExpiryAlert {
+  id: string
+  batch_number: string
+  product_name: string
+  product_sku: string
+  warehouse_name: string
+  expiry_date: string
+  days_to_expiry: number | null
+  is_expired: boolean
+}
+
 interface NotificationsCtx {
   alerts: StockAlert[]
+  overdueAlerts: OverdueAlert[]
+  expiryAlerts: ExpiryAlert[]
   count: number
   dismiss: (id: string) => void
   dismissAll: () => void
+  dismissOverdue: (id: string) => void
+  dismissExpiry: (id: string) => void
   refetch: () => void
 }
 
 const Ctx = createContext<NotificationsCtx>({
   alerts: [],
+  overdueAlerts: [],
+  expiryAlerts: [],
   count: 0,
   dismiss: () => {},
   dismissAll: () => {},
+  dismissOverdue: () => {},
+  dismissExpiry: () => {},
   refetch: () => {},
 })
 
 export function NotificationsProvider({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
   const [alerts, setAlerts] = useState<StockAlert[]>([])
+  const [overdueAlerts, setOverdueAlerts] = useState<OverdueAlert[]>([])
+  const [expiryAlerts, setExpiryAlerts] = useState<ExpiryAlert[]>([])
   const prevIdsRef   = useRef<Set<string>>(new Set())
   const firstPollRef = useRef(true)
+  const today = new Date().toISOString().split('T')[0]
 
   const poll = useCallback(async () => {
     if (!isAuthenticated) return
     try {
-      const { data } = await inventoryApi.lowStock()
-      const items: StockAlert[] = (data.results ?? data).map((i: any) => ({
-        id: i.id,
-        product_name: i.product_name,
-        product_sku: i.product_sku,
-        warehouse_name: i.warehouse_name,
-        quantity_available: i.quantity_available,
-      }))
+      const [stockData, overdueData, batchData] = await Promise.allSettled([
+        inventoryApi.lowStock(),
+        salesApi.invoices({ status: 'overdue', page_size: 20 }),
+        inventoryApi.batches({ page_size: 200 }),
+      ])
 
-      if (firstPollRef.current) {
-        // On first poll: show one aggregated toast if any items are low
-        firstPollRef.current = false
-        if (items.length > 0) {
-          toast(
-            items.length === 1
-              ? `⚠️ Low stock: ${items[0].product_name} (${items[0].quantity_available} left)`
-              : `⚠️ ${items.length} products are low on stock`,
-            { duration: 6000 },
-          )
-        }
-      } else {
-        // On subsequent polls: toast only for newly low items
-        const newItems = items.filter((i) => !prevIdsRef.current.has(i.id))
-        newItems.forEach((item) => {
-          toast(`⚠️ Low stock: ${item.product_name} (${item.quantity_available} left)`, {
-            duration: 5000,
+      if (stockData.status === 'fulfilled') {
+        const items: StockAlert[] = (stockData.value.data.results ?? stockData.value.data).map((i: any) => ({
+          id: i.id,
+          product_name: i.product_name,
+          product_sku: i.product_sku,
+          warehouse_name: i.warehouse_name,
+          quantity_available: i.quantity_available,
+        }))
+
+        if (firstPollRef.current) {
+          firstPollRef.current = false
+          if (items.length > 0) {
+            toast(
+              items.length === 1
+                ? `⚠️ Low stock: ${items[0].product_name} (${items[0].quantity_available} left)`
+                : `⚠️ ${items.length} products are low on stock`,
+              { duration: 6000 },
+            )
+          }
+        } else {
+          const newItems = items.filter((i) => !prevIdsRef.current.has(i.id))
+          newItems.forEach((item) => {
+            toast(`⚠️ Low stock: ${item.product_name} (${item.quantity_available} left)`, {
+              duration: 5000,
+            })
           })
-        })
+        }
+
+        prevIdsRef.current = new Set(items.map((i) => i.id))
+        setAlerts(items)
       }
 
-      prevIdsRef.current = new Set(items.map((i) => i.id))
-      setAlerts(items)
+      if (overdueData.status === 'fulfilled') {
+        const invoices = overdueData.value.data.results ?? overdueData.value.data
+        const overdue: OverdueAlert[] = invoices.map((inv: any) => ({
+          id: inv.id,
+          invoice_number: inv.invoice_number,
+          customer_name: inv.customer_name ?? null,
+          amount_due: inv.amount_due,
+          due_date: inv.due_date,
+          days_overdue: Math.max(0, Math.floor((new Date(today).getTime() - new Date(inv.due_date).getTime()) / 86400000)),
+        }))
+        setOverdueAlerts(overdue)
+      }
+
+      if (batchData.status === 'fulfilled') {
+        const batches = batchData.value.data.results ?? batchData.value.data
+        const expiring: ExpiryAlert[] = batches
+          .filter((b: any) => {
+            if (!b.expiry_date) return false
+            const daysLeft = b.days_to_expiry ?? Math.floor((new Date(b.expiry_date).getTime() - new Date(today).getTime()) / 86400000)
+            return daysLeft <= 30
+          })
+          .map((b: any) => {
+            const daysLeft = b.days_to_expiry ?? Math.floor((new Date(b.expiry_date).getTime() - new Date(today).getTime()) / 86400000)
+            return {
+              id: b.id,
+              batch_number: b.batch_number,
+              product_name: b.product_name,
+              product_sku: b.product_sku,
+              warehouse_name: b.warehouse_name,
+              expiry_date: b.expiry_date,
+              days_to_expiry: daysLeft,
+              is_expired: daysLeft < 0,
+            }
+          })
+        setExpiryAlerts(expiring)
+      }
     } catch {
       // Silently ignore poll failures
     }
@@ -87,14 +160,23 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
 
   const dismissAll = useCallback(() => {
     setAlerts([])
+    setOverdueAlerts([])
     prevIdsRef.current = new Set()
+  }, [])
+
+  const dismissOverdue = useCallback((id: string) => {
+    setOverdueAlerts((prev) => prev.filter((a) => a.id !== id))
+  }, [])
+
+  const dismissExpiry = useCallback((id: string) => {
+    setExpiryAlerts((prev) => prev.filter((a) => a.id !== id))
   }, [])
 
   // Exposed so pages can trigger an immediate re-poll (e.g. after a sale)
   const refetch = useCallback(() => { poll() }, [poll])
 
   return (
-    <Ctx.Provider value={{ alerts, count: alerts.length, dismiss, dismissAll, refetch }}>
+    <Ctx.Provider value={{ alerts, overdueAlerts, expiryAlerts, count: alerts.length + overdueAlerts.length + expiryAlerts.length, dismiss, dismissAll, dismissOverdue, dismissExpiry, refetch }}>
       {children}
     </Ctx.Provider>
   )

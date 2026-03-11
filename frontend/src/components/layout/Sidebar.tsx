@@ -1,10 +1,11 @@
+import { useState } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, Package, Boxes, Plus, Layers,
   Users, Receipt, BarChart3, LogOut, Zap, X, FileText, RefreshCw,
   CreditCard, Truck, Building2, Warehouse, Calculator, BookOpen,
   BookMarked, Landmark, UsersRound, Banknote, ArrowDownCircle,
-  PieChart, Scale, Shield, ClipboardList,
+  PieChart, Scale, Shield, ClipboardList, ChevronDown, ChevronRight,
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { authApi } from '@/services/api'
@@ -55,6 +56,7 @@ const navGroups = [
       { name: 'Chart of Accounts', href: '/accounting/coa', icon: BookOpen },
       { name: 'Journal Entries', href: '/accounting/journal', icon: BookMarked },
       { name: 'Fixed Assets', href: '/accounting/assets', icon: Landmark },
+      { name: 'Bank Reconciliation', href: '/accounting/reconciliation', icon: Scale },
     ],
   },
   {
@@ -67,7 +69,7 @@ const navGroups = [
   {
     label: 'FINANCE',
     items: [
-      { name: 'Expenses', href: '/expenses', icon: ArrowDownCircle },
+      { name: 'Income & Expenses', href: '/expenses', icon: ArrowDownCircle },
       { name: 'Budgets', href: '/budgets', icon: PieChart },
       { name: 'Reports', href: '/reports', icon: BarChart3 },
       { name: 'Balance Sheet', href: '/reports/balance-sheet', icon: Scale },
@@ -90,6 +92,13 @@ interface SidebarProps {
 export default function Sidebar({ open, onClose }: SidebarProps) {
   const { user, organisation, tokens, logout } = useAuthStore()
   const navigate = useNavigate()
+
+  // Track which groups are collapsed. All start expanded.
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+
+  const toggleGroup = (label: string) => {
+    setCollapsed((prev) => ({ ...prev, [label]: !prev[label] }))
+  }
 
   const handleLogout = async () => {
     try {
@@ -117,7 +126,7 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
             <Zap size={18} className="text-white" />
           </div>
           <div>
-            <p className="font-bold text-white text-sm leading-tight">Finventory</p>
+            <p className="font-bold text-white text-sm leading-tight">Audity</p>
             <p className="text-xs text-slate-500 leading-tight">Business Suite</p>
           </div>
         </div>
@@ -136,28 +145,41 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
 
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-0.5">
-        {navGroups.map((group, gi) => (
-          <div key={gi}>
-            {group.label && (
-              <p className="px-3 pt-4 pb-1 text-[10px] font-semibold text-slate-600 uppercase tracking-widest">
-                {group.label}
-              </p>
-            )}
-            {group.items.map((item) => (
-              <NavLink
-                key={item.href}
-                to={item.href}
-                end={item.href === '/sales'}
-                className={({ isActive }) =>
-                  isActive ? 'sidebar-item-active' : 'sidebar-item'
-                }
-              >
-                <item.icon size={16} className="shrink-0" />
-                <span className="truncate">{item.name}</span>
-              </NavLink>
-            ))}
-          </div>
-        ))}
+        {navGroups.map((group, gi) => {
+          const isCollapsed = group.label ? (collapsed[group.label] ?? false) : false
+
+          return (
+            <div key={gi}>
+              {group.label && (
+                <button
+                  onClick={() => toggleGroup(group.label!)}
+                  className="w-full flex items-center justify-between px-3 pt-4 pb-1 text-left group"
+                >
+                  <span className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest group-hover:text-slate-500 transition-colors">
+                    {group.label}
+                  </span>
+                  {isCollapsed
+                    ? <ChevronRight size={12} className="text-slate-600 group-hover:text-slate-500 transition-colors" />
+                    : <ChevronDown size={12} className="text-slate-600 group-hover:text-slate-500 transition-colors" />
+                  }
+                </button>
+              )}
+              {!isCollapsed && group.items.map((item) => (
+                <NavLink
+                  key={item.href}
+                  to={item.href}
+                  end={item.href === '/sales'}
+                  className={({ isActive }) =>
+                    isActive ? 'sidebar-item-active' : 'sidebar-item'
+                  }
+                >
+                  <item.icon size={16} className="shrink-0" />
+                  <span className="truncate">{item.name}</span>
+                </NavLink>
+              ))}
+            </div>
+          )
+        })}
       </nav>
 
       {/* Settings + User + Logout */}

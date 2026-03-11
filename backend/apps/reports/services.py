@@ -57,7 +57,7 @@ class ReportService:
         """Top N products by revenue in the period."""
         from apps.sales.models import SaleItem
 
-        return (
+        qs = (
             SaleItem.objects.filter(
                 organisation=organisation,
                 invoice__issue_date__gte=date_from,
@@ -73,13 +73,25 @@ class ReportService:
             )
             .order_by("-total_revenue")[:limit]
         )
+        return [
+            {
+                "product_id": r["product__id"],
+                "product_name": r["product__name"],
+                "product_sku": r["product__sku"],
+                "units_sold": r["total_quantity"],
+                "revenue": r["total_revenue"],
+                "cogs": r["total_cogs"],
+                "gross_profit": r["gross_profit"],
+            }
+            for r in qs
+        ]
 
     @staticmethod
     def top_customers(organisation, date_from, date_to, limit=10) -> list[dict]:
         """Top N customers by revenue."""
         from apps.sales.models import Invoice
 
-        return (
+        qs = (
             Invoice.objects.filter(
                 organisation=organisation,
                 issue_date__gte=date_from,
@@ -94,6 +106,16 @@ class ReportService:
             )
             .order_by("-total_revenue")[:limit]
         )
+        return [
+            {
+                "customer_id": r["customer__id"],
+                "customer_name": r["customer__name"],
+                "customer_code": r["customer__code"],
+                "revenue": r["total_revenue"],
+                "invoice_count": r["invoice_count"],
+            }
+            for r in qs
+        ]
 
     # ─── P&L Report ──────────────────────────────────────────────────────────
 
@@ -120,12 +142,12 @@ class ReportService:
             total_discounts=Sum("discount_amount"),
         )
 
-        # COGS (from sale items)
+        # COGS (from sale items) — same status set as revenue to keep gross profit accurate
         cogs_data = SaleItem.objects.filter(
             organisation=organisation,
             invoice__issue_date__gte=date_from,
             invoice__issue_date__lte=date_to,
-            invoice__status__in=["paid", "confirmed", "partially_paid"],
+            invoice__status__in=["paid", "confirmed", "partially_paid", "credit"],
         ).aggregate(total_cogs=Sum("cost_of_goods"))
 
         # Operating expenses
@@ -150,10 +172,12 @@ class ReportService:
         misc_income = income_data["total_misc_income"] or Decimal("0")
         tax_collected = revenue_data["total_tax_collected"] or Decimal("0")
 
-        gross_profit = total_revenue - total_cogs
-        operating_profit = gross_profit - total_expenses + misc_income
-        # Net profit (before income tax)
-        net_profit = operating_profit
+        # Gross profit = all income sources minus COGS
+        # Misc income (non-sale income) is included so gross_profit >= net_profit always
+        total_income = total_revenue + misc_income
+        gross_profit = total_income - total_cogs
+        # Net profit = gross profit minus operating expenses
+        net_profit = gross_profit - total_expenses
 
         return {
             "period_start": date_from,
@@ -166,16 +190,15 @@ class ReportService:
             "cost_of_goods_sold": total_cogs,
             "gross_profit": gross_profit,
             "gross_margin_pct": (
-                (gross_profit / total_revenue * 100).quantize(Decimal("0.01"))
-                if total_revenue > 0 else Decimal("0")
+                (gross_profit / total_income * 100).quantize(Decimal("0.01"))
+                if total_income > 0 else Decimal("0")
             ),
             "operating_expenses": total_expenses,
             "miscellaneous_income": misc_income,
-            "operating_profit": operating_profit,
             "net_profit": net_profit,
             "net_margin_pct": (
-                (net_profit / total_revenue * 100).quantize(Decimal("0.01"))
-                if total_revenue > 0 else Decimal("0")
+                (net_profit / total_income * 100).quantize(Decimal("0.01"))
+                if total_income > 0 else Decimal("0")
             ),
         }
 
@@ -186,7 +209,7 @@ class ReportService:
         """Expenses grouped by category."""
         from apps.expenses.models import Expense
 
-        return (
+        qs = (
             Expense.objects.filter(
                 organisation=organisation,
                 expense_date__gte=date_from,
@@ -197,6 +220,14 @@ class ReportService:
             .annotate(total=Sum("amount"), count=Count("id"))
             .order_by("-total")
         )
+        return [
+            {
+                "category_name": r["category__name"] or "Uncategorised",
+                "total": r["total"],
+                "count": r["count"],
+            }
+            for r in qs
+        ]
 
     # ─── Stock Reports ────────────────────────────────────────────────────────
 
@@ -226,6 +257,97 @@ class ReportService:
                 }
                 for i in items
             ],
+        }
+
+    # ─── AR Aging ─────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def ar_aging(organisation, as_of=None) -> dict:
+        """
+        Bucket outstanding invoices by days overdue.
+
+        Buckets: current (0), 1-30, 31-60, 61-90, 90+
+        """
+        from datetime import date as _date
+        from apps.sales.models import Invoice
+
+        as_of = as_of or _date.today()
+        invoices = Invoice.objects.filter(
+            organisation=organisation,
+            status__in=['credit', 'partially_paid', 'overdue'],
+            amount_due__gt=0,
+        ).select_related('customer')
+
+        buckets = {'current': Decimal('0'), '1_30': Decimal('0'), '31_60': Decimal('0'), '61_90': Decimal('0'), 'over_90': Decimal('0')}
+        invoice_list = []
+
+        for inv in invoices:
+            due_date = inv.due_date or inv.issue_date
+            days = (as_of - due_date).days if due_date else 0
+            amount_due = Decimal(str(inv.amount_due or 0))
+
+            if days <= 0:
+                buckets['current'] += amount_due
+            elif days <= 30:
+                buckets['1_30'] += amount_due
+            elif days <= 60:
+                buckets['31_60'] += amount_due
+            elif days <= 90:
+                buckets['61_90'] += amount_due
+            else:
+                buckets['over_90'] += amount_due
+
+            invoice_list.append({
+                'id': str(inv.id),
+                'invoice_number': inv.invoice_number,
+                'customer_name': inv.customer.name if inv.customer else 'Walk-in',
+                'amount_due': amount_due,
+                'due_date': due_date,
+                'days_overdue': max(0, days),
+            })
+
+        return {
+            'as_of': as_of,
+            'buckets': buckets,
+            'total_outstanding': sum(buckets.values()),
+            'invoices': sorted(invoice_list, key=lambda x: x['days_overdue'], reverse=True),
+        }
+
+    # ─── VAT Summary ──────────────────────────────────────────────────────────
+
+    @staticmethod
+    def vat_summary(organisation, date_from, date_to) -> dict:
+        """
+        Output VAT (collected on sales) minus Input VAT (paid on approved bills).
+        Net VAT Payable = Output − Input.
+        """
+        from apps.sales.models import Invoice
+        from apps.bills.models import Bill
+
+        output_vat = (
+            Invoice.objects.filter(
+                organisation=organisation,
+                issue_date__gte=date_from,
+                issue_date__lte=date_to,
+                status__in=['paid', 'confirmed', 'partially_paid', 'credit'],
+            ).aggregate(t=Sum('tax_amount'))['t'] or Decimal('0')
+        )
+
+        input_vat = (
+            Bill.objects.filter(
+                organisation=organisation,
+                issue_date__gte=date_from,
+                issue_date__lte=date_to,
+                status__in=['approved', 'paid', 'partially_paid'],
+            ).aggregate(t=Sum('tax_amount'))['t'] or Decimal('0')
+        )
+
+        return {
+            'period_start': date_from,
+            'period_end': date_to,
+            'output_vat': output_vat,
+            'input_vat': input_vat,
+            'net_vat_payable': output_vat - input_vat,
         }
 
     # ─── Cash Flow ────────────────────────────────────────────────────────────

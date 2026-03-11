@@ -4,6 +4,7 @@ import toast from 'react-hot-toast'
 import { quoteApi, customerApi, inventoryApi } from '@/services/api'
 import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
 import type { Quote, Customer, Warehouse, Product } from '@/types'
+import DateInput from '@/components/DateInput'
 
 type StatusFilter = 'all' | 'draft' | 'sent' | 'accepted' | 'rejected' | 'expired' | 'converted'
 
@@ -76,7 +77,11 @@ export default function QuotesPage() {
     finally { setLoading(false) }
   }
 
-  useEffect(() => { load() }, [statusFilter])
+  useEffect(() => {
+    load()
+    const interval = setInterval(load, 5 * 60 * 1000) // poll every 5 minutes for auto-expiry
+    return () => clearInterval(interval)
+  }, [statusFilter])
 
   const handleCreate = async () => {
     if (!form.warehouse) { toast.error('Select a warehouse'); return }
@@ -103,12 +108,18 @@ export default function QuotesPage() {
   }
 
   const handleConvert = async (q: Quote) => {
+    if (q.status === 'rejected') { toast.error('This quote was rejected and cannot be converted'); return }
+    if (q.status === 'expired') { toast.error('This quote has expired. Please create a new quote'); return }
     if (!confirm(`Convert quote ${q.quote_number} to invoice?`)) return
     try {
       await quoteApi.convert(q.id)
       toast.success('Converted to invoice')
       load()
-    } catch { toast.error('Failed to convert quote') }
+    } catch (err: any) {
+      const apiErr = err?.response?.data?.error
+      const msg = typeof apiErr === 'string' ? apiErr : (apiErr?.message ?? 'Failed to convert quote')
+      toast.error(msg)
+    }
   }
 
   const handleSend = async (q: Quote) => {
@@ -217,9 +228,11 @@ export default function QuotesPage() {
                     <p className="text-slate-500">No quotes found</p>
                   </td>
                 </tr>
-              ) : filtered.map((q) => (
+              ) : filtered.map((q) => {
+                const isExpiringSoon = (q.status === 'draft' || q.status === 'sent') && q.valid_until < today
+                return (
                 <>
-                  <tr key={q.id} className="table-row">
+                  <tr key={q.id} className={`table-row ${isExpiringSoon ? 'border-l-2 border-amber-500/60' : ''}`}>
                     <td className="px-4 py-3.5">
                       <button onClick={() => setExpandedRow(expandedRow === q.id ? null : q.id)} className="text-slate-400 hover:text-white">
                         {expandedRow === q.id ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -270,12 +283,16 @@ export default function QuotesPage() {
                             <span className="text-slate-400">Total: <span className="text-brand-400 font-bold">{formatCurrency(q.total_amount)}</span></span>
                           </div>
                           {q.notes && <p className="text-xs text-slate-500">Notes: {q.notes}</p>}
+                          {isExpiringSoon && (
+                            <p className="text-xs text-amber-400 font-medium mt-1">⚠ Valid until date has passed — this quote may have auto-expired</p>
+                          )}
                         </div>
                       </td>
                     </tr>
                   )}
                 </>
-              ))}
+                )
+              })}
             </tbody>
           </table>
         </div>
@@ -317,11 +334,11 @@ export default function QuotesPage() {
               </div>
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Issue Date</label>
-                <input type="date" className="input" value={form.issue_date} onChange={(e) => setForm({ ...form, issue_date: e.target.value })} />
+                <DateInput value={form.issue_date} onChange={(v) => setForm({ ...form, issue_date: v })} />
               </div>
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Valid Until</label>
-                <input type="date" className="input" value={form.valid_until} onChange={(e) => setForm({ ...form, valid_until: e.target.value })} />
+                <DateInput value={form.valid_until} onChange={(v) => setForm({ ...form, valid_until: v })} />
               </div>
             </div>
 

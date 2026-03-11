@@ -2,17 +2,14 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell, Legend,
 } from 'recharts'
 import {
   TrendingUp, TrendingDown, Package,
-  AlertTriangle, DollarSign, Zap, ArrowUpRight,
+  AlertTriangle, DollarSign, Zap, ArrowUpRight, ShoppingCart, Clock,
 } from 'lucide-react'
-import { reportApi, inventoryApi } from '@/services/api'
-import { formatCurrency } from '@/lib/utils'
+import { reportApi, inventoryApi, salesApi } from '@/services/api'
+import { formatCurrency, getCurrencySymbol } from '@/lib/utils'
 import { format, subDays } from 'date-fns'
-
-const COLORS = ['#f97316', '#3b82f6', '#22c55e', '#a855f7', '#f59e0b']
 
 function StatCard({
   label,
@@ -73,6 +70,8 @@ export default function DashboardPage() {
   const [topProducts, setTopProducts] = useState<any[]>([])
   const [lowStock, setLowStock] = useState<any[]>([])
   const [lowStockTotal, setLowStockTotal] = useState(0)
+  const [overdueInvoices, setOverdueInvoices] = useState<any[]>([])
+  const [overdueTotal, setOverdueTotal] = useState(0)
   const [loading, setLoading] = useState(true)
 
   const today = format(new Date(), 'yyyy-MM-dd')
@@ -81,31 +80,59 @@ export default function DashboardPage() {
 
   useEffect(() => {
     const fetchAll = async () => {
-      // Use allSettled so individual failures don't zero out everything
-      const [pnlRes, salesRes, topProdRes, lowRes] = await Promise.allSettled([
+      const [pnlRes, salesRes, topProdRes, stockRes, overdueRes] = await Promise.allSettled([
         reportApi.pnl({ date_from: firstOfYear, date_to: today }),
         reportApi.sales({ date_from: thirtyDaysAgo, date_to: today, group_by: 'day' }),
         reportApi.topProducts({ date_from: thirtyDaysAgo, date_to: today, limit: 5 }),
-        inventoryApi.lowStock(),
+        inventoryApi.stock(),
+        salesApi.invoices({ status: 'overdue', page_size: 5 }),
       ])
+
       if (pnlRes.status === 'fulfilled') setPnl(pnlRes.value.data)
+
       if (salesRes.status === 'fulfilled') {
         const d = salesRes.value.data
         setSalesData(Array.isArray(d) ? d : (d.results ?? []))
       }
+
       if (topProdRes.status === 'fulfilled') {
         const d = topProdRes.value.data
         setTopProducts(Array.isArray(d) ? d : (d.results ?? []))
       }
-      if (lowRes.status === 'fulfilled') {
-        const d = lowRes.value.data
-        const items = Array.isArray(d) ? d : (d.results ?? [])
-        setLowStockTotal(items.length)
-        setLowStock(items.slice(0, 5))
+
+      if (stockRes.status === 'fulfilled') {
+        const d = stockRes.value.data
+        const allItems: any[] = Array.isArray(d) ? d : (d.results ?? [])
+        const lowItems = allItems.filter((i: any) => i.stock_level === 'low' || i.is_low_stock)
+        setLowStockTotal(lowItems.length)
+        setLowStock(lowItems.slice(0, 5))
       }
+
+      if (overdueRes.status === 'fulfilled') {
+        const d = overdueRes.value.data
+        const items: any[] = Array.isArray(d) ? d : (d.results ?? [])
+        const total = Array.isArray(d) ? d.length : (d.count ?? items.length)
+        setOverdueTotal(total)
+        setOverdueInvoices(items.slice(0, 5))
+      }
+
       setLoading(false)
     }
     fetchAll()
+
+    // Refresh low stock count every 60 seconds so the card stays current
+    const interval = setInterval(async () => {
+      try {
+        const res = await inventoryApi.stock()
+        const d = res.data
+        const allItems: any[] = Array.isArray(d) ? d : (d.results ?? [])
+        const lowItems = allItems.filter((i: any) => i.stock_level === 'low' || i.is_low_stock)
+        setLowStockTotal(lowItems.length)
+        setLowStock(lowItems.slice(0, 5))
+      } catch { /* silent */ }
+    }, 60000)
+
+    return () => clearInterval(interval)
   }, [])
 
   const chartData = salesData.map((d) => ({
@@ -114,10 +141,7 @@ export default function DashboardPage() {
     invoices: d.invoice_count,
   }))
 
-  const pieData = topProducts.map((p) => ({
-    name: p.product__name?.split(' ').slice(0, 2).join(' ') ?? 'Other',
-    value: parseFloat(p.total_revenue),
-  }))
+  const totalOrders = salesData.reduce((sum, d) => sum + (d.invoice_count ?? 0), 0)
 
   return (
     <div className="space-y-6">
@@ -135,12 +159,12 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* KPI Cards — all clickable */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+      {/* KPI Row 1 — Financial */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <StatCard
           label="Total Revenue (YTD)"
           value={formatCurrency(pnl?.revenue?.gross_sales ?? 0)}
-          sub="Click to view full report"
+          sub="Year-to-date"
           icon={DollarSign}
           color="orange"
           onClick={() => navigate('/reports')}
@@ -161,130 +185,147 @@ export default function DashboardPage() {
           color="blue"
           onClick={() => navigate('/reports')}
         />
+      </div>
+
+      {/* KPI Row 2 — Operational */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <StatCard
+          label="Total Orders (30 days)"
+          value={String(totalOrders)}
+          sub="Invoices issued"
+          icon={ShoppingCart}
+          color="orange"
+          onClick={() => navigate('/sales')}
+        />
         <StatCard
           label="Low Stock Alerts"
           value={String(lowStockTotal)}
-          sub="Click to view low-stock items"
+          sub="Items below reorder level"
           icon={AlertTriangle}
           color="red"
           onClick={() => navigate('/inventory/stock?filter=low')}
         />
+        <StatCard
+          label="Overdue Invoices"
+          value={String(overdueTotal)}
+          sub="Pending payment"
+          icon={Clock}
+          color="red"
+          onClick={() => navigate('/sales?status=overdue')}
+        />
       </div>
 
-      {/* Charts row */}
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        {/* Revenue trend */}
-        <div className="card xl:col-span-2">
-          <div className="flex items-center justify-between mb-6">
-            <div>
-              <h2 className="font-semibold text-white">Revenue Trend</h2>
-              <p className="text-sm text-slate-400">Last 30 days</p>
-            </div>
+      {/* Revenue Trend — full width */}
+      <div className="card">
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h2 className="font-semibold text-white">Revenue Trend</h2>
+            <p className="text-sm text-slate-400">Last 30 days</p>
           </div>
-          {loading ? (
-            <div className="h-56 flex items-center justify-center">
-              <div className="w-8 h-8 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
-            </div>
-          ) : chartData.length === 0 ? (
-            <div className="h-56 flex flex-col items-center justify-center text-slate-500">
-              <TrendingUp size={28} className="mb-2 opacity-30" />
-              <p className="text-sm">Revenue data will appear here after your first sale</p>
-            </div>
-          ) : (
-            <ResponsiveContainer width="100%" height={220}>
-              <AreaChart data={chartData}>
-                <defs>
-                  <linearGradient id="grad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#f97316" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#f97316" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                <XAxis dataKey="date" tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickLine={false}
-                  tickFormatter={(v) => `₦${(v / 1000).toFixed(0)}k`} />
-                <Tooltip
-                  contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '12px', fontSize: '13px' }}
-                  labelStyle={{ color: '#94a3b8' }}
-                  formatter={(v: number) => [formatCurrency(v), 'Revenue']}
-                />
-                <Area type="monotone" dataKey="revenue" stroke="#f97316" strokeWidth={2}
-                  fill="url(#grad)" dot={false} activeDot={{ r: 4, fill: '#f97316' }} />
-              </AreaChart>
-            </ResponsiveContainer>
-          )}
+          <button onClick={() => navigate('/reports')} className="text-xs text-brand-400 hover:text-brand-300 flex items-center gap-1">
+            Full Report <ArrowUpRight size={12} />
+          </button>
         </div>
-
-        {/* Top products pie */}
-        <div className="card">
-          <h2 className="font-semibold text-white mb-1">Top Products</h2>
-          <p className="text-sm text-slate-400 mb-4">By revenue, last 30 days</p>
-          {loading ? (
-            <div className="h-48 flex items-center justify-center">
-              <div className="w-8 h-8 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
-            </div>
-          ) : pieData.length === 0 ? (
-            <div className="h-48 flex flex-col items-center justify-center text-slate-500">
-              <Package size={24} className="mb-2 opacity-30" />
-              <p className="text-sm text-center">Top products will appear after sales are recorded</p>
-            </div>
-          ) : (
-            <ResponsiveContainer width="100%" height={220}>
-              <PieChart>
-                <Pie data={pieData} cx="50%" cy="50%" innerRadius={55} outerRadius={85}
-                  paddingAngle={3} dataKey="value">
-                  {pieData.map((_, index) => (
-                    <Cell key={index} fill={COLORS[index % COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip
-                  contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '12px', fontSize: '13px' }}
-                  formatter={(v: number) => [formatCurrency(v), 'Revenue']}
-                />
-                <Legend iconType="circle" iconSize={8}
-                  formatter={(value) => <span style={{ color: '#94a3b8', fontSize: '11px' }}>{value}</span>} />
-              </PieChart>
-            </ResponsiveContainer>
-          )}
-        </div>
-      </div>
-
-      {/* Bottom row */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Top products table */}
-        <div className="card">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-semibold text-white">Best Sellers</h2>
-            <button onClick={() => navigate('/inventory/products')} className="text-xs text-brand-400 hover:text-brand-300 flex items-center gap-1">
-              View all <ArrowUpRight size={12} />
-            </button>
+        {loading ? (
+          <div className="h-56 flex items-center justify-center">
+            <div className="w-8 h-8 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
           </div>
-          {topProducts.length === 0 ? (
-            <div className="flex flex-col items-center py-8 text-slate-500">
-              <Package size={28} className="mb-2 opacity-40" />
-              <p className="text-sm">No sales data yet</p>
+        ) : chartData.length === 0 ? (
+          <div className="h-56 flex flex-col items-center justify-center text-slate-500">
+            <TrendingUp size={28} className="mb-2 opacity-30" />
+            <p className="text-sm">Revenue data will appear here after your first sale</p>
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height={220}>
+            <AreaChart data={chartData}>
+              <defs>
+                <linearGradient id="grad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#f97316" stopOpacity={0.3} />
+                  <stop offset="95%" stopColor="#f97316" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+              <XAxis dataKey="date" tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickLine={false}
+                tickFormatter={(v) => `${getCurrencySymbol()}${(v / 1000).toFixed(0)}k`} />
+              <Tooltip
+                contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '12px', fontSize: '13px' }}
+                labelStyle={{ color: '#94a3b8' }}
+                formatter={(v: number) => [formatCurrency(v), 'Revenue']}
+              />
+              <Area type="monotone" dataKey="revenue" stroke="#f97316" strokeWidth={2}
+                fill="url(#grad)" dot={false} activeDot={{ r: 4, fill: '#f97316' }} />
+            </AreaChart>
+          </ResponsiveContainer>
+        )}
+
+        {/* Top Products directly below the chart */}
+        {topProducts.length > 0 && (
+          <div className="mt-6 pt-5 border-t border-surface-700">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-white">Top Products · Last 30 days</h3>
+              <button onClick={() => navigate('/inventory/products')} className="text-xs text-brand-400 hover:text-brand-300 flex items-center gap-1">
+                View all <ArrowUpRight size={12} />
+              </button>
             </div>
-          ) : (
-            <div className="space-y-2">
-              {topProducts.map((p, i) => (
-                <div key={i} className="flex items-center gap-3 py-2.5 border-b border-surface-700 last:border-0">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {topProducts.slice(0, 6).map((p, i) => (
+                <div key={i} className="flex items-center gap-3 p-3 rounded-xl bg-surface-800">
                   <span className="w-6 h-6 bg-surface-700 rounded-lg flex items-center justify-center text-xs font-mono text-slate-400 shrink-0">
                     {i + 1}
                   </span>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-white truncate">{p.product__name}</p>
-                    <p className="text-xs text-slate-500">{parseFloat(p.total_quantity).toFixed(0)} units sold</p>
+                    <p className="text-xs font-medium text-white truncate">{p.product_name}</p>
+                    <p className="text-xs text-slate-500">{parseFloat(p.units_sold ?? 0).toFixed(0)} units</p>
                   </div>
-                  <p className="text-sm font-semibold text-brand-400 shrink-0">
-                    {formatCurrency(p.total_revenue)}
-                  </p>
+                  <p className="text-xs font-semibold text-brand-400 shrink-0">{formatCurrency(p.revenue)}</p>
                 </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Bottom row — Overdue Invoices + Low Stock side by side */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Overdue Invoices */}
+        <div className="card">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-semibold text-white flex items-center gap-2">
+              <Clock size={16} className="text-red-400" /> Overdue Invoices
+            </h2>
+            <button onClick={() => navigate('/sales?status=overdue')} className="text-xs text-brand-400 hover:text-brand-300 flex items-center gap-1">
+              View all <ArrowUpRight size={12} />
+            </button>
+          </div>
+          {overdueInvoices.length === 0 ? (
+            <div className="flex flex-col items-center py-8 text-slate-500">
+              <Clock size={32} className="mb-2 text-green-400 opacity-50" />
+              <p className="text-sm">No overdue invoices</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {overdueInvoices.map((inv, i) => (
+                <button
+                  key={i}
+                  onClick={() => navigate('/sales?status=overdue')}
+                  className="w-full flex items-center gap-3 p-3 rounded-xl bg-surface-800 hover:bg-surface-700 transition-colors text-left"
+                >
+                  <div className="w-2 h-2 bg-red-400 rounded-full animate-pulse shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-white truncate">
+                      {inv.invoice_number} · {inv.customer_name ?? 'Walk-in'}
+                    </p>
+                    <p className="text-xs text-slate-500">Due {inv.due_date}</p>
+                  </div>
+                  <span className="badge-red shrink-0">{formatCurrency(inv.amount_due ?? inv.total_amount)}</span>
+                </button>
               ))}
             </div>
           )}
         </div>
 
-        {/* Low stock alerts — clickable rows */}
+        {/* Low Stock Alerts */}
         <div className="card">
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-semibold text-white flex items-center gap-2">
@@ -305,7 +346,7 @@ export default function DashboardPage() {
                 <button
                   key={i}
                   onClick={() => navigate('/inventory/stock?filter=low')}
-                  className="w-full flex items-center gap-3 py-2.5 border-b border-surface-700 last:border-0 hover:bg-surface-700/30 rounded-lg px-2 -mx-2 transition-colors text-left"
+                  className="w-full flex items-center gap-3 p-3 rounded-xl bg-surface-800 hover:bg-surface-700 transition-colors text-left"
                 >
                   <div className="w-2 h-2 bg-red-400 rounded-full animate-pulse shrink-0" />
                   <div className="flex-1 min-w-0">

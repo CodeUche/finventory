@@ -52,7 +52,7 @@ export default function RegisterPage() {
           <div className="w-10 h-10 bg-brand-500 rounded-xl flex items-center justify-center shadow-glow-orange">
             <Zap size={20} className="text-white" />
           </div>
-          <h1 className="text-xl font-bold text-white">Finventory</h1>
+          <h1 className="text-xl font-bold text-white">Audity</h1>
         </div>
 
         <div className="card">

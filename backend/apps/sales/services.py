@@ -22,7 +22,7 @@ from apps.core.utils import round_money
 from apps.inventory.models import Product, Warehouse
 from apps.inventory.services import InventoryService
 
-from .models import Invoice, SaleItem, SalePayment
+from .models import Invoice, SaleItem, SalePayment, SaleReturn, SaleReturnItem
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,9 @@ class SaleService:
         notes: str = "",
         issue_date=None,
         due_date=None,
+        is_proforma: bool = False,
+        amount_paid: Decimal = None,
+        amount_tendered: Decimal = None,
     ) -> Invoice:
         """
         Create a confirmed sale invoice with stock deductions.
@@ -56,8 +59,13 @@ class SaleService:
             Confirmed Invoice with all related records created.
         """
         from django.utils import timezone as tz
+        from apps.accounting.services import AccountingService
 
         issue_date = issue_date or tz.now().date()
+
+        if AccountingService.is_period_locked(organisation, issue_date):
+            from django.core.exceptions import PermissionDenied
+            raise PermissionDenied(f"The period {issue_date.year}-{issue_date.month:02d} is locked. Unlock it before creating new transactions.")
 
         invoice = Invoice.objects.create(
             organisation=organisation,
@@ -89,6 +97,7 @@ class SaleService:
                 warehouse=warehouse,
                 item_data=item_data,
                 created_by=created_by,
+                skip_stock=is_proforma,
             )
             subtotal += line["subtotal"]
             total_discount += line["discount_amount"]
@@ -103,18 +112,51 @@ class SaleService:
         invoice.total_amount = total
         invoice.amount_due = total
 
-        # Handle payment method
-        if payment_method == Invoice.PaymentMethod.CREDIT:
+        # Handle payment method / proforma
+        if is_proforma:
+            invoice.status = Invoice.Status.PROFORMA
+        elif payment_method == Invoice.PaymentMethod.CREDIT:
             SaleService._handle_credit_sale(invoice, customer, total)
         else:
             invoice.status = Invoice.Status.CONFIRMED
 
         invoice.save()
         logger.info("Invoice %s created by %s for org %s", invoice.invoice_number, created_by, organisation.id)
+
+        # Auto-record payment for non-credit, non-proforma sales
+        if not is_proforma and payment_method != Invoice.PaymentMethod.CREDIT:
+            paid = amount_paid if amount_paid is not None else total
+            paid = min(paid, total)  # Never record more than total
+            if paid > Decimal("0"):
+                payment = SalePayment.objects.create(
+                    organisation=organisation,
+                    invoice=invoice,
+                    amount=paid,
+                    method=payment_method,
+                    reference="",
+                    received_by=created_by,
+                )
+                invoice.amount_paid = paid
+                invoice.amount_due = total - paid
+                if paid >= total:
+                    invoice.status = Invoice.Status.PAID
+                elif paid > Decimal("0"):
+                    invoice.status = Invoice.Status.PARTIALLY_PAID
+                if amount_tendered and amount_tendered > paid:
+                    payment.notes = f"Tendered: {amount_tendered}, Change: {amount_tendered - paid}"
+                    payment.save(update_fields=["notes"])
+                invoice.save(update_fields=["amount_paid", "amount_due", "status"])
+
+        # Auto-post journal entry (non-blocking)
+        try:
+            AccountingService.post_sale_journal(organisation, invoice, created_by)
+        except Exception as exc:
+            logger.warning("post_sale_journal failed for %s: %s", invoice.invoice_number, exc)
+
         return invoice
 
     @staticmethod
-    def _process_line_item(organisation, invoice, warehouse, item_data, created_by) -> dict:
+    def _process_line_item(organisation, invoice, warehouse, item_data, created_by, skip_stock: bool = False) -> dict:
         """Process one line item: validate, create record, deduct stock."""
         product = Product.objects.select_for_update().get(
             id=item_data["product_id"], organisation=organisation
@@ -135,17 +177,19 @@ class SaleService:
 
         line_total = after_discount + tax_amount
 
-        # Deduct stock (raises ValueError if insufficient)
-        InventoryService.record_movement(
-            organisation=organisation,
-            product=product,
-            warehouse=warehouse,
-            quantity=-quantity,
-            movement_type="sale_out",
-            unit_cost=product.cost_price,
-            reference=invoice.invoice_number,
-            created_by=created_by,
-        )
+        # Deduct stock only for physical/digital products (services have no inventory)
+        # skip_stock=True for proforma invoices (stock not reserved yet)
+        if product.product_type != "service" and not skip_stock:
+            InventoryService.record_movement(
+                organisation=organisation,
+                product=product,
+                warehouse=warehouse,
+                quantity=-quantity,
+                movement_type="sale_out",
+                unit_cost=product.cost_price,
+                reference=invoice.invoice_number,
+                created_by=created_by,
+            )
 
         SaleItem.objects.create(
             organisation=organisation,
@@ -225,8 +269,10 @@ class SaleService:
         if invoice.status == Invoice.Status.PAID:
             raise ValueError("Paid invoices cannot be voided without a return process.")
 
-        # Reverse all stock deductions
+        # Reverse all stock deductions (skip service items)
         for item in invoice.items.all():
+            if item.product.product_type == "service":
+                continue
             InventoryService.record_movement(
                 organisation=invoice.organisation,
                 product=item.product,
@@ -241,3 +287,97 @@ class SaleService:
         invoice.status = Invoice.Status.VOIDED
         invoice.save(update_fields=["status", "updated_at"])
         return invoice
+
+    @staticmethod
+    @transaction.atomic
+    def process_return(
+        organisation,
+        invoice: Invoice,
+        items: list[dict],
+        reason: str,
+        notes: str,
+        processed_by,
+        restocked: bool = True,
+        return_date=None,
+    ) -> SaleReturn:
+        """
+        Process a sales return / credit note.
+
+        Args:
+            items: List of {sale_item_id, quantity_returned}
+        """
+        from django.utils import timezone as tz
+
+        return_date = return_date or tz.now().date()
+
+        total_refund = Decimal("0")
+        return_items_to_create = []
+
+        for item_data in items:
+            sale_item = SaleItem.objects.select_for_update().get(
+                id=item_data["sale_item_id"], invoice=invoice
+            )
+            qty = Decimal(str(item_data["quantity_returned"]))
+            if qty <= 0 or qty > sale_item.quantity:
+                raise ValueError(
+                    f"Invalid return quantity {qty} for {sale_item.product.sku} "
+                    f"(sold: {sale_item.quantity})"
+                )
+
+            # Proportional refund
+            refund = round_money(sale_item.line_total * qty / sale_item.quantity)
+            total_refund += refund
+            return_items_to_create.append((sale_item, qty, refund))
+
+        sale_return = SaleReturn.objects.create(
+            organisation=organisation,
+            return_number=SaleReturn.generate_number(organisation),
+            invoice=invoice,
+            reason=reason,
+            notes=notes,
+            return_date=return_date,
+            total_refund=total_refund,
+            restocked=restocked,
+            processed_by=processed_by,
+        )
+
+        for sale_item, qty, refund in return_items_to_create:
+            SaleReturnItem.objects.create(
+                organisation=organisation,
+                sale_return=sale_return,
+                original_item=sale_item,
+                product=sale_item.product,
+                quantity_returned=qty,
+                unit_price=sale_item.unit_price,
+                refund_amount=refund,
+            )
+            # Restock physical products if requested
+            if restocked and sale_item.product.product_type != "service":
+                unit_cost = (
+                    sale_item.cost_of_goods / sale_item.quantity
+                    if sale_item.quantity
+                    else sale_item.product.cost_price
+                )
+                InventoryService.record_movement(
+                    organisation=organisation,
+                    product=sale_item.product,
+                    warehouse=invoice.warehouse,
+                    quantity=qty,
+                    movement_type="return_in",
+                    unit_cost=unit_cost,
+                    reference=sale_return.return_number,
+                    created_by=processed_by,
+                )
+
+        # Update customer outstanding balance if credit sale
+        if invoice.customer and invoice.payment_method == Invoice.PaymentMethod.CREDIT:
+            invoice.customer.outstanding_balance = max(
+                invoice.customer.outstanding_balance - total_refund, Decimal("0")
+            )
+            invoice.customer.save(update_fields=["outstanding_balance", "updated_at"])
+
+        logger.info(
+            "Return %s processed for invoice %s — refund %s",
+            sale_return.return_number, invoice.invoice_number, total_refund,
+        )
+        return sale_return

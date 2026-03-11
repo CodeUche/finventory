@@ -1,15 +1,25 @@
 import { useEffect, useState } from 'react'
-import { Plus, Receipt, Search, X, Loader2, CheckCircle, Ban, FileDown, Mail, MessageCircle, Download } from 'lucide-react'
+import { Plus, Receipt, Search, X, Loader2, CheckCircle, Ban, FileDown, Mail, MessageCircle, Download, RotateCcw, Truck } from 'lucide-react'
+import SortSelect from '@/components/SortSelect'
 import { Link } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { salesApi } from '@/services/api'
 import { formatCurrency, formatDate, getStatusColor, formatAmountInput, stripCommas } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
+import DateInput from '@/components/DateInput'
 import type { Invoice } from '@/types'
 
-const STATUS_OPTIONS = ['', 'paid', 'confirmed', 'partially_paid', 'credit', 'overdue', 'voided']
+const STATUS_OPTIONS = ['', 'paid', 'proforma', 'confirmed', 'partially_paid', 'credit', 'overdue', 'voided']
+const RETURN_REASONS = [
+  { value: 'defective',       label: 'Defective / Damaged' },
+  { value: 'wrong_item',      label: 'Wrong Item Delivered' },
+  { value: 'customer_change', label: 'Customer Changed Mind' },
+  { value: 'overcharge',      label: 'Overcharge / Price Error' },
+  { value: 'other',           label: 'Other' },
+]
 
 interface PdfPreview { url: string; filename: string }
+interface ReturnLineItem { sale_item_id: string; quantity_returned: string; max_qty: number; product_name: string; unit_price: string }
 
 // ── PDF builder ───────────────────────────────────────────────────────────────
 async function buildInvoicePDF(
@@ -19,6 +29,10 @@ async function buildInvoicePDF(
   orgAddress?: string,
   orgPhone?: string,
   orgEmail?: string,
+  bankName?: string,
+  bankAccountNumber?: string,
+  bankAccountName?: string,
+  bankSortCode?: string,
 ): Promise<PdfPreview> {
   const { jsPDF } = await import('jspdf')
   const { default: autoTable } = await import('jspdf-autotable')
@@ -162,29 +176,66 @@ async function buildInvoicePDF(
   const tY   = (doc as any).lastAutoTable.finalY + 8
   const tX   = pageW - 100
   const tW   = 86
-  const amtDue = parseFloat(inv.amount_due ?? '0')
+
+  const subtotalNum      = parseFloat(inv.subtotal ?? inv.total_amount ?? '0')
+  const discountNum      = parseFloat(inv.discount_amount ?? '0')
+  const taxNum           = parseFloat(inv.tax_amount ?? '0')
+  const totalNum         = parseFloat(inv.total_amount ?? '0')
+  const amtPaidNum       = parseFloat(inv.amount_paid ?? '0')
+  const amtDue           = parseFloat(inv.amount_due ?? '0')
+
+  // Extract tendered amount from first payment notes: "Tendered: X, Change: Y"
+  const firstPaymentNotes = inv.payments?.[0]?.notes ?? ''
+  const tenderedMatch = firstPaymentNotes.match(/Tendered:\s*([\d.]+)/)
+  const tenderedNum = tenderedMatch ? parseFloat(tenderedMatch[1]) : amtPaidNum
+  const changeNum = tenderedNum > amtPaidNum ? tenderedNum - amtPaidNum : 0
+
+  // Build dynamic rows
+  const totalRows: Array<{ label: string; value: string; bold?: boolean; color?: [number,number,number] }> = []
+  totalRows.push({ label: 'Subtotal:', value: formatCurrency(subtotalNum) })
+  if (discountNum > 0) totalRows.push({ label: 'Discount:', value: `- ${formatCurrency(discountNum)}`, color: [180, 80, 0] })
+  if (taxNum > 0)      totalRows.push({ label: 'Tax / VAT:', value: formatCurrency(taxNum) })
+  if (discountNum > 0 || taxNum > 0)
+    totalRows.push({ label: 'Invoice Total:', value: formatCurrency(totalNum), bold: true })
+  if (amtPaidNum > 0) {
+    totalRows.push({ label: 'Amount Tendered:', value: formatCurrency(tenderedNum), color: [22, 163, 74] })
+    if (changeNum > 0) totalRows.push({ label: 'Change Given:', value: formatCurrency(changeNum), color: [22, 163, 74] })
+  }
+
+  const ROW_H = 9
+  const PADDING_TOP = 9
+  const DIVIDER_GAP = 4
+  const boxRows = totalRows.length
+  const boxH = PADDING_TOP + boxRows * ROW_H + DIVIDER_GAP + ROW_H + 6  // rows + divider + balance due + bottom pad
 
   doc.setFillColor(...LIGHT)
-  doc.roundedRect(tX, tY, tW, 38, 2, 2, 'F')
+  doc.roundedRect(tX, tY, tW, boxH, 2, 2, 'F')
 
-  const tRow = (label: string, value: string, bold: boolean, color: [number,number,number], yOff: number) => {
+  let rowY = tY + PADDING_TOP
+  totalRows.forEach(({ label, value, bold = false, color = DARK }) => {
     doc.setFontSize(9)
     doc.setFont('helvetica', bold ? 'bold' : 'normal')
     doc.setTextColor(...MUTED)
-    doc.text(label, tX + 5, tY + 9 + yOff)
+    doc.text(label, tX + 5, rowY)
     doc.setTextColor(...color)
-    doc.text(value, pageW - 19, tY + 9 + yOff, { align: 'right' })
-  }
-
-  tRow('Subtotal:',     formatCurrency(inv.total_amount),  false, DARK,            0)
-  tRow('Amount Paid:',  formatCurrency(inv.amount_paid),   false, [22, 163, 74],   9)
+    doc.text(value, pageW - 19, rowY, { align: 'right' })
+    rowY += ROW_H
+  })
 
   doc.setDrawColor(210, 210, 210)
   doc.setLineWidth(0.3)
-  doc.line(tX + 5, tY + 22, pageW - 19, tY + 22)
+  doc.line(tX + 5, rowY + 2, pageW - 19, rowY + 2)
+  rowY += DIVIDER_GAP + 2
 
-  tRow('BALANCE DUE:',  formatCurrency(inv.amount_due),    true,
-    amtDue > 0 ? [220, 38, 38] : [22, 163, 74], 20)
+  // BALANCE DUE
+  doc.setFontSize(10)
+  doc.setFont('helvetica', 'bold')
+  doc.setTextColor(...MUTED)
+  doc.text('BALANCE DUE:', tX + 5, rowY)
+  const dueColor: [number,number,number] = amtDue > 0 ? [220, 38, 38] : [22, 163, 74]
+  doc.setTextColor(...dueColor)
+  doc.text(formatCurrency(amtDue), pageW - 19, rowY, { align: 'right' })
+  const afterTotalsY = tY + boxH
 
   // ── Payment note (left of totals) ─────────────────────────────────────────
   doc.setFontSize(7.5)
@@ -192,8 +243,24 @@ async function buildInvoicePDF(
   doc.setTextColor(...MUTED)
   doc.text(`Payment method: ${inv.payment_method.replace(/_/g, ' ')}`, 14, tY + 9)
 
+  // ── Bank details block ────────────────────────────────────────────────────
+  if (bankName || bankAccountNumber) {
+    const bY = afterTotalsY - boxH + 20
+    doc.setFontSize(7)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(...BRAND)
+    doc.text('PAYMENT DETAILS', 14, bY)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(...DARK)
+    let bRow = bY + 5
+    if (bankName)          { doc.text(`Bank: ${bankName}`,             14, bRow); bRow += 4.5 }
+    if (bankAccountName)   { doc.text(`Account Name: ${bankAccountName}`, 14, bRow); bRow += 4.5 }
+    if (bankAccountNumber) { doc.text(`Account No.: ${bankAccountNumber}`, 14, bRow); bRow += 4.5 }
+    if (bankSortCode)      { doc.text(`Sort Code: ${bankSortCode}`,    14, bRow); bRow += 4.5 }
+  }
+
   // ── Thank you ─────────────────────────────────────────────────────────────
-  const thankY = tY + 46
+  const thankY = afterTotalsY + 8
   doc.setFontSize(9)
   doc.setFont('helvetica', 'italic')
   doc.setTextColor(...MUTED)
@@ -206,7 +273,7 @@ async function buildInvoicePDF(
   doc.setFont('helvetica', 'normal')
   doc.setTextColor(255, 255, 255)
   doc.text(orgName, 14, pageH - 4.5)
-  doc.text(`Generated by Finventory  ·  ${new Date().toLocaleDateString()}`, pageW / 2, pageH - 4.5, { align: 'center' })
+  doc.text(`Generated by Audity  ·  ${new Date().toLocaleDateString()}`, pageW / 2, pageH - 4.5, { align: 'center' })
   if (orgEmail) doc.text(orgEmail, pageW - 14, pageH - 4.5, { align: 'right' })
 
   // ── Return blob URL ────────────────────────────────────────────────────────
@@ -214,6 +281,68 @@ async function buildInvoicePDF(
   const url  = URL.createObjectURL(blob)
   const filename = `Invoice-${inv.invoice_number}.pdf`
   return { url, filename }
+}
+
+// ── Delivery Note PDF builder ─────────────────────────────────────────────────
+async function buildDeliveryNotePDF(
+  inv: Invoice,
+  orgName: string,
+  orgAddress?: string,
+): Promise<PdfPreview> {
+  const { jsPDF } = await import('jspdf')
+  const { default: autoTable } = await import('jspdf-autotable')
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+  const pageW = doc.internal.pageSize.getWidth()
+  const BRAND: [number, number, number] = [249, 115, 22]
+  const DARK: [number, number, number] = [30, 30, 30]
+  const MUTED: [number, number, number] = [100, 100, 100]
+
+  doc.setFillColor(...BRAND)
+  doc.rect(0, 0, pageW, 3, 'F')
+
+  let y = 14
+  doc.setFontSize(20)
+  doc.setFont('helvetica', 'bold')
+  doc.setTextColor(...BRAND)
+  doc.text('DELIVERY NOTE', pageW / 2, y + 10, { align: 'center' })
+  y += 18
+
+  doc.setFontSize(8)
+  doc.setFont('helvetica', 'normal')
+  doc.setTextColor(...MUTED)
+  doc.text(`Ref: ${inv.invoice_number}`, 14, y)
+  doc.text(`Date: ${new Date().toLocaleDateString()}`, pageW - 14, y, { align: 'right' })
+  y += 7
+
+  doc.setFontSize(10)
+  doc.setFont('helvetica', 'bold')
+  doc.setTextColor(...DARK)
+  doc.text('Deliver To:', 14, y)
+  doc.setFont('helvetica', 'normal')
+  doc.text(inv.customer_name ?? 'Walk-in Customer', 14, y + 5)
+  y += 14
+
+  autoTable(doc, {
+    startY: y,
+    head: [['#', 'Product', 'SKU', 'Qty', '☐ Received']],
+    body: (inv.items ?? []).map((item, i) => [
+      i + 1, item.product_name, item.product_sku ?? '—', Number(item.quantity), '',
+    ]),
+    styles: { fontSize: 9, cellPadding: { top: 5, bottom: 5, left: 5, right: 5 } },
+    headStyles: { fillColor: BRAND, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
+    columnStyles: { 0: { cellWidth: 10, halign: 'center' }, 4: { cellWidth: 30, halign: 'center' } },
+    margin: { left: 14, right: 14 },
+  })
+
+  const finalY = (doc as any).lastAutoTable.finalY + 20
+  doc.setFontSize(8)
+  doc.setTextColor(...MUTED)
+  doc.text('Received by: ___________________________', 14, finalY)
+  doc.text('Signature: ___________________________', 14, finalY + 10)
+  doc.text(`From: ${orgName}${orgAddress ? ' · ' + orgAddress : ''}`, 14, finalY + 20)
+
+  const blob = doc.output('blob')
+  return { url: URL.createObjectURL(blob), filename: `DeliveryNote-${inv.invoice_number}.pdf` }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -224,23 +353,38 @@ export default function SalesPage() {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('')
+  const [sortBy, setSortBy] = useState('-issue_date')
   const [selected, setSelected] = useState<Invoice | null>(null)
   const [detail, setDetail] = useState<Invoice | null>(null)
   const [acting, setActing] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [payAmount, setPayAmount] = useState('')
+  const [payMethod, setPayMethod] = useState('cash')
   const [pdfPreview, setPdfPreview] = useState<PdfPreview | null>(null)
+  const [exportingDelivery, setExportingDelivery] = useState(false)
+  // Email modal state
+  const [showEmailModal, setShowEmailModal] = useState(false)
+  const [emailTo, setEmailTo] = useState('')
+  const [sendingEmail, setSendingEmail] = useState(false)
+  // Return modal state
+  const [showReturn, setShowReturn] = useState(false)
+  const [returnItems, setReturnItems] = useState<ReturnLineItem[]>([])
+  const [returnReason, setReturnReason] = useState('other')
+  const [returnNotes, setReturnNotes] = useState('')
+  const [returnDate, setReturnDate] = useState(() => new Date().toISOString().split('T')[0])
+  const [returnRestocked, setReturnRestocked] = useState(true)
+  const [processingReturn, setProcessingReturn] = useState(false)
 
   const load = async () => {
     setLoading(true)
     try {
-      const { data } = await salesApi.invoices({ search, status: status || undefined })
+      const { data } = await salesApi.invoices({ search, status: status || undefined, ordering: sortBy })
       setInvoices(data.results ?? data)
     } catch { toast.error('Failed to load invoices') }
     finally { setLoading(false) }
   }
 
-  useEffect(() => { load() }, [search, status])
+  useEffect(() => { load() }, [search, status, sortBy])
 
   const openDetail = async (inv: Invoice) => {
     setSelected(inv)
@@ -257,7 +401,7 @@ export default function SalesPage() {
     if (!selected) return
     setActing(true)
     try {
-      await salesApi.pay(selected.id, { amount_paid: stripCommas(payAmount) })
+      await salesApi.pay(selected.id, { amount: stripCommas(payAmount), method: payMethod })
       toast.success('Payment recorded')
       closeDetail(); load()
     } catch { toast.error('Payment failed') }
@@ -282,11 +426,15 @@ export default function SalesPage() {
     try {
       const preview = await buildInvoicePDF(
         inv,
-        organisation?.name ?? 'Finventory',
-        (organisation as any)?.logo,
-        (organisation as any)?.address,
-        (organisation as any)?.phone,
-        (organisation as any)?.email,
+        organisation?.name ?? 'Audity',
+        organisation?.logo,
+        organisation?.address,
+        organisation?.phone,
+        organisation?.email,
+        organisation?.bank_name,
+        organisation?.bank_account_number,
+        organisation?.bank_account_name,
+        organisation?.bank_sort_code,
       )
       setPdfPreview(preview)
     } catch { toast.error('Failed to generate PDF') }
@@ -308,29 +456,136 @@ export default function SalesPage() {
 
   const shareViaEmail = () => {
     if (!inv) return
-    const subject = encodeURIComponent(`Invoice ${inv.invoice_number} – ${organisation?.name ?? 'Finventory'}`)
+    const subject = encodeURIComponent(`Invoice ${inv.invoice_number} – ${organisation?.name ?? 'Audity'}`)
+    const invDetail = detail ?? inv
+    const itemLines = (invDetail?.items ?? []).map((item: any) =>
+      `  • ${item.product_name}  ×${Number(item.quantity)}  @ ${formatCurrency(item.unit_price)}  =  ${formatCurrency(item.line_total)}`
+    ).join('\n')
     const body = encodeURIComponent(
-      `Dear ${inv.customer_name ?? 'Customer'},\n\nPlease find below the details for Invoice ${inv.invoice_number}.\n\n` +
-      `Invoice No.: ${inv.invoice_number}\nDate: ${formatDate(inv.issue_date)}\nTotal: ${formatCurrency(inv.total_amount)}\n` +
-      `Amount Paid: ${formatCurrency(inv.amount_paid)}\nBalance Due: ${formatCurrency(inv.amount_due)}\n\n` +
-      `Thank you for your business!\n\n${organisation?.name ?? 'Finventory'}`
+      `Dear ${inv.customer_name ?? 'Customer'},\n\n` +
+      `Please find the details for Invoice ${inv.invoice_number} below.\n\n` +
+      `Invoice No.: ${inv.invoice_number}\n` +
+      `Date:        ${formatDate(inv.issue_date)}\n` +
+      (inv.due_date ? `Due Date:    ${formatDate(inv.due_date)}\n` : '') +
+      `Status:      ${inv.status.replace(/_/g, ' ').toUpperCase()}\n\n` +
+      (itemLines ? `${itemLines}\n\n` : '') +
+      `Total:       ${formatCurrency(inv.total_amount)}\n` +
+      `Paid:        ${formatCurrency(inv.amount_paid)}\n` +
+      `Balance Due: ${formatCurrency(inv.amount_due)}\n\n` +
+      `Thank you for your business!\n\n${organisation?.name ?? 'Audity'}`
     )
     window.open(`mailto:?subject=${subject}&body=${body}`, '_blank')
   }
 
   const shareViaWhatsApp = () => {
     if (!inv) return
+    const invDetail = detail ?? inv
+    const itemLines = (invDetail?.items ?? []).map((item: any) =>
+      `  • ${item.product_name} ×${Number(item.quantity)} = ${formatCurrency(item.line_total)}`
+    ).join('\n')
     const msg = encodeURIComponent(
       `*Invoice ${inv.invoice_number}*\n` +
-      `From: ${organisation?.name ?? 'Finventory'}\n` +
+      `From: ${organisation?.name ?? 'Audity'}\n` +
       `Customer: ${inv.customer_name ?? 'Walk-in'}\n` +
-      `Date: ${formatDate(inv.issue_date)}\n` +
-      `Total: ${formatCurrency(inv.total_amount)}\n` +
+      `Date: ${formatDate(inv.issue_date)}\n\n` +
+      (itemLines ? `${itemLines}\n\n` : '') +
+      `*Total: ${formatCurrency(inv.total_amount)}*\n` +
       `Paid: ${formatCurrency(inv.amount_paid)}\n` +
       `*Balance Due: ${formatCurrency(inv.amount_due)}*\n\n` +
       `Thank you for your business!`
     )
     window.open(`https://wa.me/?text=${msg}`, '_blank')
+  }
+
+  const handleDeliveryNote = async () => {
+    if (!inv) return
+    setExportingDelivery(true)
+    try {
+      const preview = await buildDeliveryNotePDF(
+        inv,
+        organisation?.name ?? 'Audity',
+        (organisation as any)?.address,
+      )
+      setPdfPreview(preview)
+    } catch { toast.error('Failed to generate delivery note') }
+    finally { setExportingDelivery(false) }
+  }
+
+  const openEmailModal = () => {
+    setEmailTo(inv?.customer_name ? '' : '')
+    setShowEmailModal(true)
+  }
+
+  const handleSendEmail = async () => {
+    if (!selected) return
+    setSendingEmail(true)
+    try {
+      await salesApi.sendEmail(selected.id, { to_email: emailTo || undefined })
+      toast.success('Invoice sent by email')
+      setShowEmailModal(false)
+    } catch (err: any) {
+      const apiErr = err?.response?.data?.error
+      const msg = typeof apiErr === 'string' ? apiErr : (apiErr?.message ?? 'Failed to send email')
+      toast.error(msg)
+    } finally { setSendingEmail(false) }
+  }
+
+  const handleConfirmProforma = async () => {
+    if (!selected) return
+    if (!confirm('Convert this proforma to a confirmed invoice? Stock will be deducted.')) return
+    setActing(true)
+    try {
+      await salesApi.confirmProforma(selected.id)
+      toast.success('Proforma confirmed')
+      closeDetail(); load()
+    } catch (err: any) {
+      const apiErr = err?.response?.data?.error
+      toast.error(typeof apiErr === 'string' ? apiErr : (apiErr?.message ?? 'Failed to confirm'))
+    } finally { setActing(false) }
+  }
+
+  const openReturnModal = () => {
+    if (!detail) return
+    setReturnItems(
+      (detail.items ?? []).map((item: any) => ({
+        sale_item_id: item.id,
+        quantity_returned: String(item.quantity),
+        max_qty: parseFloat(item.quantity),
+        product_name: item.product_name,
+        unit_price: item.unit_price,
+      }))
+    )
+    setReturnReason('other')
+    setReturnNotes('')
+    setReturnDate(new Date().toISOString().split('T')[0])
+    setReturnRestocked(true)
+    setShowReturn(true)
+  }
+
+  const handleReturn = async () => {
+    if (!selected) return
+    const items = returnItems
+      .filter((i) => parseFloat(i.quantity_returned) > 0)
+      .map((i) => ({ sale_item_id: i.sale_item_id, quantity_returned: stripCommas(i.quantity_returned) }))
+    if (items.length === 0) { toast.error('Enter at least one item quantity to return'); return }
+    setProcessingReturn(true)
+    try {
+      await salesApi.processReturn(selected.id, {
+        items,
+        reason: returnReason,
+        notes: returnNotes,
+        return_date: returnDate,
+        restocked: returnRestocked,
+      })
+      toast.success('Return processed successfully')
+      setShowReturn(false)
+      closeDetail()
+      load()
+    } catch (err: any) {
+      const apiErr = err?.response?.data?.error
+      const msg = typeof apiErr === 'string' ? apiErr : (apiErr?.message ?? 'Failed to process return')
+      toast.error(msg)
+    } finally { setProcessingReturn(false) }
   }
 
   const inv = detail ?? selected
@@ -352,6 +607,16 @@ export default function SalesPage() {
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
           <input className="input pl-9" placeholder="Search invoice number…" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
+        <SortSelect
+          value={sortBy}
+          onChange={setSortBy}
+          options={[
+            { label: 'Newest first', value: '-issue_date' },
+            { label: 'Oldest first', value: 'issue_date' },
+            { label: 'Amount ↓', value: '-total_amount' },
+            { label: 'Amount ↑', value: 'total_amount' },
+          ]}
+        />
         <select className="input max-w-xs" value={status} onChange={(e) => setStatus(e.target.value)}>
           <option value="">All statuses</option>
           {STATUS_OPTIONS.filter(Boolean).map((s) => (
@@ -421,6 +686,22 @@ export default function SalesPage() {
                 <h2 className="font-bold text-white text-lg">{inv?.invoice_number}</h2>
               </div>
               <div className="flex items-center gap-2">
+                <button
+                  onClick={handleDeliveryNote}
+                  disabled={exportingDelivery || !detail}
+                  title="Generate Delivery Note"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10 text-xs font-medium transition-colors disabled:opacity-50"
+                >
+                  {exportingDelivery ? <Loader2 size={14} className="animate-spin" /> : <Truck size={14} />}
+                  Delivery Note
+                </button>
+                <button
+                  onClick={openEmailModal}
+                  title="Send by Email"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-600 text-slate-300 hover:bg-surface-700 text-xs font-medium transition-colors"
+                >
+                  <Mail size={14} /> Email
+                </button>
                 <button
                   onClick={handleExportPDF}
                   disabled={exporting}
@@ -493,7 +774,18 @@ export default function SalesPage() {
               {inv?.status !== 'paid' && inv?.status !== 'voided' && parseFloat(inv?.amount_due ?? '0') > 0 && (
                 <div>
                   <p className="text-xs text-slate-500 uppercase tracking-wider mb-2">Record Payment</p>
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 mb-2">
+                    <select
+                      className="input w-36 text-sm"
+                      value={payMethod}
+                      onChange={(e) => setPayMethod(e.target.value)}
+                    >
+                      <option value="cash">Cash</option>
+                      <option value="pos">POS</option>
+                      <option value="bank_transfer">Bank Transfer</option>
+                      <option value="cheque">Cheque</option>
+                      <option value="credit_applied">Credit Applied</option>
+                    </select>
                     <input
                       type="text"
                       inputMode="decimal"
@@ -512,7 +804,25 @@ export default function SalesPage() {
 
             {/* Drawer footer */}
             {inv?.status !== 'voided' && (
-              <div className="border-t border-surface-700 px-6 py-4">
+              <div className="border-t border-surface-700 px-6 py-4 space-y-2">
+                {inv?.status === 'proforma' && (
+                  <button
+                    onClick={handleConfirmProforma}
+                    disabled={acting}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-brand-500/30 text-brand-400 hover:bg-brand-500/10 text-sm font-medium transition-colors disabled:opacity-50"
+                  >
+                    <CheckCircle size={14} /> Confirm Proforma → Invoice
+                  </button>
+                )}
+                {(inv?.status === 'paid' || inv?.status === 'partially_paid' || inv?.status === 'credit' || inv?.status === 'confirmed') && (
+                  <button
+                    onClick={openReturnModal}
+                    disabled={acting || !detail}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-amber-500/30 text-amber-400 hover:bg-amber-500/10 text-sm font-medium transition-colors disabled:opacity-50"
+                  >
+                    <RotateCcw size={14} /> Process Return / Credit Note
+                  </button>
+                )}
                 <button
                   onClick={handleVoid}
                   disabled={acting}
@@ -524,6 +834,140 @@ export default function SalesPage() {
             )}
           </div>
         </>
+      )}
+
+      {/* ── Send Email Modal ────────────────────────────────────────────────── */}
+      {showEmailModal && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60" onClick={() => setShowEmailModal(false)} />
+          <div className="relative bg-surface-900 border border-surface-700 rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold text-white">Send Invoice by Email</h2>
+              <button onClick={() => setShowEmailModal(false)} className="btn-ghost p-1.5"><X size={18} /></button>
+            </div>
+            <p className="text-xs text-slate-500">
+              Invoice <span className="text-brand-400 font-mono">{inv?.invoice_number}</span> will be sent as HTML email.
+            </p>
+            <div>
+              <label className="label">Recipient Email</label>
+              <input
+                type="email"
+                className="input"
+                placeholder={inv?.customer_name ? `${inv.customer_name}'s email` : 'customer@email.com'}
+                value={emailTo}
+                onChange={(e) => setEmailTo(e.target.value)}
+                autoFocus
+              />
+              <p className="text-xs text-slate-500 mt-1">Leave blank to use customer's saved email.</p>
+            </div>
+            <div className="flex gap-3 pt-1">
+              <button onClick={() => setShowEmailModal(false)} className="btn-ghost flex-1">Cancel</button>
+              <button onClick={handleSendEmail} disabled={sendingEmail} className="btn-primary flex-1">
+                {sendingEmail ? <Loader2 size={15} className="animate-spin" /> : <Mail size={15} />}
+                Send
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Sales Return Modal ──────────────────────────────────────────────── */}
+      {showReturn && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60" onClick={() => setShowReturn(false)} />
+          <div className="relative bg-surface-900 border border-surface-700 rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-surface-700">
+              <div>
+                <h2 className="text-lg font-bold text-white">Process Return</h2>
+                <p className="text-xs text-slate-500">Credit Note for {inv?.invoice_number}</p>
+              </div>
+              <button onClick={() => setShowReturn(false)} className="btn-ghost p-2"><X size={18} /></button>
+            </div>
+            {/* Body */}
+            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+              {/* Items */}
+              <div>
+                <p className="text-xs text-slate-500 uppercase tracking-wider mb-2">Return Quantities</p>
+                <div className="space-y-2">
+                  {returnItems.map((item, idx) => (
+                    <div key={item.sale_item_id} className="flex items-center gap-3 bg-surface-800 rounded-lg px-3 py-2.5">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-white truncate">{item.product_name}</p>
+                        <p className="text-xs text-slate-500">Max: {item.max_qty} · {formatCurrency(item.unit_price)} each</p>
+                      </div>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        className="input w-24 text-right text-sm"
+                        value={item.quantity_returned}
+                        onChange={(e) => {
+                          const v = e.target.value
+                          setReturnItems((prev) => prev.map((it, i) => i === idx ? { ...it, quantity_returned: v } : it))
+                        }}
+                        placeholder="Qty"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Reason */}
+              <div>
+                <label className="label">Reason</label>
+                <select className="input" value={returnReason} onChange={(e) => setReturnReason(e.target.value)}>
+                  {RETURN_REASONS.map((r) => (
+                    <option key={r.value} value={r.value}>{r.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Return date */}
+              <div>
+                <label className="label">Return Date</label>
+                <DateInput value={returnDate} onChange={setReturnDate} />
+              </div>
+
+              {/* Restock toggle */}
+              <div className="flex items-center gap-3">
+                <input
+                  id="restock"
+                  type="checkbox"
+                  checked={returnRestocked}
+                  onChange={(e) => setReturnRestocked(e.target.checked)}
+                  className="w-4 h-4 rounded accent-brand-500"
+                />
+                <label htmlFor="restock" className="text-sm text-slate-300 cursor-pointer">
+                  Items physically returned to stock
+                </label>
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label className="label">Notes (optional)</label>
+                <textarea
+                  className="input"
+                  rows={2}
+                  value={returnNotes}
+                  onChange={(e) => setReturnNotes(e.target.value)}
+                  placeholder="Any additional notes…"
+                />
+              </div>
+            </div>
+            {/* Footer */}
+            <div className="px-6 py-4 border-t border-surface-700 flex gap-3 justify-end">
+              <button onClick={() => setShowReturn(false)} className="btn-ghost">Cancel</button>
+              <button
+                onClick={handleReturn}
+                disabled={processingReturn}
+                className="btn-primary"
+              >
+                {processingReturn ? <Loader2 size={15} className="animate-spin" /> : <RotateCcw size={15} />}
+                Process Return
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ── PDF Preview Modal ───────────────────────────────────────────────── */}

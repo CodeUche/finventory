@@ -12,7 +12,7 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
-from apps.core.throttles import LoginRateThrottle, RegisterRateThrottle, TokenRefreshRateThrottle
+from apps.core.throttles import LoginRateThrottle, PasswordChangeRateThrottle, RegisterRateThrottle, TokenRefreshRateThrottle
 from apps.core.utils import get_client_ip
 
 from .serializers import (
@@ -178,6 +178,7 @@ class ChangePasswordView(APIView):
     """POST /api/v1/auth/change-password/"""
 
     permission_classes = [IsAuthenticated]
+    throttle_classes = [PasswordChangeRateThrottle]
 
     def post(self, request):
         serializer = ChangePasswordSerializer(data=request.data)

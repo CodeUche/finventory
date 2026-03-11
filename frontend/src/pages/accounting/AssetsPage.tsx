@@ -4,6 +4,7 @@ import toast from 'react-hot-toast'
 import { accountingApi } from '@/services/api'
 import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
 import type { FixedAsset, Account } from '@/types'
+import DateInput from '@/components/DateInput'
 
 const CATEGORIES = ['land', 'building', 'vehicle', 'equipment', 'furniture', 'other'] as const
 
@@ -58,7 +59,7 @@ export default function AssetsPage() {
     setRunningDep(true)
     try {
       const { data } = await accountingApi.runDepreciation(payload)
-      toast.success(`Depreciation run complete — ${(data as { count?: number }).count ?? 0} assets processed`)
+      toast.success(`Depreciation run complete — ${(data as { entries_created?: number }).entries_created ?? 0} entries created`)
       load()
     } catch { toast.error('Failed to run depreciation') }
     finally { setRunningDep(false) }
@@ -246,27 +247,35 @@ export default function AssetsPage() {
               </div>
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Purchase Date</label>
-                <input type="date" className="input" value={form.purchase_date} onChange={(e) => setForm({ ...form, purchase_date: e.target.value })} />
+                <DateInput value={form.purchase_date} onChange={(v) => setForm({ ...form, purchase_date: v })} />
               </div>
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">Purchase Cost (₦) *</label>
+                <label className="text-xs text-slate-400 mb-1 block">Purchase Cost *</label>
                 <input type="text" inputMode="decimal" className="input" value={form.purchase_cost} onChange={(e) => setForm({ ...form, purchase_cost: formatAmountInput(e.target.value) })} />
               </div>
-              <div>
-                <label className="text-xs text-slate-400 mb-1 block">Depreciation Method</label>
-                <select className="input" value={form.depreciation_method} onChange={(e) => setForm({ ...form, depreciation_method: e.target.value })}>
-                  <option value="straight_line">Straight Line</option>
-                  <option value="reducing_balance">Reducing Balance</option>
-                </select>
-              </div>
-              <div>
-                <label className="text-xs text-slate-400 mb-1 block">Useful Life (years)</label>
-                <input type="number" min="1" className="input" value={form.useful_life_years} onChange={(e) => setForm({ ...form, useful_life_years: e.target.value })} />
-              </div>
-              <div>
-                <label className="text-xs text-slate-400 mb-1 block">Residual Value (₦)</label>
-                <input type="text" inputMode="decimal" className="input" value={form.residual_value} onChange={(e) => setForm({ ...form, residual_value: formatAmountInput(e.target.value) })} />
-              </div>
+              {form.category === 'land' ? (
+                <div className="col-span-2 flex items-center gap-2 px-3 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs">
+                  <span className="font-semibold">ℹ Land</span> — land does not depreciate and will be excluded from depreciation runs.
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <label className="text-xs text-slate-400 mb-1 block">Depreciation Method</label>
+                    <select className="input" value={form.depreciation_method} onChange={(e) => setForm({ ...form, depreciation_method: e.target.value })}>
+                      <option value="straight_line">Straight Line</option>
+                      <option value="reducing_balance">Reducing Balance</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-400 mb-1 block">Useful Life (years)</label>
+                    <input type="number" min="1" className="input" value={form.useful_life_years} onChange={(e) => setForm({ ...form, useful_life_years: e.target.value })} />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-400 mb-1 block">Residual Value</label>
+                    <input type="text" inputMode="decimal" className="input" value={form.residual_value} onChange={(e) => setForm({ ...form, residual_value: formatAmountInput(e.target.value) })} />
+                  </div>
+                </>
+              )}
             </div>
             <div className="flex gap-3 pt-1">
               <button className="flex-1 py-2.5 rounded-xl border border-surface-600 text-slate-400 hover:text-white hover:border-surface-500 transition-colors text-sm" onClick={() => setShowModal(false)}>Cancel</button>

@@ -4,7 +4,11 @@ import { BrowserRouter } from 'react-router-dom'
 import { Toaster } from 'react-hot-toast'
 import App from './App'
 import { NotificationsProvider } from './contexts/NotificationsContext'
+import { initTheme } from './hooks/useTheme'
 import './index.css'
+
+// Apply stored theme before first render to avoid flash
+initTheme()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

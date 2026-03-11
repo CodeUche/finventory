@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Account, JournalEntry, JournalLine, FixedAsset, DepreciationEntry
+from .models import Account, JournalEntry, JournalLine, FixedAsset, DepreciationEntry, FinancialPeriod, BankReconciliation, BankReconciliationLine
 
 
 class AccountSerializer(serializers.ModelSerializer):
@@ -43,11 +43,43 @@ class DepreciationEntrySerializer(serializers.ModelSerializer):
         read_only_fields = ['id']
 
 
+class FinancialPeriodSerializer(serializers.ModelSerializer):
+    locked_by_name = serializers.CharField(source='locked_by.get_full_name', read_only=True, default=None)
+
+    class Meta:
+        model = FinancialPeriod
+        fields = ['id', 'year', 'month', 'is_locked', 'locked_by', 'locked_by_name', 'locked_at', 'created_at']
+        read_only_fields = ['id', 'is_locked', 'locked_by', 'locked_at', 'created_at']
+
+
+class BankReconciliationLineSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = BankReconciliationLine
+        fields = ['id', 'description', 'transaction_date', 'amount', 'is_cleared', 'reference', 'journal_line']
+        read_only_fields = ['id']
+
+
+class BankReconciliationSerializer(serializers.ModelSerializer):
+    lines = BankReconciliationLineSerializer(many=True, read_only=True)
+    account_name = serializers.CharField(source='account.name', read_only=True)
+    account_code = serializers.CharField(source='account.code', read_only=True)
+
+    class Meta:
+        model = BankReconciliation
+        fields = [
+            'id', 'account', 'account_name', 'account_code',
+            'period_start', 'period_end', 'statement_closing_balance',
+            'book_balance', 'is_reconciled', 'reconciled_by', 'reconciled_at',
+            'notes', 'lines', 'created_at',
+        ]
+        read_only_fields = ['id', 'book_balance', 'is_reconciled', 'reconciled_by', 'reconciled_at', 'created_at']
+
+
 class FixedAssetSerializer(serializers.ModelSerializer):
     annual_depreciation = serializers.DecimalField(max_digits=15, decimal_places=2, read_only=True)
     accumulated_depreciation = serializers.DecimalField(max_digits=15, decimal_places=2, read_only=True)
     net_book_value = serializers.DecimalField(max_digits=15, decimal_places=2, read_only=True)
-    depreciation_entries = DepreciationEntrySerializer(many=True, read_only=True)
+    depreciation_entries = DepreciationEntrySerializer(many=True, read_only=True, source='ordered_entries')
 
     class Meta:
         model = FixedAsset

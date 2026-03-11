@@ -55,6 +55,9 @@ class OrganisationService:
         # Auto-assign the Free plan so all features are available immediately
         OrganisationService._assign_free_plan(org)
 
+        # Seed country-specific default tax configuration (non-fatal)
+        OrganisationService._seed_tax_config(org)
+
         logger.info("Organisation created: %s (owner=%s)", org.id, owner.id)
         return org
 
@@ -78,6 +81,172 @@ class OrganisationService:
         except Exception as exc:
             # Non-fatal: org still works, subscription can be assigned manually
             logger.warning("Could not assign Free plan to org %s: %s", org.id, exc)
+
+    # ─── Tax seed data ────────────────────────────────────────────────────────
+    # Each entry: { name, tax_type, is_progressive, flat_rate, personal_allowance, brackets }
+    # Brackets: (lower_bound, upper_bound_or_None, rate_pct, cumulative_tax_below)
+    _TAX_PRESETS = {
+        "NG": [
+            {
+                "name": "Nigeria Personal Income Tax",
+                "tax_type": "income",
+                "is_progressive": True,
+                "flat_rate": 0,
+                "personal_allowance": 200000,
+                "brackets": [
+                    (0,         300000,  7,    0),
+                    (300000,    600000,  11,   21000),
+                    (600000,    1100000, 15,   54000),
+                    (1100000,   1600000, 19,   129000),
+                    (1600000,   3200000, 21,   224000),
+                    (3200000,   None,    24,   560000),
+                ],
+            },
+            {
+                "name": "Nigeria Corporate Income Tax",
+                "tax_type": "corporate",
+                "is_progressive": False,
+                "flat_rate": 30,
+                "personal_allowance": 0,
+                "brackets": [],
+            },
+        ],
+        "GH": [
+            {
+                "name": "Ghana Personal Income Tax",
+                "tax_type": "income",
+                "is_progressive": True,
+                "flat_rate": 0,
+                "personal_allowance": 4380,
+                "brackets": [
+                    (0,      1320,    5,    0),
+                    (1320,   2880,    10,   66),
+                    (2880,   36600,   17,   222),
+                    (36600,  240000,  25,   6053),
+                    (240000, None,    35,   56953),
+                ],
+            },
+            {
+                "name": "Ghana Corporate Income Tax",
+                "tax_type": "corporate",
+                "is_progressive": False,
+                "flat_rate": 25,
+                "personal_allowance": 0,
+                "brackets": [],
+            },
+        ],
+        "KE": [
+            {
+                "name": "Kenya Personal Income Tax (PAYE)",
+                "tax_type": "income",
+                "is_progressive": True,
+                "flat_rate": 0,
+                "personal_allowance": 0,
+                "brackets": [
+                    (0,      288000,  10, 0),
+                    (288000, 388000,  25, 28800),
+                    (388000, 6000000, 30, 53800),
+                    (6000000, None,   35, 1737400),
+                ],
+            },
+            {
+                "name": "Kenya Corporate Income Tax",
+                "tax_type": "corporate",
+                "is_progressive": False,
+                "flat_rate": 30,
+                "personal_allowance": 0,
+                "brackets": [],
+            },
+        ],
+        "ZA": [
+            {
+                "name": "South Africa Personal Income Tax",
+                "tax_type": "income",
+                "is_progressive": True,
+                "flat_rate": 0,
+                "personal_allowance": 91250,
+                "brackets": [
+                    (0,        237100,  18, 0),
+                    (237100,   370500,  26, 42678),
+                    (370500,   512800,  31, 77362),
+                    (512800,   673000,  36, 121475),
+                    (673000,   857900,  39, 179147),
+                    (857900,   1817000, 41, 251258),
+                    (1817000,  None,    45, 644489),
+                ],
+            },
+            {
+                "name": "South Africa Corporate Income Tax",
+                "tax_type": "corporate",
+                "is_progressive": False,
+                "flat_rate": 27,
+                "personal_allowance": 0,
+                "brackets": [],
+            },
+        ],
+        "GB": [
+            {
+                "name": "UK Income Tax",
+                "tax_type": "income",
+                "is_progressive": True,
+                "flat_rate": 0,
+                "personal_allowance": 12570,
+                "brackets": [
+                    (0,      37700, 20, 0),
+                    (37700,  125140, 40, 7540),
+                    (125140, None,   45, 42028),
+                ],
+            },
+            {
+                "name": "UK Corporation Tax",
+                "tax_type": "corporate",
+                "is_progressive": False,
+                "flat_rate": 25,
+                "personal_allowance": 0,
+                "brackets": [],
+            },
+        ],
+    }
+
+    @staticmethod
+    def _seed_tax_config(org: Organisation) -> None:
+        """Seed country-specific default tax configurations on org creation."""
+        try:
+            from datetime import date
+            from apps.tax.models import TaxBracket, TaxConfig
+            from decimal import Decimal
+
+            presets = OrganisationService._TAX_PRESETS.get(org.country, [])
+            if not presets:
+                return
+
+            current_year = date.today().year
+            for preset in presets:
+                config, created = TaxConfig.objects.get_or_create(
+                    organisation=org,
+                    name=preset["name"],
+                    tax_year=current_year,
+                    defaults={
+                        "tax_type": preset["tax_type"],
+                        "country": org.country,
+                        "is_progressive": preset["is_progressive"],
+                        "flat_rate": Decimal(str(preset["flat_rate"])),
+                        "personal_allowance": Decimal(str(preset["personal_allowance"])),
+                        "is_active": True,
+                    },
+                )
+                if created:
+                    for (lower, upper, rate, cum) in preset["brackets"]:
+                        TaxBracket.objects.create(
+                            config=config,
+                            lower_bound=Decimal(str(lower)),
+                            upper_bound=Decimal(str(upper)) if upper is not None else None,
+                            rate=Decimal(str(rate)),
+                            cumulative_tax_below=Decimal(str(cum)),
+                        )
+            logger.info("Tax config seeded for org %s (country=%s)", org.id, org.country)
+        except Exception as exc:
+            logger.warning("Could not seed tax config for org %s: %s", org.id, exc)
 
     @staticmethod
     def invite_member(organisation, email: str, role: str, invited_by) -> Invitation:

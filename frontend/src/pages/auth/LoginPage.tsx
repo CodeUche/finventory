@@ -59,8 +59,8 @@ export default function LoginPage() {
               <Zap size={24} className="text-white" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-white">Finventory</h1>
-              <p className="text-slate-400 text-sm">Liquor Distribution ERP</p>
+              <h1 className="text-2xl font-bold text-white">Audity</h1>
+              <p className="text-slate-400 text-sm">Business Suite</p>
             </div>
           </div>
 
@@ -93,7 +93,7 @@ export default function LoginPage() {
             <div className="w-10 h-10 bg-brand-500 rounded-xl flex items-center justify-center">
               <Zap size={20} className="text-white" />
             </div>
-            <h1 className="text-xl font-bold text-white">Finventory</h1>
+            <h1 className="text-xl font-bold text-white">Audity</h1>
           </div>
 
           <h2 className="text-3xl font-bold text-white mb-2">Sign in</h2>

@@ -1,11 +1,49 @@
 import { useEffect, useState } from 'react'
-import { Plus, Search, Users, X, Pencil, Loader2 } from 'lucide-react'
+import { Plus, Search, Users, X, Pencil, Loader2, FileText, RefreshCw, Download, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { customerApi } from '@/services/api'
-import { formatCurrency, getStatusColor } from '@/lib/utils'
+import { formatCurrency, formatDate, getStatusColor, getCurrencySymbol } from '@/lib/utils'
+import DateInput from '@/components/DateInput'
+import { useAuthStore } from '@/store/authStore'
 import type { Customer } from '@/types'
 
-const CUSTOMER_TYPES = ['retail', 'wholesale', 'distributor']
+function creditScoreColor(score: number) {
+  if (score <= 30) return { text: 'text-red-400', ring: '#ef4444', label: 'Poor' }
+  if (score <= 50) return { text: 'text-orange-400', ring: '#f97316', label: 'Fair' }
+  if (score <= 70) return { text: 'text-amber-400', ring: '#f59e0b', label: 'Avg' }
+  if (score <= 85) return { text: 'text-emerald-300', ring: '#6ee7b7', label: 'Good' }
+  return { text: 'text-emerald-400', ring: '#10b981', label: 'Excellent' }
+}
+
+function CreditScoreWheel({ score, size = 36 }: { score?: number; size?: number }) {
+  if (score == null) return <span className="text-slate-600 text-xs">—</span>
+  const c = creditScoreColor(score)
+  const r = (size / 2) - 3
+  const circ = 2 * Math.PI * r
+  const dash = (score / 100) * circ
+  return (
+    <div className="relative inline-flex items-center justify-center" style={{ width: size, height: size }}>
+      <svg viewBox={`0 0 ${size} ${size}`} width={size} height={size} style={{ transform: 'rotate(-90deg)' }}>
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#334155" strokeWidth="3" />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth="3"
+          strokeDasharray={`${dash} ${circ}`} stroke={c.ring} strokeLinecap="round" />
+      </svg>
+      <span className={`absolute text-[8px] font-bold ${c.text}`}>{score}</span>
+    </div>
+  )
+}
+
+const CUSTOMER_TYPES = [
+  'retail',        // Walk-in / general customer
+  'wholesale',     // Bulk buyer, periodic orders
+  'distributor',   // Resells to third parties
+  'corporate',     // Business/company account
+  'client',        // Professional service client
+  'passenger',     // Transport / hospitality
+  'vip',           // Premium / priority customer
+  'government',    // Government / public sector
+  'ngo',           // Non-profit / NGO
+]
 
 interface NewCustomerForm {
   name: string
@@ -26,6 +64,7 @@ const BLANK: NewCustomerForm = {
 }
 
 export default function CustomersPage() {
+  const { organisation } = useAuthStore()
   const [customers, setCustomers] = useState<Customer[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -39,6 +78,15 @@ export default function CustomersPage() {
   const [showEditModal, setShowEditModal] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
   const [editForm, setEditForm] = useState<NewCustomerForm>(BLANK)
+
+  // Statement
+  const [showStatement, setShowStatement] = useState(false)
+  const [statementData, setStatementData] = useState<any>(null)
+  const [stmtFrom, setStmtFrom] = useState(() => {
+    const d = new Date(); d.setDate(1); return d.toISOString().split('T')[0]
+  })
+  const [stmtTo, setStmtTo] = useState(() => new Date().toISOString().split('T')[0])
+  const [loadingStmt, setLoadingStmt] = useState(false)
 
   const load = async () => {
     setLoading(true)
@@ -90,6 +138,228 @@ export default function CustomersPage() {
     finally { setSaving(false) }
   }
 
+  const handleDelete = async (c: Customer) => {
+    if (!confirm(`Delete customer "${c.name}"? This cannot be undone.`)) return
+    try {
+      await customerApi.delete(c.id)
+      toast.success('Customer deleted')
+      if (selected?.id === c.id) setSelected(null)
+      load()
+    } catch { toast.error('Cannot delete customer — they may have invoices or credits linked') }
+  }
+
+  const loadStatement = async (cId: string) => {
+    setLoadingStmt(true)
+    try {
+      const { data } = await customerApi.statement(cId, { date_from: stmtFrom, date_to: stmtTo })
+      setStatementData(data)
+    } catch { toast.error('Failed to load statement') }
+    finally { setLoadingStmt(false) }
+  }
+
+  const downloadStatementPDF = async () => {
+    if (!statementData || !selected) return
+    const { jsPDF } = await import('jspdf')
+    const { default: autoTable } = await import('jspdf-autotable')
+    const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+    const sym = getCurrencySymbol()
+    const pageW = doc.internal.pageSize.getWidth()
+
+    // Load logo image if available
+    let logoDataUrl: string | null = null
+    if (organisation?.logo) {
+      try {
+        const img = new Image()
+        img.crossOrigin = 'anonymous'
+        await new Promise<void>((resolve) => {
+          img.onload = () => {
+            const canvas = document.createElement('canvas')
+            const maxH = 80
+            const scale = maxH / img.naturalHeight
+            canvas.width = img.naturalWidth * scale
+            canvas.height = maxH
+            const ctx = canvas.getContext('2d')!
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+            logoDataUrl = canvas.toDataURL('image/png')
+            resolve()
+          }
+          img.onerror = () => resolve()
+          img.src = organisation.logo!
+        })
+      } catch { /* no logo */ }
+    }
+
+    // Header block
+    const HEADER_H = 42
+    doc.setFillColor(15, 23, 42)
+    doc.rect(0, 0, pageW, HEADER_H, 'F')
+
+    // Logo (left)
+    if (logoDataUrl) {
+      doc.addImage(logoDataUrl, 'PNG', 10, 5, 32, 16)
+    }
+
+    // Company name + details (left, below logo or at top)
+    const nameY = logoDataUrl ? 26 : 13
+    doc.setFontSize(logoDataUrl ? 10 : 15)
+    doc.setTextColor(255, 255, 255)
+    doc.setFont('helvetica', 'bold')
+    doc.text(organisation?.name ?? 'Company', 10, nameY)
+    doc.setFontSize(7.5)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(148, 163, 184)
+    const subLines: string[] = []
+    if (organisation?.address) subLines.push(organisation.address)
+    if (organisation?.email) subLines.push(organisation.email)
+    if (organisation?.phone) subLines.push(organisation.phone)
+    if (organisation?.tax_id) subLines.push(`Tax ID: ${organisation.tax_id}`)
+    subLines.forEach((line, idx) => doc.text(line, 10, nameY + 5 + idx * 4))
+
+    // Title (right)
+    doc.setFontSize(14)
+    doc.setTextColor(255, 255, 255)
+    doc.setFont('helvetica', 'bold')
+    doc.text('CUSTOMER STATEMENT', pageW - 10, 13, { align: 'right' })
+    doc.setFontSize(8)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(148, 163, 184)
+    doc.text(`Period: ${formatDate(stmtFrom)} — ${formatDate(stmtTo)}`, pageW - 10, 20, { align: 'right' })
+    doc.text(`Generated: ${formatDate(new Date().toISOString().split('T')[0])}`, pageW - 10, 26, { align: 'right' })
+
+    let y = HEADER_H + 8
+    // Customer block
+    doc.setFontSize(10)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(30, 41, 59)
+    doc.text('Bill To:', 14, y)
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(9)
+    doc.setTextColor(51, 65, 85)
+    doc.text(selected.name, 14, y + 5)
+    doc.text(selected.code, 14, y + 10)
+    if (selected.email) doc.text(selected.email, 14, y + 15)
+    if (selected.phone) doc.text(selected.phone, 14, y + 20)
+
+    // Summary KPIs
+    const kpis = [
+      { label: 'Total Invoiced', value: `${sym}${parseFloat(statementData.summary.total_invoiced).toLocaleString('en', { minimumFractionDigits: 2 })}` },
+      { label: 'Total Paid', value: `${sym}${parseFloat(statementData.summary.total_paid).toLocaleString('en', { minimumFractionDigits: 2 })}` },
+      { label: 'Balance Due', value: `${sym}${parseFloat(statementData.summary.balance_due).toLocaleString('en', { minimumFractionDigits: 2 })}` },
+    ]
+    const kpiW = (pageW - 28) / 3
+    kpis.forEach((k, i) => {
+      const kx = 14 + i * kpiW
+      doc.setFillColor(241, 245, 249)
+      doc.roundedRect(kx, y, kpiW - 3, 22, 2, 2, 'F')
+      doc.setFontSize(7)
+      doc.setTextColor(100, 116, 139)
+      doc.setFont('helvetica', 'normal')
+      doc.text(k.label.toUpperCase(), kx + (kpiW - 3) / 2, y + 7, { align: 'center' })
+      doc.setFontSize(11)
+      doc.setFont('helvetica', 'bold')
+      doc.setTextColor(i === 2 && parseFloat(statementData.summary.balance_due) > 0 ? 220 : 15, i === 2 && parseFloat(statementData.summary.balance_due) > 0 ? 38 : 40, i === 2 && parseFloat(statementData.summary.balance_due) > 0 ? 38 : 80)
+      doc.text(k.value, kx + (kpiW - 3) / 2, y + 16, { align: 'center' })
+    })
+    y += 28
+
+    // Invoices table
+    if (statementData.invoices.length > 0) {
+      doc.setFontSize(9)
+      doc.setFont('helvetica', 'bold')
+      doc.setTextColor(30, 41, 59)
+      doc.text('Invoices', 14, y)
+      y += 4
+      autoTable(doc, {
+        startY: y,
+        head: [['Invoice #', 'Date', 'Due Date', 'Total', 'Paid', 'Balance', 'Status']],
+        body: statementData.invoices.map((inv: any) => [
+          inv.invoice_number,
+          formatDate(inv.issue_date),
+          inv.due_date ? formatDate(inv.due_date) : '—',
+          `${sym}${parseFloat(inv.total_amount).toLocaleString('en', { minimumFractionDigits: 2 })}`,
+          `${sym}${parseFloat(inv.amount_paid).toLocaleString('en', { minimumFractionDigits: 2 })}`,
+          `${sym}${parseFloat(inv.amount_due).toLocaleString('en', { minimumFractionDigits: 2 })}`,
+          inv.status.replace('_', ' ').toUpperCase(),
+        ]),
+        styles: { fontSize: 8, cellPadding: 3 },
+        headStyles: { fillColor: [15, 23, 42], textColor: 255, fontStyle: 'bold', fontSize: 7 },
+        columnStyles: { 0: { fontStyle: 'bold' }, 6: { fontStyle: 'bold' } },
+        alternateRowStyles: { fillColor: [248, 250, 252] },
+        margin: { left: 14, right: 14 },
+      })
+      y = (doc as any).lastAutoTable.finalY + 6
+    }
+
+    // Payments table
+    if (statementData.payments.length > 0) {
+      doc.setFontSize(9)
+      doc.setFont('helvetica', 'bold')
+      doc.setTextColor(30, 41, 59)
+      doc.text('Payments Received', 14, y)
+      y += 4
+      autoTable(doc, {
+        startY: y,
+        head: [['Invoice #', 'Date', 'Method', 'Amount']],
+        body: statementData.payments.map((p: any) => [
+          p.invoice_number,
+          formatDate(p.received_at),
+          p.method.replace('_', ' '),
+          `${sym}${parseFloat(p.amount).toLocaleString('en', { minimumFractionDigits: 2 })}`,
+        ]),
+        styles: { fontSize: 8, cellPadding: 3 },
+        headStyles: { fillColor: [5, 150, 105], textColor: 255, fontStyle: 'bold', fontSize: 7 },
+        alternateRowStyles: { fillColor: [240, 253, 244] },
+        margin: { left: 14, right: 14 },
+      })
+    }
+
+    // Bank details block (if configured)
+    const hasBankDetails = organisation?.bank_name || organisation?.bank_account_number
+    if (hasBankDetails) {
+      const finalY = (doc as any).lastAutoTable?.finalY ?? y
+      const by = finalY + 8
+      doc.setFillColor(241, 245, 249)
+      doc.roundedRect(14, by, pageW - 28, 22, 2, 2, 'F')
+      doc.setFontSize(7.5)
+      doc.setFont('helvetica', 'bold')
+      doc.setTextColor(30, 41, 59)
+      doc.text('PAYMENT DETAILS', 18, by + 6)
+      doc.setFont('helvetica', 'normal')
+      doc.setTextColor(51, 65, 85)
+      const bankParts: string[] = []
+      if (organisation?.bank_name) bankParts.push(`Bank: ${organisation.bank_name}`)
+      if (organisation?.bank_account_name) bankParts.push(`Account Name: ${organisation.bank_account_name}`)
+      if (organisation?.bank_account_number) bankParts.push(`Account No: ${organisation.bank_account_number}`)
+      if (organisation?.bank_sort_code) bankParts.push(`Sort Code: ${organisation.bank_sort_code}`)
+      const midIdx = Math.ceil(bankParts.length / 2)
+      bankParts.slice(0, midIdx).forEach((p, i) => doc.text(p, 18, by + 12 + i * 4))
+      bankParts.slice(midIdx).forEach((p, i) => doc.text(p, pageW / 2, by + 12 + i * 4))
+    }
+
+    // Footer on every page
+    const pageCount = (doc.internal as any).getNumberOfPages()
+    for (let i = 1; i <= pageCount; i++) {
+      doc.setPage(i)
+      const ph = doc.internal.pageSize.getHeight()
+      doc.setFillColor(15, 23, 42)
+      doc.rect(0, ph - 12, pageW, 12, 'F')
+      doc.setFontSize(7)
+      doc.setTextColor(148, 163, 184)
+      doc.text(`Page ${i} of ${pageCount}`, pageW / 2, ph - 5, { align: 'center' })
+      doc.text(organisation?.name ?? 'Company', 10, ph - 5)
+      doc.text(`Statement: ${formatDate(stmtFrom)} — ${formatDate(stmtTo)}`, pageW - 10, ph - 5, { align: 'right' })
+    }
+
+    doc.save(`statement-${selected.code}-${stmtFrom}-${stmtTo}.pdf`)
+  }
+
+  const openStatement = (c: Customer) => {
+    setSelected(c)
+    setStatementData(null)
+    setShowStatement(true)
+    loadStatement(c.id)
+  }
+
   const creditUtilPct = (c: Customer) => {
     const limit = parseFloat(c.credit_limit)
     const used = parseFloat(c.outstanding_balance)
@@ -135,7 +405,7 @@ export default function CustomersPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-surface-700">
-                {['Customer', 'Type', 'Phone', 'Credit Limit', 'Outstanding', 'Available', 'Credit Usage', ''].map((h) => (
+                {['Customer', 'Type', 'Score', 'Phone', 'Credit Limit', 'Outstanding', 'Available', 'Credit Usage', ''].map((h) => (
                   <th key={h} className="px-5 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">
                     {h}
                   </th>
@@ -146,7 +416,7 @@ export default function CustomersPage() {
               {loading ? (
                 Array.from({ length: 6 }).map((_, i) => (
                   <tr key={i} className="table-row">
-                    {Array.from({ length: 8 }).map((_, j) => (
+                    {Array.from({ length: 9 }).map((_, j) => (
                       <td key={j} className="px-5 py-3.5">
                         <div className="h-4 bg-surface-700 rounded animate-pulse w-20" />
                       </td>
@@ -155,7 +425,7 @@ export default function CustomersPage() {
                 ))
               ) : customers.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-5 py-12 text-center">
+                  <td colSpan={9} className="px-5 py-12 text-center">
                     <Users size={32} className="mx-auto mb-2 text-slate-600" />
                     <p className="text-slate-500">No customers yet</p>
                   </td>
@@ -173,6 +443,16 @@ export default function CustomersPage() {
                         <span className={getStatusColor(c.customer_type === 'retail' ? 'confirmed' : c.customer_type === 'wholesale' ? 'partially_paid' : 'credit')}>
                           {c.customer_type}
                         </span>
+                      </td>
+                      <td className="px-5 py-3.5">
+                        <div className="flex items-center gap-1.5">
+                          <CreditScoreWheel score={c.credit_score} size={30} />
+                          {c.credit_score != null && (
+                            <span className={`text-[10px] font-medium ${creditScoreColor(c.credit_score).text}`}>
+                              {creditScoreColor(c.credit_score).label}
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-5 py-3.5 text-slate-400">{c.phone || '—'}</td>
                       <td className="px-5 py-3.5 text-slate-300">{formatCurrency(c.credit_limit)}</td>
@@ -195,6 +475,15 @@ export default function CustomersPage() {
                         {c.is_credit_blocked && (
                           <span className="badge-red text-[10px]">Blocked</span>
                         )}
+                      </td>
+                      <td className="px-5 py-3.5" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          onClick={() => handleDelete(c)}
+                          className="p-1.5 text-slate-600 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
+                          title="Delete customer"
+                        >
+                          <Trash2 size={13} />
+                        </button>
                       </td>
                     </tr>
                   )
@@ -223,8 +512,18 @@ export default function CustomersPage() {
                   <p className="text-slate-400 text-sm">{selected.code} · {selected.customer_type}</p>
                 </div>
                 <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => openStatement(selected)}
+                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-brand-500/40 text-brand-400 hover:bg-brand-500/10 text-xs font-medium transition-colors"
+                    title="View Statement"
+                  >
+                    <FileText size={13} /> Statement
+                  </button>
                   <button onClick={() => openEdit(selected)} className="btn-ghost p-1.5 text-slate-400 hover:text-white" title="Edit">
                     <Pencil size={15} />
+                  </button>
+                  <button onClick={() => handleDelete(selected)} className="btn-ghost p-1.5 text-slate-400 hover:text-red-400" title="Delete">
+                    <Trash2 size={15} />
                   </button>
                   <button onClick={() => setSelected(null)} className="btn-ghost p-1.5 text-slate-400 hover:text-white">
                     <X size={18} />
@@ -245,6 +544,26 @@ export default function CustomersPage() {
                     <p className={`text-lg font-bold ${color}`}>{value}</p>
                   </div>
                 ))}
+                {/* Credit Score card — spans full width */}
+                <div className="col-span-2 bg-surface-800 rounded-xl p-4 flex items-center gap-4">
+                  <CreditScoreWheel score={selected.credit_score} size={52} />
+                  <div>
+                    <p className="text-xs text-slate-500 mb-0.5">Credit Score</p>
+                    {selected.credit_score != null ? (
+                      <>
+                        <p className={`text-2xl font-bold ${creditScoreColor(selected.credit_score).text}`}>
+                          {selected.credit_score}
+                          <span className="text-sm font-normal text-slate-500"> / 100</span>
+                        </p>
+                        <p className={`text-xs font-medium ${creditScoreColor(selected.credit_score).text}`}>
+                          {creditScoreColor(selected.credit_score).label}
+                        </p>
+                      </>
+                    ) : (
+                      <p className="text-slate-500 text-sm">No history</p>
+                    )}
+                  </div>
+                </div>
               </div>
 
               {/* Info */}
@@ -289,7 +608,7 @@ export default function CustomersPage() {
                 </select>
               </div>
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">Credit Limit (₦)</label>
+                <label className="text-xs text-slate-400 mb-1 block">Credit Limit</label>
                 <input type="number" className="input" value={editForm.credit_limit} min="0"
                   onChange={(e) => setEditForm({ ...editForm, credit_limit: e.target.value })} />
               </div>
@@ -314,6 +633,129 @@ export default function CustomersPage() {
               <button className="btn-primary flex-1 py-2.5 justify-center disabled:opacity-50" onClick={handleUpdate} disabled={saving}>
                 {saving ? <Loader2 size={16} className="animate-spin" /> : 'Save Changes'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Statement modal */}
+      {showStatement && selected && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setShowStatement(false)} />
+          <div className="relative bg-surface-900 border border-surface-700 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-surface-700">
+              <div>
+                <h2 className="text-lg font-bold text-white">{selected.name} — Statement</h2>
+                <p className="text-xs text-slate-500">{selected.code}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                {statementData && (
+                  <button
+                    onClick={downloadStatementPDF}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition-colors"
+                    title="Export PDF"
+                  >
+                    <Download size={13} /> Export PDF
+                  </button>
+                )}
+                <button onClick={() => setShowStatement(false)} className="btn-ghost p-2"><X size={18} /></button>
+              </div>
+            </div>
+            {/* Date range controls */}
+            <div className="px-6 pt-4 flex gap-3 items-end flex-wrap">
+              <div>
+                <label className="label text-xs">From</label>
+                <DateInput value={stmtFrom} onChange={(v) => setStmtFrom(v)} />
+              </div>
+              <div>
+                <label className="label text-xs">To</label>
+                <DateInput value={stmtTo} onChange={(v) => setStmtTo(v)} />
+              </div>
+              <button
+                onClick={() => loadStatement(selected.id)}
+                disabled={loadingStmt}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-brand-500 text-white text-xs font-semibold hover:bg-brand-600 transition-colors disabled:opacity-60"
+              >
+                {loadingStmt ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+                Refresh
+              </button>
+            </div>
+            {/* Body */}
+            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-5">
+              {loadingStmt ? (
+                <div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => (
+                  <div key={i} className="h-10 bg-surface-800 rounded-lg animate-pulse" />
+                ))}</div>
+              ) : !statementData ? null : (
+                <>
+                  {/* Summary KPIs */}
+                  <div className="grid grid-cols-3 gap-3">
+                    {[
+                      { label: 'Total Invoiced', value: formatCurrency(statementData.summary.total_invoiced), color: 'text-white' },
+                      { label: 'Total Paid', value: formatCurrency(statementData.summary.total_paid), color: 'text-green-400' },
+                      { label: 'Balance Due', value: formatCurrency(statementData.summary.balance_due), color: parseFloat(statementData.summary.balance_due) > 0 ? 'text-red-400' : 'text-green-400' },
+                    ].map(({ label, value, color }) => (
+                      <div key={label} className="bg-surface-800 rounded-xl p-3 text-center">
+                        <p className="text-xs text-slate-500 mb-1">{label}</p>
+                        <p className={`text-base font-bold ${color}`}>{value}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Invoices */}
+                  <div>
+                    <p className="text-xs text-slate-500 uppercase tracking-wider mb-2">Invoices ({statementData.invoices.length})</p>
+                    {statementData.invoices.length === 0 ? (
+                      <p className="text-slate-600 text-sm text-center py-4">No invoices in this period</p>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="border-b border-surface-700">
+                              {['Invoice #', 'Date', 'Total', 'Paid', 'Due', 'Status'].map((h) => (
+                                <th key={h} className="px-3 py-2 text-left text-slate-400 font-medium">{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {statementData.invoices.map((inv: any) => (
+                              <tr key={inv.id} className="border-b border-surface-700/50">
+                                <td className="px-3 py-2 font-mono text-brand-400">{inv.invoice_number}</td>
+                                <td className="px-3 py-2 text-slate-400">{formatDate(inv.issue_date)}</td>
+                                <td className="px-3 py-2 text-white">{formatCurrency(inv.total_amount)}</td>
+                                <td className="px-3 py-2 text-green-400">{formatCurrency(inv.amount_paid)}</td>
+                                <td className="px-3 py-2 text-red-400">{formatCurrency(inv.amount_due)}</td>
+                                <td className="px-3 py-2">
+                                  <span className={getStatusColor(inv.status)}>{inv.status.replace('_', ' ')}</span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Payments */}
+                  {statementData.payments.length > 0 && (
+                    <div>
+                      <p className="text-xs text-slate-500 uppercase tracking-wider mb-2">Payments ({statementData.payments.length})</p>
+                      <div className="space-y-1.5">
+                        {statementData.payments.map((p: any) => (
+                          <div key={p.id} className="flex items-center justify-between bg-surface-800 rounded-lg px-3 py-2">
+                            <div>
+                              <p className="text-xs font-medium text-white">{p.invoice_number}</p>
+                              <p className="text-[10px] text-slate-500">{p.method.replace('_', ' ')} · {formatDate(p.received_at)}</p>
+                            </div>
+                            <p className="text-sm font-semibold text-green-400">{formatCurrency(p.amount)}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -350,7 +792,7 @@ export default function CustomersPage() {
               </div>
 
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">Credit Limit (₦)</label>
+                <label className="text-xs text-slate-400 mb-1 block">Credit Limit</label>
                 <input
                   type="number"
                   className="input"

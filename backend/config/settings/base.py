@@ -184,11 +184,12 @@ REST_FRAMEWORK = {
         "rest_framework.throttling.UserRateThrottle",
     ],
     "DEFAULT_THROTTLE_RATES": {
-        "anon": "200/hour",
-        "user": "2000/hour",
-        "login": "10/minute",       # LoginRateThrottle
-        "register": "5/hour",       # RegisterRateThrottle
-        "token_refresh": "20/minute",  # TokenRefreshRateThrottle
+        "anon": "60/hour",
+        "user": "1000/hour",
+        "login": "5/minute",           # LoginRateThrottle — 5 attempts/min max
+        "register": "3/hour",          # RegisterRateThrottle
+        "token_refresh": "10/minute",  # TokenRefreshRateThrottle
+        "password_change": "3/hour",   # PasswordChangeRateThrottle
     },
 }
 
@@ -196,8 +197,8 @@ REST_FRAMEWORK = {
 from datetime import timedelta  # noqa: E402
 
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=config("JWT_ACCESS_MINUTES", default=60, cast=int)),
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=config("JWT_REFRESH_DAYS", default=30, cast=int)),
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=config("JWT_ACCESS_MINUTES", default=15, cast=int)),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=config("JWT_REFRESH_DAYS", default=7, cast=int)),
     "ROTATE_REFRESH_TOKENS": True,
     "BLACKLIST_AFTER_ROTATION": True,           # requires token_blacklist app
     "UPDATE_LAST_LOGIN": True,
@@ -253,6 +254,15 @@ CSRF_TRUSTED_ORIGINS: list[str] = config(
     ),
     cast=Csv(),
 )
+
+# ─── Admin URL ────────────────────────────────────────────────────────────────
+# Obfuscate the admin path via environment variable — never use the default /admin/
+# in production. Generate a random path: python -c "import secrets; print(secrets.token_hex(8))"
+ADMIN_URL = config("ADMIN_URL", default="admin/")
+
+# ─── File Upload Limits ───────────────────────────────────────────────────────
+DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024   # 10 MB max request body
+FILE_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024    # 5 MB max file upload
 
 # ─── Security Headers ─────────────────────────────────────────────────────────
 # These are enforced in production by Django's SecurityMiddleware.

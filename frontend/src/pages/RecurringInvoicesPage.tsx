@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Plus, X, RefreshCw, Loader2, Trash2 } from 'lucide-react'
+import { Plus, X, RefreshCw, Loader2, Trash2, Play } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { recurringApi, customerApi, inventoryApi } from '@/services/api'
 import { formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
 import type { RecurringInvoice, Customer, Warehouse, Product } from '@/types'
+import DateInput from '@/components/DateInput'
 
 interface RecurringForm {
   template_name: string
@@ -42,6 +43,7 @@ export default function RecurringInvoicesPage() {
   const [form, setForm] = useState<RecurringForm>(BLANK)
   const [lines, setLines] = useState<RecurringLineForm[]>([{ ...BLANK_LINE }])
   const [saving, setSaving] = useState(false)
+  const [generatingId, setGeneratingId] = useState<string | null>(null)
 
   const load = async () => {
     setLoading(true)
@@ -90,6 +92,20 @@ export default function RecurringInvoicesPage() {
       toast.success(r.is_active ? 'Disabled' : 'Enabled')
       load()
     } catch { toast.error('Failed to update') }
+  }
+
+  const handleGenerateNow = async (r: RecurringInvoice) => {
+    setGeneratingId(r.id)
+    try {
+      await recurringApi.generateNow(r.id)
+      toast.success(`Invoice generated from "${r.template_name}"`)
+      load()
+    } catch (err: any) {
+      const msg = err?.response?.data?.error ?? 'Failed to generate invoice'
+      toast.error(typeof msg === 'string' ? msg : 'Failed to generate invoice')
+    } finally {
+      setGeneratingId(null)
+    }
   }
 
   const handleDelete = async (r: RecurringInvoice) => {
@@ -171,9 +187,19 @@ export default function RecurringInvoicesPage() {
                     </button>
                   </td>
                   <td className="px-4 py-3.5">
-                    <button onClick={() => handleDelete(r)} className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors">
-                      <Trash2 size={14} />
-                    </button>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => handleGenerateNow(r)}
+                        disabled={generatingId === r.id}
+                        title="Generate invoice now"
+                        className="p-1.5 text-slate-500 hover:text-brand-400 hover:bg-brand-500/10 rounded-lg transition-colors disabled:opacity-50"
+                      >
+                        {generatingId === r.id ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+                      </button>
+                      <button onClick={() => handleDelete(r)} className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors">
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -223,11 +249,11 @@ export default function RecurringInvoicesPage() {
               </div>
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Next Run Date</label>
-                <input type="date" className="input" value={form.next_run_date} onChange={(e) => setForm({ ...form, next_run_date: e.target.value })} />
+                <DateInput value={form.next_run_date} onChange={(v) => setForm({ ...form, next_run_date: v })} />
               </div>
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">End Date (optional)</label>
-                <input type="date" className="input" value={form.end_date} onChange={(e) => setForm({ ...form, end_date: e.target.value })} />
+                <DateInput value={form.end_date} onChange={(v) => setForm({ ...form, end_date: v })} />
               </div>
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Payment Method</label>
@@ -246,7 +272,11 @@ export default function RecurringInvoicesPage() {
                     <div className="col-span-5">
                       <select className="input py-1.5 text-sm" value={line.product} onChange={(e) => updateLine(i, 'product', e.target.value)}>
                         <option value="">— Product —</option>
-                        {products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                        {products.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}{p.product_type === 'service' ? ' [Service]' : p.product_type === 'digital' ? ' [Digital]' : ''}
+                          </option>
+                        ))}
                       </select>
                     </div>
                     <div className="col-span-3">

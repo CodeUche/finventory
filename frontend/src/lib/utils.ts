@@ -10,9 +10,24 @@ let _activeCurrency = 'NGN'
 export function setActiveCurrency(c: string) { _activeCurrency = c }
 export function getActiveCurrency() { return _activeCurrency }
 
+/** Extract just the currency symbol (e.g. '₦', '$', '£') for the active or given currency. */
+export function getCurrencySymbol(currency?: string): string {
+  const cur = currency ?? _activeCurrency
+  try {
+    // Format 0, then strip digits, commas, spaces, dots — what's left is the symbol
+    const formatted = new Intl.NumberFormat('en', {
+      style: 'currency', currency: cur, minimumFractionDigits: 0, maximumFractionDigits: 0,
+    }).format(0)
+    return formatted.replace(/[\d,.\s]/g, '').trim() || cur
+  } catch {
+    return cur
+  }
+}
+
 export function formatCurrency(value: string | number, currency?: string): string {
   const cur = currency ?? _activeCurrency
   const num = typeof value === 'string' ? parseFloat(value) : value
+  if (isNaN(num)) return `${getCurrencySymbol(cur)}0.00`
   try {
     return new Intl.NumberFormat('en', {
       style: 'currency',
@@ -31,11 +46,15 @@ export function formatNumber(value: string | number): string {
 }
 
 export function formatDate(dateStr: string): string {
-  return new Intl.DateTimeFormat('en-NG', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  }).format(new Date(dateStr))
+  if (!dateStr) return ''
+  // Parse safely — handles both "2025-12-31" and "2025-12-31T..." ISO strings
+  const d = new Date(dateStr)
+  if (isNaN(d.getTime())) return dateStr
+  // Use UTC parts to avoid timezone-offset shifting the date by a day
+  const day = String(d.getUTCDate()).padStart(2, '0')
+  const month = String(d.getUTCMonth() + 1).padStart(2, '0')
+  const year = d.getUTCFullYear()
+  return `${day}/${month}/${year}`
 }
 
 /** Strip commas before sending a formatted amount to the API */

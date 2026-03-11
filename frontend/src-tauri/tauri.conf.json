@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Finventory",
+  "productName": "Audity",
   "version": "0.1.0",
   "identifier": "com.finventory.app",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Finventory",
+        "title": "Audity",
         "width": 1280,
         "height": 820,
         "minWidth": 900,
@@ -22,7 +22,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; font-src 'self' data:; connect-src 'self' http://localhost:8000 http://127.0.0.1:8000 https:; object-src 'none'; frame-src 'none'; base-uri 'self';"
     }
   },
   "bundle": {

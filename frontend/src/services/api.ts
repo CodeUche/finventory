@@ -11,6 +11,7 @@
 import axios, { AxiosError, type InternalAxiosRequestConfig } from 'axios'
 import toast from 'react-hot-toast'
 import { useAuthStore } from '@/store/authStore'
+import { offlineQueue } from '@/lib/offlineQueue'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '/api/v1'
 
@@ -65,6 +66,17 @@ api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
   if (config.data instanceof FormData) {
     delete config.headers['Content-Type']
   }
+
+  // ── Offline queue: if device is offline and this is a mutation, queue it ──
+  const isRetry = (config.headers as Record<string, string>)?.['X-Offline-Retry'] === '1'
+  const isMutation = ['post', 'put', 'patch', 'delete'].includes(config.method?.toLowerCase() ?? '')
+  if (!navigator.onLine && isMutation && !isRetry) {
+    offlineQueue.enqueue({ method: config.method!, url: config.url!, data: config.data })
+    toast('Request queued — will sync when back online', { icon: '📋', id: 'queue-notice', duration: 3000 })
+    // Reject with a network-style error so the component catch block fires
+    return Promise.reject(new AxiosError('Offline — request queued', 'ERR_NETWORK', config))
+  }
+
   return config
 })
 
@@ -157,6 +169,20 @@ export const orgApi = {
   list: () => api.get('/tenancy/organisations/'),
   create: (data: object) => api.post('/tenancy/organisations/', data),
   update: (id: string, data: FormData | object) => api.patch(`/tenancy/organisations/${id}/`, data),
+  getEmailConfig: (id: string) => api.get(`/tenancy/organisations/${id}/email_config/`),
+  saveEmailConfig: (id: string, data: object) => api.patch(`/tenancy/organisations/${id}/email_config/`, data),
+  myMembership: (orgId: string) => api.get(`/tenancy/organisations/${orgId}/my_membership/`),
+  invite: (orgId: string, data: object) => api.post(`/tenancy/organisations/${orgId}/invite/`, data),
+  createSubaccount: (orgId: string, data: object) => api.post(`/tenancy/organisations/${orgId}/create_subaccount/`, data),
+  resolveBankAccount: (accountNumber: string, bankCode: string) =>
+    api.get('/tenancy/organisations/resolve_bank_account/', { params: { account_number: accountNumber, bank_code: bankCode } }),
+}
+
+export const teamApi = {
+  members: () => api.get('/tenancy/memberships/'),
+  updateMember: (id: string, data: object) => api.patch(`/tenancy/memberships/${id}/`, data),
+  setPermissions: (id: string, permissions: { module: string; access_level: string }[]) =>
+    api.post(`/tenancy/memberships/${id}/set_permissions/`, { permissions }),
 }
 
 export const inventoryApi = {
@@ -174,6 +200,7 @@ export const inventoryApi = {
   deleteWarehouse: (id: string) => api.delete(`/inventory/warehouses/${id}/`),
   adjustStock: (data: object) => api.post('/inventory/movements/adjust/', data),
   batches: (params?: object) => api.get('/inventory/batches/', { params }),
+  createBatch: (data: object) => api.post('/inventory/batches/', data),
 }
 
 export const salesApi = {
@@ -182,6 +209,15 @@ export const salesApi = {
   create: (data: object) => api.post('/sales/invoices/', data),
   pay: (id: string, data: object) => api.post(`/sales/invoices/${id}/pay/`, data),
   void: (id: string) => api.post(`/sales/invoices/${id}/void/`),
+  processReturn: (invoiceId: string, data: object) =>
+    api.post(`/sales/invoices/${invoiceId}/process_return/`, data),
+  listReturns: (params?: object) => api.get('/sales/returns/', { params }),
+  sendEmail: (invoiceId: string, data: object) =>
+    api.post(`/sales/invoices/${invoiceId}/send_email/`, data),
+  confirmProforma: (invoiceId: string) =>
+    api.post(`/sales/invoices/${invoiceId}/confirm_proforma/`),
+  productHistory: (productId: string) =>
+    api.get('/sales/invoices/product_history/', { params: { product_id: productId } }),
 }
 
 export const customerApi = {
@@ -189,6 +225,8 @@ export const customerApi = {
   get: (id: string) => api.get(`/customers/${id}/`),
   create: (data: object) => api.post('/customers/', data),
   update: (id: string, data: object) => api.patch(`/customers/${id}/`, data),
+  delete: (id: string) => api.delete(`/customers/${id}/`),
+  statement: (id: string, params?: object) => api.get(`/customers/${id}/statement/`, { params }),
 }
 
 export const expenseApi = {
@@ -196,6 +234,12 @@ export const expenseApi = {
   create: (data: object) => api.post('/expenses/', data),
   update: (id: string, data: object) => api.patch(`/expenses/${id}/`, data),
   categories: () => api.get('/expenses/categories/'),
+  // Folders / groups
+  groups: (params?: object) => api.get('/expenses/groups/', { params }),
+  createGroup: (data: object) => api.post('/expenses/groups/', data),
+  updateGroup: (id: string, data: object) => api.patch(`/expenses/groups/${id}/`, data),
+  deleteGroup: (id: string) => api.delete(`/expenses/groups/${id}/`),
+  groupContents: (id: string) => api.get(`/expenses/groups/${id}/contents/`),
 }
 
 export const creditApi = {
@@ -214,6 +258,7 @@ export const supplierApi = {
   list: (params?: object) => api.get('/suppliers/', { params }),
   create: (data: object) => api.post('/suppliers/', data),
   update: (id: string, data: object) => api.patch(`/suppliers/${id}/`, data),
+  delete: (id: string) => api.delete(`/suppliers/${id}/`),
 }
 
 export const reportApi = {
@@ -224,6 +269,8 @@ export const reportApi = {
   inventory: () => api.get('/reports/inventory/'),
   cashFlow: (params: object) => api.get('/reports/cash-flow/', { params }),
   expenses: (params: object) => api.get('/reports/expenses/', { params }),
+  arAging: (params?: object) => api.get('/reports/ar-aging/', { params }),
+  vatSummary: (params: object) => api.get('/reports/vat-summary/', { params }),
 }
 
 export const taxApi = {
@@ -260,6 +307,19 @@ export const billApi = {
   approve: (id: string) => api.post(`/bills/${id}/approve/`),
   pay: (id: string, data: object) => api.post(`/bills/${id}/pay/`, data),
   void: (id: string) => api.post(`/bills/${id}/void/`),
+  folders: (params?: object) => api.get('/bills/folders/', { params }),
+  createFolder: (data: object) => api.post('/bills/folders/', data),
+  updateFolder: (id: string, data: object) => api.patch(`/bills/folders/${id}/`, data),
+  deleteFolder: (id: string) => api.delete(`/bills/folders/${id}/`),
+  folderContents: (id: string) => api.get(`/bills/folders/${id}/contents/`),
+}
+
+export const invoiceFolderApi = {
+  list: (params?: object) => api.get('/sales/folders/', { params }),
+  create: (data: object) => api.post('/sales/folders/', data),
+  update: (id: string, data: object) => api.patch(`/sales/folders/${id}/`, data),
+  delete: (id: string) => api.delete(`/sales/folders/${id}/`),
+  contents: (id: string) => api.get(`/sales/folders/${id}/contents/`),
 }
 
 export const accountingApi = {
@@ -268,7 +328,7 @@ export const accountingApi = {
   updateAccount: (id: string, data: object) => api.patch(`/accounting/accounts/${id}/`, data),
   deleteAccount: (id: string) => api.delete(`/accounting/accounts/${id}/`),
   trialBalance: () => api.get('/accounting/accounts/trial_balance/'),
-  balanceSheet: () => api.get('/accounting/accounts/balance_sheet/'),
+  balanceSheet: (params?: object) => api.get('/accounting/accounts/balance_sheet/', { params }),
   seedCoa: () => api.post('/accounting/accounts/seed/'),
   journal: (params?: object) => api.get('/accounting/journal/', { params }),
   createJournalEntry: (data: object) => api.post('/accounting/journal/', data),
@@ -277,6 +337,17 @@ export const accountingApi = {
   createAsset: (data: object) => api.post('/accounting/assets/', data),
   updateAsset: (id: string, data: object) => api.patch(`/accounting/assets/${id}/`, data),
   runDepreciation: (data: object) => api.post('/accounting/assets/run_depreciation/', data),
+  // Financial Periods
+  periods: () => api.get('/accounting/periods/'),
+  createPeriod: (data: object) => api.post('/accounting/periods/', data),
+  lockPeriod: (id: string) => api.post(`/accounting/periods/${id}/lock/`),
+  unlockPeriod: (id: string) => api.post(`/accounting/periods/${id}/unlock/`),
+  // Bank Reconciliation
+  reconciliations: () => api.get('/accounting/reconciliations/'),
+  createReconciliation: (data: object) => api.post('/accounting/reconciliations/', data),
+  markReconciled: (id: string) => api.post(`/accounting/reconciliations/${id}/mark_reconciled/`),
+  addReconLine: (id: string, data: object) => api.post(`/accounting/reconciliations/${id}/add_line/`, data),
+  updateReconLine: (id: string, data: object) => api.patch(`/accounting/reconciliations/${id}/update_line/`, data),
 }
 
 export const payrollApi = {
@@ -287,6 +358,7 @@ export const payrollApi = {
   runPayroll: (data: object) => api.post('/payroll/runs/', data),
   approvePayroll: (id: string) => api.post(`/payroll/runs/${id}/approve/`),
   markPaid: (id: string, data: object) => api.post(`/payroll/runs/${id}/mark_paid/`, data),
+  initiateTransfers: (id: string) => api.post(`/payroll/runs/${id}/initiate_transfers/`),
   resolveAccount: (account_number: string, bank_code: string) =>
     api.post('/payroll/employees/resolve_account/', { account_number, bank_code }),
 }
@@ -304,6 +376,7 @@ export const recurringApi = {
   create: (data: object) => api.post('/sales/recurring/', data),
   update: (id: string, data: object) => api.patch(`/sales/recurring/${id}/`, data),
   delete: (id: string) => api.delete(`/sales/recurring/${id}/`),
+  generateNow: (id: string) => api.post(`/sales/recurring/${id}/generate_now/`),
 }
 
 export const paymentGatewayApi = {

@@ -104,3 +104,26 @@ class CashFlowView(BaseDateRangeView):
         date_from, date_to = self.get_date_range(request)
         data = ReportService.cash_flow(request.organisation, date_from, date_to)
         return Response(data)
+
+
+class ARAgingView(BaseDateRangeView):
+    """GET /api/v1/reports/ar-aging/ — Accounts receivable aging buckets."""
+
+    def get(self, request):
+        from datetime import date, datetime
+        as_of_str = request.query_params.get('as_of')
+        try:
+            as_of = datetime.strptime(as_of_str, '%Y-%m-%d').date() if as_of_str else date.today()
+        except ValueError:
+            as_of = date.today()
+        data = ReportService.ar_aging(request.organisation, as_of)
+        return Response(data)
+
+
+class VATSummaryView(BaseDateRangeView):
+    """GET /api/v1/reports/vat-summary/ — VAT output vs input summary."""
+
+    def get(self, request):
+        date_from, date_to = self.get_date_range(request)
+        data = ReportService.vat_summary(request.organisation, date_from, date_to)
+        return Response(data)

@@ -19,8 +19,11 @@ class Employee(TenantAwareModel):
     termination_date = models.DateField(null=True, blank=True)
     # Banking
     bank_name = models.CharField(max_length=200, blank=True)
+    bank_code = models.CharField(max_length=20, blank=True, help_text="Paystack bank code (3-6 digit)")
     account_number = models.CharField(max_length=20, blank=True)
     account_name = models.CharField(max_length=200, blank=True)
+    paystack_recipient_code = models.CharField(max_length=100, blank=True,
+        help_text="Cached Paystack transfer recipient code (auto-populated on first transfer)")
     # Nigerian statutory
     pfa_name = models.CharField(max_length=200, blank=True)  # Pension Fund Administrator
     pfa_number = models.CharField(max_length=50, blank=True)
@@ -71,6 +74,8 @@ class PayrollRun(TenantAwareModel):
     processed_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name='payroll_runs_processed')
     approved_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='payroll_runs_approved')
     payment_date = models.DateField(null=True, blank=True)
+    transfer_reference = models.CharField(max_length=200, blank=True,
+        help_text="Paystack bulk transfer batch_transfer_code or reference")
 
     class Meta:
         ordering = ['-period_year', '-period_month']

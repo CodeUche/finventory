@@ -65,13 +65,39 @@ class ProductViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     @action(detail=False, methods=["get"])
     def low_stock(self, request):
         """GET /api/v1/inventory/products/low-stock/"""
-        items = InventoryService.get_low_stock_products(request.organisation)
-        return Response(StockItemSerializer(items, many=True).data)
+        org = self._get_organisation()
+        items = InventoryService.get_low_stock_products(org)
+        data = list(StockItemSerializer(items, many=True).data)
+
+        # Also surface products that have never had any stock movement (quantity = 0)
+        # but have a non-zero reorder level — they are effectively out of stock.
+        product_ids_with_stock = StockItem.objects.filter(
+            organisation=org
+        ).values_list("product_id", flat=True)
+        no_movement_products = Product.objects.filter(
+            organisation=org,
+            reorder_level__gt=0,
+            is_active=True,
+        ).exclude(id__in=product_ids_with_stock)
+        for p in no_movement_products:
+            data.append({
+                "id": None,
+                "product": str(p.id),
+                "product_name": p.name,
+                "product_sku": p.sku,
+                "warehouse": None,
+                "warehouse_name": "No stock received",
+                "quantity_on_hand": "0.00",
+                "quantity_reserved": "0.00",
+                "quantity_available": "0.00",
+                "is_low_stock": True,
+            })
+        return Response(data)
 
     @action(detail=False, methods=["get"])
     def valuation(self, request):
         """GET /api/v1/inventory/products/valuation/ — Inventory value report."""
-        items = InventoryService.get_stock_valuation(request.organisation)
+        items = InventoryService.get_stock_valuation(self._get_organisation())
         data = [
             {
                 "product": i.product.name,

@@ -7,12 +7,12 @@ import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from '@/lib/categories'
 import type { Budget, BudgetLine } from '@/types'
 
 interface BudgetForm { name: string; fiscal_year: string; period_type: string; notes: string }
-interface LineForm { category_name: string; custom_name: string; category_type: string; period_month: string; budgeted_amount: string }
+interface LineForm { category_name: string; custom_name: string; category_type: string; period_month: string; budgeted_amount: string; unit_price: string; quantity: string; description: string }
 
 const now = new Date()
 const CURRENT_YEAR = now.getFullYear()
 const BLANK_BUDGET: BudgetForm = { name: '', fiscal_year: String(CURRENT_YEAR), period_type: 'monthly', notes: '' }
-const BLANK_LINE: LineForm = { category_name: '', custom_name: '', category_type: 'expense', period_month: '', budgeted_amount: '' }
+const BLANK_LINE: LineForm = { category_name: '', custom_name: '', category_type: 'expense', period_month: '', budgeted_amount: '', unit_price: '', quantity: '1', description: '' }
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const STATUS_BADGE: Record<string, string> = { draft: 'badge-slate', active: 'badge-green', closed: 'badge-red' }
@@ -97,6 +97,9 @@ export default function BudgetPage() {
         category_type: lineForm.category_type,
         period_month: lineForm.period_month ? parseInt(lineForm.period_month) : null,
         budgeted_amount: parseFloat(stripCommas(lineForm.budgeted_amount)),
+        ...(lineForm.unit_price ? { unit_price: parseFloat(stripCommas(lineForm.unit_price)) } : {}),
+        quantity: parseFloat(lineForm.quantity) || 1,
+        description: lineForm.description,
       })
       toast.success('Budget line added')
       setAddLineBudgetId(null)
@@ -285,6 +288,8 @@ export default function BudgetPage() {
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Period Type</label>
                 <select className="input" value={budgetForm.period_type} onChange={(e) => setBudgetForm({ ...budgetForm, period_type: e.target.value })}>
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
                   <option value="monthly">Monthly</option>
                   <option value="quarterly">Quarterly</option>
                   <option value="annual">Annual</option>
@@ -352,8 +357,40 @@ export default function BudgetPage() {
                   />
                 </div>
               )}
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Unit Price</label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  className="input"
+                  placeholder="e.g. 5,000"
+                  value={lineForm.unit_price}
+                  onChange={(e) => {
+                    const up = formatAmountInput(e.target.value)
+                    const qty = parseFloat(lineForm.quantity) || 1
+                    const total = parseFloat(stripCommas(up)) * qty
+                    setLineForm({ ...lineForm, unit_price: up, budgeted_amount: total > 0 ? formatAmountInput(String(total)) : lineForm.budgeted_amount })
+                  }}
+                />
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Quantity</label>
+                <input
+                  type="number"
+                  min="1"
+                  className="input"
+                  placeholder="1"
+                  value={lineForm.quantity}
+                  onChange={(e) => {
+                    const qty = parseFloat(e.target.value) || 1
+                    const up = parseFloat(stripCommas(lineForm.unit_price)) || 0
+                    const total = up * qty
+                    setLineForm({ ...lineForm, quantity: e.target.value, budgeted_amount: total > 0 ? formatAmountInput(String(total)) : lineForm.budgeted_amount })
+                  }}
+                />
+              </div>
               <div className="col-span-2">
-                <label className="text-xs text-slate-400 mb-1 block">Budgeted Amount (₦) *</label>
+                <label className="text-xs text-slate-400 mb-1 block">Budgeted Amount *</label>
                 <input
                   type="text"
                   inputMode="decimal"
@@ -361,6 +398,20 @@ export default function BudgetPage() {
                   placeholder="e.g. 500,000"
                   value={lineForm.budgeted_amount}
                   onChange={(e) => setLineForm({ ...lineForm, budgeted_amount: formatAmountInput(e.target.value) })}
+                />
+                {lineForm.unit_price && lineForm.quantity && (
+                  <p className="text-xs text-slate-500 mt-1">
+                    {formatAmountInput(lineForm.unit_price)} × {lineForm.quantity} = calculated above
+                  </p>
+                )}
+              </div>
+              <div className="col-span-2">
+                <label className="text-xs text-slate-400 mb-1 block">Description <span className="text-slate-600 font-normal">(optional)</span></label>
+                <input
+                  className="input"
+                  placeholder="Brief note about this budget line"
+                  value={lineForm.description}
+                  onChange={(e) => setLineForm({ ...lineForm, description: e.target.value })}
                 />
               </div>
             </div>

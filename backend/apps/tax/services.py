@@ -20,16 +20,17 @@ logger = logging.getLogger(__name__)
 class TaxService:
 
     @staticmethod
-    def calculate_income_tax(organisation, income: Decimal, tax_year: int = None, allowances: Decimal = None) -> dict:
+    def calculate_income_tax(organisation, income: Decimal, tax_year: int = None, allowances: Decimal = None, tax_type: str = None) -> dict:
         """
         Calculate income tax for the organisation using the active tax config.
 
         Returns a full breakdown suitable for tax return generation.
         """
         year = tax_year or timezone.now().year
+        allowed_types = [tax_type] if tax_type in ['income', 'corporate'] else [TaxConfig.TaxType.INCOME, TaxConfig.TaxType.CORPORATE]
         config = TaxConfig.objects.filter(
             organisation=organisation,
-            tax_type__in=[TaxConfig.TaxType.INCOME, TaxConfig.TaxType.CORPORATE],
+            tax_type__in=allowed_types,
             tax_year=year,
             is_active=True,
         ).first()

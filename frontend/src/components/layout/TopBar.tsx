@@ -1,8 +1,10 @@
-import { Menu, Search } from 'lucide-react'
+import { Menu, Search, X, Package, Receipt, Users } from 'lucide-react'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { useAuthStore } from '@/store/authStore'
-import { orgApi } from '@/services/api'
-import { setActiveCurrency } from '@/lib/utils'
+import { orgApi, inventoryApi, salesApi, customerApi } from '@/services/api'
+import { setActiveCurrency, formatCurrency } from '@/lib/utils'
 import NotificationBell from '@/components/NotificationBell'
 
 const CURRENCIES = [
@@ -10,12 +12,28 @@ const CURRENCIES = [
   'EGP', 'MAD', 'TZS', 'UGX', 'RWF', 'ZMW', 'BWP',
 ]
 
+interface SearchResult {
+  type: 'product' | 'invoice' | 'customer'
+  id: string
+  primary: string
+  secondary: string
+  href: string
+}
+
 interface TopBarProps {
   onMenuClick: () => void
 }
 
 export default function TopBar({ onMenuClick }: TopBarProps) {
   const { organisation, updateOrganisation } = useAuthStore()
+  const navigate = useNavigate()
+  const [query, setQuery] = useState('')
+  const [results, setResults] = useState<SearchResult[]>([])
+  const [searching, setSearching] = useState(false)
+  const [showDrop, setShowDrop] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const dropRef = useRef<HTMLDivElement>(null)
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const handleCurrencyChange = async (newCurrency: string) => {
     if (!organisation || newCurrency === organisation.currency) return
@@ -29,6 +47,110 @@ export default function TopBar({ onMenuClick }: TopBarProps) {
     }
   }
 
+  const runSearch = useCallback(async (q: string) => {
+    if (!q.trim()) { setResults([]); return }
+    setSearching(true)
+    try {
+      const [prodRes, invRes, custRes] = await Promise.allSettled([
+        inventoryApi.products({ search: q, page_size: 5 }),
+        salesApi.invoices({ search: q, page_size: 5 }),
+        customerApi.list({ search: q, page_size: 5 }),
+      ])
+
+      const out: SearchResult[] = []
+
+      if (prodRes.status === 'fulfilled') {
+        const items = prodRes.value.data.results ?? prodRes.value.data
+        items.slice(0, 4).forEach((p: any) => out.push({
+          type: 'product',
+          id: p.id,
+          primary: p.name,
+          secondary: `SKU: ${p.sku}`,
+          href: '/inventory/products',
+        }))
+      }
+
+      if (invRes.status === 'fulfilled') {
+        const items = invRes.value.data.results ?? invRes.value.data
+        items.slice(0, 4).forEach((inv: any) => out.push({
+          type: 'invoice',
+          id: inv.id,
+          primary: inv.invoice_number,
+          secondary: `${inv.customer_name ?? 'Walk-in'} · ${formatCurrency(inv.total_amount)}`,
+          href: '/sales',
+        }))
+      }
+
+      if (custRes.status === 'fulfilled') {
+        const items = custRes.value.data.results ?? custRes.value.data
+        items.slice(0, 4).forEach((c: any) => out.push({
+          type: 'customer',
+          id: c.id,
+          primary: c.name,
+          secondary: c.email ?? c.phone ?? '',
+          href: '/customers',
+        }))
+      }
+
+      setResults(out)
+      setShowDrop(true)
+    } catch {
+      // silently fail
+    } finally {
+      setSearching(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (timerRef.current) clearTimeout(timerRef.current)
+    if (!query.trim()) {
+      setResults([])
+      setShowDrop(false)
+      return
+    }
+    timerRef.current = setTimeout(() => runSearch(query), 350)
+    return () => { if (timerRef.current) clearTimeout(timerRef.current) }
+  }, [query, runSearch])
+
+  // Close on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (
+        dropRef.current && !dropRef.current.contains(e.target as Node) &&
+        inputRef.current && !inputRef.current.contains(e.target as Node)
+      ) {
+        setShowDrop(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  const handleSelect = (r: SearchResult) => {
+    setQuery('')
+    setShowDrop(false)
+    navigate(r.href)
+  }
+
+  const clearSearch = () => {
+    setQuery('')
+    setResults([])
+    setShowDrop(false)
+    inputRef.current?.focus()
+  }
+
+  const iconFor = (type: SearchResult['type']) => {
+    if (type === 'product') return <Package size={13} className="text-brand-400" />
+    if (type === 'invoice') return <Receipt size={13} className="text-emerald-400" />
+    return <Users size={13} className="text-purple-400" />
+  }
+
+  const labelFor = (type: SearchResult['type']) => {
+    if (type === 'product') return 'Product'
+    if (type === 'invoice') return 'Invoice'
+    return 'Customer'
+  }
+
   return (
     <header className="h-16 flex items-center gap-4 px-4 lg:px-6 border-b border-surface-700 bg-surface-900/50 backdrop-blur-sm shrink-0">
       <button onClick={onMenuClick} className="btn-ghost lg:hidden p-2">
@@ -36,15 +158,57 @@ export default function TopBar({ onMenuClick }: TopBarProps) {
       </button>
 
       {/* Search bar */}
-      <div className="flex-1 max-w-md">
+      <div className="flex-1 max-w-md relative">
         <div className="relative">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
           <input
+            ref={inputRef}
             type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onFocus={() => { if (results.length > 0) setShowDrop(true) }}
             placeholder="Search products, invoices, customers..."
-            className="w-full bg-surface-800 border border-surface-700 rounded-xl pl-9 pr-4 py-2 text-sm text-slate-300 placeholder:text-slate-500 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500/30 transition-all"
+            className="w-full bg-surface-800 border border-surface-700 rounded-xl pl-9 pr-8 py-2 text-sm text-slate-300 placeholder:text-slate-500 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500/30 transition-all"
           />
+          {query && (
+            <button onClick={clearSearch} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors">
+              <X size={14} />
+            </button>
+          )}
         </div>
+
+        {/* Search dropdown */}
+        {showDrop && (
+          <div ref={dropRef} className="absolute top-full left-0 right-0 mt-2 bg-surface-800 border border-surface-700 rounded-xl shadow-2xl z-50 overflow-hidden">
+            {searching ? (
+              <div className="px-4 py-3 text-xs text-slate-500">Searching…</div>
+            ) : results.length === 0 ? (
+              <div className="px-4 py-3 text-xs text-slate-500">No results for "{query}"</div>
+            ) : (
+              <ul>
+                {results.map((r) => (
+                  <li key={`${r.type}-${r.id}`}>
+                    <button
+                      onClick={() => handleSelect(r)}
+                      className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-surface-700/60 transition-colors text-left"
+                    >
+                      <div className="w-6 h-6 rounded-md bg-surface-700 flex items-center justify-center shrink-0">
+                        {iconFor(r.type)}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm text-white truncate">{r.primary}</p>
+                        <p className="text-xs text-slate-500 truncate">{r.secondary}</p>
+                      </div>
+                      <span className="text-[10px] text-slate-600 font-medium uppercase tracking-wider shrink-0">
+                        {labelFor(r.type)}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="flex items-center gap-3 ml-auto">

@@ -237,7 +237,7 @@ export default function CreditsPage() {
                 </select>
               </div>
               <div>
-                <label className="label">Amount (₦) *</label>
+                <label className="label">Amount *</label>
                 <input type="text" inputMode="decimal" className="input" placeholder="0.00"
                   value={payForm.amount} onChange={(e) => setPayForm({ ...payForm, amount: formatAmountInput(e.target.value) })} />
               </div>

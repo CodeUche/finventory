@@ -4,6 +4,7 @@ import toast from 'react-hot-toast'
 import { accountingApi } from '@/services/api'
 import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
 import type { JournalEntry, Account } from '@/types'
+import DateInput from '@/components/DateInput'
 
 interface JournalLineForm {
   account: string
@@ -205,7 +206,7 @@ export default function JournalPage() {
               </div>
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Entry Date</label>
-                <input type="date" className="input" value={form.entry_date} onChange={(e) => setForm({ ...form, entry_date: e.target.value })} />
+                <DateInput value={form.entry_date} onChange={(v) => setForm({ ...form, entry_date: v })} />
               </div>
             </div>
 

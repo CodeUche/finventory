@@ -1,9 +1,21 @@
 import { useEffect, useState } from 'react'
-import { ChevronDown, ChevronUp, Banknote, Loader2, ExternalLink } from 'lucide-react'
+import { ChevronDown, ChevronUp, Banknote, Loader2, ExternalLink, Send, CheckCircle, XCircle, AlertTriangle } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { payrollApi } from '@/services/api'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import type { PayrollRun } from '@/types'
+import DateInput from '@/components/DateInput'
+
+interface TransferResult {
+  employee: string
+  name: string
+  status: 'queued' | 'initiated' | 'skipped' | 'failed'
+  account?: string
+  bank?: string
+  amount?: number
+  reason?: string
+  transfer_code?: string
+}
 
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -26,6 +38,8 @@ export default function PayrollPage() {
 
   const [markPayId, setMarkPayId] = useState<string | null>(null)
   const [paymentDate, setPaymentDate] = useState(now.toISOString().split('T')[0])
+  const [initiatingTransfer, setInitiatingTransfer] = useState(false)
+  const [transferResults, setTransferResults] = useState<TransferResult[] | null>(null)
 
   const load = async () => {
     setLoading(true)
@@ -61,8 +75,32 @@ export default function PayrollPage() {
       await payrollApi.markPaid(markPayId, { payment_date: paymentDate })
       toast.success('Payroll marked as paid')
       setMarkPayId(null)
+      setTransferResults(null)
       load()
     } catch { toast.error('Failed to mark payroll as paid') }
+  }
+
+  const handleInitiateTransfers = async () => {
+    if (!markPayId) return
+    setInitiatingTransfer(true)
+    setTransferResults(null)
+    try {
+      const { data } = await payrollApi.initiateTransfers(markPayId)
+      setTransferResults(data.results ?? [])
+      if (data.success) {
+        toast.success(data.message ?? 'Transfers initiated')
+        // Auto-mark as paid after successful transfer initiation
+        await payrollApi.markPaid(markPayId, { payment_date: paymentDate })
+        load()
+      } else {
+        toast.error(data.error ?? data.message ?? 'Transfer failed')
+      }
+    } catch (err: any) {
+      const msg = err?.response?.data?.error ?? err?.response?.data?.message ?? 'Transfer initiation failed'
+      toast.error(msg)
+    } finally {
+      setInitiatingTransfer(false)
+    }
   }
 
   // Latest run for summary cards
@@ -112,7 +150,7 @@ export default function PayrollPage() {
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {[
-              { label: 'FIRS PAYE Tax', amount: latestRun.total_paye, color: 'text-red-400', note: 'Remit to FIRS by 10th of following month', link: 'https://www.firs.gov.ng' },
+              { label: 'FIRS PAYE Tax', amount: latestRun.total_paye, color: 'text-red-400', note: 'Remit to FIRS by 10th of following month', link: 'https://ivas.firs.gov.ng/' },
               { label: 'Pension (Employee 8%)', amount: latestRun.total_pension_employee, color: 'text-orange-400', note: 'Remit to PFA within 7 days of payment' },
               { label: 'Pension (Employer 10%)', amount: latestRun.total_pension_employer, color: 'text-yellow-400', note: 'Employer contribution to PFA' },
               { label: 'NHF (2.5%)', amount: latestRun.total_nhf, color: 'text-blue-400', note: 'Remit to Federal Mortgage Bank' },
@@ -226,19 +264,111 @@ export default function PayrollPage() {
         </div>
       </div>
 
-      {/* Mark Paid Modal */}
+      {/* Mark Paid / Transfer Modal */}
       {markPayId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setMarkPayId(null)} />
-          <div className="relative card w-full max-w-sm p-6 space-y-5">
-            <h2 className="text-lg font-bold text-white">Mark Payroll as Paid</h2>
-            <div>
-              <label className="text-xs text-slate-400 mb-1 block">Payment Date</label>
-              <input type="date" className="input" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} />
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => { setMarkPayId(null); setTransferResults(null) }} />
+          <div className="relative bg-surface-800 border border-surface-700 rounded-2xl w-full max-w-lg shadow-2xl max-h-[90vh] flex flex-col">
+            <div className="p-6 border-b border-surface-700">
+              <h2 className="text-lg font-bold text-white">Pay Employees</h2>
+              <p className="text-xs text-slate-400 mt-0.5">
+                {runs.find(r => r.id === markPayId)?.run_number} —{' '}
+                {formatCurrency(runs.find(r => r.id === markPayId)?.total_net ?? 0)} net
+              </p>
             </div>
-            <div className="flex gap-3">
-              <button className="flex-1 py-2.5 rounded-xl border border-surface-600 text-slate-400 hover:text-white hover:border-surface-500 transition-colors text-sm" onClick={() => setMarkPayId(null)}>Cancel</button>
-              <button className="btn-primary flex-1 py-2.5 justify-center" onClick={handleMarkPaid}>Confirm</button>
+
+            <div className="p-6 space-y-5 overflow-y-auto flex-1">
+              {/* Payment date */}
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Payment Date</label>
+                <DateInput value={paymentDate} onChange={setPaymentDate} />
+              </div>
+
+              {/* Payslip preview — employees and bank details */}
+              {(() => {
+                const run = runs.find(r => r.id === markPayId)
+                if (!run) return null
+                return (
+                  <div>
+                    <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                      {run.payslips.length} Employee{run.payslips.length !== 1 ? 's' : ''}
+                    </p>
+                    <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                      {run.payslips.map((p) => {
+                        const hasBankDetails = (p as any).employee_account_number && (p as any).employee_bank_code
+                        const result = transferResults?.find(r => r.employee === (p as any).employee_id_str)
+                        return (
+                          <div key={p.id} className={`flex items-center justify-between px-3 py-2 rounded-lg border text-xs ${hasBankDetails ? 'border-surface-600 bg-surface-700/30' : 'border-amber-500/20 bg-amber-500/5'}`}>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-white font-medium truncate">{p.employee_name}</p>
+                              {hasBankDetails ? (
+                                <p className="text-slate-500">{(p as any).employee_bank_name} · {(p as any).employee_account_number}</p>
+                              ) : (
+                                <p className="text-amber-500 flex items-center gap-1"><AlertTriangle size={10} /> No bank details</p>
+                              )}
+                            </div>
+                            <div className="text-right ml-3 shrink-0">
+                              <p className="font-mono text-emerald-400 font-semibold">{formatCurrency(p.net_salary)}</p>
+                              {result && (
+                                <p className={`text-[10px] mt-0.5 flex items-center gap-1 justify-end ${result.status === 'initiated' ? 'text-emerald-400' : result.status === 'skipped' || result.status === 'failed' ? 'text-red-400' : 'text-slate-400'}`}>
+                                  {result.status === 'initiated' ? <CheckCircle size={10} /> : result.status === 'skipped' || result.status === 'failed' ? <XCircle size={10} /> : null}
+                                  {result.status}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )
+              })()}
+
+              {/* Transfer results summary */}
+              {transferResults && (
+                <div className={`rounded-xl p-4 text-sm border ${transferResults.some(r => r.status === 'initiated') ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
+                  <p className="font-semibold text-white mb-1">Transfer Results</p>
+                  <p className="text-slate-300 text-xs">
+                    Initiated: {transferResults.filter(r => r.status === 'initiated').length} ·{' '}
+                    Skipped: {transferResults.filter(r => r.status === 'skipped').length} ·{' '}
+                    Failed: {transferResults.filter(r => r.status === 'failed').length}
+                  </p>
+                  {transferResults.filter(r => r.status === 'skipped' || r.status === 'failed').map((r, i) => (
+                    <p key={i} className="text-amber-400 text-xs mt-1">{r.name}: {r.reason}</p>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="p-6 border-t border-surface-700 space-y-2">
+              {/* Paystack transfer button */}
+              {!transferResults?.some(r => r.status === 'initiated') && (
+                <button
+                  onClick={handleInitiateTransfers}
+                  disabled={initiatingTransfer}
+                  className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-brand-500 hover:bg-brand-600 text-white font-semibold text-sm transition-colors disabled:opacity-50"
+                >
+                  {initiatingTransfer ? <Loader2 size={16} className="animate-spin" /> : <Send size={15} />}
+                  {initiatingTransfer ? 'Initiating transfers…' : 'Pay via Paystack (Bulk Transfer)'}
+                </button>
+              )}
+              <div className="flex gap-2">
+                <button
+                  className="flex-1 py-2.5 rounded-xl border border-surface-600 text-slate-400 hover:text-white hover:border-surface-500 transition-colors text-sm"
+                  onClick={() => { setMarkPayId(null); setTransferResults(null) }}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="flex-1 py-2.5 rounded-xl border border-slate-600 text-slate-300 hover:bg-surface-700 transition-colors text-sm"
+                  onClick={handleMarkPaid}
+                >
+                  Mark as Paid (Manual)
+                </button>
+              </div>
+              <p className="text-center text-[10px] text-slate-600">
+                Paystack transfers require sufficient balance and a verified business account.
+              </p>
             </div>
           </div>
         </div>

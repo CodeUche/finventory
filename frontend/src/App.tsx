@@ -18,10 +18,12 @@ import ExpensesPage from '@/pages/expenses/ExpensesPage'
 import CreditsPage from '@/pages/CreditsPage'
 import PurchasesPage from '@/pages/PurchasesPage'
 import BillsPage from '@/pages/BillsPage'
+import BillFoldersPage from '@/pages/bills/BillFoldersPage'
 import SuppliersPage from '@/pages/SuppliersPage'
 import ChartOfAccountsPage from '@/pages/accounting/ChartOfAccountsPage'
 import JournalPage from '@/pages/accounting/JournalPage'
 import AssetsPage from '@/pages/accounting/AssetsPage'
+import BankReconciliationPage from '@/pages/accounting/BankReconciliationPage'
 import EmployeesPage from '@/pages/payroll/EmployeesPage'
 import PayrollPage from '@/pages/payroll/PayrollPage'
 import BudgetPage from '@/pages/BudgetPage'
@@ -79,6 +81,7 @@ export default function App() {
         {/* Procurement */}
         <Route path="purchases" element={<PurchasesPage />} />
         <Route path="bills" element={<BillsPage />} />
+        <Route path="bills/folders" element={<BillFoldersPage />} />
         <Route path="suppliers" element={<SuppliersPage />} />
 
         {/* CRM */}
@@ -89,6 +92,7 @@ export default function App() {
         <Route path="accounting/coa" element={<ChartOfAccountsPage />} />
         <Route path="accounting/journal" element={<JournalPage />} />
         <Route path="accounting/assets" element={<AssetsPage />} />
+        <Route path="accounting/reconciliation" element={<BankReconciliationPage />} />
 
         {/* Payroll */}
         <Route path="payroll/employees" element={<EmployeesPage />} />

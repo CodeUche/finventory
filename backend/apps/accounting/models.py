@@ -143,6 +143,10 @@ class FixedAsset(TenantAwareModel):
     def net_book_value(self):
         return self.purchase_cost - self.accumulated_depreciation
 
+    @property
+    def ordered_entries(self):
+        return self.depreciation_entries.order_by('period_year', 'period_month')
+
 
 class DepreciationEntry(TenantAwareModel):
     asset = models.ForeignKey(FixedAsset, on_delete=models.CASCADE, related_name='depreciation_entries')
@@ -155,3 +159,61 @@ class DepreciationEntry(TenantAwareModel):
     class Meta:
         ordering = ['period_year', 'period_month']
         unique_together = [('asset', 'period_year', 'period_month')]
+
+
+class FinancialPeriod(TenantAwareModel):
+    """A financial month that can be locked to prevent back-dated postings."""
+    year = models.PositiveIntegerField()
+    month = models.PositiveIntegerField()
+    is_locked = models.BooleanField(default=False)
+    locked_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name='locked_periods'
+    )
+    locked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-year', '-month']
+        unique_together = [('organisation', 'year', 'month')]
+
+    def __str__(self):
+        return f"{self.year}-{self.month:02d} ({'locked' if self.is_locked else 'open'})"
+
+
+class BankReconciliation(TenantAwareModel):
+    """A bank reconciliation for a specific account and period."""
+    account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name='reconciliations')
+    period_start = models.DateField()
+    period_end = models.DateField()
+    statement_closing_balance = MoneyField()
+    book_balance = MoneyField(default=0)
+    is_reconciled = models.BooleanField(default=False)
+    reconciled_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name='reconciliations_done'
+    )
+    reconciled_at = models.DateTimeField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ['-period_end']
+        unique_together = [('organisation', 'account', 'period_start', 'period_end')]
+
+    def __str__(self):
+        return f"Recon {self.account.code} {self.period_start}–{self.period_end}"
+
+
+class BankReconciliationLine(TenantAwareModel):
+    """An individual line item in a bank reconciliation (from journal lines or manual entry)."""
+    reconciliation = models.ForeignKey(
+        BankReconciliation, on_delete=models.CASCADE, related_name='lines'
+    )
+    journal_line = models.ForeignKey(
+        JournalLine, null=True, blank=True, on_delete=models.SET_NULL, related_name='recon_lines'
+    )
+    description = models.CharField(max_length=500)
+    transaction_date = models.DateField()
+    amount = MoneyField()
+    is_cleared = models.BooleanField(default=False)
+    reference = models.CharField(max_length=100, blank=True)
+
+    class Meta:
+        ordering = ['transaction_date']

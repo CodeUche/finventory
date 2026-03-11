@@ -47,6 +47,13 @@ class Organisation(SoftDeleteModel):
     email = models.EmailField(blank=True)
     address = models.TextField(blank=True)
     logo = models.ImageField(upload_to="org_logos/", null=True, blank=True)
+    letterhead = models.ImageField(upload_to="org_letterheads/", null=True, blank=True,
+        help_text="Optional letterhead image shown at the top of invoices and PDF documents")
+    # Banking details (shown on invoices and payment documents)
+    bank_name = models.CharField(max_length=200, blank=True)
+    bank_account_number = models.CharField(max_length=30, blank=True)
+    bank_account_name = models.CharField(max_length=200, blank=True)
+    bank_sort_code = models.CharField(max_length=20, blank=True, help_text="Sort code or routing number")
     # Subscription link (set by subscriptions app)
     subscription = models.OneToOneField(
         "subscriptions.Subscription",
@@ -118,6 +125,79 @@ class Membership(TimeStampedModel):
 
     def __str__(self):
         return f"{self.user} @ {self.organisation} ({self.role})"
+
+
+class EmailConfig(TimeStampedModel):
+    """Per-organisation SMTP configuration for sending transactional emails."""
+
+    organisation = models.OneToOneField(
+        Organisation, on_delete=models.CASCADE, related_name="email_config"
+    )
+    smtp_host = models.CharField(max_length=255, default="smtp.gmail.com")
+    smtp_port = models.PositiveSmallIntegerField(default=587)
+    smtp_username = models.CharField(max_length=255, blank=True)
+    smtp_password = models.CharField(max_length=255, blank=True, help_text="Stored plain-text — use app passwords")
+    use_tls = models.BooleanField(default=True)
+    from_name = models.CharField(max_length=255, blank=True)
+    from_email = models.EmailField(blank=True)
+    is_active = models.BooleanField(default=False)
+
+    class Meta:
+        verbose_name = "Email Config"
+
+    def __str__(self):
+        return f"EmailConfig for {self.organisation}"
+
+
+class ModulePermission(TimeStampedModel):
+    """
+    Granular per-module access control for a Membership.
+
+    Owners and admins always have full access regardless of these records.
+    For all other roles (manager, accountant, staff, viewer), the admin can
+    override each module individually:
+      none  — module is hidden from the sidebar
+      view  — read-only access
+      write — can create new records but cannot edit/delete existing ones
+      edit  — full create / edit / delete access
+    """
+
+    MODULE_CHOICES = [
+        ('sales', 'Sales / Invoices'),
+        ('purchases', 'Purchase Orders'),
+        ('bills', 'Bills / Payables'),
+        ('expenses', 'Expenses'),
+        ('inventory', 'Inventory'),
+        ('customers', 'Customers'),
+        ('suppliers', 'Suppliers'),
+        ('payroll', 'Payroll'),
+        ('reports', 'Reports'),
+        ('accounting', 'Accounting'),
+        ('tax', 'Tax'),
+        ('budget', 'Budget'),
+        ('quotes', 'Quotes'),
+        ('recurring', 'Recurring Invoices'),
+    ]
+
+    ACCESS_CHOICES = [
+        ('none', 'No Access'),
+        ('view', 'View Only'),
+        ('write', 'Enter & Save'),
+        ('edit', 'Full Edit'),
+    ]
+
+    membership = models.ForeignKey(
+        Membership, on_delete=models.CASCADE, related_name='module_permissions'
+    )
+    module = models.CharField(max_length=30, choices=MODULE_CHOICES)
+    access_level = models.CharField(max_length=10, choices=ACCESS_CHOICES, default='edit')
+
+    class Meta:
+        unique_together = [['membership', 'module']]
+        verbose_name = 'Module Permission'
+
+    def __str__(self):
+        return f"{self.membership} — {self.module}: {self.access_level}"
 
 
 class Invitation(TimeStampedModel):

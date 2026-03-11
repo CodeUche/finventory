@@ -1,11 +1,17 @@
 import { useEffect, useState } from 'react'
-import { Plus, X, Receipt, Loader2, Search, Trash2 } from 'lucide-react'
+import { Plus, X, Receipt, Loader2, Search, Trash2, Edit2, Folder } from 'lucide-react'
+import { Link, useSearchParams } from 'react-router-dom'
+import SortSelect from '@/components/SortSelect'
 import toast from 'react-hot-toast'
-import { billApi, supplierApi } from '@/services/api'
+import { billApi, supplierApi, taxApi, expenseApi } from '@/services/api'
 import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
 import type { Bill } from '@/types'
+import DateInput from '@/components/DateInput'
 
 interface Supplier { id: string; name: string }
+interface TaxClassOption { id: string; name: string; rate: string }
+interface ExpenseCategory { id: string; name: string }
+interface BillFolderOption { id: string; name: string }
 
 const STATUS_BADGE: Record<string, string> = {
   draft: 'badge-slate',
@@ -17,16 +23,20 @@ const STATUS_BADGE: Record<string, string> = {
   voided: 'badge-slate',
 }
 
-interface BillLineForm { description: string; quantity: string; unit_cost: string }
-const BLANK_LINE: BillLineForm = { description: '', quantity: '1', unit_cost: '' }
+interface BillLineForm { description: string; quantity: string; unit_cost: string; category_id: string }
+const BLANK_LINE: BillLineForm = { description: '', quantity: '1', unit_cost: '', category_id: '' }
 
 interface BillForm {
   supplier: string
+  customVendor: string
+  folder: string
   reference: string
   issue_date: string
   due_date: string
-  tax_amount: string
+  tax_percent: string
+  tax_class_id: string
   notes: string
+  status: string
 }
 
 interface PayForm {
@@ -40,8 +50,8 @@ interface PayForm {
 const today = new Date().toISOString().split('T')[0]
 const inThirtyDays = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0]
 
-const BLANK_BILL: BillForm = { supplier: '', reference: '', issue_date: today, due_date: inThirtyDays, tax_amount: '0', notes: '' }
-const BLANK_PAY: PayForm = { amount: '', payment_date: today, method: 'bank', reference: '', notes: '' }
+const BLANK_BILL: BillForm = { supplier: '', customVendor: '', folder: '', reference: '', issue_date: today, due_date: inThirtyDays, tax_percent: '0', tax_class_id: '', notes: '', status: 'draft' }
+const BLANK_PAY: PayForm = { amount: '', payment_date: today, method: 'cash', reference: '', notes: '' }
 
 function agingBucket(dueDate: string): '0-30' | '31-60' | '61-90' | '90+' {
   const days = Math.floor((Date.now() - new Date(dueDate).getTime()) / 86400000)
@@ -52,13 +62,20 @@ function agingBucket(dueDate: string): '0-30' | '31-60' | '61-90' | '90+' {
 }
 
 export default function BillsPage() {
+  const [searchParams, setSearchParams] = useSearchParams()
+
   const [bills, setBills] = useState<Bill[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
+  const [taxClasses, setTaxClasses] = useState<TaxClassOption[]>([])
+  const [expenseCategories, setExpenseCategories] = useState<ExpenseCategory[]>([])
+  const [billFolders, setBillFolders] = useState<BillFolderOption[]>([])
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState('')
   const [search, setSearch] = useState('')
+  const [sortBy, setSortBy] = useState('-created_at')
 
   const [showModal, setShowModal] = useState(false)
+  const [editingBillId, setEditingBillId] = useState<string | null>(null)
   const [form, setForm] = useState<BillForm>(BLANK_BILL)
   const [lines, setLines] = useState<BillLineForm[]>([{ ...BLANK_LINE }])
   const [saving, setSaving] = useState(false)
@@ -73,35 +90,121 @@ export default function BillsPage() {
       const params: Record<string, string> = {}
       if (statusFilter) params.status = statusFilter
       if (search) params.search = search
-      const [bRes, sRes] = await Promise.all([billApi.list(params), supplierApi.list()])
+      if (sortBy) params.ordering = sortBy
+      const [bRes, sRes, tRes, catRes, fRes] = await Promise.all([
+        billApi.list(params),
+        supplierApi.list(),
+        taxApi.classes(),
+        expenseApi.categories(),
+        billApi.folders(),
+      ])
       setBills(bRes.data.results ?? bRes.data)
       setSuppliers(sRes.data.results ?? sRes.data)
+      setTaxClasses(tRes.data.results ?? tRes.data)
+      setExpenseCategories(catRes.data.results ?? catRes.data)
+      setBillFolders(fRes.data.results ?? fRes.data)
     } catch { toast.error('Failed to load bills') }
     finally { setLoading(false) }
   }
 
-  useEffect(() => { load() }, [statusFilter, search])
+  useEffect(() => { load() }, [statusFilter, search, sortBy])
 
-  const handleCreate = async () => {
-    if (!form.supplier) { toast.error('Select a supplier'); return }
+  // Auto-open new bill modal when navigated from folder page with ?openNew=1&folder=<id>
+  useEffect(() => {
+    if (searchParams.get('openNew') === '1' && billFolders.length > 0) {
+      const folderId = searchParams.get('folder') ?? ''
+      setEditingBillId(null)
+      setForm({ ...BLANK_BILL, folder: folderId })
+      setLines([{ ...BLANK_LINE }])
+      setShowModal(true)
+      // Remove params from URL so modal doesn't re-open on refresh
+      setSearchParams({}, { replace: true })
+    }
+  }, [searchParams, billFolders])
+
+  // Compute line subtotal
+  const lineSubtotal = lines.reduce((s, l) => {
+    const qty = parseFloat(l.quantity) || 0
+    const cost = parseFloat(stripCommas(l.unit_cost)) || 0
+    return s + qty * cost
+  }, 0)
+
+  // Tax percent from selected class or manual entry
+  const resolvedTaxPercent = parseFloat(form.tax_percent) || 0
+  const computedTaxAmount = lineSubtotal * resolvedTaxPercent / 100
+
+  const handleTaxClassChange = (classId: string) => {
+    const tc = taxClasses.find((t) => t.id === classId)
+    setForm((f) => ({
+      ...f,
+      tax_class_id: classId,
+      tax_percent: tc ? tc.rate : f.tax_percent,
+    }))
+  }
+
+  const openCreate = () => {
+    setEditingBillId(null)
+    setForm(BLANK_BILL)
+    setLines([{ ...BLANK_LINE }])
+    setShowModal(true)
+  }
+
+  const openEdit = (b: Bill) => {
+    setEditingBillId(b.id)
+    const subtotal = parseFloat((b as any).subtotal ?? '0')
+    const taxAmount = parseFloat(b.tax_amount ?? '0')
+    const effectiveTaxPct = subtotal > 0 ? ((taxAmount / subtotal) * 100).toFixed(2) : '0'
+    setForm({
+      supplier: (b as any).supplier ?? '',
+      customVendor: '',
+      folder: (b as any).folder ?? '',
+      reference: b.reference ?? '',
+      issue_date: b.issue_date,
+      due_date: b.due_date,
+      tax_percent: effectiveTaxPct,
+      tax_class_id: '',
+      notes: (b as any).notes ?? '',
+      status: b.status,
+    })
+    setLines([{ ...BLANK_LINE }])
+    setShowModal(true)
+  }
+
+  const handleSave = async () => {
+    if (!form.supplier) { toast.error('Select a vendor'); return }
+    if (form.supplier === 'other' && !form.customVendor.trim()) { toast.error('Enter vendor name'); return }
     if (lines.some((l) => !l.description || !l.unit_cost)) { toast.error('Fill all line items'); return }
     setSaving(true)
     try {
-      await billApi.create({
-        ...form,
-        tax_amount: parseFloat(stripCommas(form.tax_amount)) || 0,
+      const payload = {
+        supplier: form.supplier !== 'other' ? form.supplier : null,
+        vendor_name: form.supplier === 'other' ? form.customVendor.trim() : undefined,
+        folder: form.folder || null,
+        reference: form.reference,
+        issue_date: form.issue_date,
+        due_date: form.due_date,
+        tax_amount: computedTaxAmount,
+        notes: form.notes,
+        status: form.status,
         items: lines.map((l) => ({
           description: l.description,
           quantity: parseFloat(l.quantity) || 1,
           unit_cost: parseFloat(stripCommas(l.unit_cost)) || 0,
+          ...(l.category_id ? { expense_category_id: l.category_id } : {}),
         })),
-      })
-      toast.success('Bill created')
+      }
+      if (editingBillId) {
+        await billApi.update(editingBillId, payload)
+        toast.success('Bill updated')
+      } else {
+        await billApi.create(payload)
+        toast.success('Bill created')
+      }
       setShowModal(false)
       setForm(BLANK_BILL)
       setLines([{ ...BLANK_LINE }])
       load()
-    } catch { toast.error('Failed to create bill') }
+    } catch { toast.error(editingBillId ? 'Failed to update bill' : 'Failed to create bill') }
     finally { setSaving(false) }
   }
 
@@ -130,8 +233,16 @@ export default function BillsPage() {
   }
 
   const updateLine = (i: number, field: keyof BillLineForm, value: string) => {
-    const formatted = field === 'unit_cost' ? formatAmountInput(value) : value
-    setLines(lines.map((l, idx) => idx === i ? { ...l, [field]: formatted } : l))
+    setLines(lines.map((l, idx) => {
+      if (idx !== i) return l
+      const updated = { ...l, [field]: field === 'unit_cost' ? formatAmountInput(value) : value }
+      // Auto-fill description from category name when category selected and description is empty
+      if (field === 'category_id' && value) {
+        const cat = expenseCategories.find((c) => c.id === value)
+        if (cat && !l.description) updated.description = cat.name
+      }
+      return updated
+    }))
   }
 
   // Summary
@@ -153,6 +264,13 @@ export default function BillsPage() {
   const aging: Record<string, number> = { '0-30': 0, '31-60': 0, '61-90': 0, '90+': 0 }
   unpaid.forEach((b) => { aging[agingBucket(b.due_date)] += parseFloat(b.amount_due) })
 
+  const summaryTiles = [
+    { label: 'Total Payable', value: totalPayable, color: 'text-white', filter: '', hint: '' },
+    { label: 'Overdue', value: overdue, color: 'text-red-400', filter: 'overdue', hint: 'Click to filter' },
+    { label: 'Due This Week', value: dueThisWeek, color: 'text-orange-400', filter: 'approved', hint: 'Click to filter' },
+    { label: 'Paid This Month', value: paidThisMonth, color: 'text-emerald-400', filter: 'paid', hint: 'Click to filter' },
+  ]
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -161,17 +279,29 @@ export default function BillsPage() {
           <h1 className="text-2xl font-bold text-white">Bills (Accounts Payable)</h1>
           <p className="text-slate-400 text-sm">{bills.length} total bills</p>
         </div>
-        <button className="btn-primary sm:ml-auto" onClick={() => setShowModal(true)}>
-          <Plus size={16} /> New Bill
-        </button>
+        <div className="flex items-center gap-2 sm:ml-auto">
+          <Link to="/bills/folders" className="btn-secondary flex items-center gap-2">
+            <Folder size={15} /> Folders
+          </Link>
+          <button className="btn-primary" onClick={openCreate}>
+            <Plus size={16} /> New Bill
+          </button>
+        </div>
       </div>
 
-      {/* Summary cards */}
+      {/* Summary cards — clickable to filter */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="card p-5"><p className="text-xs text-slate-400">Total Payable</p><p className="text-xl font-bold text-white mt-1">{formatCurrency(totalPayable)}</p></div>
-        <div className="card p-5"><p className="text-xs text-slate-400">Overdue</p><p className="text-xl font-bold text-red-400 mt-1">{formatCurrency(overdue)}</p></div>
-        <div className="card p-5"><p className="text-xs text-slate-400">Due This Week</p><p className="text-xl font-bold text-orange-400 mt-1">{formatCurrency(dueThisWeek)}</p></div>
-        <div className="card p-5"><p className="text-xs text-slate-400">Paid This Month</p><p className="text-xl font-bold text-emerald-400 mt-1">{formatCurrency(paidThisMonth)}</p></div>
+        {summaryTiles.map((t) => (
+          <button
+            key={t.label}
+            onClick={() => t.filter ? setStatusFilter(statusFilter === t.filter ? '' : t.filter) : undefined}
+            className={`card p-5 text-left transition-all ${t.filter ? 'cursor-pointer hover:border-brand-500/40' : 'cursor-default'} ${statusFilter === t.filter && t.filter ? 'ring-2 ring-brand-500' : ''}`}
+          >
+            <p className="text-xs text-slate-400">{t.label}</p>
+            <p className={`text-xl font-bold mt-1 ${t.color}`}>{formatCurrency(t.value)}</p>
+            {t.hint && <p className="text-xs text-slate-600 mt-0.5">{t.hint}</p>}
+          </button>
+        ))}
       </div>
 
       {/* Filters */}
@@ -180,12 +310,28 @@ export default function BillsPage() {
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
           <input className="input pl-9" placeholder="Search supplier…" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
+        <SortSelect
+          value={sortBy}
+          onChange={setSortBy}
+          options={[
+            { label: 'Newest first', value: '-created_at' },
+            { label: 'Oldest first', value: 'created_at' },
+            { label: 'Amount ↓', value: '-total_amount' },
+            { label: 'Amount ↑', value: 'total_amount' },
+            { label: 'Due date ↑', value: 'due_date' },
+          ]}
+        />
         <select className="input max-w-xs" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
           <option value="">All Statuses</option>
           {['draft', 'received', 'approved', 'paid', 'partially_paid', 'overdue', 'voided'].map((s) => (
             <option key={s} value={s}>{s.replace('_', ' ')}</option>
           ))}
         </select>
+        {statusFilter && (
+          <button onClick={() => setStatusFilter('')} className="btn-ghost text-sm px-3">
+            <X size={14} /> Clear
+          </button>
+        )}
       </div>
 
       {/* Table */}
@@ -218,7 +364,14 @@ export default function BillsPage() {
               ) : bills.map((b) => (
                 <tr key={b.id} className="table-row">
                   <td className="px-4 py-3.5 font-mono text-brand-400">{b.bill_number}</td>
-                  <td className="px-4 py-3.5 text-slate-300">{b.supplier_name}</td>
+                  <td className="px-4 py-3.5 text-slate-300">
+                    {b.supplier_name}
+                    {(b as any).folder_name && (
+                      <p className="text-xs text-slate-500 flex items-center gap-1 mt-0.5">
+                        <Folder size={10} />{(b as any).folder_name}
+                      </p>
+                    )}
+                  </td>
                   <td className="px-4 py-3.5 text-slate-400">{b.reference || '—'}</td>
                   <td className="px-4 py-3.5 text-slate-400">{formatDate(b.issue_date)}</td>
                   <td className="px-4 py-3.5 text-slate-400">{formatDate(b.due_date)}</td>
@@ -228,6 +381,11 @@ export default function BillsPage() {
                   <td className="px-4 py-3.5"><span className={STATUS_BADGE[b.status] ?? 'badge-slate'}>{b.status.replace('_', ' ')}</span></td>
                   <td className="px-4 py-3.5">
                     <div className="flex items-center gap-1.5">
+                      {(b.status === 'draft' || b.status === 'received') && (
+                        <button onClick={() => openEdit(b)} className="p-1 text-slate-500 hover:text-white transition-colors" title="Edit bill">
+                          <Edit2 size={13} />
+                        </button>
+                      )}
                       {b.status === 'received' && (
                         <button onClick={() => handleApprove(b.id)} className="text-xs px-2.5 py-1 rounded-lg bg-brand-500/15 text-brand-400 hover:bg-brand-500/25 transition-colors">Approve</button>
                       )}
@@ -261,58 +419,120 @@ export default function BillsPage() {
         </div>
       </div>
 
-      {/* New Bill Modal */}
+      {/* New / Edit Bill Modal */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setShowModal(false)} />
           <div className="relative card w-full max-w-2xl p-6 space-y-5 overflow-y-auto max-h-[90vh]">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-bold text-white">New Bill</h2>
+              <h2 className="text-lg font-bold text-white">{editingBillId ? 'Edit Bill' : 'New Bill'}</h2>
               <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-white"><X size={20} /></button>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2">
-                <label className="text-xs text-slate-400 mb-1 block">Supplier *</label>
-                <select className="input" value={form.supplier} onChange={(e) => setForm({ ...form, supplier: e.target.value })}>
-                  <option value="">— Select Supplier —</option>
+                <label className="text-xs text-slate-400 mb-1 block">Vendor *</label>
+                <select className="input" value={form.supplier} onChange={(e) => setForm({ ...form, supplier: e.target.value, customVendor: '' })}>
+                  <option value="">— Select Vendor —</option>
+                  <option value="other">Other / Custom Vendor</option>
                   {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </select>
+                {form.supplier === 'other' && (
+                  <input
+                    className="input mt-2"
+                    placeholder="Enter vendor / supplier name"
+                    value={form.customVendor}
+                    onChange={(e) => setForm({ ...form, customVendor: e.target.value })}
+                    autoFocus
+                  />
+                )}
               </div>
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Reference</label>
                 <input className="input" placeholder="Invoice/PO ref" value={form.reference} onChange={(e) => setForm({ ...form, reference: e.target.value })} />
               </div>
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">Tax Amount</label>
-                <input type="text" inputMode="decimal" className="input" value={form.tax_amount} onChange={(e) => setForm({ ...form, tax_amount: formatAmountInput(e.target.value) })} />
-              </div>
-              <div>
                 <label className="text-xs text-slate-400 mb-1 block">Issue Date</label>
-                <input type="date" className="input" value={form.issue_date} onChange={(e) => setForm({ ...form, issue_date: e.target.value })} />
+                <DateInput value={form.issue_date} onChange={(v) => setForm({ ...form, issue_date: v })} />
               </div>
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Due Date</label>
-                <input type="date" className="input" value={form.due_date} onChange={(e) => setForm({ ...form, due_date: e.target.value })} />
+                <DateInput value={form.due_date} onChange={(v) => setForm({ ...form, due_date: v })} />
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Folder (optional)</label>
+                <select className="input" value={form.folder} onChange={(e) => setForm({ ...form, folder: e.target.value })}>
+                  <option value="">— No folder —</option>
+                  {billFolders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Bill Status</label>
+                <select className="input" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
+                  <option value="draft">Draft</option>
+                  <option value="received">Received</option>
+                  <option value="approved">Approved</option>
+                </select>
+              </div>
+
+              {/* Smart Tax Field */}
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Tax Class or Rate %</label>
+                <div className="flex gap-2">
+                  <select
+                    className="input flex-1 text-sm"
+                    value={form.tax_class_id}
+                    onChange={(e) => handleTaxClassChange(e.target.value)}
+                  >
+                    <option value="">— Tax Class —</option>
+                    {taxClasses.map((t) => (
+                      <option key={t.id} value={t.id}>{t.name} ({parseFloat(t.rate).toFixed(1)}%)</option>
+                    ))}
+                  </select>
+                  <div className="relative w-24 shrink-0">
+                    <input
+                      type="text" inputMode="decimal" className="input pr-6 text-sm" placeholder="0"
+                      value={form.tax_percent}
+                      onChange={(e) => setForm({ ...form, tax_percent: e.target.value, tax_class_id: '' })}
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs">%</span>
+                  </div>
+                </div>
               </div>
             </div>
 
+            {/* Line Items */}
             <div>
               <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Line Items</p>
-              <div className="space-y-2">
+              <div className="space-y-3">
                 {lines.map((line, i) => (
-                  <div key={i} className="grid grid-cols-12 gap-2 items-center">
-                    <div className="col-span-6">
-                      <input className="input py-1.5 text-sm" placeholder="Description" value={line.description} onChange={(e) => updateLine(i, 'description', e.target.value)} />
+                  <div key={i} className="bg-surface-900/40 rounded-xl p-3 space-y-2">
+                    <div className="grid grid-cols-12 gap-2 items-center">
+                      <div className="col-span-5">
+                        <select
+                          className="input py-1.5 text-sm"
+                          value={line.category_id}
+                          onChange={(e) => updateLine(i, 'category_id', e.target.value)}
+                        >
+                          <option value="">— Category (optional) —</option>
+                          {expenseCategories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        </select>
+                      </div>
+                      <div className="col-span-2">
+                        <input type="number" min="1" className="input py-1.5 text-sm" placeholder="Qty" value={line.quantity} onChange={(e) => updateLine(i, 'quantity', e.target.value)} />
+                      </div>
+                      <div className="col-span-4">
+                        <input type="text" inputMode="decimal" className="input py-1.5 text-sm" placeholder="Unit Cost" value={line.unit_cost} onChange={(e) => updateLine(i, 'unit_cost', e.target.value)} />
+                      </div>
+                      <div className="col-span-1 flex justify-center">
+                        <button onClick={() => setLines(lines.filter((_, idx) => idx !== i))} className="p-1 text-slate-500 hover:text-red-400 transition-colors"><Trash2 size={14} /></button>
+                      </div>
                     </div>
-                    <div className="col-span-2">
-                      <input type="number" min="1" className="input py-1.5 text-sm" placeholder="Qty" value={line.quantity} onChange={(e) => updateLine(i, 'quantity', e.target.value)} />
-                    </div>
-                    <div className="col-span-3">
-                      <input type="text" inputMode="decimal" className="input py-1.5 text-sm" placeholder="Unit Cost" value={line.unit_cost} onChange={(e) => updateLine(i, 'unit_cost', e.target.value)} />
-                    </div>
-                    <div className="col-span-1 flex justify-center">
-                      <button onClick={() => setLines(lines.filter((_, idx) => idx !== i))} className="p-1 text-slate-500 hover:text-red-400 transition-colors"><Trash2 size={14} /></button>
-                    </div>
+                    <input
+                      className="input py-1.5 text-sm"
+                      placeholder="Description"
+                      value={line.description}
+                      onChange={(e) => updateLine(i, 'description', e.target.value)}
+                    />
                   </div>
                 ))}
               </div>
@@ -321,6 +541,23 @@ export default function BillsPage() {
               </button>
             </div>
 
+            {/* Totals summary */}
+            {lineSubtotal > 0 && (
+              <div className="text-sm space-y-1 border-t border-surface-700 pt-3">
+                <div className="flex justify-between text-slate-400">
+                  <span>Subtotal</span><span className="font-mono">{formatCurrency(lineSubtotal)}</span>
+                </div>
+                {resolvedTaxPercent > 0 && (
+                  <div className="flex justify-between text-slate-400">
+                    <span>Tax ({resolvedTaxPercent}%)</span><span className="font-mono">{formatCurrency(computedTaxAmount)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between text-white font-semibold border-t border-surface-700 pt-1">
+                  <span>Total</span><span className="font-mono">{formatCurrency(lineSubtotal + computedTaxAmount)}</span>
+                </div>
+              </div>
+            )}
+
             <div>
               <label className="text-xs text-slate-400 mb-1 block">Notes</label>
               <textarea className="input resize-none" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
@@ -328,8 +565,8 @@ export default function BillsPage() {
 
             <div className="flex gap-3 pt-1">
               <button className="flex-1 py-2.5 rounded-xl border border-surface-600 text-slate-400 hover:text-white hover:border-surface-500 transition-colors text-sm" onClick={() => setShowModal(false)}>Cancel</button>
-              <button className="btn-primary flex-1 py-2.5 justify-center disabled:opacity-50" onClick={handleCreate} disabled={saving}>
-                {saving ? <Loader2 size={16} className="animate-spin" /> : 'Create Bill'}
+              <button className="btn-primary flex-1 py-2.5 justify-center disabled:opacity-50" onClick={handleSave} disabled={saving}>
+                {saving ? <Loader2 size={16} className="animate-spin" /> : (editingBillId ? 'Update Bill' : 'Create Bill')}
               </button>
             </div>
           </div>
@@ -352,12 +589,12 @@ export default function BillsPage() {
               </div>
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Date</label>
-                <input type="date" className="input" value={payForm.payment_date} onChange={(e) => setPayForm({ ...payForm, payment_date: e.target.value })} />
+                <DateInput value={payForm.payment_date} onChange={(v) => setPayForm({ ...payForm, payment_date: v })} />
               </div>
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Method</label>
                 <select className="input" value={payForm.method} onChange={(e) => setPayForm({ ...payForm, method: e.target.value })}>
-                  {['cash', 'bank', 'cheque', 'transfer'].map((m) => <option key={m} value={m}>{m}</option>)}
+                  {[{ v: 'cash', l: 'Cash' }, { v: 'bank_transfer', l: 'Bank Transfer' }, { v: 'cheque', l: 'Cheque' }, { v: 'pos', l: 'POS' }].map(({ v, l }) => <option key={v} value={v}>{l}</option>)}
                 </select>
               </div>
               <div>

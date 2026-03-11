@@ -4,12 +4,43 @@ from apps.suppliers.models import Supplier
 from apps.authentication.models import User
 
 
+class BillFolder(TenantAwareModel):
+    """
+    A named folder/group for organising bills.
+    Supports unlimited nesting (parent → children) for hierarchical organisation.
+    Example: "2026 Q1" → "January" → individual bills
+    """
+    name = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    folder_date = models.DateField(null=True, blank=True, help_text="Date for this folder (optional)")
+    parent = models.ForeignKey(
+        'self', null=True, blank=True, on_delete=models.CASCADE, related_name='children'
+    )
+
+    class Meta(TenantAwareModel.Meta):
+        ordering = ['-folder_date', 'name']
+
+    def __str__(self):
+        return self.name
+
+    def get_ancestors(self):
+        ancestors = []
+        current = self.parent
+        while current:
+            ancestors.insert(0, {'id': str(current.id), 'name': current.name})
+            current = current.parent
+        return ancestors
+
+
 class Bill(TenantAwareModel):
     DRAFT = 'draft'; RECEIVED = 'received'; APPROVED = 'approved'
     PAID = 'paid'; PARTIALLY_PAID = 'partially_paid'; OVERDUE = 'overdue'; VOIDED = 'voided'
     STATUS_CHOICES = [(s, s) for s in [DRAFT, RECEIVED, APPROVED, PAID, PARTIALLY_PAID, OVERDUE, VOIDED]]
 
     bill_number = models.CharField(max_length=20, editable=False)
+    folder = models.ForeignKey(
+        BillFolder, null=True, blank=True, on_delete=models.SET_NULL, related_name='bills'
+    )
     supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name='bills')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=DRAFT)
     issue_date = models.DateField()
@@ -45,6 +76,14 @@ class BillItem(TenantAwareModel):
     quantity = models.DecimalField(max_digits=15, decimal_places=4, default=1)
     unit_cost = MoneyField()
     line_total = MoneyField(default=0)
+    expense_category = models.ForeignKey(
+        'expenses.ExpenseCategory', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='bill_items'
+    )
+    account = models.ForeignKey(
+        'accounting.Account', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='bill_items'
+    )
 
     class Meta:
         ordering = ['created_at']

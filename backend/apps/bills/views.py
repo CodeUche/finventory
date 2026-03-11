@@ -6,9 +6,44 @@ from rest_framework.response import Response
 from apps.core.mixins import TenantFilterMixin
 from apps.core.permissions import IsStaff, IsManager
 from apps.suppliers.models import Supplier
-from .models import Bill
-from .serializers import BillSerializer, CreateBillSerializer, RecordBillPaymentSerializer
+from .models import Bill, BillFolder
+from .serializers import BillFolderSerializer, BillSerializer, CreateBillSerializer, RecordBillPaymentSerializer
 from .services import BillService
+
+
+class BillFolderViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+    """CRUD for bill folders. GET /bills/folders/, POST, PATCH, DELETE."""
+    serializer_class = BillFolderSerializer
+    permission_classes = [IsAuthenticated, IsStaff]
+
+    def get_queryset(self):
+        org = self._get_organisation()
+        qs = BillFolder.objects.filter(organisation=org)
+        parent = self.request.query_params.get('parent')
+        if parent == 'null':
+            qs = qs.filter(parent__isnull=True)
+        elif parent:
+            qs = qs.filter(parent_id=parent)
+        return qs
+
+    def perform_create(self, serializer):
+        serializer.save(organisation=self._get_organisation())
+
+    @action(detail=True, methods=['get'])
+    def contents(self, request, pk=None):
+        """GET /bills/folders/{id}/contents/ — folder + children + bills inside."""
+        org = self._get_organisation()
+        try:
+            folder = BillFolder.objects.get(id=pk, organisation=org)
+        except BillFolder.DoesNotExist:
+            return Response({'error': 'Folder not found'}, status=404)
+        children = BillFolder.objects.filter(parent=folder, organisation=org)
+        bills = Bill.objects.filter(folder=folder, organisation=org).select_related('supplier').prefetch_related('items', 'payments')
+        return Response({
+            'folder': BillFolderSerializer(folder).data,
+            'children': BillFolderSerializer(children, many=True).data,
+            'bills': BillSerializer(bills, many=True).data,
+        })
 
 
 class BillViewSet(TenantFilterMixin, viewsets.ModelViewSet):
@@ -43,6 +78,7 @@ class BillViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             'reference': d.get('reference', ''),
             'tax_amount': Decimal(str(d.get('tax_amount', '0'))),
             'notes': d.get('notes', ''),
+            'status': d.get('status', 'draft'),
         }
         bill = BillService.create_bill(bill_data, items_data, org, request.user)
         return Response(BillSerializer(bill).data, status=status.HTTP_201_CREATED)

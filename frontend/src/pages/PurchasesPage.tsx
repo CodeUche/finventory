@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Plus, Search, Truck, X, Loader2, UploadCloud, FileText, Edit2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { purchaseApi, supplierApi, inventoryApi } from '@/services/api'
 import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
 import type { Product, PurchaseOrder } from '@/types'
+import DateInput from '@/components/DateInput'
 
 interface Supplier { id: string; name: string }
 interface Warehouse { id: string; name: string }
@@ -22,6 +24,15 @@ const STATUS_COLORS: Record<string, string> = {
 
 const today = new Date().toISOString().split('T')[0]
 
+function inferMime(url: string): string {
+  const ext = url.split('?')[0].split('.').pop()?.toLowerCase() ?? ''
+  const map: Record<string, string> = {
+    jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
+    gif: 'image/gif', webp: 'image/webp', pdf: 'application/pdf',
+  }
+  return map[ext] ?? 'application/octet-stream'
+}
+
 const BLANK = {
   supplier: '',
   warehouse: '',
@@ -31,6 +42,7 @@ const BLANK = {
 }
 
 export default function PurchasesPage() {
+  const [searchParams] = useSearchParams()
   const [orders, setOrders] = useState<PurchaseOrder[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -49,6 +61,7 @@ export default function PurchasesPage() {
 
   // Receipt viewer
   const [receiptViewUrl, setReceiptViewUrl] = useState<string | null>(null)
+  const [receiptMime, setReceiptMime] = useState<string>('')
 
   // Edit PO
   const [editOrder, setEditOrder] = useState<PurchaseOrder | null>(null)
@@ -88,6 +101,13 @@ export default function PurchasesPage() {
 
   useEffect(() => { load() }, [search, statusFilter])
 
+  // Auto-open create modal when navigated from low-stock banner
+  useEffect(() => {
+    if (searchParams.get('create') === '1') {
+      openModal()
+    }
+  }, [])
+
   const openModal = () => {
     setForm({ ...BLANK })
     setItems([])
@@ -120,7 +140,6 @@ export default function PurchasesPage() {
   }, 0)
 
   const handleCreate = async () => {
-    if (!form.supplier) { toast.error('Select a supplier'); return }
     if (!form.warehouse) { toast.error('Select a warehouse'); return }
     setSaving(true)
     try {
@@ -132,7 +151,7 @@ export default function PurchasesPage() {
           unit_cost: parseFloat(stripCommas(i.unit_cost)),
         }))
       const payload: Record<string, unknown> = {
-        supplier: form.supplier,
+        supplier: form.supplier || null,
         warehouse: form.warehouse,
         order_date: form.order_date,
         notes: form.notes,
@@ -162,8 +181,15 @@ export default function PurchasesPage() {
     try {
       const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http')
       const resp = await tauriFetch(url)
-      const blob = await resp.blob()
-      setReceiptViewUrl(URL.createObjectURL(blob))
+      // Extract MIME type from response headers so the blob is typed correctly
+      const ct: string = (resp.headers as any)?.get?.('content-type')
+        ?? (resp.headers as any)?.['content-type']
+        ?? ''
+      const mimeType = ct.split(';')[0].trim() || inferMime(url)
+      const raw = await resp.blob()
+      const typed = new Blob([raw], { type: mimeType })
+      setReceiptMime(mimeType)
+      setReceiptViewUrl(URL.createObjectURL(typed))
     } catch {
       window.open(url, '_blank')
     }
@@ -172,6 +198,7 @@ export default function PurchasesPage() {
   const closeReceiptViewer = () => {
     if (receiptViewUrl) URL.revokeObjectURL(receiptViewUrl)
     setReceiptViewUrl(null)
+    setReceiptMime('')
   }
 
   const openEditOrder = (order: PurchaseOrder) => {
@@ -315,11 +342,21 @@ export default function PurchasesPage() {
             <h2 className="font-semibold text-white text-sm">Receipt / Invoice</h2>
             <button onClick={closeReceiptViewer} className="btn-ghost p-1.5"><X size={18} /></button>
           </div>
-          <iframe
-            src={receiptViewUrl}
-            className="flex-1 w-full border-0"
-            title="Receipt"
-          />
+          {receiptMime.startsWith('image/') ? (
+            <div className="flex-1 flex items-center justify-center overflow-auto p-4">
+              <img
+                src={receiptViewUrl}
+                alt="Receipt"
+                className="max-w-full max-h-full object-contain rounded"
+              />
+            </div>
+          ) : (
+            <iframe
+              src={receiptViewUrl}
+              className="flex-1 w-full border-0"
+              title="Receipt"
+            />
+          )}
         </div>
       )}
 
@@ -349,11 +386,7 @@ export default function PurchasesPage() {
               </div>
               <div>
                 <label className="label">Expected Delivery</label>
-                <input
-                  type="date" className="input"
-                  value={editForm.expected_date}
-                  onChange={(e) => setEditForm((f) => ({ ...f, expected_date: e.target.value }))}
-                />
+                <DateInput value={editForm.expected_date} onChange={(v) => setEditForm((f) => ({ ...f, expected_date: v }))} />
               </div>
               <div>
                 <label className="label">Notes</label>
@@ -437,9 +470,9 @@ export default function PurchasesPage() {
             <div className="p-6 space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div className="col-span-2">
-                  <label className="label">Supplier *</label>
+                  <label className="label">Supplier</label>
                   <select className="input" value={form.supplier} onChange={upd('supplier')}>
-                    <option value="">— Select supplier —</option>
+                    <option value="">Walk-in / No supplier</option>
                     {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                   </select>
                 </div>
@@ -452,11 +485,11 @@ export default function PurchasesPage() {
                 </div>
                 <div>
                   <label className="label">Order Date</label>
-                  <input type="date" className="input" value={form.order_date} onChange={upd('order_date')} />
+                  <DateInput value={form.order_date} onChange={(v) => setForm((f) => ({ ...f, order_date: v }))} />
                 </div>
                 <div>
                   <label className="label">Expected Delivery</label>
-                  <input type="date" className="input" value={form.expected_date} onChange={upd('expected_date')} />
+                  <DateInput value={form.expected_date} onChange={(v) => setForm((f) => ({ ...f, expected_date: v }))} />
                 </div>
                 <div className="col-span-2">
                   <label className="label">Notes</label>
@@ -479,7 +512,7 @@ export default function PurchasesPage() {
                 ) : (
                   <div className="space-y-2">
                     <div className="grid grid-cols-[1fr_72px_96px_76px_20px] gap-2 px-1 text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                      <span>Product</span><span>Qty</span><span>Unit Cost (₦)</span><span>Total</span><span />
+                      <span>Product</span><span>Qty</span><span>Unit Cost</span><span>Total</span><span />
                     </div>
                     {items.map((item, idx) => {
                       return (

@@ -27,6 +27,35 @@ class ExpenseCategory(TenantAwareModel):
         return self.name
 
 
+class ExpenseGroup(TenantAwareModel):
+    """
+    A named folder for grouping expenses and income records.
+    Supports unlimited nesting (parent → children) for hierarchical organisation.
+    Example: "January 2026 Market Run" → "Beverages", "Snacks", "Transport"
+    """
+
+    name = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    group_date = models.DateField(null=True, blank=True, help_text="Date of the event/run (optional)")
+    parent = models.ForeignKey(
+        'self', null=True, blank=True, on_delete=models.CASCADE, related_name='children'
+    )
+
+    class Meta(TenantAwareModel.Meta):
+        ordering = ['-group_date', 'name']
+
+    def __str__(self):
+        return self.name
+
+    def get_ancestors(self):
+        ancestors = []
+        current = self.parent
+        while current:
+            ancestors.insert(0, {'id': str(current.id), 'name': current.name})
+            current = current.parent
+        return ancestors
+
+
 class Expense(TenantAwareModel):
     """
     A single expense or miscellaneous income record.
@@ -65,6 +94,13 @@ class Expense(TenantAwareModel):
         related_name="approved_expenses",
     )
     is_approved = models.BooleanField(default=False)
+    previous_price = MoneyField(null=True, blank=True, help_text="Previous/old price for comparison")
+    group = models.ForeignKey(
+        ExpenseGroup, null=True, blank=True, on_delete=models.SET_NULL, related_name='expenses'
+    )
+    budget = models.ForeignKey(
+        'budgets.Budget', null=True, blank=True, on_delete=models.SET_NULL, related_name='expenses'
+    )
 
     class Meta(TenantAwareModel.Meta):
         indexes = [

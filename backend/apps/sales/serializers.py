@@ -4,7 +4,28 @@ from decimal import Decimal
 
 from rest_framework import serializers
 
-from .models import Invoice, SaleItem, SalePayment, RecurringInvoice
+from .models import Invoice, InvoiceFolder, SaleItem, SalePayment, RecurringInvoice, SaleReturn, SaleReturnItem
+
+
+class InvoiceFolderSerializer(serializers.ModelSerializer):
+    children_count = serializers.SerializerMethodField()
+    invoices_count = serializers.SerializerMethodField()
+    ancestors = serializers.SerializerMethodField()
+
+    class Meta:
+        model = InvoiceFolder
+        fields = ['id', 'name', 'description', 'folder_date', 'parent',
+                  'children_count', 'invoices_count', 'ancestors', 'created_at']
+        read_only_fields = ['id', 'created_at']
+
+    def get_children_count(self, obj):
+        return obj.children.filter(is_deleted=False).count() if hasattr(obj, 'children') else 0
+
+    def get_invoices_count(self, obj):
+        return obj.invoices.filter(is_deleted=False).count() if hasattr(obj, 'invoices') else 0
+
+    def get_ancestors(self, obj):
+        return obj.get_ancestors()
 
 
 class SaleItemSerializer(serializers.ModelSerializer):
@@ -33,11 +54,12 @@ class InvoiceSerializer(serializers.ModelSerializer):
     items = SaleItemSerializer(many=True, read_only=True)
     payments = SalePaymentSerializer(many=True, read_only=True)
     customer_name = serializers.CharField(source="customer.name", read_only=True, allow_null=True)
+    folder_name = serializers.CharField(source="folder.name", read_only=True, allow_null=True)
 
     class Meta:
         model = Invoice
         fields = [
-            "id", "invoice_number", "customer", "customer_name",
+            "id", "invoice_number", "folder", "folder_name", "customer", "customer_name",
             "status", "payment_method", "issue_date", "due_date", "warehouse",
             "subtotal", "discount_amount", "tax_amount", "total_amount",
             "amount_paid", "amount_due", "notes",
@@ -68,6 +90,9 @@ class CreateSaleSerializer(serializers.Serializer):
     notes = serializers.CharField(required=False, default="", allow_blank=True)
     issue_date = serializers.DateField(required=False)
     due_date = serializers.DateField(required=False, allow_null=True)
+    is_proforma = serializers.BooleanField(required=False, default=False)
+    amount_paid = serializers.DecimalField(max_digits=15, decimal_places=4, required=False, default=Decimal("0"), min_value=Decimal("0"))
+    amount_tendered = serializers.DecimalField(max_digits=15, decimal_places=4, required=False, allow_null=True)
 
 
 class RecordPaymentSerializer(serializers.Serializer):
@@ -75,6 +100,46 @@ class RecordPaymentSerializer(serializers.Serializer):
     method = serializers.ChoiceField(choices=SalePayment.Method.choices)
     reference = serializers.CharField(required=False, default="")
     notes = serializers.CharField(required=False, default="")
+
+
+class SaleReturnItemSerializer(serializers.ModelSerializer):
+    product_name = serializers.CharField(source="product.name", read_only=True)
+    product_sku = serializers.CharField(source="product.sku", read_only=True)
+
+    class Meta:
+        model = SaleReturnItem
+        fields = ["id", "original_item", "product", "product_name", "product_sku",
+                  "quantity_returned", "unit_price", "refund_amount"]
+        read_only_fields = ["id"]
+
+
+class SaleReturnSerializer(serializers.ModelSerializer):
+    items = SaleReturnItemSerializer(many=True, read_only=True)
+    invoice_number = serializers.CharField(source="invoice.invoice_number", read_only=True)
+
+    class Meta:
+        model = SaleReturn
+        fields = [
+            "id", "return_number", "invoice", "invoice_number", "reason",
+            "notes", "return_date", "total_refund", "restocked",
+            "processed_by", "items", "created_at",
+        ]
+        read_only_fields = ["id", "return_number", "total_refund", "created_at"]
+
+
+class ProcessReturnSerializer(serializers.Serializer):
+    """Input for processing a sales return."""
+
+    class ReturnItemSerializer(serializers.Serializer):
+        sale_item_id = serializers.UUIDField()
+        quantity_returned = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0.01"))
+
+    invoice_id = serializers.UUIDField(required=False, allow_null=True)  # ignored — taken from URL
+    items = ReturnItemSerializer(many=True, min_length=1)
+    reason = serializers.ChoiceField(choices=SaleReturn.Reason.choices, default=SaleReturn.Reason.OTHER)
+    notes = serializers.CharField(required=False, default="", allow_blank=True)
+    restocked = serializers.BooleanField(default=True)
+    return_date = serializers.DateField(required=False)
 
 
 class RecurringInvoiceSerializer(serializers.ModelSerializer):

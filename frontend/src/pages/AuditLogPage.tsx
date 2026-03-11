@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Shield } from 'lucide-react'
 import { auditLogApi } from '@/services/api'
+import { useAuthStore } from '@/store/authStore'
+import DateInput from '@/components/DateInput'
 
 interface AuditEntry {
   id: string
@@ -22,6 +24,7 @@ const ACTION_BADGE: Record<string, string> = {
 }
 
 export default function AuditLogPage() {
+  const { user } = useAuthStore()
   const [entries, setEntries] = useState<AuditEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [modelFilter, setModelFilter] = useState('')
@@ -64,13 +67,23 @@ export default function AuditLogPage() {
       </div>
 
       {/* Info banner */}
-      <div className="flex items-start gap-3 p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl">
-        <Shield size={18} className="text-blue-400 mt-0.5 shrink-0" />
-        <div>
-          <p className="text-sm font-medium text-blue-400">Access Restricted</p>
-          <p className="text-xs text-slate-400 mt-0.5">Audit log is visible to Owner and Admin roles only. All create, update, and delete actions are automatically tracked.</p>
+      {user?.is_superuser ? (
+        <div className="flex items-start gap-3 p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-xl">
+          <Shield size={18} className="text-emerald-400 mt-0.5 shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-emerald-400">Full Access — Superuser</p>
+            <p className="text-xs text-slate-400 mt-0.5">You have full platform access. All create, update, delete, login, and logout actions across all organisations are tracked here.</p>
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="flex items-start gap-3 p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl">
+          <Shield size={18} className="text-blue-400 mt-0.5 shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-blue-400">Owner &amp; Admin Access</p>
+            <p className="text-xs text-slate-400 mt-0.5">Audit log is visible to Owner and Admin roles only. All create, update, and delete actions are automatically tracked.</p>
+          </div>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-3 flex-wrap">
@@ -83,9 +96,9 @@ export default function AuditLogPage() {
           {['create', 'update', 'delete', 'login', 'logout'].map((a) => <option key={a} value={a}>{a.charAt(0).toUpperCase() + a.slice(1)}</option>)}
         </select>
         <div className="flex items-center gap-2">
-          <input type="date" className="input" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} placeholder="From date" />
+          <DateInput value={dateFrom} onChange={setDateFrom} placeholder="From" />
           <span className="text-slate-500 text-sm">to</span>
-          <input type="date" className="input" value={dateTo} onChange={(e) => setDateTo(e.target.value)} placeholder="To date" />
+          <DateInput value={dateTo} onChange={setDateTo} placeholder="To" />
         </div>
       </div>
 

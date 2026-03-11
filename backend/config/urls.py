@@ -2,7 +2,7 @@
 Root URL configuration for Finventory.
 
 All API routes are versioned under /api/v1/.
-OpenAPI schema is served at /api/schema/ (admin only in production).
+OpenAPI schema is served at /api/schema/ (admin only — IsAdminUser enforced).
 """
 
 from django.conf import settings
@@ -14,6 +14,7 @@ from drf_spectacular.views import (
     SpectacularRedocView,
     SpectacularSwaggerView,
 )
+from rest_framework.permissions import IsAdminUser
 
 from apps.core.views import HealthCheckView
 
@@ -58,13 +59,16 @@ api_v1_urlpatterns = [
     path("budgets/", include("apps.budgets.urls")),
 ]
 
+_admin_only = [IsAdminUser]
+
 urlpatterns = [
-    path("admin/", admin.site.urls),
+    # Obfuscated admin path — set ADMIN_URL env var in production
+    path(settings.ADMIN_URL, admin.site.urls),
     path("api/v1/", include(api_v1_urlpatterns)),
-    # OpenAPI documentation
-    path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
-    path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
-    path("api/redoc/", SpectacularRedocView.as_view(url_name="schema"), name="redoc"),
+    # OpenAPI documentation — restricted to Django admin/staff users only
+    path("api/schema/", SpectacularAPIView.as_view(permission_classes=_admin_only), name="schema"),
+    path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema", permission_classes=_admin_only), name="swagger-ui"),
+    path("api/redoc/", SpectacularRedocView.as_view(url_name="schema", permission_classes=_admin_only), name="redoc"),
 ]
 
 if settings.DEBUG:

@@ -50,6 +50,7 @@ class IncomeTaxCalculateSerializer(serializers.Serializer):
     income = serializers.DecimalField(max_digits=15, decimal_places=2, min_value=Decimal("0"))
     tax_year = serializers.IntegerField(required=False)
     allowances = serializers.DecimalField(max_digits=15, decimal_places=2, required=False)
+    tax_type = serializers.ChoiceField(choices=['income', 'corporate'], required=False, default='income')
 
 
 class VATReportSerializer(serializers.Serializer):

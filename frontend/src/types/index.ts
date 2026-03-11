@@ -28,9 +28,14 @@ export interface Organisation {
   email: string
   address?: string
   logo?: string
+  letterhead?: string
   tax_id?: string
   registration_number?: string
   is_active: boolean
+  bank_name?: string
+  bank_account_number?: string
+  bank_account_name?: string
+  bank_sort_code?: string
 }
 
 // ─── Product ──────────────────────────────────────────────────────────────────
@@ -42,6 +47,7 @@ export interface Product {
   category: string | null
   category_name: string | null
   unit_of_measure: string
+  product_type?: 'physical' | 'service' | 'digital'
   alcohol_percentage?: number
   volume_ml?: number
   cost_price: string
@@ -63,6 +69,7 @@ export interface StockItem {
   quantity_on_hand: string
   quantity_available: string
   is_low_stock: boolean
+  stock_level?: 'low' | 'medium' | 'ok'
 }
 
 // ─── Customer ─────────────────────────────────────────────────────────────────
@@ -78,22 +85,39 @@ export interface Customer {
   outstanding_balance: string
   available_credit: string
   is_credit_blocked: boolean
+  credit_score?: number
   is_active: boolean
 }
 
 // ─── Invoice ──────────────────────────────────────────────────────────────────
+export interface SalePayment {
+  id: string
+  amount: string
+  method: string
+  reference: string
+  notes: string
+  received_at: string
+}
+
 export interface Invoice {
   id: string
   invoice_number: string
   customer: string | null
   customer_name: string | null
-  status: 'draft' | 'confirmed' | 'paid' | 'partially_paid' | 'overdue' | 'voided' | 'credit'
+  status: 'draft' | 'proforma' | 'confirmed' | 'paid' | 'partially_paid' | 'overdue' | 'voided' | 'credit'
   payment_method: string
   issue_date: string
+  due_date?: string
+  subtotal: string
+  discount_amount: string
+  tax_amount: string
   total_amount: string
   amount_paid: string
   amount_due: string
+  notes: string
   items: SaleItem[]
+  payments: SalePayment[]
+  created_at: string
 }
 
 export interface SaleItem {
@@ -121,11 +145,28 @@ export interface Expense {
   category: string
   category_name: string
   amount: string
+  previous_price?: string | null
   is_income: boolean
   description: string
   expense_date: string
   payment_method: string
   attachment?: string
+  group?: string | null
+  group_name?: string | null
+}
+
+export interface ExpenseGroup {
+  id: string
+  name: string
+  description: string
+  group_date: string | null
+  parent: string | null
+  parent_name: string | null
+  ancestors: { id: string; name: string }[]
+  children_count: number
+  expense_count: number
+  total_amount: string
+  created_at: string
 }
 
 // ─── Credits ──────────────────────────────────────────────────────────────────
@@ -525,4 +566,113 @@ export interface PaymentLink {
   status: 'pending' | 'paid' | 'failed' | 'cancelled'
   paid_at: string | null
   created_at: string
+}
+
+// ─── Financial Periods ────────────────────────────────────────────────────────
+export interface FinancialPeriod {
+  id: string
+  year: number
+  month: number
+  is_locked: boolean
+  locked_by: string | null
+  locked_by_name: string | null
+  locked_at: string | null
+  created_at: string
+}
+
+// ─── Bank Reconciliation ──────────────────────────────────────────────────────
+export interface BankReconciliationLine {
+  id: string
+  description: string
+  transaction_date: string
+  amount: string
+  is_cleared: boolean
+  reference: string
+  journal_line: string | null
+}
+
+export interface BankReconciliation {
+  id: string
+  account: string
+  account_name: string
+  account_code: string
+  period_start: string
+  period_end: string
+  statement_closing_balance: string
+  book_balance: string
+  is_reconciled: boolean
+  reconciled_by: string | null
+  reconciled_at: string | null
+  notes: string
+  lines: BankReconciliationLine[]
+  created_at: string
+}
+
+// ─── AR Aging ─────────────────────────────────────────────────────────────────
+export interface ARAgingBuckets {
+  current: number
+  '1_30': number
+  '31_60': number
+  '61_90': number
+  over_90: number
+}
+
+export interface ARAgingInvoice {
+  id: string
+  invoice_number: string
+  customer_name: string | null
+  amount_due: string
+  due_date: string | null
+  days_overdue: number
+}
+
+export interface ARAgingReport {
+  as_of: string
+  buckets: ARAgingBuckets
+  total_outstanding: string
+  invoices: ARAgingInvoice[]
+}
+
+// ─── VAT Summary ──────────────────────────────────────────────────────────────
+export interface VATSummary {
+  period_start: string
+  period_end: string
+  output_vat: string
+  input_vat: string
+  net_vat_payable: string
+}
+
+// ─── Team / Module Permissions ───────────────────────────────────────────────
+export type ModuleKey =
+  | 'sales' | 'purchases' | 'bills' | 'expenses' | 'inventory'
+  | 'customers' | 'suppliers' | 'payroll' | 'reports' | 'accounting'
+  | 'tax' | 'budget' | 'quotes' | 'recurring'
+
+export type AccessLevel = 'none' | 'view' | 'write' | 'edit'
+
+export interface ModulePermission {
+  id: string
+  module: ModuleKey
+  access_level: AccessLevel
+}
+
+export interface TeamMember {
+  id: string
+  user: string
+  user_email: string
+  user_full_name: string
+  role: string
+  is_active: boolean
+  joined_at: string | null
+  module_permissions: ModulePermission[]
+}
+
+// ─── Overdue Invoice Alert ────────────────────────────────────────────────────
+export interface OverdueInvoiceAlert {
+  id: string
+  invoice_number: string
+  customer_name: string | null
+  amount_due: string
+  due_date: string
+  days_overdue: number
 }

@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, useNavigate } from 'react-router-dom'
 import { AlertTriangle, Boxes, Plus, RefreshCw } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { inventoryApi } from '@/services/api'
+import { formatAmountInput, stripCommas } from '@/lib/utils'
 import type { Product, StockItem, Warehouse } from '@/types'
 
 interface AdjustForm {
@@ -12,11 +13,20 @@ interface AdjustForm {
   reason: string
 }
 
+interface NewProductMini {
+  name: string
+  sku: string
+  cost_price: string
+  selling_price: string
+}
+
 export default function StockPage() {
   const [searchParams] = useSearchParams()
+  const navigate = useNavigate()
   const [items, setItems] = useState<StockItem[]>([])
   const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState<'all' | 'low'>(
+  const [lowStockTotal, setLowStockTotal] = useState(0)
+  const [filter, setFilter] = useState<'all' | 'low' | 'medium'>(
     searchParams.get('filter') === 'low' ? 'low' : 'all'
   )
   const [warehouseFilter, setWarehouseFilter] = useState<string>('all')
@@ -29,6 +39,8 @@ export default function StockPage() {
     product_id: '', warehouse_id: '', quantity: '', reason: ''
   })
   const [saving, setSaving] = useState(false)
+  const [newProduct, setNewProduct] = useState<NewProductMini>({ name: '', sku: '', cost_price: '', selling_price: '' })
+  const [creatingProduct, setCreatingProduct] = useState(false)
 
   const load = async () => {
     setLoading(true)
@@ -38,11 +50,15 @@ export default function StockPage() {
         inventoryApi.warehouses(),
       ])
       setItems(stockRes.data.results ?? stockRes.data)
-      const wList: Warehouse[] = wRes.data.results ?? wRes.data
-      // Merge into existing warehouses state (used by adjust modal too)
-      setWarehouses(wList)
+      setWarehouses(wRes.data.results ?? wRes.data)
     } catch { toast.error('Failed to load stock') }
     finally { setLoading(false) }
+    // Fetch low stock count independently so a failure doesn't break the main load
+    try {
+      const lowRes = await inventoryApi.lowStock()
+      const lowData = lowRes.data
+      setLowStockTotal(Array.isArray(lowData) ? lowData.length : (lowData.count ?? 0))
+    } catch { /* fall back to client-side count */ }
   }
 
   useEffect(() => { load() }, [])
@@ -58,21 +74,54 @@ export default function StockPage() {
         quantity: '',
         reason: 'Opening stock',
       })
+      setNewProduct({ name: '', sku: '', cost_price: '', selling_price: '' })
+      setCreatingProduct(false)
       setShowAdjust(true)
     } catch { toast.error('Failed to load products') }
   }
 
   const handleAdjust = async () => {
-    if (!adjustForm.product_id) { toast.error('Select a product'); return }
     if (!adjustForm.warehouse_id) { toast.error('Select a warehouse'); return }
     if (!adjustForm.quantity || parseFloat(adjustForm.quantity) === 0) {
       toast.error('Enter a non-zero quantity'); return
     }
     if (!adjustForm.reason.trim()) { toast.error('Enter a reason'); return }
+
+    let productId = adjustForm.product_id
+
+    // If creating a new product inline
+    if (adjustForm.product_id === '__new__') {
+      if (!newProduct.name.trim()) { toast.error('Enter a product name'); return }
+      if (!newProduct.sku.trim()) { toast.error('Enter a SKU'); return }
+      setCreatingProduct(true)
+      try {
+        const { data: created } = await inventoryApi.createProduct({
+          name: newProduct.name.trim(),
+          sku: newProduct.sku.trim(),
+          cost_price: stripCommas(newProduct.cost_price) || '0',
+          selling_price: stripCommas(newProduct.selling_price) || '0',
+          product_type: 'physical',
+          unit_of_measure: 'unit',
+          reorder_level: 10,
+        })
+        productId = created.id
+        toast.success(`Product "${created.name}" created`)
+      } catch (err: any) {
+        const msg = err?.response?.data?.name?.[0] || err?.response?.data?.sku?.[0] || err?.response?.data?.error || 'Failed to create product'
+        toast.error(msg)
+        setCreatingProduct(false)
+        return
+      } finally {
+        setCreatingProduct(false)
+      }
+    } else if (!productId) {
+      toast.error('Select a product'); return
+    }
+
     setSaving(true)
     try {
       await inventoryApi.adjustStock({
-        product_id: adjustForm.product_id,
+        product_id: productId,
         warehouse_id: adjustForm.warehouse_id,
         quantity: parseFloat(adjustForm.quantity),
         reason: adjustForm.reason,
@@ -88,9 +137,15 @@ export default function StockPage() {
     }
   }
 
-  const lowCount = items.filter((i) => i.is_low_stock).length
+  // lowStockTotal from the dedicated endpoint (includes products with no stock movements)
+  const lowCount = lowStockTotal || items.filter((i) => i.stock_level === 'low' || i.is_low_stock).length
+  const mediumCount = items.filter((i) => i.stock_level === 'medium').length
   const displayed = items
-    .filter((i) => filter === 'low' ? i.is_low_stock : true)
+    .filter((i) => {
+      if (filter === 'low') return i.stock_level === 'low' || i.is_low_stock
+      if (filter === 'medium') return i.stock_level === 'medium'
+      return true
+    })
     .filter((i) => warehouseFilter === 'all' ? true : i.warehouse_name === warehouseFilter)
 
   // Unique warehouse names for the filter dropdown
@@ -114,6 +169,9 @@ export default function StockPage() {
             {warehouseNames.map((w) => <option key={w} value={w}>{w}</option>)}
           </select>
           <button onClick={() => setFilter('all')} className={filter === 'all' ? 'btn-primary py-2 px-4' : 'btn-secondary py-2 px-4'}>All</button>
+          <button onClick={() => setFilter('medium')} className={`flex items-center gap-1.5 py-2 px-4 rounded-lg text-sm font-medium transition-colors ${filter === 'medium' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40' : 'btn-secondary'}`}>
+            <AlertTriangle size={14} /> Medium {mediumCount > 0 && `(${mediumCount})`}
+          </button>
           <button onClick={() => setFilter('low')} className={filter === 'low' ? 'btn-danger py-2 px-4' : 'btn-secondary py-2 px-4'}>
             <AlertTriangle size={14} /> Low Stock {lowCount > 0 && `(${lowCount})`}
           </button>
@@ -129,7 +187,13 @@ export default function StockPage() {
         <div className="bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3 flex items-center gap-3">
           <AlertTriangle size={18} className="text-red-400 shrink-0" />
           <p className="text-sm text-red-300">
-            <strong>{lowCount} product{lowCount !== 1 ? 's' : ''}</strong> below reorder level. Consider creating purchase orders.
+            <strong>{lowCount} product{lowCount !== 1 ? 's' : ''}</strong> below reorder level. Consider creating{' '}
+            <button
+              onClick={() => navigate('/purchases?create=1')}
+              className="underline underline-offset-2 font-semibold hover:text-white transition-colors"
+            >
+              purchase orders
+            </button>.
           </p>
         </div>
       )}
@@ -176,9 +240,15 @@ export default function StockPage() {
                     <td className="px-5 py-3.5 text-slate-400">0</td>
                     <td className="px-5 py-3.5 text-white">{parseFloat(s.quantity_available).toFixed(0)}</td>
                     <td className="px-5 py-3.5">
-                      <span className={s.is_low_stock ? 'badge-red' : 'badge-green'}>
-                        {s.is_low_stock ? <><AlertTriangle size={11} /> Low</> : 'OK'}
-                      </span>
+                      {(s.stock_level === 'low' || s.is_low_stock) ? (
+                        <span className="badge-red"><AlertTriangle size={11} /> Low</span>
+                      ) : s.stock_level === 'medium' ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                          <AlertTriangle size={11} /> Medium
+                        </span>
+                      ) : (
+                        <span className="badge-green">OK</span>
+                      )}
                     </td>
                   </tr>
                 ))
@@ -207,11 +277,47 @@ export default function StockPage() {
                   onChange={(e) => setAdjustForm({ ...adjustForm, product_id: e.target.value })}
                 >
                   <option value="">Select product…</option>
+                  <option value="__new__">+ Create New Product…</option>
                   {products.map((p) => (
                     <option key={p.id} value={p.id}>{p.name} ({p.sku})</option>
                   ))}
                 </select>
               </div>
+
+              {/* Inline new product form */}
+              {adjustForm.product_id === '__new__' && (
+                <div className="bg-surface-700/50 border border-surface-600 rounded-xl p-4 space-y-3">
+                  <p className="text-xs font-semibold text-brand-400 uppercase tracking-wider">New Product Details</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs text-slate-400 block mb-1">Product Name *</label>
+                      <input className="input py-2 text-sm" placeholder="e.g. Mineral Water"
+                        value={newProduct.name}
+                        onChange={(e) => setNewProduct((p) => ({ ...p, name: e.target.value }))} />
+                    </div>
+                    <div>
+                      <label className="text-xs text-slate-400 block mb-1">SKU *</label>
+                      <input className="input py-2 text-sm" placeholder="e.g. MIN-001"
+                        value={newProduct.sku}
+                        onChange={(e) => setNewProduct((p) => ({ ...p, sku: e.target.value.toUpperCase() }))} />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs text-slate-400 block mb-1">Cost Price</label>
+                      <input type="text" inputMode="decimal" className="input py-2 text-sm" placeholder="0.00"
+                        value={newProduct.cost_price}
+                        onChange={(e) => setNewProduct((p) => ({ ...p, cost_price: formatAmountInput(e.target.value) }))} />
+                    </div>
+                    <div>
+                      <label className="text-xs text-slate-400 block mb-1">Selling Price</label>
+                      <input type="text" inputMode="decimal" className="input py-2 text-sm" placeholder="0.00"
+                        value={newProduct.selling_price}
+                        onChange={(e) => setNewProduct((p) => ({ ...p, selling_price: formatAmountInput(e.target.value) }))} />
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div>
                 <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Warehouse *</label>
@@ -254,8 +360,8 @@ export default function StockPage() {
 
             <div className="flex gap-3 mt-6">
               <button onClick={() => setShowAdjust(false)} className="btn-ghost flex-1">Cancel</button>
-              <button onClick={handleAdjust} disabled={saving} className="btn-primary flex-1 disabled:opacity-50">
-                {saving ? 'Saving…' : 'Confirm'}
+              <button onClick={handleAdjust} disabled={saving || creatingProduct} className="btn-primary flex-1 disabled:opacity-50">
+                {creatingProduct ? 'Creating product…' : saving ? 'Saving…' : adjustForm.product_id === '__new__' ? 'Create & Add Stock' : 'Confirm'}
               </button>
             </div>
           </div>
