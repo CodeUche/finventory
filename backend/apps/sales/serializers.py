@@ -86,8 +86,10 @@ class CreateSaleSerializer(serializers.Serializer):
     customer_id = serializers.UUIDField(required=False, allow_null=True)
     warehouse_id = serializers.UUIDField()
     payment_method = serializers.ChoiceField(choices=Invoice.PaymentMethod.choices)
-    items = ItemInputSerializer(many=True, min_length=1)
-    notes = serializers.CharField(required=False, default="", allow_blank=True)
+    # Cap line items to 200 — prevents absurdly large payloads
+    items = ItemInputSerializer(many=True, min_length=1, max_length=200)
+    # max_length guards against oversized text being stored in the DB
+    notes = serializers.CharField(required=False, default="", allow_blank=True, max_length=2000)
     issue_date = serializers.DateField(required=False)
     due_date = serializers.DateField(required=False, allow_null=True)
     is_proforma = serializers.BooleanField(required=False, default=False)
@@ -98,8 +100,8 @@ class CreateSaleSerializer(serializers.Serializer):
 class RecordPaymentSerializer(serializers.Serializer):
     amount = serializers.DecimalField(max_digits=15, decimal_places=4, min_value=Decimal("0.01"))
     method = serializers.ChoiceField(choices=SalePayment.Method.choices)
-    reference = serializers.CharField(required=False, default="")
-    notes = serializers.CharField(required=False, default="")
+    reference = serializers.CharField(required=False, default="", max_length=200)
+    notes = serializers.CharField(required=False, default="", max_length=1000)
 
 
 class SaleReturnItemSerializer(serializers.ModelSerializer):
@@ -135,9 +137,9 @@ class ProcessReturnSerializer(serializers.Serializer):
         quantity_returned = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0.01"))
 
     invoice_id = serializers.UUIDField(required=False, allow_null=True)  # ignored — taken from URL
-    items = ReturnItemSerializer(many=True, min_length=1)
+    items = ReturnItemSerializer(many=True, min_length=1, max_length=200)
     reason = serializers.ChoiceField(choices=SaleReturn.Reason.choices, default=SaleReturn.Reason.OTHER)
-    notes = serializers.CharField(required=False, default="", allow_blank=True)
+    notes = serializers.CharField(required=False, default="", allow_blank=True, max_length=2000)
     restocked = serializers.BooleanField(default=True)
     return_date = serializers.DateField(required=False)
 

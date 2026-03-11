@@ -7,7 +7,11 @@ class PaymentGatewayConfigSerializer(serializers.ModelSerializer):
         model = PaymentGatewayConfig
         fields = ['id', 'provider', 'public_key', 'secret_key', 'is_active', 'webhook_secret']
         read_only_fields = ['id']
-        extra_kwargs = {'secret_key': {'write_only': True}}
+        extra_kwargs = {
+            # Never return API secrets in GET responses — write-only
+            'secret_key': {'write_only': True},
+            'webhook_secret': {'write_only': True},
+        }
 
 
 class PaymentLinkSerializer(serializers.ModelSerializer):

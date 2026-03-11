@@ -1,6 +1,10 @@
 """Tenancy serializers."""
 
+import re
+
 from rest_framework import serializers
+
+from apps.core.validators import validate_image_upload
 
 from .models import Invitation, Membership, ModulePermission, Organisation
 
@@ -15,11 +19,40 @@ class OrganisationSerializer(serializers.ModelSerializer):
             "bank_name", "bank_account_number", "bank_account_name", "bank_sort_code",
         ]
         read_only_fields = ["id", "slug", "created_at", "updated_at"]
+        extra_kwargs = {
+            # Enforce upload validators so only safe image formats reach the server
+            "logo": {"validators": [validate_image_upload], "required": False},
+            "letterhead": {"validators": [validate_image_upload], "required": False},
+            # Field length caps matching model definitions
+            "registration_number": {"max_length": 100, "required": False, "allow_blank": True},
+            "tax_id": {"max_length": 50, "required": False, "allow_blank": True},
+            "phone": {"max_length": 30, "required": False, "allow_blank": True},
+            "address": {"max_length": 500, "required": False, "allow_blank": True},
+            "bank_name": {"max_length": 200, "required": False, "allow_blank": True},
+            "bank_account_name": {"max_length": 200, "required": False, "allow_blank": True},
+            "bank_sort_code": {"max_length": 20, "required": False, "allow_blank": True},
+        }
 
     def validate_name(self, value):
-        if len(value.strip()) < 2:
+        value = value.strip()
+        if len(value) < 2:
             raise serializers.ValidationError("Organisation name must be at least 2 characters.")
-        return value.strip()
+        return value
+
+    def validate_bank_account_number(self, value):
+        """Nigerian NUBAN account numbers must be exactly 10 digits."""
+        if value and not re.match(r"^\d{10}$", value):
+            raise serializers.ValidationError(
+                "Bank account number must be exactly 10 digits (CBN NUBAN format)."
+            )
+        return value
+
+    def validate_phone(self, value):
+        if value and not re.match(r"^[+\d\s\-\(\)]{0,30}$", value):
+            raise serializers.ValidationError(
+                "Phone number may only contain digits, spaces, +, -, and parentheses."
+            )
+        return value
 
 
 class ModulePermissionSerializer(serializers.ModelSerializer):

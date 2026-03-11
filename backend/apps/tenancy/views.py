@@ -1,5 +1,7 @@
 """Tenancy views: Organisations, Memberships, Invitations."""
 
+import re
+
 from django.utils import timezone
 from rest_framework import serializers as drf_serializers
 from rest_framework import status, viewsets
@@ -8,6 +10,12 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.core.permissions import IsOwnerOrAdmin
+from apps.core.throttles import BankResolveRateThrottle, InvitationRateThrottle
+
+# Nigerian NUBAN account numbers are exactly 10 digits.
+# Bank codes are 3–6 digit strings assigned by the CBN.
+_ACCOUNT_NUMBER_RE = re.compile(r"^\d{10}$")
+_BANK_CODE_RE = re.compile(r"^\d{3,6}$")
 
 from .models import EmailConfig, Invitation, Membership, ModulePermission, Organisation
 from .serializers import InvitationSerializer, MembershipSerializer, ModulePermissionSerializer, OrganisationSerializer
@@ -55,7 +63,8 @@ class OrganisationViewSet(viewsets.ModelViewSet):
             extra=serializer.validated_data,
         )
 
-    @action(detail=True, methods=["post"], permission_classes=[IsOwnerOrAdmin])
+    @action(detail=True, methods=["post"], permission_classes=[IsOwnerOrAdmin],
+            throttle_classes=[InvitationRateThrottle])
     def invite(self, request, pk=None):
         """Send an invitation to join this organisation."""
         org = self.get_object()
@@ -129,7 +138,8 @@ class OrganisationViewSet(viewsets.ModelViewSet):
             )
         return Response(MembershipSerializer(membership).data)
 
-    @action(detail=True, methods=["post"], permission_classes=[IsOwnerOrAdmin], url_path="create_subaccount")
+    @action(detail=True, methods=["post"], permission_classes=[IsOwnerOrAdmin],
+            url_path="create_subaccount", throttle_classes=[InvitationRateThrottle])
     def create_subaccount(self, request, pk=None):
         """
         POST /organisations/{id}/create_subaccount/
@@ -191,35 +201,69 @@ class OrganisationViewSet(viewsets.ModelViewSet):
         )
         return Response(MembershipSerializer(membership).data, status=status.HTTP_201_CREATED)
 
-    @action(detail=False, methods=["get"], url_path="resolve_bank_account")
+    @action(detail=False, methods=["get"], url_path="resolve_bank_account",
+            throttle_classes=[BankResolveRateThrottle])
     def resolve_bank_account(self, request):
         """
         GET /organisations/resolve_bank_account/?account_number=0123456789&bank_code=057
 
-        Proxies to Paystack's bank resolve API. Requires PAYSTACK_SECRET_KEY in settings.
+        Proxies to Paystack's bank-account name resolution API.
+
+        Security controls:
+          - BankResolveRateThrottle: 20 calls/min per user (guards Paystack quota).
+          - Strict regex validation on account_number (exactly 10 digits — CBN NUBAN)
+            and bank_code (3–6 digits — CBN assigned codes). This prevents SSRF /
+            parameter-injection attacks against the Paystack upstream.
+          - Paystack API key is never returned to the client; only the resolved
+            account name/status from Paystack's response is forwarded.
         """
-        import urllib.request
         import json as _json
+        import urllib.request
         from django.conf import settings
 
-        account_number = request.query_params.get("account_number", "")
-        bank_code = request.query_params.get("bank_code", "")
+        account_number = request.query_params.get("account_number", "").strip()
+        bank_code = request.query_params.get("bank_code", "").strip()
 
+        # ── Input validation ──────────────────────────────────────────────────
         if not account_number or not bank_code:
-            return Response({"error": {"message": "account_number and bank_code are required."}}, status=400)
+            return Response(
+                {"error": {"message": "account_number and bank_code are required."}},
+                status=400,
+            )
+        if not _ACCOUNT_NUMBER_RE.match(account_number):
+            return Response(
+                {"error": {"message": "account_number must be exactly 10 digits (CBN NUBAN format)."}},
+                status=400,
+            )
+        if not _BANK_CODE_RE.match(bank_code):
+            return Response(
+                {"error": {"message": "bank_code must be 3–6 digits."}},
+                status=400,
+            )
 
         paystack_key = getattr(settings, "PAYSTACK_SECRET_KEY", "")
         if not paystack_key:
-            return Response({"error": {"message": "Paystack API key not configured on server."}}, status=503)
+            return Response(
+                {"error": {"message": "Paystack API key not configured on server."}},
+                status=503,
+            )
 
-        url = f"https://api.paystack.co/bank/resolve?account_number={account_number}&bank_code={bank_code}"
-        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {paystack_key}"})
+        # Build URL using validated, regex-matched values only (no raw user input
+        # injected into the URL string beyond the validated parts).
+        url = (
+            f"https://api.paystack.co/bank/resolve"
+            f"?account_number={account_number}&bank_code={bank_code}"
+        )
+        req = urllib.request.Request(
+            url,
+            headers={"Authorization": f"Bearer {paystack_key}"},
+        )
         try:
             with urllib.request.urlopen(req, timeout=10) as resp:
                 body = _json.loads(resp.read().decode())
             return Response(body)
         except Exception as e:
-            return Response({"error": {"message": str(e)}}, status=502)
+            return Response({"error": {"message": "Bank account lookup failed. Please try again."}}, status=502)
 
 
 class MembershipViewSet(viewsets.ModelViewSet):

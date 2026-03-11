@@ -1,4 +1,9 @@
+from decimal import Decimal
+
 from rest_framework import serializers
+
+from apps.core.validators import validate_file_upload
+
 from .models import Bill, BillFolder, BillItem, BillPayment
 
 
@@ -58,26 +63,50 @@ class BillSerializer(serializers.ModelSerializer):
             'created_at', 'items', 'payments'
         ]
         read_only_fields = ['id', 'bill_number', 'subtotal', 'total_amount', 'amount_paid', 'amount_due', 'created_at']
+        extra_kwargs = {
+            'attachment': {'validators': [validate_file_upload], 'required': False},
+            'notes': {'max_length': 2000, 'required': False, 'allow_blank': True},
+            'reference': {'max_length': 100, 'required': False, 'allow_blank': True},
+        }
+
+
+class BillItemInputSerializer(serializers.Serializer):
+    """
+    Schema-validated bill line item.
+
+    Replaces the previous DictField(child=any) which accepted arbitrary
+    unvalidated keys and values. Each line is now strictly typed with
+    explicit bounds on every numeric and text field.
+    """
+
+    description = serializers.CharField(max_length=500)
+    quantity = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0.001"))
+    unit_cost = serializers.DecimalField(max_digits=15, decimal_places=4, min_value=Decimal("0"))
+    # Optional FK references — resolved in the view/service
+    expense_category_id = serializers.UUIDField(required=False, allow_null=True)
+    account_id = serializers.UUIDField(required=False, allow_null=True)
 
 
 class CreateBillSerializer(serializers.Serializer):
     supplier = serializers.UUIDField()
     issue_date = serializers.DateField()
     due_date = serializers.DateField()
-    reference = serializers.CharField(required=False, allow_blank=True, default='')
-    tax_amount = serializers.DecimalField(max_digits=15, decimal_places=2, required=False, default=0)
-    notes = serializers.CharField(required=False, allow_blank=True, default='')
+    # max_length prevents oversized free-text fields from being stored
+    reference = serializers.CharField(required=False, allow_blank=True, default='', max_length=100)
+    tax_amount = serializers.DecimalField(max_digits=15, decimal_places=2, required=False, default=Decimal("0"), min_value=Decimal("0"))
+    notes = serializers.CharField(required=False, allow_blank=True, default='', max_length=2000)
     status = serializers.ChoiceField(
         choices=['draft', 'received', 'approved'],
         required=False,
         default='draft',
     )
-    items = serializers.ListField(child=serializers.DictField(), min_length=1)
+    # Use the typed nested serializer — replaces unsafe DictField
+    items = BillItemInputSerializer(many=True, min_length=1, max_length=200)
 
 
 class RecordBillPaymentSerializer(serializers.Serializer):
-    amount = serializers.DecimalField(max_digits=15, decimal_places=2)
+    amount = serializers.DecimalField(max_digits=15, decimal_places=2, min_value=Decimal("0.01"))
     payment_date = serializers.DateField()
     method = serializers.ChoiceField(choices=['cash', 'bank_transfer', 'cheque', 'pos'], default='cash')
-    reference = serializers.CharField(required=False, allow_blank=True, default='')
-    notes = serializers.CharField(required=False, allow_blank=True, default='')
+    reference = serializers.CharField(required=False, allow_blank=True, default='', max_length=200)
+    notes = serializers.CharField(required=False, allow_blank=True, default='', max_length=1000)

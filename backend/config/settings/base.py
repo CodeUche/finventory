@@ -184,12 +184,19 @@ REST_FRAMEWORK = {
         "rest_framework.throttling.UserRateThrottle",
     ],
     "DEFAULT_THROTTLE_RATES": {
-        "anon": "60/hour",
-        "user": "1000/hour",
-        "login": "5/minute",           # LoginRateThrottle — 5 attempts/min max
-        "register": "3/hour",          # RegisterRateThrottle
+        # ── Global fallback limits ─────────────────────────────────────────
+        "anon": "60/hour",             # Unauthenticated catch-all
+        "user": "1000/hour",           # Authenticated catch-all
+        # ── Auth endpoints (per-IP) ────────────────────────────────────────
+        "login": "5/minute",           # LoginRateThrottle — brute-force guard
+        "register": "3/hour",          # RegisterRateThrottle — signup spam guard
         "token_refresh": "10/minute",  # TokenRefreshRateThrottle
         "password_change": "3/hour",   # PasswordChangeRateThrottle
+        # ── Business endpoints ─────────────────────────────────────────────
+        "bank_resolve": "20/minute",   # BankResolveRateThrottle — Paystack proxy
+        "invitation": "10/hour",       # InvitationRateThrottle — team management
+        "webhook": "300/minute",       # WebhookRateThrottle — Paystack inbound events
+        "public_read": "30/minute",    # PublicReadRateThrottle — plan listing etc.
     },
 }
 

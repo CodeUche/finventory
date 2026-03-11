@@ -12,6 +12,8 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
+from apps.core.validators import validate_image_upload
+
 User = get_user_model()
 
 
@@ -40,14 +42,49 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 
 
 class RegisterSerializer(serializers.ModelSerializer):
-    """User registration serializer with strong password validation."""
+    """
+    User registration serializer with strong input validation.
 
-    password = serializers.CharField(write_only=True, min_length=10, style={"input_type": "password"})
-    password_confirm = serializers.CharField(write_only=True, style={"input_type": "password"})
+    Security controls:
+      - Password min_length=10 enforced at field level.
+      - Django AUTH_PASSWORD_VALIDATORS applied (similarity, common passwords,
+        numeric-only, minimum length — all configured in settings).
+      - Email normalised to lowercase to prevent duplicate-account creation
+        via case variation (e.g. User@Example.com vs user@example.com).
+      - Name fields capped to 150 chars (AbstractUser default max_length).
+      - Phone capped to 30 chars; only digits, spaces and + allowed.
+    """
+
+    password = serializers.CharField(
+        write_only=True, min_length=10, max_length=128,
+        style={"input_type": "password"},
+    )
+    password_confirm = serializers.CharField(
+        write_only=True, max_length=128,
+        style={"input_type": "password"},
+    )
 
     class Meta:
         model = User
         fields = ["email", "first_name", "last_name", "phone", "password", "password_confirm"]
+        extra_kwargs = {
+            "first_name": {"max_length": 150, "required": False, "allow_blank": True},
+            "last_name": {"max_length": 150, "required": False, "allow_blank": True},
+            "phone": {"max_length": 30, "required": False, "allow_blank": True},
+        }
+
+    def validate_email(self, value):
+        # Normalise email to lowercase to prevent case-variant duplicates
+        return value.strip().lower()
+
+    def validate_phone(self, value):
+        import re
+        # Allow digits, spaces, hyphens, parentheses, and leading +
+        if value and not re.match(r"^[+\d\s\-\(\)]{0,30}$", value):
+            raise serializers.ValidationError(
+                "Phone number may only contain digits, spaces, +, -, and parentheses."
+            )
+        return value
 
     def validate(self, attrs):
         if attrs["password"] != attrs.pop("password_confirm"):
@@ -73,6 +110,13 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "avatar", "is_verified", "is_superuser", "is_staff", "created_at",
         ]
         read_only_fields = ["id", "email", "is_verified", "is_superuser", "is_staff", "created_at"]
+        extra_kwargs = {
+            "first_name": {"max_length": 150, "required": False, "allow_blank": True},
+            "last_name": {"max_length": 150, "required": False, "allow_blank": True},
+            "phone": {"max_length": 30, "required": False, "allow_blank": True},
+            # Only allow safe image formats for avatar uploads
+            "avatar": {"validators": [validate_image_upload], "required": False},
+        }
 
 
 class ChangePasswordSerializer(serializers.Serializer):

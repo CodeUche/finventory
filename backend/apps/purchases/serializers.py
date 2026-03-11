@@ -1,6 +1,9 @@
 from decimal import Decimal
 
 from rest_framework import serializers
+
+from apps.core.validators import validate_file_upload
+
 from .models import PurchaseOrder, PurchaseOrderItem
 
 
@@ -37,6 +40,11 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
             "notes", "receipt", "items", "created_at",
         ]
         read_only_fields = ["id", "po_number", "subtotal", "tax_amount", "total_amount", "created_at"]
+        extra_kwargs = {
+            "notes": {"max_length": 2000, "required": False, "allow_blank": True},
+            # Allow only PDF/image receipts; file size capped by validate_file_upload
+            "receipt": {"validators": [validate_file_upload], "required": False},
+        }
 
     def create(self, validated_data):
         items_data = validated_data.pop("items", [])
@@ -57,5 +65,6 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
 class ReceiveItemSerializer(serializers.Serializer):
     item_id = serializers.UUIDField()
     quantity_received = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0.01"))
-    batch_number = serializers.CharField(required=False, default="")
+    # Batch numbers are short reference codes — cap to prevent oversized strings
+    batch_number = serializers.CharField(required=False, default="", max_length=100)
     expiry_date = serializers.DateField(required=False, allow_null=True)

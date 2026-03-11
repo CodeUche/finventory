@@ -66,11 +66,18 @@ class BillViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         supplier = Supplier.objects.get(id=d['supplier'], organisation=org)
         items_data = []
         for item in d['items']:
-            items_data.append({
+            # Values are already typed Decimals from BillItemInputSerializer — no casting needed
+            entry = {
                 'description': item['description'],
-                'quantity': Decimal(str(item.get('quantity', '1'))),
-                'unit_cost': Decimal(str(item['unit_cost'])),
-            })
+                'quantity': item['quantity'],
+                'unit_cost': item['unit_cost'],
+            }
+            # Pass optional FK fields if provided
+            if item.get('expense_category_id'):
+                entry['expense_category_id'] = item['expense_category_id']
+            if item.get('account_id'):
+                entry['account_id'] = item['account_id']
+            items_data.append(entry)
         bill_data = {
             'supplier': supplier,
             'issue_date': d['issue_date'],

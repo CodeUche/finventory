@@ -1,5 +1,8 @@
 from django.db.models import Sum
 from rest_framework import serializers
+
+from apps.core.validators import validate_file_upload
+
 from .models import Expense, ExpenseCategory, ExpenseGroup
 
 
@@ -44,9 +47,10 @@ class ExpenseGroupSerializer(serializers.ModelSerializer):
 class ExpenseSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True)
     # Write-only: accept a category name string; view auto-creates the FK record
-    category_label = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    # max_length on write-only fields prevents large strings from hitting the DB
+    category_label = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=200)
     # Allow blank description — model requires non-blank but we default to empty string
-    description = serializers.CharField(required=False, allow_blank=True, default='')
+    description = serializers.CharField(required=False, allow_blank=True, default='', max_length=1000)
     recorded_by_name = serializers.CharField(source="recorded_by.get_full_name", read_only=True)
     group_name = serializers.CharField(source="group.name", read_only=True)
     budget_name = serializers.CharField(source="budget.name", read_only=True, allow_null=True)
@@ -68,4 +72,7 @@ class ExpenseSerializer(serializers.ModelSerializer):
             'category': {'required': False},
             'group': {'required': False},
             'budget': {'required': False},
+            # Field-level caps and upload validation
+            'reference': {'max_length': 200, 'required': False, 'allow_blank': True},
+            'attachment': {'validators': [validate_file_upload], 'required': False},
         }
