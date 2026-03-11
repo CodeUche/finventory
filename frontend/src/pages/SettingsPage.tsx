@@ -131,6 +131,8 @@ export default function SettingsPage() {
     bank_account_number: organisation?.bank_account_number ?? '',
     bank_account_name: organisation?.bank_account_name ?? '',
     bank_sort_code: organisation?.bank_sort_code ?? '',
+    brand_color: organisation?.brand_color ?? '#f97316',
+    use_letterhead: String(organisation?.use_letterhead ?? false),
   })
 
   // ─── Bank account resolve state ──────────────────────────────────────────────
@@ -685,14 +687,24 @@ export default function SettingsPage() {
                 <input
                   ref={letterheadRef}
                   type="file"
-                  accept="image/*"
+                  accept="image/*,.pdf,.doc,.docx"
                   className="hidden"
                   onChange={handleLetterheadChange}
                 />
               </div>
               <div className="space-y-2 text-sm text-slate-400 pt-1">
-                <p>Upload your company letterhead or a branded banner (PNG, JPG recommended).</p>
+                <p>Upload your company letterhead or a branded banner (PNG, JPG, PDF, DOC/DOCX supported).</p>
                 <p className="text-xs">Ideal size: <span className="text-slate-300">1200 × 300 px</span> or similar wide banner format.</p>
+                {/* Use letterhead toggle */}
+                <label className="flex items-center gap-2 cursor-pointer mt-1">
+                  <input
+                    type="checkbox"
+                    checked={company.use_letterhead === 'true'}
+                    onChange={(e) => setCompany({ ...company, use_letterhead: String(e.target.checked) })}
+                    className="accent-brand-500 w-4 h-4"
+                  />
+                  <span className="text-slate-300 text-xs">Use uploaded letterhead in PDFs</span>
+                </label>
                 {letterheadPreview && (
                   <button
                     type="button"
@@ -704,6 +716,44 @@ export default function SettingsPage() {
                 )}
               </div>
             </div>
+            {/* Brand color picker — used when letterhead is off */}
+            {company.use_letterhead !== 'true' && (
+              <div className="mt-4 flex items-center gap-4">
+                <div>
+                  <label className="label">Default Template Color</label>
+                  <p className="text-xs text-slate-500 mb-2">Used as the accent/header color in all PDFs when not using a letterhead</p>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="color"
+                      value={company.brand_color}
+                      onChange={(e) => setCompany({ ...company, brand_color: e.target.value })}
+                      className="w-10 h-10 rounded-lg border border-surface-600 cursor-pointer bg-transparent p-0.5"
+                    />
+                    <input
+                      className="input w-32 font-mono text-sm"
+                      value={company.brand_color}
+                      maxLength={7}
+                      placeholder="#f97316"
+                      onChange={(e) => {
+                        const v = e.target.value
+                        if (/^#[0-9a-fA-F]{0,6}$/.test(v)) setCompany({ ...company, brand_color: v })
+                      }}
+                    />
+                    <div
+                      className="w-10 h-10 rounded-lg border border-surface-600"
+                      style={{ backgroundColor: company.brand_color }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setCompany({ ...company, brand_color: '#f97316' })}
+                      className="text-xs text-slate-500 hover:text-slate-300"
+                    >
+                      Reset
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           <button onClick={saveCompany} disabled={savingCompany} className="btn-primary">

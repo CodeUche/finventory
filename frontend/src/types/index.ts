@@ -36,6 +36,8 @@ export interface Organisation {
   bank_account_number?: string
   bank_account_name?: string
   bank_sort_code?: string
+  brand_color?: string
+  use_letterhead?: boolean
 }
 
 // ─── Product ──────────────────────────────────────────────────────────────────

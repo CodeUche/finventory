@@ -21,6 +21,29 @@ const RETURN_REASONS = [
 interface PdfPreview { url: string; filename: string }
 interface ReturnLineItem { sale_item_id: string; quantity_returned: string; max_qty: number; product_name: string; unit_price: string }
 
+/** Parse a CSS hex color into an RGB triple for jsPDF. Falls back to orange on invalid input. */
+function hexToRgb(hex?: string): [number, number, number] {
+  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex ?? '')
+  if (!m) return [249, 115, 22]
+  return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)]
+}
+
+/** Fetch any URL and return a base-64 data URL for jsPDF addImage. */
+async function urlToDataUrl(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url)
+    const blob = await res.blob()
+    return await new Promise<string>((resolve, reject) => {
+      const r = new FileReader()
+      r.onloadend = () => resolve(r.result as string)
+      r.onerror = reject
+      r.readAsDataURL(blob)
+    })
+  } catch {
+    return null
+  }
+}
+
 // ── PDF builder ───────────────────────────────────────────────────────────────
 async function buildInvoicePDF(
   inv: Invoice,
@@ -33,6 +56,9 @@ async function buildInvoicePDF(
   bankAccountNumber?: string,
   bankAccountName?: string,
   bankSortCode?: string,
+  orgLetterhead?: string,
+  brandColorHex?: string,
+  useLetterhead?: boolean,
 ): Promise<PdfPreview> {
   const { jsPDF } = await import('jspdf')
   const { default: autoTable } = await import('jspdf-autotable')
@@ -41,34 +67,46 @@ async function buildInvoicePDF(
   const pageW = doc.internal.pageSize.getWidth()
   const pageH = doc.internal.pageSize.getHeight()
 
-  const BRAND: [number, number, number] = [249, 115, 22]
+  const BRAND: [number, number, number] = hexToRgb(brandColorHex)
   const DARK: [number, number, number]  = [30,  30,  30]
   const MUTED: [number, number, number] = [100, 100, 100]
   const LIGHT: [number, number, number] = [250, 250, 248]
 
   let y = 14
 
-  // ── Top brand bar ──────────────────────────────────────────────────────────
-  doc.setFillColor(...BRAND)
-  doc.rect(0, 0, pageW, 3, 'F')
+  // ── Header: letterhead banner OR brand-color bar ────────────────────────────
+  if (useLetterhead && orgLetterhead) {
+    // Only image letterheads can be embedded by jsPDF (PDF/DOC cannot be inlined)
+    const isImageUrl = /\.(png|jpe?g|gif|webp|svg)(\?|$)/i.test(orgLetterhead)
+    if (isImageUrl) {
+      const lhData = await urlToDataUrl(orgLetterhead)
+      if (lhData) {
+        const LETTERHEAD_H = 30
+        doc.addImage(lhData, 'PNG', 0, 0, pageW, LETTERHEAD_H)
+        y = LETTERHEAD_H + 4
+      } else {
+        doc.setFillColor(...BRAND)
+        doc.rect(0, 0, pageW, 3, 'F')
+      }
+    } else {
+      doc.setFillColor(...BRAND)
+      doc.rect(0, 0, pageW, 3, 'F')
+    }
+  } else {
+    doc.setFillColor(...BRAND)
+    doc.rect(0, 0, pageW, 3, 'F')
+  }
 
   // ── Logo ───────────────────────────────────────────────────────────────────
-  if (orgLogo) {
+  if (orgLogo && !(useLetterhead && orgLetterhead)) {
     try {
-      const res = await fetch(orgLogo)
-      const blob = await res.blob()
-      const b64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onloadend = () => resolve(reader.result as string)
-        reader.onerror = reject
-        reader.readAsDataURL(blob)
-      })
-      doc.addImage(b64, blob.type.includes('png') ? 'PNG' : 'JPEG', 14, y + 2, 26, 26)
+      const b64 = await urlToDataUrl(orgLogo)
+      if (b64) doc.addImage(b64, b64.includes('image/png') ? 'PNG' : 'JPEG', 14, y + 2, 26, 26)
     } catch { /* skip logo on error */ }
   }
 
   // ── Company info (left) ────────────────────────────────────────────────────
-  const textX = orgLogo ? 46 : 14
+  const textX = (orgLogo && !(useLetterhead && orgLetterhead)) ? 46 : 14
   doc.setFontSize(14)
   doc.setFont('helvetica', 'bold')
   doc.setTextColor(...DARK)
@@ -288,19 +326,30 @@ async function buildDeliveryNotePDF(
   inv: Invoice,
   orgName: string,
   orgAddress?: string,
+  orgLetterhead?: string,
+  brandColorHex?: string,
+  useLetterhead?: boolean,
 ): Promise<PdfPreview> {
   const { jsPDF } = await import('jspdf')
   const { default: autoTable } = await import('jspdf-autotable')
   const doc = new jsPDF({ unit: 'mm', format: 'a4' })
   const pageW = doc.internal.pageSize.getWidth()
-  const BRAND: [number, number, number] = [249, 115, 22]
+  const BRAND: [number, number, number] = hexToRgb(brandColorHex)
   const DARK: [number, number, number] = [30, 30, 30]
   const MUTED: [number, number, number] = [100, 100, 100]
 
-  doc.setFillColor(...BRAND)
-  doc.rect(0, 0, pageW, 3, 'F')
-
   let y = 14
+  if (useLetterhead && orgLetterhead && /\.(png|jpe?g|gif|webp|svg)(\?|$)/i.test(orgLetterhead)) {
+    const lhData = await urlToDataUrl(orgLetterhead)
+    if (lhData) {
+      doc.addImage(lhData, 'PNG', 0, 0, pageW, 30)
+      y = 34
+    } else {
+      doc.setFillColor(...BRAND); doc.rect(0, 0, pageW, 3, 'F')
+    }
+  } else {
+    doc.setFillColor(...BRAND); doc.rect(0, 0, pageW, 3, 'F')
+  }
   doc.setFontSize(20)
   doc.setFont('helvetica', 'bold')
   doc.setTextColor(...BRAND)
@@ -435,6 +484,9 @@ export default function SalesPage() {
         organisation?.bank_account_number,
         organisation?.bank_account_name,
         organisation?.bank_sort_code,
+        organisation?.letterhead,
+        organisation?.brand_color,
+        organisation?.use_letterhead,
       )
       setPdfPreview(preview)
     } catch { toast.error('Failed to generate PDF') }
@@ -504,7 +556,10 @@ export default function SalesPage() {
       const preview = await buildDeliveryNotePDF(
         inv,
         organisation?.name ?? 'Audity',
-        (organisation as any)?.address,
+        organisation?.address,
+        organisation?.letterhead,
+        organisation?.brand_color,
+        organisation?.use_letterhead,
       )
       setPdfPreview(preview)
     } catch { toast.error('Failed to generate delivery note') }

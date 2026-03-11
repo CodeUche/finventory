@@ -47,13 +47,22 @@ class Organisation(SoftDeleteModel):
     email = models.EmailField(blank=True)
     address = models.TextField(blank=True)
     logo = models.ImageField(upload_to="org_logos/", null=True, blank=True)
-    letterhead = models.ImageField(upload_to="org_letterheads/", null=True, blank=True,
-        help_text="Optional letterhead image shown at the top of invoices and PDF documents")
+    letterhead = models.FileField(upload_to="org_letterheads/", null=True, blank=True,
+        help_text="Optional letterhead file (image, PDF, or DOC) shown at the top of invoices and PDF documents")
     # Banking details (shown on invoices and payment documents)
     bank_name = models.CharField(max_length=200, blank=True)
     bank_account_number = models.CharField(max_length=30, blank=True)
     bank_account_name = models.CharField(max_length=200, blank=True)
     bank_sort_code = models.CharField(max_length=20, blank=True, help_text="Sort code or routing number")
+    # Document branding preferences
+    brand_color = models.CharField(
+        max_length=7, default="#f97316",
+        help_text="Hex color code (#rrggbb) used in invoice/PDF templates when no letterhead is uploaded"
+    )
+    use_letterhead = models.BooleanField(
+        default=False,
+        help_text="When True, use the uploaded letterhead banner instead of the colored template header"
+    )
     # Subscription link (set by subscriptions app)
     subscription = models.OneToOneField(
         "subscriptions.Subscription",

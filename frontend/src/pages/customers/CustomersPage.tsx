@@ -165,68 +165,112 @@ export default function CustomersPage() {
     const sym = getCurrencySymbol()
     const pageW = doc.internal.pageSize.getWidth()
 
-    // Load logo image if available
-    let logoDataUrl: string | null = null
-    if (organisation?.logo) {
+    // Resolve brand color
+    const brandRgb = (hex?: string): [number, number, number] => {
+      const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex ?? '')
+      if (!m) return [249, 115, 22]
+      return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)]
+    }
+    const BRAND = brandRgb(organisation?.brand_color)
+
+    // Helper to fetch URL → base64 data URL
+    const fetchDataUrl = async (url: string): Promise<string | null> => {
       try {
-        const img = new Image()
-        img.crossOrigin = 'anonymous'
-        await new Promise<void>((resolve) => {
-          img.onload = () => {
-            const canvas = document.createElement('canvas')
-            const maxH = 80
-            const scale = maxH / img.naturalHeight
-            canvas.width = img.naturalWidth * scale
-            canvas.height = maxH
-            const ctx = canvas.getContext('2d')!
-            ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
-            logoDataUrl = canvas.toDataURL('image/png')
-            resolve()
-          }
-          img.onerror = () => resolve()
-          img.src = organisation.logo!
+        const res = await fetch(url)
+        const blob = await res.blob()
+        return await new Promise<string>((resolve, reject) => {
+          const r = new FileReader()
+          r.onloadend = () => resolve(r.result as string)
+          r.onerror = reject
+          r.readAsDataURL(blob)
         })
-      } catch { /* no logo */ }
+      } catch { return null }
     }
 
-    // Header block
+    let y = 8
     const HEADER_H = 42
-    doc.setFillColor(15, 23, 42)
-    doc.rect(0, 0, pageW, HEADER_H, 'F')
 
-    // Logo (left)
-    if (logoDataUrl) {
-      doc.addImage(logoDataUrl, 'PNG', 10, 5, 32, 16)
+    // ── Header: letterhead banner OR dark block ────────────────────────────────
+    const useLetterhead = organisation?.use_letterhead && organisation?.letterhead
+    const isImageLetterhead = useLetterhead && /\.(png|jpe?g|gif|webp|svg)(\?|$)/i.test(organisation!.letterhead!)
+
+    if (isImageLetterhead) {
+      const lhData = await fetchDataUrl(organisation!.letterhead!)
+      if (lhData) {
+        doc.addImage(lhData, 'PNG', 0, 0, pageW, 30)
+        y = 32
+        // Company name below banner
+        doc.setFontSize(10)
+        doc.setFont('helvetica', 'bold')
+        doc.setTextColor(30, 41, 59)
+        doc.text(organisation?.name ?? 'Company', 10, y + 6)
+        doc.setFontSize(7.5)
+        doc.setFont('helvetica', 'normal')
+        doc.setTextColor(100, 116, 139)
+        const subLines: string[] = []
+        if (organisation?.address) subLines.push(organisation.address)
+        if (organisation?.email) subLines.push(organisation.email)
+        if (organisation?.phone) subLines.push(organisation.phone)
+        subLines.forEach((line, idx) => doc.text(line, 10, y + 11 + idx * 4))
+        // Title right
+        doc.setFontSize(14)
+        doc.setFont('helvetica', 'bold')
+        doc.setTextColor(30, 41, 59)
+        doc.text('CUSTOMER STATEMENT', pageW - 10, y + 6, { align: 'right' })
+        doc.setFontSize(8)
+        doc.setFont('helvetica', 'normal')
+        doc.setTextColor(100, 116, 139)
+        doc.text(`Period: ${formatDate(stmtFrom)} — ${formatDate(stmtTo)}`, pageW - 10, y + 13, { align: 'right' })
+        y = y + 11 + subLines.length * 4 + 8
+      } else {
+        // letterhead URL failed to load — fall back to dark header block
+        doc.setFillColor(15, 23, 42); doc.rect(0, 0, pageW, HEADER_H, 'F')
+        doc.setFontSize(15); doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold')
+        doc.text(organisation?.name ?? 'Company', 10, 13)
+        doc.setFontSize(14); doc.text('CUSTOMER STATEMENT', pageW - 10, 13, { align: 'right' })
+        y = HEADER_H + 8
+      }
+    } else {
+      // Default: colored dark header block
+      doc.setFillColor(15, 23, 42)
+      doc.rect(0, 0, pageW, HEADER_H, 'F')
+
+      // Load logo image if available
+      let logoDataUrl: string | null = null
+      if (organisation?.logo) logoDataUrl = await fetchDataUrl(organisation.logo)
+
+      // Logo (left)
+      if (logoDataUrl) doc.addImage(logoDataUrl, 'PNG', 10, 5, 32, 16)
+
+      // Company name + details
+      const nameY = logoDataUrl ? 26 : 13
+      doc.setFontSize(logoDataUrl ? 10 : 15)
+      doc.setTextColor(255, 255, 255)
+      doc.setFont('helvetica', 'bold')
+      doc.text(organisation?.name ?? 'Company', 10, nameY)
+      doc.setFontSize(7.5)
+      doc.setFont('helvetica', 'normal')
+      doc.setTextColor(148, 163, 184)
+      const subLines: string[] = []
+      if (organisation?.address) subLines.push(organisation.address)
+      if (organisation?.email) subLines.push(organisation.email)
+      if (organisation?.phone) subLines.push(organisation.phone)
+      if (organisation?.tax_id) subLines.push(`Tax ID: ${organisation.tax_id}`)
+      subLines.forEach((line, idx) => doc.text(line, 10, nameY + 5 + idx * 4))
+
+      // Title (right)
+      doc.setFontSize(14)
+      doc.setTextColor(255, 255, 255)
+      doc.setFont('helvetica', 'bold')
+      doc.text('CUSTOMER STATEMENT', pageW - 10, 13, { align: 'right' })
+      doc.setFontSize(8)
+      doc.setFont('helvetica', 'normal')
+      doc.setTextColor(148, 163, 184)
+      doc.text(`Period: ${formatDate(stmtFrom)} — ${formatDate(stmtTo)}`, pageW - 10, 20, { align: 'right' })
+      doc.text(`Generated: ${formatDate(new Date().toISOString().split('T')[0])}`, pageW - 10, 26, { align: 'right' })
+
+      y = HEADER_H + 8
     }
-
-    // Company name + details (left, below logo or at top)
-    const nameY = logoDataUrl ? 26 : 13
-    doc.setFontSize(logoDataUrl ? 10 : 15)
-    doc.setTextColor(255, 255, 255)
-    doc.setFont('helvetica', 'bold')
-    doc.text(organisation?.name ?? 'Company', 10, nameY)
-    doc.setFontSize(7.5)
-    doc.setFont('helvetica', 'normal')
-    doc.setTextColor(148, 163, 184)
-    const subLines: string[] = []
-    if (organisation?.address) subLines.push(organisation.address)
-    if (organisation?.email) subLines.push(organisation.email)
-    if (organisation?.phone) subLines.push(organisation.phone)
-    if (organisation?.tax_id) subLines.push(`Tax ID: ${organisation.tax_id}`)
-    subLines.forEach((line, idx) => doc.text(line, 10, nameY + 5 + idx * 4))
-
-    // Title (right)
-    doc.setFontSize(14)
-    doc.setTextColor(255, 255, 255)
-    doc.setFont('helvetica', 'bold')
-    doc.text('CUSTOMER STATEMENT', pageW - 10, 13, { align: 'right' })
-    doc.setFontSize(8)
-    doc.setFont('helvetica', 'normal')
-    doc.setTextColor(148, 163, 184)
-    doc.text(`Period: ${formatDate(stmtFrom)} — ${formatDate(stmtTo)}`, pageW - 10, 20, { align: 'right' })
-    doc.text(`Generated: ${formatDate(new Date().toISOString().split('T')[0])}`, pageW - 10, 26, { align: 'right' })
-
-    let y = HEADER_H + 8
     // Customer block
     doc.setFontSize(10)
     doc.setFont('helvetica', 'bold')
@@ -282,7 +326,7 @@ export default function CustomersPage() {
           inv.status.replace('_', ' ').toUpperCase(),
         ]),
         styles: { fontSize: 8, cellPadding: 3 },
-        headStyles: { fillColor: [15, 23, 42], textColor: 255, fontStyle: 'bold', fontSize: 7 },
+        headStyles: { fillColor: BRAND, textColor: 255, fontStyle: 'bold', fontSize: 7 },
         columnStyles: { 0: { fontStyle: 'bold' }, 6: { fontStyle: 'bold' } },
         alternateRowStyles: { fillColor: [248, 250, 252] },
         margin: { left: 14, right: 14 },
@@ -341,16 +385,23 @@ export default function CustomersPage() {
     for (let i = 1; i <= pageCount; i++) {
       doc.setPage(i)
       const ph = doc.internal.pageSize.getHeight()
-      doc.setFillColor(15, 23, 42)
+      doc.setFillColor(...BRAND)
       doc.rect(0, ph - 12, pageW, 12, 'F')
       doc.setFontSize(7)
-      doc.setTextColor(148, 163, 184)
+      doc.setTextColor(255, 255, 255)
       doc.text(`Page ${i} of ${pageCount}`, pageW / 2, ph - 5, { align: 'center' })
       doc.text(organisation?.name ?? 'Company', 10, ph - 5)
       doc.text(`Statement: ${formatDate(stmtFrom)} — ${formatDate(stmtTo)}`, pageW - 10, ph - 5, { align: 'right' })
     }
 
-    doc.save(`statement-${selected.code}-${stmtFrom}-${stmtTo}.pdf`)
+    // Use blob URL instead of doc.save() — doc.save() is broken in Tauri WebView2
+    const blob = doc.output('blob')
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `statement-${selected.code}-${stmtFrom}-${stmtTo}.pdf`
+    a.click()
+    setTimeout(() => URL.revokeObjectURL(url), 30000)
   }
 
   const openStatement = (c: Customer) => {
