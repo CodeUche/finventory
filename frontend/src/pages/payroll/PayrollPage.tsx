@@ -5,6 +5,7 @@ import { payrollApi } from '@/services/api'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import type { PayrollRun } from '@/types'
 import DateInput from '@/components/DateInput'
+import YearFilter from '@/components/YearFilter'
 
 interface TransferResult {
   employee: string
@@ -40,6 +41,7 @@ export default function PayrollPage() {
   const [paymentDate, setPaymentDate] = useState(now.toISOString().split('T')[0])
   const [initiatingTransfer, setInitiatingTransfer] = useState(false)
   const [transferResults, setTransferResults] = useState<TransferResult[] | null>(null)
+  const [archiveYear, setArchiveYear] = useState<number | null>(null)
 
   const load = async () => {
     setLoading(true)
@@ -103,6 +105,7 @@ export default function PayrollPage() {
     }
   }
 
+  const displayRuns = archiveYear ? runs.filter((r) => r.period_year === archiveYear) : runs
   // Latest run for summary cards
   const latestRun = runs.find((r) => r.status === 'approved' || r.status === 'paid') ?? runs[0]
 
@@ -115,7 +118,7 @@ export default function PayrollPage() {
       </div>
 
       {/* Run Payroll bar */}
-      <div className="card p-5 flex flex-col sm:flex-row items-start sm:items-center gap-4">
+      <div className="card p-5 flex flex-col sm:flex-row items-start sm:items-center gap-4 flex-wrap">
         <p className="text-white font-semibold">Run Payroll for:</p>
         <div className="flex items-center gap-2">
           <select className="input py-1.5" value={selectedMonth} onChange={(e) => setSelectedMonth(parseInt(e.target.value))}>
@@ -129,14 +132,25 @@ export default function PayrollPage() {
             Run Payroll
           </button>
         </div>
+        <div className="sm:ml-auto">
+          <YearFilter selectedYear={archiveYear} onChange={setArchiveYear} />
+        </div>
       </div>
 
       {/* Summary from latest run */}
       {latestRun && (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
           <div className="card p-5"><p className="text-xs text-slate-400">Total Gross</p><p className="text-xl font-bold text-white mt-1">{formatCurrency(latestRun.total_gross)}</p></div>
           <div className="card p-5"><p className="text-xs text-slate-400">Total PAYE Tax</p><p className="text-xl font-bold text-red-400 mt-1">{formatCurrency(latestRun.total_paye)}</p></div>
           <div className="card p-5"><p className="text-xs text-slate-400">Pension (Employee)</p><p className="text-xl font-bold text-orange-400 mt-1">{formatCurrency(latestRun.total_pension_employee)}</p></div>
+          <div className="card p-5">
+            <p className="text-xs text-slate-400">Penalties &amp; Loans</p>
+            <p className="text-xl font-bold text-rose-400 mt-1">
+              {formatCurrency(
+                latestRun.payslips.reduce((s, p) => s + parseFloat(p.penalty_deductions || '0') + parseFloat(p.loan_deductions || '0'), 0)
+              )}
+            </p>
+          </div>
           <div className="card p-5"><p className="text-xs text-slate-400">Total Net Pay</p><p className="text-xl font-bold text-emerald-400 mt-1">{formatCurrency(latestRun.total_net)}</p></div>
         </div>
       )}
@@ -150,7 +164,7 @@ export default function PayrollPage() {
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {[
-              { label: 'FIRS PAYE Tax', amount: latestRun.total_paye, color: 'text-red-400', note: 'Remit to FIRS by 10th of following month', link: 'https://ivas.firs.gov.ng/' },
+              { label: 'FIRS PAYE Tax', amount: latestRun.total_paye, color: 'text-red-400', note: 'Remit to FIRS by 10th of following month', link: 'https://taxpromax.firs.gov.ng/' },
               { label: 'Pension (Employee 8%)', amount: latestRun.total_pension_employee, color: 'text-orange-400', note: 'Remit to PFA within 7 days of payment' },
               { label: 'Pension (Employer 10%)', amount: latestRun.total_pension_employer, color: 'text-yellow-400', note: 'Employer contribution to PFA' },
               { label: 'NHF (2.5%)', amount: latestRun.total_nhf, color: 'text-blue-400', note: 'Remit to Federal Mortgage Bank' },
@@ -193,14 +207,14 @@ export default function PayrollPage() {
                     ))}
                   </tr>
                 ))
-              ) : runs.length === 0 ? (
+              ) : displayRuns.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="px-4 py-12 text-center">
                     <Banknote size={32} className="mx-auto mb-2 text-slate-600" />
-                    <p className="text-slate-500">No payroll runs yet. Click "Run Payroll" to get started.</p>
+                    <p className="text-slate-500">{archiveYear ? `No payroll runs for ${archiveYear}.` : 'No payroll runs yet. Click "Run Payroll" to get started.'}</p>
                   </td>
                 </tr>
-              ) : runs.map((r) => (
+              ) : displayRuns.map((r) => (
                 <>
                   <tr key={r.id} className="table-row">
                     <td className="px-4 py-3.5">
@@ -234,21 +248,27 @@ export default function PayrollPage() {
                           <table className="w-full text-xs">
                             <thead>
                               <tr className="border-b border-surface-700">
-                                {['Employee', 'Gross', 'PAYE', 'Pension (Emp)', 'NHF', 'Deductions', 'Net Pay'].map((h) => (
-                                  <th key={h} className="pb-2 text-left text-slate-500 uppercase tracking-wider">{h}</th>
+                                {['Employee', 'Gross', 'PAYE', 'Pension (Emp)', 'NHF', 'Penalties', 'Loans', 'Total Deductions', 'Net Pay'].map((h) => (
+                                  <th key={h} className="pb-2 pr-4 text-left text-slate-500 uppercase tracking-wider">{h}</th>
                                 ))}
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-surface-700">
                               {r.payslips.map((p) => (
                                 <tr key={p.id}>
-                                  <td className="py-2 text-slate-300">{p.employee_name}</td>
-                                  <td className="py-2 font-mono text-white">{formatCurrency(p.gross_salary)}</td>
-                                  <td className="py-2 font-mono text-red-400">{formatCurrency(p.paye_tax)}</td>
-                                  <td className="py-2 font-mono text-orange-400">{formatCurrency(p.employee_pension)}</td>
-                                  <td className="py-2 font-mono text-blue-400">{formatCurrency(p.nhf)}</td>
-                                  <td className="py-2 font-mono text-slate-400">{formatCurrency(p.total_deductions)}</td>
-                                  <td className="py-2 font-mono text-emerald-400">{formatCurrency(p.net_salary)}</td>
+                                  <td className="py-2 pr-4 text-slate-300">{p.employee_name}</td>
+                                  <td className="py-2 pr-4 font-mono text-white">{formatCurrency(p.gross_salary)}</td>
+                                  <td className="py-2 pr-4 font-mono text-red-400">{formatCurrency(p.paye_tax)}</td>
+                                  <td className="py-2 pr-4 font-mono text-orange-400">{formatCurrency(p.employee_pension)}</td>
+                                  <td className="py-2 pr-4 font-mono text-blue-400">{formatCurrency(p.nhf)}</td>
+                                  <td className="py-2 pr-4 font-mono text-rose-400">
+                                    {parseFloat(p.penalty_deductions) > 0 ? formatCurrency(p.penalty_deductions) : <span className="text-slate-600">—</span>}
+                                  </td>
+                                  <td className="py-2 pr-4 font-mono text-amber-400">
+                                    {parseFloat(p.loan_deductions) > 0 ? formatCurrency(p.loan_deductions) : <span className="text-slate-600">—</span>}
+                                  </td>
+                                  <td className="py-2 pr-4 font-mono text-slate-400">{formatCurrency(p.total_deductions)}</td>
+                                  <td className="py-2 font-mono text-emerald-400 font-semibold">{formatCurrency(p.net_salary)}</td>
                                 </tr>
                               ))}
                             </tbody>

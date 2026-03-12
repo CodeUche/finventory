@@ -7,5 +7,12 @@ gunicorn==23.0.0
 # Static files
 whitenoise==6.8.2
 
+# Cloud media storage (S3-compatible: AWS S3, Cloudflare R2, DigitalOcean Spaces)
+django-storages==1.14.4
+boto3==1.35.93
+
+# Parse DATABASE_URL / REDIS_URL strings provided by cloud platforms (Railway, Render, etc.)
+dj-database-url==2.3.0
+
 # Monitoring
 sentry-sdk==2.19.2

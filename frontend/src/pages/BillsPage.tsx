@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Plus, X, Receipt, Loader2, Search, Trash2, Edit2, Folder } from 'lucide-react'
 import { Link, useSearchParams } from 'react-router-dom'
 import SortSelect from '@/components/SortSelect'
+import YearFilter, { yearToDateParams } from '@/components/YearFilter'
 import toast from 'react-hot-toast'
 import { billApi, supplierApi, taxApi, expenseApi } from '@/services/api'
 import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
@@ -73,6 +74,7 @@ export default function BillsPage() {
   const [statusFilter, setStatusFilter] = useState('')
   const [search, setSearch] = useState('')
   const [sortBy, setSortBy] = useState('-created_at')
+  const [archiveYear, setArchiveYear] = useState<number | null>(null)
 
   const [showModal, setShowModal] = useState(false)
   const [editingBillId, setEditingBillId] = useState<string | null>(null)
@@ -87,7 +89,7 @@ export default function BillsPage() {
   const load = async () => {
     setLoading(true)
     try {
-      const params: Record<string, string> = {}
+      const params: Record<string, string> = { ...yearToDateParams(archiveYear) }
       if (statusFilter) params.status = statusFilter
       if (search) params.search = search
       if (sortBy) params.ordering = sortBy
@@ -107,7 +109,7 @@ export default function BillsPage() {
     finally { setLoading(false) }
   }
 
-  useEffect(() => { load() }, [statusFilter, search, sortBy])
+  useEffect(() => { load() }, [statusFilter, search, sortBy, archiveYear])
 
   // Auto-open new bill modal when navigated from folder page with ?openNew=1&folder=<id>
   useEffect(() => {
@@ -332,6 +334,7 @@ export default function BillsPage() {
             <X size={14} /> Clear
           </button>
         )}
+        <YearFilter selectedYear={archiveYear} onChange={setArchiveYear} />
       </div>
 
       {/* Table */}

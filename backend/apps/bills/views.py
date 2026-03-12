@@ -56,6 +56,12 @@ class BillViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         status_f = self.request.query_params.get('status')
         if status_f:
             qs = qs.filter(status=status_f)
+        date_from = self.request.query_params.get('date_from')
+        date_to = self.request.query_params.get('date_to')
+        if date_from:
+            qs = qs.filter(issue_date__gte=date_from)
+        if date_to:
+            qs = qs.filter(issue_date__lte=date_to)
         return qs
 
     def create(self, request, *args, **kwargs):

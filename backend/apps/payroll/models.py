@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.db import models
 from apps.core.models import TenantAwareModel, MoneyField
 from apps.authentication.models import User
@@ -118,6 +120,117 @@ class PayslipLine(TenantAwareModel):
     net_salary = MoneyField(default=0)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=CALCULATED)
 
+    penalty_deductions = MoneyField(default=0)   # sum of applied penalties this run
+    loan_deductions = MoneyField(default=0)      # sum of loan installments this run
+
     class Meta:
         ordering = ['employee__last_name']
         unique_together = [('payroll_run', 'employee')]
+
+
+class EmployeePenalty(TenantAwareModel):
+    """One-off or recurring salary deduction for disciplinary or operational reasons."""
+    PENDING = 'pending'
+    APPLIED = 'applied'
+    WAIVED = 'waived'
+    STATUS_CHOICES = [(s, s) for s in [PENDING, APPLIED, WAIVED]]
+
+    employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name='penalties')
+    reason = models.CharField(max_length=500)
+    amount = MoneyField()
+    penalty_date = models.DateField()
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=PENDING)
+    applied_in_run = models.ForeignKey(
+        'PayrollRun', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='applied_penalties'
+    )
+
+    class Meta:
+        ordering = ['-penalty_date']
+
+    def __str__(self):
+        return f"{self.employee} — {self.reason} ({self.amount})"
+
+
+class EmployeeLoan(TenantAwareModel):
+    """Company loan issued to an employee, repaid via monthly payroll deductions."""
+    ACTIVE = 'active'
+    SETTLED = 'settled'
+    CANCELLED = 'cancelled'
+    STATUS_CHOICES = [(s, s) for s in [ACTIVE, SETTLED, CANCELLED]]
+
+    employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name='loans')
+    principal_amount = MoneyField()
+    # Flat interest rate applied to the principal (e.g. 5 = 5%). Zero = interest-free.
+    interest_rate = models.DecimalField(max_digits=6, decimal_places=2, default=0)
+    duration_months = models.PositiveIntegerField()
+    start_date = models.DateField()
+    # Auto-computed on save
+    total_repayable = MoneyField(default=0)
+    monthly_installment = MoneyField(default=0)
+    # Tracks repayment progress
+    amount_repaid = MoneyField(default=0)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=ACTIVE)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ['-start_date']
+
+    def __str__(self):
+        return f"{self.employee} — loan {self.principal_amount}"
+
+    @property
+    def balance_remaining(self):
+        return max(Decimal('0'), self.total_repayable - self.amount_repaid)
+
+    def save(self, *args, **kwargs):
+        principal = Decimal(str(self.principal_amount))
+        rate = Decimal(str(self.interest_rate))
+        if rate > 0:
+            self.total_repayable = (principal * (1 + rate / 100)).quantize(Decimal('0.01'))
+        else:
+            self.total_repayable = principal
+        months = max(1, self.duration_months)
+        self.monthly_installment = (Decimal(str(self.total_repayable)) / months).quantize(Decimal('0.01'))
+        super().save(*args, **kwargs)
+
+
+def _employee_doc_path(instance, filename):
+    import os
+    ext = os.path.splitext(filename)[1].lower()
+    safe = filename.replace(' ', '_')
+    return f"employee_documents/{instance.employee.organisation_id}/{instance.employee_id}/{safe}"
+
+
+class EmployeeDocument(TenantAwareModel):
+    """File attachment for an employee (CV, ID card, certificates, contracts, etc.)."""
+    CV = 'cv'
+    ID = 'id'
+    CERTIFICATE = 'certificate'
+    CONTRACT = 'contract'
+    OTHER = 'other'
+    TYPE_CHOICES = [
+        (CV, 'CV / Resume'),
+        (ID, 'ID Card / Passport'),
+        (CERTIFICATE, 'Certificate / Qualification'),
+        (CONTRACT, 'Employment Contract'),
+        (OTHER, 'Other'),
+    ]
+
+    employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name='documents')
+    name = models.CharField(max_length=300)
+    document_type = models.CharField(max_length=20, choices=TYPE_CHOICES, default=OTHER)
+    file = models.FileField(upload_to=_employee_doc_path)
+    file_size = models.PositiveIntegerField(default=0, help_text="File size in bytes")
+
+    class Meta:
+        ordering = ['document_type', 'name']
+
+    def __str__(self):
+        return f"{self.employee} — {self.name}"
+
+    @property
+    def file_url(self):
+        if self.file:
+            return self.file.url
+        return None

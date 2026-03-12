@@ -11,6 +11,7 @@ import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from '@/lib/categories'
 import { useAuthStore } from '@/store/authStore'
 import type { Expense, ExpenseGroup } from '@/types'
 import DateInput from '@/components/DateInput'
+import YearFilter, { yearToDateParams } from '@/components/YearFilter'
 
 const PAYMENT_METHODS: { value: string; label: string }[] = [
   { value: 'cash', label: 'Cash' },
@@ -72,6 +73,7 @@ export default function ExpensesPage() {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState<'expense' | 'income' | ''>('')
+  const [archiveYear, setArchiveYear] = useState<number | null>(null)
   const [groupByCategory, setGroupByCategory] = useState(false)
 
   const [showModal, setShowModal] = useState(false)
@@ -87,7 +89,7 @@ export default function ExpensesPage() {
   const loadExpenses = async () => {
     setLoading(true)
     try {
-      const params: Record<string, unknown> = { search: search || undefined }
+      const params: Record<string, unknown> = { search: search || undefined, ...yearToDateParams(archiveYear) }
       if (typeFilter === 'income') params.is_income = true
       if (typeFilter === 'expense') params.is_income = false
       const expRes = await expenseApi.list(params)
@@ -96,7 +98,7 @@ export default function ExpensesPage() {
     finally { setLoading(false) }
   }
 
-  useEffect(() => { loadExpenses() }, [search, typeFilter])
+  useEffect(() => { loadExpenses() }, [search, typeFilter, archiveYear])
 
   useEffect(() => {
     budgetApi.list().then(({ data }) => {
@@ -400,7 +402,7 @@ export default function ExpensesPage() {
                 onChange={(e) => setSearch(e.target.value)}
               />
             </div>
-            <div className="flex gap-2 flex-wrap">
+            <div className="flex gap-2 flex-wrap items-center">
               {(['', 'expense', 'income'] as const).map((t) => (
                 <button
                   key={t}
@@ -425,6 +427,7 @@ export default function ExpensesPage() {
                 <Layers size={14} />
                 Group by Category
               </button>
+              <YearFilter selectedYear={archiveYear} onChange={setArchiveYear} />
             </div>
           </div>
 

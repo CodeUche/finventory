@@ -11,14 +11,21 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from apps.core.mixins import TenantFilterMixin
 from apps.core.permissions import IsManager, IsStaff
-from .models import Employee, PayrollRun
-from .serializers import EmployeeSerializer, PayrollRunSerializer
+from .models import Employee, EmployeeDocument, EmployeePenalty, EmployeeLoan, PayrollRun
+from .serializers import (
+    EmployeeSerializer, EmployeeDocumentSerializer,
+    EmployeePenaltySerializer, EmployeeLoanSerializer,
+    PayrollRunSerializer,
+)
 from .services import PayrollService
 
 
 class EmployeeViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     serializer_class = EmployeeSerializer
     permission_classes = [IsAuthenticated, IsStaff]
+    search_fields = ["first_name", "last_name", "email", "department", "job_title", "employee_id"]
+    ordering_fields = ["first_name", "last_name", "basic_salary", "hire_date"]
+    ordering = ["first_name"]
 
     def get_queryset(self):
         org = self._get_organisation()
@@ -63,6 +70,74 @@ class EmployeeViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                 {"error": "Account resolution service is currently unavailable."},
                 status=503,
             )
+
+
+class EmployeeDocumentViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+    serializer_class = EmployeeDocumentSerializer
+    permission_classes = [IsAuthenticated, IsStaff]
+
+    def get_queryset(self):
+        org = self._get_organisation()
+        qs = EmployeeDocument.objects.filter(organisation=org)
+        employee_id = self.request.query_params.get('employee')
+        if employee_id:
+            qs = qs.filter(employee_id=employee_id)
+        return qs
+
+    def perform_create(self, serializer):
+        file = self.request.FILES.get('file')
+        size = file.size if file else 0
+        serializer.save(organisation=self._get_organisation(), file_size=size)
+
+
+class EmployeePenaltyViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+    serializer_class = EmployeePenaltySerializer
+    permission_classes = [IsAuthenticated, IsStaff]
+
+    def get_queryset(self):
+        org = self._get_organisation()
+        qs = EmployeePenalty.objects.filter(organisation=org)
+        employee_id = self.request.query_params.get('employee')
+        if employee_id:
+            qs = qs.filter(employee_id=employee_id)
+        return qs
+
+    def perform_create(self, serializer):
+        serializer.save(organisation=self._get_organisation())
+
+    @action(detail=True, methods=['post'])
+    def waive(self, request, pk=None):
+        penalty = self.get_object()
+        if penalty.status != EmployeePenalty.PENDING:
+            return Response({'error': 'Only pending penalties can be waived'}, status=400)
+        penalty.status = EmployeePenalty.WAIVED
+        penalty.save(update_fields=['status'])
+        return Response(EmployeePenaltySerializer(penalty).data)
+
+
+class EmployeeLoanViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+    serializer_class = EmployeeLoanSerializer
+    permission_classes = [IsAuthenticated, IsStaff]
+
+    def get_queryset(self):
+        org = self._get_organisation()
+        qs = EmployeeLoan.objects.filter(organisation=org)
+        employee_id = self.request.query_params.get('employee')
+        if employee_id:
+            qs = qs.filter(employee_id=employee_id)
+        return qs
+
+    def perform_create(self, serializer):
+        serializer.save(organisation=self._get_organisation())
+
+    @action(detail=True, methods=['post'])
+    def cancel(self, request, pk=None):
+        loan = self.get_object()
+        if loan.status != EmployeeLoan.ACTIVE:
+            return Response({'error': 'Only active loans can be cancelled'}, status=400)
+        loan.status = EmployeeLoan.CANCELLED
+        loan.save(update_fields=['status'])
+        return Response(EmployeeLoanSerializer(loan).data)
 
 
 class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):

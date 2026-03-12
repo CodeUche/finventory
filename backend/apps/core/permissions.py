@@ -117,3 +117,32 @@ class IsManagerOrSuperuser(BasePermission):
             return True
         org = _get_or_resolve_org(request)
         return bool(org and has_minimum_role(request.user, org, 'manager'))
+
+
+class SubscriptionActive(BasePermission):
+    """
+    Blocks write requests (POST/PUT/PATCH/DELETE) when the organisation's
+    subscription is expired, canceled, or unpaid.
+
+    Read requests (GET/HEAD/OPTIONS) always pass — users can still view
+    existing data after expiry but cannot create new records.
+
+    Superusers bypass this check.
+    """
+    message = "Your subscription is inactive. Upgrade your plan to continue using this feature."
+
+    def has_permission(self, request, view):
+        # Safe methods always allowed
+        if request.method in ("GET", "HEAD", "OPTIONS"):
+            return True
+        # Superusers bypass
+        if request.user and request.user.is_superuser:
+            return True
+        org = _get_or_resolve_org(request)
+        if org is None:
+            return False
+        sub = getattr(org, "subscription", None)
+        if sub is None:
+            # No subscription — allow (prevents lockout before plans are seeded)
+            return True
+        return sub.is_active

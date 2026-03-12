@@ -307,6 +307,48 @@ CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_TRACK_STARTED = True
 
+# Windows-compatible worker pool.
+# Celery's default prefork pool uses POSIX semaphores which Windows (WinError 5)
+# rejects. 'solo' runs tasks in the same process — fine for a single-server dev
+# or staging setup. On Linux/Mac the default 'prefork' is used automatically.
+import sys as _sys  # noqa: E402
+if _sys.platform == "win32":
+    CELERY_WORKER_POOL = "solo"
+
+# ─── Celery Beat (Periodic Tasks) ─────────────────────────────────────────────
+# Start the beat scheduler alongside the worker:
+#   celery -A config.celery beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+# Or with a simple file-based scheduler for single-server deployments:
+#   celery -A config.celery beat --loglevel=info
+from celery.schedules import crontab  # noqa: E402
+
+CELERY_BEAT_SCHEDULE = {
+    # Mark overdue invoices daily at 00:05
+    "mark-overdue-invoices-daily": {
+        "task": "sales.mark_overdue_invoices",
+        "schedule": crontab(hour=0, minute=5),
+    },
+    # Generate recurring invoices daily at 00:10
+    "generate-recurring-invoices-daily": {
+        "task": "sales.generate_recurring_invoices",
+        "schedule": crontab(hour=0, minute=10),
+    },
+    # Run monthly depreciation on the 1st of each month at 01:00
+    "run-monthly-depreciation": {
+        "task": "accounting.run_monthly_depreciation",
+        "schedule": crontab(hour=1, minute=0, day_of_month=1),
+    },
+    # Create year-archive folders on Jan 1 at 00:30 (invoices) and 00:35 (bills)
+    "create-invoice-year-archive": {
+        "task": "sales.create_year_archive_folders",
+        "schedule": crontab(hour=0, minute=30, month_of_year=1, day_of_month=1),
+    },
+    "create-bill-year-archive": {
+        "task": "bills.create_year_archive_folders",
+        "schedule": crontab(hour=0, minute=35, month_of_year=1, day_of_month=1),
+    },
+}
+
 # ─── OpenAPI / Spectacular ────────────────────────────────────────────────────
 SPECTACULAR_SETTINGS = {
     "TITLE": "Finventory API",

@@ -7,11 +7,13 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "build:desktop": "tsc && vite build --mode desktop",
+    "build:cloud": "tsc && vite build --mode cloud",
     "build:android": "tsc && vite build --mode android",
     "preview": "vite preview",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
+    "tauri:build:cloud": "tauri build --config src-tauri/tauri.cloud.conf.json",
     "cap:sync": "cap sync",
     "cap:android": "cap open android",
     "cap:run:android": "cap run android"

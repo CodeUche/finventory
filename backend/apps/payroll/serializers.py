@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Employee, PayrollRun, PayslipLine
+from .models import Employee, EmployeeDocument, EmployeePenalty, EmployeeLoan, PayrollRun, PayslipLine
 
 
 class EmployeeSerializer(serializers.ModelSerializer):
@@ -22,6 +22,57 @@ class EmployeeSerializer(serializers.ModelSerializer):
         return f"{obj.first_name} {obj.last_name}"
 
 
+class EmployeeDocumentSerializer(serializers.ModelSerializer):
+    file_url = serializers.SerializerMethodField()
+    file_size_display = serializers.SerializerMethodField()
+
+    class Meta:
+        model = EmployeeDocument
+        fields = [
+            'id', 'employee', 'name', 'document_type', 'file', 'file_url',
+            'file_size', 'file_size_display', 'created_at',
+        ]
+        read_only_fields = ['id', 'file_url', 'file_size', 'file_size_display', 'created_at']
+
+    def get_file_url(self, obj):
+        request = self.context.get('request')
+        if obj.file and request:
+            return request.build_absolute_uri(obj.file.url)
+        return obj.file.url if obj.file else None
+
+    def get_file_size_display(self, obj):
+        size = obj.file_size
+        if size < 1024:
+            return f"{size} B"
+        elif size < 1024 * 1024:
+            return f"{size / 1024:.1f} KB"
+        else:
+            return f"{size / (1024 * 1024):.1f} MB"
+
+
+class EmployeePenaltySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = EmployeePenalty
+        fields = [
+            'id', 'employee', 'reason', 'amount', 'penalty_date',
+            'status', 'applied_in_run', 'created_at',
+        ]
+        read_only_fields = ['id', 'applied_in_run', 'created_at']
+
+
+class EmployeeLoanSerializer(serializers.ModelSerializer):
+    balance_remaining = serializers.DecimalField(max_digits=15, decimal_places=2, read_only=True)
+
+    class Meta:
+        model = EmployeeLoan
+        fields = [
+            'id', 'employee', 'principal_amount', 'interest_rate', 'duration_months',
+            'start_date', 'total_repayable', 'monthly_installment',
+            'amount_repaid', 'balance_remaining', 'status', 'notes', 'created_at',
+        ]
+        read_only_fields = ['id', 'total_repayable', 'monthly_installment', 'amount_repaid', 'created_at']
+
+
 class PayslipLineSerializer(serializers.ModelSerializer):
     employee_name = serializers.SerializerMethodField()
     employee_id_str = serializers.CharField(source='employee.employee_id', read_only=True)
@@ -38,7 +89,8 @@ class PayslipLineSerializer(serializers.ModelSerializer):
             'basic_salary', 'housing_allowance', 'transport_allowance', 'leave_allowance',
             'other_allowances', 'gross_salary', 'employee_pension', 'nhf', 'nsitf',
             'consolidated_relief_allowance', 'taxable_income', 'paye_tax',
-            'employer_pension', 'total_deductions', 'net_salary', 'status'
+            'employer_pension', 'penalty_deductions', 'loan_deductions',
+            'total_deductions', 'net_salary', 'status'
         ]
         read_only_fields = ['id']
 

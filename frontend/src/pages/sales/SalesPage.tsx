@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Plus, Receipt, Search, X, Loader2, CheckCircle, Ban, FileDown, Mail, MessageCircle, Download, RotateCcw, Truck } from 'lucide-react'
 import SortSelect from '@/components/SortSelect'
+import YearFilter, { yearToDateParams } from '@/components/YearFilter'
 import { Link } from 'react-router-dom'
 import toast from 'react-hot-toast'
-import { salesApi } from '@/services/api'
+import { salesApi, tauriFetch } from '@/services/api'
 import { formatCurrency, formatDate, getStatusColor, formatAmountInput, stripCommas } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
 import DateInput from '@/components/DateInput'
@@ -31,7 +32,7 @@ function hexToRgb(hex?: string): [number, number, number] {
 /** Fetch any URL and return a base-64 data URL for jsPDF addImage. */
 async function urlToDataUrl(url: string): Promise<string | null> {
   try {
-    const res = await fetch(url)
+    const res = await tauriFetch(url)
     const blob = await res.blob()
     return await new Promise<string>((resolve, reject) => {
       const r = new FileReader()
@@ -423,17 +424,18 @@ export default function SalesPage() {
   const [returnDate, setReturnDate] = useState(() => new Date().toISOString().split('T')[0])
   const [returnRestocked, setReturnRestocked] = useState(true)
   const [processingReturn, setProcessingReturn] = useState(false)
+  const [archiveYear, setArchiveYear] = useState<number | null>(null)
 
   const load = async () => {
     setLoading(true)
     try {
-      const { data } = await salesApi.invoices({ search, status: status || undefined, ordering: sortBy })
+      const { data } = await salesApi.invoices({ search, status: status || undefined, ordering: sortBy, ...yearToDateParams(archiveYear) })
       setInvoices(data.results ?? data)
     } catch { toast.error('Failed to load invoices') }
     finally { setLoading(false) }
   }
 
-  useEffect(() => { load() }, [search, status, sortBy])
+  useEffect(() => { load() }, [search, status, sortBy, archiveYear])
 
   const openDetail = async (inv: Invoice) => {
     setSelected(inv)
@@ -678,6 +680,7 @@ export default function SalesPage() {
             <option key={s} value={s}>{s.replace('_', ' ')}</option>
           ))}
         </select>
+        <YearFilter selectedYear={archiveYear} onChange={setArchiveYear} />
       </div>
 
       <div className="card p-0 overflow-hidden">

@@ -97,7 +97,12 @@ api.interceptors.response.use(
   async (error: AxiosError) => {
     const original = error.config as InternalAxiosRequestConfig & { _retry?: boolean }
 
-    if (error.response?.status === 401 && !original._retry) {
+    // Never attempt a token refresh for auth endpoints — a 401 there is a real credential
+    // failure, not an expired token. Bypassing these prevents isRefreshing from getting stuck.
+    const isAuthEndpoint = original.url?.includes('/auth/login/') ||
+                           original.url?.includes('/auth/token/')
+
+    if (error.response?.status === 401 && !original._retry && !isAuthEndpoint) {
       if (isRefreshing) {
         return new Promise((resolve, reject) => {
           failedQueue.push({ resolve, reject })
@@ -112,7 +117,9 @@ api.interceptors.response.use(
 
       const auth = getStoredAuth()
       if (!auth.refresh) {
-        // No refresh token — clear state and let ProtectedRoute redirect (no full page reload)
+        // No refresh token — reset flag, drain queue, clear state
+        isRefreshing = false
+        processQueue(error, null)
         useAuthStore.getState().logout()
         return Promise.reject(error)
       }
@@ -154,6 +161,15 @@ api.interceptors.response.use(
     return Promise.reject(error)
   },
 )
+
+// ─── Tauri-aware media fetch ──────────────────────────────────────────────────
+// Use this instead of native fetch() to load images/files in the Tauri desktop
+// app — native fetch() to http://localhost is blocked by WebView2.
+export async function tauriFetch(url: string): Promise<Response> {
+  await _tauriReady
+  const fn = _tauriFetch ?? fetch
+  return fn(url)
+}
 
 // ─── Typed helpers ────────────────────────────────────────────────────────────
 export const authApi = {
@@ -361,6 +377,22 @@ export const payrollApi = {
   initiateTransfers: (id: string) => api.post(`/payroll/runs/${id}/initiate_transfers/`),
   resolveAccount: (account_number: string, bank_code: string) =>
     api.post('/payroll/employees/resolve_account/', { account_number, bank_code }),
+  // Penalties
+  penalties: (employeeId: string) =>
+    api.get('/payroll/penalties/', { params: { employee: employeeId } }),
+  createPenalty: (data: object) => api.post('/payroll/penalties/', data),
+  waivePenalty: (id: string) => api.post(`/payroll/penalties/${id}/waive/`),
+  deletePenalty: (id: string) => api.delete(`/payroll/penalties/${id}/`),
+  // Loans
+  loans: (employeeId: string) =>
+    api.get('/payroll/loans/', { params: { employee: employeeId } }),
+  createLoan: (data: object) => api.post('/payroll/loans/', data),
+  cancelLoan: (id: string) => api.post(`/payroll/loans/${id}/cancel/`),
+  // Employee documents
+  documents: (employeeId: string) =>
+    api.get('/payroll/documents/', { params: { employee: employeeId } }),
+  uploadDocument: (data: FormData) => api.post('/payroll/documents/', data),
+  deleteDocument: (id: string) => api.delete(`/payroll/documents/${id}/`),
 }
 
 export const budgetApi = {

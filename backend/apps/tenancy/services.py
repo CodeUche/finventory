@@ -55,6 +55,9 @@ class OrganisationService:
         # Auto-assign the Free plan so all features are available immediately
         OrganisationService._assign_free_plan(org)
 
+        # Seed chart of accounts so accounting module is ready from day 1 (non-fatal)
+        OrganisationService._seed_chart_of_accounts(org)
+
         # Seed country-specific default tax configuration (non-fatal)
         OrganisationService._seed_tax_config(org)
 
@@ -81,6 +84,21 @@ class OrganisationService:
         except Exception as exc:
             # Non-fatal: org still works, subscription can be assigned manually
             logger.warning("Could not assign Free plan to org %s: %s", org.id, exc)
+
+    @staticmethod
+    def _seed_chart_of_accounts(org: Organisation) -> None:
+        """
+        Seed the standard chart of accounts for a new organisation.
+
+        Uses AccountingService.seed_chart_of_accounts which is idempotent
+        (get_or_create — safe to call multiple times).
+        """
+        try:
+            from apps.accounting.services import AccountingService
+            AccountingService.seed_chart_of_accounts(org)
+            logger.info("Chart of accounts seeded for org %s", org.id)
+        except Exception as exc:
+            logger.warning("Could not seed chart of accounts for org %s: %s", org.id, exc)
 
     # ─── Tax seed data ────────────────────────────────────────────────────────
     # Each entry: { name, tax_type, is_progressive, flat_rate, personal_allowance, brackets }

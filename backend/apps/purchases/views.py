@@ -28,6 +28,17 @@ class PurchaseOrderViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     search_fields = ["po_number", "supplier__name"]
     ordering_fields = ["order_date", "total_amount"]
 
+    def get_queryset(self):
+        org = self._get_organisation()
+        qs = PurchaseOrder.objects.filter(organisation=org).select_related("supplier", "warehouse").prefetch_related("items__product")
+        date_from = self.request.query_params.get('date_from')
+        date_to = self.request.query_params.get('date_to')
+        if date_from:
+            qs = qs.filter(order_date__gte=date_from)
+        if date_to:
+            qs = qs.filter(order_date__lte=date_to)
+        return qs
+
     def perform_create(self, serializer):
         org = self.request.organisation
         po_number = PurchaseOrder.generate_number(org)

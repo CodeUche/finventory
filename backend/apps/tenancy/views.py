@@ -21,8 +21,26 @@ from .models import EmailConfig, Invitation, Membership, ModulePermission, Organ
 from .serializers import InvitationSerializer, MembershipSerializer, ModulePermissionSerializer, OrganisationSerializer
 from .services import OrganisationService
 
-# Maximum sub-accounts an admin can create (excluding the owner)
-MAX_TEAM_MEMBERS = 3
+# Default maximum when no subscription plan is attached
+_DEFAULT_MAX_TEAM_MEMBERS = 3
+
+
+def _get_max_team_members(org) -> int:
+    """
+    Return the maximum number of non-owner team members allowed for this org,
+    read from the org's subscription plan features (key: 'max_users').
+
+    Falls back to _DEFAULT_MAX_TEAM_MEMBERS if no subscription / plan exists.
+    """
+    try:
+        sub = getattr(org, "subscription", None)
+        if sub and sub.plan:
+            val = sub.plan.features.get("max_users")
+            if val is not None:
+                return int(val)
+    except Exception:
+        pass
+    return _DEFAULT_MAX_TEAM_MEMBERS
 
 
 class EmailConfigSerializer(drf_serializers.ModelSerializer):
@@ -70,12 +88,13 @@ class OrganisationViewSet(viewsets.ModelViewSet):
         org = self.get_object()
 
         # Enforce member limit (owners are excluded from the count)
+        max_members = _get_max_team_members(org)
         active_non_owner = Membership.objects.filter(
             organisation=org, is_active=True
         ).exclude(role=Membership.Role.OWNER).count()
-        if active_non_owner >= MAX_TEAM_MEMBERS:
+        if active_non_owner >= max_members:
             return Response(
-                {"error": {"message": f"Maximum {MAX_TEAM_MEMBERS} team members allowed. Deactivate a member first."}},
+                {"error": {"message": f"Maximum {max_members} team members allowed on your current plan. Upgrade or deactivate a member first."}},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -151,12 +170,13 @@ class OrganisationViewSet(viewsets.ModelViewSet):
         org = self.get_object()
 
         # Enforce member limit
+        max_members = _get_max_team_members(org)
         active_non_owner = Membership.objects.filter(
             organisation=org, is_active=True
         ).exclude(role=Membership.Role.OWNER).count()
-        if active_non_owner >= MAX_TEAM_MEMBERS:
+        if active_non_owner >= max_members:
             return Response(
-                {"error": {"message": f"Maximum {MAX_TEAM_MEMBERS} team members allowed."}},
+                {"error": {"message": f"Maximum {max_members} team members allowed on your current plan."}},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

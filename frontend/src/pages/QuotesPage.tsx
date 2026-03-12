@@ -5,6 +5,7 @@ import { quoteApi, customerApi, inventoryApi } from '@/services/api'
 import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
 import type { Quote, Customer, Warehouse, Product } from '@/types'
 import DateInput from '@/components/DateInput'
+import YearFilter, { yearToDateParams } from '@/components/YearFilter'
 
 type StatusFilter = 'all' | 'draft' | 'sent' | 'accepted' | 'rejected' | 'expired' | 'converted'
 
@@ -51,6 +52,7 @@ export default function QuotesPage() {
   const [products, setProducts] = useState<Product[]>([])
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  const [archiveYear, setArchiveYear] = useState<number | null>(null)
 
   const [showModal, setShowModal] = useState(false)
   const [form, setForm] = useState<QuoteForm>(BLANK_FORM)
@@ -61,7 +63,7 @@ export default function QuotesPage() {
   const load = async () => {
     setLoading(true)
     try {
-      const params: Record<string, string> = {}
+      const params: Record<string, string> = { ...yearToDateParams(archiveYear) }
       if (statusFilter !== 'all') params.status = statusFilter
       const [qRes, cRes, wRes, pRes] = await Promise.all([
         quoteApi.list(params),
@@ -81,7 +83,7 @@ export default function QuotesPage() {
     load()
     const interval = setInterval(load, 5 * 60 * 1000) // poll every 5 minutes for auto-expiry
     return () => clearInterval(interval)
-  }, [statusFilter])
+  }, [statusFilter, archiveYear])
 
   const handleCreate = async () => {
     if (!form.warehouse) { toast.error('Select a warehouse'); return }
@@ -197,6 +199,10 @@ export default function QuotesPage() {
             {s === 'all' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1)}
           </button>
         ))}
+      </div>
+
+      <div className="flex items-center gap-3">
+        <YearFilter selectedYear={archiveYear} onChange={setArchiveYear} />
       </div>
 
       {/* Table */}

@@ -6,6 +6,7 @@ import { purchaseApi, supplierApi, inventoryApi } from '@/services/api'
 import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
 import type { Product, PurchaseOrder } from '@/types'
 import DateInput from '@/components/DateInput'
+import YearFilter, { yearToDateParams } from '@/components/YearFilter'
 
 interface Supplier { id: string; name: string }
 interface Warehouse { id: string; name: string }
@@ -47,6 +48,7 @@ export default function PurchasesPage() {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
+  const [archiveYear, setArchiveYear] = useState<number | null>(null)
 
   const [showModal, setShowModal] = useState(false)
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
@@ -74,7 +76,7 @@ export default function PurchasesPage() {
   const load = async () => {
     setLoading(true)
     try {
-      const params: Record<string, unknown> = {}
+      const params: Record<string, unknown> = { ...yearToDateParams(archiveYear) }
       if (search) params.search = search
       if (statusFilter) params.status = statusFilter
       const { data } = await purchaseApi.list(params)
@@ -99,7 +101,7 @@ export default function PurchasesPage() {
     } catch { /* ignore */ }
   }
 
-  useEffect(() => { load() }, [search, statusFilter])
+  useEffect(() => { load() }, [search, statusFilter, archiveYear])
 
   // Auto-open create modal when navigated from low-stock banner
   useEffect(() => {
@@ -266,6 +268,7 @@ export default function PurchasesPage() {
             <option key={s} value={s}>{s.replace('_', ' ')}</option>
           ))}
         </select>
+        <YearFilter selectedYear={archiveYear} onChange={setArchiveYear} />
       </div>
 
       {/* Table */}

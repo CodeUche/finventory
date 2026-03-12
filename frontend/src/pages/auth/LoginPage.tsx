@@ -17,6 +17,9 @@ export default function LoginPage() {
     setLoading(true)
     try {
       const { data } = await authApi.login(form.email, form.password)
+      // Stamp session start so the 12-hour absolute ceiling begins now
+      localStorage.setItem('finventory-session-start', String(Date.now()))
+      localStorage.setItem('finventory-last-active', String(Date.now()))
       setAuth(data.user || { email: form.email, first_name: '', last_name: '', id: '', phone: '', is_verified: true }, {
         access: data.access,
         refresh: data.refresh,
@@ -66,16 +69,16 @@ export default function LoginPage() {
 
           <h2 className="text-4xl font-bold text-white leading-tight mb-4">
             Manage your<br />
-            <span className="text-brand-400">liquor empire</span><br />
+            <span className="text-brand-400">empire</span><br />
             with precision
           </h2>
           <p className="text-slate-400 text-lg leading-relaxed">
-            Track inventory, record sales, manage credit customers, and file taxes — all from one platform.
+            Track inventory, record sales, manage payroll, and file taxes — all from one platform.
           </p>
 
           {/* Feature list */}
           <div className="mt-8 space-y-3">
-            {['Real-time inventory tracking', 'Progressive tax engine', 'Credit management & aging', 'P&L and cash flow reports'].map((f) => (
+            {['Real-time inventory tracking', 'Progressive tax engine', 'Payroll & statutory remittances', 'Credit management & aging', 'P&L and cash flow reports'].map((f) => (
               <div key={f} className="flex items-center gap-3 text-slate-300">
                 <div className="w-1.5 h-1.5 bg-brand-400 rounded-full shrink-0" />
                 {f}

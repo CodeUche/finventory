@@ -129,9 +129,19 @@ class FinancialPeriodViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         org = self._get_organisation()
         return FinancialPeriod.objects.filter(organisation=org)
 
-    def perform_create(self, serializer):
+    def create(self, request, *args, **kwargs):
+        from django.db import IntegrityError
         org = self._get_organisation()
-        serializer.save(organisation=org)
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            period = serializer.save(organisation=org)
+        except IntegrityError:
+            # Period for this month already exists — return it instead of erroring
+            year = serializer.validated_data.get('year')
+            month = serializer.validated_data.get('month')
+            period = FinancialPeriod.objects.get(organisation=org, year=year, month=month)
+        return Response(FinancialPeriodSerializer(period).data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsOwnerOrAdmin])
     def lock(self, request, pk=None):

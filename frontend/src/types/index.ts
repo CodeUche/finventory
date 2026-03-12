@@ -426,6 +426,45 @@ export interface Employee {
   created_at: string
 }
 
+export interface EmployeePenalty {
+  id: string
+  employee: string
+  reason: string
+  amount: string
+  penalty_date: string
+  status: 'pending' | 'applied' | 'waived'
+  applied_in_run: string | null
+  created_at: string
+}
+
+export interface EmployeeLoan {
+  id: string
+  employee: string
+  principal_amount: string
+  interest_rate: string
+  duration_months: number
+  start_date: string
+  total_repayable: string
+  monthly_installment: string
+  amount_repaid: string
+  balance_remaining: string
+  status: 'active' | 'settled' | 'cancelled'
+  notes: string
+  created_at: string
+}
+
+export interface EmployeeDocument {
+  id: string
+  employee: string
+  name: string
+  document_type: 'cv' | 'id' | 'certificate' | 'contract' | 'other'
+  file: string
+  file_url: string | null
+  file_size: number
+  file_size_display: string
+  created_at: string
+}
+
 export interface PayslipLine {
   id: string
   employee: string
@@ -444,6 +483,8 @@ export interface PayslipLine {
   taxable_income: string
   paye_tax: string
   employer_pension: string
+  penalty_deductions: string
+  loan_deductions: string
   total_deductions: string
   net_salary: string
   status: string

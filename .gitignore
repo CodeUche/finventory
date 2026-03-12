@@ -58,6 +58,18 @@ frontend/src-tauri/target/
 # Claude Code project files
 .claude/
 
+# Celery Beat runtime state files
+backend/celerybeat-schedule
+backend/celerybeat-schedule-shm
+backend/celerybeat-schedule-wal
+celerybeat-schedule
+celerybeat-schedule-shm
+celerybeat-schedule-wal
+
+# Generated files / docs not part of source
+generate_tech_stack_pdf.py
+tech_stack.pdf
+
 # OS
 .DS_Store
 Thumbs.db
