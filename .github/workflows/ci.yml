@@ -101,7 +101,7 @@ jobs:
           cache-dependency-path: backend/requirements/development.txt
 
       - name: Install dependencies
-        run: pip install -r backend/requirements/development.txt
+        run: pip install -r requirements/development.txt
 
       - name: Run migrations
         run: python manage.py migrate --no-input
