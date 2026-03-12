@@ -31,6 +31,7 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
+          cache-dependency-path: backend/requirements.txt
 
       - name: Install lint deps
         run: pip install flake8 black isort
@@ -97,9 +98,10 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
+          cache-dependency-path: backend/requirements/development.txt
 
       - name: Install dependencies
-        run: pip install -r requirements/development.txt
+        run: pip install -r backend/requirements/development.txt
 
       - name: Run migrations
         run: python manage.py migrate --no-input
