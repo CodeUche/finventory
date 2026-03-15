@@ -208,3 +208,88 @@ class BankReconciliationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         line.is_cleared = request.data.get('is_cleared', line.is_cleared)
         line.save(update_fields=['is_cleared'])
         return Response(BankReconciliationLineSerializer(line).data)
+
+    @action(detail=True, methods=['post'], url_path='import_statement')
+    def import_statement(self, request, pk=None):
+        """
+        POST /accounting/reconciliations/{id}/import_statement/
+        Accepts a CSV file with columns: date, description, debit, credit
+        (or a single 'amount' column — positive = credit, negative = debit).
+        Creates one BankReconciliationLine per row.
+        """
+        import csv, io
+        recon = self.get_object()
+        csv_file = request.FILES.get('file')
+        if not csv_file:
+            return Response({'error': 'No file provided. Upload a CSV file.'}, status=400)
+
+        try:
+            text = csv_file.read().decode('utf-8-sig')  # utf-8-sig strips BOM
+        except UnicodeDecodeError:
+            return Response({'error': 'File encoding not supported. Please save as UTF-8.'}, status=400)
+
+        reader = csv.DictReader(io.StringIO(text))
+        headers = [h.strip().lower() for h in (reader.fieldnames or [])]
+
+        # Normalise header names (accept variations)
+        def _col(row, *keys):
+            for k in keys:
+                for h in headers:
+                    if h == k:
+                        return row.get(h, '').strip()
+            return ''
+
+        lines_created = []
+        errors = []
+        for i, row in enumerate(reader, start=2):  # row 1 is header
+            row_lower = {k.strip().lower(): v.strip() for k, v in row.items()}
+            try:
+                from decimal import Decimal
+                date_str = _col(row_lower, 'date', 'transaction date', 'txn date', 'value date')
+                description = _col(row_lower, 'description', 'narration', 'details', 'remarks', 'memo')
+
+                debit_str = _col(row_lower, 'debit', 'dr', 'withdrawal', 'charge')
+                credit_str = _col(row_lower, 'credit', 'cr', 'deposit', 'payment')
+                amount_str = _col(row_lower, 'amount', 'value')
+
+                if not date_str:
+                    continue  # skip blank rows
+
+                if amount_str and not debit_str and not credit_str:
+                    amt = Decimal(amount_str.replace(',', ''))
+                    debit = -amt if amt < 0 else Decimal('0')
+                    credit = amt if amt >= 0 else Decimal('0')
+                else:
+                    debit = Decimal(debit_str.replace(',', '') or '0')
+                    credit = Decimal(credit_str.replace(',', '') or '0')
+
+                from datetime import datetime
+                for fmt in ('%Y-%m-%d', '%d/%m/%Y', '%m/%d/%Y', '%d-%m-%Y', '%d %b %Y'):
+                    try:
+                        txn_date = datetime.strptime(date_str, fmt).date()
+                        break
+                    except ValueError:
+                        continue
+                else:
+                    errors.append(f"Row {i}: unrecognised date format '{date_str}'")
+                    continue
+
+                # Signed amount: credit (inflow) = positive, debit (outflow) = negative
+                signed_amount = credit - debit
+                line = BankReconciliationLine.objects.create(
+                    organisation=recon.organisation,
+                    reconciliation=recon,
+                    transaction_date=txn_date,
+                    description=description or 'Imported transaction',
+                    amount=signed_amount,
+                    is_cleared=False,
+                )
+                lines_created.append(line)
+            except Exception as e:
+                errors.append(f"Row {i}: {e}")
+
+        return Response({
+            'lines_created': len(lines_created),
+            'errors': errors,
+            'lines': BankReconciliationLineSerializer(lines_created, many=True).data,
+        }, status=status.HTTP_201_CREATED)

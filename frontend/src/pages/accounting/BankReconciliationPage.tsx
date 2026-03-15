@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { CheckSquare, Square, RefreshCw, CheckCircle2 } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { CheckSquare, Square, RefreshCw, CheckCircle2, Upload, FileText } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { accountingApi } from '@/services/api'
 import { formatCurrency, formatDate } from '@/lib/utils'
@@ -35,6 +35,8 @@ export default function BankReconciliationPage() {
   const [activeRecon, setActiveRecon] = useState<Reconciliation | null>(null)
   const [clearedIds, setClearedIds] = useState<Set<string>>(new Set())
   const [reconciling, setReconciling] = useState(false)
+  const [importing, setImporting] = useState(false)
+  const csvInputRef = useRef<HTMLInputElement>(null)
 
   const load = async () => {
     setLoading(true)
@@ -101,6 +103,31 @@ export default function BankReconciliationPage() {
       const msg = err?.response?.data?.error ?? 'Failed to reconcile'
       toast.error(typeof msg === 'string' ? msg : 'Failed to reconcile')
     } finally { setReconciling(false) }
+  }
+
+  const handleImportCSV = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file || !activeRecon) return
+    setImporting(true)
+    try {
+      const { data } = await accountingApi.importStatement(activeRecon.id, file)
+      toast.success(`Imported ${data.lines_created} transaction${data.lines_created !== 1 ? 's' : ''}`)
+      if (data.errors?.length) toast(`${data.errors.length} rows skipped`, { icon: '⚠️' })
+      // Reload reconciliation to get new lines
+      const recRes = await accountingApi.reconciliations()
+      const recs: Reconciliation[] = recRes.data.results ?? recRes.data
+      const updated = recs.find((r) => r.id === activeRecon.id)
+      if (updated) {
+        setActiveRecon(updated)
+        setClearedIds(new Set(updated.lines.filter((l) => l.is_cleared).map((l) => l.id)))
+      }
+    } catch (err: any) {
+      const msg = err?.response?.data?.error ?? 'Import failed'
+      toast.error(typeof msg === 'string' ? msg : 'Import failed')
+    } finally {
+      setImporting(false)
+      if (csvInputRef.current) csvInputRef.current.value = ''
+    }
   }
 
   const clearedTotal = activeRecon
@@ -197,6 +224,16 @@ export default function BankReconciliationPage() {
                 Transactions — {activeRecon.period_start} to {activeRecon.period_end}
               </h3>
               <div className="flex gap-2">
+                <input ref={csvInputRef} type="file" accept=".csv" className="hidden" onChange={handleImportCSV} />
+                <button
+                  onClick={() => csvInputRef.current?.click()}
+                  disabled={importing}
+                  className="btn-ghost text-sm px-3 flex items-center gap-2 disabled:opacity-50"
+                  title="Import bank statement CSV (columns: date, description, debit, credit)"
+                >
+                  <Upload size={14} />
+                  {importing ? 'Importing…' : 'Import CSV'}
+                </button>
                 <button
                   onClick={() => setActiveRecon(null)}
                   className="btn-ghost text-sm px-3"
@@ -215,7 +252,11 @@ export default function BankReconciliationPage() {
             </div>
             <div className="divide-y divide-surface-700">
               {activeRecon.lines.length === 0 ? (
-                <p className="px-5 py-8 text-center text-slate-500">No transactions found for this period</p>
+                <div className="px-5 py-10 text-center">
+                  <FileText size={32} className="mx-auto mb-3 text-slate-600" />
+                  <p className="text-sm text-slate-400 mb-1">No transactions yet</p>
+                  <p className="text-xs text-slate-500">Click <strong>Import CSV</strong> to upload your bank statement.<br />Expected columns: <code className="bg-surface-700 px-1 rounded">date, description, debit, credit</code> (or <code className="bg-surface-700 px-1 rounded">amount</code>).</p>
+                </div>
               ) : activeRecon.lines.map((line) => {
                 const isCleared = clearedIds.has(line.id)
                 return (

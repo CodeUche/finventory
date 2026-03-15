@@ -75,3 +75,95 @@ class AuditMixin:
 
     def perform_update(self, serializer):
         serializer.save()
+
+
+class ExportMixin:
+    """
+    Adds CSV/XLSX export to any ModelViewSet.
+
+    Append ?format=csv or ?format=xlsx to any list endpoint.
+    The ViewSet must set `export_fields` (list of (header, field_or_callable) tuples)
+    and optionally `export_filename` (base filename without extension).
+
+    Example:
+        export_filename = 'invoices'
+        export_fields = [
+            ('Invoice #', 'invoice_number'),
+            ('Customer', lambda obj: obj.customer.name if obj.customer else 'Walk-in'),
+            ('Total', 'total'),
+        ]
+    """
+
+    export_fields: list = []
+    export_filename: str = 'export'
+
+    def list(self, request, *args, **kwargs):
+        fmt = request.query_params.get('format', '').lower()
+        if fmt in ('csv', 'xlsx'):
+            return self._export(request, fmt)
+        return super().list(request, *args, **kwargs)
+
+    def _export(self, request, fmt):
+        import csv
+        import io
+        from django.http import HttpResponse
+
+        qs = self.filter_queryset(self.get_queryset())
+
+        if fmt == 'csv':
+            response = HttpResponse(content_type='text/csv')
+            response['Content-Disposition'] = f'attachment; filename="{self.export_filename}.csv"'
+            writer = csv.writer(response)
+            headers = [h for h, _ in self.export_fields]
+            writer.writerow(headers)
+            for obj in qs:
+                row = []
+                for _, field in self.export_fields:
+                    if callable(field):
+                        row.append(field(obj))
+                    else:
+                        val = obj
+                        for part in field.split('__'):
+                            val = getattr(val, part, '') if val is not None else ''
+                        row.append(val if val is not None else '')
+                writer.writerow(row)
+            return response
+
+        # XLSX
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = self.export_filename.capitalize()
+
+        header_font = Font(bold=True, color='FFFFFF')
+        header_fill = PatternFill('solid', fgColor='1E293B')
+        headers = [h for h, _ in self.export_fields]
+        ws.append(headers)
+        for cell in ws[1]:
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal='center')
+
+        for obj in qs:
+            row = []
+            for _, field in self.export_fields:
+                if callable(field):
+                    row.append(field(obj))
+                else:
+                    val = obj
+                    for part in field.split('__'):
+                        val = getattr(val, part, '') if val is not None else ''
+                    row.append(str(val) if val is not None else '')
+            ws.append(row)
+
+        for col in ws.columns:
+            max_len = max(len(str(cell.value or '')) for cell in col)
+            ws.column_dimensions[col[0].column_letter].width = min(max_len + 4, 40)
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        response = HttpResponse(buf.read(), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        response['Content-Disposition'] = f'attachment; filename="{self.export_filename}.xlsx"'
+        return response

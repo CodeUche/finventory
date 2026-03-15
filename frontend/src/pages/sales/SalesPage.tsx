@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Plus, Receipt, Search, X, Loader2, CheckCircle, Ban, FileDown, Mail, MessageCircle, Download, RotateCcw, Truck } from 'lucide-react'
 import SortSelect from '@/components/SortSelect'
 import YearFilter, { yearToDateParams } from '@/components/YearFilter'
+import ExportButton from '@/components/ExportButton'
 import { Link } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { salesApi, tauriFetch } from '@/services/api'
@@ -681,6 +682,7 @@ export default function SalesPage() {
           ))}
         </select>
         <YearFilter selectedYear={archiveYear} onChange={setArchiveYear} />
+        <ExportButton endpoint="/sales/invoices/" filename="invoices" params={yearToDateParams(archiveYear)} />
       </div>
 
       <div className="card p-0 overflow-hidden">

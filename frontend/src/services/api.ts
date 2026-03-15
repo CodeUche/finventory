@@ -364,6 +364,10 @@ export const accountingApi = {
   markReconciled: (id: string) => api.post(`/accounting/reconciliations/${id}/mark_reconciled/`),
   addReconLine: (id: string, data: object) => api.post(`/accounting/reconciliations/${id}/add_line/`, data),
   updateReconLine: (id: string, data: object) => api.patch(`/accounting/reconciliations/${id}/update_line/`, data),
+  importStatement: (id: string, file: File) => {
+    const fd = new FormData(); fd.append('file', file)
+    return api.post(`/accounting/reconciliations/${id}/import_statement/`, fd)
+  },
 }
 
 export const payrollApi = {

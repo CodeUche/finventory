@@ -6,6 +6,7 @@ import { formatCurrency, formatDate } from '@/lib/utils'
 import type { PayrollRun } from '@/types'
 import DateInput from '@/components/DateInput'
 import YearFilter from '@/components/YearFilter'
+import ExportButton from '@/components/ExportButton'
 
 interface TransferResult {
   employee: string
@@ -132,8 +133,9 @@ export default function PayrollPage() {
             Run Payroll
           </button>
         </div>
-        <div className="sm:ml-auto">
+        <div className="sm:ml-auto flex items-center gap-2">
           <YearFilter selectedYear={archiveYear} onChange={setArchiveYear} />
+          <ExportButton endpoint="/payroll/employees/" filename="employees" />
         </div>
       </div>
 

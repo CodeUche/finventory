@@ -4,7 +4,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from apps.core.mixins import TenantFilterMixin
+from apps.core.mixins import ExportMixin, TenantFilterMixin
 from apps.core.permissions import IsAccountant, IsStaff
 
 from .models import Expense, ExpenseCategory, ExpenseGroup
@@ -64,7 +64,18 @@ class ExpenseCategoryViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, IsAccountant]
 
 
-class ExpenseViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+class ExpenseViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
+    export_filename = 'expenses'
+    export_fields = [
+        ('Date', 'expense_date'),
+        ('Description', 'description'),
+        ('Category', lambda o: o.category.name if o.category else ''),
+        ('Amount', 'amount'),
+        ('Previous Price', 'previous_price'),
+        ('Payment Method', 'payment_method'),
+        ('Type', lambda o: 'Income' if o.is_income else 'Expense'),
+        ('Approved', lambda o: 'Yes' if o.is_approved else 'No'),
+    ]
     queryset = Expense.objects.select_related("category", "recorded_by")
     serializer_class = ExpenseSerializer
     permission_classes = [IsAuthenticated, IsStaff]

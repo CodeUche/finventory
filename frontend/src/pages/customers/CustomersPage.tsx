@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Plus, Search, Users, X, Pencil, Loader2, FileText, RefreshCw, Download, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { customerApi } from '@/services/api'
+import ExportButton from '@/components/ExportButton'
 import { formatCurrency, formatDate, getStatusColor, getCurrencySymbol } from '@/lib/utils'
 import DateInput from '@/components/DateInput'
 import { useAuthStore } from '@/store/authStore'
@@ -426,9 +427,12 @@ export default function CustomersPage() {
           <h1 className="text-2xl font-bold text-white">Customers</h1>
           <p className="text-slate-400 text-sm">{customers.length} customer{customers.length !== 1 ? 's' : ''}</p>
         </div>
-        <button className="btn-primary sm:ml-auto" onClick={() => setShowModal(true)}>
-          <Plus size={16} /> New Customer
-        </button>
+        <div className="sm:ml-auto flex items-center gap-2">
+          <ExportButton endpoint="/customers/" filename="customers" />
+          <button className="btn-primary" onClick={() => setShowModal(true)}>
+            <Plus size={16} /> New Customer
+          </button>
+        </div>
       </div>
 
       {/* Filters */}

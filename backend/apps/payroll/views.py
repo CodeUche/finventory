@@ -9,7 +9,7 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from apps.core.mixins import TenantFilterMixin
+from apps.core.mixins import ExportMixin, TenantFilterMixin
 from apps.core.permissions import IsManager, IsStaff
 from .models import Employee, EmployeeDocument, EmployeePenalty, EmployeeLoan, PayrollRun
 from .serializers import (
@@ -20,7 +20,21 @@ from .serializers import (
 from .services import PayrollService
 
 
-class EmployeeViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+class EmployeeViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
+    export_filename = 'employees'
+    export_fields = [
+        ('Employee ID', 'employee_id'),
+        ('First Name', 'first_name'),
+        ('Last Name', 'last_name'),
+        ('Email', 'email'),
+        ('Phone', 'phone'),
+        ('Job Title', 'job_title'),
+        ('Department', 'department'),
+        ('Type', 'employment_type'),
+        ('Hire Date', 'hire_date'),
+        ('Gross Salary', 'gross_salary'),
+        ('Active', lambda o: 'Yes' if o.is_active else 'No'),
+    ]
     serializer_class = EmployeeSerializer
     permission_classes = [IsAuthenticated, IsStaff]
     search_fields = ["first_name", "last_name", "email", "department", "job_title", "employee_id"]

@@ -17,6 +17,7 @@ import uuid
 from django.conf import settings
 from django.db import models
 
+from apps.core.fields import EncryptedCharField
 from apps.core.models import SoftDeleteModel, TimeStampedModel
 
 
@@ -145,7 +146,7 @@ class EmailConfig(TimeStampedModel):
     smtp_host = models.CharField(max_length=255, default="smtp.gmail.com")
     smtp_port = models.PositiveSmallIntegerField(default=587)
     smtp_username = models.CharField(max_length=255, blank=True)
-    smtp_password = models.CharField(max_length=255, blank=True, help_text="Stored plain-text — use app passwords")
+    smtp_password = EncryptedCharField(max_length=255, blank=True, help_text="Encrypted at rest — use app passwords")
     use_tls = models.BooleanField(default=True)
     from_name = models.CharField(max_length=255, blank=True)
     from_email = models.EmailField(blank=True)

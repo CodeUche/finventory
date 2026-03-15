@@ -12,6 +12,7 @@ import { useAuthStore } from '@/store/authStore'
 import type { Expense, ExpenseGroup } from '@/types'
 import DateInput from '@/components/DateInput'
 import YearFilter, { yearToDateParams } from '@/components/YearFilter'
+import ExportButton from '@/components/ExportButton'
 
 const PAYMENT_METHODS: { value: string; label: string }[] = [
   { value: 'cash', label: 'Cash' },
@@ -428,6 +429,7 @@ export default function ExpensesPage() {
                 Group by Category
               </button>
               <YearFilter selectedYear={archiveYear} onChange={setArchiveYear} />
+              <ExportButton endpoint="/expenses/" filename="expenses" params={yearToDateParams(archiveYear)} />
             </div>
           </div>
 

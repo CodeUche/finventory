@@ -3,7 +3,7 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from apps.core.mixins import TenantFilterMixin
+from apps.core.mixins import ExportMixin, TenantFilterMixin
 from apps.core.permissions import IsStaff, IsManager
 from apps.suppliers.models import Supplier
 from .models import Bill, BillFolder
@@ -46,7 +46,19 @@ class BillFolderViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         })
 
 
-class BillViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+class BillViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
+    export_filename = 'bills'
+    export_fields = [
+        ('Bill #', 'bill_number'),
+        ('Issue Date', 'issue_date'),
+        ('Due Date', 'due_date'),
+        ('Supplier', lambda o: o.supplier.name),
+        ('Status', 'status'),
+        ('Subtotal', 'subtotal'),
+        ('Tax', 'tax_amount'),
+        ('Total', 'total'),
+        ('Amount Due', 'amount_due'),
+    ]
     serializer_class = BillSerializer
     permission_classes = [IsAuthenticated, IsStaff]
 
@@ -62,6 +74,9 @@ class BillViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             qs = qs.filter(issue_date__gte=date_from)
         if date_to:
             qs = qs.filter(issue_date__lte=date_to)
+        due_date = self.request.query_params.get('due_date')
+        if due_date:
+            qs = qs.filter(due_date=due_date)
         return qs
 
     def create(self, request, *args, **kwargs):

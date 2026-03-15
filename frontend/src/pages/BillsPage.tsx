@@ -3,6 +3,7 @@ import { Plus, X, Receipt, Loader2, Search, Trash2, Edit2, Folder } from 'lucide
 import { Link, useSearchParams } from 'react-router-dom'
 import SortSelect from '@/components/SortSelect'
 import YearFilter, { yearToDateParams } from '@/components/YearFilter'
+import ExportButton from '@/components/ExportButton'
 import toast from 'react-hot-toast'
 import { billApi, supplierApi, taxApi, expenseApi } from '@/services/api'
 import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
@@ -335,6 +336,7 @@ export default function BillsPage() {
           </button>
         )}
         <YearFilter selectedYear={archiveYear} onChange={setArchiveYear} />
+        <ExportButton endpoint="/bills/" filename="bills" params={yearToDateParams(archiveYear)} />
       </div>
 
       {/* Table */}

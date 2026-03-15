@@ -8,7 +8,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from apps.core.mixins import TenantFilterMixin
+from apps.core.mixins import ExportMixin, TenantFilterMixin
 from apps.core.permissions import IsStaff
 from apps.customers.models import Customer
 from apps.inventory.models import Product, Warehouse
@@ -41,7 +41,20 @@ class InvoiceFilter(django_filters.FilterSet):
         fields = ["status", "customer", "payment_method"]
 
 
-class InvoiceViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+class InvoiceViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
+    export_filename = 'invoices'
+    export_fields = [
+        ('Invoice #', 'invoice_number'),
+        ('Date', 'invoice_date'),
+        ('Due Date', 'due_date'),
+        ('Customer', lambda o: o.customer.name if o.customer else 'Walk-in'),
+        ('Status', 'status'),
+        ('Subtotal', 'subtotal'),
+        ('Tax', 'tax_amount'),
+        ('Total', 'total'),
+        ('Amount Due', 'amount_due'),
+        ('Payment Method', 'payment_method'),
+    ]
     """
     Sales invoice management.
 

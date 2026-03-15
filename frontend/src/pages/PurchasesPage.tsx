@@ -7,6 +7,7 @@ import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/li
 import type { Product, PurchaseOrder } from '@/types'
 import DateInput from '@/components/DateInput'
 import YearFilter, { yearToDateParams } from '@/components/YearFilter'
+import ExportButton from '@/components/ExportButton'
 
 interface Supplier { id: string; name: string }
 interface Warehouse { id: string; name: string }
@@ -269,6 +270,7 @@ export default function PurchasesPage() {
           ))}
         </select>
         <YearFilter selectedYear={archiveYear} onChange={setArchiveYear} />
+        <ExportButton endpoint="/purchases/" filename="purchase_orders" params={yearToDateParams(archiveYear)} />
       </div>
 
       {/* Table */}

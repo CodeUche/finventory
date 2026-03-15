@@ -5,7 +5,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from apps.core.mixins import TenantFilterMixin
+from apps.core.mixins import ExportMixin, TenantFilterMixin
 from apps.core.permissions import IsStaff
 from rest_framework import viewsets
 
@@ -23,7 +23,17 @@ class CustomerFilter(django_filters.FilterSet):
         fields = ["name", "customer_type", "is_active"]
 
 
-class CustomerViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+class CustomerViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
+    export_filename = 'customers'
+    export_fields = [
+        ('Name', 'name'),
+        ('Email', 'email'),
+        ('Phone', 'phone'),
+        ('Type', 'customer_type'),
+        ('Credit Limit', 'credit_limit'),
+        ('Outstanding Balance', 'outstanding_balance'),
+        ('Active', lambda o: 'Yes' if o.is_active else 'No'),
+    ]
     queryset = Customer.objects.all()
     serializer_class = CustomerSerializer
     permission_classes = [IsAuthenticated, IsStaff]

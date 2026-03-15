@@ -6,7 +6,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from apps.core.mixins import TenantFilterMixin
+from apps.core.mixins import ExportMixin, TenantFilterMixin
 from apps.core.permissions import IsStaff
 
 from .models import PurchaseOrder
@@ -14,7 +14,16 @@ from .serializers import PurchaseOrderSerializer, ReceiveItemSerializer
 from .services import PurchaseService
 
 
-class PurchaseOrderViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+class PurchaseOrderViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
+    export_filename = 'purchase_orders'
+    export_fields = [
+        ('PO #', 'po_number'),
+        ('Order Date', 'order_date'),
+        ('Supplier', lambda o: o.supplier.name if o.supplier else 'Walk-in'),
+        ('Status', 'status'),
+        ('Total', 'total'),
+        ('Notes', 'notes'),
+    ]
     """
     Manage purchase orders.
 
