@@ -118,3 +118,106 @@ class QuoteViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             import logging as _log
             _log.getLogger(__name__).exception("Unexpected error converting quote")
             return Response({'error': f"[{type(e).__name__}] {str(e)}"}, status=400)
+
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsStaff])
+    def send_email(self, request, pk=None):
+        """POST /api/v1/quotes/{id}/send_email/ — send quote to customer by email."""
+        quote = self.get_object()
+        to_email = request.data.get('to_email') or (quote.customer and quote.customer.email)
+        if not to_email:
+            return Response({'error': 'No recipient email address provided'}, status=422)
+
+        try:
+            email_cfg = request.organisation.email_config
+            if not email_cfg.is_active:
+                return Response({'error': 'Email is not configured. Go to Settings → Email.'}, status=422)
+        except Exception:
+            return Response({'error': 'Email is not configured. Go to Settings → Email.'}, status=422)
+
+        try:
+            import smtplib
+            from email.mime.multipart import MIMEMultipart
+            from email.mime.text import MIMEText
+
+            from_name  = email_cfg.from_name or request.organisation.name
+            from_email = email_cfg.from_email or email_cfg.smtp_username
+
+            items_html = ''.join(
+                f"<tr><td style='padding:6px 10px;border-bottom:1px solid #eee'>{i.product.name}</td>"
+                f"<td style='padding:6px 10px;border-bottom:1px solid #eee;text-align:right'>{i.quantity}</td>"
+                f"<td style='padding:6px 10px;border-bottom:1px solid #eee;text-align:right'>{i.unit_price}</td>"
+                f"<td style='padding:6px 10px;border-bottom:1px solid #eee;text-align:right;font-weight:bold'>{i.line_total}</td></tr>"
+                for i in quote.items.all()
+            )
+            html = f"""
+<html><body style='font-family:Arial,sans-serif;color:#333;max-width:600px;margin:auto'>
+  <div style='background:#f97316;padding:20px;text-align:center'>
+    <h1 style='color:white;margin:0;font-size:24px'>QUOTE</h1>
+    <p style='color:white;margin:5px 0 0'>#{quote.quote_number}</p>
+  </div>
+  <div style='padding:24px'>
+    <p>Dear {quote.customer.name if quote.customer else 'Customer'},</p>
+    <p>Please find your quote details below. This quote is valid until {quote.valid_until}.</p>
+    <table style='width:100%;border-collapse:collapse;margin:16px 0'>
+      <thead><tr style='background:#f97316;color:white'>
+        <th style='padding:8px 10px;text-align:left'>Item</th>
+        <th style='padding:8px 10px;text-align:right'>Qty</th>
+        <th style='padding:8px 10px;text-align:right'>Unit Price</th>
+        <th style='padding:8px 10px;text-align:right'>Total</th>
+      </tr></thead>
+      <tbody>{items_html}</tbody>
+    </table>
+    <div style='text-align:right;margin-top:12px'>
+      <p style='margin:4px 0;font-size:18px'>Total: <strong>{quote.total_amount}</strong></p>
+    </div>
+    <hr style='margin:24px 0'>
+    <p style='color:#888;font-size:12px'>Issued by {from_name}. Thank you for your interest.</p>
+  </div>
+</body></html>"""
+
+            msg = MIMEMultipart('mixed')
+            msg['Subject'] = f"Quote {quote.quote_number} from {from_name}"
+            msg['From']    = f"{from_name} <{from_email}>"
+            msg['To']      = to_email
+
+            alt = MIMEMultipart('alternative')
+            alt.attach(MIMEText(html, 'html'))
+            msg.attach(alt)
+
+            pdf_base64 = request.data.get('pdf_base64')
+            if pdf_base64:
+                import base64
+                from email.mime.base import MIMEBase
+                from email import encoders
+                try:
+                    pdf_bytes = base64.b64decode(pdf_base64)
+                    pdf_part = MIMEBase('application', 'pdf')
+                    pdf_part.set_payload(pdf_bytes)
+                    encoders.encode_base64(pdf_part)
+                    pdf_part.add_header('Content-Disposition', 'attachment', filename=f"Quote-{quote.quote_number}.pdf")
+                    msg.attach(pdf_part)
+                except Exception:
+                    pass
+
+            import ssl as _ssl
+            ctx = _ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = _ssl.CERT_NONE
+            if email_cfg.use_tls:
+                conn = smtplib.SMTP(email_cfg.smtp_host, email_cfg.smtp_port, timeout=20)
+                conn.ehlo(); conn.starttls(context=ctx); conn.ehlo()
+            else:
+                conn = smtplib.SMTP_SSL(email_cfg.smtp_host, email_cfg.smtp_port, timeout=20, context=ctx)
+                conn.ehlo()
+            conn.login(email_cfg.smtp_username, email_cfg.smtp_password)
+            conn.sendmail(from_email, [to_email], msg.as_string())
+            try:
+                conn.quit()
+            except Exception:
+                pass
+
+            return Response({'message': f"Quote sent to {to_email}"})
+        except smtplib.SMTPAuthenticationError:
+            return Response({'error': 'SMTP authentication failed. Check your username and password in Settings → Email.'}, status=422)
+        except Exception as e:
+            return Response({'error': f"Failed to send email: {str(e)}"}, status=422)

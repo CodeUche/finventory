@@ -437,6 +437,29 @@ class AccountingService:
             logger.warning("post_sale_journal failed: %s", exc)
 
     @staticmethod
+    def post_credit_payment_journal(organisation, customer, amount: Decimal, user=None, description="", date=None):
+        """DR Cash (1001) → CR Accounts Receivable (1100) when a credit customer pays."""
+        try:
+            from django.utils import timezone
+            zero = Decimal('0')
+            amt = Decimal(str(amount))
+            lines = [
+                ('1001', amt, zero),   # DR Cash
+                ('1100', zero, amt),   # CR Accounts Receivable
+            ]
+            ref_date = date or timezone.now().date()
+            AccountingService.post_journal_entry(
+                organisation,
+                description or f"Credit payment – {customer.name}",
+                ref_date,
+                lines,
+                user,
+                ref=f"CRPAY-{customer.code or str(customer.id)[:8]}",
+            )
+        except Exception as exc:
+            logger.warning("post_credit_payment_journal failed: %s", exc)
+
+    @staticmethod
     def post_bill_approved_journal(organisation, bill, user=None):
         """DR Expense → CR Accounts Payable."""
         try:

@@ -28,7 +28,7 @@ export interface Organisation {
   email: string
   address?: string
   logo?: string
-  letterhead?: string
+  company_stamp?: string
   tax_id?: string
   registration_number?: string
   is_active: boolean
@@ -37,7 +37,16 @@ export interface Organisation {
   bank_account_name?: string
   bank_sort_code?: string
   brand_color?: string
-  use_letterhead?: boolean
+  invoice_company_name?: string
+  company_name_font?: string
+  company_name_font_color?: string
+  company_name_font_size?: number
+  company_name_font_bold?: boolean
+  company_name_font_italic?: boolean
+  company_name_font_underline?: boolean
+  invoice_template?: string
+  pension_provider?: string
+  ai_custom_context?: string
 }
 
 // ─── Product ──────────────────────────────────────────────────────────────────
@@ -53,6 +62,7 @@ export interface Product {
   alcohol_percentage?: number
   volume_ml?: number
   cost_price: string
+  owner_cost_price?: string
   selling_price: string
   reorder_level: number
   is_active: boolean
@@ -85,6 +95,7 @@ export interface Customer {
   address?: string
   credit_limit: string
   outstanding_balance: string
+  store_credit: string
   available_credit: string
   is_credit_blocked: boolean
   credit_score?: number
@@ -114,6 +125,7 @@ export interface Invoice {
   discount_amount: string
   tax_amount: string
   total_amount: string
+  credit_applied: string
   amount_paid: string
   amount_due: string
   notes: string
@@ -139,6 +151,26 @@ export interface Warehouse {
   address: string
   is_default: boolean
   is_active: boolean
+}
+
+export interface OwnerAnalytics {
+  period: string
+  total_revenue: string
+  company_cogs: string
+  owner_cogs: string
+  company_gross_profit: string
+  owner_gross_profit: string
+  company_margin_pct: string
+  owner_margin_pct: string
+  top_products: { product_name: string; revenue: string; company_gross: string; owner_gross: string }[]
+}
+
+export interface WarehouseSalesRow {
+  warehouse_id: string
+  warehouse_name: string
+  total_revenue: string
+  invoice_count: number
+  top_products: { product_name: string; units_sold: string; revenue: string }[]
 }
 
 // ─── Expense ──────────────────────────────────────────────────────────────────
@@ -551,6 +583,7 @@ export interface RecurringInvoice {
   template_name: string
   customer: string | null
   customer_name: string | null
+  custom_customer_name: string
   warehouse: string
   warehouse_name: string
   frequency: 'daily' | 'weekly' | 'monthly' | 'quarterly' | 'annual'
@@ -689,7 +722,7 @@ export interface VATSummary {
 export type ModuleKey =
   | 'sales' | 'purchases' | 'bills' | 'expenses' | 'inventory'
   | 'customers' | 'suppliers' | 'payroll' | 'reports' | 'accounting'
-  | 'tax' | 'budget' | 'quotes' | 'recurring'
+  | 'tax' | 'budget' | 'quotes' | 'recurring' | 'settings'
 
 export type AccessLevel = 'none' | 'view' | 'write' | 'edit'
 
@@ -708,6 +741,47 @@ export interface TeamMember {
   is_active: boolean
   joined_at: string | null
   module_permissions: ModulePermission[]
+}
+
+// ─── Subscription / Billing ──────────────────────────────────────────────────
+export interface Plan {
+  id: string
+  name: string
+  slug: string
+  description: string
+  price: string
+  interval: 'monthly' | 'annual'
+  trial_days: number
+  features: Record<string, number | boolean | string>
+  is_public: boolean
+  display_order: number
+}
+
+export interface Subscription {
+  id: string
+  plan: Plan
+  status: 'trialing' | 'active' | 'past_due' | 'canceled' | 'unpaid' | 'incomplete'
+  is_active: boolean
+  trial_end: string | null
+  current_period_start: string | null
+  current_period_end: string | null
+  canceled_at: string | null
+  created_at: string
+}
+
+export interface SubscriptionPayment {
+  id: string
+  amount: string
+  currency: string
+  status: 'succeeded' | 'failed' | 'refunded'
+  description: string
+  created_at: string
+}
+
+export interface InitiatePaymentResult {
+  authorization_url: string
+  reference: string
+  access_code: string
 }
 
 // ─── Overdue Invoice Alert ────────────────────────────────────────────────────

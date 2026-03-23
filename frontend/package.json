@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:desktop": "vite --mode desktop",
     "build": "tsc && vite build",
     "build:desktop": "tsc && vite build --mode desktop",
     "build:cloud": "tsc && vite build --mode cloud",
@@ -23,6 +24,8 @@
   "dependencies": {
     "@capacitor/core": "^6.2.0",
     "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2.6.0",
+    "@tauri-apps/plugin-fs": "^2.4.5",
     "@tauri-apps/plugin-http": "^2.5.7",
     "axios": "^1.7.9",
     "clsx": "^2.1.1",

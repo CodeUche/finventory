@@ -118,16 +118,28 @@ export default function NewSalePage() {
   // ── Payment ───────────────────────────────────────────────────────────────
   const [paymentMethod, setPaymentMethod] = useState('cash')
   const [amountPaid, setAmountPaid] = useState('')
+  const [applyCredit, setApplyCredit] = useState(false)
   const [notes, setNotes] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
+  const customerStoreCredit = parseFloat(selectedCustomer?.store_credit ?? '0')
+  const creditApplied = applyCredit && customerStoreCredit > 0
+    ? Math.min(customerStoreCredit, grandTotal)
+    : 0
+  const effectiveBalanceDue = grandTotal - creditApplied
+
   const tenderedNum = parseFloat(stripCommas(amountPaid)) || 0
-  const changeGiven = tenderedNum > grandTotal ? tenderedNum - grandTotal : 0
-  const balanceDue  = tenderedNum > 0 && tenderedNum < grandTotal ? grandTotal - tenderedNum : 0
+  const changeGiven = tenderedNum > effectiveBalanceDue ? tenderedNum - effectiveBalanceDue : 0
+  const balanceDue  = tenderedNum > 0 && tenderedNum < effectiveBalanceDue ? effectiveBalanceDue - tenderedNum : 0
+
+  // Reset apply-credit if customer changes or no credit
+  useEffect(() => {
+    if (!selectedCustomer || customerStoreCredit <= 0) setApplyCredit(false)
+  }, [selectedCustomer, customerStoreCredit])
 
   const buildPayload = (isProforma = false) => {
-    const rawTendered = parseFloat(stripCommas(amountPaid)) || grandTotal
-    const actualPaid = Math.min(rawTendered, grandTotal)
+    const rawTendered = parseFloat(stripCommas(amountPaid)) || effectiveBalanceDue
+    const actualPaid = Math.min(rawTendered, effectiveBalanceDue)
     const isCredit = paymentMethod === 'credit'
     return {
       customer_id: selectedCustomer?.id ?? null,
@@ -135,6 +147,7 @@ export default function NewSalePage() {
       payment_method: paymentMethod,
       amount_paid: isCredit || isProforma ? '0' : actualPaid.toFixed(2),
       amount_tendered: !isCredit && !isProforma && rawTendered > 0 ? rawTendered.toFixed(2) : null,
+      credit_applied: isProforma ? '0' : creditApplied.toFixed(2),
       notes,
       is_proforma: isProforma,
       items: cart.map((c) => ({
@@ -148,7 +161,7 @@ export default function NewSalePage() {
 
   const handleSubmit = async (isProforma = false) => {
     if (cart.length === 0) { toast.error('Add at least one product'); return }
-    if (!selectedWarehouse) { toast.error('Select a warehouse first'); return }
+    if (!selectedWarehouse) { toast.error('Select a location first'); return }
     if (paymentMethod === 'credit' && !selectedCustomer && !isProforma) {
       toast.error('Select a customer for credit sales'); return
     }
@@ -331,17 +344,17 @@ export default function NewSalePage() {
           </div>
         </div>
 
-        {/* ── Right: Warehouse + Customer + Payment + Summary ── */}
+        {/* ── Right: Location + Customer + Payment + Summary ── */}
         <div className="space-y-4">
-          {/* Warehouse selector */}
+          {/* Location selector */}
           <div className="card p-4 space-y-3">
             <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-2">
               <Warehouse size={14} />
-              Warehouse
+              Location
             </p>
             {warehouses.length === 0 ? (
               <p className="text-xs text-amber-400">
-                No warehouses found.{' '}
+                No locations found.{' '}
                 <a href="/inventory/warehouses" className="underline hover:text-amber-300">Add one first →</a>
               </p>
             ) : (
@@ -350,7 +363,7 @@ export default function NewSalePage() {
                 value={selectedWarehouse}
                 onChange={(e) => setSelectedWarehouse(e.target.value)}
               >
-                <option value="">Select warehouse…</option>
+                <option value="">Select location…</option>
                 {warehouses.map((w) => (
                   <option key={w.id} value={w.id}>
                     {w.name}{w.is_default ? ' (default)' : ''}
@@ -441,11 +454,29 @@ export default function NewSalePage() {
                   type="text"
                   inputMode="decimal"
                   className="input"
-                  placeholder={formatCurrency(grandTotal)}
+                  placeholder={formatCurrency(effectiveBalanceDue)}
                   value={amountPaid}
                   onChange={(e) => setAmountPaid(formatAmountInput(e.target.value))}
                 />
               </div>
+            )}
+
+            {/* Store credit checkbox — shown only when customer has credit */}
+            {selectedCustomer && customerStoreCredit > 0 && !isNaN(customerStoreCredit) && (
+              <label className="flex items-start gap-3 cursor-pointer select-none bg-emerald-500/5 border border-emerald-500/20 rounded-xl p-3 hover:bg-emerald-500/10 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={applyCredit}
+                  onChange={(e) => setApplyCredit(e.target.checked)}
+                  className="mt-0.5 accent-emerald-500"
+                />
+                <div>
+                  <p className="text-sm font-medium text-emerald-300">Apply Store Credit</p>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    {formatCurrency(customerStoreCredit)} available · deducts {formatCurrency(Math.min(customerStoreCredit, grandTotal))} from balance
+                  </p>
+                </div>
+              </label>
             )}
           </div>
 
@@ -465,11 +496,22 @@ export default function NewSalePage() {
                   <span>− {formatCurrency(discountTotal)}</span>
                 </div>
               )}
-              <div className="border-t border-surface-700 pt-2 flex justify-between text-white font-bold text-base">
-                <span>Total</span>
-                <span className="text-brand-400">{formatCurrency(grandTotal)}</span>
+              <div className="border-t border-surface-700 pt-2 flex justify-between text-white font-semibold text-base">
+                <span>Invoice Total</span>
+                <span>{formatCurrency(grandTotal)}</span>
               </div>
-
+              {creditApplied > 0 && (
+                <>
+                  <div className="flex justify-between text-emerald-400">
+                    <span>Store Credit Applied</span>
+                    <span>− {formatCurrency(creditApplied)}</span>
+                  </div>
+                  <div className="border-t border-surface-700 pt-2 flex justify-between text-white font-bold text-base">
+                    <span>Balance Due</span>
+                    <span className="text-brand-400">{formatCurrency(effectiveBalanceDue)}</span>
+                  </div>
+                </>
+              )}
               {/* Tendered / change / balance — only when a tendered amount is entered */}
               {paymentMethod !== 'credit' && tenderedNum > 0 && (
                 <>
@@ -521,7 +563,7 @@ export default function NewSalePage() {
               disabled={submitting || cart.length === 0}
               className="btn-primary w-full py-3.5 text-base disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {submitting ? 'Processing…' : `Confirm Sale · ${formatCurrency(grandTotal)}`}
+              {submitting ? 'Processing…' : `Confirm Sale · ${formatCurrency(effectiveBalanceDue)}`}
             </button>
             <button
               onClick={() => handleSubmit(true)}

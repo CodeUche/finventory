@@ -30,6 +30,12 @@ ALLOWED_HOSTS: list[str] = config("ALLOWED_HOSTS", default="localhost,127.0.0.1"
 # Get yours at https://dashboard.paystack.com/#/settings/developers
 PAYSTACK_SECRET_KEY = config("PAYSTACK_SECRET_KEY", default="")
 
+# Groq AI key — powers the "Explain My Money" AI assistant (free globally)
+# Get yours free at https://console.groq.com/keys
+GROQ_API_KEY = config("GROQ_API_KEY", default="")
+
+# NOTE: AI bank reconciliation reuses GROQ_API_KEY defined below
+
 # ─── Application Definition ───────────────────────────────────────────────────
 DJANGO_APPS = [
     "django.contrib.admin",
@@ -69,6 +75,7 @@ LOCAL_APPS = [
     "apps.payroll",
     "apps.payments",
     "apps.budgets",
+    "apps.ai",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -130,6 +137,18 @@ DATABASES = {
 # ─── Custom Auth Model ────────────────────────────────────────────────────────
 AUTH_USER_MODEL = "authentication.User"
 
+# ─── Password Hashing ─────────────────────────────────────────────────────────
+# Argon2id is the OWASP-recommended winner of the Password Hashing Competition.
+# It is memory-hard (resists GPU/ASIC attacks) and is the strongest hasher
+# available in Django. Existing PBKDF2 hashes are transparently upgraded to
+# Argon2 on next login.
+PASSWORD_HASHERS = [
+    "django.contrib.auth.hashers.Argon2PasswordHasher",   # primary — all new passwords
+    "django.contrib.auth.hashers.PBKDF2PasswordHasher",   # legacy — upgrades on login
+    "django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher",
+    "django.contrib.auth.hashers.BCryptSHA256PasswordHasher",
+]
+
 # ─── Password Validation ──────────────────────────────────────────────────────
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
@@ -190,10 +209,12 @@ REST_FRAMEWORK = {
         "anon": "60/hour",             # Unauthenticated catch-all
         "user": "1000/hour",           # Authenticated catch-all
         # ── Auth endpoints (per-IP) ────────────────────────────────────────
-        "login": "5/minute",           # LoginRateThrottle — brute-force guard
+        "login": "20/minute",          # LoginRateThrottle — brute-force guard
         "register": "3/hour",          # RegisterRateThrottle — signup spam guard
         "token_refresh": "10/minute",  # TokenRefreshRateThrottle
         "password_change": "3/hour",   # PasswordChangeRateThrottle
+        "password_reset_request": "5/hour",   # PasswordResetRequestRateThrottle
+        "password_reset_confirm": "10/hour",  # PasswordResetConfirmRateThrottle
         # ── Business endpoints ─────────────────────────────────────────────
         "bank_resolve": "20/minute",   # BankResolveRateThrottle — Paystack proxy
         "invitation": "10/hour",       # InvitationRateThrottle — team management

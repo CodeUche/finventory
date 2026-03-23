@@ -99,6 +99,7 @@ class Invoice(TenantAwareModel):
     discount_amount = MoneyField()
     tax_amount = MoneyField()
     total_amount = MoneyField()
+    credit_applied = MoneyField(default=0)  # Store credit redeemed on this invoice
     amount_paid = MoneyField()
     amount_due = MoneyField()
 
@@ -205,6 +206,7 @@ class RecurringInvoice(TenantAwareModel):
 
     template_name = models.CharField(max_length=200)
     customer = models.ForeignKey('customers.Customer', null=True, blank=True, on_delete=models.SET_NULL)
+    custom_customer_name = models.CharField(max_length=255, blank=True, help_text="Free-text customer/vendor name when not in the customer list")
     warehouse = models.ForeignKey('inventory.Warehouse', on_delete=models.PROTECT)
     frequency = models.CharField(max_length=20, choices=FREQ_CHOICES, default=MONTHLY)
     interval = models.PositiveIntegerField(default=1)

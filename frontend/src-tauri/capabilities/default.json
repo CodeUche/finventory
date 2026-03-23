@@ -9,7 +9,12 @@
     "core:default",
     {
       "identifier": "http:default",
-      "allow": [{ "url": "http://localhost:8000/**" }]
-    }
+      "allow": [
+        { "url": "http://localhost:8000/**" },
+        { "url": "http://127.0.0.1:8000/**" }
+      ]
+    },
+    "dialog:allow-save",
+    "fs:allow-write-file"
   ]
 }

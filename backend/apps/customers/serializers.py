@@ -16,7 +16,7 @@ class CustomerSerializer(serializers.ModelSerializer):
         fields = [
             "id", "code", "name", "customer_type", "email", "phone",
             "address", "contact_person", "credit_limit",
-            "payment_terms_days", "outstanding_balance",
+            "payment_terms_days", "outstanding_balance", "store_credit",
             "available_credit", "is_credit_blocked", "credit_score",
             "notes", "is_active", "created_at", "updated_at",
         ]

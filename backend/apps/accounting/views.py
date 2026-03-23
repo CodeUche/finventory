@@ -6,10 +6,11 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from apps.core.mixins import TenantFilterMixin
 from apps.core.permissions import IsAccountant, IsOwnerOrAdmin
-from .models import Account, JournalEntry, JournalLine, FixedAsset, FinancialPeriod, BankReconciliation, BankReconciliationLine
+from .models import Account, JournalEntry, JournalLine, FixedAsset, FinancialPeriod, BankReconciliation, BankReconciliationLine, AIReconMatch
 from .serializers import (
     AccountSerializer, JournalEntrySerializer, CreateJournalEntrySerializer,
     FixedAssetSerializer, FinancialPeriodSerializer, BankReconciliationSerializer, BankReconciliationLineSerializer,
+    AIReconMatchSerializer,
 )
 from .services import AccountingService
 
@@ -293,3 +294,222 @@ class BankReconciliationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             'errors': errors,
             'lines': BankReconciliationLineSerializer(lines_created, many=True).data,
         }, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'], url_path='ai_reconcile')
+    def ai_reconcile(self, request, pk=None):
+        """
+        POST /accounting/reconciliations/{id}/ai_reconcile/
+        Uses Groq (free tier, llama-3.3-70b-versatile) to match bank statement
+        lines to book journal lines. Requires GROQ_API_KEY in .env.
+        Get a free key at: https://console.groq.com/keys
+        """
+        import json
+        from django.conf import settings
+
+        recon = self.get_object()
+
+        api_key = getattr(settings, 'GROQ_API_KEY', '') or ''
+        if not api_key:
+            return Response(
+                {'error': 'AI reconciliation requires a GROQ_API_KEY. Get a free key at https://console.groq.com/keys and add it to your .env file.'},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+
+        # Fetch bank statement lines for this reconciliation
+        bank_lines = list(recon.lines.all())
+        if not bank_lines:
+            return Response({'error': 'No bank statement lines found. Import a CSV statement first.'}, status=400)
+
+        # Fetch book journal lines for the account + period
+        journal_lines = list(
+            JournalLine.objects.filter(
+                account=recon.account,
+                journal_entry__organisation=recon.organisation,
+                journal_entry__entry_date__gte=recon.period_start,
+                journal_entry__entry_date__lte=recon.period_end,
+                journal_entry__status='posted',
+            ).select_related('journal_entry')
+        )
+
+        bank_items = [
+            {
+                'id': str(line.id),
+                'date': str(line.transaction_date),
+                'description': line.description,
+                'amount': float(line.amount),
+                'reference': line.reference,
+            }
+            for line in bank_lines
+        ]
+
+        book_items = [
+            {
+                'id': str(jl.id),
+                'date': str(jl.journal_entry.entry_date),
+                'description': jl.description or jl.journal_entry.description,
+                'debit': float(jl.debit),
+                'credit': float(jl.credit),
+                'reference': jl.journal_entry.reference,
+            }
+            for jl in journal_lines
+        ]
+
+        prompt = f"""You are an expert accountant performing bank reconciliation for a Nigerian business.
+
+TASK: Match each bank statement transaction to the corresponding book entry (journal line), if one exists.
+
+BANK STATEMENT TRANSACTIONS (from the bank):
+{json.dumps(bank_items, indent=2)}
+
+BOOK ENTRIES (journal lines from the accounting system):
+{json.dumps(book_items, indent=2)}
+
+MATCHING RULES:
+- Exact match: same amount AND same/similar date AND description matches
+- Fuzzy match: amount matches but date differs by ≤5 days, OR description partially matches
+- Uncertain: possible match but significant discrepancy
+- No match: cannot find a reasonable corresponding book entry
+
+For Nigerian context: bank descriptions often use coded references (e.g. "NIP/TRANSFER/ACCTNO", "POS/MERCHANT", "USSD/TRF"). Match these to book entries by amount and approximate date.
+
+RESPONSE FORMAT — Return ONLY valid JSON, nothing else:
+{{
+  "matches": [
+    {{
+      "bank_line_id": "uuid",
+      "book_line_id": "uuid",
+      "confidence": 0.95,
+      "match_type": "exact|fuzzy|uncertain",
+      "reasoning": "Brief explanation of why these match"
+    }}
+  ],
+  "unmatched_bank": [
+    {{
+      "bank_line_id": "uuid",
+      "advice": "This looks like a bank charge — create an expense entry: DR Bank Charges, CR Bank Account"
+    }}
+  ],
+  "unmatched_book": [
+    {{
+      "book_line_id": "uuid",
+      "advice": "This entry has no corresponding bank transaction — it may be a timing difference or an error"
+    }}
+  ]
+}}"""
+
+        try:
+            from groq import Groq
+            client = Groq(api_key=api_key)
+            chat_completion = client.chat.completions.create(
+                model='llama-3.3-70b-versatile',
+                messages=[{'role': 'user', 'content': prompt}],
+                max_tokens=4096,
+                temperature=0.1,  # Low temp for deterministic matching
+                response_format={'type': 'json_object'},
+            )
+            response_text = chat_completion.choices[0].message.content.strip()
+            # Strip markdown code fences if present
+            if response_text.startswith('```'):
+                response_text = response_text.split('```', 2)[1]
+                if response_text.startswith('json'):
+                    response_text = response_text[4:]
+            result = json.loads(response_text.strip())
+        except Exception as e:
+            return Response(
+                {'error': f'AI reconciliation failed: {type(e).__name__}: {e}'},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+
+        # Build lookup maps
+        bank_line_map = {str(bl.id): bl for bl in bank_lines}
+        journal_line_map = {str(jl.id): jl for jl in journal_lines}
+
+        # Delete old AI matches for this reconciliation
+        AIReconMatch.objects.filter(reconciliation=recon).delete()
+
+        created_matches = []
+
+        # Create matched records
+        for m in result.get('matches', []):
+            bank_line = bank_line_map.get(m.get('bank_line_id'))
+            book_line = journal_line_map.get(m.get('book_line_id'))
+            if bank_line:
+                match = AIReconMatch.objects.create(
+                    organisation=recon.organisation,
+                    reconciliation=recon,
+                    bank_line=bank_line,
+                    book_line=book_line,
+                    confidence=float(m.get('confidence', 0.5)),
+                    match_type=m.get('match_type', 'uncertain'),
+                    status='proposed',
+                    ai_reasoning=m.get('reasoning', ''),
+                )
+                created_matches.append(match)
+
+        # Create unmatched bank records
+        for u in result.get('unmatched_bank', []):
+            bank_line = bank_line_map.get(u.get('bank_line_id'))
+            if bank_line:
+                match = AIReconMatch.objects.create(
+                    organisation=recon.organisation,
+                    reconciliation=recon,
+                    bank_line=bank_line,
+                    book_line=None,
+                    confidence=0.0,
+                    match_type='uncertain',
+                    status='proposed',
+                    ai_advice=u.get('advice', ''),
+                )
+                created_matches.append(match)
+
+        # Create unmatched book records — attach to a placeholder bank_line if possible
+        # We can't create an AIReconMatch without a bank_line (FK is required).
+        # Instead we return unmatched_book as extra data in the response.
+        unmatched_book_data = result.get('unmatched_book', [])
+
+        all_matches = AIReconMatch.objects.filter(reconciliation=recon).select_related(
+            'bank_line', 'book_line', 'book_line__journal_entry'
+        )
+        return Response({
+            'matches': AIReconMatchSerializer(all_matches, many=True).data,
+            'unmatched_book': unmatched_book_data,
+            'summary': {
+                'bank_lines_total': len(bank_lines),
+                'book_lines_total': len(journal_lines),
+                'matches_proposed': len(created_matches),
+                'unmatched_book_count': len(unmatched_book_data),
+            }
+        })
+
+    @action(detail=True, methods=['post'], url_path='confirm_match')
+    def confirm_match(self, request, pk=None):
+        """
+        POST /accounting/reconciliations/{id}/confirm_match/
+        Body: { match_id: uuid, action: "confirm" | "reject" }
+        """
+        recon = self.get_object()
+        match_id = request.data.get('match_id')
+        action_val = request.data.get('action')
+
+        if action_val not in ('confirm', 'reject'):
+            return Response({'error': 'action must be "confirm" or "reject"'}, status=400)
+
+        try:
+            match = AIReconMatch.objects.get(id=match_id, reconciliation=recon)
+        except AIReconMatch.DoesNotExist:
+            return Response({'error': 'Match not found'}, status=404)
+
+        if action_val == 'confirm':
+            match.status = 'confirmed'
+            match.bank_line.is_cleared = True
+            match.bank_line.save(update_fields=['is_cleared'])
+        else:
+            match.status = 'rejected'
+            match.bank_line.is_cleared = False
+            match.bank_line.save(update_fields=['is_cleared'])
+
+        match.save(update_fields=['status'])
+
+        return Response(AIReconMatchSerializer(
+            AIReconMatch.objects.select_related('bank_line', 'book_line', 'book_line__journal_entry').get(id=match.id)
+        ).data)

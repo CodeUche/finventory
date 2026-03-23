@@ -8,49 +8,121 @@
  *   - Redirects to /login on refresh failure
  */
 
-import axios, { AxiosError, type InternalAxiosRequestConfig } from 'axios'
+import axios, { AxiosError, type AxiosAdapter, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios'
+import { fetch as tauriHttpFetch } from '@tauri-apps/plugin-http'
 import toast from 'react-hot-toast'
 import { useAuthStore } from '@/store/authStore'
 import { offlineQueue } from '@/lib/offlineQueue'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '/api/v1'
 
-// ─── Tauri HTTP plugin ────────────────────────────────────────────────────────
-// In the packaged desktop app, WebView2 blocks XHR/fetch to http://localhost
-// even with the loopback exemption applied. The Tauri HTTP plugin routes all
-// requests through Rust's reqwest, completely bypassing WebView2 restrictions.
+// ─── Tauri HTTP adapter ───────────────────────────────────────────────────────
+// Uses @tauri-apps/plugin-http's fetch() which routes through Rust reqwest via
+// Tauri IPC, bypassing WebView2 CORS entirely.  Falls back to native fetch()
+// in web-browser contexts (plugin throws when __TAURI_INTERNALS__ is absent).
 //
-// We start loading the plugin immediately (IIFE), then the request interceptor
-// awaits _tauriReady before the first request fires — zero race conditions.
-let _tauriFetch: typeof fetch | null = null
-const _tauriReady: Promise<void> =
-  typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
-    ? import('@tauri-apps/plugin-http')
-        .then((m) => { _tauriFetch = m.fetch as typeof fetch })
-        .catch(() => { /* fall back to native fetch */ })
-    : Promise.resolve()
+// Static import (not dynamic) so Vite bundles it at compile time — no silent
+// failures like the dynamic-import approach that caused the original 401 bug.
+
+// Resolved immediately — kept so the interceptor can await it symmetrically.
+const _tauriReady: Promise<void> = Promise.resolve()
+
+// ── Shared response converter (Response → AxiosResponse) ──────────────────
+async function responseToAxios(resp: Response, config: InternalAxiosRequestConfig): Promise<AxiosResponse> {
+  const respHeaders: Record<string, string> = {}
+  resp.headers.forEach((v, k) => { respHeaders[k.toLowerCase()] = v })
+  const ct = respHeaders['content-type'] ?? ''
+  let data: unknown
+  if (ct.includes('application/json')) {
+    try { data = await resp.json() } catch { data = await resp.text() }
+  } else if (config.responseType === 'blob') {
+    data = await resp.blob()
+  } else if (config.responseType === 'arraybuffer') {
+    data = await resp.arrayBuffer()
+  } else {
+    data = await resp.text()
+  }
+  const axiosResp: AxiosResponse = {
+    data, status: resp.status, statusText: resp.statusText,
+    headers: respHeaders as never, config,
+  }
+  if (resp.ok) return axiosResp
+  throw new AxiosError(`Request failed with status code ${resp.status}`, 'ERR_BAD_RESPONSE', config, null, axiosResp)
+}
+
+function buildTauriAdapter(): AxiosAdapter {
+  return async (config): Promise<AxiosResponse> => {
+    const method = (config.method ?? 'GET').toUpperCase()
+
+    // Build absolute URL + query string
+    const base = (config.baseURL ?? '').replace(/\/+$/, '')
+    const path = (config.url ?? '').replace(/^\/+/, '')
+    let url = path.startsWith('http') ? path : `${base}/${path}`
+    if (config.params) {
+      const qs = Object.entries(config.params as Record<string, unknown>)
+        .filter(([, v]) => v !== undefined && v !== null)
+        .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
+        .join('&')
+      if (qs) url += (url.includes('?') ? '&' : '?') + qs
+    }
+
+    // Extract headers via toJSON(true) — most reliable way to flatten an
+    // AxiosHeaders instance to a plain { key: string } object.
+    // toJSON(true) joins multi-value headers with ', ' and skips null/false entries.
+    const rawHeaders = (config.headers?.toJSON?.(true) ?? config.headers ?? {}) as Record<string, unknown>
+    const headers: Record<string, string> = {}
+    for (const [k, v] of Object.entries(rawHeaders)) {
+      if (typeof v === 'string' && v) headers[k] = v
+    }
+    console.debug('[Audity] adapter headers:', JSON.stringify(Object.keys(headers)))
+
+    const body = !['GET', 'HEAD'].includes(method) && config.data != null
+      ? (config.data instanceof FormData ? config.data : config.data as string)
+      : undefined
+
+    // Try Tauri IPC fetch first (routes through Rust reqwest, no CORS).
+    // Only catch IPC-level errors (plugin not available / scope mismatch).
+    // AxiosErrors thrown by responseToAxios for non-2xx MUST propagate directly —
+    // they are real HTTP errors, not IPC failures.
+    let ipcResponse: Response | null = null
+    try {
+      ipcResponse = await tauriHttpFetch(url, { method, headers, body } as RequestInit)
+    } catch (ipcErr) {
+      // IPC unavailable or URL not in scope — fall back to native browser fetch.
+      console.error('[Audity] tauriHttpFetch threw:', String(ipcErr))
+      toast.error(`[Audity] IPC error: ${String(ipcErr).slice(0, 100)}`, { id: 'ipc-err', duration: 15000 })
+      const resp = await fetch(url, { method, headers, body } as RequestInit)
+      return responseToAxios(resp, config)
+    }
+    // IPC succeeded — convert and return (throws AxiosError for non-2xx, propagates up)
+    return responseToAxios(ipcResponse, config)
+  }
+}
 
 export const api = axios.create({
   baseURL: API_BASE,
   headers: { 'Content-Type': 'application/json' },
   timeout: 10000,
-  adapter: 'fetch',
+  // Always use the Tauri adapter. It detects __TAURI_INTERNALS__ at request
+  // time (not module init) to avoid a race in tauri dev where the IPC object
+  // is injected after modules are evaluated. Falls back to native fetch in
+  // pure web browser contexts.
+  adapter: buildTauriAdapter(),
 })
 
-// ─── Storage helpers (sessionStorage-first for "no remember me") ──────────────
-function getStoredAuth() {
-  return JSON.parse(sessionStorage.getItem('auth') || localStorage.getItem('auth') || '{}')
+// ─── Storage helpers ──────────────────────────────────────────────────────────
+// Read directly from Zustand in-memory state — always reflects the latest
+// setAuth() call instantly, with no localStorage serialisation/timing gap.
+function getStoredAuth(): { access?: string; refresh?: string } {
+  return useAuthStore.getState().tokens ?? {}
 }
-function getStoredOrgId() {
-  return sessionStorage.getItem('org_id') || localStorage.getItem('org_id')
+function getStoredOrgId(): string | null {
+  return useAuthStore.getState().organisation?.id ?? null
 }
 
 // ─── Request interceptor ──────────────────────────────────────────────────────
 api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
-  // Ensure Tauri plugin is loaded before the first request goes out
-  await _tauriReady
-  // Pass the Tauri fetch fn directly to Axios's fetch adapter (config.fetch takes priority)
-  if (_tauriFetch) (config as any).fetch = _tauriFetch
+  await _tauriReady  // no-op (resolved immediately) — kept for symmetry
 
   const auth = getStoredAuth()
   const orgId = getStoredOrgId()
@@ -125,7 +197,7 @@ api.interceptors.response.use(
       }
 
       try {
-        const { data } = await axios.post(`${API_BASE}/auth/token/refresh/`, { refresh: auth.refresh })
+        const { data } = await api.post('/auth/token/refresh/', { refresh: auth.refresh })
         // IMPORTANT: ROTATE_REFRESH_TOKENS=True means Django returns a NEW refresh token.
         // We must save it — otherwise the next refresh attempt uses a blacklisted token → logout.
         const newAuth = {
@@ -133,10 +205,7 @@ api.interceptors.response.use(
           access: data.access,
           refresh: data.refresh ?? auth.refresh,  // save rotated refresh token
         }
-        // Write back to whichever storage has the tokens
-        if (sessionStorage.getItem('auth')) sessionStorage.setItem('auth', JSON.stringify(newAuth))
-        else localStorage.setItem('auth', JSON.stringify(newAuth))
-        // Also keep Zustand store in sync so inactivity logout uses the current refresh token
+        // Write rotated tokens back into Zustand persisted state
         useAuthStore.getState().updateTokens({ access: newAuth.access, refresh: newAuth.refresh })
         api.defaults.headers.common.Authorization = `Bearer ${data.access}`
         processQueue(null, data.access)
@@ -166,9 +235,48 @@ api.interceptors.response.use(
 // Use this instead of native fetch() to load images/files in the Tauri desktop
 // app — native fetch() to http://localhost is blocked by WebView2.
 export async function tauriFetch(url: string): Promise<Response> {
-  await _tauriReady
-  const fn = _tauriFetch ?? fetch
-  return fn(url)
+  try {
+    return await tauriHttpFetch(url)
+  } catch {
+    return fetch(url)
+  }
+}
+
+// ─── Binary file upload (bypasses Tauri FormData/multipart bug) ───────────────
+// Tauri's IPC layer serialises FormData as application/x-www-form-urlencoded
+// instead of multipart/form-data. This helper sends the file as raw binary with
+// an explicit Content-Type so the Django backend receives it correctly.
+export async function uploadFileDirect(
+  urlPath: string,   // e.g. '/tenancy/organisations/abc/upload_logo/'
+  file: File,
+): Promise<Response> {
+  const base = API_BASE.startsWith('http')
+    ? API_BASE.replace(/\/$/, '')
+    : 'http://localhost:8000/api/v1'
+  const { access } = getStoredAuth()
+  const orgId = getStoredOrgId()
+  const ab = await file.arrayBuffer()
+  try {
+    return await tauriHttpFetch(`${base}${urlPath}`, {
+      method: 'POST',
+      headers: {
+        ...(access ? { Authorization: `Bearer ${access}` } : {}),
+        ...(orgId ? { 'X-Organisation-ID': orgId } : {}),
+        'Content-Type': file.type || 'application/octet-stream',
+      },
+      body: ab,
+    } as RequestInit)
+  } catch {
+    return fetch(`${base}${urlPath}`, {
+      method: 'POST',
+      headers: {
+        ...(access ? { Authorization: `Bearer ${access}` } : {}),
+        ...(orgId ? { 'X-Organisation-ID': orgId } : {}),
+        'Content-Type': file.type || 'application/octet-stream',
+      },
+      body: ab,
+    })
+  }
 }
 
 // ─── Typed helpers ────────────────────────────────────────────────────────────
@@ -178,7 +286,12 @@ export const authApi = {
   register: (data: object) => api.post('/auth/register/', data),
   logout: (refresh: string) => api.post('/auth/logout/', { refresh }),
   profile: () => api.get('/auth/profile/'),
-  updateProfile: (data: FormData | object) => api.patch('/auth/profile/', data),
+  updateProfile: (data: object) => api.patch('/auth/profile/', data),
+  uploadAvatar: (file: File) => uploadFileDirect('/auth/upload_avatar/', file),
+  requestPasswordReset: (email: string) =>
+    api.post('/auth/password-reset/', { email }),
+  confirmPasswordReset: (data: { email: string; code: string; new_password: string; confirm_password: string }) =>
+    api.post('/auth/password-reset/confirm/', data),
 }
 
 export const orgApi = {
@@ -192,6 +305,10 @@ export const orgApi = {
   createSubaccount: (orgId: string, data: object) => api.post(`/tenancy/organisations/${orgId}/create_subaccount/`, data),
   resolveBankAccount: (accountNumber: string, bankCode: string) =>
     api.get('/tenancy/organisations/resolve_bank_account/', { params: { account_number: accountNumber, bank_code: bankCode } }),
+  removeLogo: (id: string) => api.post(`/tenancy/organisations/${id}/remove_logo/`),
+  removeStamp: (id: string) => api.post(`/tenancy/organisations/${id}/remove_stamp/`),
+  uploadLogo: (id: string, file: File) => uploadFileDirect(`/tenancy/organisations/${id}/upload_logo/`, file),
+  uploadStamp: (id: string, file: File) => uploadFileDirect(`/tenancy/organisations/${id}/upload_stamp/`, file),
 }
 
 export const teamApi = {
@@ -223,6 +340,8 @@ export const salesApi = {
   invoices: (params?: object) => api.get('/sales/invoices/', { params }),
   invoice: (id: string) => api.get(`/sales/invoices/${id}/`),
   create: (data: object) => api.post('/sales/invoices/', data),
+  updateInvoice: (id: string, data: object) => api.patch(`/sales/invoices/${id}/`, data),
+  deleteInvoice: (id: string) => api.delete(`/sales/invoices/${id}/`),
   pay: (id: string, data: object) => api.post(`/sales/invoices/${id}/pay/`, data),
   void: (id: string) => api.post(`/sales/invoices/${id}/void/`),
   processReturn: (invoiceId: string, data: object) =>
@@ -234,6 +353,10 @@ export const salesApi = {
     api.post(`/sales/invoices/${invoiceId}/confirm_proforma/`),
   productHistory: (productId: string) =>
     api.get('/sales/invoices/product_history/', { params: { product_id: productId } }),
+  warehouseSales: (period?: string) =>
+    api.get('/sales/invoices/warehouse_sales/', { params: { period } }),
+  ownerAnalytics: (period?: string) =>
+    api.get('/sales/invoices/owner_analytics/', { params: { period } }),
 }
 
 export const customerApi = {
@@ -314,6 +437,7 @@ export const quoteApi = {
   accept: (id: string) => api.post(`/quotes/${id}/accept/`),
   reject: (id: string) => api.post(`/quotes/${id}/reject/`),
   convert: (id: string) => api.post(`/quotes/${id}/convert/`),
+  sendEmail: (id: string, data: object) => api.post(`/quotes/${id}/send_email/`, data),
 }
 
 export const billApi = {
@@ -368,12 +492,16 @@ export const accountingApi = {
     const fd = new FormData(); fd.append('file', file)
     return api.post(`/accounting/reconciliations/${id}/import_statement/`, fd)
   },
+  aiReconcile: (id: string) => api.post(`/accounting/reconciliations/${id}/ai_reconcile/`),
+  confirmMatch: (id: string, data: { match_id: string; action: 'confirm' | 'reject' }) =>
+    api.post(`/accounting/reconciliations/${id}/confirm_match/`, data),
 }
 
 export const payrollApi = {
   employees: (params?: object) => api.get('/payroll/employees/', { params }),
   createEmployee: (data: object) => api.post('/payroll/employees/', data),
   updateEmployee: (id: string, data: object) => api.patch(`/payroll/employees/${id}/`, data),
+  deleteEmployee: (id: string) => api.delete(`/payroll/employees/${id}/`),
   runs: () => api.get('/payroll/runs/'),
   runPayroll: (data: object) => api.post('/payroll/runs/', data),
   approvePayroll: (id: string) => api.post(`/payroll/runs/${id}/approve/`),
@@ -445,4 +573,18 @@ export const auditLogApi = {
 export const platformAdminApi = {
   stats: () => api.get('/platform/stats/'),
   users: () => api.get('/platform/users/'),
+}
+
+export const subscriptionApi = {
+  plans: () => api.get('/subscriptions/plans/'),
+  current: () => api.get('/subscriptions/current/'),
+  payments: () => api.get('/subscriptions/payments/'),
+  initiatePayment: (planId: string) => api.post('/subscriptions/initiate-payment/', { plan_id: planId }),
+  verifyPayment: (reference: string) => api.post('/subscriptions/verify-payment/', { reference }),
+  cancel: () => api.post('/subscriptions/cancel/'),
+}
+
+export const aiApi = {
+  status: () => api.get('/ai/status/'),
+  chat: (message: string) => api.post('/ai/chat/', { message }),
 }

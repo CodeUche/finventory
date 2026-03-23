@@ -5,11 +5,11 @@ import {
   Folder, FolderOpen, FolderPlus, ChevronRight, Home, Trash2, Edit2,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { expenseApi, budgetApi } from '@/services/api'
+import { expenseApi, budgetApi, salesApi } from '@/services/api'
 import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from '@/lib/categories'
 import { useAuthStore } from '@/store/authStore'
-import type { Expense, ExpenseGroup } from '@/types'
+import type { Expense, ExpenseGroup, Invoice } from '@/types'
 import DateInput from '@/components/DateInput'
 import YearFilter, { yearToDateParams } from '@/components/YearFilter'
 import ExportButton from '@/components/ExportButton'
@@ -74,8 +74,29 @@ export default function ExpensesPage() {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState<'expense' | 'income' | ''>('')
+  const [periodFilter, setPeriodFilter] = useState<string>('30d')
   const [archiveYear, setArchiveYear] = useState<number | null>(null)
   const [groupByCategory, setGroupByCategory] = useState(false)
+
+  /** Compute { date_from, date_to } from a period key */
+  function periodToDateParams(period: string): Record<string, string> {
+    if (period === 'all') return {}
+    if (period === 'year') {
+      const y = new Date().getFullYear()
+      return { date_from: `${y}-01-01`, date_to: `${y}-12-31` }
+    }
+    if (archiveYear) return yearToDateParams(archiveYear)
+    const days = parseInt(period)
+    if (!isNaN(days)) {
+      const to = new Date()
+      const from = new Date(); from.setDate(from.getDate() - days + 1)
+      return {
+        date_from: from.toISOString().split('T')[0],
+        date_to:   to.toISOString().split('T')[0],
+      }
+    }
+    return {}
+  }
 
   const [showModal, setShowModal] = useState(false)
   const [form, setForm] = useState<ExpenseForm>(BLANK)
@@ -86,20 +107,35 @@ export default function ExpensesPage() {
   const [editForm, setEditForm] = useState<ExpenseForm>(BLANK)
 
   const [budgets, setBudgets] = useState<{ id: string; name: string; status: string }[]>([])
+  const [salesInvoices, setSalesInvoices] = useState<Invoice[]>([])
 
   const loadExpenses = async () => {
     setLoading(true)
     try {
-      const params: Record<string, unknown> = { search: search || undefined, ...yearToDateParams(archiveYear) }
+      const dateParams = archiveYear ? yearToDateParams(archiveYear) : periodToDateParams(periodFilter)
+      const params: Record<string, unknown> = { search: search || undefined, ...dateParams }
       if (typeFilter === 'income') params.is_income = true
       if (typeFilter === 'expense') params.is_income = false
       const expRes = await expenseApi.list(params)
       setExpenses(expRes.data.results ?? expRes.data)
+
+      // Also load sales invoices for income view (revenue from sales)
+      if (typeFilter !== 'expense') {
+        const invParams: Record<string, unknown> = { ...dateParams, page_size: 200 }
+        const invRes = await salesApi.invoices(invParams)
+        const allInvoices: Invoice[] = invRes.data.results ?? invRes.data
+        // Show all revenue-generating invoices (not draft/proforma/voided)
+        setSalesInvoices(allInvoices.filter(
+          (inv) => !['draft', 'proforma', 'voided'].includes(inv.status)
+        ))
+      } else {
+        setSalesInvoices([])
+      }
     } catch { toast.error('Failed to load expenses') }
     finally { setLoading(false) }
   }
 
-  useEffect(() => { loadExpenses() }, [search, typeFilter, archiveYear])
+  useEffect(() => { loadExpenses() }, [search, typeFilter, periodFilter, archiveYear])
 
   useEffect(() => {
     budgetApi.list().then(({ data }) => {
@@ -153,7 +189,9 @@ export default function ExpensesPage() {
   }
 
   const totalExpenses = expenses.filter((e) => !e.is_income).reduce((s, e) => s + parseFloat(e.amount), 0)
-  const totalIncome = expenses.filter((e) => e.is_income).reduce((s, e) => s + parseFloat(e.amount), 0)
+  const totalMiscIncome = expenses.filter((e) => e.is_income).reduce((s, e) => s + parseFloat(e.amount), 0)
+  const totalSalesRevenue = salesInvoices.reduce((s, inv) => s + parseFloat(String(inv.total_amount)), 0)
+  const totalIncome = totalMiscIncome + totalSalesRevenue
   const net = totalIncome - totalExpenses
 
   const grouped: Record<string, { label: string; total: number; count: number; is_income: boolean }> = {}
@@ -374,6 +412,12 @@ export default function ExpensesPage() {
               <div>
                 <p className="text-xs text-slate-400">Total Income</p>
                 <p className="text-xl font-bold text-emerald-400">{formatCurrency(totalIncome)}</p>
+                {totalSalesRevenue > 0 && (
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Sales {formatCurrency(totalSalesRevenue, currency)}
+                    {totalMiscIncome > 0 && ` · Misc ${formatCurrency(totalMiscIncome, currency)}`}
+                  </p>
+                )}
               </div>
             </div>
 
@@ -428,8 +472,25 @@ export default function ExpensesPage() {
                 <Layers size={14} />
                 Group by Category
               </button>
-              <YearFilter selectedYear={archiveYear} onChange={setArchiveYear} />
-              <ExportButton endpoint="/expenses/" filename="expenses" params={yearToDateParams(archiveYear)} />
+              {/* Period filter */}
+              {!archiveYear && (
+                <select
+                  value={periodFilter}
+                  onChange={(e) => setPeriodFilter(e.target.value)}
+                  className="input text-sm py-2 min-w-[130px]"
+                >
+                  <option value="1">Today</option>
+                  <option value="7">Last 7 days</option>
+                  <option value="14">Last 14 days</option>
+                  <option value="30">Last 30 days</option>
+                  <option value="60">Last 60 days</option>
+                  <option value="90">Last 90 days</option>
+                  <option value="year">This year</option>
+                  <option value="all">All time</option>
+                </select>
+              )}
+              <YearFilter selectedYear={archiveYear} onChange={(y) => { setArchiveYear(y); if (!y) setPeriodFilter('30d') }} />
+              <ExportButton endpoint="/expenses/" filename="expenses" params={archiveYear ? yearToDateParams(archiveYear) : periodToDateParams(periodFilter)} />
             </div>
           </div>
 
@@ -460,7 +521,52 @@ export default function ExpensesPage() {
             </div>
           )}
 
-          {/* Table */}
+          {/* Sales Revenue section — shown when not filtering to expense-only */}
+          {typeFilter !== 'expense' && salesInvoices.length > 0 && (
+            <div className="card p-0 overflow-hidden">
+              <div className="px-5 py-3.5 border-b border-surface-700 flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-white">Sales Revenue</p>
+                  <p className="text-xs text-slate-500">{salesInvoices.length} invoice{salesInvoices.length !== 1 ? 's' : ''} · automatically recorded from Sales module</p>
+                </div>
+                <span className="text-emerald-400 font-bold">{formatCurrency(totalSalesRevenue, currency)}</span>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-surface-700">
+                      {['Date', 'Invoice #', 'Customer', 'Method', 'Status', 'Amount'].map((h) => (
+                        <th key={h} className="px-5 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {salesInvoices.map((inv) => (
+                      <tr key={inv.id} className="table-row">
+                        <td className="px-5 py-3.5 text-slate-400 whitespace-nowrap">{formatDate(inv.issue_date)}</td>
+                        <td className="px-5 py-3.5 font-mono text-brand-400 text-xs">{inv.invoice_number}</td>
+                        <td className="px-5 py-3.5 text-slate-300">{inv.customer_name || 'Walk-in'}</td>
+                        <td className="px-5 py-3.5 text-slate-400 capitalize">{inv.payment_method?.replace('_', ' ') || '—'}</td>
+                        <td className="px-5 py-3.5">
+                          <span className={
+                            inv.status === 'paid' ? 'badge-green' :
+                            inv.status === 'credit' ? 'badge-yellow' :
+                            inv.status === 'partially_paid' ? 'badge-blue' :
+                            'badge-slate'
+                          }>{inv.status.replace('_', ' ')}</span>
+                        </td>
+                        <td className="px-5 py-3.5 font-semibold text-emerald-400">
+                          + {formatCurrency(parseFloat(String(inv.total_amount)), currency)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Misc Income & Expenses Table */}
           <div className="card p-0 overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">

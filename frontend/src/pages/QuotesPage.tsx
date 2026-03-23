@@ -1,11 +1,293 @@
 import { useEffect, useState } from 'react'
-import { Plus, X, ClipboardList, Loader2, FileText, ChevronDown, ChevronUp, Trash2 } from 'lucide-react'
+import { Plus, X, ClipboardList, Loader2, FileText, ChevronDown, ChevronUp, Trash2, FileDown, Mail, MessageCircle } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { quoteApi, customerApi, inventoryApi } from '@/services/api'
+import { quoteApi, customerApi, inventoryApi, tauriFetch } from '@/services/api'
 import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
+import { useAuthStore } from '@/store/authStore'
+import { saveBlobFile } from '@/lib/saveBlobFile'
 import type { Quote, Customer, Warehouse, Product } from '@/types'
 import DateInput from '@/components/DateInput'
 import YearFilter, { yearToDateParams } from '@/components/YearFilter'
+
+interface PdfPreview { url: string; filename: string; quoteId: string }
+
+function hexToRgb(hex?: string): [number, number, number] {
+  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex ?? '')
+  if (!m) return [249, 115, 22]
+  return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)]
+}
+
+async function urlToDataUrl(url: string): Promise<string | null> {
+  try {
+    const res = await tauriFetch(url)
+    const blob = await res.blob()
+    return await new Promise<string>((resolve, reject) => {
+      const r = new FileReader()
+      r.onloadend = () => resolve(r.result as string)
+      r.onerror = reject
+      r.readAsDataURL(blob)
+    })
+  } catch { return null }
+}
+
+async function buildQuotePDF(
+  q: Quote,
+  orgName: string,
+  orgLogo?: string,
+  orgAddress?: string,
+  orgPhone?: string,
+  orgEmail?: string,
+  brandColorHex?: string,
+  companyNameOverride?: string,
+  companyFont?: string,
+  companyFontSize?: number,
+  companyFontBold?: boolean,
+  companyFontItalic?: boolean,
+  companyFontUnderline?: boolean,
+  companyFontColor?: string,
+  invoiceTemplate?: string,
+  companyStamp?: string,
+): Promise<PdfPreview> {
+  const { jsPDF } = await import('jspdf')
+  const { default: autoTable } = await import('jspdf-autotable')
+
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+  const pageW = doc.internal.pageSize.getWidth()
+  const pageH = doc.internal.pageSize.getHeight()
+  const tmpl  = invoiceTemplate ?? 'classic'
+
+  const BRAND:  [number, number, number] = hexToRgb(brandColorHex)
+  const DARK:   [number, number, number] = [30,  30,  30]
+  const MUTED:  [number, number, number] = [100, 100, 100]
+  const LIGHT:  [number, number, number] = [250, 250, 248]
+  const NAVY:   [number, number, number] = [15,  23,  42]
+  const SLATE4: [number, number, number] = [148, 163, 184]
+
+  const displayName = companyNameOverride?.trim() || orgName
+  const pdfFontFamily = companyFont?.toLowerCase().includes('times') || companyFont === 'Georgia'
+    || companyFont === 'Playfair Display' || companyFont === 'Merriweather' || companyFont === 'Lora'
+    || companyFont === 'Libre Baskerville' || companyFont === 'EB Garamond' || companyFont === 'Crimson Text'
+    || companyFont === 'Cinzel' || companyFont === 'Cormorant Garamond' || companyFont === 'Spectral'
+    ? 'times'
+    : companyFont === 'courier' || companyFont === 'JetBrains Mono' || companyFont === 'Fira Code'
+    ? 'courier' : 'helvetica'
+  const isBold   = companyFontBold !== false
+  const isItalic = companyFontItalic === true
+  const pdfStyle = isBold && isItalic ? 'bolditalic' : isBold ? 'bold' : isItalic ? 'italic' : 'normal'
+  const fontSize = Math.max(8, Math.min(36, companyFontSize ?? 14))
+  const nameColor: [number, number, number] = companyFontColor ? hexToRgb(companyFontColor) : DARK
+
+  let logoData: string | null = null
+  if (orgLogo) { try { logoData = await urlToDataUrl(orgLogo) } catch { /* skip */ } }
+
+  let y = 0
+
+  if (tmpl === 'classic') {
+    const H = 36
+    doc.setFillColor(...BRAND); doc.rect(0, 0, pageW, H, 'F')
+    if (logoData) { const fmt = logoData.includes('image/png') ? 'PNG' : 'JPEG'; doc.addImage(logoData, fmt, 8, 6, 22, 22) }
+    const nameX = logoData ? 34 : 10
+    doc.setFontSize(fontSize); doc.setFont(pdfFontFamily, pdfStyle); doc.setTextColor(255, 255, 255)
+    doc.text(displayName, nameX, 15)
+    if (companyFontUnderline) { const tw = doc.getTextWidth(displayName); doc.setDrawColor(255, 255, 255); doc.setLineWidth(0.3); doc.line(nameX, 16.5, nameX + tw, 16.5) }
+    doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(220, 220, 220)
+    let iy = 21
+    if (orgAddress) { doc.text(orgAddress, nameX, iy); iy += 4 }
+    if (orgPhone)   { doc.text(orgPhone, nameX, iy); iy += 4 }
+    if (orgEmail)   { doc.text(orgEmail, nameX, iy) }
+    doc.setFontSize(22); doc.setFont('helvetica', 'bold'); doc.setTextColor(255, 255, 255)
+    doc.text('QUOTE', pageW - 10, 14, { align: 'right' })
+    const mRows: [string, string][] = [['No.', q.quote_number], ['Date', formatDate(q.issue_date)], ['Valid Until', formatDate(q.valid_until)]]
+    mRows.forEach(([lbl, val], i) => {
+      doc.setFontSize(7.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(200, 200, 200)
+      doc.text(lbl, pageW - 65, 20 + i * 5)
+      doc.setFont('helvetica', 'bold'); doc.setTextColor(255, 255, 255)
+      doc.text(val, pageW - 10, 20 + i * 5, { align: 'right' })
+    })
+    y = H + 8
+
+  } else if (tmpl === 'modern') {
+    doc.setFillColor(...BRAND); doc.rect(0, 0, pageW, 4, 'F')
+    y = 10
+    if (logoData) { const fmt = logoData.includes('image/png') ? 'PNG' : 'JPEG'; doc.addImage(logoData, fmt, 14, y + 2, 22, 22) }
+    const nameX = logoData ? 40 : 14
+    doc.setFontSize(fontSize); doc.setFont(pdfFontFamily, pdfStyle); doc.setTextColor(...nameColor)
+    doc.text(displayName, nameX, y + 12)
+    if (companyFontUnderline) { const tw = doc.getTextWidth(displayName); doc.setDrawColor(...nameColor); doc.setLineWidth(0.3); doc.line(nameX, y + 13.5, nameX + tw, y + 13.5) }
+    doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(...MUTED)
+    let iy = y + 18
+    if (orgAddress) { doc.text(orgAddress, nameX, iy); iy += 4 }
+    if (orgEmail)   { doc.text(orgEmail, nameX, iy) }
+    doc.setFontSize(24); doc.setFont('helvetica', 'bold'); doc.setTextColor(...BRAND)
+    doc.text('QUOTE', pageW - 14, y + 12, { align: 'right' })
+    doc.setFillColor(248, 250, 252); doc.roundedRect(pageW - 76, y + 16, 62, 22, 2, 2, 'F')
+    const infoRows: [string, string][] = [['Number', q.quote_number], ['Date', formatDate(q.issue_date)], ['Valid Until', formatDate(q.valid_until)]]
+    infoRows.forEach(([lbl, val], i) => {
+      doc.setFontSize(7.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(...MUTED)
+      doc.text(lbl, pageW - 73, y + 22 + i * 5.5)
+      doc.setFont('helvetica', 'bold'); doc.setTextColor(...DARK)
+      doc.text(val, pageW - 16, y + 22 + i * 5.5, { align: 'right' })
+    })
+    y = y + 42; doc.setDrawColor(...BRAND); doc.setLineWidth(0.5); doc.line(14, y, pageW - 14, y); y += 8
+
+  } else if (tmpl === 'minimal') {
+    y = 12
+    if (logoData) { const fmt = logoData.includes('image/png') ? 'PNG' : 'JPEG'; doc.addImage(logoData, fmt, 14, y, 22, 22) }
+    const nameX = logoData ? 40 : 14
+    doc.setFontSize(fontSize); doc.setFont(pdfFontFamily, pdfStyle); doc.setTextColor(...nameColor)
+    doc.text(displayName, nameX, y + 10)
+    if (companyFontUnderline) { const tw = doc.getTextWidth(displayName); doc.setDrawColor(...nameColor); doc.setLineWidth(0.3); doc.line(nameX, y + 11.5, nameX + tw, y + 11.5) }
+    doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(...MUTED)
+    let iy = y + 16
+    if (orgAddress) { doc.text(orgAddress, nameX, iy); iy += 4 }
+    if (orgEmail)   { doc.text(orgEmail, nameX, iy) }
+    doc.setFontSize(22); doc.setFont('helvetica', 'bold'); doc.setTextColor(...DARK)
+    doc.text('QUOTE', pageW - 14, y + 10, { align: 'right' })
+    const mRows: [string, string][] = [['No.', q.quote_number], ['Valid Until', formatDate(q.valid_until)]]
+    mRows.forEach(([lbl, val], i) => {
+      doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(...MUTED); doc.text(lbl, pageW - 65, y + 17 + i * 5.5)
+      doc.setFont('helvetica', 'bold'); doc.setTextColor(...DARK); doc.text(val, pageW - 14, y + 17 + i * 5.5, { align: 'right' })
+    })
+    y = y + 32; doc.setDrawColor(...DARK); doc.setLineWidth(1.2); doc.line(14, y, pageW - 14, y); y += 8
+
+  } else {
+    // professional
+    const H = 40; const splitX = pageW * 0.46
+    doc.setFillColor(...NAVY); doc.rect(0, 0, splitX, H, 'F')
+    doc.setFillColor(248, 250, 252); doc.rect(splitX, 0, pageW - splitX, H, 'F')
+    if (logoData) { const fmt = logoData.includes('image/png') ? 'PNG' : 'JPEG'; doc.addImage(logoData, fmt, 8, 6, 22, 22) }
+    const nameX = logoData ? 33 : 10
+    doc.setFontSize(fontSize); doc.setFont(pdfFontFamily, pdfStyle); doc.setTextColor(255, 255, 255)
+    doc.text(displayName, nameX, 16)
+    if (companyFontUnderline) { const tw = doc.getTextWidth(displayName); doc.setDrawColor(255, 255, 255); doc.setLineWidth(0.3); doc.line(nameX, 17.5, nameX + tw, 17.5) }
+    doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(...SLATE4)
+    let iy = 22
+    if (orgAddress) { doc.text(orgAddress.slice(0, 30), nameX, iy); iy += 4 }
+    if (orgEmail)   { doc.text(orgEmail, nameX, iy) }
+    doc.setFontSize(16); doc.setFont('helvetica', 'bold'); doc.setTextColor(...NAVY)
+    doc.text('QUOTE', pageW - 14, 13, { align: 'right' })
+    const pRows: [string, string][] = [['Quote No.', q.quote_number], ['Date', formatDate(q.issue_date)], ['Valid Until', formatDate(q.valid_until)], ['Status', q.status.toUpperCase()]]
+    pRows.forEach(([lbl, val], i) => {
+      doc.setFontSize(7.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(...SLATE4); doc.text(lbl, splitX + 5, 18 + i * 5.2)
+      doc.setFont('helvetica', 'bold'); doc.setTextColor(...NAVY); doc.text(val, pageW - 14, 18 + i * 5.2, { align: 'right' })
+    })
+    y = H + 8
+  }
+
+  // Bill To block
+  const billLabelColor: [number, number, number] = tmpl === 'minimal' ? DARK : BRAND
+  const billW = (pageW - 28) * 0.48
+  if (tmpl !== 'minimal') { doc.setFillColor(...LIGHT); doc.roundedRect(14, y, billW, 22, 2, 2, 'F') }
+  doc.setFontSize(7); doc.setFont('helvetica', 'bold'); doc.setTextColor(...billLabelColor)
+  doc.text('QUOTE FOR', 19, y + 6)
+  doc.setFontSize(10); doc.setFont('helvetica', 'bold'); doc.setTextColor(...DARK)
+  doc.text(q.customer_name ?? 'Walk-in Customer', 19, y + 13)
+  doc.setFontSize(7.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(...MUTED)
+  doc.text(`Valid until: ${formatDate(q.valid_until)}`, 19, y + 19)
+  y += 28
+
+  // Items table
+  const headFill: [number, number, number] = tmpl === 'professional' ? NAVY : tmpl === 'minimal' ? DARK : BRAND
+  autoTable(doc, {
+    startY: y,
+    head: [['#', 'Product / Description', 'Qty', 'Unit Price', 'Disc%', 'Amount']],
+    body: (q.items ?? []).map((item, i) => [
+      i + 1,
+      item.product_name,
+      Number(item.quantity),
+      formatCurrency(item.unit_price),
+      parseFloat(item.discount_percent) > 0 ? `${item.discount_percent}%` : '—',
+      formatCurrency(item.line_total),
+    ]),
+    styles: { fontSize: 9, cellPadding: { top: 4, bottom: 4, left: 5, right: 5 }, textColor: DARK },
+    headStyles: { fillColor: headFill, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
+    alternateRowStyles: { fillColor: tmpl === 'minimal' ? [255, 255, 255] : [248, 248, 248] },
+    columnStyles: { 0: { cellWidth: 10, halign: 'center' }, 1: { cellWidth: 'auto' }, 2: { cellWidth: 14, halign: 'center' }, 3: { cellWidth: 32, halign: 'right' }, 4: { cellWidth: 16, halign: 'center' }, 5: { cellWidth: 32, halign: 'right', fontStyle: 'bold' } },
+    margin: { left: 14, right: 14 },
+    tableLineColor: tmpl === 'minimal' ? DARK : [225, 225, 225],
+    tableLineWidth: tmpl === 'minimal' ? 0.4 : 0.2,
+  })
+
+  // Totals block
+  const tY = (doc as any).lastAutoTable.finalY + 8
+  const tX = pageW - 100; const tW = 86
+  const subtotalNum = parseFloat(q.subtotal ?? q.total_amount ?? '0')
+  const discountNum = parseFloat(q.discount_amount ?? '0')
+  const taxNum      = parseFloat(q.tax_amount ?? '0')
+  const totalNum    = parseFloat(q.total_amount ?? '0')
+
+  const totalRows: Array<{ label: string; value: string; bold?: boolean }> = []
+  totalRows.push({ label: 'Subtotal:', value: formatCurrency(subtotalNum) })
+  if (discountNum > 0) totalRows.push({ label: 'Discount:', value: `- ${formatCurrency(discountNum)}` })
+  if (taxNum > 0) totalRows.push({ label: 'Tax / VAT:', value: formatCurrency(taxNum) })
+
+  const ROW_H = 9; const PADDING_TOP = 9; const DIVIDER_GAP = 4
+  const boxH = PADDING_TOP + totalRows.length * ROW_H + DIVIDER_GAP + ROW_H + 6
+  doc.setFillColor(...LIGHT); doc.roundedRect(tX, tY, tW, boxH, 2, 2, 'F')
+  let rowY = tY + PADDING_TOP
+  totalRows.forEach(({ label, value }) => {
+    doc.setFontSize(9); doc.setFont('helvetica', 'normal')
+    doc.setTextColor(...MUTED); doc.text(label, tX + 5, rowY)
+    doc.setTextColor(...DARK); doc.text(value, pageW - 19, rowY, { align: 'right' })
+    rowY += ROW_H
+  })
+  doc.setDrawColor(210, 210, 210); doc.setLineWidth(0.3); doc.line(tX + 5, rowY + 2, pageW - 19, rowY + 2); rowY += DIVIDER_GAP + 2
+  doc.setFontSize(10); doc.setFont('helvetica', 'bold'); doc.setTextColor(...MUTED); doc.text('QUOTE TOTAL:', tX + 5, rowY)
+  doc.setTextColor(...BRAND); doc.text(formatCurrency(totalNum), pageW - 19, rowY, { align: 'right' })
+
+  // Notes & Terms
+  const afterTotalsY = tY + boxH
+  if (q.notes) {
+    doc.setFontSize(8); doc.setFont('helvetica', 'bold'); doc.setTextColor(...BRAND)
+    doc.text('NOTES', 14, afterTotalsY + 8)
+    doc.setFont('helvetica', 'normal'); doc.setTextColor(...MUTED)
+    const noteLines = doc.splitTextToSize(q.notes, 90)
+    doc.text(noteLines, 14, afterTotalsY + 14)
+  }
+  if (q.terms) {
+    const termsY = afterTotalsY + (q.notes ? 20 + 4 : 8)
+    doc.setFontSize(8); doc.setFont('helvetica', 'bold'); doc.setTextColor(...BRAND)
+    doc.text('TERMS & CONDITIONS', 14, termsY)
+    doc.setFont('helvetica', 'normal'); doc.setTextColor(...MUTED)
+    const termLines = doc.splitTextToSize(q.terms, 90)
+    doc.text(termLines, 14, termsY + 6)
+  }
+
+  // Footer
+  if (tmpl === 'minimal') {
+    doc.setDrawColor(...DARK); doc.setLineWidth(0.5); doc.line(14, pageH - 14, pageW - 14, pageH - 14)
+    doc.setFontSize(7); doc.setFont('helvetica', 'normal'); doc.setTextColor(...MUTED)
+    doc.text(orgName, 14, pageH - 6)
+    doc.text(`Generated by Audity  ·  ${new Date().toLocaleDateString()}`, pageW / 2, pageH - 6, { align: 'center' })
+    if (orgEmail) doc.text(orgEmail, pageW - 14, pageH - 6, { align: 'right' })
+  } else {
+    const footerFill: [number, number, number] = tmpl === 'professional' ? NAVY : BRAND
+    doc.setFillColor(...footerFill); doc.rect(0, pageH - 12, pageW, 12, 'F')
+    doc.setFontSize(7); doc.setFont('helvetica', 'normal'); doc.setTextColor(255, 255, 255)
+    doc.text(orgName, 14, pageH - 4.5)
+    doc.text(`Generated by Audity  ·  ${new Date().toLocaleDateString()}`, pageW / 2, pageH - 4.5, { align: 'center' })
+    if (orgEmail) doc.text(orgEmail, pageW - 14, pageH - 4.5, { align: 'right' })
+  }
+
+  // Company stamp
+  if (companyStamp) {
+    try {
+      const stampData = await urlToDataUrl(companyStamp)
+      if (stampData) {
+        const STAMP_SIZE = 36
+        doc.saveGraphicsState()
+        doc.setGState(new (doc as any).GState({ opacity: 0.55 }))
+        doc.addImage(stampData, 'PNG', pageW - 14 - STAMP_SIZE, pageH - 20 - STAMP_SIZE, STAMP_SIZE, STAMP_SIZE)
+        doc.restoreGraphicsState()
+      }
+    } catch { /* skip stamp on error */ }
+  }
+
+  const blob = doc.output('blob')
+  const url  = URL.createObjectURL(blob)
+  const filename = `Quote-${q.quote_number}.pdf`
+  return { url, filename, quoteId: q.id }
+}
 
 type StatusFilter = 'all' | 'draft' | 'sent' | 'accepted' | 'rejected' | 'expired' | 'converted'
 
@@ -46,6 +328,7 @@ const BLANK_FORM: QuoteForm = {
 }
 
 export default function QuotesPage() {
+  const { organisation } = useAuthStore()
   const [quotes, setQuotes] = useState<Quote[]>([])
   const [customers, setCustomers] = useState<Customer[]>([])
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
@@ -59,6 +342,13 @@ export default function QuotesPage() {
   const [lines, setLines] = useState<QuoteLineForm[]>([{ ...BLANK_LINE }])
   const [saving, setSaving] = useState(false)
   const [expandedRow, setExpandedRow] = useState<string | null>(null)
+
+  // PDF / share state
+  const [pdfPreview, setPdfPreview] = useState<PdfPreview | null>(null)
+  const [exporting, setExporting] = useState<string | null>(null) // quoteId being exported
+  const [showEmailModal, setShowEmailModal] = useState(false)
+  const [emailTo, setEmailTo] = useState('')
+  const [sendingEmail, setSendingEmail] = useState(false)
 
   const load = async () => {
     setLoading(true)
@@ -143,6 +433,88 @@ export default function QuotesPage() {
       if (field === 'unit_price') updated.unit_price = formatAmountInput(value)
       return updated
     }))
+  }
+
+  const handleExportPDF = async (q: Quote) => {
+    setExporting(q.id)
+    try {
+      const preview = await buildQuotePDF(
+        q,
+        organisation?.name ?? 'Audity',
+        organisation?.logo,
+        organisation?.address,
+        organisation?.phone,
+        organisation?.email,
+        organisation?.brand_color,
+        organisation?.invoice_company_name,
+        organisation?.company_name_font,
+        organisation?.company_name_font_size,
+        organisation?.company_name_font_bold,
+        organisation?.company_name_font_italic,
+        organisation?.company_name_font_underline,
+        organisation?.company_name_font_color,
+        organisation?.invoice_template,
+        organisation?.company_stamp,
+      )
+      setPdfPreview(preview)
+    } catch { toast.error('Failed to generate PDF') }
+    finally { setExporting(null) }
+  }
+
+  const closePdfPreview = () => {
+    if (pdfPreview) URL.revokeObjectURL(pdfPreview.url)
+    setPdfPreview(null)
+  }
+
+  const saveToDevice = async () => {
+    if (!pdfPreview) return
+    const res = await fetch(pdfPreview.url)
+    const blob = await res.blob()
+    await saveBlobFile(blob, pdfPreview.filename)
+  }
+
+  const shareViaWhatsApp = () => {
+    if (!pdfPreview) return
+    const q = quotes.find((x) => x.id === pdfPreview.quoteId)
+    if (!q) return
+    const itemLines = (q.items ?? []).map((item) =>
+      `  • ${item.product_name} ×${Number(item.quantity)} = ${formatCurrency(item.line_total)}`
+    ).join('\n')
+    const msg =
+      `*Quote ${q.quote_number}*\n` +
+      `From: ${organisation?.name ?? 'Audity'}\n` +
+      `Customer: ${q.customer_name ?? 'Walk-in'}\n` +
+      `Date: ${formatDate(q.issue_date)} · Valid Until: ${formatDate(q.valid_until)}\n\n` +
+      (itemLines ? `${itemLines}\n\n` : '') +
+      `*Total: ${formatCurrency(q.total_amount)}*\n\n` +
+      `Thank you for your interest!`
+    const url = `https://wa.me/?text=${encodeURIComponent(msg)}`
+    navigator.clipboard.writeText(url).then(() => {
+      toast.success('WhatsApp link copied! Open WhatsApp and paste to share.')
+    }).catch(() => { toast('WhatsApp link: ' + url, { duration: 8000 }) })
+  }
+
+  const handleSendEmail = async () => {
+    if (!pdfPreview || !emailTo.trim()) return
+    setSendingEmail(true)
+    try {
+      // Build PDF and convert to base64 for attachment
+      const res = await fetch(pdfPreview.url)
+      const blob = await res.blob()
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const r = new FileReader()
+        r.onloadend = () => resolve((r.result as string).split(',')[1])
+        r.onerror = reject
+        r.readAsDataURL(blob)
+      })
+      await quoteApi.sendEmail(pdfPreview.quoteId, { to_email: emailTo.trim(), pdf_base64: base64 })
+      toast.success(`Quote sent to ${emailTo.trim()}`)
+      setShowEmailModal(false)
+      setEmailTo('')
+    } catch (err: any) {
+      const msg = err?.response?.data?.error ?? 'Failed to send email'
+      toast.error(typeof msg === 'string' ? msg : 'Failed to send email')
+    } finally { setSendingEmail(false) }
   }
 
   const total = quotes.filter((q) => statusFilter === 'all' ? true : q.status === statusFilter).length
@@ -264,6 +636,14 @@ export default function QuotesPage() {
                             Convert
                           </button>
                         )}
+                        <button
+                          onClick={() => handleExportPDF(q)}
+                          disabled={exporting === q.id}
+                          title="Export PDF"
+                          className="p-1.5 text-slate-500 hover:text-brand-400 hover:bg-brand-500/10 rounded-lg transition-colors disabled:opacity-50"
+                        >
+                          {exporting === q.id ? <Loader2 size={14} className="animate-spin" /> : <FileDown size={14} />}
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -304,6 +684,68 @@ export default function QuotesPage() {
         </div>
       </div>
 
+      {/* PDF Preview Modal */}
+      {pdfPreview && (
+        <div className="fixed inset-0 z-[60] flex flex-col">
+          <div className="flex items-center justify-between px-4 py-3 bg-surface-900 border-b border-surface-700 shrink-0">
+            <button
+              onClick={saveToDevice}
+              title="Save to device"
+              className="flex items-center gap-2 min-w-0 group hover:opacity-80 transition-opacity"
+            >
+              <FileDown size={15} className="text-brand-400 shrink-0 group-hover:text-brand-300" />
+              <span className="text-sm font-medium text-white truncate">{pdfPreview.filename}</span>
+            </button>
+            <div className="flex items-center gap-2 ml-4">
+              <button onClick={() => { setEmailTo(''); setShowEmailModal(true) }} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 transition-colors">
+                <Mail size={13} /> Email
+              </button>
+              <button onClick={shareViaWhatsApp} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-600 text-white text-xs font-semibold hover:bg-green-700 transition-colors">
+                <MessageCircle size={13} /> WhatsApp
+              </button>
+              <button onClick={closePdfPreview} className="p-1.5 text-slate-400 hover:text-white hover:bg-surface-700 rounded-lg transition-colors">
+                <X size={16} />
+              </button>
+            </div>
+          </div>
+          <iframe src={pdfPreview.url} className="flex-1 w-full border-0 bg-white" title="Quote Preview" />
+        </div>
+      )}
+
+      {/* Email Modal */}
+      {showEmailModal && pdfPreview && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setShowEmailModal(false)} />
+          <div className="relative card w-full max-w-md p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold text-white">Send Quote by Email</h2>
+              <button onClick={() => setShowEmailModal(false)} className="text-slate-400 hover:text-white"><X size={20} /></button>
+            </div>
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">Recipient Email *</label>
+              <input
+                className="input"
+                type="email"
+                placeholder="customer@example.com"
+                value={emailTo}
+                onChange={(e) => setEmailTo(e.target.value)}
+                autoFocus
+              />
+            </div>
+            <div className="flex gap-3 pt-1">
+              <button className="flex-1 py-2.5 rounded-xl border border-surface-600 text-slate-400 hover:text-white hover:border-surface-500 transition-colors text-sm" onClick={() => setShowEmailModal(false)}>Cancel</button>
+              <button
+                className="btn-primary flex-1 py-2.5 justify-center disabled:opacity-50"
+                onClick={handleSendEmail}
+                disabled={sendingEmail || !emailTo.trim()}
+              >
+                {sendingEmail ? <Loader2 size={16} className="animate-spin" /> : <><Mail size={15} /> Send</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* New Quote Modal */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -323,7 +765,7 @@ export default function QuotesPage() {
                 </select>
               </div>
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">Warehouse *</label>
+                <label className="text-xs text-slate-400 mb-1 block">Location *</label>
                 <select className="input" value={form.warehouse} onChange={(e) => setForm({ ...form, warehouse: e.target.value })}>
                   <option value="">— Select —</option>
                   {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}

@@ -62,12 +62,12 @@ class InvoiceSerializer(serializers.ModelSerializer):
             "id", "invoice_number", "folder", "folder_name", "customer", "customer_name",
             "status", "payment_method", "issue_date", "due_date", "warehouse",
             "subtotal", "discount_amount", "tax_amount", "total_amount",
-            "amount_paid", "amount_due", "notes",
+            "credit_applied", "amount_paid", "amount_due", "notes",
             "items", "payments", "created_at",
         ]
         read_only_fields = [
             "id", "invoice_number", "subtotal", "discount_amount",
-            "tax_amount", "total_amount", "amount_paid", "amount_due", "created_at",
+            "tax_amount", "total_amount", "credit_applied", "amount_paid", "amount_due", "created_at",
         ]
 
 
@@ -95,6 +95,7 @@ class CreateSaleSerializer(serializers.Serializer):
     is_proforma = serializers.BooleanField(required=False, default=False)
     amount_paid = serializers.DecimalField(max_digits=15, decimal_places=4, required=False, default=Decimal("0"), min_value=Decimal("0"))
     amount_tendered = serializers.DecimalField(max_digits=15, decimal_places=4, required=False, allow_null=True)
+    credit_applied = serializers.DecimalField(max_digits=15, decimal_places=4, required=False, default=Decimal("0"), min_value=Decimal("0"))
 
 
 class RecordPaymentSerializer(serializers.Serializer):
@@ -151,7 +152,8 @@ class RecurringInvoiceSerializer(serializers.ModelSerializer):
     class Meta:
         model = RecurringInvoice
         fields = [
-            'id', 'template_name', 'customer', 'customer_name', 'warehouse', 'warehouse_name',
+            'id', 'template_name', 'customer', 'customer_name', 'custom_customer_name',
+            'warehouse', 'warehouse_name',
             'frequency', 'interval', 'next_run_date', 'end_date', 'max_occurrences',
             'occurrences_count', 'is_active', 'items', 'notes', 'payment_method', 'created_at',
         ]

@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Account, JournalEntry, JournalLine, FixedAsset, DepreciationEntry, FinancialPeriod, BankReconciliation, BankReconciliationLine
+from .models import Account, JournalEntry, JournalLine, FixedAsset, DepreciationEntry, FinancialPeriod, BankReconciliation, BankReconciliationLine, AIReconMatch
 
 
 class AccountSerializer(serializers.ModelSerializer):
@@ -59,8 +59,31 @@ class BankReconciliationLineSerializer(serializers.ModelSerializer):
         read_only_fields = ['id']
 
 
+class AIReconMatchSerializer(serializers.ModelSerializer):
+    bank_line_description = serializers.CharField(source='bank_line.description', read_only=True)
+    bank_line_date = serializers.DateField(source='bank_line.transaction_date', read_only=True)
+    bank_line_amount = serializers.DecimalField(source='bank_line.amount', max_digits=15, decimal_places=4, read_only=True)
+    book_line_description = serializers.CharField(source='book_line.description', read_only=True, allow_null=True)
+    book_line_date = serializers.DateField(source='book_line.journal_entry.entry_date', read_only=True, allow_null=True)
+    book_line_debit = serializers.DecimalField(source='book_line.debit', max_digits=15, decimal_places=4, read_only=True, allow_null=True)
+    book_line_credit = serializers.DecimalField(source='book_line.credit', max_digits=15, decimal_places=4, read_only=True, allow_null=True)
+    book_line_reference = serializers.CharField(source='book_line.journal_entry.reference', read_only=True, allow_null=True)
+
+    class Meta:
+        model = AIReconMatch
+        fields = [
+            'id', 'bank_line', 'book_line', 'confidence', 'match_type', 'status',
+            'ai_reasoning', 'ai_advice',
+            'bank_line_description', 'bank_line_date', 'bank_line_amount',
+            'book_line_description', 'book_line_date', 'book_line_debit', 'book_line_credit', 'book_line_reference',
+            'created_at',
+        ]
+        read_only_fields = ['id', 'created_at']
+
+
 class BankReconciliationSerializer(serializers.ModelSerializer):
     lines = BankReconciliationLineSerializer(many=True, read_only=True)
+    ai_matches = AIReconMatchSerializer(many=True, read_only=True)
     account_name = serializers.CharField(source='account.name', read_only=True)
     account_code = serializers.CharField(source='account.code', read_only=True)
 
@@ -70,7 +93,7 @@ class BankReconciliationSerializer(serializers.ModelSerializer):
             'id', 'account', 'account_name', 'account_code',
             'period_start', 'period_end', 'statement_closing_balance',
             'book_balance', 'is_reconciled', 'reconciled_by', 'reconciled_at',
-            'notes', 'lines', 'created_at',
+            'notes', 'lines', 'ai_matches', 'created_at',
         ]
         read_only_fields = ['id', 'book_balance', 'is_reconciled', 'reconciled_by', 'reconciled_at', 'created_at']
 

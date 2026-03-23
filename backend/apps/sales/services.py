@@ -44,6 +44,7 @@ class SaleService:
         is_proforma: bool = False,
         amount_paid: Decimal = None,
         amount_tendered: Decimal = None,
+        credit_applied: Decimal = None,
     ) -> Invoice:
         """
         Create a confirmed sale invoice with stock deductions.
@@ -67,6 +68,17 @@ class SaleService:
             from django.core.exceptions import PermissionDenied
             raise PermissionDenied(f"The period {issue_date.year}-{issue_date.month:02d} is locked. Unlock it before creating new transactions.")
 
+        # Validate and normalise credit_applied
+        credit_to_apply = Decimal("0")
+        if credit_applied and credit_applied > Decimal("0") and not is_proforma:
+            if not customer:
+                raise ValueError("A customer must be selected to apply store credit.")
+            if credit_applied > customer.store_credit:
+                raise ValueError(
+                    f"Cannot apply {credit_applied} — customer only has {customer.store_credit} store credit."
+                )
+            credit_to_apply = credit_applied
+
         invoice = Invoice.objects.create(
             organisation=organisation,
             invoice_number=Invoice.generate_number(organisation),
@@ -82,6 +94,7 @@ class SaleService:
             discount_amount=Decimal("0"),
             tax_amount=Decimal("0"),
             total_amount=Decimal("0"),
+            credit_applied=Decimal("0"),
             amount_paid=Decimal("0"),
             amount_due=Decimal("0"),
         )
@@ -105,28 +118,45 @@ class SaleService:
 
         total = subtotal - total_discount + total_tax
 
+        # Clamp credit to total (can't apply more credit than the invoice total)
+        credit_to_apply = min(credit_to_apply, total)
+
         # Update invoice totals
         invoice.subtotal = subtotal
         invoice.discount_amount = total_discount
         invoice.tax_amount = total_tax
         invoice.total_amount = total
-        invoice.amount_due = total
+        invoice.credit_applied = credit_to_apply
+        invoice.amount_due = total - credit_to_apply
+
+        # Effective balance after applying store credit
+        effective_due = total - credit_to_apply
 
         # Handle payment method / proforma
         if is_proforma:
             invoice.status = Invoice.Status.PROFORMA
         elif payment_method == Invoice.PaymentMethod.CREDIT:
-            SaleService._handle_credit_sale(invoice, customer, total)
+            SaleService._handle_credit_sale(invoice, customer, effective_due)
+        elif credit_to_apply >= total:
+            # Credit covers the entire invoice — mark as paid immediately
+            invoice.status = Invoice.Status.PAID
         else:
             invoice.status = Invoice.Status.CONFIRMED
 
         invoice.save()
         logger.info("Invoice %s created by %s for org %s", invoice.invoice_number, created_by, organisation.id)
 
-        # Auto-record payment for non-credit, non-proforma sales
-        if not is_proforma and payment_method != Invoice.PaymentMethod.CREDIT:
-            paid = amount_paid if amount_paid is not None else total
-            paid = min(paid, total)  # Never record more than total
+        # Deduct store credit from customer balance (atomic with the transaction)
+        if credit_to_apply > Decimal("0") and customer:
+            from apps.customers.models import Customer as CustomerModel
+            CustomerModel.objects.filter(pk=customer.pk).update(
+                store_credit=customer.store_credit - credit_to_apply
+            )
+
+        # Auto-record cash payment for non-credit, non-proforma sales
+        if not is_proforma and payment_method != Invoice.PaymentMethod.CREDIT and credit_to_apply < total:
+            paid = amount_paid if amount_paid is not None else effective_due
+            paid = min(paid, effective_due)  # Never record more than remaining balance
             if paid > Decimal("0"):
                 payment = SalePayment.objects.create(
                     organisation=organisation,
@@ -137,8 +167,8 @@ class SaleService:
                     received_by=created_by,
                 )
                 invoice.amount_paid = paid
-                invoice.amount_due = total - paid
-                if paid >= total:
+                invoice.amount_due = effective_due - paid
+                if paid >= effective_due:
                     invoice.status = Invoice.Status.PAID
                 elif paid > Decimal("0"):
                     invoice.status = Invoice.Status.PARTIALLY_PAID
@@ -214,7 +244,7 @@ class SaleService:
 
     @staticmethod
     def _handle_credit_sale(invoice: Invoice, customer, total: Decimal):
-        """Mark as credit sale and update customer balance."""
+        """Mark as credit sale, create credit ledger entry, and update customer balance."""
         if customer is None:
             raise ValueError("Customer is required for credit sales.")
         if customer.is_credit_blocked:
@@ -223,9 +253,16 @@ class SaleService:
             )
         invoice.status = Invoice.Status.CREDIT
 
-        # Update outstanding balance
-        customer.outstanding_balance += total
-        customer.save(update_fields=["outstanding_balance", "updated_at"])
+        # Record in credits ledger (also updates customer.outstanding_balance)
+        from apps.credits.services import CreditService
+        CreditService.record_credit_debit(
+            organisation=invoice.organisation,
+            customer=customer,
+            amount=total,
+            invoice=invoice,
+            due_date=invoice.due_date,
+            description=f"Credit sale – {invoice.invoice_number}",
+        )
 
     @staticmethod
     @transaction.atomic
@@ -369,12 +406,16 @@ class SaleService:
                     created_by=processed_by,
                 )
 
-        # Update customer outstanding balance if credit sale
+        # Update customer outstanding balance if credit sale and record in ledger
         if invoice.customer and invoice.payment_method == Invoice.PaymentMethod.CREDIT:
-            invoice.customer.outstanding_balance = max(
-                invoice.customer.outstanding_balance - total_refund, Decimal("0")
+            from apps.credits.services import CreditService
+            CreditService.record_payment(
+                organisation=organisation,
+                customer=invoice.customer,
+                amount=total_refund,
+                recorded_by=processed_by,
+                description=f"Sales return – {sale_return.return_number}",
             )
-            invoice.customer.save(update_fields=["outstanding_balance", "updated_at"])
 
         logger.info(
             "Return %s processed for invoice %s — refund %s",

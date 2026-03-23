@@ -42,6 +42,9 @@ class Customer(TenantAwareModel):
     # Denormalised outstanding balance (updated by credit service)
     outstanding_balance = MoneyField(default=0)
 
+    # Store credit balance (pre-paid credit the customer can use against future purchases)
+    store_credit = MoneyField(default=0, help_text="Pre-paid credit balance redeemable on future sales")
+
     notes = models.TextField(blank=True)
     is_active = models.BooleanField(default=True, db_index=True)
 

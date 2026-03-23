@@ -25,6 +25,9 @@ kombu==5.4.2
 django-filter==24.3
 drf-spectacular==0.28.0
 
+# HTTP client (Paystack API calls)
+requests==2.32.5
+
 # Utilities
 python-decouple==3.8
 pillow==11.1.0
@@ -38,6 +41,10 @@ openpyxl==3.1.5
 # Security
 cryptography==44.0.0
 django-ratelimit==4.1.0
+argon2-cffi==23.1.0
 
 # Logging
 structlog==24.4.0
+
+# AI bank reconciliation — Groq free tier (same key used by AI Financial Assistant)
+groq>=0.8.0

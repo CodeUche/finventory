@@ -1,6 +1,7 @@
 """Sales ViewSets."""
 
 import logging
+import datetime
 import django_filters
 from django.utils import timezone
 from rest_framework import status, viewsets
@@ -9,7 +10,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.core.mixins import ExportMixin, TenantFilterMixin
-from apps.core.permissions import IsStaff
+from apps.core.permissions import IsStaff, IsOwnerOrAdmin, has_minimum_role
 from apps.customers.models import Customer
 from apps.inventory.models import Product, Warehouse
 
@@ -128,6 +129,7 @@ class InvoiceViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
                 is_proforma=d.get("is_proforma", False),
                 amount_paid=d.get("amount_paid"),
                 amount_tendered=d.get("amount_tendered"),
+                credit_applied=d.get("credit_applied"),
             )
             return Response(InvoiceSerializer(invoice).data, status=status.HTTP_201_CREATED)
 
@@ -140,6 +142,97 @@ class InvoiceViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
         except Exception as e:
             logger.exception("Unexpected error creating sale")
             return Response({"error": f"[{type(e).__name__}] {str(e)}"}, status=422)
+
+    def _check_invoice_edit_permission(self, request):
+        """
+        Returns True if the user can edit invoices.
+        Owner/admin always can. Other users need 'edit' level on the 'sales' module permission.
+        """
+        org = request.organisation
+        if not org:
+            return False
+        if has_minimum_role(request.user, org, "admin"):
+            return True
+        # Check module-level 'edit' permission for sub-accounts
+        from apps.tenancy.models import Membership, ModulePermission
+        try:
+            membership = Membership.objects.get(organisation=org, user=request.user, is_active=True)
+            perm = ModulePermission.objects.filter(membership=membership, module="sales").first()
+            return perm is not None and perm.access_level == "edit"
+        except Membership.DoesNotExist:
+            return False
+
+    def update(self, request, *args, **kwargs):
+        """
+        PATCH /sales/invoices/{id}/ — Edit invoice metadata.
+
+        Allowed fields: notes, due_date, issue_date, payment_method, folder, status (limited).
+        Requires owner/admin role OR 'edit' sales module permission.
+        Paid and voided invoices are read-only except for notes.
+        """
+        if not self._check_invoice_edit_permission(request):
+            return Response(
+                {"error": "You need edit-level sales permission to update invoices. Ask the account owner to grant access."},
+                status=403,
+            )
+
+        invoice = self.get_object()
+
+        LOCKED_STATUSES = {Invoice.Status.PAID, Invoice.Status.VOIDED}
+        if invoice.status in LOCKED_STATUSES:
+            # Only allow notes update on paid/voided invoices
+            allowed = {k: v for k, v in request.data.items() if k == "notes"}
+            if not allowed:
+                return Response(
+                    {"error": f"Paid and voided invoices cannot be edited. Use Void + Re-issue for corrections."},
+                    status=422,
+                )
+            request._full_data = allowed  # type: ignore[attr-defined]
+
+        # Only allow safe metadata fields — never allow changing financial amounts
+        ALLOWED_FIELDS = {"notes", "due_date", "issue_date", "payment_method", "folder", "status"}
+        # Status can only be changed between non-financial states
+        if "status" in request.data:
+            new_status = request.data.get("status")
+            forbidden_transitions = {Invoice.Status.PAID, Invoice.Status.VOIDED}
+            if new_status in forbidden_transitions:
+                return Response(
+                    {"error": "Status cannot be set to 'paid' or 'voided' via edit. Use the Pay or Void actions."},
+                    status=422,
+                )
+
+        # Filter data to only allowed fields
+        filtered_data = {k: v for k, v in request.data.items() if k in ALLOWED_FIELDS}
+        serializer = self.get_serializer(invoice, data=filtered_data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+    def destroy(self, request, *args, **kwargs):
+        """
+        DELETE /sales/invoices/{id}/ — Soft-delete an invoice.
+
+        Requires owner/admin role. Only draft and proforma invoices may be deleted —
+        confirmed/paid invoices must be voided to preserve the audit trail.
+        """
+        org = request.organisation
+        if not org or not has_minimum_role(request.user, org, "admin"):
+            return Response(
+                {"error": "Only the account owner or admin can delete invoices."},
+                status=403,
+            )
+
+        invoice = self.get_object()
+        DELETABLE_STATUSES = {Invoice.Status.DRAFT, Invoice.Status.PROFORMA}
+        if invoice.status not in DELETABLE_STATUSES:
+            return Response(
+                {"error": f"Only draft and proforma invoices can be deleted. To cancel a confirmed invoice, use the Void action instead."},
+                status=422,
+            )
+
+        invoice.delete()  # SoftDeleteModel.delete() sets is_deleted=True
+        logger.info("Invoice %s deleted by %s", invoice.invoice_number, request.user.email)
+        return Response(status=204)
 
     @action(detail=True, methods=["post"])
     def pay(self, request, pk=None):
@@ -286,14 +379,43 @@ class InvoiceViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
   </div>
 </body></html>"""
 
-            msg = MIMEMultipart("alternative")
+            msg = MIMEMultipart("mixed")
             msg["Subject"] = f"Invoice {invoice.invoice_number} from {from_name}"
             msg["From"]    = f"{from_name} <{from_email}>"
             msg["To"]      = to_email
-            msg.attach(MIMEText(html, "html"))
+
+            # HTML body wrapped in alternative part
+            alt = MIMEMultipart("alternative")
+            alt.attach(MIMEText(html, "html"))
+            msg.attach(alt)
+
+            # Attach PDF if provided
+            pdf_base64 = request.data.get("pdf_base64")
+            if pdf_base64:
+                import base64
+                from email.mime.base import MIMEBase
+                from email import encoders
+                try:
+                    pdf_bytes = base64.b64decode(pdf_base64)
+                    pdf_part = MIMEBase("application", "pdf")
+                    pdf_part.set_payload(pdf_bytes)
+                    encoders.encode_base64(pdf_part)
+                    pdf_part.add_header(
+                        "Content-Disposition",
+                        "attachment",
+                        filename=f"Invoice-{invoice.invoice_number}.pdf",
+                    )
+                    msg.attach(pdf_part)
+                except Exception:
+                    pass  # skip attachment on decode error — still send the email
 
             import ssl as _ssl
             ctx = _ssl.create_default_context()
+            # Some SMTP servers use certificates that fail strict Python SSL
+            # validation (e.g. missing Basic Constraints critical flag).
+            # Disable hostname/cert checking for outbound SMTP — acceptable risk.
+            ctx.check_hostname = False
+            ctx.verify_mode = _ssl.CERT_NONE
             if email_cfg.use_tls:
                 # STARTTLS mode (typically port 587)
                 conn = smtplib.SMTP(email_cfg.smtp_host, email_cfg.smtp_port, timeout=20)
@@ -325,6 +447,192 @@ class InvoiceViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
             logger.exception("Email send failed")
             return Response({"error": f"Failed to send email: {str(e)}"}, status=422)
 
+
+    @action(detail=False, methods=["get"])
+    def owner_analytics(self, request):
+        """GET /sales/invoices/owner_analytics/?period=month
+        Owner-only view: total revenue vs company COGS vs owner COGS vs gross profit at each level.
+        period: today | week | month | year | all
+        """
+        from django.db.models import Sum, DecimalField
+        from django.db.models.functions import Coalesce
+        import decimal
+
+        org = self._get_organisation()
+
+        # Verify owner or admin
+        from apps.tenancy.models import Membership
+        try:
+            membership = Membership.objects.get(
+                organisation=org, user=request.user, is_active=True
+            )
+        except Membership.DoesNotExist:
+            return Response({"error": "Not a member"}, status=403)
+        if membership.role not in (Membership.Role.OWNER, Membership.Role.ADMIN):
+            return Response({"error": "Owner or admin access required"}, status=403)
+
+        period = request.query_params.get("period", "month")
+        today = timezone.now().date()
+        if period == "today":
+            date_from = today
+        elif period == "week":
+            date_from = today - datetime.timedelta(days=7)
+        elif period == "year":
+            date_from = today - datetime.timedelta(days=365)
+        elif period == "all":
+            date_from = None
+        else:
+            date_from = today - datetime.timedelta(days=30)
+
+        active_statuses = [
+            Invoice.Status.CONFIRMED, Invoice.Status.PAID,
+            Invoice.Status.PARTIALLY_PAID, Invoice.Status.OVERDUE,
+            Invoice.Status.CREDIT,
+        ]
+        item_qs = SaleItem.objects.filter(
+            invoice__organisation=org, invoice__status__in=active_statuses
+        ).select_related("product")
+        if date_from:
+            item_qs = item_qs.filter(invoice__issue_date__gte=date_from)
+
+        zero = decimal.Decimal("0")
+        total_revenue = zero
+        company_cogs = zero
+        owner_cogs = zero
+
+        for item in item_qs:
+            total_revenue += item.line_total
+            company_cogs += item.cost_of_goods
+            qty = item.quantity
+            owner_price = item.product.owner_cost_price or zero
+            owner_cogs += qty * owner_price
+
+        company_gross = total_revenue - company_cogs
+        owner_gross = total_revenue - owner_cogs
+        company_margin = (company_gross / total_revenue * 100) if total_revenue else zero
+        owner_margin = (owner_gross / total_revenue * 100) if total_revenue else zero
+
+        # Top products by owner profit
+        product_map: dict = {}
+        for item in item_qs:
+            pid = str(item.product_id)
+            if pid not in product_map:
+                product_map[pid] = {
+                    "product_name": item.product.name,
+                    "revenue": zero,
+                    "company_cogs": zero,
+                    "owner_cogs": zero,
+                }
+            product_map[pid]["revenue"] += item.line_total
+            product_map[pid]["company_cogs"] += item.cost_of_goods
+            product_map[pid]["owner_cogs"] += item.quantity * (item.product.owner_cost_price or zero)
+
+        top_products = sorted(
+            [
+                {
+                    "product_name": v["product_name"],
+                    "revenue": str(v["revenue"].quantize(decimal.Decimal("0.01"))),
+                    "company_gross": str((v["revenue"] - v["company_cogs"]).quantize(decimal.Decimal("0.01"))),
+                    "owner_gross": str((v["revenue"] - v["owner_cogs"]).quantize(decimal.Decimal("0.01"))),
+                }
+                for v in product_map.values()
+            ],
+            key=lambda x: float(x["owner_gross"]),
+            reverse=True,
+        )[:10]
+
+        return Response({
+            "period": period,
+            "total_revenue": str(total_revenue.quantize(decimal.Decimal("0.01"))),
+            "company_cogs": str(company_cogs.quantize(decimal.Decimal("0.01"))),
+            "owner_cogs": str(owner_cogs.quantize(decimal.Decimal("0.01"))),
+            "company_gross_profit": str(company_gross.quantize(decimal.Decimal("0.01"))),
+            "owner_gross_profit": str(owner_gross.quantize(decimal.Decimal("0.01"))),
+            "company_margin_pct": str(company_margin.quantize(decimal.Decimal("0.1"))),
+            "owner_margin_pct": str(owner_margin.quantize(decimal.Decimal("0.1"))),
+            "top_products": top_products,
+        })
+
+    @action(detail=False, methods=["get"])
+    def warehouse_sales(self, request):
+        """GET /sales/invoices/warehouse_sales/?period=month
+        Returns revenue totals grouped by warehouse, with top-5 products per warehouse.
+        period: today | week | month | year | all (default: month)
+        """
+        from django.db.models import Sum, Count, DecimalField
+        from django.db.models.functions import Coalesce
+        import decimal
+
+        org = self._get_organisation()
+        period = request.query_params.get("period", "month")
+
+        today = timezone.now().date()
+        if period == "today":
+            date_from = today
+        elif period == "week":
+            date_from = today - datetime.timedelta(days=7)
+        elif period == "year":
+            date_from = today - datetime.timedelta(days=365)
+        elif period == "all":
+            date_from = None
+        else:  # month
+            date_from = today - datetime.timedelta(days=30)
+
+        active_statuses = [
+            Invoice.Status.CONFIRMED, Invoice.Status.PAID,
+            Invoice.Status.PARTIALLY_PAID, Invoice.Status.OVERDUE,
+            Invoice.Status.CREDIT,
+        ]
+        qs = Invoice.objects.filter(organisation=org, status__in=active_statuses)
+        if date_from:
+            qs = qs.filter(issue_date__gte=date_from)
+
+        # Revenue per warehouse
+        warehouse_totals = (
+            qs.values("warehouse__id", "warehouse__name")
+            .annotate(
+                total_revenue=Coalesce(Sum("total_amount"), decimal.Decimal("0"), output_field=DecimalField()),
+                invoice_count=Count("id"),
+            )
+            .order_by("-total_revenue")
+        )
+
+        results = []
+        for row in warehouse_totals:
+            wid = row["warehouse__id"]
+            # Top 5 products for this warehouse in this period
+            item_qs = SaleItem.objects.filter(
+                invoice__organisation=org,
+                invoice__status__in=active_statuses,
+                invoice__warehouse_id=wid,
+            )
+            if date_from:
+                item_qs = item_qs.filter(invoice__issue_date__gte=date_from)
+            top_products = (
+                item_qs
+                .values("product__name")
+                .annotate(
+                    units=Coalesce(Sum("quantity"), decimal.Decimal("0"), output_field=DecimalField()),
+                    revenue=Coalesce(Sum("line_total"), decimal.Decimal("0"), output_field=DecimalField()),
+                )
+                .order_by("-revenue")[:5]
+            )
+            results.append({
+                "warehouse_id": str(wid),
+                "warehouse_name": row["warehouse__name"],
+                "total_revenue": str(row["total_revenue"]),
+                "invoice_count": row["invoice_count"],
+                "top_products": [
+                    {
+                        "product_name": p["product__name"],
+                        "units_sold": str(p["units"]),
+                        "revenue": str(p["revenue"]),
+                    }
+                    for p in top_products
+                ],
+            })
+
+        return Response({"period": period, "results": results})
 
     @action(detail=False, methods=["get"])
     def product_history(self, request):

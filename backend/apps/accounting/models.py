@@ -217,3 +217,29 @@ class BankReconciliationLine(TenantAwareModel):
 
     class Meta:
         ordering = ['transaction_date']
+
+
+class AIReconMatch(TenantAwareModel):
+    """AI-proposed match between a bank statement line and a book journal line."""
+    MATCH_TYPES = [
+        ('exact', 'Exact Match'),
+        ('fuzzy', 'Fuzzy Match'),
+        ('uncertain', 'Uncertain'),
+    ]
+    STATUS = [
+        ('proposed', 'Proposed'),
+        ('confirmed', 'Confirmed'),
+        ('rejected', 'Rejected'),
+    ]
+    reconciliation = models.ForeignKey(BankReconciliation, on_delete=models.CASCADE, related_name='ai_matches')
+    bank_line = models.ForeignKey(BankReconciliationLine, on_delete=models.CASCADE, related_name='ai_matches')
+    book_line = models.ForeignKey(JournalLine, null=True, blank=True, on_delete=models.SET_NULL, related_name='ai_matches')
+    confidence = models.FloatField(default=0.0)  # 0.0 - 1.0
+    match_type = models.CharField(max_length=20, choices=MATCH_TYPES, default='uncertain')
+    status = models.CharField(max_length=20, choices=STATUS, default='proposed')
+    ai_reasoning = models.TextField(blank=True)  # AI explanation
+    ai_advice = models.TextField(blank=True)  # For unmatched lines — advice on how to fix
+    matched_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-confidence']
