@@ -61,6 +61,7 @@ class Invoice(TenantAwareModel):
         OVERDUE = "overdue", "Overdue"
         VOIDED = "voided", "Voided"
         CREDIT = "credit", "Credit"   # Sold on credit
+        RETURNED = "returned", "Returned"          # All items fully returned via credit note(s)
 
     class PaymentMethod(models.TextChoices):
         CASH = "cash", "Cash"
@@ -159,6 +160,10 @@ class SaleItem(TenantAwareModel):
         "inventory.Batch", null=True, blank=True, on_delete=models.SET_NULL
     )
     quantity = models.DecimalField(max_digits=12, decimal_places=2)
+    quantity_returned = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0,
+        help_text="Cumulative quantity returned so far for this line item"
+    )
     unit_price = MoneyField()
     discount_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     discount_amount = MoneyField()

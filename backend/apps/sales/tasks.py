@@ -66,6 +66,12 @@ def generate_recurring_invoices(self):
             continue
 
         try:
+            # Append custom customer name to notes when no FK customer is set
+            notes = ri.notes or ''
+            if not ri.customer and ri.custom_customer_name:
+                prefix = f"Customer: {ri.custom_customer_name}"
+                notes = f"{prefix}\n{notes}".strip() if notes else prefix
+
             invoice = SaleService.create_sale(
                 organisation=ri.organisation,
                 created_by=ri.created_by,
@@ -73,7 +79,7 @@ def generate_recurring_invoices(self):
                 warehouse=ri.warehouse,
                 items=ri.items,
                 payment_method=ri.payment_method,
-                notes=ri.notes,
+                notes=notes,
                 issue_date=today,
             )
             RecurringInvoiceLog.objects.create(

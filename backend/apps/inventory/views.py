@@ -117,6 +117,22 @@ class BatchViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     serializer_class = BatchSerializer
     permission_classes = [IsAuthenticated, IsStaff]
     filterset_fields = ["product", "warehouse", "is_active"]
+    search_fields = ["product__name", "product__sku", "batch_number"]
+
+    def get_queryset(self):
+        from django.utils import timezone
+        qs = super().get_queryset()
+        expiry_status = self.request.query_params.get("expiry_status")
+        today = timezone.now().date()
+        if expiry_status == "expired":
+            qs = qs.filter(expiry_date__lt=today)
+        elif expiry_status == "expiring":
+            from datetime import timedelta
+            qs = qs.filter(expiry_date__gte=today, expiry_date__lt=today + timedelta(days=30))
+        elif expiry_status == "ok":
+            from datetime import timedelta
+            qs = qs.filter(expiry_date__gte=today + timedelta(days=30))
+        return qs
 
 
 class StockItemViewSet(TenantFilterMixin, viewsets.ReadOnlyModelViewSet):

@@ -35,6 +35,26 @@ class PasswordChangeRateThrottle(UserRateThrottle):
     scope = "password_change"
 
 
+class PasswordResetRequestRateThrottle(AnonRateThrottle):
+    """5 reset-code requests per hour per IP — prevents email flooding."""
+    scope = "password_reset_request"
+
+
+class PasswordResetConfirmRateThrottle(AnonRateThrottle):
+    """10 reset confirmations per hour per IP — brute-force OTP protection."""
+    scope = "password_reset_confirm"
+
+
+class ResendVerificationRateThrottle(AnonRateThrottle):
+    """3 resend-verification emails per hour per IP — prevents email flooding."""
+    scope = "resend_verification"
+
+
+class MFAVerifyRateThrottle(AnonRateThrottle):
+    """10 MFA verify attempts per minute per IP — brute-force OTP protection."""
+    scope = "mfa_verify"
+
+
 # ── Business endpoints ─────────────────────────────────────────────────────────
 
 class BankResolveRateThrottle(UserRateThrottle):

@@ -169,7 +169,11 @@ def paystack_webhook(request):
     data = request.data.get("data", {})
     logger.info("Paystack webhook event received: %s", event)
 
-    # TODO: dispatch to domain handlers
-    # e.g. if event == "charge.success": handle_charge_success(data)
+    if event == "charge.success":
+        # Check if this is a subscription payment (metadata contains plan_id + org_id)
+        metadata = data.get("metadata", {})
+        if metadata.get("plan_id") and metadata.get("org_id"):
+            from apps.subscriptions.services import PaystackSubscriptionService
+            PaystackSubscriptionService.activate_from_webhook(data)
 
     return Response({"status": "received"})

@@ -36,8 +36,8 @@ class CreditService:
 
     @staticmethod
     @transaction.atomic
-    def record_payment(organisation, customer, amount: Decimal, recorded_by, description="") -> CreditTransaction:
-        """Record a credit payment (reduces outstanding balance)."""
+    def record_payment(organisation, customer, amount: Decimal, recorded_by, description="", due_date=None) -> CreditTransaction:
+        """Record a credit payment (reduces outstanding balance) and post GL entry."""
         new_balance = max(customer.outstanding_balance - amount, Decimal("0"))
         txn = CreditTransaction.objects.create(
             organisation=organisation,
@@ -45,11 +45,24 @@ class CreditService:
             transaction_type=CreditTransaction.TransactionType.CREDIT,
             amount=amount,
             balance_after=new_balance,
-            description=description or "Payment received",
+            due_date=due_date,
+            description=description or f"Payment received – {customer.name}",
             recorded_by=recorded_by,
         )
         customer.outstanding_balance = new_balance
         customer.save(update_fields=["outstanding_balance", "updated_at"])
+
+        # Post GL: DR 1001 Cash → CR 1100 Accounts Receivable
+        try:
+            from apps.accounting.services import AccountingService
+            from django.utils import timezone
+            AccountingService.post_credit_payment_journal(
+                organisation, customer, amount, recorded_by,
+                txn.description, timezone.now().date(),
+            )
+        except Exception as exc:
+            logger.warning("post_credit_payment_journal failed for %s: %s", customer.name, exc)
+
         return txn
 
     @staticmethod

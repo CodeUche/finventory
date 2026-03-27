@@ -119,6 +119,17 @@ class IsManagerOrSuperuser(BasePermission):
         return bool(org and has_minimum_role(request.user, org, 'manager'))
 
 
+class IsVerified(BasePermission):
+    """
+    Blocks unverified users from accessing tenant data.
+    Users must click the verification link sent to their email after registration.
+    """
+    message = "Please verify your email address before accessing this resource."
+
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated and request.user.is_verified)
+
+
 class SubscriptionActive(BasePermission):
     """
     Blocks write requests (POST/PUT/PATCH/DELETE) when the organisation's

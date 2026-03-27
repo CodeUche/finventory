@@ -84,7 +84,26 @@ class BillViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
         ser = CreateBillSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         d = ser.validated_data
-        supplier = Supplier.objects.get(id=d['supplier'], organisation=org)
+
+        # Resolve supplier — either by UUID or by auto-creating from vendor_name
+        if d.get('supplier'):
+            supplier = Supplier.objects.get(id=d['supplier'], organisation=org)
+        else:
+            vendor_name = d.get('vendor_name', '').strip()
+            supplier, _ = Supplier.objects.get_or_create(
+                organisation=org,
+                name=vendor_name,
+                defaults={'code': vendor_name[:50].upper().replace(' ', '-')},
+            )
+
+        # Resolve optional folder
+        folder = None
+        if d.get('folder'):
+            try:
+                folder = BillFolder.objects.get(id=d['folder'], organisation=org)
+            except BillFolder.DoesNotExist:
+                pass
+
         items_data = []
         for item in d['items']:
             # Values are already typed Decimals from BillItemInputSerializer — no casting needed
@@ -101,6 +120,7 @@ class BillViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
             items_data.append(entry)
         bill_data = {
             'supplier': supplier,
+            'folder': folder,
             'issue_date': d['issue_date'],
             'due_date': d['due_date'],
             'reference': d.get('reference', ''),

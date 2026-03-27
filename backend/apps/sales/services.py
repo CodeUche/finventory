@@ -355,14 +355,18 @@ class SaleService:
                 id=item_data["sale_item_id"], invoice=invoice
             )
             qty = Decimal(str(item_data["quantity_returned"]))
-            if qty <= 0 or qty > sale_item.quantity:
+            already_returned = sale_item.quantity_returned or Decimal("0")
+            remaining_returnable = sale_item.quantity - already_returned
+            if qty <= 0 or qty > remaining_returnable:
                 raise ValueError(
                     f"Invalid return quantity {qty} for {sale_item.product.sku} "
-                    f"(sold: {sale_item.quantity})"
+                    f"(sold: {sale_item.quantity}, already returned: {already_returned}, "
+                    f"remaining returnable: {remaining_returnable})"
                 )
 
-            # Proportional refund
-            refund = round_money(sale_item.line_total * qty / sale_item.quantity)
+            # Proportional refund based on the remaining line value
+            remaining_line_value = sale_item.line_total * remaining_returnable / sale_item.quantity
+            refund = round_money(remaining_line_value * qty / remaining_returnable)
             total_refund += refund
             return_items_to_create.append((sale_item, qty, refund))
 
@@ -388,6 +392,10 @@ class SaleService:
                 unit_price=sale_item.unit_price,
                 refund_amount=refund,
             )
+            # Track cumulative returned quantity on the line item
+            SaleItem.objects.filter(pk=sale_item.pk).update(
+                quantity_returned=sale_item.quantity_returned + qty
+            )
             # Restock physical products if requested
             if restocked and sale_item.product.product_type != "service":
                 unit_cost = (
@@ -405,6 +413,16 @@ class SaleService:
                     reference=sale_return.return_number,
                     created_by=processed_by,
                 )
+
+        # Update invoice status only when ALL items are fully returned (full reversal).
+        # A partial return is a credit note against the original invoice — best accounting
+        # practice (Xero / QuickBooks behaviour) leaves the invoice at its current status
+        # (paid, confirmed, etc.) and lets the SaleReturn credit note carry the partial value.
+        all_items = list(invoice.items.all())
+        total_sold     = sum(Decimal(str(i.quantity))                         for i in all_items)
+        total_returned = sum(Decimal(str(i.quantity_returned or 0))           for i in all_items)
+        if total_sold > 0 and total_returned >= total_sold:
+            Invoice.objects.filter(pk=invoice.pk).update(status=Invoice.Status.RETURNED)
 
         # Update customer outstanding balance if credit sale and record in ledger
         if invoice.customer and invoice.payment_method == Invoice.PaymentMethod.CREDIT:

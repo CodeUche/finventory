@@ -30,9 +30,9 @@ class RegisterTests(TestCase):
     def test_register_success(self):
         res = self.client.post(self.url, self._payload())
         self.assertEqual(res.status_code, 201)
-        self.assertIn("tokens", res.data)
-        self.assertIn("user", res.data)
-        self.assertEqual(res.data["user"]["email"], "test@example.com")
+        # Registration now returns a message, NOT tokens — user must verify email first
+        self.assertIn("message", res.data)
+        self.assertTrue(User.objects.filter(email="test@example.com").exists())
 
     def test_register_duplicate_email(self):
         # Create a fully-established user (with an active membership) to verify
@@ -48,7 +48,8 @@ class RegisterTests(TestCase):
     def test_register_email_normalised_lowercase(self):
         res = self.client.post(self.url, self._payload(email="UPPER@EXAMPLE.COM"))
         self.assertEqual(res.status_code, 201)
-        self.assertEqual(res.data["user"]["email"], "upper@example.com")
+        # Email should be normalised to lowercase in the database
+        self.assertTrue(User.objects.filter(email="upper@example.com").exists())
 
     def test_register_password_mismatch_rejected(self):
         res = self.client.post(
@@ -74,6 +75,7 @@ class LoginTests(TestCase):
             password="ValidPass123!",
             first_name="Login",
             last_name="User",
+            is_verified=True,  # Pre-verified so login tests work without email flow
         )
 
     def test_login_success(self):

@@ -73,8 +73,13 @@ class PayrollRun(TenantAwareModel):
     total_pension_employer = MoneyField(default=0)
     total_nhf = MoneyField(default=0)
     total_nsitf = MoneyField(default=0)
+    total_bonus = MoneyField(default=0)
+    total_overtime = MoneyField(default=0)
     processed_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name='payroll_runs_processed')
     approved_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='payroll_runs_approved')
+    # Multi-level approval: HR/Manager submits → Owner/Admin approves
+    submitted_for_approval = models.BooleanField(default=False)
+    submitted_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='payroll_runs_submitted')
     payment_date = models.DateField(null=True, blank=True)
     transfer_reference = models.CharField(max_length=200, blank=True,
         help_text="Paystack bulk transfer batch_transfer_code or reference")
@@ -96,6 +101,20 @@ class PayslipLine(TenantAwareModel):
     CALCULATED = 'calculated'; PAID = 'paid'
     STATUS_CHOICES = [(s, s) for s in [CALCULATED, PAID]]
 
+    # Per-employee Paystack transfer status
+    TRANSFER_PENDING = 'pending'
+    TRANSFER_INITIATED = 'initiated'
+    TRANSFER_SUCCESS = 'success'
+    TRANSFER_FAILED = 'failed'
+    TRANSFER_SKIPPED = 'skipped'
+    TRANSFER_STATUS_CHOICES = [
+        (TRANSFER_PENDING, 'Pending'),
+        (TRANSFER_INITIATED, 'Initiated'),
+        (TRANSFER_SUCCESS, 'Success'),
+        (TRANSFER_FAILED, 'Failed'),
+        (TRANSFER_SKIPPED, 'Skipped'),
+    ]
+
     payroll_run = models.ForeignKey(PayrollRun, on_delete=models.CASCADE, related_name='payslips')
     employee = models.ForeignKey(Employee, on_delete=models.PROTECT, related_name='payslips')
     # Earnings
@@ -105,12 +124,16 @@ class PayslipLine(TenantAwareModel):
     leave_allowance = MoneyField(default=0)
     other_allowances = MoneyField(default=0)
     gross_salary = MoneyField(default=0)
+    # Extras
+    bonus_amount = MoneyField(default=0)
+    overtime_amount = MoneyField(default=0)
+    attendance_deduction = MoneyField(default=0)
     # Nigerian statutory deductions (employee)
     employee_pension = MoneyField(default=0)   # 8% of (basic + housing + transport)
     nhf = MoneyField(default=0)                # 2.5% of basic (National Housing Fund)
     nsitf = MoneyField(default=0)              # 1% of gross (National Social Insurance Trust Fund)
     # Tax computation
-    consolidated_relief_allowance = MoneyField(default=0)  # 20% of gross or 200k, whichever is higher + 200k
+    consolidated_relief_allowance = MoneyField(default=0)
     taxable_income = MoneyField(default=0)
     paye_tax = MoneyField(default=0)
     # Employer contributions (not deducted from employee)
@@ -120,8 +143,15 @@ class PayslipLine(TenantAwareModel):
     net_salary = MoneyField(default=0)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=CALCULATED)
 
-    penalty_deductions = MoneyField(default=0)   # sum of applied penalties this run
-    loan_deductions = MoneyField(default=0)      # sum of loan installments this run
+    penalty_deductions = MoneyField(default=0)
+    loan_deductions = MoneyField(default=0)
+
+    # Paystack transfer tracking (persisted for reconciliation & retry)
+    transfer_status = models.CharField(
+        max_length=20, choices=TRANSFER_STATUS_CHOICES, default=TRANSFER_PENDING
+    )
+    transfer_reference = models.CharField(max_length=200, blank=True)
+    transfer_error = models.CharField(max_length=500, blank=True)
 
     class Meta:
         ordering = ['employee__last_name']
@@ -193,6 +223,76 @@ class EmployeeLoan(TenantAwareModel):
         months = max(1, self.duration_months)
         self.monthly_installment = (Decimal(str(self.total_repayable)) / months).quantize(Decimal('0.01'))
         super().save(*args, **kwargs)
+
+
+class Bonus(TenantAwareModel):
+    """Ad-hoc or recurring bonus payment for an employee, applied during payroll."""
+    PERFORMANCE = 'performance'
+    SIGNING = 'signing'
+    ANNUAL = 'annual'
+    REFERRAL = 'referral'
+    OTHER = 'other'
+    TYPE_CHOICES = [
+        (PERFORMANCE, 'Performance Bonus'),
+        (SIGNING, 'Signing Bonus'),
+        (ANNUAL, 'Annual Bonus'),
+        (REFERRAL, 'Referral Bonus'),
+        (OTHER, 'Other'),
+    ]
+
+    PENDING = 'pending'
+    APPLIED = 'applied'
+    STATUS_CHOICES = [(s, s) for s in [PENDING, APPLIED]]
+
+    employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name='bonuses')
+    amount = MoneyField()
+    bonus_type = models.CharField(max_length=20, choices=TYPE_CHOICES, default=OTHER)
+    reason = models.CharField(max_length=500)
+    period_year = models.PositiveIntegerField()
+    period_month = models.PositiveIntegerField()
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=PENDING)
+    applied_in_run = models.ForeignKey(
+        'PayrollRun', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='applied_bonuses'
+    )
+
+    class Meta:
+        ordering = ['-period_year', '-period_month']
+
+    def __str__(self):
+        return f"{self.employee} — {self.bonus_type} ₦{self.amount}"
+
+
+class Attendance(TenantAwareModel):
+    """Daily attendance record for an employee."""
+    PRESENT = 'present'
+    ABSENT = 'absent'
+    HALF_DAY = 'half_day'
+    LEAVE = 'leave'
+    HOLIDAY = 'holiday'
+    STATUS_CHOICES = [
+        (PRESENT, 'Present'),
+        (ABSENT, 'Absent'),
+        (HALF_DAY, 'Half Day'),
+        (LEAVE, 'Leave / Holiday'),
+        (HOLIDAY, 'Public Holiday'),
+    ]
+
+    employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name='attendance')
+    date = models.DateField()
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=PRESENT)
+    clock_in = models.TimeField(null=True, blank=True)
+    clock_out = models.TimeField(null=True, blank=True)
+    # Overtime hours logged for this day (e.g. 2.5 = 2h 30m)
+    overtime_hours = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    notes = models.CharField(max_length=300, blank=True)
+
+    class Meta:
+        ordering = ['-date']
+        unique_together = [('employee', 'date')]
+
+    def __str__(self):
+        return f"{self.employee} — {self.date} ({self.status})"
 
 
 def _employee_doc_path(instance, filename):

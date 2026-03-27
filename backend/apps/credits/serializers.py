@@ -21,3 +21,4 @@ class RecordCreditPaymentSerializer(serializers.Serializer):
     customer_id = serializers.UUIDField()
     amount = serializers.DecimalField(max_digits=15, decimal_places=4, min_value=Decimal("0.01"))
     description = serializers.CharField(required=False, default="")
+    due_date = serializers.DateField(required=False, allow_null=True)

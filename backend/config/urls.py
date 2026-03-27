@@ -57,6 +57,8 @@ api_v1_urlpatterns = [
     path("payments/", include("apps.payments.urls")),
     # Budgets
     path("budgets/", include("apps.budgets.urls")),
+    # AI Financial Assistant
+    path("ai/", include("apps.ai.urls")),
 ]
 
 _admin_only = [IsAdminUser]

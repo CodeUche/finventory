@@ -4,6 +4,8 @@ from rest_framework import serializers
 
 from .models import Batch, Category, Product, StockItem, StockMovement, Warehouse
 
+_OWNER_ROLES = {"owner", "admin"}
+
 
 class CategorySerializer(serializers.ModelSerializer):
     class Meta:
@@ -28,7 +30,7 @@ class ProductSerializer(serializers.ModelSerializer):
         fields = [
             "id", "sku", "name", "description", "category", "category_name",
             "brand", "unit_of_measure", "product_type", "alcohol_percentage", "volume_ml",
-            "cost_price", "selling_price", "wholesale_price",
+            "cost_price", "owner_cost_price", "selling_price", "wholesale_price",
             "reorder_level", "reorder_quantity", "barcode",
             "is_active", "is_taxable", "tax_class",
             "total_stock", "created_at", "updated_at",
@@ -39,6 +41,25 @@ class ProductSerializer(serializers.ModelSerializer):
         return sum(
             s.quantity_on_hand for s in obj.stock_items.filter(organisation=obj.organisation)
         )
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get("request")
+        if request and request.user and request.user.is_authenticated:
+            try:
+                from apps.tenancy.models import Membership
+                membership = Membership.objects.get(
+                    organisation=instance.organisation,
+                    user=request.user,
+                    is_active=True,
+                )
+                if membership.role not in _OWNER_ROLES and not request.user.is_superuser:
+                    data.pop("owner_cost_price", None)
+            except Membership.DoesNotExist:
+                data.pop("owner_cost_price", None)
+        else:
+            data.pop("owner_cost_price", None)
+        return data
 
 
 class BatchSerializer(serializers.ModelSerializer):

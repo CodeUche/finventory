@@ -4,7 +4,7 @@ import re
 
 from rest_framework import serializers
 
-from apps.core.validators import validate_image_upload, validate_letterhead_upload
+from apps.core.validators import validate_image_upload
 
 from .models import Invitation, Membership, ModulePermission, Organisation
 
@@ -15,15 +15,21 @@ class OrganisationSerializer(serializers.ModelSerializer):
         fields = [
             "id", "name", "slug", "account_type", "registration_number",
             "tax_id", "country", "currency", "phone", "email", "address",
-            "logo", "letterhead", "is_active", "created_at", "updated_at",
+            "logo", "company_stamp", "is_active", "created_at", "updated_at",
             "bank_name", "bank_account_number", "bank_account_name", "bank_sort_code",
-            "brand_color", "use_letterhead",
+            "brand_color",
+            "invoice_company_name", "company_name_font",
+            "company_name_font_color", "company_name_font_size",
+            "company_name_font_bold", "company_name_font_italic", "company_name_font_underline",
+            "show_company_name_on_pdf",
+            "invoice_template", "pension_provider", "ai_custom_context",
+            "onboarding_completed",
         ]
         read_only_fields = ["id", "slug", "created_at", "updated_at"]
         extra_kwargs = {
             # Enforce upload validators so only safe image formats reach the server
             "logo": {"validators": [validate_image_upload], "required": False},
-            "letterhead": {"validators": [validate_letterhead_upload], "required": False},
+            "company_stamp": {"validators": [validate_image_upload], "required": False},
             # Field length caps matching model definitions
             "registration_number": {"max_length": 100, "required": False, "allow_blank": True},
             "tax_id": {"max_length": 50, "required": False, "allow_blank": True},

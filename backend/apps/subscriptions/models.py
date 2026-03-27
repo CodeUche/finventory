@@ -107,10 +107,16 @@ class Subscription(TimeStampedModel):
     def is_active(self) -> bool:
         """Returns True if the subscription grants feature access."""
         from django.utils import timezone
-        if self.status in (self.Status.ACTIVE, self.Status.TRIALING):
+        now = timezone.now()
+        if self.status == self.Status.ACTIVE:
+            # Free plans (price=0) have no period_end → always active
+            if self.current_period_end and now > self.current_period_end:
+                return False
             return True
-        if self.status == self.Status.TRIALING and self.trial_end:
-            return timezone.now() < self.trial_end
+        if self.status == self.Status.TRIALING:
+            if self.trial_end and now > self.trial_end:
+                return False
+            return True
         return False
 
     def can_use_feature(self, feature_key: str, threshold=None) -> bool:

@@ -75,6 +75,9 @@ class OrganisationViewSet(viewsets.ModelViewSet):
         return Organisation.objects.filter(id__in=user_org_ids, is_active=True)
 
     def perform_create(self, serializer):
+        if getattr(self.request.user, 'is_sub_account', False):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("Sub-accounts cannot create organisations. Contact your administrator.")
         OrganisationService.create_organisation(
             name=serializer.validated_data["name"],
             owner=self.request.user,
@@ -105,6 +108,65 @@ class OrganisationViewSet(viewsets.ModelViewSet):
             invited_by=request.user,
         )
         return Response(InvitationSerializer(invitation).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["post"], permission_classes=[IsOwnerOrAdmin], url_path="remove_logo")
+    def remove_logo(self, request, pk=None):
+        """POST /organisations/{id}/remove_logo/ — clear the organisation logo."""
+        org = self.get_object()
+        if org.logo:
+            org.logo.delete(save=False)
+            org.logo = None
+            org.save(update_fields=["logo"])
+        return Response(OrganisationSerializer(org).data)
+
+    @action(detail=True, methods=["post"], permission_classes=[IsOwnerOrAdmin], url_path="remove_stamp")
+    def remove_stamp(self, request, pk=None):
+        """POST /organisations/{id}/remove_stamp/ — clear the company stamp."""
+        org = self.get_object()
+        if org.company_stamp:
+            org.company_stamp.delete(save=False)
+            org.company_stamp = None
+            org.save(update_fields=["company_stamp"])
+        return Response(OrganisationSerializer(org).data)
+
+    @action(detail=True, methods=["post"], permission_classes=[IsOwnerOrAdmin], url_path="upload_logo")
+    def upload_logo(self, request, pk=None):
+        """
+        POST /organisations/{id}/upload_logo/
+        Body: raw image binary. Content-Type: image/png | image/jpeg | image/webp
+
+        Accepts raw binary instead of multipart to work around Tauri's IPC layer
+        serialising FormData as application/x-www-form-urlencoded.
+        """
+        from django.core.files.base import ContentFile
+        org = self.get_object()
+        body = request.body
+        if not body:
+            return Response({"error": {"message": "No file data received."}}, status=status.HTTP_400_BAD_REQUEST)
+        ct = (request.content_type or "image/jpeg").split(";")[0].strip()
+        ext = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}.get(ct, ".jpg")
+        if org.logo:
+            org.logo.delete(save=False)
+        org.logo.save(f"logo_{org.id}{ext}", ContentFile(body), save=True)
+        return Response(OrganisationSerializer(org, context={"request": request}).data)
+
+    @action(detail=True, methods=["post"], permission_classes=[IsOwnerOrAdmin], url_path="upload_stamp")
+    def upload_stamp(self, request, pk=None):
+        """
+        POST /organisations/{id}/upload_stamp/
+        Body: raw image binary. Content-Type: image/png | image/jpeg | image/webp
+        """
+        from django.core.files.base import ContentFile
+        org = self.get_object()
+        body = request.body
+        if not body:
+            return Response({"error": {"message": "No file data received."}}, status=status.HTTP_400_BAD_REQUEST)
+        ct = (request.content_type or "image/png").split(";")[0].strip()
+        ext = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}.get(ct, ".png")
+        if org.company_stamp:
+            org.company_stamp.delete(save=False)
+        org.company_stamp.save(f"stamp_{org.id}{ext}", ContentFile(body), save=True)
+        return Response(OrganisationSerializer(org, context={"request": request}).data)
 
     @action(detail=True, methods=["get", "put", "patch"], permission_classes=[IsOwnerOrAdmin], url_path="email_config")
     def email_config(self, request, pk=None):
@@ -183,6 +245,9 @@ class OrganisationViewSet(viewsets.ModelViewSet):
         username = (request.data.get("username") or "").strip().lower()
         password = request.data.get("password", "").strip()
         role = request.data.get("role", Membership.Role.STAFF)
+        first_name = (request.data.get("first_name") or "").strip() or username.capitalize()
+        last_name = (request.data.get("last_name") or "").strip()
+        notify_email = (request.data.get("notify_email") or "").strip().lower()
 
         if not username or not password:
             return Response(
@@ -208,9 +273,10 @@ class OrganisationViewSet(viewsets.ModelViewSet):
         user = User.objects.create_user(
             email=email,
             password=password,
-            first_name=username.capitalize(),
-            last_name="",
+            first_name=first_name,
+            last_name=last_name,
             is_verified=True,
+            is_sub_account=True,
         )
         membership = Membership.objects.create(
             organisation=org,
@@ -219,6 +285,37 @@ class OrganisationViewSet(viewsets.ModelViewSet):
             invited_by=request.user,
             is_active=True,
         )
+
+        # Send credentials email to the member's personal email if provided
+        if notify_email:
+            try:
+                from django.core.mail import send_mail
+                from django.conf import settings as django_settings
+                frontend_url = getattr(django_settings, "FRONTEND_URL", "http://localhost:3000")
+                from_email = getattr(django_settings, "DEFAULT_FROM_EMAIL", "noreply@auditytechnologies.com")
+                display_name = f"{first_name} {last_name}".strip()
+                send_mail(
+                    subject=f"You've been added to {org.name} on Audity",
+                    message=(
+                        f"Hi {display_name},\n\n"
+                        f"{request.user.get_full_name() or request.user.email} has created an Audity account for you "
+                        f"on the {org.name} workspace.\n\n"
+                        f"Your login credentials:\n"
+                        f"  Email:    {email}\n"
+                        f"  Password: {password}\n"
+                        f"  Role:     {role.capitalize()}\n\n"
+                        f"Sign in at: {frontend_url}/login\n\n"
+                        f"For security, please change your password after your first login.\n\n"
+                        f"— The Audity Team"
+                    ),
+                    from_email=from_email,
+                    recipient_list=[notify_email],
+                    fail_silently=True,
+                )
+                logger.info("Credentials email sent to %s for sub-account %s", notify_email, email)
+            except Exception as exc:
+                logger.error("Failed to send credentials email to %s: %s", notify_email, exc)
+
         return Response(MembershipSerializer(membership).data, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=["get"], url_path="resolve_bank_account",

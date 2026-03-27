@@ -48,8 +48,10 @@ class Organisation(SoftDeleteModel):
     email = models.EmailField(blank=True)
     address = models.TextField(blank=True)
     logo = models.ImageField(upload_to="org_logos/", null=True, blank=True)
-    letterhead = models.FileField(upload_to="org_letterheads/", null=True, blank=True,
-        help_text="Optional letterhead file (image, PDF, or DOC) shown at the top of invoices and PDF documents")
+    company_stamp = models.ImageField(
+        upload_to="org_stamps/", null=True, blank=True,
+        help_text="Optional digital company stamp/seal shown on invoices and delivery notes"
+    )
     # Banking details (shown on invoices and payment documents)
     bank_name = models.CharField(max_length=200, blank=True)
     bank_account_number = models.CharField(max_length=30, blank=True)
@@ -60,9 +62,53 @@ class Organisation(SoftDeleteModel):
         max_length=7, default="#f97316",
         help_text="Hex color code (#rrggbb) used in invoice/PDF templates when no letterhead is uploaded"
     )
-    use_letterhead = models.BooleanField(
+    # Invoice header customisation
+    invoice_company_name = models.CharField(
+        max_length=255, blank=True,
+        help_text="Override the company name shown on invoices/PDFs. Leave blank to use the organisation name."
+    )
+    company_name_font = models.CharField(
+        max_length=100, default='helvetica',
+        help_text="Font used for the company name on invoices and PDF documents"
+    )
+    company_name_font_color = models.CharField(
+        max_length=7, default='#ffffff',
+        help_text="Hex color for the company name text on invoices"
+    )
+    company_name_font_size = models.PositiveSmallIntegerField(
+        default=14,
+        help_text="Font size (pt) for the company name on invoices"
+    )
+    company_name_font_bold = models.BooleanField(
+        default=True,
+        help_text="Whether the company name is bold on invoices"
+    )
+    company_name_font_italic = models.BooleanField(
         default=False,
-        help_text="When True, use the uploaded letterhead banner instead of the colored template header"
+        help_text="Whether the company name is italic on invoices"
+    )
+    company_name_font_underline = models.BooleanField(
+        default=False,
+        help_text="Whether the company name is underlined on invoices"
+    )
+    show_company_name_on_pdf = models.BooleanField(
+        default=True,
+        help_text="Whether to show the company name text on invoices and PDFs (alongside the logo)"
+    )
+    # Invoice template
+    invoice_template = models.CharField(
+        max_length=30, default='classic',
+        help_text="Invoice PDF layout template: classic, modern, minimal, professional"
+    )
+    # Payroll — default pension provider (PFA)
+    pension_provider = models.CharField(
+        max_length=100, blank=True,
+        help_text="Default Pension Fund Administrator (PFA) for remittance guidance"
+    )
+    # AI assistant custom context (per-org training)
+    ai_custom_context = models.TextField(
+        blank=True,
+        help_text="Custom business context that personalises the AI assistant for this organisation"
     )
     # Subscription link (set by subscriptions app)
     subscription = models.OneToOneField(
@@ -78,6 +124,10 @@ class Organisation(SoftDeleteModel):
         related_name="owned_organisations",
     )
     is_active = models.BooleanField(default=True)
+    # Set to True once the user explicitly completes the onboarding flow
+    # (selects a plan and pays, or deliberately chooses the free plan).
+    # Until this is True, the user is redirected to /onboarding on every login.
+    onboarding_completed = models.BooleanField(default=False)
 
     class Meta(SoftDeleteModel.Meta):
         verbose_name = "Organisation"
@@ -187,6 +237,7 @@ class ModulePermission(TimeStampedModel):
         ('budget', 'Budget'),
         ('quotes', 'Quotes'),
         ('recurring', 'Recurring Invoices'),
+        ('settings', 'Settings (Company / Billing)'),
     ]
 
     ACCESS_CHOICES = [

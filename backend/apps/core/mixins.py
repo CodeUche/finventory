@@ -81,9 +81,13 @@ class ExportMixin:
     """
     Adds CSV/XLSX export to any ModelViewSet.
 
-    Append ?format=csv or ?format=xlsx to any list endpoint.
+    Append ?dl=csv or ?dl=xlsx to any list endpoint.
     The ViewSet must set `export_fields` (list of (header, field_or_callable) tuples)
     and optionally `export_filename` (base filename without extension).
+
+    Using `dl` instead of `format` avoids DRF's built-in format-suffix content
+    negotiation which intercepts `?format=` before the view runs and 404s on
+    unknown renderer names like 'csv'.
 
     Example:
         export_filename = 'invoices'
@@ -98,7 +102,7 @@ class ExportMixin:
     export_filename: str = 'export'
 
     def list(self, request, *args, **kwargs):
-        fmt = request.query_params.get('format', '').lower()
+        fmt = request.query_params.get('dl', '').lower()
         if fmt in ('csv', 'xlsx'):
             return self._export(request, fmt)
         return super().list(request, *args, **kwargs)

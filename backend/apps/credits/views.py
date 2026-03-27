@@ -39,6 +39,7 @@ class CreditTransactionViewSet(TenantFilterMixin, viewsets.ReadOnlyModelViewSet)
             amount=d["amount"],
             recorded_by=request.user,
             description=d.get("description", ""),
+            due_date=d.get("due_date"),
         )
         return Response(CreditTransactionSerializer(txn).data, status=201)
 

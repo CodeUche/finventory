@@ -1,21 +1,24 @@
+import csv
+import io
 import json as _json
 import urllib.error
 import urllib.parse
 import urllib.request
 
 from django.conf import settings as django_settings
+from django.http import HttpResponse
 
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from apps.core.mixins import ExportMixin, TenantFilterMixin
-from apps.core.permissions import IsManager, IsStaff
-from .models import Employee, EmployeeDocument, EmployeePenalty, EmployeeLoan, PayrollRun
+from apps.core.permissions import IsManager, IsStaff, IsOwnerOrAdmin
+from .models import Employee, EmployeeDocument, EmployeePenalty, EmployeeLoan, PayrollRun, PayslipLine, Bonus, Attendance
 from .serializers import (
     EmployeeSerializer, EmployeeDocumentSerializer,
     EmployeePenaltySerializer, EmployeeLoanSerializer,
-    PayrollRunSerializer,
+    PayrollRunSerializer, BonusSerializer, AttendanceSerializer,
 )
 from .services import PayrollService
 
@@ -52,9 +55,7 @@ class EmployeeViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
         bank_code = request.data.get("bank_code", "").strip()
 
         if not account_number or not bank_code:
-            return Response(
-                {"error": "account_number and bank_code are required"}, status=400
-            )
+            return Response({"error": "account_number and bank_code are required"}, status=400)
 
         secret_key = getattr(django_settings, "PAYSTACK_SECRET_KEY", "")
         if not secret_key:
@@ -64,13 +65,9 @@ class EmployeeViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
             )
 
         try:
-            params = urllib.parse.urlencode(
-                {"account_number": account_number, "bank_code": bank_code}
-            )
+            params = urllib.parse.urlencode({"account_number": account_number, "bank_code": bank_code})
             url = f"https://api.paystack.co/bank/resolve?{params}"
-            req = urllib.request.Request(
-                url, headers={"Authorization": f"Bearer {secret_key}"}
-            )
+            req = urllib.request.Request(url, headers={"Authorization": f"Bearer {secret_key}"})
             with urllib.request.urlopen(req, timeout=10) as resp:
                 data = _json.loads(resp.read())
             return Response({"account_name": data["data"]["account_name"]})
@@ -80,10 +77,7 @@ class EmployeeViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
                 status=400,
             )
         except Exception:
-            return Response(
-                {"error": "Account resolution service is currently unavailable."},
-                status=503,
-            )
+            return Response({"error": "Account resolution service is currently unavailable."}, status=503)
 
 
 class EmployeeDocumentViewSet(TenantFilterMixin, viewsets.ModelViewSet):
@@ -154,6 +148,92 @@ class EmployeeLoanViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         return Response(EmployeeLoanSerializer(loan).data)
 
 
+class BonusViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+    serializer_class = BonusSerializer
+    permission_classes = [IsAuthenticated, IsStaff]
+
+    def get_queryset(self):
+        org = self._get_organisation()
+        qs = Bonus.objects.filter(organisation=org).select_related('employee')
+        employee_id = self.request.query_params.get('employee')
+        if employee_id:
+            qs = qs.filter(employee_id=employee_id)
+        period_year = self.request.query_params.get('period_year')
+        period_month = self.request.query_params.get('period_month')
+        if period_year:
+            qs = qs.filter(period_year=period_year)
+        if period_month:
+            qs = qs.filter(period_month=period_month)
+        return qs
+
+    def perform_create(self, serializer):
+        serializer.save(organisation=self._get_organisation())
+
+
+class AttendanceViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+    serializer_class = AttendanceSerializer
+    permission_classes = [IsAuthenticated, IsStaff]
+
+    def get_queryset(self):
+        org = self._get_organisation()
+        qs = Attendance.objects.filter(organisation=org).select_related('employee')
+        employee_id = self.request.query_params.get('employee')
+        if employee_id:
+            qs = qs.filter(employee_id=employee_id)
+        date_from = self.request.query_params.get('date_from')
+        date_to = self.request.query_params.get('date_to')
+        month = self.request.query_params.get('month')
+        year = self.request.query_params.get('year')
+        if date_from:
+            qs = qs.filter(date__gte=date_from)
+        if date_to:
+            qs = qs.filter(date__lte=date_to)
+        if year:
+            qs = qs.filter(date__year=year)
+        if month:
+            qs = qs.filter(date__month=month)
+        return qs
+
+    def perform_create(self, serializer):
+        serializer.save(organisation=self._get_organisation())
+
+    @action(detail=False, methods=['post'])
+    def bulk_mark(self, request):
+        """
+        POST /payroll/attendance/bulk_mark/
+        Body: { employee_ids: [...], date: "YYYY-MM-DD", status: "present"|"absent"|..., overtime_hours: 0 }
+        Marks attendance for multiple employees on the same day.
+        """
+        org = self._get_organisation()
+        emp_ids = request.data.get('employee_ids', [])
+        date = request.data.get('date')
+        att_status = request.data.get('status', Attendance.PRESENT)
+        overtime_hours = request.data.get('overtime_hours', 0)
+        notes = request.data.get('notes', '')
+
+        if not emp_ids or not date:
+            return Response({'error': 'employee_ids and date are required'}, status=400)
+
+        created, updated = 0, 0
+        for emp_id in emp_ids:
+            obj, is_new = Attendance.objects.update_or_create(
+                organisation=org,
+                employee_id=emp_id,
+                date=date,
+                defaults={
+                    'status': att_status,
+                    'overtime_hours': overtime_hours,
+                    'notes': notes,
+                }
+            )
+            if is_new:
+                created += 1
+            else:
+                updated += 1
+
+        return Response({'created': created, 'updated': updated})
+
+
 class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     serializer_class = PayrollRunSerializer
     permission_classes = [IsAuthenticated, IsManager]
@@ -177,16 +257,52 @@ class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         from apps.accounting.services import AccountingService
         period_date = _date(year, month, 1)
         if AccountingService.is_period_locked(org, period_date):
-            return Response({'error': f'The period {year}-{month:02d} is locked. Unlock it before running payroll.'}, status=403)
+            return Response(
+                {'error': f'The period {year}-{month:02d} is locked. Unlock it before running payroll.'},
+                status=403,
+            )
         run = PayrollService.run_payroll(run)
-        return Response(PayrollRunSerializer(run).data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+        return Response(
+            PayrollRunSerializer(run).data,
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+    @action(detail=True, methods=['post'])
+    def submit_for_approval(self, request, pk=None):
+        """Manager/HR submits a processed payroll for admin/owner approval."""
+        run = self.get_object()
+        if run.status != PayrollRun.PROCESSING:
+            return Response({'error': 'Only processing payrolls can be submitted for approval'}, status=400)
+        run.submitted_for_approval = True
+        run.submitted_by = request.user
+        run.save(update_fields=['submitted_for_approval', 'submitted_by'])
+
+        # Notify admins/owners via audit log (notifications picked up by frontend polling)
+        try:
+            from apps.core.utils import log_audit
+            log_audit(request, run, 'PAYROLL_SUBMITTED',
+                      f"Payroll {run.run_number} submitted for approval by {request.user.email}")
+        except Exception:
+            pass
+
+        return Response(PayrollRunSerializer(run).data)
 
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
+        """Owner/Admin final approval — requires submitted_for_approval=True."""
         import logging as _log
         run = self.get_object()
         if run.status != PayrollRun.PROCESSING:
             return Response({'error': 'Only processing payrolls can be approved'}, status=400)
+        if not run.submitted_for_approval:
+            # Allow owners/admins to self-approve without submission step
+            from apps.core.permissions import IsOwnerOrAdmin as _IsOwner
+            checker = _IsOwner()
+            if not checker.has_permission(request, self):
+                return Response(
+                    {'error': 'This payroll must be submitted for approval first.'},
+                    status=400,
+                )
         run.status = PayrollRun.APPROVED
         run.approved_by = request.user
         run.save()
@@ -207,15 +323,15 @@ class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         run.status = PayrollRun.PAID
         run.payment_date = request.data.get('payment_date', timezone.now().date())
         run.save()
+        # Mark all payslips as paid
+        run.payslips.filter(status=PayslipLine.CALCULATED).update(status=PayslipLine.PAID)
         return Response(PayrollRunSerializer(run).data)
 
     @action(detail=True, methods=['post'])
     def initiate_transfers(self, request, pk=None):
         """
         POST /payroll/runs/{id}/initiate_transfers/
-        Creates Paystack transfer recipients for each employee (if not cached),
-        then initiates a bulk transfer for all payslips in the run.
-        Returns transfer results per employee.
+        Bulk Paystack salary transfer. Persists per-payslip transfer_status for reconciliation.
         """
         import logging as _log
         logger = _log.getLogger(__name__)
@@ -226,7 +342,10 @@ class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
         secret_key = getattr(django_settings, 'PAYSTACK_SECRET_KEY', '')
         if not secret_key:
-            return Response({'error': 'Paystack is not configured. Add PAYSTACK_SECRET_KEY to your .env file.'}, status=503)
+            return Response(
+                {'error': 'Paystack is not configured. Add PAYSTACK_SECRET_KEY to your .env file.'},
+                status=503,
+            )
 
         def paystack_post(path, payload):
             req_body = _json.dumps(payload).encode()
@@ -244,21 +363,24 @@ class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
         results = []
         transfers = []
+        payslip_map = {}  # reference → payslip id
 
         for payslip in run.payslips.select_related('employee').all():
             emp = payslip.employee
             net = float(payslip.net_salary)
+            ref = f'{run.run_number}-{emp.employee_id}'
 
             if not emp.account_number or not emp.bank_code:
+                payslip.transfer_status = PayslipLine.TRANSFER_SKIPPED
+                payslip.transfer_error = 'Missing bank account number or bank code'
+                payslip.save(update_fields=['transfer_status', 'transfer_error'])
                 results.append({
-                    'employee': emp.employee_id,
-                    'name': f'{emp.first_name} {emp.last_name}',
-                    'status': 'skipped',
-                    'reason': 'Missing bank account number or bank code',
+                    'employee': emp.employee_id, 'name': f'{emp.first_name} {emp.last_name}',
+                    'status': 'skipped', 'reason': 'Missing bank account number or bank code',
                 })
                 continue
 
-            # Step 1: Create/get recipient code
+            # Create/get Paystack recipient code
             recipient_code = emp.paystack_recipient_code
             if not recipient_code:
                 try:
@@ -270,34 +392,31 @@ class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                         'currency': 'NGN',
                     })
                     recipient_code = r['data']['recipient_code']
-                    # Cache it on the employee record
                     emp.paystack_recipient_code = recipient_code
                     emp.save(update_fields=['paystack_recipient_code'])
                 except Exception as e:
                     logger.warning('Paystack create recipient failed for %s: %s', emp.employee_id, e)
+                    payslip.transfer_status = PayslipLine.TRANSFER_FAILED
+                    payslip.transfer_error = 'Could not create transfer recipient'
+                    payslip.save(update_fields=['transfer_status', 'transfer_error'])
                     results.append({
-                        'employee': emp.employee_id,
-                        'name': f'{emp.first_name} {emp.last_name}',
-                        'status': 'failed',
-                        'reason': 'Could not create transfer recipient',
+                        'employee': emp.employee_id, 'name': f'{emp.first_name} {emp.last_name}',
+                        'status': 'failed', 'reason': 'Could not create transfer recipient',
                     })
                     continue
 
-            # Paystack amounts are in kobo (multiply by 100)
             transfers.append({
                 'amount': int(net * 100),
                 'recipient': recipient_code,
                 'reason': f'Net pay — {run.run_number}',
-                'reference': f'{run.run_number}-{emp.employee_id}',
+                'reference': ref,
             })
+            payslip_map[ref] = payslip.id
             results.append({
-                'employee': emp.employee_id,
-                'name': f'{emp.first_name} {emp.last_name}',
-                'account': emp.account_number,
-                'bank': emp.bank_name,
-                'amount': net,
-                'recipient_code': recipient_code,
-                'status': 'queued',
+                'employee': emp.employee_id, 'name': f'{emp.first_name} {emp.last_name}',
+                'account': emp.account_number, 'bank': emp.bank_name,
+                'amount': net, 'recipient_code': recipient_code,
+                'status': 'queued', 'reference': ref,
             })
 
         if not transfers:
@@ -307,27 +426,51 @@ class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                 'results': results,
             }, status=400)
 
-        # Step 2: Initiate bulk transfer
         try:
             bulk_resp = paystack_post('/transfer/bulk', {
-                'currency': 'NGN',
-                'source': 'balance',
-                'transfers': transfers,
+                'currency': 'NGN', 'source': 'balance', 'transfers': transfers,
             })
-            batch_code = bulk_resp.get('data', {}).get('batch_code', '') if isinstance(bulk_resp.get('data'), dict) else ''
+            batch_code = (
+                bulk_resp.get('data', {}).get('batch_code', '')
+                if isinstance(bulk_resp.get('data'), dict)
+                else ''
+            )
             if not batch_code and isinstance(bulk_resp.get('data'), list):
                 batch_code = ','.join(str(t.get('reference', '')) for t in bulk_resp['data'][:3])
 
-            # Save reference on the run
             run.transfer_reference = batch_code or run.run_number
             run.save(update_fields=['transfer_reference'])
 
-            # Update queued statuses with transfer codes from response
+            # Persist per-payslip transfer status
             if isinstance(bulk_resp.get('data'), list):
-                for i, transfer_result in enumerate(bulk_resp['data']):
-                    if i < len(results) and results[i]['status'] == 'queued':
-                        results[i]['transfer_code'] = transfer_result.get('transfer_code', '')
-                        results[i]['status'] = 'initiated'
+                for transfer_result in bulk_resp['data']:
+                    ref = transfer_result.get('reference', '')
+                    pslip_id = payslip_map.get(ref)
+                    if pslip_id:
+                        t_status = transfer_result.get('status', '')
+                        ps_status = (
+                            PayslipLine.TRANSFER_INITIATED if t_status in ('pending', 'otp')
+                            else PayslipLine.TRANSFER_SUCCESS if t_status == 'success'
+                            else PayslipLine.TRANSFER_FAILED
+                        )
+                        PayslipLine.objects.filter(id=pslip_id).update(
+                            transfer_status=ps_status,
+                            transfer_reference=transfer_result.get('transfer_code', ref),
+                        )
+                        # Mirror to results list
+                        for r in results:
+                            if r.get('reference') == ref:
+                                r['status'] = 'initiated'
+                                r['transfer_code'] = transfer_result.get('transfer_code', '')
+            else:
+                # Fallback: mark all queued as initiated
+                PayslipLine.objects.filter(
+                    payroll_run=run,
+                    transfer_status=PayslipLine.TRANSFER_PENDING,
+                ).update(transfer_status=PayslipLine.TRANSFER_INITIATED)
+                for r in results:
+                    if r['status'] == 'queued':
+                        r['status'] = 'initiated'
 
             return Response({
                 'success': True,
@@ -347,4 +490,157 @@ class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             return Response({'success': False, 'error': msg, 'results': results}, status=400)
         except Exception as e:
             logger.warning('Paystack bulk transfer error: %s', e)
-            return Response({'success': False, 'error': 'Transfer service temporarily unavailable', 'results': results}, status=503)
+            return Response({
+                'success': False, 'error': 'Transfer service temporarily unavailable',
+                'results': results,
+            }, status=503)
+
+    @action(detail=True, methods=['post'])
+    def retry_failed(self, request, pk=None):
+        """
+        POST /payroll/runs/{id}/retry_failed/
+        Retries only the payslips whose transfer_status is 'failed'.
+        Same idempotency key (run_number-employee_id) prevents double payments.
+        """
+        import logging as _log
+        logger = _log.getLogger(__name__)
+
+        run = self.get_object()
+        if run.status not in [PayrollRun.APPROVED, PayrollRun.PAID]:
+            return Response({'error': 'Can only retry on approved or paid payroll runs'}, status=400)
+
+        secret_key = getattr(django_settings, 'PAYSTACK_SECRET_KEY', '')
+        if not secret_key:
+            return Response({'error': 'Paystack is not configured.'}, status=503)
+
+        failed_payslips = list(
+            run.payslips.select_related('employee').filter(
+                transfer_status__in=[PayslipLine.TRANSFER_FAILED, PayslipLine.TRANSFER_PENDING]
+            )
+        )
+        if not failed_payslips:
+            return Response({'message': 'No failed transfers to retry', 'retried': 0})
+
+        def paystack_post(path, payload):
+            req_body = _json.dumps(payload).encode()
+            req = urllib.request.Request(
+                f'https://api.paystack.co{path}',
+                data=req_body,
+                headers={
+                    'Authorization': f'Bearer {secret_key}',
+                    'Content-Type': 'application/json',
+                },
+                method='POST',
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return _json.loads(resp.read())
+
+        results = []
+        transfers = []
+        payslip_map = {}
+
+        for payslip in failed_payslips:
+            emp = payslip.employee
+            if not emp.account_number or not emp.bank_code:
+                results.append({'employee': emp.employee_id, 'name': f'{emp.first_name} {emp.last_name}',
+                                 'status': 'skipped', 'reason': 'No bank details'})
+                continue
+            recipient_code = emp.paystack_recipient_code
+            if not recipient_code:
+                try:
+                    r = paystack_post('/transferrecipient', {
+                        'type': 'nuban',
+                        'name': emp.account_name or f'{emp.first_name} {emp.last_name}',
+                        'account_number': emp.account_number,
+                        'bank_code': emp.bank_code,
+                        'currency': 'NGN',
+                    })
+                    recipient_code = r['data']['recipient_code']
+                    emp.paystack_recipient_code = recipient_code
+                    emp.save(update_fields=['paystack_recipient_code'])
+                except Exception as e:
+                    logger.warning('Retry: recipient failed for %s: %s', emp.employee_id, e)
+                    results.append({'employee': emp.employee_id, 'name': f'{emp.first_name} {emp.last_name}',
+                                     'status': 'failed', 'reason': 'Could not create recipient'})
+                    continue
+
+            ref = f'{run.run_number}-{emp.employee_id}'
+            transfers.append({
+                'amount': int(float(payslip.net_salary) * 100),
+                'recipient': recipient_code,
+                'reason': f'Retry net pay — {run.run_number}',
+                'reference': ref,
+            })
+            payslip_map[ref] = payslip.id
+            results.append({'employee': emp.employee_id, 'name': f'{emp.first_name} {emp.last_name}',
+                             'status': 'queued', 'reference': ref})
+
+        if not transfers:
+            return Response({'success': False, 'message': 'No retryable transfers', 'results': results})
+
+        try:
+            bulk_resp = paystack_post('/transfer/bulk', {
+                'currency': 'NGN', 'source': 'balance', 'transfers': transfers,
+            })
+            for transfer_result in (bulk_resp.get('data') or []):
+                ref = transfer_result.get('reference', '')
+                pslip_id = payslip_map.get(ref)
+                if pslip_id:
+                    PayslipLine.objects.filter(id=pslip_id).update(
+                        transfer_status=PayslipLine.TRANSFER_INITIATED,
+                        transfer_reference=transfer_result.get('transfer_code', ref),
+                        transfer_error='',
+                    )
+                    for r in results:
+                        if r.get('reference') == ref:
+                            r['status'] = 'initiated'
+
+            return Response({'success': True, 'retried': len(transfers), 'results': results})
+        except Exception as e:
+            logger.warning('Retry bulk transfer error: %s', e)
+            return Response({'success': False, 'error': str(e), 'results': results}, status=503)
+
+    @action(detail=True, methods=['get'])
+    def export_bank_file(self, request, pk=None):
+        """
+        GET /payroll/runs/{id}/export_bank_file/
+        Returns a NIBSS-compatible CSV for upload to your bank's bulk payment portal.
+        Columns: Account Number, Account Name, Bank Name, Sort Code (Bank Code), Amount, Narration
+        """
+        run = self.get_object()
+        payslips = run.payslips.select_related('employee').all()
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow([
+            'Account Number', 'Account Name', 'Bank Name', 'Bank Code',
+            'Amount (NGN)', 'Narration', 'Employee ID',
+        ])
+        for p in payslips:
+            emp = p.employee
+            if emp.account_number and emp.bank_code:
+                writer.writerow([
+                    emp.account_number,
+                    emp.account_name or f'{emp.first_name} {emp.last_name}',
+                    emp.bank_name,
+                    emp.bank_code,
+                    str(p.net_salary),
+                    f'Net pay {run.run_number}',
+                    emp.employee_id,
+                ])
+
+        filename = f'{run.run_number}-bank-transfer.csv'
+        response = HttpResponse(output.getvalue(), content_type='text/csv')
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
+
+    @action(detail=False, methods=['get'])
+    def pending_approvals(self, request):
+        """GET /payroll/runs/pending_approvals/ — runs awaiting approval (for notification badge)."""
+        org = self._get_organisation()
+        runs = PayrollRun.objects.filter(
+            organisation=org,
+            status=PayrollRun.PROCESSING,
+            submitted_for_approval=True,
+        ).values('id', 'run_number', 'period_year', 'period_month', 'submitted_by__email')
+        return Response(list(runs))

@@ -526,7 +526,7 @@ class AccountingService:
             zero = Decimal('0')
             gross = Decimal(str(payroll_run.total_gross or 0))
             paye = Decimal(str(payroll_run.total_paye or 0))
-            pension = Decimal(str(payroll_run.total_pension or 0))
+            pension = Decimal(str(payroll_run.total_pension_employee or 0)) + Decimal(str(payroll_run.total_pension_employer or 0))
             nhf = Decimal(str(payroll_run.total_nhf or 0))
             nsitf = Decimal(str(payroll_run.total_nsitf or 0))
             net = Decimal(str(payroll_run.total_net or 0))

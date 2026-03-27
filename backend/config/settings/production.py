@@ -155,11 +155,42 @@ REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"].update({  # noqa: F405
 DATA_UPLOAD_MAX_MEMORY_SIZE = 20 * 1024 * 1024   # 20 MB
 FILE_UPLOAD_MAX_MEMORY_SIZE = 15 * 1024 * 1024   # 15 MB
 
-# Email
-EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-EMAIL_HOST = config("EMAIL_HOST", default="smtp.sendgrid.net")
-EMAIL_PORT = config("EMAIL_PORT", default=587, cast=int)
-EMAIL_USE_TLS = True
-EMAIL_HOST_USER = config("EMAIL_HOST_USER", default="")
+# ─── Email (SMTP) ────────────────────────────────────────────────────────────
+# All credentials are read exclusively from environment variables.
+# Nothing is hardcoded here — no host, no user, no password, no from-address.
+#
+# Security rules enforced at startup:
+#   - If EMAIL_HOST is set, EMAIL_HOST_PASSWORD MUST also be set (no silent failures).
+#   - If EMAIL_HOST is set, DEFAULT_FROM_EMAIL MUST also be set.
+#   - EMAIL_USE_SSL is explicitly False; TLS (STARTTLS) on port 587 is the only
+#     accepted transport — SSL on port 465 is deprecated and not enabled here.
+#   - EMAIL_TIMEOUT prevents hung connections from blocking request threads.
+#
+# Use an app-specific password or SMTP API key — NEVER your main account password.
+# Rotate credentials immediately if they are ever exposed.
+EMAIL_BACKEND = "apps.core.email_backend.CertifiEmailBackend"
+EMAIL_HOST          = config("EMAIL_HOST",          default="")
+EMAIL_PORT          = config("EMAIL_PORT",          default=587, cast=int)
+EMAIL_USE_TLS       = True   # STARTTLS on port 587
+EMAIL_USE_SSL       = False  # SSL (port 465) is disabled; mutually exclusive with TLS
+EMAIL_TIMEOUT       = 10     # seconds — prevent hung SMTP connections
+EMAIL_HOST_USER     = config("EMAIL_HOST_USER",     default="")
 EMAIL_HOST_PASSWORD = config("EMAIL_HOST_PASSWORD", default="")
-DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default="noreply@finventory.app")
+DEFAULT_FROM_EMAIL  = config("DEFAULT_FROM_EMAIL",  default="")
+
+# Fail fast if email is partially configured — catch misconfiguration at startup,
+# not silently at runtime when the first password-reset email is attempted.
+if EMAIL_HOST and not EMAIL_HOST_PASSWORD:
+    from django.core.exceptions import ImproperlyConfigured
+    raise ImproperlyConfigured(
+        "[PRODUCTION] EMAIL_HOST is set but EMAIL_HOST_PASSWORD is missing. "
+        "Set EMAIL_HOST_PASSWORD to your SMTP API key or app-specific password. "
+        "NEVER use your main account password — generate an app password or API key "
+        "(Gmail: myaccount.google.com/apppasswords; SendGrid: use the API key as password)."
+    )
+if EMAIL_HOST and not DEFAULT_FROM_EMAIL:
+    from django.core.exceptions import ImproperlyConfigured
+    raise ImproperlyConfigured(
+        "[PRODUCTION] EMAIL_HOST is set but DEFAULT_FROM_EMAIL is missing. "
+        "Set DEFAULT_FROM_EMAIL to a verified sender address, e.g. noreply@yourdomain.com."
+    )

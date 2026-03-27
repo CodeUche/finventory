@@ -69,6 +69,13 @@ class PurchaseOrderViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet
             except IntegrityError as e:
                 raise ValidationError({"detail": f"Could not generate a unique PO number: {e}"})
 
+    @action(detail=True, methods=["post"], url_path="clear_receipt")
+    def clear_receipt(self, request, pk=None):
+        """POST /api/v1/purchases/orders/{id}/clear_receipt/ — remove the attached receipt."""
+        po = self.get_object()
+        po.receipt.delete(save=True)
+        return Response({"receipt": None})
+
     @action(detail=True, methods=["post"])
     def receive(self, request, pk=None):
         """POST /api/v1/purchases/orders/{id}/receive/"""

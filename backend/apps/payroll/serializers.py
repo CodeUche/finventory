@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Employee, EmployeeDocument, EmployeePenalty, EmployeeLoan, PayrollRun, PayslipLine
+from .models import Employee, EmployeeDocument, EmployeePenalty, EmployeeLoan, PayrollRun, PayslipLine, Bonus, Attendance
 
 
 class EmployeeSerializer(serializers.ModelSerializer):
@@ -73,6 +73,36 @@ class EmployeeLoanSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'total_repayable', 'monthly_installment', 'amount_repaid', 'created_at']
 
 
+class BonusSerializer(serializers.ModelSerializer):
+    employee_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Bonus
+        fields = [
+            'id', 'employee', 'employee_name', 'amount', 'bonus_type', 'reason',
+            'period_year', 'period_month', 'status', 'applied_in_run', 'created_at',
+        ]
+        read_only_fields = ['id', 'status', 'applied_in_run', 'created_at']
+
+    def get_employee_name(self, obj):
+        return f"{obj.employee.first_name} {obj.employee.last_name}"
+
+
+class AttendanceSerializer(serializers.ModelSerializer):
+    employee_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Attendance
+        fields = [
+            'id', 'employee', 'employee_name', 'date', 'status',
+            'clock_in', 'clock_out', 'overtime_hours', 'notes', 'created_at',
+        ]
+        read_only_fields = ['id', 'created_at']
+
+    def get_employee_name(self, obj):
+        return f"{obj.employee.first_name} {obj.employee.last_name}"
+
+
 class PayslipLineSerializer(serializers.ModelSerializer):
     employee_name = serializers.SerializerMethodField()
     employee_id_str = serializers.CharField(source='employee.employee_id', read_only=True)
@@ -87,10 +117,12 @@ class PayslipLineSerializer(serializers.ModelSerializer):
             'id', 'employee', 'employee_name', 'employee_id_str',
             'employee_bank_name', 'employee_bank_code', 'employee_account_number', 'employee_account_name',
             'basic_salary', 'housing_allowance', 'transport_allowance', 'leave_allowance',
-            'other_allowances', 'gross_salary', 'employee_pension', 'nhf', 'nsitf',
+            'other_allowances', 'gross_salary', 'bonus_amount', 'overtime_amount',
+            'employee_pension', 'nhf', 'nsitf',
             'consolidated_relief_allowance', 'taxable_income', 'paye_tax',
-            'employer_pension', 'penalty_deductions', 'loan_deductions',
-            'total_deductions', 'net_salary', 'status'
+            'employer_pension', 'penalty_deductions', 'loan_deductions', 'attendance_deduction',
+            'total_deductions', 'net_salary', 'status',
+            'transfer_status', 'transfer_reference', 'transfer_error',
         ]
         read_only_fields = ['id']
 
@@ -100,6 +132,7 @@ class PayslipLineSerializer(serializers.ModelSerializer):
 
 class PayrollRunSerializer(serializers.ModelSerializer):
     payslips = PayslipLineSerializer(many=True, read_only=True)
+    employee_count = serializers.SerializerMethodField()
 
     class Meta:
         model = PayrollRun
@@ -107,8 +140,17 @@ class PayrollRunSerializer(serializers.ModelSerializer):
             'id', 'run_number', 'period_year', 'period_month', 'status',
             'total_gross', 'total_deductions', 'total_net', 'total_paye',
             'total_pension_employee', 'total_pension_employer', 'total_nhf', 'total_nsitf',
-            'payment_date', 'transfer_reference', 'created_at', 'payslips'
+            'total_bonus', 'total_overtime',
+            'submitted_for_approval', 'submitted_by',
+            'payment_date', 'transfer_reference', 'created_at', 'payslips', 'employee_count',
         ]
-        read_only_fields = ['id', 'run_number', 'created_at', 'total_gross', 'total_deductions',
-                           'total_net', 'total_paye', 'total_pension_employee', 'total_pension_employer',
-                           'total_nhf', 'total_nsitf', 'transfer_reference']
+        read_only_fields = [
+            'id', 'run_number', 'created_at',
+            'total_gross', 'total_deductions', 'total_net', 'total_paye',
+            'total_pension_employee', 'total_pension_employer', 'total_nhf', 'total_nsitf',
+            'total_bonus', 'total_overtime',
+            'transfer_reference', 'submitted_for_approval', 'submitted_by', 'employee_count',
+        ]
+
+    def get_employee_count(self, obj):
+        return obj.payslips.count()

@@ -114,6 +114,10 @@ class Product(TenantAwareModel):
 
     # Pricing
     cost_price = MoneyField(help_text="Default cost price (overridden per batch)")
+    owner_cost_price = MoneyField(
+        default=Decimal("0"),
+        help_text="Owner's actual purchase cost — visible to owners only for margin analytics",
+    )
     selling_price = MoneyField(help_text="Default retail selling price")
     wholesale_price = MoneyField(default=Decimal("0"))
 

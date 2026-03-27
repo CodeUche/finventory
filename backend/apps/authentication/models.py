@@ -11,6 +11,7 @@ Security decisions:
     - `is_verified` gate prevents unverified accounts from accessing data.
 """
 
+import random
 import uuid
 
 from django.contrib.auth.models import (
@@ -60,6 +61,16 @@ class User(AbstractBaseUser, PermissionsMixin):
         default=False,
         help_text="Email has been verified. Unverified users have limited access.",
     )
+    is_sub_account = models.BooleanField(
+        default=False,
+        help_text="True for accounts created under a parent organisation. Cannot create orgs or manage billing.",
+    )
+
+    # MFA (TOTP)
+    mfa_enabled = models.BooleanField(default=False)
+    mfa_secret = models.CharField(max_length=64, blank=True, default='')
+    mfa_secret_pending = models.CharField(max_length=64, blank=True, default='')
+    mfa_backup_codes = models.JSONField(default=list, blank=True)
 
     # Security: track login activity
     last_login_ip = models.GenericIPAddressField(null=True, blank=True)
@@ -92,3 +103,46 @@ class User(AbstractBaseUser, PermissionsMixin):
     def is_locked(self) -> bool:
         from django.utils import timezone
         return self.locked_until is not None and self.locked_until > timezone.now()
+
+
+class PasswordResetOTP(models.Model):
+    """
+    One-time password for password resets.
+    Expires after 15 minutes, single-use.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        "authentication.User",
+        on_delete=models.CASCADE,
+        related_name="password_reset_otps",
+    )
+    # Store only the last 6 chars for display; full code stored hashed
+    code_hash = models.CharField(max_length=128)
+    created_at = models.DateTimeField(auto_now_add=True)
+    used = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    @classmethod
+    def generate(cls, user):
+        """Invalidate previous OTPs and create a new one. Returns plain code."""
+        import hashlib
+        cls.objects.filter(user=user, used=False).update(used=True)
+        code = str(random.randint(100000, 999999))
+        code_hash = hashlib.sha256(code.encode()).hexdigest()
+        cls.objects.create(user=user, code_hash=code_hash)
+        return code
+
+    def verify(self, code: str) -> bool:
+        import hashlib
+        import hmac
+        from django.utils import timezone
+        from datetime import timedelta
+        if self.used:
+            return False
+        if timezone.now() > self.created_at + timedelta(minutes=15):
+            return False
+        candidate = hashlib.sha256(code.encode()).hexdigest()
+        return hmac.compare_digest(candidate, self.code_hash)

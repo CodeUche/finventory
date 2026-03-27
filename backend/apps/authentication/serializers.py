@@ -31,6 +31,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         token["email"] = user.email
         token["full_name"] = user.get_full_name()
         token["is_verified"] = user.is_verified
+        token["is_sub_account"] = user.is_sub_account
 
         # Embed memberships (org_id → role) for fast client-side routing
         memberships = {
@@ -107,9 +108,9 @@ class UserProfileSerializer(serializers.ModelSerializer):
         model = User
         fields = [
             "id", "email", "first_name", "last_name", "phone",
-            "avatar", "is_verified", "is_superuser", "is_staff", "created_at",
+            "avatar", "is_verified", "is_superuser", "is_staff", "is_sub_account", "mfa_enabled", "created_at",
         ]
-        read_only_fields = ["id", "email", "is_verified", "is_superuser", "is_staff", "created_at"]
+        read_only_fields = ["id", "email", "is_verified", "is_superuser", "is_staff", "is_sub_account", "mfa_enabled", "created_at"]
         extra_kwargs = {
             "first_name": {"max_length": 150, "required": False, "allow_blank": True},
             "last_name": {"max_length": 150, "required": False, "allow_blank": True},

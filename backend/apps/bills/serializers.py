@@ -88,7 +88,10 @@ class BillItemInputSerializer(serializers.Serializer):
 
 
 class CreateBillSerializer(serializers.Serializer):
-    supplier = serializers.UUIDField()
+    # supplier is optional when vendor_name (custom/walk-in) is supplied instead
+    supplier = serializers.UUIDField(required=False, allow_null=True)
+    vendor_name = serializers.CharField(required=False, allow_blank=True, default='', max_length=255)
+    folder = serializers.UUIDField(required=False, allow_null=True)
     issue_date = serializers.DateField()
     due_date = serializers.DateField()
     # max_length prevents oversized free-text fields from being stored
@@ -102,6 +105,13 @@ class CreateBillSerializer(serializers.Serializer):
     )
     # Use the typed nested serializer — replaces unsafe DictField
     items = BillItemInputSerializer(many=True, min_length=1, max_length=200)
+
+    def validate(self, attrs):
+        if not attrs.get('supplier') and not attrs.get('vendor_name', '').strip():
+            raise serializers.ValidationError(
+                {'supplier': 'Either a supplier or a custom vendor name is required.'}
+            )
+        return attrs
 
 
 class RecordBillPaymentSerializer(serializers.Serializer):

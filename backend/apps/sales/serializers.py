@@ -36,11 +36,11 @@ class SaleItemSerializer(serializers.ModelSerializer):
         model = SaleItem
         fields = [
             "id", "product", "product_name", "product_sku",
-            "batch", "quantity", "unit_price",
+            "batch", "quantity", "quantity_returned", "unit_price",
             "discount_percent", "discount_amount",
             "tax_rate", "tax_amount", "line_total", "cost_of_goods",
         ]
-        read_only_fields = ["id", "discount_amount", "tax_amount", "line_total", "cost_of_goods"]
+        read_only_fields = ["id", "quantity_returned", "discount_amount", "tax_amount", "line_total", "cost_of_goods"]
 
 
 class SalePaymentSerializer(serializers.ModelSerializer):

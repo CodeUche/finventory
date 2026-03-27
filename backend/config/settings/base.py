@@ -30,6 +30,11 @@ ALLOWED_HOSTS: list[str] = config("ALLOWED_HOSTS", default="localhost,127.0.0.1"
 # Get yours at https://dashboard.paystack.com/#/settings/developers
 PAYSTACK_SECRET_KEY = config("PAYSTACK_SECRET_KEY", default="")
 
+# Frontend base URL (kept for reference; verify-email now uses backend URL directly)
+FRONTEND_URL = config("FRONTEND_URL", default="http://localhost:3000")
+# Backend public URL — used to build email verification links for desktop app
+BACKEND_URL = config("BACKEND_URL", default="http://localhost:8000")
+
 # Groq AI key — powers the "Explain My Money" AI assistant (free globally)
 # Get yours free at https://console.groq.com/keys
 GROQ_API_KEY = config("GROQ_API_KEY", default="")
@@ -180,6 +185,7 @@ REST_FRAMEWORK = {
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
+        "apps.core.permissions.IsVerified",
     ],
     "DEFAULT_RENDERER_CLASSES": [
         "rest_framework.renderers.JSONRenderer",
@@ -215,6 +221,8 @@ REST_FRAMEWORK = {
         "password_change": "3/hour",   # PasswordChangeRateThrottle
         "password_reset_request": "5/hour",   # PasswordResetRequestRateThrottle
         "password_reset_confirm": "10/hour",  # PasswordResetConfirmRateThrottle
+        "resend_verification": "3/hour",      # ResendVerificationRateThrottle
+        "mfa_verify": "10/minute",            # MFAVerifyRateThrottle
         # ── Business endpoints ─────────────────────────────────────────────
         "bank_resolve": "20/minute",   # BankResolveRateThrottle — Paystack proxy
         "invitation": "10/hour",       # InvitationRateThrottle — team management
@@ -367,6 +375,11 @@ CELERY_BEAT_SCHEDULE = {
     "create-bill-year-archive": {
         "task": "bills.create_year_archive_folders",
         "schedule": crontab(hour=0, minute=35, month_of_year=1, day_of_month=1),
+    },
+    # Check for expired trials and subscriptions every hour
+    "expire-subscriptions-hourly": {
+        "task": "subscriptions.expire_subscriptions",
+        "schedule": crontab(hour="*", minute=0),
     },
 }
 
