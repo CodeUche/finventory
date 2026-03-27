@@ -13,7 +13,7 @@ import DateInput from '@/components/DateInput'
 import { saveBlobFile } from '@/lib/saveBlobFile'
 import type { Invoice } from '@/types'
 
-const STATUS_OPTIONS = ['', 'paid', 'proforma', 'confirmed', 'partially_paid', 'credit', 'overdue', 'voided']
+const STATUS_OPTIONS = ['', 'paid', 'proforma', 'confirmed', 'partially_paid', 'credit', 'overdue', 'returned', 'voided']
 const RETURN_REASONS = [
   { value: 'defective',       label: 'Defective / Damaged' },
   { value: 'wrong_item',      label: 'Wrong Item Delivered' },
@@ -23,7 +23,7 @@ const RETURN_REASONS = [
 ]
 
 interface PdfPreview { url: string; filename: string }
-interface ReturnLineItem { sale_item_id: string; quantity_returned: string; max_qty: number; product_name: string; unit_price: string }
+interface ReturnLineItem { sale_item_id: string; quantity_returned: string; max_qty: number; already_returned: number; product_name: string; unit_price: string }
 
 /** Parse a CSS hex color into an RGB triple for jsPDF. Falls back to orange on invalid input. */
 function hexToRgb(hex?: string): [number, number, number] {
@@ -70,6 +70,7 @@ async function buildInvoicePDF(
   companyFontColor?: string,
   invoiceTemplate?: string,
   companyStamp?: string,
+  showCompanyName?: boolean,
 ): Promise<PdfPreview> {
   const { jsPDF } = await import('jspdf')
   const { default: autoTable } = await import('jspdf-autotable')
@@ -86,7 +87,7 @@ async function buildInvoicePDF(
   const NAVY:   [number, number, number] = [15,  23,  42]
   const SLATE4: [number, number, number] = [148, 163, 184]
 
-  const displayName = companyNameOverride?.trim() || orgName
+  const displayName = showCompanyName === false ? '' : (companyNameOverride?.trim() || orgName)
   const pdfFontFamily = companyFont?.toLowerCase().includes('times') || companyFont === 'Georgia'
     || companyFont === 'Playfair Display' || companyFont === 'Merriweather' || companyFont === 'Lora'
     || companyFont === 'Libre Baskerville' || companyFont === 'EB Garamond' || companyFont === 'Crimson Text'
@@ -98,7 +99,14 @@ async function buildInvoicePDF(
   const isItalic = companyFontItalic === true
   const pdfStyle = isBold && isItalic ? 'bolditalic' : isBold ? 'bold' : isItalic ? 'italic' : 'normal'
   const fontSize = Math.max(8, Math.min(36, companyFontSize ?? 14))
-  const nameColor: [number, number, number] = companyFontColor ? hexToRgb(companyFontColor) : DARK
+  // Smart default: white on dark-background templates, dark on light-background templates.
+  // Custom color (anything other than the default #fff) is always used as-is.
+  const nameColor: [number, number, number] = (() => {
+    if (!companyFontColor || companyFontColor === '#ffffff') {
+      return (tmpl === 'modern' || tmpl === 'minimal') ? DARK : [255, 255, 255]
+    }
+    return hexToRgb(companyFontColor)
+  })()
 
   // Pre-load logo
   let logoData: string | null = null
@@ -117,13 +125,15 @@ async function buildInvoicePDF(
       doc.addImage(logoData, fmt, 8, 6, 22, 22)
     }
     const nameX = logoData ? 34 : 10
-    doc.setFontSize(fontSize); doc.setFont(pdfFontFamily, pdfStyle)
-    doc.setTextColor(255, 255, 255)
-    doc.text(displayName, nameX, 15)
-    if (companyFontUnderline) {
-      const tw = doc.getTextWidth(displayName)
-      doc.setDrawColor(255, 255, 255); doc.setLineWidth(0.3)
-      doc.line(nameX, 16.5, nameX + tw, 16.5)
+    if (displayName) {
+      doc.setFontSize(fontSize); doc.setFont(pdfFontFamily, pdfStyle)
+      doc.setTextColor(...nameColor)
+      doc.text(displayName, nameX, 15)
+      if (companyFontUnderline) {
+        const tw = doc.getTextWidth(displayName)
+        doc.setDrawColor(...nameColor); doc.setLineWidth(0.3)
+        doc.line(nameX, 16.5, nameX + tw, 16.5)
+      }
     }
     doc.setFontSize(8); doc.setFont('helvetica', 'normal')
     doc.setTextColor(220, 220, 220)
@@ -230,26 +240,28 @@ async function buildInvoicePDF(
     // professional — split header: dark left panel | light right panel
     const H = 40
     const splitX = pageW * 0.46
-    doc.setFillColor(...NAVY); doc.rect(0, 0, splitX, H, 'F')
+    doc.setFillColor(...BRAND); doc.rect(0, 0, splitX, H, 'F')
     doc.setFillColor(248, 250, 252); doc.rect(splitX, 0, pageW - splitX, H, 'F')
     if (logoData) {
       const fmt = logoData.includes('image/png') ? 'PNG' : 'JPEG'
       doc.addImage(logoData, fmt, 8, 6, 22, 22)
     }
     const nameX = logoData ? 33 : 10
-    doc.setFontSize(fontSize); doc.setFont(pdfFontFamily, pdfStyle); doc.setTextColor(255, 255, 255)
-    doc.text(displayName, nameX, 16)
-    if (companyFontUnderline) {
-      const tw = doc.getTextWidth(displayName)
-      doc.setDrawColor(255, 255, 255); doc.setLineWidth(0.3)
-      doc.line(nameX, 17.5, nameX + tw, 17.5)
+    if (displayName) {
+      doc.setFontSize(fontSize); doc.setFont(pdfFontFamily, pdfStyle); doc.setTextColor(...nameColor)
+      doc.text(displayName, nameX, 16)
+      if (companyFontUnderline) {
+        const tw = doc.getTextWidth(displayName)
+        doc.setDrawColor(...nameColor); doc.setLineWidth(0.3)
+        doc.line(nameX, 17.5, nameX + tw, 17.5)
+      }
     }
     doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(...SLATE4)
     let iy = 22
     if (orgAddress) { doc.text(orgAddress.slice(0, 30), nameX, iy); iy += 4 }
     if (orgEmail)   { doc.text(orgEmail, nameX, iy) }
     // Right panel
-    doc.setFontSize(16); doc.setFont('helvetica', 'bold'); doc.setTextColor(...NAVY)
+    doc.setFontSize(16); doc.setFont('helvetica', 'bold'); doc.setTextColor(...DARK)
     doc.text('INVOICE', pageW - 14, 13, { align: 'right' })
     const pRows: [string, string][] = [
       ['Invoice No.', inv.invoice_number],
@@ -260,7 +272,7 @@ async function buildInvoicePDF(
     pRows.forEach(([lbl, val], i) => {
       doc.setFontSize(7.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(...SLATE4)
       doc.text(lbl, splitX + 5, 18 + i * 5.2)
-      doc.setFont('helvetica', 'bold'); doc.setTextColor(...NAVY)
+      doc.setFont('helvetica', 'bold'); doc.setTextColor(...DARK)
       doc.text(val, pageW - 14, 18 + i * 5.2, { align: 'right' })
     })
     y = H + 8
@@ -282,7 +294,19 @@ async function buildInvoicePDF(
   y += 28
 
   // ── Items table (headStyle varies by template) ─────────────────────────────
-  const headFill: [number, number, number] = tmpl === 'professional' ? NAVY : tmpl === 'minimal' ? DARK : BRAND
+  const headFill: [number, number, number] = tmpl === 'minimal' ? DARK : BRAND
+
+  // Dynamically size the Unit Price and Amount columns so large numbers
+  // (e.g. ₦250,000,000.00) always fit, and Product / Description takes whatever
+  // space remains (cellWidth: 'auto').
+  const itemAmounts = [...(inv.items ?? []).map(it => formatCurrency(it.line_total)), 'Amount']
+  const itemPrices  = [...(inv.items ?? []).map(it => formatCurrency(it.unit_price)), 'Unit Price']
+  const itemQtys    = [...(inv.items ?? []).map(it => String(Number(it.quantity))), 'Qty']
+  doc.setFontSize(9)
+  const amtColW   = Math.min(58, Math.max(30, Math.max(...itemAmounts.map(s => doc.getTextWidth(s))) + 10))
+  const priceColW = Math.min(52, Math.max(28, Math.max(...itemPrices.map(s => doc.getTextWidth(s)))  + 10))
+  const qtyColW   = Math.min(30, Math.max(14, Math.max(...itemQtys.map(s => doc.getTextWidth(s)))    + 8))
+
   autoTable(doc, {
     startY: y,
     head: [['#', 'Product / Description', 'SKU', 'Qty', 'Unit Price', 'Amount']],
@@ -307,12 +331,12 @@ async function buildInvoicePDF(
     },
     alternateRowStyles: { fillColor: tmpl === 'minimal' ? [255, 255, 255] : [248, 248, 248] },
     columnStyles: {
-      0: { cellWidth: 10,  halign: 'center' },
+      0: { cellWidth: 10,        halign: 'center' },
       1: { cellWidth: 'auto' },
-      2: { cellWidth: 28,  halign: 'center' },
-      3: { cellWidth: 14,  halign: 'center' },
-      4: { cellWidth: 32,  halign: 'right' },
-      5: { cellWidth: 32,  halign: 'right', fontStyle: 'bold' },
+      2: { cellWidth: 26,        halign: 'center' },
+      3: { cellWidth: qtyColW,   halign: 'center' },
+      4: { cellWidth: priceColW, halign: 'right' },
+      5: { cellWidth: amtColW,   halign: 'right', fontStyle: 'bold' },
     },
     margin: { left: 14, right: 14 },
     tableLineColor: tmpl === 'minimal' ? DARK : [225, 225, 225],
@@ -441,53 +465,56 @@ async function buildDeliveryNotePDF(
   companyFont?: string,
   orgLogo?: string,
   companyStamp?: string,
+  invoiceTemplate?: string,
+  showCompanyName?: boolean,
+  companyFontColor?: string,
 ): Promise<PdfPreview> {
   const { jsPDF } = await import('jspdf')
   const { default: autoTable } = await import('jspdf-autotable')
+  const { applyDocHeader, templateHeadFill } = await import('@/lib/pdfUtils')
   const doc = new jsPDF({ unit: 'mm', format: 'a4' })
   const pageW = doc.internal.pageSize.getWidth()
   const BRAND: [number, number, number] = hexToRgb(brandColorHex)
   const DARK: [number, number, number] = [30, 30, 30]
   const MUTED: [number, number, number] = [100, 100, 100]
-  const displayName = companyNameOverride?.trim() || orgName
+  const tmpl = invoiceTemplate ?? 'classic'
+  const displayName = showCompanyName === false ? '' : (companyNameOverride?.trim() || orgName)
   const pdfFont = (companyFont === 'times' || companyFont === 'courier') ? companyFont : 'helvetica'
+  const nameColor: [number, number, number] = (() => {
+    if (!companyFontColor || companyFontColor === '#ffffff') {
+      return (tmpl === 'modern' || tmpl === 'minimal') ? DARK : [255, 255, 255]
+    }
+    return hexToRgb(companyFontColor)
+  })()
 
-  let y = 14
-  doc.setFillColor(...BRAND); doc.rect(0, 0, pageW, 3, 'F')
+  // Pre-load logo
+  let logoData: string | null = null
+  if (orgLogo) { try { logoData = await urlToDataUrl(orgLogo) } catch { /* skip */ } }
 
-  // ── Logo ──────────────────────────────────────────────────────────────────
-  let textX = 14
-  if (orgLogo) {
-    try {
-      const b64 = await urlToDataUrl(orgLogo)
-      if (b64) {
-        doc.addImage(b64, b64.includes('image/png') ? 'PNG' : 'JPEG', 14, y + 2, 22, 22)
-        textX = 40
-      }
-    } catch { /* skip logo on error */ }
-  }
+  // Render template-aware header
+  let y = applyDocHeader(doc, {
+    tmpl, pageW, BRAND, DARK, MUTED,
+    logoData,
+    displayName,
+    orgAddress,
+    pdfFont,
+    nameColor,
+    showCompanyName: showCompanyName !== false,
+    docTitle: 'DELIVERY NOTE',
+    metaRows: [
+      ['Ref No.', inv.invoice_number],
+      ['Date',    formatDate(inv.issue_date)],
+    ],
+  })
 
-  doc.setFontSize(20)
-  doc.setFont(pdfFont, 'bold')
-  doc.setTextColor(...BRAND)
-  doc.text('DELIVERY NOTE', pageW / 2, y + 10, { align: 'center' })
-  y += 18
-
-  doc.setFontSize(8)
-  doc.setFont(pdfFont, 'normal')
-  doc.setTextColor(...MUTED)
-  doc.text(`Ref: ${inv.invoice_number}`, textX, y)
-  doc.text(`Date: ${new Date().toLocaleDateString()}`, pageW - 14, y, { align: 'right' })
-  y += 7
-
-  doc.setFontSize(10)
-  doc.setFont(pdfFont, 'bold')
-  doc.setTextColor(...DARK)
+  // "Deliver To" block
+  doc.setFontSize(10); doc.setFont(pdfFont, 'bold'); doc.setTextColor(...DARK)
   doc.text('Deliver To:', 14, y)
   doc.setFont(pdfFont, 'normal')
   doc.text(inv.customer_name ?? 'Walk-in Customer', 14, y + 5)
   y += 14
 
+  const headFill = templateHeadFill(tmpl, BRAND)
   autoTable(doc, {
     startY: y,
     head: [['#', 'Product', 'SKU', 'Qty', '☐ Received']],
@@ -495,7 +522,7 @@ async function buildDeliveryNotePDF(
       i + 1, item.product_name, item.product_sku ?? '—', Number(item.quantity), '',
     ]),
     styles: { fontSize: 9, cellPadding: { top: 5, bottom: 5, left: 5, right: 5 }, font: pdfFont },
-    headStyles: { fillColor: BRAND, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
+    headStyles: { fillColor: headFill, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
     columnStyles: { 0: { cellWidth: 10, halign: 'center' }, 4: { cellWidth: 30, halign: 'center' } },
     margin: { left: 14, right: 14 },
   })
@@ -681,6 +708,7 @@ export default function SalesPage() {
         organisation?.company_name_font_color,
         organisation?.invoice_template,
         organisation?.company_stamp,
+        organisation?.show_company_name_on_pdf ?? true,
       )
       setPdfPreview(preview)
     } catch { toast.error('Failed to generate PDF') }
@@ -736,6 +764,9 @@ export default function SalesPage() {
         organisation?.company_name_font,
         organisation?.logo,
         organisation?.company_stamp,
+        organisation?.invoice_template,
+        organisation?.show_company_name_on_pdf ?? true,
+        organisation?.company_name_font_color,
       )
       setPdfPreview(preview)
     } catch { toast.error('Failed to generate delivery note') }
@@ -818,14 +849,29 @@ export default function SalesPage() {
 
   const openReturnModal = () => {
     if (!detail) return
+    const returnable = (detail.items ?? []).filter((item: any) => {
+      const sold = parseFloat(item.quantity)
+      const returned = parseFloat(item.quantity_returned ?? '0')
+      return sold - returned > 0
+    })
+    if (returnable.length === 0) {
+      toast.error('All items on this invoice have already been fully returned.')
+      return
+    }
     setReturnItems(
-      (detail.items ?? []).map((item: any) => ({
-        sale_item_id: item.id,
-        quantity_returned: String(item.quantity),
-        max_qty: parseFloat(item.quantity),
-        product_name: item.product_name,
-        unit_price: item.unit_price,
-      }))
+      returnable.map((item: any) => {
+        const sold = parseFloat(item.quantity)
+        const alreadyReturned = parseFloat(item.quantity_returned ?? '0')
+        const remaining = sold - alreadyReturned
+        return {
+          sale_item_id: item.id,
+          quantity_returned: String(remaining),
+          max_qty: remaining,
+          already_returned: alreadyReturned,
+          product_name: item.product_name,
+          unit_price: item.unit_price,
+        }
+      })
     )
     setReturnReason('other')
     setReturnNotes('')
@@ -1268,7 +1314,13 @@ export default function SalesPage() {
                     <div key={item.sale_item_id} className="flex items-center gap-3 bg-surface-800 rounded-lg px-3 py-2.5">
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-white truncate">{item.product_name}</p>
-                        <p className="text-xs text-slate-500">Max: {item.max_qty} · {formatCurrency(item.unit_price)} each</p>
+                        <p className="text-xs text-slate-500">
+                          Returnable: {item.max_qty}
+                          {item.already_returned > 0 && (
+                            <span className="ml-1 text-amber-400">({item.already_returned} already returned)</span>
+                          )}
+                          {' · '}{formatCurrency(item.unit_price)} each
+                        </p>
                       </div>
                       <input
                         type="text"
@@ -1277,6 +1329,8 @@ export default function SalesPage() {
                         value={item.quantity_returned}
                         onChange={(e) => {
                           const v = e.target.value
+                          const num = parseFloat(v)
+                          if (!isNaN(num) && num > item.max_qty) return
                           setReturnItems((prev) => prev.map((it, i) => i === idx ? { ...it, quantity_returned: v } : it))
                         }}
                         placeholder="Qty"

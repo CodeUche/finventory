@@ -8,6 +8,7 @@ import { payrollApi } from '@/services/api'
 import { formatCurrency, formatAmountInput, stripCommas, formatDate } from '@/lib/utils'
 import type { Employee, EmployeeDocument, EmployeePenalty, EmployeeLoan } from '@/types'
 import DateInput from '@/components/DateInput'
+import { FieldTooltip } from '@/components/FieldTooltip'
 
 interface EmployeeForm {
   first_name: string; last_name: string; email: string; phone: string
@@ -391,6 +392,14 @@ export default function EmployeesPage() {
     } catch { toast.error('Failed to deactivate') }
   }
 
+  const handleDelete = async (e: Employee) => {
+    if (!confirm(`Permanently delete ${e.full_name}? This will remove all their records and cannot be undone.`)) return
+    try {
+      await payrollApi.deleteEmployee(e.id)
+      toast.success('Employee deleted'); load()
+    } catch { toast.error('Failed to delete employee') }
+  }
+
   const totalEmployees = employees.length
   const active = employees.filter((e) => e.is_active).length
   const contracted = employees.filter((e) => e.employment_type === 'contract').length
@@ -489,6 +498,7 @@ export default function EmployeesPage() {
                       {e.is_active && (
                         <button onClick={() => handleDeactivate(e)} className="text-xs px-2.5 py-1 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors">Deactivate</button>
                       )}
+                      <button onClick={() => handleDelete(e)} className="p-1.5 text-slate-600 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors" title="Delete employee permanently"><Trash2 size={14} /></button>
                     </div>
                   </td>
                 </tr>
@@ -523,21 +533,21 @@ export default function EmployeesPage() {
             {/* ── Personal ── */}
             {formTab === 'personal' && (
               <div className="grid grid-cols-2 gap-4">
-                <div><label className="text-xs text-slate-400 mb-1 block">First Name *</label><input className="input" value={form.first_name} onChange={(e) => setForm({ ...form, first_name: e.target.value })} /></div>
-                <div><label className="text-xs text-slate-400 mb-1 block">Last Name *</label><input className="input" value={form.last_name} onChange={(e) => setForm({ ...form, last_name: e.target.value })} /></div>
-                <div><label className="text-xs text-slate-400 mb-1 block">Email</label><input type="email" className="input" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
-                <div><label className="text-xs text-slate-400 mb-1 block">Phone</label><input className="input" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>
-                <div><label className="text-xs text-slate-400 mb-1 block">Job Title</label><input className="input" value={form.job_title} onChange={(e) => setForm({ ...form, job_title: e.target.value })} /></div>
-                <div><label className="text-xs text-slate-400 mb-1 block">Department</label><input className="input" value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} /></div>
+                <div><label className="text-xs text-slate-400 mb-1 block flex items-center gap-1">First Name *<FieldTooltip text="Employee's full legal name as it appears on their employment contract." /></label><input className="input" value={form.first_name} onChange={(e) => setForm({ ...form, first_name: e.target.value })} /></div>
+                <div><label className="text-xs text-slate-400 mb-1 block flex items-center gap-1">Last Name *<FieldTooltip text="Employee's full legal name as it appears on their employment contract." /></label><input className="input" value={form.last_name} onChange={(e) => setForm({ ...form, last_name: e.target.value })} /></div>
+                <div><label className="text-xs text-slate-400 mb-1 block flex items-center gap-1">Email<FieldTooltip text="Employee's work email — used for payslip delivery." /></label><input type="email" className="input" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
+                <div><label className="text-xs text-slate-400 mb-1 block flex items-center gap-1">Phone<FieldTooltip text="Employee's contact number." /></label><input className="input" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>
+                <div><label className="text-xs text-slate-400 mb-1 block flex items-center gap-1">Job Title<FieldTooltip text="The employee's role or position in your company." /></label><input className="input" value={form.job_title} onChange={(e) => setForm({ ...form, job_title: e.target.value })} /></div>
+                <div><label className="text-xs text-slate-400 mb-1 block flex items-center gap-1">Department<FieldTooltip text="Which team or department this employee belongs to — e.g. Sales, Operations, Finance." /></label><input className="input" value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} /></div>
                 <div>
-                  <label className="text-xs text-slate-400 mb-1 block">Employment Type</label>
+                  <label className="text-xs text-slate-400 mb-1 block flex items-center gap-1">Employment Type<FieldTooltip text="Whether this is a full-time permanent employee, part-time, or a contractor." /></label>
                   <select className="input" value={form.employment_type} onChange={(e) => setForm({ ...form, employment_type: e.target.value })}>
                     <option value="full_time">Full Time</option>
                     <option value="part_time">Part Time</option>
                     <option value="contract">Contract</option>
                   </select>
                 </div>
-                <div><label className="text-xs text-slate-400 mb-1 block">Hire Date</label><DateInput value={form.hire_date} onChange={(v) => setForm({ ...form, hire_date: v })} /></div>
+                <div><label className="text-xs text-slate-400 mb-1 block flex items-center gap-1">Hire Date<FieldTooltip text="The date this employee joined your company. Used to calculate tenure." /></label><DateInput value={form.hire_date} onChange={(v) => setForm({ ...form, hire_date: v })} /></div>
               </div>
             )}
 
@@ -545,7 +555,7 @@ export default function EmployeesPage() {
             {formTab === 'salary' && (
               <div className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
-                  <div><label className="text-xs text-slate-400 mb-1 block">Basic Salary *</label><input type="text" inputMode="decimal" className="input" value={form.basic_salary} onChange={(e) => setForm({ ...form, basic_salary: formatAmountInput(e.target.value) })} /></div>
+                  <div><label className="text-xs text-slate-400 mb-1 block flex items-center gap-1">Basic Salary *<FieldTooltip text="The employee's total monthly pay before any deductions like tax (PAYE) or pension." /></label><input type="text" inputMode="decimal" className="input" value={form.basic_salary} onChange={(e) => setForm({ ...form, basic_salary: formatAmountInput(e.target.value) })} /></div>
                   <div><label className="text-xs text-slate-400 mb-1 block">Housing Allowance</label><input type="text" inputMode="decimal" className="input" value={form.housing_allowance} onChange={(e) => setForm({ ...form, housing_allowance: formatAmountInput(e.target.value) })} /></div>
                   <div><label className="text-xs text-slate-400 mb-1 block">Transport Allowance</label><input type="text" inputMode="decimal" className="input" value={form.transport_allowance} onChange={(e) => setForm({ ...form, transport_allowance: formatAmountInput(e.target.value) })} /></div>
                   <div><label className="text-xs text-slate-400 mb-1 block">Leave Allowance</label><input type="text" inputMode="decimal" className="input" value={form.leave_allowance} onChange={(e) => setForm({ ...form, leave_allowance: formatAmountInput(e.target.value) })} /></div>
@@ -562,7 +572,7 @@ export default function EmployeesPage() {
             {formTab === 'banking' && (
               <div className="grid grid-cols-2 gap-4">
                 <div className="col-span-2" ref={bankRef}>
-                  <label className="text-xs text-slate-400 mb-1 block">Bank Name</label>
+                  <label className="text-xs text-slate-400 mb-1 block flex items-center gap-1">Bank Name<FieldTooltip text="Employee's bank details where their salary will be transferred. Keep this accurate." /></label>
                   <div className="relative">
                     <input className="input pr-9" placeholder="Search bank…" value={bankSearch}
                       onChange={(e) => { setBankSearch(e.target.value); setBankOpen(true); if (e.target.value !== form.bank_name) { setForm((f) => ({ ...f, bank_name: '' })); setBankCode('') } }}
@@ -584,7 +594,7 @@ export default function EmployeesPage() {
                   </div>
                 </div>
                 <div>
-                  <label className="text-xs text-slate-400 mb-1 block">Account Number</label>
+                  <label className="text-xs text-slate-400 mb-1 block flex items-center gap-1">Account Number<FieldTooltip text="Employee's bank account number where their salary will be transferred. Keep this accurate." /></label>
                   <input className="input" placeholder="10-digit NUBAN" maxLength={10} value={form.account_number}
                     onChange={(e) => { const val = e.target.value.replace(/\D/g, '').slice(0, 10); setForm((f) => ({ ...f, account_number: val, account_name: val.length < 10 ? '' : f.account_name })) }} />
                 </div>
@@ -601,9 +611,9 @@ export default function EmployeesPage() {
             {/* ── Statutory ── */}
             {formTab === 'statutory' && (
               <div className="grid grid-cols-2 gap-4">
-                <div><label className="text-xs text-slate-400 mb-1 block">PFA Name</label><input className="input" placeholder="e.g. ARM Pension" value={form.pfa_name} onChange={(e) => setForm({ ...form, pfa_name: e.target.value })} /></div>
+                <div><label className="text-xs text-slate-400 mb-1 block flex items-center gap-1">PFA Name<FieldTooltip text="The pension fund administrator managing this employee's retirement contributions." /></label><input className="input" placeholder="e.g. ARM Pension" value={form.pfa_name} onChange={(e) => setForm({ ...form, pfa_name: e.target.value })} /></div>
                 <div><label className="text-xs text-slate-400 mb-1 block">PFA Number (RSA PIN)</label><input className="input" value={form.pfa_number} onChange={(e) => setForm({ ...form, pfa_number: e.target.value })} /></div>
-                <div className="col-span-2"><label className="text-xs text-slate-400 mb-1 block">TIN (Tax ID)</label><input className="input" placeholder="FIRS Tax Identification Number" value={form.tin} onChange={(e) => setForm({ ...form, tin: e.target.value })} /></div>
+                <div className="col-span-2"><label className="text-xs text-slate-400 mb-1 block flex items-center gap-1">TIN (Tax ID)<FieldTooltip text="Employee's Tax Identification Number issued by FIRS. Required for accurate PAYE remittance." /></label><input className="input" placeholder="FIRS Tax Identification Number" value={form.tin} onChange={(e) => setForm({ ...form, tin: e.target.value })} /></div>
               </div>
             )}
 
@@ -868,11 +878,21 @@ export default function EmployeesPage() {
             </div>
           </div>
           {viewingDoc.file_url && /\.(png|jpe?g|gif|webp|svg)(\?|$)/i.test(viewingDoc.file_url) ? (
-            <div className="flex-1 flex items-center justify-center bg-black/80 p-8">
-              <img src={viewingDoc.file_url} alt={viewingDoc.name} className="max-w-full max-h-full object-contain rounded-lg shadow-xl" />
+            <div className="flex-1 flex items-center justify-center bg-white p-8">
+              <img
+                src={viewingDoc.file_url}
+                alt={viewingDoc.name}
+                className="max-w-full max-h-full object-contain rounded-lg shadow-md"
+                style={{ background: '#fff' }}
+              />
             </div>
           ) : (
-            <iframe src={viewingDoc.file_url ?? ''} className="flex-1 w-full border-0 bg-white" title={viewingDoc.name} />
+            <iframe
+              src={viewingDoc.file_url ?? ''}
+              className="flex-1 w-full border-0"
+              title={viewingDoc.name}
+              style={{ background: '#fff' }}
+            />
           )}
         </div>
       )}

@@ -81,7 +81,7 @@ export default function StockPage() {
   }
 
   const handleAdjust = async () => {
-    if (!adjustForm.warehouse_id) { toast.error('Select a warehouse'); return }
+    if (!adjustForm.warehouse_id) { toast.error('Select a location'); return }
     if (!adjustForm.quantity || parseFloat(adjustForm.quantity) === 0) {
       toast.error('Enter a non-zero quantity'); return
     }
@@ -165,7 +165,7 @@ export default function StockPage() {
             value={warehouseFilter}
             onChange={(e) => setWarehouseFilter(e.target.value)}
           >
-            <option value="all">All Warehouses</option>
+            <option value="all">All Locations</option>
             {warehouseNames.map((w) => <option key={w} value={w}>{w}</option>)}
           </select>
           <button onClick={() => setFilter('all')} className={filter === 'all' ? 'btn-primary py-2 px-4' : 'btn-secondary py-2 px-4'}>All</button>
@@ -203,7 +203,7 @@ export default function StockPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-surface-700">
-                {['Product', 'SKU', 'Warehouse', 'On Hand', 'Reserved', 'Available', 'Status'].map((h) => (
+                {['Product', 'SKU', 'Location', 'On Hand', 'Reserved', 'Available', 'Status'].map((h) => (
                   <th key={h} className="px-5 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
                 ))}
               </tr>
@@ -320,13 +320,13 @@ export default function StockPage() {
               )}
 
               <div>
-                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Warehouse *</label>
+                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Location *</label>
                 <select
                   className="input"
                   value={adjustForm.warehouse_id}
                   onChange={(e) => setAdjustForm({ ...adjustForm, warehouse_id: e.target.value })}
                 >
-                  <option value="">Select warehouse…</option>
+                  <option value="">Select location…</option>
                   {warehouses.map((w) => (
                     <option key={w.id} value={w.id}>{w.name}{w.is_default ? ' (default)' : ''}</option>
                   ))}

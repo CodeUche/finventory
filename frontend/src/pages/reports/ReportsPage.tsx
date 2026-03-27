@@ -19,6 +19,7 @@ import toast from 'react-hot-toast'
 import { reportApi } from '@/services/api'
 import { formatCurrency, formatNumber, formatDate, getCurrencySymbol } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
+import { saveBlobFile } from '@/lib/saveBlobFile'
 import type { PnL, SalesSummaryPoint, ARAgingReport, VATSummary } from '@/types'
 
 const PERIOD_OPTIONS = [
@@ -64,32 +65,72 @@ export default function ReportsPage() {
       const { default: autoTable } = await import('jspdf-autotable')
       const doc = new jsPDF({ unit: 'mm', format: 'a4' })
       const pageW = doc.internal.pageSize.getWidth()
-      const BRAND: [number,number,number] = [249, 115, 22]
+      const brandRgbVAT = (hex?: string): [number, number, number] => {
+        const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex ?? '')
+        if (!m) return [249, 115, 22]
+        return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)]
+      }
+      const BRAND: [number,number,number] = brandRgbVAT(organisation?.brand_color)
       const DARK: [number,number,number] = [30, 30, 30]
       const MUTED: [number,number,number] = [100, 100, 100]
+      const tmpl = organisation?.invoice_template ?? 'classic'
 
-      // Header bar
-      doc.setFillColor(...BRAND)
-      doc.rect(0, 0, pageW, 3, 'F')
+      // Pre-load logo
+      let vatLogoData: string | null = null
+      if (organisation?.logo) {
+        try {
+          const res = await fetch(organisation.logo)
+          const blob = await res.blob()
+          vatLogoData = await new Promise<string>((resolve, reject) => {
+            const r = new FileReader(); r.onloadend = () => resolve(r.result as string); r.onerror = reject; r.readAsDataURL(blob)
+          })
+        } catch { /* no logo */ }
+      }
 
-      // Title
-      doc.setFontSize(20)
-      doc.setFont('helvetica', 'bold')
-      doc.setTextColor(...BRAND)
-      doc.text('VAT RETURN REPORT', 14, 20)
-
-      doc.setFontSize(9)
-      doc.setFont('helvetica', 'normal')
-      doc.setTextColor(...MUTED)
-      doc.text(`Organisation: ${organisation?.name ?? ''}`, 14, 28)
       const range = buildDateRange()
-      doc.text(`Period: ${range.date_from} to ${range.date_to}`, 14, 33)
-      doc.text(`Generated: ${new Date().toLocaleDateString()}`, 14, 38)
+      const vatHexToRgb = (hex?: string): [number, number, number] => {
+        const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex ?? '')
+        if (!m) return [30, 30, 30]
+        return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)]
+      }
+      const vatNameColor: [number, number, number] = (() => {
+        const c = organisation?.company_name_font_color
+        if (!c || c === '#ffffff') return (tmpl === 'modern' || tmpl === 'minimal') ? DARK : [255, 255, 255]
+        return vatHexToRgb(c)
+      })()
+      const vatShowName = organisation?.show_company_name_on_pdf ?? true
+      const vatDisplayName = vatShowName
+        ? (organisation?.invoice_company_name?.trim() || organisation?.name || 'Company') : ''
+      const { applyDocHeader, templateHeadFill: vatHeadFill } = await import('@/lib/pdfUtils')
+      let vatY = applyDocHeader(doc, {
+        tmpl, pageW, BRAND, DARK, MUTED,
+        logoData: vatLogoData,
+        displayName: vatDisplayName,
+        nameColor: vatNameColor,
+        showCompanyName: vatShowName,
+        orgAddress: organisation?.address,
+        orgEmail: organisation?.email,
+        docTitle: 'VAT RETURN REPORT',
+        metaRows: [
+          ['Organisation', organisation?.name ?? ''],
+          ['Period', `${range.date_from} to ${range.date_to}`],
+          ['Generated', new Date().toLocaleDateString()],
+        ],
+      })
 
       // Summary table
       const netPayable = parseFloat(vatSummary.net_vat_payable)
+      // Dynamic amount column width so large VAT figures always fit
+      const vatAmounts = [
+        formatCurrency(vatSummary.output_vat),
+        `(${formatCurrency(vatSummary.input_vat)})`,
+        formatCurrency(vatSummary.net_vat_payable),
+        'Amount',
+      ]
+      doc.setFontSize(10)
+      const vatAmtW = Math.min(70, Math.max(36, Math.max(...vatAmounts.map(s => doc.getTextWidth(s))) + 16))
       autoTable(doc, {
-        startY: 46,
+        startY: vatY,
         head: [['Description', 'Amount']],
         body: [
           ['Output VAT (collected on sales)', formatCurrency(vatSummary.output_vat)],
@@ -97,9 +138,12 @@ export default function ReportsPage() {
           ['Net VAT Payable to FIRS', formatCurrency(vatSummary.net_vat_payable)],
         ],
         styles: { fontSize: 10, cellPadding: { top: 5, bottom: 5, left: 8, right: 8 } },
-        headStyles: { fillColor: BRAND, textColor: [255,255,255], fontStyle: 'bold' },
+        headStyles: { fillColor: vatHeadFill(tmpl, BRAND), textColor: [255,255,255], fontStyle: 'bold' },
         bodyStyles: { textColor: DARK },
-        columnStyles: { 1: { halign: 'right', fontStyle: 'bold' } },
+        columnStyles: {
+          0: { cellWidth: 'auto' },
+          1: { halign: 'right', fontStyle: 'bold', cellWidth: vatAmtW },
+        },
         didParseCell: (data) => {
           if (data.row.index === 2) {
             data.cell.styles.textColor = netPayable >= 0 ? [220, 38, 38] : [22, 163, 74]
@@ -127,7 +171,7 @@ export default function ReportsPage() {
       doc.setTextColor(255, 255, 255)
       doc.text('Generated by Audity', pageW / 2, pageH - 3.5, { align: 'center' })
 
-      doc.save(`VAT-Return-${range.date_from}-to-${range.date_to}.pdf`)
+      await saveBlobFile(doc.output('blob'), `VAT-Return-${range.date_from}-to-${range.date_to}.pdf`)
       toast.success('VAT report downloaded')
     } catch {
       toast.error('Failed to generate PDF')

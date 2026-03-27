@@ -4,13 +4,18 @@ import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import path from 'path'
 
-// `tauri dev` sets TAURI_DEBUG; detect so we can tweak build options
-const isTauri = process.env.TAURI_DEBUG !== undefined || process.env.TAURI_ENV_DEBUG !== undefined
+export default defineConfig(({ mode }) => {
+  // Tauri builds pass --mode desktop (production) or set TAURI_DEBUG (dev).
+  // In both cases the PWA service worker must be disabled — it intercepts
+  // every fetch in the WebView2 context and strips the Authorization header
+  // on cross-origin requests, causing 401 on all authenticated API calls.
+  const isTauri = mode === 'desktop' || mode === 'android' ||
+    process.env.TAURI_DEBUG !== undefined || process.env.TAURI_ENV_DEBUG !== undefined
 
-export default defineConfig({
+  return {
   plugins: [
     react(),
-    // Only add PWA plugin for cloud/web builds — Tauri bundles its own manifest
+    // Only add PWA plugin for cloud/web builds — Tauri has no use for a SW
     !isTauri && VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'icons/*.png'],
@@ -85,4 +90,5 @@ export default defineConfig({
       },
     },
   },
+  }
 })

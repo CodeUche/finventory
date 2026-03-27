@@ -9,6 +9,7 @@ import { billApi, supplierApi, taxApi, expenseApi } from '@/services/api'
 import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
 import type { Bill } from '@/types'
 import DateInput from '@/components/DateInput'
+import { FieldTooltip } from '@/components/FieldTooltip'
 
 interface Supplier { id: string; name: string }
 interface TaxClassOption { id: string; name: string; rate: string }
@@ -207,7 +208,11 @@ export default function BillsPage() {
       setForm(BLANK_BILL)
       setLines([{ ...BLANK_LINE }])
       load()
-    } catch { toast.error(editingBillId ? 'Failed to update bill' : 'Failed to create bill') }
+    } catch (err: unknown) {
+      const apiErr = (err as { response?: { data?: { error?: { message?: string } | string } } })?.response?.data?.error
+      const msg = typeof apiErr === 'string' ? apiErr : (apiErr?.message ?? (editingBillId ? 'Failed to update bill' : 'Failed to create bill'))
+      toast.error(msg)
+    }
     finally { setSaving(false) }
   }
 
@@ -435,7 +440,7 @@ export default function BillsPage() {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2">
-                <label className="text-xs text-slate-400 mb-1 block">Vendor *</label>
+                <label className="text-xs text-slate-400 mb-1 block">Vendor *<FieldTooltip text="The supplier or company who sent you this bill. Select from your suppliers list, or enter a custom name." /></label>
                 <select className="input" value={form.supplier} onChange={(e) => setForm({ ...form, supplier: e.target.value, customVendor: '' })}>
                   <option value="">— Select Vendor —</option>
                   <option value="other">Other / Custom Vendor</option>
@@ -452,26 +457,26 @@ export default function BillsPage() {
                 )}
               </div>
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">Reference</label>
+                <label className="text-xs text-slate-400 mb-1 block">Reference<FieldTooltip text="The invoice number printed on the supplier's document. Write it here to match your records to theirs — useful if there's ever a dispute." /></label>
                 <input className="input" placeholder="Invoice/PO ref" value={form.reference} onChange={(e) => setForm({ ...form, reference: e.target.value })} />
               </div>
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">Issue Date</label>
+                <label className="text-xs text-slate-400 mb-1 block">Issue Date<FieldTooltip text="The date printed on the supplier's invoice — when they say they raised the bill." /></label>
                 <DateInput value={form.issue_date} onChange={(v) => setForm({ ...form, issue_date: v })} />
               </div>
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">Due Date</label>
+                <label className="text-xs text-slate-400 mb-1 block">Due Date<FieldTooltip text="The deadline by which you must pay this bill. The app will flag overdue bills automatically." /></label>
                 <DateInput value={form.due_date} onChange={(v) => setForm({ ...form, due_date: v })} />
               </div>
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">Folder (optional)</label>
+                <label className="text-xs text-slate-400 mb-1 block">Folder (optional)<FieldTooltip text="Organise bills into folders for easier management — e.g. 'Utilities', 'Rent', 'Suppliers'." /></label>
                 <select className="input" value={form.folder} onChange={(e) => setForm({ ...form, folder: e.target.value })}>
                   <option value="">— No folder —</option>
                   {billFolders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
                 </select>
               </div>
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">Bill Status</label>
+                <label className="text-xs text-slate-400 mb-1 block">Bill Status<FieldTooltip text="Draft = you haven't received the physical bill yet. Received = bill is in hand. Approved = authorised for payment." /></label>
                 <select className="input" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
                   <option value="draft">Draft</option>
                   <option value="received">Received</option>
@@ -481,7 +486,7 @@ export default function BillsPage() {
 
               {/* Smart Tax Field */}
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">Tax Class or Rate %</label>
+                <label className="text-xs text-slate-400 mb-1 block">Tax Class or Rate %<FieldTooltip text="The VAT or tax charged by the supplier. Select a tax class or enter a percentage manually — e.g. 7.5 for 7.5% VAT." /></label>
                 <div className="flex gap-2">
                   <select
                     className="input flex-1 text-sm"
@@ -508,6 +513,12 @@ export default function BillsPage() {
             {/* Line Items */}
             <div>
               <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Line Items</p>
+              {/* Column headers */}
+              <div className="grid grid-cols-12 gap-2 px-3 mb-1">
+                <div className="col-span-5 text-xs text-slate-500 flex items-center gap-1">Category <FieldTooltip text="What type of expense this bill is for — e.g. Rent, Utilities, Supplies. Used in reports." /></div>
+                <div className="col-span-2 text-xs text-slate-500">Qty</div>
+                <div className="col-span-4 text-xs text-slate-500 flex items-center gap-1">Unit Cost <FieldTooltip text="The total amount before tax on this bill line. Multiply by quantity to get the line subtotal." /></div>
+              </div>
               <div className="space-y-3">
                 {lines.map((line, i) => (
                   <div key={i} className="bg-surface-900/40 rounded-xl p-3 space-y-2">
@@ -532,6 +543,7 @@ export default function BillsPage() {
                         <button onClick={() => setLines(lines.filter((_, idx) => idx !== i))} className="p-1 text-slate-500 hover:text-red-400 transition-colors"><Trash2 size={14} /></button>
                       </div>
                     </div>
+                    <div className="text-xs text-slate-500 flex items-center gap-1 px-0.5 -mb-1">Description <FieldTooltip text="A short note about what this bill line is for. Helps you identify it later." /></div>
                     <input
                       className="input py-1.5 text-sm"
                       placeholder="Description"
@@ -564,7 +576,7 @@ export default function BillsPage() {
             )}
 
             <div>
-              <label className="text-xs text-slate-400 mb-1 block">Notes</label>
+              <label className="text-xs text-slate-400 mb-1 block">Notes<FieldTooltip text="Any extra details about this bill — e.g. payment instructions, delivery terms, or dispute notes." /></label>
               <textarea className="input resize-none" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
             </div>
 

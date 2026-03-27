@@ -1,0 +1,1379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Audity — Product Requirements Document</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      font-size: 14px;
+      line-height: 1.7;
+      color: #1e293b;
+      background: #f8fafc;
+    }
+
+    .cover {
+      background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 60%, #f97316 100%);
+      color: white;
+      padding: 80px 60px;
+      min-height: 280px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+
+    .cover .logo-badge {
+      display: inline-block;
+      background: rgba(249,115,22,0.25);
+      border: 1px solid rgba(249,115,22,0.5);
+      color: #fb923c;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      padding: 5px 14px;
+      border-radius: 100px;
+      margin-bottom: 20px;
+    }
+
+    .cover h1 {
+      font-size: 52px;
+      font-weight: 800;
+      letter-spacing: -1px;
+      line-height: 1.1;
+      margin-bottom: 12px;
+    }
+
+    .cover h1 span { color: #fb923c; }
+
+    .cover .subtitle {
+      font-size: 18px;
+      color: #94a3b8;
+      max-width: 600px;
+      margin-bottom: 40px;
+    }
+
+    .cover .meta {
+      display: flex;
+      gap: 40px;
+      font-size: 13px;
+    }
+
+    .cover .meta-item label {
+      display: block;
+      color: #64748b;
+      font-size: 10px;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      margin-bottom: 2px;
+    }
+
+    .cover .meta-item span { color: #e2e8f0; font-weight: 600; }
+
+    .container {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 48px 40px;
+    }
+
+    /* Table of Contents */
+    .toc {
+      background: white;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 32px 36px;
+      margin-bottom: 48px;
+    }
+
+    .toc h2 {
+      font-size: 16px;
+      font-weight: 700;
+      color: #0f172a;
+      margin-bottom: 20px;
+      padding-bottom: 12px;
+      border-bottom: 2px solid #f97316;
+      display: inline-block;
+    }
+
+    .toc ol {
+      columns: 2;
+      column-gap: 40px;
+      padding-left: 20px;
+    }
+
+    .toc li {
+      margin-bottom: 8px;
+      font-size: 13px;
+    }
+
+    .toc a {
+      color: #3b82f6;
+      text-decoration: none;
+    }
+
+    .toc a:hover { text-decoration: underline; }
+
+    /* Sections */
+    .section {
+      background: white;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 36px 40px;
+      margin-bottom: 28px;
+    }
+
+    .section-header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid #f1f5f9;
+    }
+
+    .section-num {
+      width: 36px;
+      height: 36px;
+      background: #f97316;
+      color: white;
+      font-size: 14px;
+      font-weight: 800;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    h2.section-title {
+      font-size: 20px;
+      font-weight: 700;
+      color: #0f172a;
+    }
+
+    h3 {
+      font-size: 15px;
+      font-weight: 700;
+      color: #1e293b;
+      margin: 24px 0 10px;
+    }
+
+    h3:first-child { margin-top: 0; }
+
+    p {
+      color: #475569;
+      margin-bottom: 12px;
+    }
+
+    ul, ol {
+      padding-left: 20px;
+      margin-bottom: 14px;
+    }
+
+    li {
+      color: #475569;
+      margin-bottom: 6px;
+    }
+
+    /* Module cards */
+    .modules-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 16px;
+      margin-top: 8px;
+    }
+
+    .module-card {
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 18px 20px;
+      background: #fafafa;
+    }
+
+    .module-card .module-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      margin-bottom: 10px;
+    }
+
+    .module-card h4 {
+      font-size: 14px;
+      font-weight: 700;
+      color: #0f172a;
+      margin-bottom: 6px;
+    }
+
+    .module-card p {
+      font-size: 12.5px;
+      color: #64748b;
+      margin: 0;
+      line-height: 1.5;
+    }
+
+    .bg-orange { background: #fff7ed; }
+    .bg-blue   { background: #eff6ff; }
+    .bg-green  { background: #f0fdf4; }
+    .bg-purple { background: #faf5ff; }
+    .bg-red    { background: #fff1f2; }
+    .bg-teal   { background: #f0fdfa; }
+    .bg-yellow { background: #fefce8; }
+    .bg-pink   { background: #fdf2f8; }
+    .bg-slate  { background: #f8fafc; }
+    .bg-indigo { background: #eef2ff; }
+    .bg-amber  { background: #fffbeb; }
+    .bg-cyan   { background: #ecfeff; }
+    .bg-lime   { background: #f7fee7; }
+    .bg-rose   { background: #fff1f2; }
+
+    /* Roles table */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 16px 0;
+      font-size: 13px;
+    }
+
+    thead th {
+      background: #0f172a;
+      color: white;
+      padding: 10px 14px;
+      text-align: left;
+      font-weight: 600;
+      font-size: 12px;
+      letter-spacing: 0.5px;
+    }
+
+    tbody td {
+      padding: 9px 14px;
+      border-bottom: 1px solid #f1f5f9;
+      color: #475569;
+      vertical-align: top;
+    }
+
+    tbody tr:nth-child(even) { background: #f8fafc; }
+    tbody tr:hover { background: #fff7ed; }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .badge-orange { background: #fed7aa; color: #c2410c; }
+    .badge-blue   { background: #bfdbfe; color: #1d4ed8; }
+    .badge-green  { background: #bbf7d0; color: #15803d; }
+    .badge-purple { background: #e9d5ff; color: #7e22ce; }
+    .badge-slate  { background: #e2e8f0; color: #475569; }
+    .badge-red    { background: #fecaca; color: #b91c1c; }
+    .badge-amber  { background: #fde68a; color: #92400e; }
+
+    /* Callout */
+    .callout {
+      border-left: 4px solid #f97316;
+      background: #fff7ed;
+      padding: 14px 18px;
+      border-radius: 0 8px 8px 0;
+      margin: 16px 0;
+    }
+
+    .callout p { color: #9a3412; margin: 0; font-size: 13px; }
+
+    .callout.info {
+      border-left-color: #3b82f6;
+      background: #eff6ff;
+    }
+
+    .callout.info p { color: #1e40af; }
+
+    /* Two-col layout */
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin: 8px 0;
+    }
+
+    .two-col .col {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 16px 18px;
+    }
+
+    .two-col .col h4 {
+      font-size: 13px;
+      font-weight: 700;
+      color: #0f172a;
+      margin-bottom: 10px;
+    }
+
+    .two-col .col ul { margin: 0; }
+    .two-col .col li { font-size: 13px; }
+
+    /* Stack row */
+    .stack-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin: 10px 0;
+    }
+
+    .stack-tag {
+      background: #1e293b;
+      color: #94a3b8;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 4px 12px;
+      border-radius: 6px;
+      font-family: 'Consolas', monospace;
+    }
+
+    .stack-tag.highlight { background: #f97316; color: white; }
+
+    /* NFR table */
+    .nfr-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 8px;
+    }
+
+    .nfr-item {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+
+    .nfr-item h4 {
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #f97316;
+      margin-bottom: 6px;
+    }
+
+    .nfr-item p { font-size: 12.5px; margin: 0; color: #475569; }
+
+    /* Metrics */
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+      margin-top: 10px;
+    }
+
+    .metric-card {
+      background: linear-gradient(135deg, #0f172a, #1e3a5f);
+      border-radius: 10px;
+      padding: 18px 20px;
+      color: white;
+    }
+
+    .metric-card .num {
+      font-size: 28px;
+      font-weight: 800;
+      color: #fb923c;
+      line-height: 1;
+      margin-bottom: 4px;
+    }
+
+    .metric-card .label {
+      font-size: 12px;
+      color: #94a3b8;
+    }
+
+    /* Footer */
+    .footer {
+      background: #0f172a;
+      color: #64748b;
+      text-align: center;
+      padding: 24px;
+      font-size: 12px;
+      margin-top: 48px;
+    }
+
+    .footer strong { color: #fb923c; }
+
+    /* Print styles */
+    @media print {
+      body { background: white; font-size: 12px; }
+      .cover { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+      .section { page-break-inside: avoid; }
+      .modules-grid { grid-template-columns: repeat(3, 1fr); }
+    }
+
+    @page {
+      margin: 0.5in;
+    }
+  </style>
+</head>
+<body>
+
+<!-- ═══════════════════════ COVER ═══════════════════════ -->
+<div class="cover">
+  <div class="logo-badge">Product Requirements Document</div>
+  <h1><span>Audity</span><br>Business Management Platform</h1>
+  <p class="subtitle">
+    A comprehensive, multi-tenant financial management and business operations platform
+    built for African SMEs — available as a desktop app and web application.
+  </p>
+  <div class="meta">
+    <div class="meta-item">
+      <label>Version</label>
+      <span>0.1.8</span>
+    </div>
+    <div class="meta-item">
+      <label>Document Date</label>
+      <span>March 2026</span>
+    </div>
+    <div class="meta-item">
+      <label>Status</label>
+      <span>Active Development</span>
+    </div>
+    <div class="meta-item">
+      <label>Platform</label>
+      <span>Desktop (Tauri) + Web</span>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════ CONTAINER ═══════════════════════ -->
+<div class="container">
+
+  <!-- Table of Contents -->
+  <div class="toc">
+    <h2>Table of Contents</h2>
+    <ol>
+      <li><a href="#s1">Executive Summary</a></li>
+      <li><a href="#s2">Product Vision &amp; Goals</a></li>
+      <li><a href="#s3">Target Users &amp; Personas</a></li>
+      <li><a href="#s4">Core Feature Modules</a></li>
+      <li><a href="#s5">User Roles &amp; Permissions</a></li>
+      <li><a href="#s6">Technical Architecture</a></li>
+      <li><a href="#s7">Data Model Overview</a></li>
+      <li><a href="#s8">Integrations &amp; Extensibility</a></li>
+      <li><a href="#s9">Security Requirements</a></li>
+      <li><a href="#s10">Non-Functional Requirements</a></li>
+      <li><a href="#s11">Subscription &amp; Billing</a></li>
+      <li><a href="#s12">Success Metrics &amp; KPIs</a></li>
+      <li><a href="#s13">Roadmap &amp; Milestones</a></li>
+      <li><a href="#s14">Constraints &amp; Assumptions</a></li>
+    </ol>
+  </div>
+
+  <!-- ─── 1. Executive Summary ─── -->
+  <div class="section" id="s1">
+    <div class="section-header">
+      <div class="section-num">1</div>
+      <h2 class="section-title">Executive Summary</h2>
+    </div>
+
+    <p>
+      <strong>Audity</strong> is a full-stack, multi-tenant business management and accounting platform
+      designed primarily for small and medium enterprises (SMEs) operating in Africa, particularly Nigeria.
+      It combines inventory management, sales invoicing, purchase orders, accounts payable/receivable,
+      payroll processing, tax calculations, and comprehensive financial reporting into a single unified platform.
+    </p>
+    <p>
+      The platform ships as a native Windows desktop application (built with Tauri + React) as well as
+      a browser-accessible web application backed by a Django REST Framework API. It is architected around
+      strict tenant isolation — each business (organisation) operates in a completely isolated data environment.
+    </p>
+
+    <div class="callout">
+      <p>
+        <strong>Core Value Proposition:</strong> Replace the fragmented tools used by African SMEs
+        (spreadsheets, WhatsApp, manual ledgers) with one fully integrated platform that handles
+        everything from point-of-sale to tax filing — while working offline-first via the desktop app.
+      </p>
+    </div>
+
+    <h3>Problem Statement</h3>
+    <p>
+      Most African SMEs rely on a combination of Excel spreadsheets, paper records, and disconnected
+      mobile apps to manage their finances and operations. This leads to:
+    </p>
+    <ul>
+      <li>No real-time visibility into cash flow, inventory levels, or profitability</li>
+      <li>Manual errors in invoicing, stock tracking, and payroll calculations</li>
+      <li>Non-compliance with FIRS tax requirements due to lack of automated tax computation</li>
+      <li>Inability to generate professional financial statements for banking or investor relations</li>
+      <li>No audit trail or role-based access control for team members</li>
+    </ul>
+
+    <h3>Solution</h3>
+    <p>
+      Audity provides a single, affordable SaaS platform that automates all core business processes,
+      posts accurate double-entry journal entries automatically, generates tax-compliant reports,
+      and scales from a one-person shop to a multi-branch enterprise with complex team permissions.
+    </p>
+  </div>
+
+  <!-- ─── 2. Product Vision & Goals ─── -->
+  <div class="section" id="s2">
+    <div class="section-header">
+      <div class="section-num">2</div>
+      <h2 class="section-title">Product Vision &amp; Goals</h2>
+    </div>
+
+    <h3>Vision Statement</h3>
+    <p>
+      <em>"To be the operating system of every African business — from first sale to annual tax filing —
+      making enterprise-grade financial management accessible to every entrepreneur."</em>
+    </p>
+
+    <h3>Strategic Goals</h3>
+    <div class="two-col">
+      <div class="col">
+        <h4>Business Goals</h4>
+        <ul>
+          <li>Capture the underserved African SME accounting software market</li>
+          <li>Grow to 10,000 active organisations within 18 months of launch</li>
+          <li>Achieve ₦50M MRR by end of Year 2</li>
+          <li>Build a platform that reduces accounting errors by &gt;90% vs spreadsheets</li>
+          <li>Provide a 30-day free trial with high-intent onboarding</li>
+        </ul>
+      </div>
+      <div class="col">
+        <h4>Product Goals</h4>
+        <ul>
+          <li>Complete double-entry accounting with zero manual journal entries</li>
+          <li>Generate FIRS-compliant VAT returns and payroll tax schedules</li>
+          <li>Support multi-location inventory across branches and warehouses</li>
+          <li>Enable team collaboration with granular permission controls</li>
+          <li>Work fully offline on desktop (Tauri) and sync when online</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>Non-Goals (Out of Scope — v1)</h3>
+    <ul>
+      <li>Direct integration with Nigerian banking APIs (NIBSS, bank feeds) — planned for v2</li>
+      <li>Mobile app (iOS / Android) — web-responsive frontend bridges this gap</li>
+      <li>E-commerce storefront or online payment gateway processing</li>
+      <li>HR recruitment module or performance management</li>
+      <li>Multi-currency transactions within a single invoice</li>
+    </ul>
+  </div>
+
+  <!-- ─── 3. Target Users & Personas ─── -->
+  <div class="section" id="s3">
+    <div class="section-header">
+      <div class="section-num">3</div>
+      <h2 class="section-title">Target Users &amp; Personas</h2>
+    </div>
+
+    <h3>Primary Market Segment</h3>
+    <p>
+      SMEs in Nigeria and West Africa with 1–200 employees in the following verticals:
+      retail, wholesale/distribution, hospitality, professional services, manufacturing,
+      logistics, agriculture, and digital services.
+    </p>
+
+    <h3>User Personas</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Persona</th>
+          <th>Role in Audity</th>
+          <th>Primary Needs</th>
+          <th>Pain Points Solved</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Chioma — Business Owner</strong><br><small>Lagos, runs a liquor distribution company</small></td>
+          <td><span class="badge badge-orange">Owner</span></td>
+          <td>Profit/loss overview, cash flow, top-selling products, payroll costs</td>
+          <td>No longer needs an accountant for monthly P&amp;L; sees live dashboard</td>
+        </tr>
+        <tr>
+          <td><strong>Emeka — Accountant</strong><br><small>Hired bookkeeper, part-time</small></td>
+          <td><span class="badge badge-blue">Accountant</span></td>
+          <td>Journal entries, bank reconciliation, VAT returns, financial statements</td>
+          <td>All postings are automatic; only needs to review &amp; export reports</td>
+        </tr>
+        <tr>
+          <td><strong>Fatima — Sales Manager</strong><br><small>Manages 3 sales staff</small></td>
+          <td><span class="badge badge-green">Manager</span></td>
+          <td>Create invoices, manage customer credit, track sales performance</td>
+          <td>Issues professional invoices in seconds; monitors team sales</td>
+        </tr>
+        <tr>
+          <td><strong>Tunde — Warehouse Staff</strong><br><small>Storekeeper at main branch</small></td>
+          <td><span class="badge badge-slate">Staff</span></td>
+          <td>Record stock movements, check reorder levels, scan batch/lot numbers</td>
+          <td>Real-time stock counts; alerts when reorder level is hit</td>
+        </tr>
+        <tr>
+          <td><strong>Ngozi — HR Manager</strong><br><small>Handles payroll &amp; compliance</small></td>
+          <td><span class="badge badge-purple">Manager</span></td>
+          <td>Run payroll, manage PAYE deductions, generate payslips</td>
+          <td>Automated PAYE calculation; one-click payslip generation</td>
+        </tr>
+        <tr>
+          <td><strong>Platform Admin</strong><br><small>Audity internal superuser</small></td>
+          <td><span class="badge badge-red">Superuser</span></td>
+          <td>Manage all organisations, subscriptions, audit logs</td>
+          <td>Full platform visibility; manage plans and billing centrally</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ─── 4. Core Feature Modules ─── -->
+  <div class="section" id="s4">
+    <div class="section-header">
+      <div class="section-num">4</div>
+      <h2 class="section-title">Core Feature Modules</h2>
+    </div>
+
+    <div class="modules-grid">
+
+      <div class="module-card">
+        <div class="module-icon bg-orange">🧾</div>
+        <h4>Sales &amp; Invoicing</h4>
+        <p>Create professional invoices (4 PDF templates), proforma invoices, manage credit sales, record payments, process returns, and send via email or WhatsApp. Recurring invoice automation with Celery beat scheduling.</p>
+      </div>
+
+      <div class="module-card">
+        <div class="module-icon bg-blue">📦</div>
+        <h4>Inventory Management</h4>
+        <p>Multi-location stock tracking, batch/lot management with expiry notifications, product variants (physical/service/digital), reorder alerts, stock adjustments, and COGS auto-calculation.</p>
+      </div>
+
+      <div class="module-card">
+        <div class="module-icon bg-green">🛒</div>
+        <h4>Purchases &amp; Bills</h4>
+        <p>Purchase orders with receipt scanning, accounts payable with folder organisation, bill approval workflows, multi-line tax configuration, vendor management, and payable aging reports.</p>
+      </div>
+
+      <div class="module-card">
+        <div class="module-icon bg-purple">👥</div>
+        <h4>Customer Management</h4>
+        <p>Full CRM with customer types (9 segments), credit limits, outstanding balance tracking, customer statements (PDF), sales history per customer, and accounts receivable aging.</p>
+      </div>
+
+      <div class="module-card">
+        <div class="module-icon bg-teal">💹</div>
+        <h4>Accounting &amp; GL</h4>
+        <p>Full double-entry general ledger, automated journal posting for all transactions, Chart of Accounts (auto-seeded), bank reconciliation, balance sheet, P&amp;L, and trial balance.</p>
+      </div>
+
+      <div class="module-card">
+        <div class="module-icon bg-yellow">👷</div>
+        <h4>Payroll</h4>
+        <p>Employee management, salary structures, automated PAYE (Nigeria PIT) calculation, pension, employee loans, penalties, payslip generation (PDF), and FIRS TaxProMax integration link.</p>
+      </div>
+
+      <div class="module-card">
+        <div class="module-icon bg-pink">📊</div>
+        <h4>Reports &amp; Analytics</h4>
+        <p>P&amp;L statement, balance sheet, cash flow, VAT returns (downloadable PDF), AR/AP aging, sales analytics by period, top customers, top products, and expense breakdown charts.</p>
+      </div>
+
+      <div class="module-card">
+        <div class="module-icon bg-indigo">💰</div>
+        <h4>Budgeting</h4>
+        <p>Period budgets (daily/weekly/monthly/quarterly/annual), budget line items with quantity × unit price auto-calc, actuals vs. budget variance analysis, and budget activation/approval workflow.</p>
+      </div>
+
+      <div class="module-card">
+        <div class="module-icon bg-amber">📑</div>
+        <h4>Quotes &amp; Estimates</h4>
+        <p>Draft, send, and convert quotes to invoices. Auto-expiry detection with 5-minute polling, PDF export with all 4 invoice templates, email &amp; WhatsApp sharing, and conversion rate tracking.</p>
+      </div>
+
+      <div class="module-card">
+        <div class="module-icon bg-cyan">💳</div>
+        <h4>Credits Module</h4>
+        <p>Customer credit ledger with full debit/credit history, outstanding balance tracking, GL integration (AR account), payment recording with automatic journal entries, and credit limit enforcement.</p>
+      </div>
+
+      <div class="module-card">
+        <div class="module-icon bg-lime">🏦</div>
+        <h4>Bank Reconciliation</h4>
+        <p>Create reconciliation sessions, match journal lines to bank statements, toggle cleared status, and reconcile when the difference is within tolerance (±₦0.01).</p>
+      </div>
+
+      <div class="module-card">
+        <div class="module-icon bg-rose">🔔</div>
+        <h4>Notifications</h4>
+        <p>Real-time notification bell with low-stock alerts, expiring/expired batch warnings, overdue invoice alerts, and 30-second polling for critical business events.</p>
+      </div>
+
+      <div class="module-card">
+        <div class="module-icon bg-orange">💲</div>
+        <h4>Tax Engine</h4>
+        <p>Nigeria Personal Income Tax (progressive brackets), corporate tax, VAT management with tax classes per product, VAT return generation, and tax configuration per organisation.</p>
+      </div>
+
+      <div class="module-card">
+        <div class="module-icon bg-blue">⚙️</div>
+        <h4>Settings &amp; Customisation</h4>
+        <p>Organisation branding (logo, brand colour, company stamp), invoice templates (Classic/Modern/Minimal/Professional), font customisation, SMTP email config, team management, and subscription billing.</p>
+      </div>
+
+    </div>
+
+    <h3 style="margin-top:28px">Recurring Invoice Automation</h3>
+    <p>
+      Recurring invoices are a first-class feature. Business owners create templates (daily/weekly/monthly/quarterly/annual)
+      with configurable intervals. A Celery beat task runs daily to auto-generate invoices, advance the next-run date,
+      log successes/failures, and deactivate templates that have reached their end date or max occurrences.
+    </p>
+
+    <h3>Document &amp; Folder Organisation</h3>
+    <p>
+      Both invoices and bills support folder-based organisation with nested parent/child folders. The system
+      automatically creates yearly archive folders (e.g. "2025 Archive") on January 1st via a scheduled task,
+      moving all prior-year documents into the archive.
+    </p>
+  </div>
+
+  <!-- ─── 5. User Roles & Permissions ─── -->
+  <div class="section" id="s5">
+    <div class="section-header">
+      <div class="section-num">5</div>
+      <h2 class="section-title">User Roles &amp; Permissions</h2>
+    </div>
+
+    <p>
+      Audity implements a two-layer permission system: a <strong>role hierarchy</strong> (numeric levels)
+      for broad access control, and a <strong>per-module granular permission matrix</strong> for fine-grained
+      sub-account access.
+    </p>
+
+    <h3>Role Hierarchy</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Role</th>
+          <th>Level</th>
+          <th>Description</th>
+          <th>Max Members</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="badge badge-red">Superuser</span></td>
+          <td>Platform</td>
+          <td>Audity platform administrator. Full access to all organisations, audit logs, and billing management.</td>
+          <td>N/A</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-orange">Owner</span></td>
+          <td>100</td>
+          <td>Business owner. Full access to all features and settings within their organisation. Can invite members, manage subscriptions.</td>
+          <td>1</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-purple">Admin</span></td>
+          <td>80</td>
+          <td>Trusted administrator. Full operational access. Cannot modify subscription plan or owner settings.</td>
+          <td>Plan-limited</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-blue">Manager</span></td>
+          <td>60</td>
+          <td>Department manager. Can approve budgets, manage team operations. Cannot modify org settings.</td>
+          <td>Plan-limited</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-green">Accountant</span></td>
+          <td>40</td>
+          <td>Financial staff. Full accounting and reporting access. Limited inventory &amp; sales access.</td>
+          <td>Plan-limited</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-amber">Staff</span></td>
+          <td>20</td>
+          <td>Operational staff. View and basic write access per assigned modules.</td>
+          <td>Plan-limited</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-slate">Viewer</span></td>
+          <td>10</td>
+          <td>Read-only access to assigned modules. Cannot create or modify records.</td>
+          <td>Plan-limited</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>Module-Level Permission Matrix</h3>
+    <p>
+      Each non-owner member can be assigned per-module access levels independently. The 14 modules with configurable access are:
+    </p>
+    <div class="stack-row">
+      <span class="stack-tag">dashboard</span>
+      <span class="stack-tag">sales</span>
+      <span class="stack-tag">purchases</span>
+      <span class="stack-tag">inventory</span>
+      <span class="stack-tag">customers</span>
+      <span class="stack-tag">accounting</span>
+      <span class="stack-tag">payroll</span>
+      <span class="stack-tag">expenses</span>
+      <span class="stack-tag">reports</span>
+      <span class="stack-tag">budgets</span>
+      <span class="stack-tag">credits</span>
+      <span class="stack-tag">quotes</span>
+      <span class="stack-tag">tax</span>
+      <span class="stack-tag">settings</span>
+    </div>
+    <p style="margin-top:10px">Each module can be set to: <strong>none</strong> (hidden), <strong>view</strong> (read-only), <strong>write</strong> (create/read), or <strong>edit</strong> (full CRUD). Owners, admins, and platform superusers always receive full access regardless of module settings.</p>
+
+    <h3>Subscription-Aware Team Limits</h3>
+    <p>
+      The maximum number of active non-owner members is enforced from the organisation's subscription plan
+      (<code>plan.features.max_users</code>). Invitations beyond this limit are rejected with a 403 error.
+      The <code>SubscriptionActive</code> permission class blocks all write operations when the subscription
+      has expired.
+    </p>
+  </div>
+
+  <!-- ─── 6. Technical Architecture ─── -->
+  <div class="section" id="s6">
+    <div class="section-header">
+      <div class="section-num">6</div>
+      <h2 class="section-title">Technical Architecture</h2>
+    </div>
+
+    <h3>System Overview</h3>
+    <p>
+      Audity follows a clean separation between a Python/Django backend API and a React frontend.
+      On desktop, the Tauri shell wraps the frontend in a WebView2 container and an HTTP proxy plugin
+      routes API requests through Rust to bypass WebView2 CORS/SSL restrictions.
+    </p>
+
+    <div class="callout info">
+      <p>
+        <strong>Tauri HTTP Plugin Pattern:</strong> All API calls in the Tauri desktop app route through
+        <code>tauriFetch()</code> (Rust HTTP client) instead of the browser's native <code>fetch()</code>.
+        This bypasses WebView2's certificate and CORS limitations for local/LAN API connections.
+      </p>
+    </div>
+
+    <h3>Backend Stack</h3>
+    <div class="stack-row">
+      <span class="stack-tag highlight">Django 5.1</span>
+      <span class="stack-tag">Django REST Framework</span>
+      <span class="stack-tag">SimpleJWT</span>
+      <span class="stack-tag">PostgreSQL</span>
+      <span class="stack-tag">Celery + Redis</span>
+      <span class="stack-tag">django-storages (S3/R2)</span>
+      <span class="stack-tag">Gunicorn</span>
+    </div>
+
+    <h3>Frontend Stack</h3>
+    <div class="stack-row">
+      <span class="stack-tag highlight">React 18</span>
+      <span class="stack-tag">TypeScript</span>
+      <span class="stack-tag">Vite</span>
+      <span class="stack-tag">Tailwind CSS</span>
+      <span class="stack-tag">Zustand</span>
+      <span class="stack-tag">Axios</span>
+      <span class="stack-tag">React Router v6</span>
+      <span class="stack-tag">Recharts</span>
+      <span class="stack-tag">jsPDF + AutoTable</span>
+    </div>
+
+    <h3>Desktop (Tauri)</h3>
+    <div class="stack-row">
+      <span class="stack-tag highlight">Tauri v2</span>
+      <span class="stack-tag">Rust</span>
+      <span class="stack-tag">tauri-plugin-http</span>
+      <span class="stack-tag">tauri-plugin-dialog</span>
+      <span class="stack-tag">tauri-plugin-fs</span>
+      <span class="stack-tag">WebView2 (Windows)</span>
+    </div>
+
+    <h3>Infrastructure</h3>
+    <div class="two-col">
+      <div class="col">
+        <h4>Development</h4>
+        <ul>
+          <li>Django runserver with auto-reload</li>
+          <li>Vite HMR for frontend development</li>
+          <li>SQLite for local testing (pytest)</li>
+          <li>GitHub Actions CI/CD pipeline</li>
+        </ul>
+      </div>
+      <div class="col">
+        <h4>Production</h4>
+        <ul>
+          <li>PostgreSQL (Supabase / Railway)</li>
+          <li>Media storage: S3/Cloudflare R2</li>
+          <li>Celery workers + beat scheduler</li>
+          <li>Gunicorn behind Nginx/Caddy</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>CI/CD Pipeline</h3>
+    <p>
+      GitHub Actions runs on every push: (1) backend — flake8 lint, pytest with coverage, security audit;
+      (2) frontend — TypeScript type-check, Vite production build; (3) Tauri — cross-platform bundle
+      (generates <code>.msi</code> + <code>.exe</code> installers for Windows).
+    </p>
+
+    <h3>Authentication &amp; Session Management</h3>
+    <p>
+      Email-based JWT authentication (no username). Access tokens (short-lived) and refresh tokens
+      (long-lived) stored in Zustand persisted state (localStorage). The Axios interceptor auto-refreshes
+      expired access tokens, injects the <code>Authorization</code> header, and attaches the
+      <code>X-Organisation-ID</code> header for tenant resolution.
+    </p>
+  </div>
+
+  <!-- ─── 7. Data Model Overview ─── -->
+  <div class="section" id="s7">
+    <div class="section-header">
+      <div class="section-num">7</div>
+      <h2 class="section-title">Data Model Overview</h2>
+    </div>
+
+    <h3>Base Model Hierarchy</h3>
+    <table>
+      <thead>
+        <tr><th>Base Model</th><th>Adds</th><th>Used By</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>TimeStampedModel</code></td>
+          <td>UUID PK, <code>created_at</code>, <code>updated_at</code></td>
+          <td>All models</td>
+        </tr>
+        <tr>
+          <td><code>SoftDeleteModel</code></td>
+          <td><code>is_deleted</code>, <code>deleted_at</code>, soft-delete manager</td>
+          <td>All deletable entities</td>
+        </tr>
+        <tr>
+          <td><code>TenantAwareModel</code></td>
+          <td><code>organisation</code> FK (tenant isolation)</td>
+          <td>All business data models</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>Key Domain Entities</h3>
+    <ul>
+      <li><strong>Organisation</strong> — Tenant root. Holds branding, bank details, invoice template preferences, subscription plan.</li>
+      <li><strong>User / Membership</strong> — Email-based users attached to one or more organisations via Membership (role-based).</li>
+      <li><strong>Product</strong> — Inventory item (physical/service/digital). Has SKU, cost/selling prices, tax class, reorder level.</li>
+      <li><strong>StockItem</strong> — Per-product-per-warehouse stock record. Created on first movement. Tracks <code>quantity_on_hand</code>, <code>quantity_reserved</code>.</li>
+      <li><strong>Invoice / SaleItem / SalePayment</strong> — Complete sale lifecycle. Auto-posts to GL on creation.</li>
+      <li><strong>Bill / BillPayment</strong> — Accounts payable. Auto-posts AP and expense journal entries.</li>
+      <li><strong>JournalEntry / JournalLine</strong> — General ledger. Always balanced (debits = credits per entry).</li>
+      <li><strong>Employee / PayrollRun / Payslip</strong> — Complete payroll cycle with PAYE bracket engine.</li>
+      <li><strong>RecurringInvoice</strong> — Invoice generation template with schedule, items, and run history log.</li>
+      <li><strong>CreditTransaction</strong> — Double-entry credit ledger (DEBIT = customer owes, CREDIT = payment received).</li>
+      <li><strong>Budget / BudgetLine</strong> — Budgeting with actuals variance computed from GL.</li>
+      <li><strong>ModulePermission</strong> — Per-membership, per-module access level (none/view/write/edit).</li>
+    </ul>
+
+    <h3>Tenant Isolation Pattern</h3>
+    <p>
+      Every data model inherits <code>TenantAwareModel</code>. The Django middleware resolves
+      the tenant from the <code>X-Organisation-ID</code> request header and attaches it to
+      <code>request.organisation</code>. All viewsets that extend <code>TenantFilterMixin</code>
+      automatically scope every queryset to the current organisation — it is architecturally impossible
+      to access another tenant's data through normal API routes.
+    </p>
+  </div>
+
+  <!-- ─── 8. Integrations ─── -->
+  <div class="section" id="s8">
+    <div class="section-header">
+      <div class="section-num">8</div>
+      <h2 class="section-title">Integrations &amp; Extensibility</h2>
+    </div>
+
+    <h3>Current Integrations</h3>
+    <table>
+      <thead>
+        <tr><th>Integration</th><th>Purpose</th><th>Status</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>SMTP Email (any provider)</td>
+          <td>Send invoices, quotes, and statements directly from the app via configurable SMTP settings</td>
+          <td><span class="badge badge-green">Live</span></td>
+        </tr>
+        <tr>
+          <td>Cloudflare R2 / AWS S3</td>
+          <td>Media file storage for logos, receipts, company stamps, and employee documents</td>
+          <td><span class="badge badge-green">Live</span></td>
+        </tr>
+        <tr>
+          <td>Paystack Bank Resolve API</td>
+          <td>Auto-fill employee bank account name from account number during payroll setup</td>
+          <td><span class="badge badge-green">Live</span></td>
+        </tr>
+        <tr>
+          <td>FIRS TaxProMax</td>
+          <td>Direct link to FIRS PAYE filing portal from payroll module</td>
+          <td><span class="badge badge-green">Live</span></td>
+        </tr>
+        <tr>
+          <td>WhatsApp Share</td>
+          <td>Generate pre-filled WhatsApp message with invoice/quote summary for sharing</td>
+          <td><span class="badge badge-green">Live</span></td>
+        </tr>
+        <tr>
+          <td>Tauri OS File System</td>
+          <td>Native save-as dialog + file write for PDF and CSV exports on desktop</td>
+          <td><span class="badge badge-green">Live</span></td>
+        </tr>
+        <tr>
+          <td>Nigerian Banking APIs (NIBSS)</td>
+          <td>Bank statement feeds for automatic reconciliation</td>
+          <td><span class="badge badge-slate">Planned v2</span></td>
+        </tr>
+        <tr>
+          <td>Flutterwave / Paystack Payments</td>
+          <td>Accept online invoice payments from customers</td>
+          <td><span class="badge badge-slate">Planned v2</span></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>Export Formats</h3>
+    <p>
+      All list views (invoices, customers, products, expenses, etc.) support data export via the
+      <code>ExportMixin</code> — generating CSV or Excel (<code>.xlsx</code>) via the <code>?dl=csv</code>
+      or <code>?dl=xlsx</code> query parameters. PDF exports are client-side (jsPDF) for invoices,
+      quotes, statements, and VAT returns.
+    </p>
+  </div>
+
+  <!-- ─── 9. Security Requirements ─── -->
+  <div class="section" id="s9">
+    <div class="section-header">
+      <div class="section-num">9</div>
+      <h2 class="section-title">Security Requirements</h2>
+    </div>
+
+    <div class="two-col">
+      <div class="col">
+        <h4>Authentication</h4>
+        <ul>
+          <li>Email + password with strong password validation</li>
+          <li>JWT access + refresh token pair (SimpleJWT)</li>
+          <li>Token rotation on refresh</li>
+          <li>Email verification required before login</li>
+          <li>Orphaned account cleanup on re-registration</li>
+        </ul>
+      </div>
+      <div class="col">
+        <h4>Authorisation</h4>
+        <ul>
+          <li>Role-based access control (7 levels)</li>
+          <li>Per-module granular permissions (14 modules)</li>
+          <li>All write operations blocked on expired subscriptions</li>
+          <li>Tenant isolation enforced at ORM layer</li>
+          <li>Superuser-only platform admin routes</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="two-col" style="margin-top:12px">
+      <div class="col">
+        <h4>Data Protection</h4>
+        <ul>
+          <li>Soft deletes — no hard data deletion by default</li>
+          <li>All UUIDs (no enumerable integer IDs)</li>
+          <li>Sensitive fields (passwords, SMTP credentials) never returned in API responses</li>
+          <li>Audit log for all admin actions</li>
+        </ul>
+      </div>
+      <div class="col">
+        <h4>API Security</h4>
+        <ul>
+          <li>CORS configured for known frontend origins only</li>
+          <li>Input validation on all serializers (max_length, min_value)</li>
+          <li>Max 200 line items per invoice (payload size guard)</li>
+          <li>SMTP SSL certificates verified (configurable for legacy servers)</li>
+          <li>SQL injection impossible (Django ORM parameterised queries)</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="callout">
+      <p>
+        <strong>Compliance Note:</strong> Audity is architected to support NDPR (Nigeria Data Protection Regulation)
+        compliance — all personal data is tenant-isolated, deletion is tracked with soft-delete timestamps,
+        and data exports are role-gated. Full NDPR compliance audit is planned before v1 public launch.
+      </p>
+    </div>
+  </div>
+
+  <!-- ─── 10. Non-Functional Requirements ─── -->
+  <div class="section" id="s10">
+    <div class="section-header">
+      <div class="section-num">10</div>
+      <h2 class="section-title">Non-Functional Requirements</h2>
+    </div>
+
+    <div class="nfr-grid">
+      <div class="nfr-item">
+        <h4>Performance</h4>
+        <p>API responses &lt;200ms for list endpoints with up to 10,000 records per tenant. PDF generation &lt;3s for invoices with 50+ line items. Dashboard loads &lt;1s (parallel API calls).</p>
+      </div>
+      <div class="nfr-item">
+        <h4>Availability</h4>
+        <p>99.5% uptime SLA for the cloud backend. Desktop app works fully offline (all data cached locally via Tauri HTTP plugin). Celery beat tasks are idempotent and safe to re-run.</p>
+      </div>
+      <div class="nfr-item">
+        <h4>Scalability</h4>
+        <p>Tenant-isolated architecture allows horizontal scaling. Database queries are indexed on <code>organisation</code>, <code>is_deleted</code>, and date fields. Pagination on all list endpoints (default 50 per page).</p>
+      </div>
+      <div class="nfr-item">
+        <h4>Reliability</h4>
+        <p>Celery tasks have <code>max_retries=3</code>. Double-entry accounting enforces balanced journals at the ORM level. Invoice number collisions are prevented by org-specific hex prefix.</p>
+      </div>
+      <div class="nfr-item">
+        <h4>Usability</h4>
+        <p>All monetary inputs use formatted text fields with comma-separators. Dates use DD/MM/YYYY (Africa-standard). Dark/light mode toggle. Sidebar navigation with collapsible groups.</p>
+      </div>
+      <div class="nfr-item">
+        <h4>Maintainability</h4>
+        <p>Backend: Django migrations for all schema changes. Frontend: TypeScript strict mode. CI enforces lint, tests, and type-check on every commit. Coverage tracked via pytest-cov.</p>
+      </div>
+      <div class="nfr-item">
+        <h4>Localisation</h4>
+        <p>Currency symbol and formatting per organisation's currency setting. Date format: DD/MM/YYYY globally. Initial support: NGN. Multi-currency planned for v2.</p>
+      </div>
+      <div class="nfr-item">
+        <h4>Accessibility</h4>
+        <p>Keyboard-navigable forms. Sufficient colour contrast in both dark and light themes. Screen reader-friendly semantic HTML. Print styles for all PDF-generating pages.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── 11. Subscription & Billing ─── -->
+  <div class="section" id="s11">
+    <div class="section-header">
+      <div class="section-num">11</div>
+      <h2 class="section-title">Subscription &amp; Billing</h2>
+    </div>
+
+    <p>
+      Audity uses a plan-based subscription model managed through the <code>subscriptions</code> app.
+      All plan limits and feature flags are stored in a JSON <code>features</code> field, making
+      them configurable without code changes.
+    </p>
+
+    <h3>Plan Feature Flags</h3>
+    <table>
+      <thead>
+        <tr><th>Feature Flag</th><th>Type</th><th>Description</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>max_products</code></td><td>Integer</td><td>Max products in inventory (999999 = unlimited)</td></tr>
+        <tr><td><code>max_users</code></td><td>Integer</td><td>Max active non-owner team members</td></tr>
+        <tr><td><code>max_warehouses</code></td><td>Integer</td><td>Max locations/branches (999999 = unlimited)</td></tr>
+        <tr><td><code>multi_warehouse</code></td><td>Boolean</td><td>Can use more than one location</td></tr>
+        <tr><td><code>advanced_reports</code></td><td>Boolean</td><td>Access to balance sheet, P&amp;L, cash flow</td></tr>
+        <tr><td><code>api_access</code></td><td>Boolean</td><td>REST API access for external integrations</td></tr>
+        <tr><td><code>recurring_invoices</code></td><td>Boolean</td><td>Recurring invoice automation</td></tr>
+        <tr><td><code>payroll</code></td><td>Boolean</td><td>Full payroll module access</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Subscription Enforcement</h3>
+    <p>
+      The <code>SubscriptionActive</code> permission class is applied globally to all write operations.
+      Organisations with an expired subscription receive a <code>403 Forbidden</code> response with a
+      clear upgrade prompt. Read operations are unaffected, ensuring data remains accessible.
+    </p>
+
+    <h3>Billing Page</h3>
+    <p>
+      The in-app billing page displays the current plan, usage metrics (products used vs. limit,
+      team members, locations), all available plan features, and upgrade/downgrade options.
+      Billing is managed externally (Paystack or manual for early-stage customers).
+    </p>
+  </div>
+
+  <!-- ─── 12. Success Metrics ─── -->
+  <div class="section" id="s12">
+    <div class="section-header">
+      <div class="section-num">12</div>
+      <h2 class="section-title">Success Metrics &amp; KPIs</h2>
+    </div>
+
+    <div class="metrics-grid">
+      <div class="metric-card">
+        <div class="num">10K</div>
+        <div class="label">Active organisations — 18 months post-launch</div>
+      </div>
+      <div class="metric-card">
+        <div class="num">₦50M</div>
+        <div class="label">Monthly Recurring Revenue — Year 2</div>
+      </div>
+      <div class="metric-card">
+        <div class="num">90%</div>
+        <div class="label">Reduction in accounting errors vs. spreadsheet baseline</div>
+      </div>
+      <div class="metric-card">
+        <div class="num">&lt;200ms</div>
+        <div class="label">API P95 response time</div>
+      </div>
+      <div class="metric-card">
+        <div class="num">27+</div>
+        <div class="label">Backend test suite — 100% pass rate in CI</div>
+      </div>
+      <div class="metric-card">
+        <div class="num">99.5%</div>
+        <div class="label">Platform uptime SLA</div>
+      </div>
+    </div>
+
+    <h3 style="margin-top:24px">Engagement Metrics</h3>
+    <ul>
+      <li><strong>Daily Active Users (DAU)</strong> — tracked per organisation, target &gt;60% of subscribed users active daily</li>
+      <li><strong>Invoice creation rate</strong> — primary engagement signal; target &gt;5 invoices/week per active org</li>
+      <li><strong>Feature adoption</strong> — % of orgs using payroll, recurring invoices, and budget modules</li>
+      <li><strong>PDF export rate</strong> — measures sales document quality expectations being met</li>
+      <li><strong>Support ticket volume</strong> — target &lt;2% of users raising tickets per month</li>
+      <li><strong>Trial-to-paid conversion</strong> — target &gt;25% of 30-day trial organisations convert</li>
+    </ul>
+  </div>
+
+  <!-- ─── 13. Roadmap ─── -->
+  <div class="section" id="s13">
+    <div class="section-header">
+      <div class="section-num">13</div>
+      <h2 class="section-title">Roadmap &amp; Milestones</h2>
+    </div>
+
+    <table>
+      <thead>
+        <tr><th>Phase</th><th>Timeline</th><th>Key Deliverables</th><th>Status</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Phase 0 — Foundation</strong></td>
+          <td>Months 1–3</td>
+          <td>Multi-tenant architecture, auth, inventory, basic invoicing, subscription model</td>
+          <td><span class="badge badge-green">Complete</span></td>
+        </tr>
+        <tr>
+          <td><strong>Phase 1 — Core Modules</strong></td>
+          <td>Months 3–6</td>
+          <td>Full accounting GL, payroll, customer CRM, purchases, reporting, PDF templates</td>
+          <td><span class="badge badge-green">Complete</span></td>
+        </tr>
+        <tr>
+          <td><strong>Phase 2 — Advanced Features</strong></td>
+          <td>Months 6–9</td>
+          <td>Recurring invoices, credits module, bank reconciliation, quotes, budgeting, sub-accounts</td>
+          <td><span class="badge badge-green">Complete</span></td>
+        </tr>
+        <tr>
+          <td><strong>Phase 3 — Polish &amp; Launch</strong></td>
+          <td>Months 9–12</td>
+          <td>S3 media storage, CI/CD, Tauri desktop app, Warehouse→Location generalisation, quote PDFs, saveBlobFile</td>
+          <td><span class="badge badge-orange">In Progress</span></td>
+        </tr>
+        <tr>
+          <td><strong>Phase 4 — Growth</strong></td>
+          <td>Months 12–18</td>
+          <td>Mobile-responsive PWA, macOS/Linux Tauri builds, Nigerian bank feeds, Flutterwave payments, multi-currency</td>
+          <td><span class="badge badge-slate">Planned</span></td>
+        </tr>
+        <tr>
+          <td><strong>Phase 5 — Scale</strong></td>
+          <td>Months 18–24</td>
+          <td>Public REST API, Zapier/Make integration, e-commerce module, multi-country tax engines (Ghana, Kenya)</td>
+          <td><span class="badge badge-slate">Planned</span></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>Immediate Priorities (Next 90 Days)</h3>
+    <ul>
+      <li>Public beta launch on ProductHunt Africa &amp; relevant LinkedIn communities</li>
+      <li>Onboard first 50 paying customers and collect NPS feedback</li>
+      <li>macOS Tauri build (expand from Windows-only)</li>
+      <li>In-app onboarding tour for new organisations (guided setup wizard)</li>
+      <li>Stripe/Paystack in-app subscription management (self-serve upgrades)</li>
+      <li>Customer-facing invoice payment portal (link in emailed invoices)</li>
+    </ul>
+  </div>
+
+  <!-- ─── 14. Constraints & Assumptions ─── -->
+  <div class="section" id="s14">
+    <div class="section-header">
+      <div class="section-num">14</div>
+      <h2 class="section-title">Constraints &amp; Assumptions</h2>
+    </div>
+
+    <h3>Technical Constraints</h3>
+    <ul>
+      <li>Desktop app is currently Windows-only (WebView2 dependency). macOS and Linux planned.</li>
+      <li>PDF generation is client-side (jsPDF). Complex layouts may differ slightly across browsers.</li>
+      <li>Celery requires a running Redis instance — not available on serverless deployments.</li>
+      <li>SQLite is supported for development and testing only; PostgreSQL required for production.</li>
+      <li>File uploads are capped by Nginx <code>client_max_body_size</code> (default 10MB); configurable.</li>
+    </ul>
+
+    <h3>Business Constraints</h3>
+    <ul>
+      <li>Initial market focus is Nigeria; multi-country tax engines require separate localisation work.</li>
+      <li>No mobile app in v1 — responsive web is the mobile strategy.</li>
+      <li>Manual billing management in early stage; self-serve billing requires Paystack integration.</li>
+      <li>Automated database backups must be configured at the hosting provider level (Railway, Supabase, etc.).</li>
+    </ul>
+
+    <h3>Assumptions</h3>
+    <ul>
+      <li>Users have at least one organisation created before accessing any module.</li>
+      <li>A StockItem record is only created when the first inventory movement is recorded for a product-location pair.</li>
+      <li>Double-entry accounting is always enforced: every financial transaction posts balanced journal entries automatically.</li>
+      <li>The platform assumes Nigerian Naira (NGN) as the default currency; currency is configurable per organisation.</li>
+      <li>Invoice numbers are globally unique and collision-free via org-UUID-derived prefix (<code>INV-XXXX-000001</code>).</li>
+    </ul>
+  </div>
+
+</div>
+<!-- ═══════════════════════ FOOTER ═══════════════════════ -->
+<div class="footer">
+  <p>
+    <strong>Audity</strong> Business Management Platform &nbsp;·&nbsp;
+    Product Requirements Document v1.0 &nbsp;·&nbsp;
+    March 2026 &nbsp;·&nbsp;
+    Confidential
+  </p>
+  <p style="margin-top:6px">
+    This document was generated from the live codebase and reflects the current state of the platform.
+    For questions, contact the product team.
+  </p>
+</div>
+
+<script>
+  // Auto-scroll to anchor on TOC click (smooth)
+  document.querySelectorAll('.toc a').forEach(a => {
+    a.addEventListener('click', e => {
+      e.preventDefault();
+      const target = document.querySelector(a.getAttribute('href'));
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  });
+</script>
+
+</body>
+</html>

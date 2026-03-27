@@ -79,6 +79,18 @@ const Ctx = createContext<NotificationsCtx>({
   refetch: () => {},
 })
 
+// IDs dismissed by the user this session — persisted to sessionStorage so
+// they survive the 30s poll cycle but reset cleanly when the app restarts.
+function loadDismissed(): Set<string> {
+  try {
+    const raw = sessionStorage.getItem('audity-dismissed-notifications')
+    return new Set(raw ? (JSON.parse(raw) as string[]) : [])
+  } catch { return new Set() }
+}
+function saveDismissed(ids: Set<string>) {
+  try { sessionStorage.setItem('audity-dismissed-notifications', JSON.stringify([...ids])) } catch { /* ignore */ }
+}
+
 export function NotificationsProvider({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
   const [alerts, setAlerts] = useState<StockAlert[]>([])
@@ -86,8 +98,9 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
   const [expiryAlerts, setExpiryAlerts] = useState<ExpiryAlert[]>([])
   const [billDueAlerts, setBillDueAlerts] = useState<BillDueAlert[]>([])
   const [payrollPendingAlerts, setPayrollPendingAlerts] = useState<PayrollPendingAlert[]>([])
-  const prevIdsRef   = useRef<Set<string>>(new Set())
-  const firstPollRef = useRef(true)
+  const prevIdsRef    = useRef<Set<string>>(new Set())
+  const dismissedRef  = useRef<Set<string>>(loadDismissed())
+  const firstPollRef  = useRef(true)
   const today = new Date().toISOString().split('T')[0]
 
   // tomorrow's date as YYYY-MM-DD
@@ -105,13 +118,14 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       ])
 
       if (stockData.status === 'fulfilled') {
-        const items: StockAlert[] = (stockData.value.data.results ?? stockData.value.data).map((i: any) => ({
+        const allItems: StockAlert[] = (stockData.value.data.results ?? stockData.value.data).map((i: any) => ({
           id: i.id,
           product_name: i.product_name,
           product_sku: i.product_sku,
           warehouse_name: i.warehouse_name,
           quantity_available: i.quantity_available,
         }))
+        const items = allItems.filter((i) => !dismissedRef.current.has(i.id))
 
         if (firstPollRef.current) {
           firstPollRef.current = false
@@ -138,14 +152,16 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
 
       if (overdueData.status === 'fulfilled') {
         const invoices = overdueData.value.data.results ?? overdueData.value.data
-        const overdue: OverdueAlert[] = invoices.map((inv: any) => ({
-          id: inv.id,
-          invoice_number: inv.invoice_number,
-          customer_name: inv.customer_name ?? null,
-          amount_due: inv.amount_due,
-          due_date: inv.due_date,
-          days_overdue: Math.max(0, Math.floor((new Date(today).getTime() - new Date(inv.due_date).getTime()) / 86400000)),
-        }))
+        const overdue: OverdueAlert[] = invoices
+          .filter((inv: any) => !dismissedRef.current.has(inv.id))
+          .map((inv: any) => ({
+            id: inv.id,
+            invoice_number: inv.invoice_number,
+            customer_name: inv.customer_name ?? null,
+            amount_due: inv.amount_due,
+            due_date: inv.due_date,
+            days_overdue: Math.max(0, Math.floor((new Date(today).getTime() - new Date(inv.due_date).getTime()) / 86400000)),
+          }))
         setOverdueAlerts(overdue)
       }
 
@@ -154,6 +170,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
         const expiring: ExpiryAlert[] = batches
           .filter((b: any) => {
             if (!b.expiry_date) return false
+            if (dismissedRef.current.has(b.id)) return false
             const daysLeft = b.days_to_expiry ?? Math.floor((new Date(b.expiry_date).getTime() - new Date(today).getTime()) / 86400000)
             return daysLeft <= 30
           })
@@ -176,13 +193,15 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       // Bills due tomorrow
       if (billDueData.status === 'fulfilled') {
         const bills = billDueData.value.data.results ?? billDueData.value.data
-        const due: BillDueAlert[] = bills.map((b: any) => ({
-          id: b.id,
-          bill_number: b.bill_number,
-          supplier_name: b.supplier_name ?? b.supplier ?? 'Unknown supplier',
-          amount_due: b.amount_due ?? b.total,
-          due_date: b.due_date,
-        }))
+        const due: BillDueAlert[] = bills
+          .filter((b: any) => !dismissedRef.current.has(b.id))
+          .map((b: any) => ({
+            id: b.id,
+            bill_number: b.bill_number,
+            supplier_name: b.supplier_name ?? b.supplier ?? 'Unknown supplier',
+            amount_due: b.amount_due ?? b.total,
+            due_date: b.due_date,
+          }))
         setBillDueAlerts(due)
       }
 
@@ -190,7 +209,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       if (payrollData.status === 'fulfilled') {
         const runs = payrollData.value.data.results ?? payrollData.value.data
         const pending: PayrollPendingAlert[] = (runs as any[])
-          .filter((r: any) => r.status === 'processing')
+          .filter((r: any) => r.status === 'processing' && !dismissedRef.current.has(r.id))
           .map((r: any) => ({
             id: r.id,
             run_number: r.run_number,
@@ -212,34 +231,46 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     return () => clearInterval(interval)
   }, [isAuthenticated, poll])
 
+  const addDismissed = useCallback((id: string) => {
+    dismissedRef.current.add(id)
+    saveDismissed(dismissedRef.current)
+  }, [])
+
   const dismiss = useCallback((id: string) => {
+    addDismissed(id)
     setAlerts((prev) => prev.filter((a) => a.id !== id))
     prevIdsRef.current.delete(id)
-  }, [])
+  }, [addDismissed])
 
   const dismissAll = useCallback(() => {
-    setAlerts([])
-    setOverdueAlerts([])
-    setBillDueAlerts([])
-    setPayrollPendingAlerts([])
+    // Collect all current IDs before clearing state
+    setAlerts((prev) => { prev.forEach((a) => addDismissed(a.id)); return [] })
+    setOverdueAlerts((prev) => { prev.forEach((a) => addDismissed(a.id)); return [] })
+    setExpiryAlerts((prev) => { prev.forEach((a) => addDismissed(a.id)); return [] })
+    setBillDueAlerts((prev) => { prev.forEach((a) => addDismissed(a.id)); return [] })
+    setPayrollPendingAlerts((prev) => { prev.forEach((a) => addDismissed(a.id)); return [] })
     prevIdsRef.current = new Set()
-  }, [])
+  }, [addDismissed])
 
   const dismissOverdue = useCallback((id: string) => {
+    addDismissed(id)
     setOverdueAlerts((prev) => prev.filter((a) => a.id !== id))
-  }, [])
+  }, [addDismissed])
 
   const dismissExpiry = useCallback((id: string) => {
+    addDismissed(id)
     setExpiryAlerts((prev) => prev.filter((a) => a.id !== id))
-  }, [])
+  }, [addDismissed])
 
   const dismissBillDue = useCallback((id: string) => {
+    addDismissed(id)
     setBillDueAlerts((prev) => prev.filter((a) => a.id !== id))
-  }, [])
+  }, [addDismissed])
 
   const dismissPayrollPending = useCallback((id: string) => {
+    addDismissed(id)
     setPayrollPendingAlerts((prev) => prev.filter((a) => a.id !== id))
-  }, [])
+  }, [addDismissed])
 
   const refetch = useCallback(() => { poll() }, [poll])
 

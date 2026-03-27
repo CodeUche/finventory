@@ -1,34 +1,56 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts'
 import {
   TrendingUp, TrendingDown, Package,
-  AlertTriangle, DollarSign, Zap, ArrowUpRight, ShoppingCart, Clock,
+  AlertTriangle, DollarSign, Zap, ArrowUpRight, ShoppingCart, Clock, Sparkles,
 } from 'lucide-react'
 import { reportApi, inventoryApi, salesApi } from '@/services/api'
 import { formatCurrency, getCurrencySymbol } from '@/lib/utils'
-import { format, subDays } from 'date-fns'
+import { format, subDays, subMonths, subYears, startOfYear } from 'date-fns'
+import AIChatModal from '@/components/AIChatModal'
 
+// ─── Period options ─────────────────────────────────────────────────────────
+type PeriodKey = 'today' | '7d' | '14d' | '30d' | '60d' | '90d' | '6m' | '1y' | 'ytd'
+
+const PERIODS: { key: PeriodKey; label: string }[] = [
+  { key: 'today', label: 'Today' },
+  { key: '7d',   label: '7 Days' },
+  { key: '14d',  label: '14 Days' },
+  { key: '30d',  label: '30 Days' },
+  { key: '60d',  label: '60 Days' },
+  { key: '90d',  label: '90 Days' },
+  { key: '6m',   label: '6 Months' },
+  { key: '1y',   label: '1 Year' },
+  { key: 'ytd',  label: 'Year to Date' },
+]
+
+function getDateRange(key: PeriodKey): { dateFrom: string; dateTo: string } {
+  const now = new Date()
+  const fmt = (d: Date) => format(d, 'yyyy-MM-dd')
+  const today = fmt(now)
+  switch (key) {
+    case 'today': return { dateFrom: today, dateTo: today }
+    case '7d':    return { dateFrom: fmt(subDays(now, 7)),       dateTo: today }
+    case '14d':   return { dateFrom: fmt(subDays(now, 14)),      dateTo: today }
+    case '30d':   return { dateFrom: fmt(subDays(now, 30)),      dateTo: today }
+    case '60d':   return { dateFrom: fmt(subDays(now, 60)),      dateTo: today }
+    case '90d':   return { dateFrom: fmt(subDays(now, 90)),      dateTo: today }
+    case '6m':    return { dateFrom: fmt(subMonths(now, 6)),     dateTo: today }
+    case '1y':    return { dateFrom: fmt(subYears(now, 1)),      dateTo: today }
+    case 'ytd':   return { dateFrom: fmt(startOfYear(now)),      dateTo: today }
+  }
+}
+
+// ─── StatCard ────────────────────────────────────────────────────────────────
 function StatCard({
-  label,
-  value,
-  sub,
-  icon: Icon,
-  trend,
-  trendValue,
-  color = 'orange',
-  onClick,
+  label, value, sub, icon: Icon, trend, trendValue, color = 'orange', onClick,
 }: {
-  label: string
-  value: string
-  sub?: string
-  icon: React.ElementType
-  trend?: 'up' | 'down'
-  trendValue?: string
-  color?: 'orange' | 'green' | 'blue' | 'red'
-  onClick?: () => void
+  label: string; value: string; sub?: string; icon: React.ElementType
+  trend?: 'up' | 'down'; trendValue?: string
+  color?: 'orange' | 'green' | 'blue' | 'red'; onClick?: () => void
 }) {
   const colorMap = {
     orange: 'text-brand-400 bg-brand-500/15 border-brand-500/30',
@@ -36,7 +58,6 @@ function StatCard({
     blue:   'text-blue-400 bg-blue-500/15 border-blue-500/30',
     red:    'text-red-400 bg-red-500/15 border-red-500/30',
   }
-
   return (
     <div
       className={`stat-card animate-slide-up ${onClick ? 'cursor-pointer hover:border-brand-500/50 transition-colors' : ''}`}
@@ -52,7 +73,7 @@ function StatCard({
             {trendValue}
           </div>
         )}
-        {onClick && <ArrowUpRight size={14} className="text-slate-600" />}
+        {onClick && !trend && <ArrowUpRight size={14} className="text-slate-600" />}
       </div>
       <div>
         <p className="text-2xl font-bold text-white">{value}</p>
@@ -63,8 +84,10 @@ function StatCard({
   )
 }
 
+// ─── Main component ───────────────────────────────────────────────────────────
 export default function DashboardPage() {
   const navigate = useNavigate()
+  const [period, setPeriod] = useState<PeriodKey>('30d')
   const [pnl, setPnl] = useState<any>(null)
   const [salesData, setSalesData] = useState<any[]>([])
   const [topProducts, setTopProducts] = useState<any[]>([])
@@ -73,17 +96,18 @@ export default function DashboardPage() {
   const [overdueInvoices, setOverdueInvoices] = useState<any[]>([])
   const [overdueTotal, setOverdueTotal] = useState(0)
   const [loading, setLoading] = useState(true)
+  const [showAI, setShowAI] = useState(false)
 
-  const today = format(new Date(), 'yyyy-MM-dd')
-  const thirtyDaysAgo = format(subDays(new Date(), 30), 'yyyy-MM-dd')
-  const firstOfYear = `${new Date().getFullYear()}-01-01`
+  const { dateFrom, dateTo } = useMemo(() => getDateRange(period), [period])
+  const periodLabel = PERIODS.find((p) => p.key === period)?.label ?? ''
 
   useEffect(() => {
+    setLoading(true)
     const fetchAll = async () => {
       const [pnlRes, salesRes, topProdRes, stockRes, overdueRes] = await Promise.allSettled([
-        reportApi.pnl({ date_from: firstOfYear, date_to: today }),
-        reportApi.sales({ date_from: thirtyDaysAgo, date_to: today, group_by: 'day' }),
-        reportApi.topProducts({ date_from: thirtyDaysAgo, date_to: today, limit: 5 }),
+        reportApi.pnl({ date_from: dateFrom, date_to: dateTo }),
+        reportApi.sales({ date_from: dateFrom, date_to: dateTo, group_by: 'day' }),
+        reportApi.topProducts({ date_from: dateFrom, date_to: dateTo, limit: 5 }),
         inventoryApi.stock(),
         salesApi.invoices({ status: 'overdue', page_size: 5 }),
       ])
@@ -120,7 +144,7 @@ export default function DashboardPage() {
     }
     fetchAll()
 
-    // Refresh low stock count every 60 seconds so the card stays current
+    // Refresh low stock every 60s
     const interval = setInterval(async () => {
       try {
         const res = await inventoryApi.stock()
@@ -133,10 +157,10 @@ export default function DashboardPage() {
     }, 60000)
 
     return () => clearInterval(interval)
-  }, [])
+  }, [dateFrom, dateTo])
 
   const chartData = salesData.map((d) => ({
-    date: format(new Date(d.period), 'MMM d'),
+    date: format(new Date(d.period), period === 'today' ? 'HH:mm' : 'MMM d'),
     revenue: parseFloat(d.total_revenue),
     invoices: d.invoice_count,
   }))
@@ -146,41 +170,62 @@ export default function DashboardPage() {
   return (
     <div className="space-y-6">
       {/* Page header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-white">Dashboard</h1>
           <p className="text-slate-400 text-sm mt-0.5">
-            {format(new Date(), 'EEEE, MMMM d yyyy')} · Year-to-date overview
+            {format(new Date(), 'EEEE, MMMM d yyyy')}
           </p>
         </div>
-        <div className="flex items-center gap-2 px-3 py-2 bg-green-500/10 border border-green-500/30 rounded-xl">
-          <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
-          <span className="text-xs text-green-400 font-medium">Live</span>
+        <div className="flex items-center gap-2 flex-wrap">
+          <select
+            value={period}
+            onChange={(e) => setPeriod(e.target.value as PeriodKey)}
+            className="input text-sm py-1.5 w-auto"
+          >
+            {PERIODS.map(({ key, label }) => (
+              <option key={key} value={key}>{label}</option>
+            ))}
+          </select>
+          <button
+            onClick={() => setShowAI(true)}
+            className="flex items-center gap-2 px-3 py-2 bg-brand-500/15 border border-brand-500/30 hover:bg-brand-500/25 rounded-xl transition-colors"
+            title="Ask Audity AI about your finances"
+          >
+            <Sparkles size={14} className="text-brand-400" />
+            <span className="text-xs text-brand-400 font-medium hidden sm:inline">Explain My Money</span>
+          </button>
+          <div className="flex items-center gap-2 px-3 py-2 bg-green-500/10 border border-green-500/30 rounded-xl">
+            <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
+            <span className="text-xs text-green-400 font-medium">Live</span>
+          </div>
         </div>
       </div>
+
+      <AIChatModal open={showAI} onClose={() => setShowAI(false)} />
 
       {/* KPI Row 1 — Financial */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <StatCard
-          label="Total Revenue (YTD)"
-          value={formatCurrency(pnl?.revenue?.gross_sales ?? 0)}
-          sub="Year-to-date"
+          label={`Total Revenue · ${periodLabel}`}
+          value={loading ? '—' : formatCurrency(pnl?.revenue?.gross_sales ?? 0)}
+          sub={loading ? 'Loading…' : undefined}
           icon={DollarSign}
           color="orange"
           onClick={() => navigate('/reports')}
         />
         <StatCard
-          label="Gross Profit"
-          value={formatCurrency(pnl?.gross_profit ?? 0)}
-          sub={pnl ? `${pnl.gross_margin_pct}% margin` : 'No data yet'}
+          label={`Gross Profit · ${periodLabel}`}
+          value={loading ? '—' : formatCurrency(pnl?.gross_profit ?? 0)}
+          sub={loading ? undefined : pnl ? `${pnl.gross_margin_pct}% margin` : 'No data yet'}
           icon={TrendingUp}
           color="green"
           onClick={() => navigate('/reports')}
         />
         <StatCard
-          label="Net Profit"
-          value={formatCurrency(pnl?.net_profit ?? 0)}
-          sub={pnl ? `${pnl.net_margin_pct}% net margin` : 'No data yet'}
+          label={`Net Profit · ${periodLabel}`}
+          value={loading ? '—' : formatCurrency(pnl?.net_profit ?? 0)}
+          sub={loading ? undefined : pnl ? `${pnl.net_margin_pct}% net margin` : 'No data yet'}
           icon={Zap}
           color="blue"
           onClick={() => navigate('/reports')}
@@ -190,8 +235,8 @@ export default function DashboardPage() {
       {/* KPI Row 2 — Operational */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <StatCard
-          label="Total Orders (30 days)"
-          value={String(totalOrders)}
+          label={`Total Orders · ${periodLabel}`}
+          value={loading ? '—' : String(totalOrders)}
           sub="Invoices issued"
           icon={ShoppingCart}
           color="orange"
@@ -220,7 +265,7 @@ export default function DashboardPage() {
         <div className="flex items-center justify-between mb-6">
           <div>
             <h2 className="font-semibold text-white">Revenue Trend</h2>
-            <p className="text-sm text-slate-400">Last 30 days</p>
+            <p className="text-sm text-slate-400">{periodLabel}</p>
           </div>
           <button onClick={() => navigate('/reports')} className="text-xs text-brand-400 hover:text-brand-300 flex items-center gap-1">
             Full Report <ArrowUpRight size={12} />
@@ -233,7 +278,7 @@ export default function DashboardPage() {
         ) : chartData.length === 0 ? (
           <div className="h-56 flex flex-col items-center justify-center text-slate-500">
             <TrendingUp size={28} className="mb-2 opacity-30" />
-            <p className="text-sm">Revenue data will appear here after your first sale</p>
+            <p className="text-sm">No revenue data for this period</p>
           </div>
         ) : (
           <ResponsiveContainer width="100%" height={220}>
@@ -263,7 +308,7 @@ export default function DashboardPage() {
         {topProducts.length > 0 && (
           <div className="mt-6 pt-5 border-t border-surface-700">
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-semibold text-white">Top Products · Last 30 days</h3>
+              <h3 className="text-sm font-semibold text-white">Top Products · {periodLabel}</h3>
               <button onClick={() => navigate('/inventory/products')} className="text-xs text-brand-400 hover:text-brand-300 flex items-center gap-1">
                 View all <ArrowUpRight size={12} />
               </button>

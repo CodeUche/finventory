@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Plus, Search, Truck, X, Loader2, UploadCloud, FileText, Edit2 } from 'lucide-react'
+import { Plus, Search, Truck, X, Loader2, UploadCloud, FileText, Edit2, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { purchaseApi, supplierApi, inventoryApi } from '@/services/api'
 import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
@@ -8,6 +8,7 @@ import type { Product, PurchaseOrder } from '@/types'
 import DateInput from '@/components/DateInput'
 import YearFilter, { yearToDateParams } from '@/components/YearFilter'
 import ExportButton from '@/components/ExportButton'
+import { FieldTooltip } from '@/components/FieldTooltip'
 
 interface Supplier { id: string; name: string }
 interface Warehouse { id: string; name: string }
@@ -65,6 +66,9 @@ export default function PurchasesPage() {
   // Receipt viewer
   const [receiptViewUrl, setReceiptViewUrl] = useState<string | null>(null)
   const [receiptMime, setReceiptMime] = useState<string>('')
+
+  // Delete PO
+  const [deletingId, setDeletingId] = useState<string | null>(null)
 
   // Edit PO
   const [editOrder, setEditOrder] = useState<PurchaseOrder | null>(null)
@@ -204,6 +208,35 @@ export default function PurchasesPage() {
     setReceiptMime('')
   }
 
+  const handleDelete = async (id: string) => {
+    if (!window.confirm('Delete this purchase order? This cannot be undone.')) return
+    setDeletingId(id)
+    try {
+      await purchaseApi.delete(id)
+      toast.success('Purchase order deleted')
+      setOrders((prev) => prev.filter((o) => o.id !== id))
+    } catch (err: any) {
+      const msg = err?.response?.data?.error?.message
+        || err?.response?.data?.detail
+        || 'Failed to delete purchase order'
+      toast.error(msg)
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
+  const handleRemoveReceipt = async () => {
+    if (!editOrder) return
+    if (!window.confirm('Remove the attached receipt?')) return
+    try {
+      await purchaseApi.removeReceipt(editOrder.id)
+      setEditOrder({ ...editOrder, receipt: null })
+      toast.success('Receipt removed')
+    } catch {
+      toast.error('Failed to remove receipt')
+    }
+  }
+
   const openEditOrder = (order: PurchaseOrder) => {
     setEditOrder(order)
     setEditForm({
@@ -279,7 +312,7 @@ export default function PurchasesPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-surface-700">
-                {['PO Number', 'Supplier', 'Warehouse', 'Order Date', 'Expected', 'Total', 'Status', 'Actions'].map((h) => (
+                {['PO Number', 'Supplier', 'Location', 'Order Date', 'Expected', 'Total', 'Status', 'Actions'].map((h) => (
                   <th key={h} className="px-5 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
                 ))}
               </tr>
@@ -318,6 +351,14 @@ export default function PurchasesPage() {
                           title="Edit PO"
                         >
                           <Edit2 size={14} />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(o.id)}
+                          disabled={deletingId === o.id}
+                          className="text-slate-500 hover:text-red-400 transition-colors disabled:opacity-40"
+                          title="Delete PO"
+                        >
+                          {deletingId === o.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
                         </button>
                         {o.receipt ? (
                           <button
@@ -390,11 +431,11 @@ export default function PurchasesPage() {
                 </select>
               </div>
               <div>
-                <label className="label">Expected Delivery</label>
+                <label className="label">Expected Delivery <FieldTooltip text="When you expect the goods to arrive. Helps you plan stock levels and production schedules." /></label>
                 <DateInput value={editForm.expected_date} onChange={(v) => setEditForm((f) => ({ ...f, expected_date: v }))} />
               </div>
               <div>
-                <label className="label">Notes</label>
+                <label className="label">Notes <FieldTooltip text="Any special instructions for this order — e.g. delivery terms, packaging requirements, or contact details." /></label>
                 <textarea
                   className="input resize-none" rows={3}
                   value={editForm.notes}
@@ -437,6 +478,13 @@ export default function PurchasesPage() {
                     <div className="text-slate-400 text-sm">
                       <FileText size={20} className="mx-auto mb-1" />
                       <p>Receipt attached — drop a new file to replace</p>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); handleRemoveReceipt() }}
+                        className="mt-2 text-xs text-red-400 hover:text-red-300 flex items-center gap-1 mx-auto"
+                      >
+                        <Trash2 size={12} /> Remove receipt
+                      </button>
                     </div>
                   ) : (
                     <div className="text-slate-500">
@@ -475,29 +523,29 @@ export default function PurchasesPage() {
             <div className="p-6 space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div className="col-span-2">
-                  <label className="label">Supplier</label>
+                  <label className="label">Supplier <FieldTooltip text="The company you are buying from. Must be added to your suppliers list first." /></label>
                   <select className="input" value={form.supplier} onChange={upd('supplier')}>
                     <option value="">Walk-in / No supplier</option>
                     {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                   </select>
                 </div>
                 <div className="col-span-2">
-                  <label className="label">Warehouse *</label>
+                  <label className="label">Location * <FieldTooltip text="Where the ordered goods will be delivered and stored. Important for tracking stock at the right location." /></label>
                   <select className="input" value={form.warehouse} onChange={upd('warehouse')}>
-                    <option value="">— Select warehouse —</option>
+                    <option value="">— Select location —</option>
                     {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label className="label">Order Date</label>
+                  <label className="label">Order Date <FieldTooltip text="The date you placed this purchase order. Used to track how long orders take to arrive." /></label>
                   <DateInput value={form.order_date} onChange={(v) => setForm((f) => ({ ...f, order_date: v }))} />
                 </div>
                 <div>
-                  <label className="label">Expected Delivery</label>
+                  <label className="label">Expected Delivery <FieldTooltip text="When you expect the goods to arrive. Helps you plan stock levels and production schedules." /></label>
                   <DateInput value={form.expected_date} onChange={(v) => setForm((f) => ({ ...f, expected_date: v }))} />
                 </div>
                 <div className="col-span-2">
-                  <label className="label">Notes</label>
+                  <label className="label">Notes <FieldTooltip text="Any special instructions for this order — e.g. delivery terms, packaging requirements, or contact details." /></label>
                   <textarea className="input resize-none" rows={2} value={form.notes}
                     onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} placeholder="Optional notes…" />
                 </div>

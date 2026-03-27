@@ -73,8 +73,9 @@
   .badge-red    { @apply badge bg-red-500/15 text-red-400 border border-red-500/30; }
   .badge-yellow { @apply badge bg-yellow-500/15 text-yellow-400 border border-yellow-500/30; }
   .badge-blue   { @apply badge bg-blue-500/15 text-blue-400 border border-blue-500/30; }
-  .badge-orange { @apply badge bg-brand-500/15 text-brand-400 border border-brand-500/30; }
-  .badge-slate  { @apply badge bg-slate-500/15 text-slate-400 border border-slate-500/30; }
+  .badge-orange  { @apply badge bg-brand-500/15 text-brand-400 border border-brand-500/30; }
+  .badge-purple  { @apply badge bg-purple-500/15 text-purple-400 border border-purple-500/30; }
+  .badge-slate   { @apply badge bg-slate-500/15 text-slate-400 border border-slate-500/30; }
 
   .stat-card {
     @apply card flex flex-col gap-3 hover:border-surface-600 transition-colors duration-200;
@@ -134,6 +135,11 @@ html.light .btn-ghost:hover {
   color: #0f172a;
 }
 
+html.light .btn-secondary:hover {
+  background-color: #cbd5e1;
+  color: #0f172a;
+}
+
 html.light aside {
   background-color: #ffffff;
   border-color: #e2e8f0;
@@ -149,9 +155,9 @@ html.light .sidebar-item:hover {
 }
 
 html.light .sidebar-item-active {
-  background-color: rgba(249, 115, 22, 0.1);
-  border-color: rgba(249, 115, 22, 0.3);
-  color: #ea580c;
+  background-color: rgba(234, 88, 12, 0.12);
+  border-color: rgba(194, 65, 12, 0.4);
+  color: #9a3412;
 }
 
 html.light .table-row {
@@ -167,15 +173,78 @@ html.light .text-slate-200 { color: #1e293b; }
 html.light .text-slate-300 { color: #334155; }
 html.light .text-slate-400 { color: #64748b; }
 html.light .text-slate-500 { color: #94a3b8; }
-html.light .text-white { color: #0f172a; }
+html.light .text-slate-600 { color: #64748b; }
+html.light .text-slate-700 { color: #334155; }
+html.light .text-white     { color: #0f172a; }
 
-html.light .bg-surface-700\/30 { background-color: rgba(203, 213, 225, 0.3); }
-html.light .bg-surface-700\/50 { background-color: rgba(203, 213, 225, 0.5); }
-html.light .bg-surface-700\/60 { background-color: rgba(203, 213, 225, 0.6); }
-html.light .bg-surface-800 { background-color: #ffffff; }
-html.light .bg-surface-900 { background-color: #f8fafc; }
-html.light .bg-surface-950 { background-color: #f1f5f9; }
-html.light .border-surface-700 { border-color: #e2e8f0; }
+/* ── Surface background overrides ──────────────────────────────────────── */
+html.light .bg-surface-600   { background-color: #cbd5e1; }
+html.light .bg-surface-700   { background-color: #e2e8f0; }
+html.light .bg-surface-800   { background-color: #ffffff; }
+html.light .bg-surface-900   { background-color: #f8fafc; }
+html.light .bg-surface-950   { background-color: #f1f5f9; }
+
+/* Opacity variants */
+html.light .bg-surface-600\/20 { background-color: rgba(203, 213, 225, 0.2); }
+html.light .bg-surface-600\/30 { background-color: rgba(203, 213, 225, 0.3); }
+html.light .bg-surface-700\/20 { background-color: rgba(226, 232, 240, 0.4); }
+html.light .bg-surface-700\/30 { background-color: rgba(226, 232, 240, 0.5); }
+html.light .bg-surface-700\/40 { background-color: rgba(226, 232, 240, 0.6); }
+html.light .bg-surface-700\/50 { background-color: rgba(226, 232, 240, 0.7); }
+html.light .bg-surface-700\/60 { background-color: rgba(226, 232, 240, 0.8); }
+html.light .bg-surface-800\/40 { background-color: rgba(255, 255, 255, 0.6); }
+html.light .bg-surface-800\/50 { background-color: rgba(255, 255, 255, 0.7); }
+html.light .bg-surface-900\/30 { background-color: rgba(248, 250, 252, 0.5); }
+html.light .bg-surface-900\/40 { background-color: rgba(248, 250, 252, 0.6); }
+html.light .bg-surface-900\/50 { background-color: rgba(248, 250, 252, 0.7); }
+html.light .bg-surface-900\/60 { background-color: rgba(248, 250, 252, 0.8); }
+
+/* ── Surface border overrides ───────────────────────────────────────────── */
+html.light .border-surface-500   { border-color: #94a3b8; }
+html.light .border-surface-600   { border-color: #cbd5e1; }
+html.light .border-surface-700   { border-color: #e2e8f0; }
+html.light .border-surface-700\/30 { border-color: rgba(226, 232, 240, 0.3); }
+html.light .border-surface-700\/50 { border-color: rgba(226, 232, 240, 0.5); }
+html.light .border-surface-700\/60 { border-color: rgba(226, 232, 240, 0.6); }
 
 html.light ::-webkit-scrollbar-track { background-color: #f1f5f9; }
 html.light ::-webkit-scrollbar-thumb { background-color: #cbd5e1; }
+
+/* ── Light-mode colour overrides for semantic / data colours ────────────────
+   Tailwind's -400 shades are optimised for dark backgrounds. On white/light
+   backgrounds they wash out badly. We remap them to -700 equivalents so every
+   monetary figure, badge, and status indicator stays legible in light mode.   */
+html.light .text-red-400    { color: #b91c1c; }   /* red-700     */
+html.light .text-rose-400   { color: #be123c; }   /* rose-700    */
+html.light .text-orange-400 { color: #c2410c; }   /* orange-700  */
+html.light .text-amber-400  { color: #92400e; }   /* amber-800   */
+html.light .text-yellow-400 { color: #854d0e; }   /* yellow-800  */
+html.light .text-emerald-400 { color: #047857; }  /* emerald-700 */
+html.light .text-green-400  { color: #15803d; }   /* green-700   */
+html.light .text-teal-400   { color: #0f766e; }   /* teal-700    */
+html.light .text-blue-400   { color: #1d4ed8; }   /* blue-700    */
+html.light .text-indigo-400 { color: #4338ca; }   /* indigo-700  */
+html.light .text-violet-400 { color: #6d28d9; }   /* violet-700  */
+html.light .text-purple-400 { color: #7e22ce; }   /* purple-700  */
+html.light .text-fuchsia-400 { color: #a21caf; }  /* fuchsia-700 */
+html.light .text-pink-400   { color: #be185d; }   /* pink-700    */
+html.light .text-cyan-400   { color: #0e7490; }   /* cyan-700    */
+html.light .text-sky-400    { color: #0369a1; }   /* sky-700     */
+html.light .text-brand-400  { color: #c2410c; }   /* same as orange-700 */
+
+/* Badge backgrounds need higher contrast in light mode too */
+html.light .badge-red    { background-color: #fee2e2; color: #991b1b; border-color: #fca5a5; }
+html.light .badge-green  { background-color: #dcfce7; color: #166534; border-color: #86efac; }
+html.light .badge-blue   { background-color: #dbeafe; color: #1e40af; border-color: #93c5fd; }
+html.light .badge-yellow { background-color: #fef9c3; color: #713f12; border-color: #fde047; }
+html.light .badge-orange { background-color: #ffedd5; color: #9a3412; border-color: #fdba74; }
+html.light .badge-purple { background-color: #f3e8ff; color: #6b21a8; border-color: #d8b4fe; }
+html.light .badge-slate  { background-color: #f1f5f9; color: #334155; border-color: #cbd5e1; }
+
+/* Force-dark panel — always renders with dark background/text regardless of theme (e.g. auth page left panel) */
+html.light .force-dark { background: linear-gradient(135deg, #1e293b, #0f172a) !important; }
+html.light .force-dark .text-white { color: #f8fafc !important; }
+html.light .force-dark .text-slate-100 { color: #f1f5f9 !important; }
+html.light .force-dark .text-slate-200 { color: #e2e8f0 !important; }
+html.light .force-dark .text-slate-300 { color: #cbd5e1 !important; }
+html.light .force-dark .text-slate-400 { color: #94a3b8 !important; }

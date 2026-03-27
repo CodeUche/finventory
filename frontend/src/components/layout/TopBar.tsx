@@ -1,4 +1,4 @@
-import { Menu, Search, X, Package, Receipt, Users } from 'lucide-react'
+import { Menu, Search, X, Package, Receipt, Users, Sun, Moon } from 'lucide-react'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
@@ -6,6 +6,7 @@ import { useAuthStore } from '@/store/authStore'
 import { orgApi, inventoryApi, salesApi, customerApi } from '@/services/api'
 import { setActiveCurrency, formatCurrency } from '@/lib/utils'
 import NotificationBell from '@/components/NotificationBell'
+import { getStoredTheme, setTheme, type Theme } from '@/hooks/useTheme'
 
 const CURRENCIES = [
   'NGN', 'USD', 'EUR', 'GBP', 'GHS', 'KES', 'ZAR', 'XOF', 'XAF',
@@ -27,6 +28,14 @@ interface TopBarProps {
 export default function TopBar({ onMenuClick }: TopBarProps) {
   const { organisation, updateOrganisation } = useAuthStore()
   const navigate = useNavigate()
+  const [currentTheme, setCurrentTheme] = useState<Theme>(getStoredTheme)
+
+  const toggleTheme = () => {
+    const next: Theme = currentTheme === 'dark' ? 'light' : 'dark'
+    setTheme(next)
+    setCurrentTheme(next)
+  }
+
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<SearchResult[]>([])
   const [searching, setSearching] = useState(false)
@@ -42,8 +51,10 @@ export default function TopBar({ onMenuClick }: TopBarProps) {
       updateOrganisation({ currency: newCurrency })
       setActiveCurrency(newCurrency)
       toast.success(`Currency changed to ${newCurrency}`)
-    } catch {
-      toast.error('Failed to update currency')
+    } catch (err: unknown) {
+      const apiErr = (err as { response?: { data?: { error?: { message?: string } | string } } })?.response?.data?.error
+      const msg = typeof apiErr === 'string' ? apiErr : (apiErr?.message ?? 'Failed to update currency')
+      toast.error(msg)
     }
   }
 
@@ -212,6 +223,15 @@ export default function TopBar({ onMenuClick }: TopBarProps) {
       </div>
 
       <div className="flex items-center gap-3 ml-auto">
+        {/* Theme toggle */}
+        <button
+          onClick={toggleTheme}
+          className="btn-ghost p-2"
+          title={currentTheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+        >
+          {currentTheme === 'dark' ? <Sun size={17} /> : <Moon size={17} />}
+        </button>
+
         {/* Real-time notifications bell */}
         <NotificationBell />
 

@@ -9,6 +9,7 @@ import DateInput from '@/components/DateInput'
 interface RecurringForm {
   template_name: string
   customer: string
+  custom_customer_name: string
   warehouse: string
   frequency: string
   interval: string
@@ -23,8 +24,9 @@ const BLANK_LINE: RecurringLineForm = { product: '', quantity: '1', unit_price: 
 
 const today = new Date().toISOString().split('T')[0]
 const BLANK: RecurringForm = {
-  template_name: '', customer: '', warehouse: '', frequency: 'monthly', interval: '1',
-  next_run_date: today, end_date: '', notes: '', payment_method: 'cash',
+  template_name: '', customer: '', custom_customer_name: '', warehouse: '',
+  frequency: 'monthly', interval: '1', next_run_date: today, end_date: '',
+  notes: '', payment_method: 'cash',
 }
 
 const FREQ_BADGE: Record<string, string> = {
@@ -63,12 +65,13 @@ export default function RecurringInvoicesPage() {
 
   const handleCreate = async () => {
     if (!form.template_name.trim()) { toast.error('Template name is required'); return }
-    if (!form.warehouse) { toast.error('Warehouse is required'); return }
+    if (!form.warehouse) { toast.error('Location is required'); return }
     setSaving(true)
     try {
       await recurringApi.create({
         ...form,
-        customer: form.customer || null,
+        customer: form.customer === '__custom__' ? null : (form.customer || null),
+        custom_customer_name: form.customer === '__custom__' ? form.custom_customer_name.trim() : '',
         interval: parseInt(form.interval) || 1,
         end_date: form.end_date || null,
         items: lines.filter((l) => l.product).map((l) => ({
@@ -170,7 +173,14 @@ export default function RecurringInvoicesPage() {
               ) : items.map((r) => (
                 <tr key={r.id} className="table-row">
                   <td className="px-4 py-3.5 text-white font-medium">{r.template_name}</td>
-                  <td className="px-4 py-3.5 text-slate-400">{r.customer_name ?? <span className="italic text-slate-600">Walk-in</span>}</td>
+                  <td className="px-4 py-3.5 text-slate-400">
+                    {r.customer_name
+                      ? r.customer_name
+                      : r.custom_customer_name
+                        ? <span className="text-slate-300">{r.custom_customer_name}</span>
+                        : <span className="italic text-slate-600">Walk-in</span>
+                    }
+                  </td>
                   <td className="px-4 py-3.5">
                     <span className={FREQ_BADGE[r.frequency] ?? 'badge-slate'}>
                       {r.interval > 1 ? `Every ${r.interval} ` : ''}{r.frequency}
@@ -223,15 +233,29 @@ export default function RecurringInvoicesPage() {
                 <label className="text-xs text-slate-400 mb-1 block">Template Name *</label>
                 <input className="input" placeholder="e.g. Monthly Maintenance Fee" value={form.template_name} onChange={(e) => setForm({ ...form, template_name: e.target.value })} />
               </div>
-              <div>
+              <div className={form.customer === '__custom__' ? 'col-span-2' : ''}>
                 <label className="text-xs text-slate-400 mb-1 block">Customer</label>
-                <select className="input" value={form.customer} onChange={(e) => setForm({ ...form, customer: e.target.value })}>
-                  <option value="">Walk-in</option>
+                <select
+                  className="input"
+                  value={form.customer}
+                  onChange={(e) => setForm({ ...form, customer: e.target.value, custom_customer_name: '' })}
+                >
+                  <option value="">Walk-in / No customer</option>
                   {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  <option value="__custom__">— Other / Enter manually —</option>
                 </select>
+                {form.customer === '__custom__' && (
+                  <input
+                    className="input mt-2"
+                    placeholder="Enter customer or vendor name…"
+                    value={form.custom_customer_name}
+                    onChange={(e) => setForm({ ...form, custom_customer_name: e.target.value })}
+                    autoFocus
+                  />
+                )}
               </div>
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">Warehouse *</label>
+                <label className="text-xs text-slate-400 mb-1 block">Location *</label>
                 <select className="input" value={form.warehouse} onChange={(e) => setForm({ ...form, warehouse: e.target.value })}>
                   <option value="">— Select —</option>
                   {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}

@@ -5,6 +5,7 @@ import toast from 'react-hot-toast'
 import { customerApi, inventoryApi, salesApi } from '@/services/api'
 import { formatCurrency, formatAmountInput, stripCommas } from '@/lib/utils'
 import { useNotifications } from '@/contexts/NotificationsContext'
+import { FieldTooltip } from '@/components/FieldTooltip'
 import type { Customer, Product, Warehouse as WarehouseType } from '@/types'
 
 interface CartItem {
@@ -317,7 +318,7 @@ export default function NewSalePage() {
 
                       {/* Discount % */}
                       <div>
-                        <p className="text-xs text-slate-500 mb-1">Discount %</p>
+                        <p className="text-xs text-slate-500 mb-1 flex items-center gap-1">Discount % <FieldTooltip text="Enter a percentage to reduce this item's price. E.g. 10 means the customer gets 10% off. Leave 0 for full price." /></p>
                         <input
                           type="number"
                           className="input text-xs py-1.5 px-2"
@@ -351,6 +352,7 @@ export default function NewSalePage() {
             <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-2">
               <Warehouse size={14} />
               Location
+              <FieldTooltip text="The warehouse or shop location this sale is coming from. Stock will be deducted from this location's inventory." />
             </p>
             {warehouses.length === 0 ? (
               <p className="text-xs text-amber-400">
@@ -375,8 +377,9 @@ export default function NewSalePage() {
 
           {/* Customer */}
           <div className="card p-4 space-y-3">
-            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1">
               Customer (optional)
+              <FieldTooltip text="Attach a customer to track their purchase history, apply store credit, and generate a named invoice. Leave blank for walk-in cash sales." />
             </p>
             {selectedCustomer ? (
               <div className="flex items-center justify-between bg-surface-700 rounded-xl px-4 py-3">
@@ -428,8 +431,9 @@ export default function NewSalePage() {
 
           {/* Payment method */}
           <div className="card p-4 space-y-3">
-            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1">
               Payment Method
+              <FieldTooltip text="How the customer is paying. Choose 'Credit' if they are paying later — the invoice will stay open until settled. Cash/POS/Transfer marks it as paid immediately." />
             </p>
             <div className="grid grid-cols-2 gap-2">
               {PAYMENT_METHODS.map((m) => (
@@ -449,7 +453,7 @@ export default function NewSalePage() {
 
             {paymentMethod !== 'credit' && (
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">Amount Tendered</label>
+                <label className="text-xs text-slate-400 mb-1 flex items-center gap-1">Amount Tendered <FieldTooltip text="The amount of cash the customer physically gives you. If more than the total, the change due will be shown automatically." /></label>
                 <input
                   type="text"
                   inputMode="decimal"
@@ -544,8 +548,8 @@ export default function NewSalePage() {
 
           {/* Notes */}
           <div className="card p-4">
-            <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-2">
-              Notes
+            <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1 mb-2">
+              Notes <FieldTooltip text="Add any message or instructions to print on the invoice — e.g. delivery address, payment terms, or a thank-you note. Visible to the customer." />
             </label>
             <textarea
               className="input resize-none"

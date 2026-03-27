@@ -5,7 +5,9 @@ import { customerApi } from '@/services/api'
 import ExportButton from '@/components/ExportButton'
 import { formatCurrency, formatDate, getStatusColor, getCurrencySymbol } from '@/lib/utils'
 import DateInput from '@/components/DateInput'
+import { FieldTooltip } from '@/components/FieldTooltip'
 import { useAuthStore } from '@/store/authStore'
+import { saveBlobFile } from '@/lib/saveBlobFile'
 import type { Customer } from '@/types'
 
 function creditScoreColor(score: number) {
@@ -173,6 +175,9 @@ export default function CustomersPage() {
       return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)]
     }
     const BRAND = brandRgb(organisation?.brand_color)
+    const DARK: [number, number, number] = [30, 30, 30]
+    const MUTED: [number, number, number] = [100, 100, 100]
+    const tmpl = organisation?.invoice_template ?? 'classic'
 
     // Helper to fetch URL → base64 data URL
     const fetchDataUrl = async (url: string): Promise<string | null> => {
@@ -188,90 +193,39 @@ export default function CustomersPage() {
       } catch { return null }
     }
 
-    let y = 8
-    const HEADER_H = 42
+    // Pre-load logo
+    let logoData: string | null = null
+    if (organisation?.logo) logoData = await fetchDataUrl(organisation.logo)
 
-    // ── Header: letterhead banner OR dark block ────────────────────────────────
-    const useLetterhead = organisation?.use_letterhead && organisation?.letterhead
-    const isImageLetterhead = useLetterhead && /\.(png|jpe?g|gif|webp|svg)(\?|$)/i.test(organisation!.letterhead!)
-
-    if (isImageLetterhead) {
-      const lhData = await fetchDataUrl(organisation!.letterhead!)
-      if (lhData) {
-        doc.addImage(lhData, 'PNG', 0, 0, pageW, 30)
-        y = 32
-        // Company name below banner
-        doc.setFontSize(10)
-        doc.setFont('helvetica', 'bold')
-        doc.setTextColor(30, 41, 59)
-        doc.text(organisation?.name ?? 'Company', 10, y + 6)
-        doc.setFontSize(7.5)
-        doc.setFont('helvetica', 'normal')
-        doc.setTextColor(100, 116, 139)
-        const subLines: string[] = []
-        if (organisation?.address) subLines.push(organisation.address)
-        if (organisation?.email) subLines.push(organisation.email)
-        if (organisation?.phone) subLines.push(organisation.phone)
-        subLines.forEach((line, idx) => doc.text(line, 10, y + 11 + idx * 4))
-        // Title right
-        doc.setFontSize(14)
-        doc.setFont('helvetica', 'bold')
-        doc.setTextColor(30, 41, 59)
-        doc.text('CUSTOMER STATEMENT', pageW - 10, y + 6, { align: 'right' })
-        doc.setFontSize(8)
-        doc.setFont('helvetica', 'normal')
-        doc.setTextColor(100, 116, 139)
-        doc.text(`Period: ${formatDate(stmtFrom)} — ${formatDate(stmtTo)}`, pageW - 10, y + 13, { align: 'right' })
-        y = y + 11 + subLines.length * 4 + 8
-      } else {
-        // letterhead URL failed to load — fall back to dark header block
-        doc.setFillColor(15, 23, 42); doc.rect(0, 0, pageW, HEADER_H, 'F')
-        doc.setFontSize(15); doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold')
-        doc.text(organisation?.name ?? 'Company', 10, 13)
-        doc.setFontSize(14); doc.text('CUSTOMER STATEMENT', pageW - 10, 13, { align: 'right' })
-        y = HEADER_H + 8
-      }
-    } else {
-      // Default: colored dark header block
-      doc.setFillColor(15, 23, 42)
-      doc.rect(0, 0, pageW, HEADER_H, 'F')
-
-      // Load logo image if available
-      let logoDataUrl: string | null = null
-      if (organisation?.logo) logoDataUrl = await fetchDataUrl(organisation.logo)
-
-      // Logo (left)
-      if (logoDataUrl) doc.addImage(logoDataUrl, 'PNG', 10, 5, 32, 16)
-
-      // Company name + details
-      const nameY = logoDataUrl ? 26 : 13
-      doc.setFontSize(logoDataUrl ? 10 : 15)
-      doc.setTextColor(255, 255, 255)
-      doc.setFont('helvetica', 'bold')
-      doc.text(organisation?.name ?? 'Company', 10, nameY)
-      doc.setFontSize(7.5)
-      doc.setFont('helvetica', 'normal')
-      doc.setTextColor(148, 163, 184)
-      const subLines: string[] = []
-      if (organisation?.address) subLines.push(organisation.address)
-      if (organisation?.email) subLines.push(organisation.email)
-      if (organisation?.phone) subLines.push(organisation.phone)
-      if (organisation?.tax_id) subLines.push(`Tax ID: ${organisation.tax_id}`)
-      subLines.forEach((line, idx) => doc.text(line, 10, nameY + 5 + idx * 4))
-
-      // Title (right)
-      doc.setFontSize(14)
-      doc.setTextColor(255, 255, 255)
-      doc.setFont('helvetica', 'bold')
-      doc.text('CUSTOMER STATEMENT', pageW - 10, 13, { align: 'right' })
-      doc.setFontSize(8)
-      doc.setFont('helvetica', 'normal')
-      doc.setTextColor(148, 163, 184)
-      doc.text(`Period: ${formatDate(stmtFrom)} — ${formatDate(stmtTo)}`, pageW - 10, 20, { align: 'right' })
-      doc.text(`Generated: ${formatDate(new Date().toISOString().split('T')[0])}`, pageW - 10, 26, { align: 'right' })
-
-      y = HEADER_H + 8
+    // ── Template-aware header ──────────────────────────────────────────────────
+    const hexToRgb = (hex?: string): [number, number, number] => {
+      const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex ?? '')
+      if (!m) return [30, 30, 30]
+      return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)]
     }
+    const nameColor: [number, number, number] = (() => {
+      const c = organisation?.company_name_font_color
+      if (!c || c === '#ffffff') return (tmpl === 'modern' || tmpl === 'minimal') ? DARK : [255, 255, 255]
+      return hexToRgb(c)
+    })()
+    const showName = organisation?.show_company_name_on_pdf ?? true
+    const displayName = showName ? (organisation?.invoice_company_name?.trim() || organisation?.name || 'Company') : ''
+    const { applyDocHeader, templateHeadFill } = await import('@/lib/pdfUtils')
+    let y = applyDocHeader(doc, {
+      tmpl, pageW, BRAND, DARK, MUTED,
+      logoData,
+      displayName,
+      nameColor,
+      showCompanyName: showName,
+      orgAddress: organisation?.address,
+      orgEmail: organisation?.email,
+      orgPhone: organisation?.phone,
+      docTitle: 'CUSTOMER STATEMENT',
+      metaRows: [
+        ['Period', `${formatDate(stmtFrom)} – ${formatDate(stmtTo)}`],
+        ['Generated', formatDate(new Date().toISOString().split('T')[0])],
+      ],
+    })
     // Customer block
     doc.setFontSize(10)
     doc.setFont('helvetica', 'bold')
@@ -314,6 +268,14 @@ export default function CustomersPage() {
       doc.setTextColor(30, 41, 59)
       doc.text('Invoices', 14, y)
       y += 4
+
+      // Dynamic money column widths
+      const invTotals = [...statementData.invoices.map((inv: any) =>
+        `${sym}${parseFloat(inv.total_amount).toLocaleString('en', { minimumFractionDigits: 2 })}`
+      ), 'Total', 'Paid', 'Balance']
+      doc.setFontSize(8)
+      const moneyW = Math.min(40, Math.max(22, Math.max(...invTotals.map((s: string) => doc.getTextWidth(s))) + 8))
+
       autoTable(doc, {
         startY: y,
         head: [['Invoice #', 'Date', 'Due Date', 'Total', 'Paid', 'Balance', 'Status']],
@@ -327,8 +289,14 @@ export default function CustomersPage() {
           inv.status.replace('_', ' ').toUpperCase(),
         ]),
         styles: { fontSize: 8, cellPadding: 3 },
-        headStyles: { fillColor: BRAND, textColor: 255, fontStyle: 'bold', fontSize: 7 },
-        columnStyles: { 0: { fontStyle: 'bold' }, 6: { fontStyle: 'bold' } },
+        headStyles: { fillColor: templateHeadFill(tmpl, BRAND), textColor: 255, fontStyle: 'bold', fontSize: 7 },
+        columnStyles: {
+          0: { fontStyle: 'bold', cellWidth: 'auto' },
+          3: { halign: 'right', cellWidth: moneyW },
+          4: { halign: 'right', cellWidth: moneyW },
+          5: { halign: 'right', cellWidth: moneyW, fontStyle: 'bold' },
+          6: { fontStyle: 'bold', cellWidth: 20 },
+        },
         alternateRowStyles: { fillColor: [248, 250, 252] },
         margin: { left: 14, right: 14 },
       })
@@ -342,6 +310,14 @@ export default function CustomersPage() {
       doc.setTextColor(30, 41, 59)
       doc.text('Payments Received', 14, y)
       y += 4
+
+      // Dynamic amount column width
+      const payAmounts = [...statementData.payments.map((p: any) =>
+        `${sym}${parseFloat(p.amount).toLocaleString('en', { minimumFractionDigits: 2 })}`
+      ), 'Amount']
+      doc.setFontSize(8)
+      const payAmtW = Math.min(48, Math.max(24, Math.max(...payAmounts.map((s: string) => doc.getTextWidth(s))) + 8))
+
       autoTable(doc, {
         startY: y,
         head: [['Invoice #', 'Date', 'Method', 'Amount']],
@@ -352,7 +328,11 @@ export default function CustomersPage() {
           `${sym}${parseFloat(p.amount).toLocaleString('en', { minimumFractionDigits: 2 })}`,
         ]),
         styles: { fontSize: 8, cellPadding: 3 },
-        headStyles: { fillColor: [5, 150, 105], textColor: 255, fontStyle: 'bold', fontSize: 7 },
+        headStyles: { fillColor: templateHeadFill(tmpl, BRAND), textColor: 255, fontStyle: 'bold', fontSize: 7 },
+        columnStyles: {
+          0: { cellWidth: 'auto' },
+          3: { halign: 'right', cellWidth: payAmtW, fontStyle: 'bold' },
+        },
         alternateRowStyles: { fillColor: [240, 253, 244] },
         margin: { left: 14, right: 14 },
       })
@@ -395,14 +375,7 @@ export default function CustomersPage() {
       doc.text(`Statement: ${formatDate(stmtFrom)} — ${formatDate(stmtTo)}`, pageW - 10, ph - 5, { align: 'right' })
     }
 
-    // Use blob URL instead of doc.save() — doc.save() is broken in Tauri WebView2
-    const blob = doc.output('blob')
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `statement-${selected.code}-${stmtFrom}-${stmtTo}.pdf`
-    a.click()
-    setTimeout(() => URL.revokeObjectURL(url), 30000)
+    await saveBlobFile(doc.output('blob'), `statement-${selected.code}-${stmtFrom}-${stmtTo}.pdf`)
   }
 
   const openStatement = (c: Customer) => {
@@ -653,30 +626,30 @@ export default function CustomersPage() {
 
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2">
-                <label className="text-xs text-slate-400 mb-1 block">Full Name *</label>
+                <label className="text-xs text-slate-400 mb-1 block">Full Name *<FieldTooltip text="The person or business name. This appears on all their invoices and account statements." /></label>
                 <input className="input" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} />
               </div>
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">Type</label>
+                <label className="text-xs text-slate-400 mb-1 block">Type<FieldTooltip text="Categorise your customer — Retail for individuals, Wholesale for bulk buyers, Corporate for businesses. Helps with filtering and pricing decisions." /></label>
                 <select className="input" value={editForm.customer_type} onChange={(e) => setEditForm({ ...editForm, customer_type: e.target.value })}>
                   {CUSTOMER_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                 </select>
               </div>
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">Credit Limit</label>
+                <label className="text-xs text-slate-400 mb-1 block">Credit Limit<FieldTooltip text="The maximum amount this customer is allowed to owe you at any time. Set to 0 to block credit sales. The app warns you when they approach this limit." /></label>
                 <input type="number" className="input" value={editForm.credit_limit} min="0"
                   onChange={(e) => setEditForm({ ...editForm, credit_limit: e.target.value })} />
               </div>
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">Phone</label>
+                <label className="text-xs text-slate-400 mb-1 block">Phone<FieldTooltip text="Customer's phone number. Shown on invoices and useful for follow-ups." /></label>
                 <input className="input" value={editForm.phone} onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })} />
               </div>
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">Email</label>
+                <label className="text-xs text-slate-400 mb-1 block">Email<FieldTooltip text="Customer's email. Used to send invoices and payment links directly from the app." /></label>
                 <input type="email" className="input" value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} />
               </div>
               <div className="col-span-2">
-                <label className="text-xs text-slate-400 mb-1 block">Address</label>
+                <label className="text-xs text-slate-400 mb-1 block">Address<FieldTooltip text="The customer's delivery or billing address. Printed on their invoices." /></label>
                 <textarea className="input resize-none" rows={2} value={editForm.address}
                   onChange={(e) => setEditForm({ ...editForm, address: e.target.value })} />
               </div>
@@ -830,7 +803,7 @@ export default function CustomersPage() {
 
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2">
-                <label className="text-xs text-slate-400 mb-1 block">Full Name *</label>
+                <label className="text-xs text-slate-400 mb-1 block">Full Name *<FieldTooltip text="The person or business name. This appears on all their invoices and account statements." /></label>
                 <input
                   className="input"
                   placeholder="e.g., Aisha Musa"
@@ -840,14 +813,14 @@ export default function CustomersPage() {
               </div>
 
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">Type</label>
+                <label className="text-xs text-slate-400 mb-1 block">Type<FieldTooltip text="Categorise your customer — Retail for individuals, Wholesale for bulk buyers, Corporate for businesses. Helps with filtering and pricing decisions." /></label>
                 <select className="input" value={form.customer_type} onChange={(e) => setForm({ ...form, customer_type: e.target.value })}>
                   {CUSTOMER_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                 </select>
               </div>
 
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">Credit Limit</label>
+                <label className="text-xs text-slate-400 mb-1 block">Credit Limit<FieldTooltip text="The maximum amount this customer is allowed to owe you at any time. Set to 0 to block credit sales. The app warns you when they approach this limit." /></label>
                 <input
                   type="number"
                   className="input"
@@ -859,7 +832,7 @@ export default function CustomersPage() {
               </div>
 
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">Phone</label>
+                <label className="text-xs text-slate-400 mb-1 block">Phone<FieldTooltip text="Customer's phone number. Shown on invoices and useful for follow-ups." /></label>
                 <input
                   className="input"
                   placeholder="+234…"
@@ -869,7 +842,7 @@ export default function CustomersPage() {
               </div>
 
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">Email</label>
+                <label className="text-xs text-slate-400 mb-1 block">Email<FieldTooltip text="Customer's email. Used to send invoices and payment links directly from the app." /></label>
                 <input
                   type="email"
                   className="input"
@@ -880,7 +853,7 @@ export default function CustomersPage() {
               </div>
 
               <div className="col-span-2">
-                <label className="text-xs text-slate-400 mb-1 block">Address</label>
+                <label className="text-xs text-slate-400 mb-1 block">Address<FieldTooltip text="The customer's delivery or billing address. Printed on their invoices." /></label>
                 <textarea
                   className="input resize-none"
                   rows={2}

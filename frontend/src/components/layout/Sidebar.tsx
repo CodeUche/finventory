@@ -2,17 +2,20 @@ import { useState } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, Package, Boxes, Plus, Layers,
-  Users, Receipt, BarChart3, LogOut, Zap, X, FileText, RefreshCw,
+  Users, Receipt, BarChart3, LogOut, X, FileText, RefreshCw,
   CreditCard, Truck, Building2, Warehouse, Calculator, BookOpen,
   BookMarked, Landmark, UsersRound, Banknote, ArrowDownCircle,
-  PieChart, Scale, Shield, ClipboardList, ChevronDown, ChevronRight,
+  PieChart, Scale, Shield, ClipboardList, ChevronDown, ChevronRight, ShieldCheck,
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { authApi } from '@/services/api'
 import { cn } from '@/lib/utils'
+import type { ModuleKey } from '@/types'
 
 // ─── Navigation structure ─────────────────────────────────────────────────────
-const navGroups = [
+// `module` maps to ModuleKey for permission filtering; null = always visible
+// `ownerOnly` = only owners/admins see this item (no sub-account access)
+const navGroups: { label: string | null; items: { name: string; href: string; icon: React.ElementType; module?: ModuleKey; ownerOnly?: boolean }[] }[] = [
   {
     label: null,
     items: [{ name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard }],
@@ -20,66 +23,72 @@ const navGroups = [
   {
     label: 'INVENTORY',
     items: [
-      { name: 'Products', href: '/inventory/products', icon: Package },
-      { name: 'Stock Levels', href: '/inventory/stock', icon: Boxes },
-      { name: 'Warehouses', href: '/inventory/warehouses', icon: Warehouse },
-      { name: 'Batches & Lots', href: '/inventory/batches', icon: Layers },
+      { name: 'Products', href: '/inventory/products', icon: Package, module: 'inventory' },
+      { name: 'Stock Levels', href: '/inventory/stock', icon: Boxes, module: 'inventory' },
+      { name: 'Locations', href: '/inventory/warehouses', icon: Warehouse, module: 'inventory' },
+      { name: 'Batches & Lots', href: '/inventory/batches', icon: Layers, module: 'inventory' },
     ],
   },
   {
     label: 'SALES',
     items: [
-      { name: 'Invoices', href: '/sales', icon: FileText },
-      { name: 'New Sale', href: '/sales/new', icon: Plus },
-      { name: 'Quotes', href: '/quotes', icon: ClipboardList },
-      { name: 'Recurring', href: '/recurring', icon: RefreshCw },
+      { name: 'Invoices', href: '/sales', icon: FileText, module: 'sales' },
+      { name: 'New Sale', href: '/sales/new', icon: Plus, module: 'sales' },
+      { name: 'Quotes', href: '/quotes', icon: ClipboardList, module: 'quotes' },
+      { name: 'Recurring', href: '/recurring', icon: RefreshCw, module: 'recurring' },
     ],
   },
   {
     label: 'PROCUREMENT',
     items: [
-      { name: 'Purchase Orders', href: '/purchases', icon: Truck },
-      { name: 'Bills (AP)', href: '/bills', icon: Receipt },
-      { name: 'Suppliers', href: '/suppliers', icon: Building2 },
+      { name: 'Purchase Orders', href: '/purchases', icon: Truck, module: 'purchases' },
+      { name: 'Bills (AP)', href: '/bills', icon: Receipt, module: 'bills' },
+      { name: 'Suppliers', href: '/suppliers', icon: Building2, module: 'suppliers' },
     ],
   },
   {
     label: 'CRM',
     items: [
-      { name: 'Customers', href: '/customers', icon: Users },
-      { name: 'Credits', href: '/credits', icon: CreditCard },
+      { name: 'Customers', href: '/customers', icon: Users, module: 'customers' },
+      { name: 'Credits', href: '/credits', icon: CreditCard, module: 'customers' },
     ],
   },
   {
     label: 'ACCOUNTING',
     items: [
-      { name: 'Chart of Accounts', href: '/accounting/coa', icon: BookOpen },
-      { name: 'Journal Entries', href: '/accounting/journal', icon: BookMarked },
-      { name: 'Fixed Assets', href: '/accounting/assets', icon: Landmark },
-      { name: 'Bank Reconciliation', href: '/accounting/reconciliation', icon: Scale },
+      { name: 'Chart of Accounts', href: '/accounting/coa', icon: BookOpen, module: 'accounting' },
+      { name: 'Journal Entries', href: '/accounting/journal', icon: BookMarked, module: 'accounting' },
+      { name: 'Fixed Assets', href: '/accounting/assets', icon: Landmark, module: 'accounting' },
+      { name: 'Bank Reconciliation', href: '/accounting/reconciliation', icon: Scale, module: 'accounting' },
+      { name: 'Balance Sheet', href: '/reports/balance-sheet', icon: Scale, module: 'accounting' },
     ],
   },
   {
     label: 'PAYROLL',
     items: [
-      { name: 'Employees', href: '/payroll/employees', icon: UsersRound },
-      { name: 'Payroll Runs', href: '/payroll/runs', icon: Banknote },
+      { name: 'Employees', href: '/payroll/employees', icon: UsersRound, module: 'payroll' },
+      { name: 'Payroll Runs', href: '/payroll/runs', icon: Banknote, module: 'payroll' },
     ],
   },
   {
-    label: 'FINANCE',
+    label: 'CASH FLOW',
     items: [
-      { name: 'Income & Expenses', href: '/expenses', icon: ArrowDownCircle },
-      { name: 'Budgets', href: '/budgets', icon: PieChart },
-      { name: 'Reports', href: '/reports', icon: BarChart3 },
-      { name: 'Balance Sheet', href: '/reports/balance-sheet', icon: Scale },
+      { name: 'Income & Expenses', href: '/expenses', icon: ArrowDownCircle, module: 'expenses' },
+      { name: 'Budgets', href: '/budgets', icon: PieChart, module: 'budget' },
+      { name: 'Reports', href: '/reports', icon: BarChart3, module: 'reports' },
     ],
   },
   {
     label: 'COMPLIANCE',
     items: [
-      { name: 'Tax', href: '/tax', icon: Calculator },
-      { name: 'Audit Log', href: '/audit-log', icon: Shield },
+      { name: 'Tax', href: '/tax', icon: Calculator, module: 'tax' },
+      { name: 'Audit Log', href: '/audit-log', icon: Shield, module: 'audit_log', ownerOnly: true },
+    ],
+  },
+  {
+    label: 'ACCOUNT',
+    items: [
+      { name: 'Billing & Plans', href: '/billing', icon: CreditCard, ownerOnly: true },
     ],
   },
 ]
@@ -90,8 +99,23 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ open, onClose }: SidebarProps) {
-  const { user, organisation, tokens, logout } = useAuthStore()
+  const { user, organisation, tokens, logout, memberRole, modulePermissions, planModules } = useAuthStore()
   const navigate = useNavigate()
+
+  const isOwnerOrAdmin = !memberRole || memberRole === 'owner' || memberRole === 'admin' || user?.is_superuser
+
+  // Returns true if the nav item should be visible.
+  // Checks: ownerOnly → plan modules → sub-account RBAC permissions
+  const canSeeItem = (mod?: ModuleKey, ownerOnly?: boolean) => {
+    if (ownerOnly && !isOwnerOrAdmin) return false   // explicitly owner-only items
+    if (!mod) return true                             // no module restriction (dashboard, settings)
+    if (user?.is_superuser) return true              // superusers always see everything
+    // Plan-level gate: if the active plan restricts modules, only show allowed ones
+    if (planModules !== null && !planModules.includes(mod)) return false
+    if (isOwnerOrAdmin) return true                   // owners/admins see all plan-allowed modules
+    const level = modulePermissions?.[mod]
+    return level === 'view' || level === 'write' || level === 'edit'
+  }
 
   // Track which groups are collapsed. All start expanded.
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
@@ -122,9 +146,9 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
       {/* Logo */}
       <div className="flex items-center justify-between px-5 py-4 border-b border-surface-700 shrink-0">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 bg-brand-500 rounded-xl flex items-center justify-center shadow-glow-orange">
-            <Zap size={18} className="text-white" />
-          </div>
+          <div className="w-9 h-9 rounded-full bg-white overflow-hidden flex items-center justify-center flex-shrink-0">
+              <img src="/audity-logo.png" alt="Audity" className="w-7 h-7 object-contain" />
+            </div>
           <div>
             <p className="font-bold text-white text-sm leading-tight">Audity</p>
             <p className="text-xs text-slate-500 leading-tight">Business Suite</p>
@@ -147,6 +171,8 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
       <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-0.5">
         {navGroups.map((group, gi) => {
           const isCollapsed = group.label ? (collapsed[group.label] ?? false) : false
+          const visibleItems = group.items.filter((item) => canSeeItem(item.module, item.ownerOnly))
+          if (group.label && visibleItems.length === 0) return null
 
           return (
             <div key={gi}>
@@ -164,7 +190,7 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
                   }
                 </button>
               )}
-              {!isCollapsed && group.items.map((item) => (
+              {!isCollapsed && visibleItems.map((item) => (
                 <NavLink
                   key={item.href}
                   to={item.href}
@@ -180,6 +206,22 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
             </div>
           )
         })}
+
+        {/* Owner-only analytics */}
+        {isOwnerOrAdmin && canSeeItem('owner_analytics') && (
+          <div>
+            <div className="px-3 pt-4 pb-1">
+              <span className="text-[10px] font-semibold text-brand-600 uppercase tracking-widest">OWNER</span>
+            </div>
+            <NavLink
+              to="/owner-analytics"
+              className={({ isActive }) => isActive ? 'sidebar-item-active' : 'sidebar-item'}
+            >
+              <ShieldCheck size={16} className="shrink-0 text-brand-400" />
+              <span className="truncate text-brand-400">Owner Analytics</span>
+            </NavLink>
+          </div>
+        )}
       </nav>
 
       {/* Settings + User + Logout */}
@@ -194,6 +236,7 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
             <span className="text-red-400">Platform Admin</span>
           </NavLink>
         )}
+        {/* Settings: always show for owners/admins; for sub-accounts show only if they have profile/security access (always) */}
         <NavLink
           to="/settings"
           className={({ isActive }) => isActive ? 'sidebar-item-active' : 'sidebar-item'}

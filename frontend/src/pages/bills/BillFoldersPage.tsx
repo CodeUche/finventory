@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import {
   Folder, FolderOpen, FolderPlus, ChevronRight, Home,
-  Trash2, Edit2, Loader2, X, Plus,
+  Trash2, Edit2, Loader2, X, Plus, ArrowLeft,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { billApi } from '@/services/api'
@@ -138,9 +138,29 @@ export default function BillFoldersPage() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-white">Bill Folders</h1>
-          <p className="text-slate-400 text-sm">Organise your bills into folders for easy retrieval</p>
+        <div className="flex items-center gap-3">
+          {currentFolderId && (
+            <button
+              onClick={() => {
+                const parentId = currentFolder?.ancestors?.slice(-1)[0]?.id
+                parentId ? setSearchParams({ folder: parentId }) : goHome()
+              }}
+              className="btn-ghost p-2 text-slate-400 hover:text-white"
+              title="Go back"
+            >
+              <ArrowLeft size={18} />
+            </button>
+          )}
+          <div>
+            <h1 className="text-2xl font-bold text-white">
+              {currentFolder ? currentFolder.name : 'Bill Folders'}
+            </h1>
+            <p className="text-slate-400 text-sm">
+              {currentFolder
+                ? `Folder · ${currentFolder.bills_count} bill${currentFolder.bills_count !== 1 ? 's' : ''}`
+                : 'Organise your bills into folders for easy retrieval'}
+            </p>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={openCreateFolder} className="btn-secondary flex items-center gap-2">
@@ -151,7 +171,7 @@ export default function BillFoldersPage() {
               onClick={() => navigate(`/bills?openNew=1&folder=${currentFolderId}`)}
               className="btn-primary flex items-center gap-2"
             >
-              <Plus size={15} /> New Bill
+              <Plus size={15} /> New Bill in Folder
             </button>
           )}
         </div>
@@ -159,6 +179,10 @@ export default function BillFoldersPage() {
 
       {/* Breadcrumb */}
       <div className="flex items-center gap-1.5 text-sm text-slate-400 flex-wrap">
+        <button onClick={() => navigate('/bills')} className="flex items-center gap-1 hover:text-white transition-colors">
+          <ArrowLeft size={13} /> Bills
+        </button>
+        <span className="text-slate-600">/</span>
         <button onClick={goHome} className="flex items-center gap-1 hover:text-white transition-colors">
           <Home size={13} /> Bill Folders
         </button>

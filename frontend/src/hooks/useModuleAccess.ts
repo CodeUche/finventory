@@ -31,7 +31,8 @@ export function useModuleAccess(module: ModuleKey) {
     return FULL
   }
 
-  const level: AccessLevel = modulePermissions[module] ?? 'edit'
+  // No explicit permission record = no access (restrictive default for sub-accounts)
+  const level: AccessLevel = modulePermissions[module] ?? 'none'
 
   switch (level) {
     case 'none':

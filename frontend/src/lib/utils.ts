@@ -79,6 +79,7 @@ export function getStatusColor(status: string): string {
     overdue: 'badge-red',
     voided: 'badge-slate',
     draft: 'badge-slate',
+    returned: 'badge-purple',
     active: 'badge-green',
     trialing: 'badge-blue',
     canceled: 'badge-red',

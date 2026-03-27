@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   ArrowDownCircle, ArrowUpCircle, Plus, Search, X, Pencil, Loader2, Layers,
-  Folder, FolderOpen, FolderPlus, ChevronRight, Home, Trash2, Edit2,
+  Folder, FolderOpen, FolderPlus, ChevronRight, ChevronDown, Home, Trash2, Edit2,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { expenseApi, budgetApi, salesApi } from '@/services/api'
@@ -13,6 +13,7 @@ import type { Expense, ExpenseGroup, Invoice } from '@/types'
 import DateInput from '@/components/DateInput'
 import YearFilter, { yearToDateParams } from '@/components/YearFilter'
 import ExportButton from '@/components/ExportButton'
+import { FieldTooltip } from '@/components/FieldTooltip'
 
 const PAYMENT_METHODS: { value: string; label: string }[] = [
   { value: 'cash', label: 'Cash' },
@@ -77,6 +78,8 @@ export default function ExpensesPage() {
   const [periodFilter, setPeriodFilter] = useState<string>('30d')
   const [archiveYear, setArchiveYear] = useState<number | null>(null)
   const [groupByCategory, setGroupByCategory] = useState(false)
+  const [salesRevenueCollapsed, setSalesRevenueCollapsed] = useState(false)
+  const [cashflowCollapsed, setCashflowCollapsed] = useState(false)
 
   /** Compute { date_from, date_to } from a period key */
   function periodToDateParams(period: string): Record<string, string> {
@@ -186,6 +189,15 @@ export default function ExpensesPage() {
       loadExpenses()
     } catch { toast.error('Failed to update') }
     finally { setSaving(false) }
+  }
+
+  const handleDelete = async (e: Expense) => {
+    if (!confirm(`Delete this ${e.is_income ? 'income' : 'expense'} entry (${formatCurrency(e.amount)})?`)) return
+    try {
+      await expenseApi.delete(e.id)
+      toast.success('Entry deleted')
+      loadExpenses()
+    } catch { toast.error('Failed to delete') }
   }
 
   const totalExpenses = expenses.filter((e) => !e.is_income).reduce((s, e) => s + parseFloat(e.amount), 0)
@@ -524,50 +536,74 @@ export default function ExpensesPage() {
           {/* Sales Revenue section — shown when not filtering to expense-only */}
           {typeFilter !== 'expense' && salesInvoices.length > 0 && (
             <div className="card p-0 overflow-hidden">
-              <div className="px-5 py-3.5 border-b border-surface-700 flex items-center justify-between">
-                <div>
+              <button
+                onClick={() => setSalesRevenueCollapsed(c => !c)}
+                className="w-full px-5 py-3.5 border-b border-surface-700 flex items-center justify-between hover:bg-surface-700/40 transition-colors"
+              >
+                <div className="text-left">
                   <p className="text-sm font-semibold text-white">Sales Revenue</p>
                   <p className="text-xs text-slate-500">{salesInvoices.length} invoice{salesInvoices.length !== 1 ? 's' : ''} · automatically recorded from Sales module</p>
                 </div>
-                <span className="text-emerald-400 font-bold">{formatCurrency(totalSalesRevenue, currency)}</span>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-surface-700">
-                      {['Date', 'Invoice #', 'Customer', 'Method', 'Status', 'Amount'].map((h) => (
-                        <th key={h} className="px-5 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {salesInvoices.map((inv) => (
-                      <tr key={inv.id} className="table-row">
-                        <td className="px-5 py-3.5 text-slate-400 whitespace-nowrap">{formatDate(inv.issue_date)}</td>
-                        <td className="px-5 py-3.5 font-mono text-brand-400 text-xs">{inv.invoice_number}</td>
-                        <td className="px-5 py-3.5 text-slate-300">{inv.customer_name || 'Walk-in'}</td>
-                        <td className="px-5 py-3.5 text-slate-400 capitalize">{inv.payment_method?.replace('_', ' ') || '—'}</td>
-                        <td className="px-5 py-3.5">
-                          <span className={
-                            inv.status === 'paid' ? 'badge-green' :
-                            inv.status === 'credit' ? 'badge-yellow' :
-                            inv.status === 'partially_paid' ? 'badge-blue' :
-                            'badge-slate'
-                          }>{inv.status.replace('_', ' ')}</span>
-                        </td>
-                        <td className="px-5 py-3.5 font-semibold text-emerald-400">
-                          + {formatCurrency(parseFloat(String(inv.total_amount)), currency)}
-                        </td>
+                <div className="flex items-center gap-3">
+                  <span className="text-emerald-400 font-bold">{formatCurrency(totalSalesRevenue, currency)}</span>
+                  <ChevronDown size={16} className={`text-slate-400 transition-transform duration-200 ${salesRevenueCollapsed ? '-rotate-90' : ''}`} />
+                </div>
+              </button>
+              {!salesRevenueCollapsed && (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-surface-700">
+                        {['Date', 'Invoice #', 'Customer', 'Method', 'Status', 'Amount'].map((h) => (
+                          <th key={h} className="px-5 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
+                        ))}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {salesInvoices.map((inv) => (
+                        <tr key={inv.id} className="table-row">
+                          <td className="px-5 py-3.5 text-slate-400 whitespace-nowrap">{formatDate(inv.issue_date)}</td>
+                          <td className="px-5 py-3.5 font-mono text-brand-400 text-xs">{inv.invoice_number}</td>
+                          <td className="px-5 py-3.5 text-slate-300">{inv.customer_name || 'Walk-in'}</td>
+                          <td className="px-5 py-3.5 text-slate-400 capitalize">{inv.payment_method?.replace('_', ' ') || '—'}</td>
+                          <td className="px-5 py-3.5">
+                            <span className={
+                              inv.status === 'paid' ? 'badge-green' :
+                              inv.status === 'credit' ? 'badge-yellow' :
+                              inv.status === 'partially_paid' ? 'badge-blue' :
+                              'badge-slate'
+                            }>{inv.status.replace('_', ' ')}</span>
+                          </td>
+                          <td className="px-5 py-3.5 font-semibold text-emerald-400">
+                            + {formatCurrency(parseFloat(String(inv.total_amount)), currency)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           )}
 
-          {/* Misc Income & Expenses Table */}
+          {/* Cashflow Table */}
           <div className="card p-0 overflow-hidden">
+            <button
+              onClick={() => setCashflowCollapsed(c => !c)}
+              className="w-full px-5 py-3.5 border-b border-surface-700 flex items-center justify-between hover:bg-surface-700/40 transition-colors"
+            >
+              <div className="text-left">
+                <p className="text-sm font-semibold text-white">Cashflow</p>
+                <p className="text-xs text-slate-500">{expenses.length} {expenses.length === 1 ? 'entry' : 'entries'} · manually recorded income &amp; expenses</p>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className={`font-bold text-sm ${net >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {net >= 0 ? '+' : '−'} {formatCurrency(Math.abs(net), currency)}
+                </span>
+                <ChevronDown size={16} className={`text-slate-400 transition-transform duration-200 ${cashflowCollapsed ? '-rotate-90' : ''}`} />
+              </div>
+            </button>
+            {!cashflowCollapsed && (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -613,9 +649,14 @@ export default function ExpensesPage() {
                           {e.is_income ? '+' : '−'} {formatCurrency(e.amount)}
                         </td>
                         <td className="px-5 py-3.5">
-                          <button onClick={() => openEdit(e)} className="btn-ghost p-1.5 text-slate-400 hover:text-white">
-                            <Pencil size={14} />
-                          </button>
+                          <div className="flex items-center gap-1">
+                            <button onClick={() => openEdit(e)} className="btn-ghost p-1.5 text-slate-400 hover:text-white">
+                              <Pencil size={14} />
+                            </button>
+                            <button onClick={() => handleDelete(e)} className="btn-ghost p-1.5 text-slate-400 hover:text-red-400">
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))
@@ -623,6 +664,7 @@ export default function ExpensesPage() {
                 </tbody>
               </table>
             </div>
+            )}
           </div>
         </>
       )}
@@ -1075,7 +1117,7 @@ export default function ExpensesPage() {
 
             <div className="space-y-4">
               <div>
-                <label className="label">Category</label>
+                <label className="label">Category <FieldTooltip text="What type of income or expense this is — e.g. 'Rent', 'Salaries', 'Sales Revenue'. Used to group transactions in your reports and budget tracking." /></label>
                 <select className="input" value={folderExpForm.category_label}
                   onChange={(e) => setFolderExpForm({ ...folderExpForm, category_label: e.target.value })}>
                   <option value="">— Select category —</option>
@@ -1086,13 +1128,13 @@ export default function ExpensesPage() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="label">Amount *</label>
+                  <label className="label">Amount * <FieldTooltip text="The money received (income) or spent (expense). Enter numbers only — no currency symbol needed." /></label>
                   <input className="input" placeholder="0.00"
                     value={folderExpForm.amount}
                     onChange={(e) => setFolderExpForm({ ...folderExpForm, amount: formatAmountInput(e.target.value) })} />
                 </div>
                 <div>
-                  <label className="label">Old Price (optional)</label>
+                  <label className="label">Old Price (optional) <FieldTooltip text="The old amount before a price change. Optional — lets you track savings or cost increases over time." /></label>
                   <input className="input" placeholder="Previous amount"
                     value={folderExpForm.previous_price}
                     onChange={(e) => setFolderExpForm({ ...folderExpForm, previous_price: formatAmountInput(e.target.value) })} />
@@ -1107,11 +1149,11 @@ export default function ExpensesPage() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="label">Date</label>
+                  <label className="label">Date <FieldTooltip text="The actual date the money was spent or received. Important for accurate monthly reports." /></label>
                   <DateInput value={folderExpForm.expense_date} onChange={(v) => setFolderExpForm({ ...folderExpForm, expense_date: v })} />
                 </div>
                 <div>
-                  <label className="label">Payment Method</label>
+                  <label className="label">Payment Method <FieldTooltip text="How the money moved — cash in hand, bank transfer, card/POS, or cheque." /></label>
                   <select className="input" value={folderExpForm.payment_method}
                     onChange={(e) => setFolderExpForm({ ...folderExpForm, payment_method: e.target.value })}>
                     {PAYMENT_METHODS.map((m) => (
@@ -1122,7 +1164,7 @@ export default function ExpensesPage() {
               </div>
               {!folderExpForm.is_income && budgets.length > 0 && (
                 <div>
-                  <label className="label">Budget (optional)</label>
+                  <label className="label">Budget (optional) <FieldTooltip text="Link this entry to an active budget line to automatically track actual spending against your plan." /></label>
                   <select className="input" value={folderExpForm.budget ?? ''}
                     onChange={(e) => setFolderExpForm({ ...folderExpForm, budget: e.target.value || null })}>
                     <option value="">— No budget —</option>
@@ -1133,7 +1175,7 @@ export default function ExpensesPage() {
                 </div>
               )}
               <div>
-                <label className="label">Description (optional)</label>
+                <label className="label">Description (optional) <FieldTooltip text="A short note about what this transaction was for. E.g. 'Paid NEPA bill March' or 'Market sales Friday'. Helps you remember later." /></label>
                 <input className="input" placeholder="Notes or reference"
                   value={folderExpForm.description}
                   onChange={(e) => setFolderExpForm({ ...folderExpForm, description: e.target.value })} />

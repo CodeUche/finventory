@@ -1,12 +1,12 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Audity",
-  "version": "0.1.0",
+  "version": "0.1.8",
   "identifier": "com.finventory.app",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:3000",
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "npm run dev:desktop",
     "beforeBuildCommand": "npm run build:desktop"
   },
   "app": {
@@ -22,7 +22,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; font-src 'self' data:; connect-src 'self' http://localhost:8000 http://127.0.0.1:8000 https:; object-src 'none'; frame-src blob: 'self'; base-uri 'self';"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' http://localhost:8000 http://127.0.0.1:8000 https:; object-src 'none'; frame-src blob: 'self'; base-uri 'self'; form-action 'self';"
     }
   },
   "bundle": {

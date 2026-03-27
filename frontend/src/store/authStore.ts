@@ -1,6 +1,10 @@
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { persist, createJSONStorage } from 'zustand/middleware'
 import type { User, AuthTokens, Organisation, AccessLevel, ModuleKey } from '@/types'
+
+export const REMEMBER_FLAG_KEY = 'audity-remember-me'
+// Purge any legacy plaintext password that may have been stored by older builds
+localStorage.removeItem('audity-saved-creds')
 
 interface AuthState {
   user: User | null
@@ -13,12 +17,18 @@ interface AuthState {
   memberRole: string | null
   // module_key → access_level for non-admin users
   modulePermissions: Partial<Record<ModuleKey, AccessLevel>>
+  // Modules allowed by the active subscription plan; null = no restriction
+  planModules: string[] | null
+  // Whether the current subscription is expired
+  subscriptionExpired: boolean
 
   setAuth: (user: User, tokens: AuthTokens) => void
   setOrganisation: (org: Organisation) => void
   setOrganisations: (orgs: Organisation[]) => void
   setRememberMe: (val: boolean) => void
   setMembership: (role: string, perms: Partial<Record<ModuleKey, AccessLevel>>) => void
+  setPlanModules: (modules: string[] | null) => void
+  setSubscriptionExpired: (expired: boolean) => void
   updateUser: (user: Partial<User>) => void
   updateOrganisation: (org: Partial<Organisation>) => void
   updateTokens: (tokens: Partial<AuthTokens>) => void
@@ -27,7 +37,7 @@ interface AuthState {
 
 export const useAuthStore = create<AuthState>()(
   persist(
-    (set, get) => ({
+    (set) => ({
       user: null,
       tokens: null,
       organisation: null,
@@ -36,24 +46,30 @@ export const useAuthStore = create<AuthState>()(
       rememberMe: false,
       memberRole: null,
       modulePermissions: {},
+      planModules: null,
+      subscriptionExpired: false,
 
-      setRememberMe: (val) => set({ rememberMe: val }),
+      setRememberMe: (val) => {
+        if (val) localStorage.setItem(REMEMBER_FLAG_KEY, 'true')
+        else localStorage.removeItem(REMEMBER_FLAG_KEY)
+        set({ rememberMe: val })
+      },
 
       setAuth: (user, tokens) => {
-        const storage = get().rememberMe ? localStorage : sessionStorage
-        storage.setItem('auth', JSON.stringify(tokens))
         set({ user, tokens, isAuthenticated: true })
       },
 
       setOrganisation: (org) => {
-        const storage = get().rememberMe ? localStorage : sessionStorage
-        storage.setItem('org_id', org.id)
         set({ organisation: org })
       },
 
       setOrganisations: (organisations) => set({ organisations }),
 
       setMembership: (role, perms) => set({ memberRole: role, modulePermissions: perms }),
+
+      setPlanModules: (modules) => set({ planModules: modules }),
+
+      setSubscriptionExpired: (expired) => set({ subscriptionExpired: expired }),
 
       updateUser: (partial) =>
         set((s) => ({ user: s.user ? { ...s.user, ...partial } : s.user })),
@@ -66,24 +82,27 @@ export const useAuthStore = create<AuthState>()(
       updateTokens: (partial) =>
         set((s) => {
           const updated = s.tokens ? { ...s.tokens, ...partial } : s.tokens
-          const storage = s.rememberMe ? localStorage : sessionStorage
-          if (updated) storage.setItem('auth', JSON.stringify(updated))
           return { tokens: updated }
         }),
 
       logout: () => {
-        localStorage.removeItem('auth')
-        localStorage.removeItem('org_id')
-        sessionStorage.removeItem('auth')
-        sessionStorage.removeItem('org_id')
+        localStorage.removeItem(REMEMBER_FLAG_KEY)
+        localStorage.removeItem('finventory-auth')
+        sessionStorage.removeItem('finventory-auth') // belt-and-suspenders
         set({
           user: null, tokens: null, organisation: null, isAuthenticated: false,
-          memberRole: null, modulePermissions: {},
+          rememberMe: false, memberRole: null, modulePermissions: {}, planModules: null,
+          subscriptionExpired: false,
         })
       },
     }),
     {
       name: 'finventory-auth',
+      // Always use localStorage. The startup guard in main.tsx calls logout()
+      // on every app launch, which clears this key before the first render.
+      // Tauri/WebView2 does NOT reliably clear sessionStorage on process exit,
+      // so using localStorage + explicit logout() is the only safe approach.
+      storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({
         user: state.user,
         tokens: state.tokens,
@@ -92,6 +111,8 @@ export const useAuthStore = create<AuthState>()(
         rememberMe: state.rememberMe,
         memberRole: state.memberRole,
         modulePermissions: state.modulePermissions,
+        planModules: state.planModules,
+        subscriptionExpired: state.subscriptionExpired,
       }),
     },
   ),

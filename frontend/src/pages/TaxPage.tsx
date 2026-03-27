@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import {
-  Calculator, ChevronDown, ChevronUp, Edit2, Plus, Receipt, Trash2, X, Zap, AlertCircle,
+  Building2, Calculator, ChevronDown, ChevronUp, Edit2, ExternalLink, Plus, Receipt, Trash2, X, Zap, AlertCircle,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
+import { openExternal } from '@/lib/openExternal'
 import { taxApi, exciseApi, whtApi } from '@/services/api'
 import { formatCurrency } from '@/lib/utils'
 import type { TaxClass, TaxConfig, ExciseDuty, WHTRate, WHTTransaction } from '@/types'
@@ -10,7 +11,7 @@ import DateInput from '@/components/DateInput'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-type Tab = 'vat' | 'income' | 'tools' | 'excise' | 'wht'
+type Tab = 'vat' | 'income' | 'tools' | 'excise' | 'wht' | 'filing'
 
 interface ClassForm { name: string; rate: string; description: string }
 const EMPTY_CLASS: ClassForm = { name: '', rate: '', description: '' }
@@ -289,6 +290,7 @@ export default function TaxPage() {
           ['tools', 'Tax Tools'],
           ['excise', 'Excise Duty'],
           ['wht', 'WHT'],
+          ['filing', 'Filing Guide'],
         ] as [Tab, string][]).map(([t, label]) => (
           <button
             key={t}
@@ -1059,6 +1061,215 @@ export default function TaxPage() {
               }}>
                 {savingWHT ? 'Saving…' : editingWHTId ? 'Save Changes' : 'Add WHT Rate'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* ── Filing Guide Tab ─────────────────────────────────────────────────── */}
+      {tab === 'filing' && (
+        <div className="space-y-6">
+          <div>
+            <h2 className="text-white font-semibold">Nigerian Tax Filing Guide</h2>
+            <p className="text-slate-500 text-xs mt-0.5">Step-by-step instructions for filing your taxes — simplified for business owners and employees.</p>
+          </div>
+
+          <div className="grid gap-6 lg:grid-cols-2">
+            {/* Personal Income Tax */}
+            <div className="card space-y-4">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 bg-blue-500/15 rounded-xl flex items-center justify-center shrink-0">
+                  <span className="text-blue-400 text-lg font-bold">₦</span>
+                </div>
+                <div>
+                  <h3 className="text-white font-semibold">Personal Income Tax (PIT)</h3>
+                  <p className="text-slate-400 text-xs mt-0.5">For individuals, sole traders, and employees — governed by PITA</p>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                {[
+                  {
+                    step: '1', title: 'Get your TIN',
+                    detail: 'Register at any FIRS office or via JTB online portal to obtain your Tax Identification Number (TIN). Free and required for all filings.',
+                    link: 'https://apps.jtb.gov.ng/TinSearch',
+                    linkLabel: 'JTB TIN Portal',
+                  },
+                  {
+                    step: '2', title: 'File annual return (Form A)',
+                    detail: 'Employees: Your employer withholds PAYE monthly. At year end (by 31 March), file Form A via TaxPro MAX to confirm total income and deductions.',
+                    link: 'https://taxpromax.firs.gov.ng/',
+                    linkLabel: 'TaxPro MAX',
+                  },
+                  {
+                    step: '3', title: 'Pay any tax balance',
+                    detail: 'After filing, generate a payment reference from TaxPro MAX and pay at any bank, via bank transfer, or USSD. Deadline: 31 March every year.',
+                    link: 'https://taxpromax.firs.gov.ng/',
+                    linkLabel: 'Pay on TaxPro MAX',
+                  },
+                  {
+                    step: '4', title: 'Keep your tax clearance',
+                    detail: 'After payment, download your Tax Clearance Certificate (TCC) valid for 3 years. Required for government contracts, land purchases, and passports.',
+                    link: 'https://taxpromax.firs.gov.ng/',
+                    linkLabel: 'Download TCC',
+                  },
+                ].map((item) => (
+                  <div key={item.step} className="flex gap-3">
+                    <div className="w-6 h-6 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">{item.step}</div>
+                    <div>
+                      <p className="text-sm font-medium text-white">{item.title}</p>
+                      <p className="text-xs text-slate-400 mt-0.5 leading-relaxed">{item.detail}</p>
+                      <button
+                        onClick={() => openExternal(item.link)}
+                        className="inline-flex items-center gap-1 text-xs text-brand-400 hover:text-brand-300 mt-1"
+                      >
+                        <ExternalLink size={10} /> {item.linkLabel}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="p-3 bg-blue-500/5 border border-blue-500/20 rounded-xl">
+                <p className="text-xs font-semibold text-blue-400 mb-1">Quick Reference — PAYE Brackets (Annual)</p>
+                <div className="grid grid-cols-2 gap-1 text-xs">
+                  {[
+                    ['First ₦300k', '7%'], ['Next ₦300k', '11%'],
+                    ['Next ₦500k', '15%'], ['Next ₦500k', '19%'],
+                    ['Next ₦1.6M', '21%'], ['Above ₦3.2M', '24%'],
+                  ].map(([band, rate]) => (
+                    <div key={band} className="flex justify-between">
+                      <span className="text-slate-400">{band}</span>
+                      <span className="text-white font-mono font-semibold">{rate}</span>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-[10px] text-slate-500 mt-2">Minimum tax: 1% of gross income applies when computed PAYE is lower.</p>
+              </div>
+            </div>
+
+            {/* Corporate Income Tax */}
+            <div className="card space-y-4">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 bg-emerald-500/15 rounded-xl flex items-center justify-center shrink-0">
+                  <Building2 size={18} className="text-emerald-400" />
+                </div>
+                <div>
+                  <h3 className="text-white font-semibold">Companies Income Tax (CIT)</h3>
+                  <p className="text-slate-400 text-xs mt-0.5">For limited companies and other incorporated bodies — governed by CITA</p>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                {[
+                  {
+                    step: '1', title: 'Understand your rate',
+                    detail: 'Small companies (turnover < ₦25M): 0% CIT. Medium (₦25M–₦100M): 20%. Large (above ₦100M): 30%. Assessed on profits after allowable deductions.',
+                    link: 'https://www.firs.gov.ng/companies-income-tax/',
+                    linkLabel: 'FIRS CIT Guide',
+                  },
+                  {
+                    step: '2', title: 'File annual returns',
+                    detail: 'File on TaxPro MAX within 6 months after your accounting year-end (e.g. if year ends Dec 31, file by Jun 30). Attach audited accounts and tax computations.',
+                    link: 'https://taxpromax.firs.gov.ng/',
+                    linkLabel: 'TaxPro MAX Filing',
+                  },
+                  {
+                    step: '3', title: 'Pay in instalments (if applicable)',
+                    detail: 'Large companies pay CIT in 3 instalments: 1st instalment (50%) by 6th month, 2nd (25%) by 9th month, final balance on filing. Minimum tax = 0.5% of turnover.',
+                    link: 'https://taxpromax.firs.gov.ng/',
+                    linkLabel: 'Pay CIT',
+                  },
+                  {
+                    step: '4', title: 'Claim capital allowances',
+                    detail: 'Reduce your tax by claiming capital allowances on qualifying assets (plant, machinery, buildings). Initial allowance + annual allowance deducted from assessable profits.',
+                    link: 'https://www.firs.gov.ng/',
+                    linkLabel: 'FIRS Official Portal',
+                  },
+                ].map((item) => (
+                  <div key={item.step} className="flex gap-3">
+                    <div className="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">{item.step}</div>
+                    <div>
+                      <p className="text-sm font-medium text-white">{item.title}</p>
+                      <p className="text-xs text-slate-400 mt-0.5 leading-relaxed">{item.detail}</p>
+                      <button
+                        onClick={() => openExternal(item.link)}
+                        className="inline-flex items-center gap-1 text-xs text-brand-400 hover:text-brand-300 mt-1"
+                      >
+                        <ExternalLink size={10} /> {item.linkLabel}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="p-3 bg-emerald-500/5 border border-emerald-500/20 rounded-xl space-y-1.5">
+                <p className="text-xs font-semibold text-emerald-400">CIT Rates at a Glance</p>
+                {[
+                  ['Turnover < ₦25M', '0%', 'Exempt from CIT'],
+                  ['Turnover ₦25M–₦100M', '20%', 'Medium company rate'],
+                  ['Turnover > ₦100M', '30%', 'Large company rate'],
+                  ['Minimum tax', '0.5%', 'Of gross turnover (floor)'],
+                ].map(([cat, rate, note]) => (
+                  <div key={cat} className="flex items-center justify-between text-xs">
+                    <div>
+                      <span className="text-slate-300">{cat}</span>
+                      <span className="text-slate-500 ml-1.5">— {note}</span>
+                    </div>
+                    <span className="text-white font-mono font-bold">{rate}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* VAT Filing */}
+          <div className="card space-y-3">
+            <h3 className="text-white font-semibold">VAT Filing (Monthly)</h3>
+            <p className="text-slate-400 text-xs">Nigerian VAT rate: 7.5%. Registered businesses must file monthly VAT returns by the 21st of the following month.</p>
+            <div className="grid sm:grid-cols-3 gap-3">
+              {[
+                { step: '1', title: 'Register for VAT', detail: 'All businesses with annual turnover ≥ ₦25M must register for VAT on TaxPro MAX. Voluntary registration allowed below this threshold.' },
+                { step: '2', title: 'Issue VAT invoices', detail: 'Charge 7.5% VAT on all taxable goods/services. Issue proper VAT invoices with your TIN, VAT registration number, and VAT amount clearly shown.' },
+                { step: '3', title: 'File & remit monthly', detail: 'By the 21st of each month: log into TaxPro MAX → File VAT Return → Enter output VAT (collected) minus input VAT (paid) → Pay net VAT via bank.' },
+              ].map((item) => (
+                <div key={item.step} className="flex gap-3 p-3 bg-surface-900/50 rounded-xl border border-surface-700">
+                  <div className="w-6 h-6 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center text-xs font-bold shrink-0">{item.step}</div>
+                  <div>
+                    <p className="text-sm font-medium text-white">{item.title}</p>
+                    <p className="text-xs text-slate-400 mt-0.5 leading-relaxed">{item.detail}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <button
+              onClick={() => openExternal('https://taxpromax.firs.gov.ng/')}
+              className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-brand-500/15 text-brand-400 hover:bg-brand-500/25"
+            >
+              <ExternalLink size={11} /> File VAT on TaxPro MAX
+            </button>
+          </div>
+
+          {/* Key deadlines */}
+          <div className="card">
+            <h3 className="text-white font-semibold mb-3">Key Annual Tax Deadlines</h3>
+            <div className="space-y-2">
+              {[
+                { deadline: '10th of each month', tax: 'PAYE Remittance', note: 'Employer remits employees\' PAYE withheld the previous month' },
+                { deadline: '21st of each month', tax: 'VAT Return & Payment', note: 'Net VAT (output − input) for previous month' },
+                { deadline: 'Within 7 days of salary', tax: 'Pension Contributions', note: 'Employee (8%) + employer (10%) to employee\'s PFA' },
+                { deadline: '31 March', tax: 'Personal Income Tax Return', note: 'Annual income return for individuals (Form A)' },
+                { deadline: '6 months after year-end', tax: 'Companies Income Tax Return', note: 'CIT return + audited accounts' },
+              ].map((row) => (
+                <div key={row.deadline} className="flex items-start gap-3 py-2 border-b border-surface-700 last:border-0">
+                  <div className="w-28 shrink-0">
+                    <span className="text-xs font-mono text-brand-400">{row.deadline}</span>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-white">{row.tax}</p>
+                    <p className="text-xs text-slate-400">{row.note}</p>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         </div>

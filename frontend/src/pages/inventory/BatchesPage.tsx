@@ -94,7 +94,7 @@ export default function BatchesPage() {
           <input className="input pl-9" placeholder="Search product or batch…" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
         <select className="input max-w-xs" value={warehouseFilter} onChange={(e) => setWarehouseFilter(e.target.value)}>
-          <option value="">All Warehouses</option>
+          <option value="">All Locations</option>
           {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
         </select>
         <div className="flex gap-1 p-1 bg-surface-800 rounded-xl">
@@ -113,7 +113,7 @@ export default function BatchesPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-surface-700">
-                {['Batch #', 'Product', 'SKU', 'Warehouse', 'Qty', 'Manufacture Date', 'Expiry Date', 'Status'].map((h) => (
+                {['Batch #', 'Product', 'SKU', 'Location', 'Qty', 'Manufacture Date', 'Expiry Date', 'Status'].map((h) => (
                   <th key={h} className="px-4 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
                 ))}
               </tr>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { CheckCircle, Loader2, CreditCard, Zap, Building2, Star, AlertCircle, ExternalLink, RefreshCw } from 'lucide-react'
+import { CheckCircle, X as XIcon, Loader2, CreditCard, Zap, Building2, Star, AlertCircle, ExternalLink, RefreshCw, Package, ShoppingCart, FileText, Receipt, Users, Truck, BarChart3, Calculator, Briefcase, Wallet, Clock, DollarSign, Shield, ChevronDown, ChevronUp } from 'lucide-react'
 import toast from 'react-hot-toast'
+import { openExternal } from '@/lib/openExternal'
 import { subscriptionApi } from '@/services/api'
 import type { Plan, Subscription, SubscriptionPayment } from '@/types'
 
@@ -9,6 +10,38 @@ const PLAN_ICONS: Record<string, React.ElementType> = {
   professional: Star,
   business: Building2,
 }
+
+// Hardcoded per-plan module details for clear comparison
+// Each entry: [icon, label, tooltip description, starter, professional, business]
+type ModuleRow = {
+  icon: React.ElementType
+  label: string
+  tip: string
+  starter: boolean | string
+  professional: boolean | string
+  business: boolean | string
+}
+
+const MODULE_ROWS: ModuleRow[] = [
+  { icon: ShoppingCart,  label: 'Sales & Invoicing',       tip: 'Create invoices, record payments, manage your sales pipeline',                          starter: true,      professional: true,       business: true },
+  { icon: FileText,      label: 'Quotes & Estimates',      tip: 'Send price quotes to customers before converting them to invoices',                      starter: true,      professional: true,       business: true },
+  { icon: Clock,         label: 'Recurring Invoices',      tip: 'Auto-generate invoices on a schedule for subscription or retainer clients',              starter: true,      professional: true,       business: true },
+  { icon: Truck,         label: 'Purchase Orders',         tip: 'Raise purchase orders to suppliers and track delivery and receipt',                      starter: true,      professional: true,       business: true },
+  { icon: Receipt,       label: 'Bills & Payables',        tip: 'Track bills owed to suppliers, schedule payments, manage folders',                       starter: true,      professional: true,       business: true },
+  { icon: Wallet,        label: 'Expense Tracking',        tip: 'Record business expenses and income, group by category, track savings',                  starter: true,      professional: true,       business: true },
+  { icon: Package,       label: 'Inventory Management',   tip: 'Manage products, track stock levels, set reorder alerts, handle batches and lots',        starter: true,      professional: true,       business: true },
+  { icon: Users,         label: 'Customer Management',    tip: 'Maintain a full customer database, view statement, track credits and balances',           starter: true,      professional: true,       business: true },
+  { icon: Truck,         label: 'Supplier Management',    tip: 'Manage your supplier contacts and link them to purchases and bills',                      starter: true,      professional: true,       business: true },
+  { icon: DollarSign,    label: 'Budget Planning',         tip: 'Set spending budgets per category, compare actual vs planned spend',                     starter: true,      professional: true,       business: true },
+  { icon: Calculator,    label: 'Tax Engine',              tip: 'Calculate income tax, corporate tax and VAT. Starter = basic; Pro/Business = advanced with bracket breakdown', starter: 'Basic',  professional: 'Advanced', business: 'Advanced' },
+  { icon: BarChart3,     label: 'Reports & Analytics',    tip: 'P&L, revenue trends, top products, top customers, expense breakdown and balance sheet',  starter: 'Basic',   professional: 'Advanced', business: 'Advanced' },
+  { icon: Briefcase,     label: 'Payroll',                 tip: 'Manage employees, run payroll, compute PAYE and pension deductions',                     starter: false,     professional: true,       business: true },
+  { icon: Calculator,    label: 'Accounting Ledger',      tip: 'Full chart of accounts, journal entries, fixed assets, bank reconciliation',              starter: false,     professional: true,       business: true },
+  { icon: Shield,        label: 'Owner Analytics',         tip: 'Private profit view using your personal cost price — only you can see this',             starter: false,     professional: true,       business: true },
+  { icon: FileText,      label: 'Audit Log',               tip: 'Full trail of every action taken in the system — who did what and when',                 starter: false,     professional: true,       business: true },
+  { icon: Users,         label: 'Team & Permissions',     tip: 'Invite staff with custom access levels per module (e.g. view-only, write, full edit)',    starter: false,     professional: true,       business: true },
+  { icon: Package,       label: 'API Access',              tip: 'Connect Audity to your own tools and integrations via REST API',                         starter: false,     professional: false,      business: true },
+]
 
 const STATUS_COLORS: Record<string, string> = {
   active: 'text-green-400 bg-green-400/10',
@@ -63,7 +96,7 @@ export default function BillingPage() {
       const res = await subscriptionApi.initiatePayment(plan.id)
       const { authorization_url, reference } = res.data
       // Open Paystack checkout in the system browser
-      window.open(authorization_url, '_blank')
+      await openExternal(authorization_url)
       // Store reference so user can paste it back to verify
       setVerifyRef(reference)
       toast.success('Complete payment in the browser window that just opened, then click "Verify Payment" below.')
@@ -145,16 +178,27 @@ export default function BillingPage() {
               )}
             </div>
           </div>
-          {subscription.status !== 'canceled' && currentPlanSlug !== 'free' && (
-            <button
-              onClick={handleCancel}
-              disabled={canceling}
-              className="btn-ghost text-sm text-red-400 hover:text-red-300 flex items-center gap-1.5"
-            >
-              {canceling ? <Loader2 size={14} className="animate-spin" /> : null}
-              Cancel subscription
-            </button>
-          )}
+          <div className="flex items-center gap-3 flex-wrap">
+            {currentPlanSlug !== 'business' && (
+              <a
+                href="#plans"
+                className="btn-primary text-sm flex items-center gap-1.5"
+                onClick={(e) => { e.preventDefault(); document.getElementById('plans-section')?.scrollIntoView({ behavior: 'smooth' }) }}
+              >
+                <Zap size={14} /> Upgrade Plan
+              </a>
+            )}
+            {subscription.status !== 'canceled' && currentPlanSlug !== 'free' && (
+              <button
+                onClick={handleCancel}
+                disabled={canceling}
+                className="btn-ghost text-sm text-red-400 hover:text-red-300 flex items-center gap-1.5"
+              >
+                {canceling ? <Loader2 size={14} className="animate-spin" /> : null}
+                Cancel subscription
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -197,7 +241,7 @@ export default function BillingPage() {
       )}
 
       {/* Plan cards */}
-      <div>
+      <div id="plans-section">
         <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wide mb-4">Available Plans</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {plans.map((plan) => {
@@ -239,16 +283,22 @@ export default function BillingPage() {
                   {price > 0 && <span className="text-slate-400 text-sm">/{plan.interval}</span>}
                 </div>
 
-                {/* Feature list */}
-                <ul className="space-y-2 text-sm flex-1">
-                  <FeatureLine label={`${plan.features.max_products === 999999 ? 'Unlimited' : plan.features.max_products} products`} />
-                  <FeatureLine label={`${plan.features.max_users === 999999 ? 'Unlimited' : plan.features.max_users} team members`} />
-                  <FeatureLine label={`${plan.features.max_warehouses === 999999 ? 'Unlimited' : plan.features.max_warehouses} location(s)`} />
-                  <FeatureLine label="Advanced reports" enabled={!!plan.features.advanced_reports} />
-                  <FeatureLine label="Multi-location" enabled={!!plan.features.multi_warehouse} />
-                  <FeatureLine label="API access" enabled={!!plan.features.api_access} />
-                  <FeatureLine label={`Tax engine: ${plan.features.tax_engine}`} />
-                </ul>
+                {/* Limits row */}
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  {[
+                    { val: plan.features.max_products === 999999 ? '∞' : plan.features.max_products, sub: 'products' },
+                    { val: plan.features.max_users === 999999 ? '∞' : plan.features.max_users, sub: 'users' },
+                    { val: plan.features.max_warehouses === 999999 ? '∞' : plan.features.max_warehouses, sub: 'locations' },
+                  ].map(({ val, sub }) => (
+                    <div key={sub} className="rounded-lg bg-surface-700/40 border border-surface-600 py-2">
+                      <p className="text-white font-bold text-lg leading-none">{val}</p>
+                      <p className="text-xs text-slate-500 mt-0.5">{sub}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Module list */}
+                <PlanModuleList slug={plan.slug} />
 
                 {plan.trial_days > 0 && !isCurrent && (
                   <p className="text-xs text-brand-400 text-center">{plan.trial_days}-day free trial</p>
@@ -339,12 +389,47 @@ export default function BillingPage() {
   )
 }
 
-function FeatureLine({ label, enabled }: { label: string; enabled?: boolean }) {
-  const show = enabled === undefined ? true : enabled
+function PlanModuleList({ slug }: { slug: string }) {
+  const [expanded, setExpanded] = useState(false)
+  const key = slug as keyof Pick<ModuleRow, 'starter' | 'professional' | 'business'>
+  const validKey = ['starter', 'professional', 'business'].includes(key) ? key : 'starter'
+
+  const SHOW_INITIAL = 8
+  const visible = expanded ? MODULE_ROWS : MODULE_ROWS.slice(0, SHOW_INITIAL)
+
   return (
-    <li className={`flex items-center gap-2 ${show ? 'text-slate-300' : 'text-slate-600 line-through'}`}>
-      <CheckCircle size={13} className={show ? 'text-green-400 shrink-0' : 'text-slate-700 shrink-0'} />
-      {label}
-    </li>
+    <div className="space-y-1 flex-1">
+      {visible.map((row) => {
+        const val = row[validKey as 'starter' | 'professional' | 'business']
+        const included = val !== false
+        const badge = typeof val === 'string' ? val : null
+        const Icon = row.icon
+        return (
+          <div key={row.label} className="group/mod relative flex items-center gap-2 py-1">
+            {included
+              ? <CheckCircle size={13} className="text-green-400 shrink-0" />
+              : <XIcon size={13} className="text-slate-700 shrink-0" />}
+            <Icon size={13} className={included ? 'text-slate-400 shrink-0' : 'text-slate-700 shrink-0'} />
+            <span className={`text-xs ${included ? 'text-slate-300' : 'text-slate-600'}`}>{row.label}</span>
+            {badge && (
+              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-brand-500/15 text-brand-400 ml-auto shrink-0">{badge}</span>
+            )}
+            {/* Tooltip */}
+            <span className="pointer-events-none absolute left-0 bottom-full mb-1.5 w-56 rounded-xl bg-surface-800 border border-surface-600 px-3 py-2 text-xs text-slate-300 leading-relaxed opacity-0 group-hover/mod:opacity-100 transition-opacity duration-150 z-[9999] shadow-xl">
+              {row.tip}
+              <span className="absolute top-full left-4 border-[5px] border-transparent border-t-surface-600" />
+            </span>
+          </div>
+        )
+      })}
+      {MODULE_ROWS.length > SHOW_INITIAL && (
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          className="flex items-center gap-1 text-xs text-brand-400 hover:text-brand-300 mt-1 transition-colors"
+        >
+          {expanded ? <><ChevronUp size={12} /> Show less</> : <><ChevronDown size={12} /> Show all {MODULE_ROWS.length} features</>}
+        </button>
+      )}
+    </div>
   )
 }

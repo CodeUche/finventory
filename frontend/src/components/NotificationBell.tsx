@@ -93,7 +93,7 @@ export default function NotificationBell() {
                   {payrollPendingAlerts.length > 0 && (
                     <>
                       <button
-                        onClick={() => go('/payroll')}
+                        onClick={() => go('/payroll/runs')}
                         className="w-full flex items-center gap-2 px-4 py-2.5 bg-blue-500/5 border-b border-surface-700 text-xs text-blue-400 hover:bg-blue-500/10 transition-colors"
                       >
                         <Users size={13} />
@@ -104,7 +104,7 @@ export default function NotificationBell() {
                         <div
                           key={r.id}
                           className="flex items-start gap-3 px-4 py-3 border-b border-surface-700/60 hover:bg-surface-700/30 transition-colors cursor-pointer"
-                          onClick={() => go('/payroll')}
+                          onClick={() => go('/payroll/runs')}
                         >
                           <div className="w-7 h-7 rounded-lg bg-blue-500/10 flex items-center justify-center shrink-0 mt-0.5">
                             <Users size={13} className="text-blue-400" />
@@ -254,7 +254,7 @@ export default function NotificationBell() {
                   </button>
                 )}
                 {payrollPendingAlerts.length > 0 && (
-                  <button onClick={() => go('/payroll')} className="flex-1 px-3 py-2.5 text-xs text-blue-400 hover:text-blue-300 font-medium text-center hover:bg-surface-700/30 transition-colors border-l border-surface-700">
+                  <button onClick={() => go('/payroll/runs')} className="flex-1 px-3 py-2.5 text-xs text-blue-400 hover:text-blue-300 font-medium text-center hover:bg-surface-700/30 transition-colors border-l border-surface-700">
                     Payroll →
                   </button>
                 )}

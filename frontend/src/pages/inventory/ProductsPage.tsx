@@ -1,15 +1,17 @@
 import { useEffect, useState } from 'react'
-import { Plus, Search, Package, AlertTriangle, X, Pencil, Loader2, TrendingUp, TrendingDown, History, Maximize2, Minimize2 } from 'lucide-react'
+import { Plus, Search, Package, AlertTriangle, X, Pencil, Loader2, TrendingUp, TrendingDown, History, Maximize2, Minimize2, ShieldCheck } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { inventoryApi, taxApi, salesApi } from '@/services/api'
 import { formatCurrency, formatAmountInput, stripCommas, formatDate } from '@/lib/utils'
+import { useAuthStore } from '@/store/authStore'
 import type { Product, TaxClass } from '@/types'
 import SortSelect from '@/components/SortSelect'
+import { FieldTooltip } from '@/components/FieldTooltip'
 
 const BLANK = {
   sku: '', name: '', brand: '', unit_of_measure: 'unit',
   product_type: 'physical',
-  cost_price: '', selling_price: '', reorder_level: '10',
+  cost_price: '', owner_cost_price: '', selling_price: '', reorder_level: '10',
   alcohol_percentage: '', volume_ml: '',
   is_taxable: false, tax_class: '',
 }
@@ -27,7 +29,7 @@ const PRODUCT_TYPES = [
 ]
 
 const UNITS_OF_MEASURE = [
-  'bottle', 'carton', 'case', 'litre', 'unit', 'hour', 'day', 'kg', 'piece',
+  'bottle', 'carton', 'case', 'dozen', 'litre', 'pack', 'unit', 'hour', 'day', 'kg', 'piece',
 ]
 
 interface SalesHistoryItem {
@@ -45,6 +47,10 @@ interface SalesHistoryItem {
 }
 
 export default function ProductsPage() {
+  const { user, memberRole, planModules } = useAuthStore()
+  const isOwner = !memberRole || memberRole === 'owner' || user?.is_superuser
+  // Owner-only features (cost price, owner column) hidden on Starter — single-user plan doesn't need them
+  const showOwnerFeatures = isOwner && (planModules === null || planModules.includes('owner_analytics'))
   const [products, setProducts] = useState<Product[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -99,6 +105,7 @@ export default function ProductsPage() {
       unit_of_measure: p.unit_of_measure,
       product_type: (p as any).product_type ?? 'physical',
       cost_price: formatAmountInput(p.cost_price),
+      owner_cost_price: formatAmountInput(p.owner_cost_price ?? '0'),
       selling_price: formatAmountInput(p.selling_price),
       reorder_level: String(p.reorder_level),
       alcohol_percentage: String(p.alcohol_percentage ?? ''),
@@ -116,6 +123,7 @@ export default function ProductsPage() {
     const payload: Record<string, unknown> = {
       ...form,
       cost_price: stripCommas(form.cost_price),
+      owner_cost_price: stripCommas(form.owner_cost_price) || '0',
       selling_price: stripCommas(form.selling_price),
     }
     if (!payload.alcohol_percentage) delete payload.alcohol_percentage
@@ -211,8 +219,8 @@ export default function ProductsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-surface-700">
-                {['SKU', 'Product', 'Type', 'Cost Price', 'Selling Price', 'Profit / Margin', 'Stock', 'Status', ''].map((h) => (
-                  <th key={h} className="px-5 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
+                {['SKU', 'Product', 'Type', 'Cost Price', ...(showOwnerFeatures ? ['Owner Cost'] : []), 'Selling Price', 'Profit / Margin', 'Stock', 'Status', ''].map((h) => (
+                  <th key={h} className={`px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wider ${h === 'Owner Cost' ? 'text-brand-400' : 'text-slate-400'}`}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -250,6 +258,9 @@ export default function ProductsPage() {
                         : <span className="badge-slate">Physical</span>}
                     </td>
                     <td className="px-5 py-3.5 text-slate-300">{formatCurrency(p.cost_price)}</td>
+                    {showOwnerFeatures && (
+                      <td className="px-5 py-3.5 font-mono text-brand-400 text-xs">{formatCurrency(p.owner_cost_price ?? '0')}</td>
+                    )}
                     <td className="px-5 py-3.5 font-semibold text-white">{formatCurrency(p.selling_price)}</td>
                     <td className="px-5 py-3.5">
                       <div className="flex items-center gap-1.5">
@@ -312,49 +323,66 @@ export default function ProductsPage() {
             <form onSubmit={handleSave} className="p-6 space-y-4">
               {/* Product Type */}
               <div>
-                <label className="label">Product Type *</label>
+                <label className="label">Product Type * <FieldTooltip text="Physical = items you can touch and stock (clothing, drinks, electronics). Service = things you do for customers (repairs, consultations). Digital = files or downloads. This affects how stock is tracked." /></label>
                 <select className="input" value={form.product_type} onChange={upd('product_type')}>
                   {PRODUCT_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
                 </select>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="label">SKU *</label>
+                  <label className="label">SKU * <FieldTooltip text="Stock Keeping Unit — a unique code you create for this product. E.g. 'COKE-50CL' or 'SHIRT-RED-L'. Makes searching and reporting easier. You can leave this blank to auto-generate." /></label>
                   <input className="input" value={form.sku} onChange={upd('sku')} required disabled={!!editId} placeholder="SVC-001" />
                 </div>
                 <div>
-                  <label className="label">Unit</label>
+                  <label className="label">Unit <FieldTooltip text="How this product is counted or sold. Choose 'piece' for individual items, 'carton' for boxes, 'kg' for weight-based products, 'dozen' for groups of 12, etc." /></label>
                   <select className="input" value={form.unit_of_measure} onChange={upd('unit_of_measure')}>
                     {UNITS_OF_MEASURE.map((u) => <option key={u} value={u}>{u}</option>)}
                   </select>
                 </div>
               </div>
               <div>
-                <label className="label">Product / Service Name *</label>
+                <label className="label">Product / Service Name * <FieldTooltip text="The name that will appear on invoices, receipts, and reports. Use a clear, descriptive name your customers will recognise." /></label>
                 <input className="input" value={form.name} onChange={upd('name')} required placeholder="e.g. Consulting, Delivery, Software License" />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="label">Brand / Vendor</label>
+                  <label className="label">Brand / Vendor <FieldTooltip text="The brand name or the company that makes or supplies this product. Optional — useful for filtering and reports." /></label>
                   <input className="input" value={form.brand} onChange={upd('brand')} placeholder="Optional" />
                 </div>
                 {form.product_type === 'physical' && (
                   <div>
-                    <label className="label">Reorder Level</label>
+                    <label className="label">Reorder Level <FieldTooltip text="The minimum quantity before you get a low-stock alert. E.g. if you set '10', you'll be notified when only 10 units remain so you can reorder in time." /></label>
                     <input type="number" className="input" value={form.reorder_level} onChange={upd('reorder_level')} />
                   </div>
                 )}
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="label">Cost Price *</label>
+                  <label className="label">Cost Price * <FieldTooltip text="What you paid to buy or produce each unit. Used to calculate your profit margin. Never shown to customers." /></label>
                   <input type="text" inputMode="decimal" className="input" value={form.cost_price} onChange={(e) => setForm((f) => ({ ...f, cost_price: formatAmountInput(e.target.value) }))} required placeholder="5,500.00" />
                 </div>
                 <div>
-                  <label className="label">Selling Price *</label>
+                  <label className="label">Selling Price * <FieldTooltip text="The price you charge customers. This is what appears on invoices. Should always be higher than your cost price to make a profit." /></label>
                   <input type="text" inputMode="decimal" className="input" value={form.selling_price} onChange={(e) => setForm((f) => ({ ...f, selling_price: formatAmountInput(e.target.value) }))} required placeholder="8,500.00" />
                 </div>
               </div>
+              {showOwnerFeatures && (
+                <div className="p-3 rounded-xl border border-brand-500/20 bg-brand-500/5">
+                  <div className="flex items-center gap-1.5 mb-2">
+                    <ShieldCheck size={13} className="text-brand-400" />
+                    <label className="text-xs font-semibold text-brand-400 uppercase tracking-wide">Owner Cost Price</label>
+                  </div>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    className="input"
+                    value={form.owner_cost_price}
+                    onChange={(e) => setForm((f) => ({ ...f, owner_cost_price: formatAmountInput(e.target.value) }))}
+                    placeholder="Your actual purchase cost (private)"
+                  />
+                  <p className="text-xs text-slate-500 mt-1.5">Only visible to you (owner). Used in owner profit analytics.</p>
+                </div>
+              )}
               {/* Physical-only fields */}
               {form.product_type === 'physical' && (
                 <div className="grid grid-cols-2 gap-4">
@@ -418,15 +446,15 @@ export default function ProductsPage() {
                   {batchForm.enabled && (
                     <div className="grid grid-cols-2 gap-3 pl-1">
                       <div>
-                        <label className="label">Warehouse *</label>
+                        <label className="label">Location *</label>
                         <select className="input" value={batchForm.warehouse}
                           onChange={(e) => setBatchForm((b) => ({ ...b, warehouse: e.target.value }))}>
-                          <option value="">— Select warehouse —</option>
+                          <option value="">— Select location —</option>
                           {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
                         </select>
                       </div>
                       <div>
-                        <label className="label">Quantity *</label>
+                        <label className="label">Quantity * <FieldTooltip text="How many units you currently have right now. This sets your starting inventory count. You only need to set this once when adding a new product." /></label>
                         <input type="number" className="input" placeholder="0" min="0"
                           value={batchForm.quantity}
                           onChange={(e) => setBatchForm((b) => ({ ...b, quantity: e.target.value }))} />
@@ -500,7 +528,7 @@ export default function ProductsPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-surface-700">
-                      {['Invoice', 'Date', 'Customer', 'Sold By', 'Warehouse', 'Payment', 'Qty', 'Unit Price', 'Total', 'Status'].map((h) => (
+                      {['Invoice', 'Date', 'Customer', 'Sold By', 'Location', 'Payment', 'Qty', 'Unit Price', 'Total', 'Status'].map((h) => (
                         <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap">{h}</th>
                       ))}
                     </tr>

@@ -221,10 +221,11 @@ api.interceptors.response.use(
       }
     }
 
-    // Show toast for API errors
+    // Show toast for API errors (deduplicate using toast ID so poll loops don't spam)
     const errData = (error.response?.data as any)?.error
     if (errData?.message && error.response?.status !== 401) {
-      toast.error(errData.message)
+      const toastId = `api-err-${error.response?.status}-${original.url}`
+      toast.error(errData.message, { id: toastId, duration: 4000 })
     }
 
     return Promise.reject(error)
@@ -292,6 +293,16 @@ export const authApi = {
     api.post('/auth/password-reset/', { email }),
   confirmPasswordReset: (data: { email: string; code: string; new_password: string; confirm_password: string }) =>
     api.post('/auth/password-reset/confirm/', data),
+  verifyEmail: (token: string) =>
+    api.get('/auth/verify-email/', { params: { token } }),
+  resendVerification: (email: string) =>
+    api.post('/auth/resend-verification/', { email }),
+  mfaSetup: () => api.post('/auth/mfa/setup/'),
+  mfaConfirmSetup: (code: string) => api.post('/auth/mfa/confirm-setup/', { code }),
+  mfaVerify: (mfa_token: string, code: string) => api.post('/auth/mfa/verify/', { mfa_token, code }),
+  mfaDisable: (code: string) => api.post('/auth/mfa/disable/', { code }),
+  staffLogin: (username: string, orgSlug: string, password: string) =>
+    api.post('/auth/staff-login/', { username, org_slug: orgSlug, password }),
 }
 
 export const orgApi = {
@@ -372,6 +383,7 @@ export const expenseApi = {
   list: (params?: object) => api.get('/expenses/', { params }),
   create: (data: object) => api.post('/expenses/', data),
   update: (id: string, data: object) => api.patch(`/expenses/${id}/`, data),
+  delete: (id: string) => api.delete(`/expenses/${id}/`),
   categories: () => api.get('/expenses/categories/'),
   // Folders / groups
   groups: (params?: object) => api.get('/expenses/groups/', { params }),
@@ -391,6 +403,8 @@ export const purchaseApi = {
   list: (params?: object) => api.get('/purchases/orders/', { params }),
   create: (data: object) => api.post('/purchases/orders/', data),
   patch: (id: string, data: FormData | object) => api.patch(`/purchases/orders/${id}/`, data),
+  delete: (id: string) => api.delete(`/purchases/orders/${id}/`),
+  removeReceipt: (id: string) => api.post(`/purchases/orders/${id}/clear_receipt/`),
 }
 
 export const supplierApi = {
@@ -507,8 +521,21 @@ export const payrollApi = {
   approvePayroll: (id: string) => api.post(`/payroll/runs/${id}/approve/`),
   markPaid: (id: string, data: object) => api.post(`/payroll/runs/${id}/mark_paid/`, data),
   initiateTransfers: (id: string) => api.post(`/payroll/runs/${id}/initiate_transfers/`),
+  submitForApproval: (id: string) => api.post(`/payroll/runs/${id}/submit_for_approval/`),
+  retryFailed: (id: string) => api.post(`/payroll/runs/${id}/retry_failed/`),
+  exportBankFile: (id: string) => api.get(`/payroll/runs/${id}/export_bank_file/`, { responseType: 'blob' }),
+  pendingApprovals: () => api.get('/payroll/runs/pending_approvals/'),
   resolveAccount: (account_number: string, bank_code: string) =>
     api.post('/payroll/employees/resolve_account/', { account_number, bank_code }),
+  // Bonuses
+  bonuses: (params?: object) => api.get('/payroll/bonuses/', { params }),
+  createBonus: (data: object) => api.post('/payroll/bonuses/', data),
+  deleteBonus: (id: string) => api.delete(`/payroll/bonuses/${id}/`),
+  // Attendance
+  attendance: (params?: object) => api.get('/payroll/attendance/', { params }),
+  markAttendance: (data: object) => api.post('/payroll/attendance/', data),
+  bulkMarkAttendance: (data: object) => api.post('/payroll/attendance/bulk_mark/', data),
+  updateAttendance: (id: string, data: object) => api.patch(`/payroll/attendance/${id}/`, data),
   // Penalties
   penalties: (employeeId: string) =>
     api.get('/payroll/penalties/', { params: { employee: employeeId } }),
@@ -582,6 +609,9 @@ export const subscriptionApi = {
   initiatePayment: (planId: string) => api.post('/subscriptions/initiate-payment/', { plan_id: planId }),
   verifyPayment: (reference: string) => api.post('/subscriptions/verify-payment/', { reference }),
   cancel: () => api.post('/subscriptions/cancel/'),
+  recommendPlan: (answers: Record<string, string>) => api.post('/subscriptions/recommend-plan/', { answers }),
+  checkPayment: (reference: string) => api.get('/subscriptions/check-payment/', { params: { reference } }),
+  startTrial: (planId: string) => api.post('/subscriptions/start-trial/', { plan_id: planId }),
 }
 
 export const aiApi = {

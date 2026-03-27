@@ -8,6 +8,8 @@ export interface User {
   is_verified: boolean
   is_superuser?: boolean
   is_staff?: boolean
+  is_sub_account?: boolean
+  mfa_enabled?: boolean
   avatar?: string
 }
 
@@ -32,6 +34,7 @@ export interface Organisation {
   tax_id?: string
   registration_number?: string
   is_active: boolean
+  onboarding_completed: boolean
   bank_name?: string
   bank_account_number?: string
   bank_account_name?: string
@@ -44,6 +47,7 @@ export interface Organisation {
   company_name_font_bold?: boolean
   company_name_font_italic?: boolean
   company_name_font_underline?: boolean
+  show_company_name_on_pdf?: boolean
   invoice_template?: string
   pension_provider?: string
   ai_custom_context?: string
@@ -117,7 +121,7 @@ export interface Invoice {
   invoice_number: string
   customer: string | null
   customer_name: string | null
-  status: 'draft' | 'proforma' | 'confirmed' | 'paid' | 'partially_paid' | 'overdue' | 'voided' | 'credit'
+  status: 'draft' | 'proforma' | 'confirmed' | 'paid' | 'partially_paid' | 'overdue' | 'voided' | 'credit' | 'returned'
   payment_method: string
   issue_date: string
   due_date?: string
@@ -140,6 +144,7 @@ export interface SaleItem {
   product_name: string
   product_sku: string
   quantity: string
+  quantity_returned: string
   unit_price: string
   line_total: string
 }
@@ -502,12 +507,18 @@ export interface PayslipLine {
   employee: string
   employee_name: string
   employee_id_str: string
+  employee_bank_name?: string
+  employee_bank_code?: string
+  employee_account_number?: string
+  employee_account_name?: string
   basic_salary: string
   housing_allowance: string
   transport_allowance: string
   leave_allowance: string
   other_allowances: string
   gross_salary: string
+  bonus_amount: string
+  overtime_amount: string
   employee_pension: string
   nhf: string
   nsitf: string
@@ -517,9 +528,13 @@ export interface PayslipLine {
   employer_pension: string
   penalty_deductions: string
   loan_deductions: string
+  attendance_deduction: string
   total_deductions: string
   net_salary: string
   status: string
+  transfer_status: 'pending' | 'initiated' | 'success' | 'failed' | 'skipped'
+  transfer_reference: string
+  transfer_error: string
 }
 
 export interface PayrollRun {
@@ -536,9 +551,15 @@ export interface PayrollRun {
   total_pension_employer: string
   total_nhf: string
   total_nsitf: string
+  total_bonus: string
+  total_overtime: string
+  submitted_for_approval: boolean
+  submitted_by: string | null
   payment_date: string | null
+  transfer_reference: string
   created_at: string
   payslips: PayslipLine[]
+  employee_count: number
 }
 
 // Tax extensions
@@ -723,6 +744,7 @@ export type ModuleKey =
   | 'sales' | 'purchases' | 'bills' | 'expenses' | 'inventory'
   | 'customers' | 'suppliers' | 'payroll' | 'reports' | 'accounting'
   | 'tax' | 'budget' | 'quotes' | 'recurring' | 'settings'
+  | 'audit_log' | 'owner_analytics' | 'team'
 
 export type AccessLevel = 'none' | 'view' | 'write' | 'edit'
 

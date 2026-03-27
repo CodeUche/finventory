@@ -4,6 +4,7 @@ import toast from 'react-hot-toast'
 import { creditApi, customerApi } from '@/services/api'
 import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
 import type { CreditTransaction, Customer } from '@/types'
+import DateInput from '@/components/DateInput'
 
 const TYPE_COLORS: Record<string, string> = {
   debit: 'badge-red',
@@ -26,7 +27,7 @@ export default function CreditsPage() {
 
   const [showPayModal, setShowPayModal] = useState(false)
   const [customers, setCustomers] = useState<Customer[]>([])
-  const [payForm, setPayForm] = useState({ customer_id: '', amount: '', description: '' })
+  const [payForm, setPayForm] = useState({ customer_id: '', amount: '', description: '', due_date: '' })
   const [saving, setSaving] = useState(false)
 
   const [aging, setAging] = useState<AgingBucket[] | null>(null)
@@ -73,10 +74,14 @@ export default function CreditsPage() {
     if (!payForm.amount || parseFloat(stripCommas(payForm.amount)) <= 0) { toast.error('Enter a valid amount'); return }
     setSaving(true)
     try {
-      await creditApi.recordPayment({ ...payForm, amount: stripCommas(payForm.amount) })
+      await creditApi.recordPayment({
+        ...payForm,
+        amount: stripCommas(payForm.amount),
+        due_date: payForm.due_date || undefined,
+      })
       toast.success('Payment recorded')
       setShowPayModal(false)
-      setPayForm({ customer_id: '', amount: '', description: '' })
+      setPayForm({ customer_id: '', amount: '', description: '', due_date: '' })
       load()
     } catch {
       toast.error('Failed to record payment')
@@ -240,6 +245,14 @@ export default function CreditsPage() {
                 <label className="label">Amount *</label>
                 <input type="text" inputMode="decimal" className="input" placeholder="0.00"
                   value={payForm.amount} onChange={(e) => setPayForm({ ...payForm, amount: formatAmountInput(e.target.value) })} />
+              </div>
+              <div>
+                <label className="label">Due Date <span className="text-slate-500 font-normal">(optional)</span></label>
+                <DateInput
+                  value={payForm.due_date}
+                  onChange={(v) => setPayForm({ ...payForm, due_date: v })}
+                  placeholder="DD/MM/YYYY"
+                />
               </div>
               <div>
                 <label className="label">Description</label>

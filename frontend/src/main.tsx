@@ -5,10 +5,41 @@ import { Toaster } from 'react-hot-toast'
 import App from './App'
 import { NotificationsProvider } from './contexts/NotificationsContext'
 import { initTheme } from './hooks/useTheme'
+import { useAuthStore } from './store/authStore'
 import './index.css'
 
 // Apply stored theme before first render to avoid flash
 initTheme()
+
+// Unregister any PWA service workers left from previous builds.
+// In the Tauri desktop app the service worker intercepts every fetch() call
+// and strips the Authorization header on cross-origin requests, causing 401
+// on ALL authenticated API calls after login. The new builds no longer
+// register a SW, but WebView2 persists the old registration across reinstalls.
+// If a SW is found we unregister it and immediately reload — the reload is
+// necessary because unregister() is async and the current page's fetch events
+// are still routed through the SW until the next navigation.
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistrations().then((regs) => {
+    if (regs.length > 0) {
+      Promise.all(regs.map((r) => r.unregister())).then(() => {
+        window.location.reload()
+      })
+    }
+  })
+}
+
+// ── Session guard ──────────────────────────────────────────────────────────
+// Zustand's persist middleware rehydrates SYNCHRONOUSLY from localStorage the
+// moment the authStore module is imported above. Simply clearing localStorage
+// is not enough — the store is already loaded in memory. We must also call
+// logout() to reset the in-memory state before the first React render.
+;(function clearSessionOnStartup() {
+  // Always clear the in-memory auth state on every app launch.
+  // Saved credentials (audity-saved-creds) are kept for auto-fill on the login form.
+  // "Remember me" only pre-fills credentials — it does NOT maintain a persistent session.
+  useAuthStore.getState().logout()
+})()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

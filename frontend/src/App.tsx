@@ -1,9 +1,14 @@
-import { Routes, Route, Navigate } from 'react-router-dom'
+import React from 'react'
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
+import type { ModuleKey } from '@/types'
 import AppLayout from '@/components/layout/AppLayout'
 import LoginPage from '@/pages/auth/LoginPage'
+import SubAccountLoginPage from '@/pages/auth/SubAccountLoginPage'
 import RegisterPage from '@/pages/auth/RegisterPage'
 import OnboardingPage from '@/pages/auth/OnboardingPage'
+import ForgotPasswordPage from '@/pages/auth/ForgotPasswordPage'
+import VerifyEmailPage from '@/pages/auth/VerifyEmailPage'
 import DashboardPage from '@/pages/dashboard/DashboardPage'
 import ProductsPage from '@/pages/inventory/ProductsPage'
 import StockPage from '@/pages/inventory/StockPage'
@@ -29,14 +34,67 @@ import PayrollPage from '@/pages/payroll/PayrollPage'
 import BudgetPage from '@/pages/BudgetPage'
 import ReportsPage from '@/pages/reports/ReportsPage'
 import BalanceSheetPage from '@/pages/reports/BalanceSheetPage'
+import OwnerAnalyticsPage from '@/pages/dashboard/OwnerAnalyticsPage'
 import TaxPage from '@/pages/TaxPage'
 import AuditLogPage from '@/pages/AuditLogPage'
 import SettingsPage from '@/pages/SettingsPage'
 import PlatformAdminPage from '@/pages/PlatformAdminPage'
+import BillingPage from '@/pages/BillingPage'
+
+// Inner class-based boundary — must be a class to use getDerivedStateFromError
+class ErrorBoundaryInner extends React.Component<
+  { children: React.ReactNode; resetKey: string },
+  { hasError: boolean; message: string }
+> {
+  constructor(props: { children: React.ReactNode; resetKey: string }) {
+    super(props)
+    this.state = { hasError: false, message: '' }
+  }
+  static getDerivedStateFromError(err: Error) {
+    return { hasError: true, message: err?.message ?? 'Unknown error' }
+  }
+  componentDidUpdate(prev: { resetKey: string }) {
+    // Reset error state whenever the route changes so a stale crash doesn't
+    // keep the error screen visible on subsequent navigations
+    if (prev.resetKey !== this.props.resetKey && this.state.hasError) {
+      this.setState({ hasError: false, message: '' })
+    }
+  }
+  render() {
+    if (this.state.hasError) {
+      // Use inline styles so the error card is always visible regardless of theme
+      return (
+        <div style={{ minHeight: '100vh', background: '#020617', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
+          <div style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '16px', padding: '32px', maxWidth: '400px', width: '100%', textAlign: 'center' }}>
+            <p style={{ color: '#f8fafc', fontSize: '18px', fontWeight: 700, marginBottom: '8px' }}>Something went wrong</p>
+            <p style={{ color: '#94a3b8', fontSize: '12px', fontFamily: 'monospace', wordBreak: 'break-all', marginBottom: '20px' }}>{this.state.message}</p>
+            <button
+              style={{ background: '#f97316', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 24px', cursor: 'pointer', fontWeight: 600, fontSize: '14px' }}
+              onClick={() => { this.setState({ hasError: false, message: '' }); window.location.replace('/') }}
+            >
+              Go to Dashboard
+            </button>
+          </div>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
+// Wrapper that supplies the current route path as a reset key
+function ErrorBoundary({ children }: { children: React.ReactNode }) {
+  const location = useLocation()
+  return <ErrorBoundaryInner resetKey={location.pathname}>{children}</ErrorBoundaryInner>
+}
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
-  return isAuthenticated ? <>{children}</> : <Navigate to="/login" replace />
+  const { isAuthenticated, user, organisation } = useAuthStore()
+  if (!isAuthenticated) return <Navigate to="/login" replace />
+  // Block access until onboarding is complete (superusers bypass)
+  const onboardingDone = user?.is_superuser || user?.is_sub_account || organisation?.onboarding_completed === true
+  if (!onboardingDone) return <Navigate to="/onboarding" replace />
+  return <>{children}</>
 }
 
 function SuperuserRoute({ children }: { children: React.ReactNode }) {
@@ -46,13 +104,57 @@ function SuperuserRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+/** Allows owners, admins, and superusers; redirects regular sub-accounts and Starter plan users. */
+function OwnerOnlyRoute({ children }: { children: React.ReactNode }) {
+  const { user, memberRole, planModules } = useAuthStore()
+  if (!user) return <Navigate to="/login" replace />
+  const isOwnerOrAdmin = user.is_superuser || !memberRole || memberRole === 'owner' || memberRole === 'admin'
+  if (!isOwnerOrAdmin) return <Navigate to="/dashboard" replace />
+  // Starter plan has no 'owner_analytics' module — redirect to billing
+  if (planModules !== null && !planModules.includes('owner_analytics') && !user.is_superuser)
+    return <Navigate to="/billing" replace />
+  return <>{children}</>
+}
+
+/**
+ * Redirects sub-accounts to /dashboard if they have 'none' access on a module.
+ * Owners, admins, and superusers always pass through.
+ */
+function ModuleRoute({ module, children }: { module: ModuleKey; children: React.ReactNode }) {
+  const { user, memberRole, modulePermissions } = useAuthStore()
+  const isOwnerOrAdmin =
+    user?.is_superuser || !memberRole || memberRole === 'owner' || memberRole === 'admin'
+  if (isOwnerOrAdmin) return <>{children}</>
+  const level = modulePermissions[module] ?? 'none'
+  if (level === 'none') return <Navigate to="/dashboard" replace />
+  return <>{children}</>
+}
+
+/**
+ * Like ModuleRoute but also blocks 'view'-only users (who cannot write).
+ * Used for create/new-record pages.
+ */
+function WriteModuleRoute({ module, children }: { module: ModuleKey; children: React.ReactNode }) {
+  const { user, memberRole, modulePermissions } = useAuthStore()
+  const isOwnerOrAdmin =
+    user?.is_superuser || !memberRole || memberRole === 'owner' || memberRole === 'admin'
+  if (isOwnerOrAdmin) return <>{children}</>
+  const level = modulePermissions[module] ?? 'none'
+  if (level === 'none' || level === 'view') return <Navigate to="/dashboard" replace />
+  return <>{children}</>
+}
+
 export default function App() {
   return (
+    <ErrorBoundary>
     <Routes>
       {/* Public */}
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
       <Route path="/onboarding" element={<OnboardingPage />} />
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/verify-email" element={<VerifyEmailPage />} />
+      <Route path="/staff-login" element={<SubAccountLoginPage />} />
 
       {/* Protected */}
       <Route
@@ -67,53 +169,59 @@ export default function App() {
         <Route path="dashboard" element={<DashboardPage />} />
 
         {/* Inventory */}
-        <Route path="inventory/products" element={<ProductsPage />} />
-        <Route path="inventory/stock" element={<StockPage />} />
-        <Route path="inventory/warehouses" element={<WarehousesPage />} />
-        <Route path="inventory/batches" element={<BatchesPage />} />
+        <Route path="inventory/products"   element={<ModuleRoute module="inventory"><ProductsPage /></ModuleRoute>} />
+        <Route path="inventory/stock"      element={<ModuleRoute module="inventory"><StockPage /></ModuleRoute>} />
+        <Route path="inventory/warehouses" element={<ModuleRoute module="inventory"><WarehousesPage /></ModuleRoute>} />
+        <Route path="inventory/batches"    element={<ModuleRoute module="inventory"><BatchesPage /></ModuleRoute>} />
 
         {/* Sales */}
-        <Route path="sales" element={<SalesPage />} />
-        <Route path="sales/new" element={<NewSalePage />} />
-        <Route path="quotes" element={<QuotesPage />} />
-        <Route path="recurring" element={<RecurringInvoicesPage />} />
+        <Route path="sales"     element={<ModuleRoute module="sales"><SalesPage /></ModuleRoute>} />
+        <Route path="sales/new" element={<WriteModuleRoute module="sales"><NewSalePage /></WriteModuleRoute>} />
+        <Route path="quotes"    element={<ModuleRoute module="quotes"><QuotesPage /></ModuleRoute>} />
+        <Route path="recurring" element={<ModuleRoute module="recurring"><RecurringInvoicesPage /></ModuleRoute>} />
 
         {/* Procurement */}
-        <Route path="purchases" element={<PurchasesPage />} />
-        <Route path="bills" element={<BillsPage />} />
-        <Route path="bills/folders" element={<BillFoldersPage />} />
-        <Route path="suppliers" element={<SuppliersPage />} />
+        <Route path="purchases"      element={<ModuleRoute module="purchases"><PurchasesPage /></ModuleRoute>} />
+        <Route path="bills"          element={<ModuleRoute module="bills"><BillsPage /></ModuleRoute>} />
+        <Route path="bills/folders"  element={<ModuleRoute module="bills"><BillFoldersPage /></ModuleRoute>} />
+        <Route path="suppliers"      element={<ModuleRoute module="suppliers"><SuppliersPage /></ModuleRoute>} />
 
         {/* CRM */}
-        <Route path="customers" element={<CustomersPage />} />
-        <Route path="credits" element={<CreditsPage />} />
+        <Route path="customers" element={<ModuleRoute module="customers"><CustomersPage /></ModuleRoute>} />
+        <Route path="credits"   element={<ModuleRoute module="customers"><CreditsPage /></ModuleRoute>} />
 
         {/* Accounting */}
-        <Route path="accounting/coa" element={<ChartOfAccountsPage />} />
-        <Route path="accounting/journal" element={<JournalPage />} />
-        <Route path="accounting/assets" element={<AssetsPage />} />
-        <Route path="accounting/reconciliation" element={<BankReconciliationPage />} />
+        <Route path="accounting/coa"             element={<ModuleRoute module="accounting"><ChartOfAccountsPage /></ModuleRoute>} />
+        <Route path="accounting/journal"          element={<ModuleRoute module="accounting"><JournalPage /></ModuleRoute>} />
+        <Route path="accounting/assets"           element={<ModuleRoute module="accounting"><AssetsPage /></ModuleRoute>} />
+        <Route path="accounting/reconciliation"   element={<ModuleRoute module="accounting"><BankReconciliationPage /></ModuleRoute>} />
 
         {/* Payroll */}
-        <Route path="payroll/employees" element={<EmployeesPage />} />
-        <Route path="payroll/runs" element={<PayrollPage />} />
+        <Route path="payroll/employees" element={<ModuleRoute module="payroll"><EmployeesPage /></ModuleRoute>} />
+        <Route path="payroll/runs"      element={<ModuleRoute module="payroll"><PayrollPage /></ModuleRoute>} />
 
         {/* Finance */}
-        <Route path="expenses" element={<ExpensesPage />} />
-        <Route path="budgets" element={<BudgetPage />} />
-        <Route path="reports" element={<ReportsPage />} />
-        <Route path="reports/balance-sheet" element={<BalanceSheetPage />} />
+        <Route path="expenses"              element={<ModuleRoute module="expenses"><ExpensesPage /></ModuleRoute>} />
+        <Route path="budgets"               element={<ModuleRoute module="budget"><BudgetPage /></ModuleRoute>} />
+        <Route path="reports"               element={<ModuleRoute module="reports"><ReportsPage /></ModuleRoute>} />
+        <Route path="reports/balance-sheet" element={<ModuleRoute module="reports"><BalanceSheetPage /></ModuleRoute>} />
+        <Route path="owner-analytics"       element={<OwnerOnlyRoute><OwnerAnalyticsPage /></OwnerOnlyRoute>} />
 
         {/* Compliance */}
-        <Route path="tax" element={<TaxPage />} />
+        <Route path="tax"       element={<ModuleRoute module="tax"><TaxPage /></ModuleRoute>} />
         <Route path="audit-log" element={<AuditLogPage />} />
 
-        {/* Settings */}
+        {/* Settings — always accessible for personal profile/security; org tabs filtered inside the page */}
         <Route path="settings" element={<SettingsPage />} />
+        <Route path="billing"  element={<ModuleRoute module="settings"><BillingPage /></ModuleRoute>} />
 
         {/* Platform Admin — superuser only */}
         <Route path="platform-admin" element={<SuperuserRoute><PlatformAdminPage /></SuperuserRoute>} />
+
+        {/* Catch-all: redirect unknown paths to dashboard */}
+        <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Route>
     </Routes>
+    </ErrorBoundary>
   )
 }

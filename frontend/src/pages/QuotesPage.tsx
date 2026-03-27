@@ -8,6 +8,7 @@ import { saveBlobFile } from '@/lib/saveBlobFile'
 import type { Quote, Customer, Warehouse, Product } from '@/types'
 import DateInput from '@/components/DateInput'
 import YearFilter, { yearToDateParams } from '@/components/YearFilter'
+import { FieldTooltip } from '@/components/FieldTooltip'
 
 interface PdfPreview { url: string; filename: string; quoteId: string }
 
@@ -188,6 +189,17 @@ async function buildQuotePDF(
 
   // Items table
   const headFill: [number, number, number] = tmpl === 'professional' ? NAVY : tmpl === 'minimal' ? DARK : BRAND
+
+  // Dynamic column widths so large amounts (e.g. ₦250,000,000.00) always fit;
+  // Product / Description column absorbs the remaining space via cellWidth: 'auto'.
+  const qAmounts = [...(q.items ?? []).map(it => formatCurrency(it.line_total)), 'Amount']
+  const qPrices  = [...(q.items ?? []).map(it => formatCurrency(it.unit_price)), 'Unit Price']
+  const qQtys    = [...(q.items ?? []).map(it => String(Number(it.quantity))), 'Qty']
+  doc.setFontSize(9)
+  const amtColW   = Math.min(58, Math.max(30, Math.max(...qAmounts.map(s => doc.getTextWidth(s))) + 10))
+  const priceColW = Math.min(52, Math.max(28, Math.max(...qPrices.map(s => doc.getTextWidth(s)))  + 10))
+  const qtyColW   = Math.min(30, Math.max(14, Math.max(...qQtys.map(s => doc.getTextWidth(s)))    + 8))
+
   autoTable(doc, {
     startY: y,
     head: [['#', 'Product / Description', 'Qty', 'Unit Price', 'Disc%', 'Amount']],
@@ -202,7 +214,14 @@ async function buildQuotePDF(
     styles: { fontSize: 9, cellPadding: { top: 4, bottom: 4, left: 5, right: 5 }, textColor: DARK },
     headStyles: { fillColor: headFill, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
     alternateRowStyles: { fillColor: tmpl === 'minimal' ? [255, 255, 255] : [248, 248, 248] },
-    columnStyles: { 0: { cellWidth: 10, halign: 'center' }, 1: { cellWidth: 'auto' }, 2: { cellWidth: 14, halign: 'center' }, 3: { cellWidth: 32, halign: 'right' }, 4: { cellWidth: 16, halign: 'center' }, 5: { cellWidth: 32, halign: 'right', fontStyle: 'bold' } },
+    columnStyles: {
+      0: { cellWidth: 10,        halign: 'center' },
+      1: { cellWidth: 'auto' },
+      2: { cellWidth: qtyColW,   halign: 'center' },
+      3: { cellWidth: priceColW, halign: 'right' },
+      4: { cellWidth: 14,        halign: 'center' },
+      5: { cellWidth: amtColW,   halign: 'right', fontStyle: 'bold' },
+    },
     margin: { left: 14, right: 14 },
     tableLineColor: tmpl === 'minimal' ? DARK : [225, 225, 225],
     tableLineWidth: tmpl === 'minimal' ? 0.4 : 0.2,
@@ -758,21 +777,21 @@ export default function QuotesPage() {
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">Customer (optional)</label>
+                <label className="text-xs text-slate-400 mb-1 block">Customer (optional)<FieldTooltip text="Who this quote is for. Optional — you can prepare a general quote without naming a customer yet." /></label>
                 <select className="input" value={form.customer} onChange={(e) => setForm({ ...form, customer: e.target.value })}>
                   <option value="">Walk-in / No customer</option>
                   {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">Location *</label>
+                <label className="text-xs text-slate-400 mb-1 block">Location *<FieldTooltip text="Which warehouse the quoted stock will come from." /></label>
                 <select className="input" value={form.warehouse} onChange={(e) => setForm({ ...form, warehouse: e.target.value })}>
                   <option value="">— Select —</option>
                   {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
                 </select>
               </div>
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">Status</label>
+                <label className="text-xs text-slate-400 mb-1 block">Status<FieldTooltip text="Draft = still being prepared. Sent = shared with the customer. Accepted = customer agreed. Rejected = turned down." /></label>
                 <select className="input" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
                   <option value="draft">Draft</option>
                   <option value="sent">Sent</option>
@@ -781,11 +800,11 @@ export default function QuotesPage() {
                 </select>
               </div>
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">Issue Date</label>
+                <label className="text-xs text-slate-400 mb-1 block">Issue Date<FieldTooltip text="The date you're creating this quote." /></label>
                 <DateInput value={form.issue_date} onChange={(v) => setForm({ ...form, issue_date: v })} />
               </div>
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">Valid Until</label>
+                <label className="text-xs text-slate-400 mb-1 block">Valid Until<FieldTooltip text="The expiry date of this quote — after this, the prices are no longer guaranteed. Typically 7–30 days ahead." /></label>
                 <DateInput value={form.valid_until} onChange={(v) => setForm({ ...form, valid_until: v })} />
               </div>
             </div>
@@ -825,7 +844,7 @@ export default function QuotesPage() {
             </div>
 
             <div>
-              <label className="text-xs text-slate-400 mb-1 block">Notes</label>
+              <label className="text-xs text-slate-400 mb-1 block">Notes<FieldTooltip text="Terms, conditions, or extra info for the customer — e.g. 'Price valid for 14 days' or 'Delivery not included'." /></label>
               <textarea className="input resize-none" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Any notes for the customer…" />
             </div>
             <div>

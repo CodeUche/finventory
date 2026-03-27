@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
-import { User, Building2, Shield, Loader2, Camera, CreditCard, CheckCircle, Moon, Sun, Mail, Lock, Unlock, LandmarkIcon, UsersRound, UserPlus, X, ChevronDown, ChevronUp } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { User, Building2, Shield, Loader2, Camera, CreditCard, CheckCircle, Moon, Sun, Mail, Lock, Unlock, LandmarkIcon, UsersRound, UserPlus, X, ChevronDown, ChevronUp, Bot, Layout } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { authApi, orgApi, paymentGatewayApi, accountingApi, teamApi } from '@/services/api'
+import { authApi, orgApi, paymentGatewayApi, accountingApi, teamApi, tauriFetch } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
 import {
   getTimeoutPreference,
@@ -26,6 +27,7 @@ const ALL_MODULES: { key: ModuleKey; label: string }[] = [
   { key: 'budget', label: 'Budget' },
   { key: 'quotes', label: 'Quotes' },
   { key: 'recurring', label: 'Recurring Invoices' },
+  { key: 'settings', label: 'Settings (Company / Billing)' },
 ]
 
 const ACCESS_OPTIONS: { value: AccessLevel; label: string; color: string }[] = [
@@ -99,11 +101,18 @@ const TIMEOUT_OPTIONS: { value: TimeoutOption; label: string }[] = [
   { value: '4h', label: '4 hours (recommended)' },
 ]
 
-type Tab = 'profile' | 'company' | 'security' | 'payments' | 'email' | 'appearance' | 'periods' | 'team'
+type Tab = 'profile' | 'company' | 'security' | 'payments' | 'email' | 'appearance' | 'periods' | 'team' | 'invoice_templates' | 'ai'
 
 export default function SettingsPage() {
-  const { user, organisation, updateUser, updateOrganisation, memberRole } = useAuthStore()
-  const isOwner = !memberRole || memberRole === 'owner' || user?.is_superuser
+  const navigate = useNavigate()
+  const { user, organisation, updateUser, updateOrganisation, memberRole, modulePermissions, planModules } = useAuthStore()
+  // Owners, admins, and superusers have full settings access
+  const isOwner = !memberRole || memberRole === 'owner' || memberRole === 'admin' || user?.is_superuser
+  // Sub-accounts need explicit 'settings' module permission to access org settings tabs
+  const hasSettingsPerm = isOwner || ((): boolean => {
+    const lvl = modulePermissions?.['settings'] ?? 'none'
+    return lvl !== 'none'
+  })()
   const [tab, setTab] = useState<Tab>('profile')
 
   // ─── Profile state ─────────────────────────────────────────────────────────
@@ -132,7 +141,17 @@ export default function SettingsPage() {
     bank_account_name: organisation?.bank_account_name ?? '',
     bank_sort_code: organisation?.bank_sort_code ?? '',
     brand_color: organisation?.brand_color ?? '#f97316',
-    use_letterhead: String(organisation?.use_letterhead ?? false),
+    invoice_company_name: organisation?.invoice_company_name ?? '',
+    company_name_font: organisation?.company_name_font ?? 'helvetica',
+    company_name_font_color: organisation?.company_name_font_color ?? '#1e293b',
+    company_name_font_size: organisation?.company_name_font_size ?? 14,
+    company_name_font_bold: organisation?.company_name_font_bold ?? true,
+    company_name_font_italic: organisation?.company_name_font_italic ?? false,
+    company_name_font_underline: organisation?.company_name_font_underline ?? false,
+    show_company_name_on_pdf: organisation?.show_company_name_on_pdf ?? true,
+    invoice_template: organisation?.invoice_template ?? 'classic',
+    pension_provider: organisation?.pension_provider ?? '',
+    ai_custom_context: organisation?.ai_custom_context ?? '',
   })
 
   // ─── Bank account resolve state ──────────────────────────────────────────────
@@ -161,14 +180,100 @@ export default function SettingsPage() {
   const [lockingPeriod, setLockingPeriod] = useState<string | null>(null)
   const [logoFile, setLogoFile] = useState<File | null>(null)
   const [logoPreview, setLogoPreview] = useState<string | null>(organisation?.logo ?? null)
+  const [logoRemoved, setLogoRemoved] = useState(false)
   const logoRef = useRef<HTMLInputElement>(null)
-  const [letterheadFile, setLetterheadFile] = useState<File | null>(null)
-  const [letterheadPreview, setLetterheadPreview] = useState<string | null>(organisation?.letterhead ?? null)
-  const letterheadRef = useRef<HTMLInputElement>(null)
+  const [stampFile, setStampFile] = useState<File | null>(null)
+  const [stampPreview, setStampPreview] = useState<string | null>(organisation?.company_stamp ?? null)
+  const [stampRemoved, setStampRemoved] = useState(false)
+  const stampRef = useRef<HTMLInputElement>(null)
   const [savingCompany, setSavingCompany] = useState(false)
+
+  // ─── Load existing org/user images as data URLs (Tauri <img> can't reach http://localhost:8000 directly)
+  useEffect(() => {
+    const loadDataUrl = async (url: string | null | undefined): Promise<string | null> => {
+      if (!url) return null
+      try {
+        const res = await tauriFetch(url)
+        const blob = await res.blob()
+        return await new Promise<string>((resolve, reject) => {
+          const r = new FileReader()
+          r.onloadend = () => resolve(r.result as string)
+          r.onerror = reject
+          r.readAsDataURL(blob)
+        })
+      } catch { return null }
+    }
+    if (organisation?.logo && !logoFile && !logoRemoved)
+      loadDataUrl(organisation.logo).then((d) => { if (d) setLogoPreview(d) })
+    if (organisation?.company_stamp && !stampFile && !stampRemoved)
+      loadDataUrl(organisation.company_stamp).then((d) => { if (d) setStampPreview(d) })
+    if (user?.avatar && !avatarFile)
+      loadDataUrl(user.avatar).then((d) => { if (d) setAvatarPreview(d) })
+  }, [organisation?.logo, organisation?.company_stamp, user?.avatar])
 
   // ─── Security state ─────────────────────────────────────────────────────────
   const [timeout, setTimeoutState] = useState<TimeoutOption>(getTimeoutPreference())
+
+  // MFA state
+  const [mfaStep, setMfaStep] = useState<'idle' | 'setup' | 'confirm' | 'backup' | 'disable'>('idle')
+  const [mfaQr, setMfaQr] = useState('')
+  const [mfaSecret, setMfaSecret] = useState('')
+  const [mfaCode, setMfaCode] = useState('')
+  const [mfaLoading, setMfaLoading] = useState(false)
+  const [backupCodes, setBackupCodes] = useState<string[]>([])
+  const [mfaEnabled, setMfaEnabled] = useState(user?.mfa_enabled ?? false)
+  const [mfaSecretCopied, setMfaSecretCopied] = useState(false)
+
+  const handleMFASetup = async () => {
+    setMfaLoading(true)
+    try {
+      const { data } = await authApi.mfaSetup()
+      setMfaQr(data.qr_data_url)
+      // Extract the secret from the provisioning URI for manual entry
+      const match = data.provisioning_uri?.match(/[?&]secret=([^&]+)/)
+      setMfaSecret(match ? match[1] : '')
+      setMfaStep('setup')
+    } catch (err: any) {
+      const msg = err.response?.data?.error?.message ?? 'Failed to start MFA setup.'
+      toast.error(msg)
+    } finally {
+      setMfaLoading(false)
+    }
+  }
+
+  const handleMFAConfirm = async () => {
+    setMfaLoading(true)
+    try {
+      const { data } = await authApi.mfaConfirmSetup(mfaCode)
+      setBackupCodes(data.backup_codes)
+      setMfaEnabled(true)
+      updateUser({ mfa_enabled: true })  // sync to persisted store
+      setMfaStep('backup')
+      setMfaCode('')
+    } catch (err: any) {
+      const msg = err.response?.data?.error?.message ?? 'Invalid code. Try again.'
+      toast.error(msg)
+    } finally {
+      setMfaLoading(false)
+    }
+  }
+
+  const handleMFADisable = async () => {
+    setMfaLoading(true)
+    try {
+      await authApi.mfaDisable(mfaCode)
+      setMfaEnabled(false)
+      updateUser({ mfa_enabled: false })  // sync to persisted store
+      setMfaStep('idle')
+      setMfaCode('')
+      toast.success('MFA disabled.')
+    } catch (err: any) {
+      const msg = err.response?.data?.error?.message ?? 'Invalid code.'
+      toast.error(msg)
+    } finally {
+      setMfaLoading(false)
+    }
+  }
 
   // ─── Appearance state ────────────────────────────────────────────────────────
   const [currentTheme, setCurrentTheme] = useState<Theme>(getStoredTheme())
@@ -189,7 +294,7 @@ export default function SettingsPage() {
   // ─── Team state ──────────────────────────────────────────────────────────────
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([])
   const [loadingTeam, setLoadingTeam] = useState(false)
-  const [subaccountForm, setSubaccountForm] = useState({ username: '', password: '', role: 'staff' })
+  const [subaccountForm, setSubaccountForm] = useState({ username: '', password: '', role: 'staff', first_name: '', last_name: '', notify_email: '' })
   const [showSubaccountForm, setShowSubaccountForm] = useState(false)
   const [creatingSubaccount, setCreatingSubaccount] = useState(false)
   const [expandedMember, setExpandedMember] = useState<string | null>(null)
@@ -198,7 +303,7 @@ export default function SettingsPage() {
   const [savingPerms, setSavingPerms] = useState<string | null>(null)
 
   useEffect(() => {
-    if (tab === 'payments') {
+    if (activeTab === 'payments') {
       paymentGatewayApi.configs().then(({ data }) => {
         const configs = data.results ?? data
         const ps = configs.find((c: PaymentGatewayConfig) => c.provider === 'paystack')
@@ -209,7 +314,7 @@ export default function SettingsPage() {
         }
       }).catch(() => {})
     }
-    if (tab === 'email' && organisation?.id) {
+    if (activeTab === 'email' && organisation?.id) {
       orgApi.getEmailConfig(organisation.id).then(({ data }) => {
         setEmailForm({
           smtp_host: data.smtp_host ?? 'smtp.gmail.com',
@@ -223,13 +328,13 @@ export default function SettingsPage() {
         })
       }).catch(() => {})
     }
-    if (tab === 'periods') {
+    if (activeTab === 'periods') {
       setLoadingPeriods(true)
       accountingApi.periods().then(({ data }) => {
         setPeriods(Array.isArray(data) ? data : data.results ?? [])
       }).catch(() => toast.error('Failed to load periods')).finally(() => setLoadingPeriods(false))
     }
-    if (tab === 'team') {
+    if (activeTab === 'team') {
       setLoadingTeam(true)
       teamApi.members().then(({ data }) => {
         const members: TeamMember[] = Array.isArray(data) ? data : data.results ?? []
@@ -262,22 +367,29 @@ export default function SettingsPage() {
     setLogoPreview(URL.createObjectURL(file))
   }
 
-  const handleLetterheadChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleStampChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
-    setLetterheadFile(file)
-    setLetterheadPreview(URL.createObjectURL(file))
+    setStampFile(file)
+    setStampPreview(URL.createObjectURL(file))
+    setStampRemoved(false)
   }
 
   const saveProfile = async () => {
     setSavingProfile(true)
     try {
-      const fd = new FormData()
-      fd.append('first_name', profile.first_name)
-      fd.append('last_name', profile.last_name)
-      fd.append('phone', profile.phone)
-      if (avatarFile) fd.append('avatar', avatarFile)
-      const { data } = await authApi.updateProfile(fd)
+      // Send text fields as JSON (avoids Tauri IPC FormData → URL-encoded bug)
+      let { data } = await authApi.updateProfile({
+        first_name: profile.first_name,
+        last_name: profile.last_name,
+        phone: profile.phone,
+      })
+      // Upload avatar as raw binary via dedicated endpoint
+      if (avatarFile) {
+        const resp = await authApi.uploadAvatar(avatarFile)
+        if (resp.ok) data = await resp.json()
+        setAvatarFile(null)
+      }
       updateUser(data)
       toast.success('Profile updated')
     } catch {
@@ -291,15 +403,95 @@ export default function SettingsPage() {
     if (!organisation?.id) return
     setSavingCompany(true)
     try {
-      const fd = new FormData()
-      Object.entries(company).forEach(([k, v]) => fd.append(k, v))
-      if (logoFile) fd.append('logo', logoFile)
-      if (letterheadFile) fd.append('letterhead', letterheadFile)
-      const { data } = await orgApi.update(organisation.id, fd)
+      if (logoRemoved) {
+        await orgApi.removeLogo(organisation.id)
+        setLogoRemoved(false)
+      }
+      if (stampRemoved) {
+        await orgApi.removeStamp(organisation.id)
+        setStampRemoved(false)
+      }
+
+      // Always send text fields as JSON — this reliably works with the Tauri
+      // HTTP adapter. FormData without file blobs gets serialised as URL-encoded
+      // by the IPC bridge, which DRF rejects (no FormParser in parser_classes).
+      const textPayload = {
+        name: company.name,
+        country: company.country,
+        currency: company.currency,
+        tax_id: company.tax_id,
+        registration_number: company.registration_number,
+        address: company.address,
+        phone: company.phone,
+        email: company.email,
+        bank_name: company.bank_name,
+        bank_account_number: company.bank_account_number,
+        bank_account_name: company.bank_account_name,
+        bank_sort_code: company.bank_sort_code,
+        brand_color: company.brand_color,
+        invoice_company_name: company.invoice_company_name,
+        company_name_font: company.company_name_font,
+        company_name_font_color: company.company_name_font_color,
+        company_name_font_size: company.company_name_font_size,
+        company_name_font_bold: company.company_name_font_bold,
+        company_name_font_italic: company.company_name_font_italic,
+        company_name_font_underline: company.company_name_font_underline,
+        show_company_name_on_pdf: company.show_company_name_on_pdf,
+        invoice_template: company.invoice_template,
+        pension_provider: company.pension_provider ?? '',
+        ai_custom_context: company.ai_custom_context ?? '',
+      }
+
+      // Always send text fields as JSON (Tauri's IPC serialises FormData as
+      // URL-encoded, not multipart — so files are uploaded via a separate
+      // binary POST endpoint that avoids FormData entirely).
+      let { data } = await orgApi.update(organisation.id, textPayload)
+
+      // Upload logo / stamp as raw binary through dedicated endpoints
+      if (logoFile) {
+        const resp = await orgApi.uploadLogo(organisation.id, logoFile)
+        if (resp.ok) data = await resp.json()
+        setLogoFile(null)
+      }
+      if (stampFile) {
+        const resp = await orgApi.uploadStamp(organisation.id, stampFile)
+        if (resp.ok) data = await resp.json()
+        setStampFile(null)
+      }
+
       updateOrganisation(data)
       toast.success('Company settings saved')
+    } catch (err: unknown) {
+      const apiErr = (err as { response?: { data?: { error?: { message?: string } | string } } })?.response?.data?.error
+      const msg = typeof apiErr === 'string' ? apiErr : (apiErr?.message ?? 'Failed to save company settings')
+      toast.error(msg)
+    } finally {
+      setSavingCompany(false)
+    }
+  }
+
+  const saveTemplate = async (templateValue: string) => {
+    if (!organisation?.id) return
+    try {
+      const { data } = await orgApi.update(organisation.id, { invoice_template: templateValue })
+      updateOrganisation(data)
+      toast.success('Template saved')
     } catch {
-      toast.error('Failed to save company settings')
+      toast.error('Failed to save template')
+    }
+  }
+
+  const saveAIContext = async () => {
+    if (!organisation?.id) return
+    setSavingCompany(true)
+    try {
+      const { data } = await orgApi.update(organisation.id, { ai_custom_context: company.ai_custom_context ?? '' })
+      updateOrganisation(data)
+      toast.success('AI context saved')
+    } catch (err: unknown) {
+      const apiErr = (err as { response?: { data?: { error?: { message?: string } | string } } })?.response?.data?.error
+      const msg = typeof apiErr === 'string' ? apiErr : (apiErr?.message ?? 'Failed to save AI context')
+      toast.error(msg)
     } finally {
       setSavingCompany(false)
     }
@@ -396,9 +588,10 @@ export default function SettingsPage() {
     setCreatingSubaccount(true)
     try {
       await orgApi.createSubaccount(organisation.id, subaccountForm)
-      toast.success(`Sub-account ${subaccountForm.username}@${organisation.slug} created`)
+      const emailNote = subaccountForm.notify_email ? ` · credentials sent to ${subaccountForm.notify_email}` : ''
+      toast.success(`Sub-account ${subaccountForm.username}@${organisation.slug} created${emailNote}`)
       setShowSubaccountForm(false)
-      setSubaccountForm({ username: '', password: '', role: 'staff' })
+      setSubaccountForm({ username: '', password: '', role: 'staff', first_name: '', last_name: '', notify_email: '' })
       const { data } = await teamApi.members()
       setTeamMembers(Array.isArray(data) ? data : data.results ?? [])
     } catch (err: unknown) {
@@ -448,19 +641,30 @@ export default function SettingsPage() {
 
   const activeNonOwners = teamMembers.filter((m) => m.is_active && m.role !== 'owner')
 
-  const tabs: { id: Tab; label: string; icon: React.ElementType }[] = [
-    { id: 'profile', label: 'My Profile', icon: User },
-    { id: 'company', label: 'Company', icon: Building2 },
-    { id: 'team', label: 'Team', icon: UsersRound },
-    { id: 'security', label: 'Security', icon: Shield },
-    { id: 'payments', label: 'Payments', icon: CreditCard },
-    { id: 'email', label: 'Email', icon: Mail },
-    { id: 'periods', label: 'Periods', icon: Lock },
-    { id: 'appearance', label: 'Appearance', icon: Moon },
+  const allTabs: { id: Tab; label: string; icon: React.ElementType; ownerOnly?: boolean; requiresSettings?: boolean }[] = [
+    { id: 'profile',           label: 'My Profile',   icon: User },
+    { id: 'company',           label: 'Company',      icon: Building2,  requiresSettings: true },
+    { id: 'team',              label: 'Team',         icon: UsersRound, ownerOnly: true },
+    { id: 'security',          label: 'Security',     icon: Shield },
+    { id: 'payments',          label: 'Payments',     icon: CreditCard, requiresSettings: true },
+    { id: 'email',             label: 'Email',        icon: Mail,       ownerOnly: true },
+    { id: 'periods',           label: 'Periods',      icon: Lock,       requiresSettings: true },
+    { id: 'appearance',        label: 'Appearance',   icon: Moon },
+    { id: 'invoice_templates', label: 'Templates',    icon: Layout,     ownerOnly: true },
+    { id: 'ai',                label: 'AI Assistant', icon: Bot,        ownerOnly: true },
   ]
+  const tabs = allTabs.filter((t) => {
+    if (t.ownerOnly && !isOwner) return false           // owner-only tabs
+    if (t.requiresSettings && !hasSettingsPerm) return false  // org-settings tabs need permission
+    return true
+  })
+
+  // If current tab is no longer visible (permissions changed), reset to profile
+  const validTabIds = tabs.map((t) => t.id)
+  const activeTab = validTabIds.includes(tab) ? tab : 'profile'
 
   return (
-    <div className="space-y-6 max-w-2xl">
+    <div className={`space-y-6 ${activeTab === 'invoice_templates' ? '' : 'max-w-2xl'}`}>
       <div>
         <h1 className="text-2xl font-bold text-white">Settings</h1>
         <p className="text-slate-400 text-sm">Manage your account and organisation</p>
@@ -473,7 +677,7 @@ export default function SettingsPage() {
             key={t.id}
             onClick={() => setTab(t.id)}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-              tab === t.id
+              activeTab === t.id
                 ? 'bg-brand-500 text-white shadow-glow-orange'
                 : 'text-slate-400 hover:text-white'
             }`}
@@ -485,7 +689,7 @@ export default function SettingsPage() {
       </div>
 
       {/* ── Profile ── */}
-      {tab === 'profile' && (
+      {activeTab === 'profile' && (
         <div className="card p-6 space-y-6">
           {/* Avatar */}
           <div className="flex items-center gap-5">
@@ -538,7 +742,7 @@ export default function SettingsPage() {
       )}
 
       {/* ── Company ── */}
-      {tab === 'company' && (
+      {activeTab === 'company' && (
         <div className="card p-6 space-y-6">
           {/* Logo */}
           <div className="flex items-center gap-5">
@@ -561,9 +765,20 @@ export default function SettingsPage() {
             <div>
               <p className="font-semibold text-white">{organisation?.name}</p>
               <p className="text-sm text-slate-400">{organisation?.currency} · {organisation?.country}</p>
-              <button onClick={() => logoRef.current?.click()} className="text-xs text-brand-400 hover:text-brand-300 mt-1">
-                Change logo
-              </button>
+              <div className="flex items-center gap-3 mt-1">
+                <button onClick={() => logoRef.current?.click()} className="text-xs text-brand-400 hover:text-brand-300">
+                  Change logo
+                </button>
+                {logoPreview && (
+                  <button
+                    type="button"
+                    onClick={() => { setLogoPreview(null); setLogoFile(null); setLogoRemoved(true) }}
+                    className="text-xs text-red-400 hover:text-red-300 transition-colors"
+                  >
+                    Remove logo
+                  </button>
+                )}
+              </div>
             </div>
           </div>
 
@@ -604,13 +819,20 @@ export default function SettingsPage() {
           </div>
 
           {/* Banking Details */}
-          <div>
+          <div className={`relative ${!isOwner ? 'opacity-60' : ''}`}>
             <div className="flex items-center gap-2 mb-3">
               <LandmarkIcon size={16} className="text-brand-400" />
               <h3 className="text-sm font-semibold text-white">Banking Details</h3>
               <span className="text-xs text-slate-500">— automatically included in invoices</span>
+              {!isOwner && <Lock size={13} className="text-slate-500 ml-1" />}
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            {!isOwner && (
+              <div className="mb-3 flex items-center gap-2 text-xs text-slate-500 bg-surface-800 border border-surface-700 rounded-lg px-3 py-2">
+                <Lock size={12} className="shrink-0" />
+                Only the owner account has the privilege to access this section.
+              </div>
+            )}
+            <div className={`grid grid-cols-2 gap-4 ${!isOwner ? 'pointer-events-none select-none' : ''}`}>
               <div>
                 <label className="label">Bank Name</label>
                 <select
@@ -660,100 +882,27 @@ export default function SettingsPage() {
             </div>
           </div>
 
-          {/* Letterhead / Invoice Template */}
-          <div>
-            <div className="flex items-center gap-2 mb-3">
-              <Camera size={16} className="text-brand-400" />
-              <h3 className="text-sm font-semibold text-white">Letterhead / Invoice Template</h3>
-              <span className="text-xs text-slate-500">— appears at the top of invoices, statements &amp; PDFs</span>
+          {/* Default Pension Provider */}
+          <div className="card p-6 space-y-4">
+            <div>
+              <h3 className="text-base font-semibold text-white mb-1">Default Pension Provider</h3>
+              <p className="text-sm text-slate-400">Sets your default PFA for payroll statutory remittance guidance. Can be changed per run.</p>
             </div>
-            <div className="flex items-start gap-5">
-              {/* Preview box */}
-              <div
-                className="relative group w-48 h-20 rounded-xl border-2 border-dashed border-surface-600 bg-surface-700/30 flex items-center justify-center overflow-hidden cursor-pointer hover:border-brand-500/50 transition-colors shrink-0"
-                onClick={() => letterheadRef.current?.click()}
-              >
-                {letterheadPreview ? (
-                  <img src={letterheadPreview} alt="letterhead" className="w-full h-full object-contain" />
-                ) : (
-                  <div className="text-center text-slate-500">
-                    <Camera size={20} className="mx-auto mb-1" />
-                    <p className="text-xs">Click to upload</p>
-                  </div>
-                )}
-                <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded-xl">
-                  <Camera size={18} className="text-white" />
-                </div>
-                <input
-                  ref={letterheadRef}
-                  type="file"
-                  accept="image/*,.pdf,.doc,.docx"
-                  className="hidden"
-                  onChange={handleLetterheadChange}
-                />
-              </div>
-              <div className="space-y-2 text-sm text-slate-400 pt-1">
-                <p>Upload your company letterhead or a branded banner (PNG, JPG, PDF, DOC/DOCX supported).</p>
-                <p className="text-xs">Ideal size: <span className="text-slate-300">1200 × 300 px</span> or similar wide banner format.</p>
-                {/* Use letterhead toggle */}
-                <label className="flex items-center gap-2 cursor-pointer mt-1">
-                  <input
-                    type="checkbox"
-                    checked={company.use_letterhead === 'true'}
-                    onChange={(e) => setCompany({ ...company, use_letterhead: String(e.target.checked) })}
-                    className="accent-brand-500 w-4 h-4"
-                  />
-                  <span className="text-slate-300 text-xs">Use uploaded letterhead in PDFs</span>
-                </label>
-                {letterheadPreview && (
-                  <button
-                    type="button"
-                    onClick={() => { setLetterheadFile(null); setLetterheadPreview(null) }}
-                    className="text-xs text-red-400 hover:text-red-300 transition-colors"
-                  >
-                    Remove letterhead
-                  </button>
-                )}
-              </div>
-            </div>
-            {/* Brand color picker — used when letterhead is off */}
-            {company.use_letterhead !== 'true' && (
-              <div className="mt-4 flex items-center gap-4">
-                <div>
-                  <label className="label">Default Template Color</label>
-                  <p className="text-xs text-slate-500 mb-2">Used as the accent/header color in all PDFs when not using a letterhead</p>
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="color"
-                      value={company.brand_color}
-                      onChange={(e) => setCompany({ ...company, brand_color: e.target.value })}
-                      className="w-10 h-10 rounded-lg border border-surface-600 cursor-pointer bg-transparent p-0.5"
-                    />
-                    <input
-                      className="input w-32 font-mono text-sm"
-                      value={company.brand_color}
-                      maxLength={7}
-                      placeholder="#f97316"
-                      onChange={(e) => {
-                        const v = e.target.value
-                        if (/^#[0-9a-fA-F]{0,6}$/.test(v)) setCompany({ ...company, brand_color: v })
-                      }}
-                    />
-                    <div
-                      className="w-10 h-10 rounded-lg border border-surface-600"
-                      style={{ backgroundColor: company.brand_color }}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setCompany({ ...company, brand_color: '#f97316' })}
-                      className="text-xs text-slate-500 hover:text-slate-300"
-                    >
-                      Reset
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
+            <select
+              className="input"
+              value={company.pension_provider}
+              onChange={(e) => setCompany((c: typeof company) => ({ ...c, pension_provider: e.target.value }))}
+            >
+              <option value="">— Not set —</option>
+              {[
+                'ARM Pension Managers', 'AXA Mansard Pensions', 'Crusader Sterling Pensions',
+                'FCMB Pensions', 'Fidelity Pension Managers', 'First Guarantee Pension',
+                'Leadway Pensure', 'Meristem Pensions', 'Nigerian University Pension Management',
+                'NLPC Pension Fund Administrators', 'OAK Pensions', 'PAL Pensions (Pensions Alliance Ltd)',
+                'Premium Pension', 'Radix Pension Managers', 'Sigma Pensions',
+                'Stanbic IBTC Pension Managers', 'Trustfund Pensions', 'Veritas Glanvills Pensions',
+              ].map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
           </div>
 
           <button onClick={saveCompany} disabled={savingCompany} className="btn-primary">
@@ -763,7 +912,7 @@ export default function SettingsPage() {
       )}
 
       {/* ── Financial Periods ── */}
-      {tab === 'periods' && (
+      {activeTab === 'periods' && (
         <div className="card p-6 space-y-5">
           <div className="flex items-center justify-between">
             <div>
@@ -822,7 +971,7 @@ export default function SettingsPage() {
       )}
 
       {/* ── Team Members ── */}
-      {tab === 'team' && (
+      {activeTab === 'team' && (
         <div className="space-y-5">
           {/* Header */}
           <div className="card p-5">
@@ -839,11 +988,15 @@ export default function SettingsPage() {
                   </span>
                 </p>
               </div>
-              {activeNonOwners.length < MAX_MEMBERS && (
+              {planModules !== null && !planModules.includes('team') && !user?.is_superuser ? (
+                <button onClick={() => navigate('/billing')} className="btn-secondary text-sm text-amber-400 border-amber-500/30 hover:border-amber-400/50 shrink-0 flex items-center gap-1.5">
+                  <UserPlus size={14} /> Upgrade to Add Members
+                </button>
+              ) : activeNonOwners.length < MAX_MEMBERS ? (
                 <button onClick={() => setShowSubaccountForm((v) => !v)} className="btn-primary shrink-0">
                   <UserPlus size={14} /> Add Member
                 </button>
-              )}
+              ) : null}
             </div>
 
             {/* Sub-account creation form */}
@@ -853,12 +1006,28 @@ export default function SettingsPage() {
                   <div>
                     <span className="text-sm font-medium text-white">Create Sub-Account</span>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      Login email will be: <span className="text-brand-400 font-mono">{subaccountForm.username || 'username'}@{organisation?.slug}</span>
+                      Login email: <span className="text-brand-400 font-mono">{subaccountForm.username || 'username'}@{organisation?.slug}</span>
                     </p>
                   </div>
                   <button type="button" onClick={() => setShowSubaccountForm(false)} className="btn-ghost p-1"><X size={14} /></button>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="label">First Name</label>
+                    <input
+                      className="input" placeholder="e.g. John"
+                      value={subaccountForm.first_name}
+                      onChange={(e) => setSubaccountForm({ ...subaccountForm, first_name: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <label className="label">Last Name</label>
+                    <input
+                      className="input" placeholder="e.g. Doe"
+                      value={subaccountForm.last_name}
+                      onChange={(e) => setSubaccountForm({ ...subaccountForm, last_name: e.target.value })}
+                    />
+                  </div>
                   <div>
                     <label className="label">Username *</label>
                     <input
@@ -875,6 +1044,14 @@ export default function SettingsPage() {
                       <option value="staff">Staff</option>
                       <option value="viewer">Viewer (read-only)</option>
                     </select>
+                  </div>
+                  <div className="col-span-2">
+                    <label className="label">Personal Email <span className="text-slate-500 font-normal">(optional — to send login credentials)</span></label>
+                    <input
+                      type="email" className="input" placeholder="e.g. john@gmail.com"
+                      value={subaccountForm.notify_email}
+                      onChange={(e) => setSubaccountForm({ ...subaccountForm, notify_email: e.target.value })}
+                    />
                   </div>
                   <div className="col-span-2">
                     <label className="label">Password *</label>
@@ -960,7 +1137,7 @@ export default function SettingsPage() {
                             <div key={key} className="flex items-center justify-between gap-2 py-1.5 px-3 rounded-lg bg-surface-800">
                               <span className="text-sm text-slate-300">{label}</span>
                               <select
-                                className="bg-surface-700 border border-surface-600 text-xs rounded-lg px-2 py-1 text-white focus:outline-none focus:border-brand-500"
+                                className="input text-xs py-1 px-2 w-auto"
                                 value={current}
                                 onChange={(e) => setDraftPerms((prev) => ({
                                   ...prev,
@@ -1001,10 +1178,16 @@ export default function SettingsPage() {
       )}
 
       {/* ── Payments ── */}
-      {tab === 'payments' && (
+      {activeTab === 'payments' && (
         <div className="space-y-6">
+          {!isOwner && (
+            <div className="flex items-center gap-3 p-4 rounded-xl bg-surface-800 border border-surface-700 text-sm text-slate-400">
+              <Lock size={16} className="text-slate-500 shrink-0" />
+              <span>Only the owner account has the privilege to access this section.</span>
+            </div>
+          )}
           {/* Paystack */}
-          <div className="card p-6 space-y-5">
+          <div className={`card p-6 space-y-5 ${!isOwner ? 'opacity-60 pointer-events-none select-none' : ''}`}>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 bg-blue-500/15 rounded-xl flex items-center justify-center">
@@ -1057,7 +1240,7 @@ export default function SettingsPage() {
           </div>
 
           {/* Flutterwave */}
-          <div className="card p-6 opacity-60">
+          <div className={`card p-6 opacity-60 ${!isOwner ? 'pointer-events-none select-none' : ''}`}>
             <div className="flex items-center gap-3 mb-3">
               <div className="w-10 h-10 bg-orange-500/15 rounded-xl flex items-center justify-center">
                 <CreditCard size={20} className="text-orange-400" />
@@ -1081,36 +1264,219 @@ export default function SettingsPage() {
       )}
 
       {/* ── Security ── */}
-      {tab === 'security' && (
-        <div className="card p-6 space-y-6">
-          <div>
-            <h3 className="text-base font-semibold text-white mb-1">Inactivity Timeout</h3>
-            <p className="text-sm text-slate-400 mb-4">Automatically sign you out after a period of inactivity.</p>
-            <div className="space-y-2">
-              {TIMEOUT_OPTIONS.map((opt) => (
-                <label key={opt.value} className="flex items-center gap-3 p-3 rounded-xl border border-surface-700 cursor-pointer hover:border-surface-600 transition-colors">
-                  <input
-                    type="radio"
-                    name="timeout"
-                    value={opt.value}
-                    checked={timeout === opt.value}
-                    onChange={() => setTimeoutState(opt.value)}
-                    className="accent-brand-500"
-                  />
-                  <span className="text-sm text-white">{opt.label}</span>
-                </label>
-              ))}
+      {activeTab === 'security' && (
+        <div className="space-y-4">
+          {/* Inactivity Timeout */}
+          <div className="card p-6 space-y-4">
+            <div>
+              <h3 className="text-base font-semibold text-white mb-1">Inactivity Timeout</h3>
+              <p className="text-sm text-slate-400 mb-4">Automatically sign you out after a period of inactivity.</p>
+              <div className="space-y-2">
+                {TIMEOUT_OPTIONS.map((opt) => (
+                  <label key={opt.value} className="flex items-center gap-3 p-3 rounded-xl border border-surface-700 cursor-pointer hover:border-surface-600 transition-colors">
+                    <input
+                      type="radio"
+                      name="timeout"
+                      value={opt.value}
+                      checked={timeout === opt.value}
+                      onChange={() => setTimeoutState(opt.value)}
+                      className="accent-brand-500"
+                    />
+                    <span className="text-sm text-white">{opt.label}</span>
+                  </label>
+                ))}
+              </div>
             </div>
+            <button onClick={saveSecurity} className="btn-primary">
+              Save Security Settings
+            </button>
           </div>
 
-          <button onClick={saveSecurity} className="btn-primary">
-            Save Security Settings
-          </button>
+          {/* Two-Factor Authentication */}
+          <div className="card p-6 space-y-5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-brand-500/15 rounded-xl flex items-center justify-center">
+                  <Shield size={20} className="text-brand-400" />
+                </div>
+                <div>
+                  <h3 className="text-base font-semibold text-white">Two-Factor Authentication (MFA)</h3>
+                  <p className="text-sm text-slate-400">Works with Google Authenticator, Microsoft Authenticator, Authy, and any TOTP app</p>
+                </div>
+              </div>
+              <span className={mfaEnabled ? 'badge-green' : 'badge-slate'}>
+                {mfaEnabled ? 'Enabled' : 'Disabled'}
+              </span>
+            </div>
+
+            {/* Idle — show enable or disable button */}
+            {mfaStep === 'idle' && (
+              <>
+                {!mfaEnabled ? (
+                  <div className="space-y-3">
+                    <p className="text-sm text-slate-400">
+                      Add an extra layer of security. After enabling, you'll need both your password and a 6-digit code from your authenticator app to sign in.
+                    </p>
+                    <button onClick={handleMFASetup} disabled={mfaLoading} className="btn-primary">
+                      {mfaLoading ? <Loader2 size={16} className="animate-spin mr-2" /> : null}
+                      Enable MFA
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <p className="text-sm text-slate-400">MFA is active. You'll be prompted for a code on each login.</p>
+                    <button onClick={() => setMfaStep('disable')} className="btn-secondary text-red-400 hover:text-red-300 border-red-500/30 hover:border-red-500/50">
+                      Disable MFA
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* Step 1 — show QR code */}
+            {mfaStep === 'setup' && (
+              <div className="space-y-4">
+                {/* App recommendations */}
+                <div className="bg-surface-800 border border-surface-700 rounded-xl p-4 text-sm space-y-2">
+                  <p className="font-medium text-white">Step 1 — Install an authenticator app</p>
+                  <p className="text-slate-400 text-xs">Use any free TOTP app — they all work:</p>
+                  <div className="grid grid-cols-2 gap-1.5 text-xs text-slate-300">
+                    {[
+                      'Google Authenticator',
+                      'Microsoft Authenticator',
+                      'Authy',
+                      '1Password',
+                      'Bitwarden',
+                      'Any TOTP-compatible app',
+                    ].map((app) => (
+                      <span key={app} className="flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-brand-400 shrink-0" />
+                        {app}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                {/* QR code */}
+                <div className="bg-surface-800 border border-surface-700 rounded-xl p-4 space-y-3">
+                  <p className="text-sm font-medium text-white">Step 2 — Scan this QR code</p>
+                  {mfaQr && (
+                    <div className="flex justify-center">
+                      <div className="bg-white p-3 rounded-xl inline-block">
+                        <img src={mfaQr} alt="MFA QR code" className="w-52 h-52" />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Manual secret fallback */}
+                  {mfaSecret && (
+                    <div className="mt-3">
+                      <p className="text-xs text-slate-400 mb-1.5">Can't scan? Enter this key manually in your app:</p>
+                      <div className="flex items-center gap-2 bg-surface-700 rounded-xl px-3 py-2">
+                        <code className="flex-1 text-xs font-mono text-brand-300 tracking-wider break-all">{mfaSecret}</code>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(mfaSecret)
+                            setMfaSecretCopied(true)
+                            setTimeout(() => setMfaSecretCopied(false), 2000)
+                          }}
+                          className="text-xs text-slate-400 hover:text-white shrink-0 px-2 py-1 rounded-lg hover:bg-surface-600 transition-colors"
+                        >
+                          {mfaSecretCopied ? '✓ Copied' : 'Copy'}
+                        </button>
+                      </div>
+                      <p className="text-xs text-slate-500 mt-1">Select "Time-based" (TOTP) when entering manually.</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Code entry */}
+                <div className="bg-surface-800 border border-surface-700 rounded-xl p-4 space-y-3">
+                  <p className="text-sm font-medium text-white">Step 3 — Enter the 6-digit code</p>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={6}
+                    className="input text-center tracking-widest font-mono text-lg"
+                    placeholder="000000"
+                    value={mfaCode}
+                    onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, ''))}
+                    autoFocus
+                  />
+                </div>
+
+                <div className="flex gap-3">
+                  <button onClick={handleMFAConfirm} disabled={mfaLoading || mfaCode.length < 6} className="btn-primary flex-1">
+                    {mfaLoading ? <Loader2 size={16} className="animate-spin mr-2" /> : null}
+                    Confirm & Enable
+                  </button>
+                  <button onClick={() => { setMfaStep('idle'); setMfaCode(''); setMfaQr(''); setMfaSecret('') }} className="btn-secondary">
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Step 2 — backup codes */}
+            {mfaStep === 'backup' && (
+              <div className="space-y-4">
+                <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl">
+                  <p className="text-sm font-semibold text-amber-300 mb-1">Save your backup codes</p>
+                  <p className="text-xs text-amber-400/80">These are one-time use codes. If you lose access to your authenticator, use one of these. They won't be shown again.</p>
+                </div>
+                <div className="bg-surface-800 border border-surface-700 rounded-xl p-4 font-mono text-sm">
+                  <div className="grid grid-cols-2 gap-2">
+                    {backupCodes.map((code, i) => (
+                      <span key={i} className="text-green-400">{code}</span>
+                    ))}
+                  </div>
+                </div>
+                <button
+                  onClick={() => navigator.clipboard.writeText(backupCodes.join('\n')).then(() => toast.success('Copied!'))}
+                  className="btn-secondary w-full"
+                >
+                  Copy all codes
+                </button>
+                <button onClick={() => setMfaStep('idle')} className="btn-primary w-full">
+                  Done — I've saved my codes
+                </button>
+              </div>
+            )}
+
+            {/* Disable confirmation */}
+            {mfaStep === 'disable' && (
+              <div className="space-y-4">
+                <p className="text-sm text-slate-400">Enter your current authenticator code (or a backup code) to confirm disabling MFA.</p>
+                <div>
+                  <label className="label">Authenticator code</label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={10}
+                    className="input text-center tracking-widest font-mono text-lg"
+                    placeholder="000000"
+                    value={mfaCode}
+                    onChange={(e) => setMfaCode(e.target.value.replace(/\s/g, ''))}
+                  />
+                </div>
+                <div className="flex gap-3">
+                  <button onClick={handleMFADisable} disabled={mfaLoading || mfaCode.length < 6} className="btn-primary flex-1 bg-red-600 hover:bg-red-700">
+                    {mfaLoading ? <Loader2 size={16} className="animate-spin mr-2" /> : null}
+                    Disable MFA
+                  </button>
+                  <button onClick={() => { setMfaStep('idle'); setMfaCode('') }} className="btn-secondary">
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
       {/* ── Email / SMTP ── */}
-      {tab === 'email' && (
+      {activeTab === 'email' && (
         <div className="card p-6 space-y-5">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-brand-500/15 rounded-xl flex items-center justify-center">
@@ -1188,7 +1554,7 @@ export default function SettingsPage() {
       )}
 
       {/* ── Appearance ── */}
-      {tab === 'appearance' && (
+      {activeTab === 'appearance' && (
         <div className="card p-6 space-y-6">
           <div>
             <h3 className="text-base font-semibold text-white mb-1">Theme</h3>
@@ -1233,6 +1599,774 @@ export default function SettingsPage() {
                   <CheckCircle size={16} className="text-brand-400" />
                 )}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Invoice Templates ────────────────────────────────────────────── */}
+      {activeTab === 'invoice_templates' && (
+        <div className="grid grid-cols-2 gap-6 items-start">
+          {/* ── Left: template picker ───────────────────────── */}
+          <div className="space-y-5">
+          <div className="card p-5 space-y-4">
+            <div>
+              <h3 className="text-base font-semibold text-white mb-1">Invoice Layout Template</h3>
+              <p className="text-sm text-slate-400">Choose the global PDF template for invoices, delivery notes, and quotes.</p>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              {([
+                {
+                  value: 'classic',
+                  label: 'Classic',
+                  desc: 'Bold coloured header with company name. Traditional business layout.',
+                  preview: (
+                    <svg viewBox="0 0 160 110" className="w-full" xmlns="http://www.w3.org/2000/svg">
+                      {/* Header bar */}
+                      <rect x="0" y="0" width="160" height="30" fill="#f97316" rx="3"/>
+                      <rect x="8" y="8" width="60" height="6" rx="2" fill="white" opacity="0.9"/>
+                      <rect x="8" y="17" width="35" height="3" rx="1.5" fill="white" opacity="0.6"/>
+                      <rect x="110" y="8" width="40" height="5" rx="1.5" fill="white" opacity="0.7"/>
+                      <rect x="120" y="16" width="30" height="3" rx="1.5" fill="white" opacity="0.5"/>
+                      {/* Invoice label */}
+                      <rect x="8" y="38" width="30" height="4" rx="2" fill="#f97316" opacity="0.8"/>
+                      {/* Info rows */}
+                      <rect x="8" y="48" width="55" height="2.5" rx="1.2" fill="#94a3b8"/>
+                      <rect x="8" y="54" width="40" height="2.5" rx="1.2" fill="#94a3b8"/>
+                      <rect x="100" y="48" width="52" height="2.5" rx="1.2" fill="#94a3b8"/>
+                      <rect x="100" y="54" width="38" height="2.5" rx="1.2" fill="#94a3b8"/>
+                      {/* Table header */}
+                      <rect x="8" y="63" width="144" height="8" rx="2" fill="#f97316" opacity="0.15"/>
+                      <rect x="12" y="65.5" width="30" height="2.5" rx="1" fill="#f97316" opacity="0.7"/>
+                      <rect x="115" y="65.5" width="18" height="2.5" rx="1" fill="#f97316" opacity="0.7"/>
+                      <rect x="138" y="65.5" width="10" height="2.5" rx="1" fill="#f97316" opacity="0.7"/>
+                      {/* Table rows */}
+                      {[0,1,2].map(i => (
+                        <g key={i}>
+                          <rect x="8" y={76 + i*9} width="144" height="7" rx="1" fill={i%2===0?"#1e293b":"transparent"} opacity="0.4"/>
+                          <rect x="12" y={78 + i*9} width="45" height="2" rx="1" fill="#94a3b8"/>
+                          <rect x="118" y={78 + i*9} width="14" height="2" rx="1" fill="#94a3b8"/>
+                          <rect x="138" y={78 + i*9} width="12" height="2" rx="1" fill="#94a3b8"/>
+                        </g>
+                      ))}
+                      {/* Total */}
+                      <rect x="100" y="104" width="52" height="4" rx="2" fill="#f97316" opacity="0.3"/>
+                      <rect x="104" y="105.5" width="20" height="1.5" rx="1" fill="#f97316" opacity="0.8"/>
+                      <rect x="138" y="105.5" width="12" height="1.5" rx="1" fill="#f97316" opacity="0.8"/>
+                    </svg>
+                  ),
+                },
+                {
+                  value: 'modern',
+                  label: 'Modern',
+                  desc: 'Clean minimal header, generous white space. Contemporary style.',
+                  preview: (
+                    <svg viewBox="0 0 160 110" className="w-full" xmlns="http://www.w3.org/2000/svg">
+                      {/* Top accent line */}
+                      <rect x="0" y="0" width="160" height="4" fill="#f97316" rx="2"/>
+                      {/* Company name large */}
+                      <rect x="8" y="12" width="70" height="7" rx="2" fill="#1e293b"/>
+                      <rect x="8" y="22" width="45" height="3" rx="1.5" fill="#94a3b8"/>
+                      {/* INVOICE right aligned */}
+                      <rect x="110" y="10" width="42" height="8" rx="2" fill="#f97316" opacity="0.15"/>
+                      <rect x="114" y="12.5" width="34" height="3" rx="1.5" fill="#f97316" opacity="0.9"/>
+                      <rect x="120" y="19" width="28" height="2" rx="1" fill="#94a3b8"/>
+                      {/* Divider */}
+                      <line x1="8" y1="32" x2="152" y2="32" stroke="#e2e8f0" strokeWidth="0.8"/>
+                      {/* Bill to / info */}
+                      <rect x="8" y="38" width="25" height="2.5" rx="1" fill="#f97316" opacity="0.7"/>
+                      <rect x="8" y="44" width="55" height="2" rx="1" fill="#94a3b8"/>
+                      <rect x="8" y="49" width="40" height="2" rx="1" fill="#94a3b8"/>
+                      <rect x="100" y="38" width="25" height="2.5" rx="1" fill="#94a3b8"/>
+                      <rect x="100" y="44" width="40" height="2" rx="1" fill="#94a3b8"/>
+                      {/* Table */}
+                      <line x1="8" y1="60" x2="152" y2="60" stroke="#e2e8f0" strokeWidth="0.8"/>
+                      <rect x="8" y="63" width="30" height="2" rx="1" fill="#f97316" opacity="0.7"/>
+                      <rect x="118" y="63" width="14" height="2" rx="1" fill="#f97316" opacity="0.7"/>
+                      <rect x="138" y="63" width="14" height="2" rx="1" fill="#f97316" opacity="0.7"/>
+                      <line x1="8" y1="68" x2="152" y2="68" stroke="#e2e8f0" strokeWidth="0.8"/>
+                      {[0,1,2].map(i => (
+                        <g key={i}>
+                          <rect x="8" y={72 + i*9} width="45" height="2" rx="1" fill="#94a3b8"/>
+                          <rect x="118" y={72 + i*9} width="14" height="2" rx="1" fill="#94a3b8"/>
+                          <rect x="138" y={72 + i*9} width="14" height="2" rx="1" fill="#94a3b8"/>
+                          <line x1="8" y1={77 + i*9} x2="152" y2={77 + i*9} stroke="#e2e8f0" strokeWidth="0.5"/>
+                        </g>
+                      ))}
+                      {/* Total */}
+                      <rect x="100" y="103" width="52" height="5" rx="2" fill="#f97316" opacity="0.12"/>
+                      <rect x="104" y="105" width="18" height="2" rx="1" fill="#f97316"/>
+                      <rect x="136" y="105" width="14" height="2" rx="1" fill="#f97316"/>
+                    </svg>
+                  ),
+                },
+                {
+                  value: 'minimal',
+                  label: 'Minimal',
+                  desc: 'No header background. Just the essentials — clean and fast.',
+                  preview: (
+                    <svg viewBox="0 0 160 110" className="w-full" xmlns="http://www.w3.org/2000/svg">
+                      {/* Company name */}
+                      <rect x="8" y="8" width="55" height="5" rx="2" fill="#1e293b"/>
+                      <rect x="8" y="16" width="35" height="2.5" rx="1" fill="#94a3b8"/>
+                      {/* INVOICE word */}
+                      <rect x="8" y="26" width="22" height="4" rx="2" fill="#1e293b"/>
+                      <rect x="100" y="26" width="52" height="3" rx="1.5" fill="#94a3b8"/>
+                      <rect x="100" y="32" width="40" height="2.5" rx="1" fill="#94a3b8"/>
+                      {/* Simple line */}
+                      <line x1="8" y1="40" x2="152" y2="40" stroke="#1e293b" strokeWidth="1.5"/>
+                      {/* Bill to */}
+                      <rect x="8" y="46" width="55" height="2" rx="1" fill="#94a3b8"/>
+                      <rect x="8" y="51" width="40" height="2" rx="1" fill="#94a3b8"/>
+                      {/* Table header: dark bg */}
+                      <rect x="8" y="58" width="144" height="8" rx="1" fill="#1e293b"/>
+                      <rect x="12" y="60.5" width="28" height="2" rx="1" fill="white" opacity="0.8"/>
+                      <rect x="116" y="60.5" width="14" height="2" rx="1" fill="white" opacity="0.8"/>
+                      <rect x="136" y="60.5" width="12" height="2" rx="1" fill="white" opacity="0.8"/>
+                      {[0,1,2].map(i => (
+                        <g key={i}>
+                          <rect x="8" y={70 + i*9} width="45" height="2" rx="1" fill="#94a3b8"/>
+                          <rect x="118" y={70 + i*9} width="14" height="2" rx="1" fill="#94a3b8"/>
+                          <rect x="138" y={70 + i*9} width="14" height="2" rx="1" fill="#94a3b8"/>
+                          <line x1="8" y1={75 + i*9} x2="152" y2={75 + i*9} stroke="#e2e8f0" strokeWidth="0.4"/>
+                        </g>
+                      ))}
+                      <line x1="8" y1="99" x2="152" y2="99" stroke="#1e293b" strokeWidth="1"/>
+                      <rect x="104" y="103" width="18" height="2" rx="1" fill="#1e293b"/>
+                      <rect x="136" y="103" width="14" height="2" rx="1" fill="#1e293b"/>
+                    </svg>
+                  ),
+                },
+                {
+                  value: 'professional',
+                  label: 'Professional',
+                  desc: 'Two-column header with logo on left and details on right. Formal.',
+                  preview: (
+                    <svg viewBox="0 0 160 110" className="w-full" xmlns="http://www.w3.org/2000/svg">
+                      {/* Header: brand-color left (~46%) | light right */}
+                      <rect x="0" y="0" width="74" height="36" fill={company.brand_color || '#f97316'}/>
+                      <rect x="75" y="0" width="85" height="36" fill="#f8fafc"/>
+                      {/* Left: logo placeholder + company */}
+                      <rect x="8" y="6" width="14" height="14" rx="2" fill="rgba(255,255,255,0.2)"/>
+                      <rect x="8" y="23" width="50" height="3" rx="1.5" fill="white" opacity="0.85"/>
+                      <rect x="8" y="28" width="38" height="2" rx="1" fill="white" opacity="0.55"/>
+                      {/* Right: INVOICE word + meta rows */}
+                      <rect x="115" y="5" width="30" height="5" rx="1.5" fill="#1e293b"/>
+                      <rect x="80" y="14" width="22" height="2" rx="1" fill="#94a3b8"/>
+                      <rect x="115" y="14" width="30" height="2" rx="1" fill="#1e293b"/>
+                      <rect x="80" y="19" width="22" height="2" rx="1" fill="#94a3b8"/>
+                      <rect x="115" y="19" width="30" height="2" rx="1" fill="#1e293b"/>
+                      <rect x="80" y="24" width="22" height="2" rx="1" fill="#94a3b8"/>
+                      <rect x="115" y="24" width="22" height="2" rx="1" fill="#1e293b"/>
+                      {/* Bill to */}
+                      <rect x="8" y="43" width="22" height="3" rx="1.5" fill={company.brand_color || '#f97316'} opacity="0.8"/>
+                      <rect x="8" y="50" width="55" height="2" rx="1" fill="#94a3b8"/>
+                      <rect x="8" y="55" width="40" height="2" rx="1" fill="#94a3b8"/>
+                      {/* Table header with brand color */}
+                      <rect x="8" y="64" width="144" height="7" rx="2" fill={company.brand_color || '#f97316'}/>
+                      <rect x="12" y="66.5" width="30" height="2" rx="1" fill="white" opacity="0.8"/>
+                      <rect x="115" y="66.5" width="14" height="2" rx="1" fill="white" opacity="0.8"/>
+                      <rect x="138" y="66.5" width="10" height="2" rx="1" fill="white" opacity="0.8"/>
+                      {[0,1,2].map(i => (
+                        <g key={i}>
+                          <rect x="8" y={75 + i*9} width="144" height="7" rx="1" fill={i%2===0?"#f8fafc":"white"}/>
+                          <rect x="12" y={77.5 + i*9} width="45" height="2" rx="1" fill="#94a3b8"/>
+                          <rect x="118" y={77.5 + i*9} width="12" height="2" rx="1" fill="#94a3b8"/>
+                          <rect x="139" y={77.5 + i*9} width="11" height="2" rx="1" fill="#94a3b8"/>
+                        </g>
+                      ))}
+                      {/* Total box: brand color */}
+                      <rect x="96" y="102" width="56" height="7" rx="2" fill={company.brand_color || '#f97316'}/>
+                      <rect x="100" y="104.5" width="18" height="2" rx="1" fill="white" opacity="0.8"/>
+                      <rect x="136" y="104.5" width="12" height="2" rx="1" fill="white" opacity="0.9"/>
+                    </svg>
+                  ),
+                },
+              ] as { value: string; label: string; desc: string; preview: React.ReactNode }[]).map((tmpl) => (
+                <button
+                  key={tmpl.value}
+                  onClick={() => {
+                    setCompany((c: typeof company) => ({ ...c, invoice_template: tmpl.value }))
+                    saveTemplate(tmpl.value)
+                  }}
+                  className={`text-left rounded-xl border-2 transition-all overflow-hidden ${
+                    company.invoice_template === tmpl.value
+                      ? 'border-brand-500'
+                      : 'border-surface-700 hover:border-surface-500'
+                  }`}
+                >
+                  {/* Preview area */}
+                  <div className={`p-3 ${company.invoice_template === tmpl.value ? 'bg-brand-500/5' : 'bg-surface-900/60'}`}>
+                    <div className="bg-white rounded-lg overflow-hidden shadow-sm">
+                      {tmpl.preview}
+                    </div>
+                  </div>
+                  {/* Label */}
+                  <div className="px-4 py-3 flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-semibold text-white">{tmpl.label}</p>
+                      <p className="text-xs text-slate-400 mt-0.5 leading-relaxed">{tmpl.desc}</p>
+                    </div>
+                    {company.invoice_template === tmpl.value && (
+                      <span className="ml-3 shrink-0 text-xs font-medium text-brand-400 bg-brand-500/15 px-2 py-0.5 rounded-full">Active</span>
+                    )}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Brand Accent Color */}
+          <div className="card p-5 space-y-4">
+            <div>
+              <h3 className="text-base font-semibold text-white mb-1">Brand &amp; Accent Color</h3>
+              <p className="text-xs text-slate-500">Used as the header and accent color across all invoices and PDFs</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <input
+                type="color"
+                value={company.brand_color}
+                onChange={(e) => setCompany({ ...company, brand_color: e.target.value })}
+                className="w-10 h-10 rounded-lg border border-surface-600 cursor-pointer bg-transparent p-0.5"
+              />
+              <input
+                className="input w-32 font-mono text-sm"
+                value={company.brand_color}
+                maxLength={7}
+                placeholder="#f97316"
+                onChange={(e) => {
+                  const v = e.target.value
+                  if (/^#[0-9a-fA-F]{0,6}$/.test(v)) setCompany({ ...company, brand_color: v })
+                }}
+              />
+              <div className="w-10 h-10 rounded-lg border border-surface-600" style={{ backgroundColor: company.brand_color }} />
+              <button type="button" onClick={() => setCompany({ ...company, brand_color: '#f97316' })} className="text-xs text-slate-500 hover:text-slate-300">Reset</button>
+            </div>
+          </div>
+
+          {/* Company Font */}
+          <div className="card p-5 space-y-4">
+            <div>
+              <h3 className="text-base font-semibold text-white mb-1">Company Name &amp; Font</h3>
+              <p className="text-xs text-slate-500">Controls how your company name appears on all invoices and PDFs</p>
+            </div>
+            <div>
+              <label className="label">Invoice Company Name</label>
+              <p className="text-xs text-slate-500 mb-2">Override the name shown on invoices. Leave blank to use the organisation name.</p>
+              <input
+                className="input w-full max-w-md"
+                value={company.invoice_company_name}
+                placeholder={company.name || 'Your Company Name'}
+                onChange={(e) => setCompany({ ...company, invoice_company_name: e.target.value })}
+              />
+              <label className="flex items-center gap-2 mt-3 cursor-pointer select-none w-fit">
+                <input
+                  type="checkbox"
+                  checked={company.show_company_name_on_pdf ?? true}
+                  onChange={(e) => setCompany({ ...company, show_company_name_on_pdf: e.target.checked })}
+                  className="accent-brand-500 w-4 h-4"
+                />
+                <span className="text-sm text-slate-300">Show company name on invoices and PDFs</span>
+                <span className="text-xs text-slate-500">(uncheck to show logo only)</span>
+              </label>
+            </div>
+            <div>
+              <label className="label">Font</label>
+              <p className="text-xs text-slate-500 mb-2">
+                Font, size and style for the company name on PDFs.
+                <span className="text-slate-600 ml-1">(PDF output uses the nearest standard font — Helvetica / Times / Courier)</span>
+              </p>
+              <div className="space-y-3">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <select
+                    className="input w-52"
+                    value={company.company_name_font}
+                    onChange={(e) => setCompany({ ...company, company_name_font: e.target.value })}
+                  >
+                    <optgroup label="── Sans-Serif ──">
+                      <option value="helvetica">Helvetica / Arial</option>
+                      <option value="Inter">Inter</option>
+                      <option value="Roboto">Roboto</option>
+                      <option value="Open Sans">Open Sans</option>
+                      <option value="Lato">Lato</option>
+                      <option value="Montserrat">Montserrat</option>
+                      <option value="Poppins">Poppins</option>
+                      <option value="Raleway">Raleway</option>
+                      <option value="Nunito">Nunito</option>
+                      <option value="Ubuntu">Ubuntu</option>
+                      <option value="Source Sans 3">Source Sans Pro</option>
+                      <option value="Oswald">Oswald</option>
+                    </optgroup>
+                    <optgroup label="── Serif ──">
+                      <option value="times">Times New Roman</option>
+                      <option value="Georgia">Georgia</option>
+                      <option value="Playfair Display">Playfair Display</option>
+                      <option value="Merriweather">Merriweather</option>
+                      <option value="Lora">Lora</option>
+                      <option value="Libre Baskerville">Libre Baskerville</option>
+                      <option value="EB Garamond">EB Garamond</option>
+                      <option value="Crimson Text">Crimson Text</option>
+                      <option value="Cinzel">Cinzel</option>
+                      <option value="Cormorant Garamond">Cormorant Garamond</option>
+                      <option value="Spectral">Spectral</option>
+                    </optgroup>
+                    <optgroup label="── Display / Title ──">
+                      <option value="Bebas Neue">Bebas Neue</option>
+                    </optgroup>
+                    <optgroup label="── Monospace ──">
+                      <option value="courier">Courier New</option>
+                      <option value="JetBrains Mono">JetBrains Mono</option>
+                      <option value="Fira Code">Fira Code</option>
+                    </optgroup>
+                  </select>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={company.company_name_font_color}
+                      onChange={(e) => setCompany({ ...company, company_name_font_color: e.target.value })}
+                      className="w-9 h-9 rounded-lg border border-surface-600 cursor-pointer bg-transparent p-0.5"
+                      title="Company name font color"
+                    />
+                    <span className="text-xs text-slate-500">Color</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-4 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-slate-400">Size (pt)</label>
+                    <input
+                      type="number"
+                      min={8}
+                      max={72}
+                      className="input w-16 text-center"
+                      value={company.company_name_font_size}
+                      onChange={(e) => setCompany({ ...company, company_name_font_size: Math.max(8, Math.min(72, parseInt(e.target.value) || 14)) })}
+                    />
+                  </div>
+                  <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                    <input type="checkbox" checked={company.company_name_font_bold}
+                      onChange={(e) => setCompany({ ...company, company_name_font_bold: e.target.checked })}
+                      className="accent-brand-500 w-4 h-4" />
+                    <span className="text-xs font-bold text-slate-300">Bold</span>
+                  </label>
+                  <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                    <input type="checkbox" checked={company.company_name_font_italic}
+                      onChange={(e) => setCompany({ ...company, company_name_font_italic: e.target.checked })}
+                      className="accent-brand-500 w-4 h-4" />
+                    <span className="text-xs italic text-slate-300">Italic</span>
+                  </label>
+                  <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                    <input type="checkbox" checked={company.company_name_font_underline}
+                      onChange={(e) => setCompany({ ...company, company_name_font_underline: e.target.checked })}
+                      className="accent-brand-500 w-4 h-4" />
+                    <span className="text-xs underline text-slate-300">Underline</span>
+                  </label>
+                </div>
+                {(() => {
+                  const fontMap: Record<string, string> = {
+                    helvetica: 'Arial, sans-serif', times: 'Georgia, serif', courier: '"Courier New", monospace',
+                    Inter: 'Inter, sans-serif', Roboto: 'Roboto, sans-serif', 'Open Sans': '"Open Sans", sans-serif',
+                    Lato: 'Lato, sans-serif', Montserrat: 'Montserrat, sans-serif', Poppins: 'Poppins, sans-serif',
+                    Raleway: 'Raleway, sans-serif', Nunito: 'Nunito, sans-serif', Ubuntu: 'Ubuntu, sans-serif',
+                    'Source Sans 3': '"Source Sans 3", sans-serif', Oswald: 'Oswald, sans-serif',
+                    Georgia: 'Georgia, serif', 'Playfair Display': '"Playfair Display", serif',
+                    Merriweather: 'Merriweather, serif', Lora: 'Lora, serif',
+                    'Libre Baskerville': '"Libre Baskerville", serif', 'EB Garamond': '"EB Garamond", serif',
+                    'Crimson Text': '"Crimson Text", serif', Cinzel: 'Cinzel, serif',
+                    'Cormorant Garamond': '"Cormorant Garamond", serif', Spectral: 'Spectral, serif',
+                    'Bebas Neue': '"Bebas Neue", cursive',
+                    'JetBrains Mono': '"JetBrains Mono", monospace', 'Fira Code': '"Fira Code", monospace',
+                  }
+                  const ff = fontMap[company.company_name_font] ?? 'Arial, sans-serif'
+                  const displayName = company.invoice_company_name?.trim() || company.name || 'Your Company Name'
+                  const brandRgb = company.brand_color
+                  return (
+                    <div className="mt-2 rounded-xl border border-surface-600 overflow-hidden bg-white shadow-sm">
+                      <div className="h-2" style={{ backgroundColor: brandRgb }} />
+                      <div className="px-5 py-4 flex items-start justify-between bg-white">
+                        <div>
+                          <p style={{
+                            fontFamily: ff,
+                            fontSize: `${Math.round(company.company_name_font_size * 0.85)}px`,
+                            fontWeight: company.company_name_font_bold ? 700 : 400,
+                            fontStyle: company.company_name_font_italic ? 'italic' : 'normal',
+                            textDecoration: company.company_name_font_underline ? 'underline' : 'none',
+                            color: company.company_name_font_color,
+                          }}>
+                            {displayName}
+                          </p>
+                          <p className="text-[9px] mt-1" style={{ color: '#888' }}>123 Business Street, Lagos, Nigeria</p>
+                        </div>
+                        <div className="text-right">
+                          <p style={{ color: brandRgb, fontWeight: 800, fontSize: '18px' }}>INVOICE</p>
+                          <p className="text-[9px] mt-1" style={{ color: '#888' }}>INV-0001</p>
+                        </div>
+                      </div>
+                      <div className="px-5 pb-2">
+                        <span className="text-[9px] text-slate-400 italic">↑ Preview of how your company name will appear</span>
+                      </div>
+                    </div>
+                  )
+                })()}
+              </div>
+            </div>
+          </div>
+
+          {/* Company Stamp */}
+          <div className="card p-6 space-y-4">
+            <div>
+              <h3 className="text-base font-semibold text-white mb-1">Company Stamp / Seal</h3>
+              <p className="text-sm text-slate-400">Optional digital stamp added to all invoices and delivery notes. Use a transparent PNG for best results.</p>
+            </div>
+            <div className="flex items-start gap-4">
+              {(stampPreview && !stampRemoved) ? (
+                <div className="relative group">
+                  <img src={stampPreview} alt="Company stamp" className="w-24 h-24 object-contain rounded-xl border border-surface-600 bg-white p-1" />
+                  <button
+                    type="button"
+                    onClick={() => { setStampPreview(null); setStampFile(null); setStampRemoved(true) }}
+                    className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-red-500 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
+                    <X size={12} className="text-white" />
+                  </button>
+                </div>
+              ) : (
+                <div
+                  onClick={() => stampRef.current?.click()}
+                  className="w-24 h-24 rounded-xl border-2 border-dashed border-surface-600 hover:border-brand-500 flex flex-col items-center justify-center gap-1 cursor-pointer transition-colors"
+                >
+                  <Camera size={20} className="text-slate-500" />
+                  <span className="text-xs text-slate-500">Upload stamp</span>
+                </div>
+              )}
+              <div className="flex-1 space-y-2">
+                <input ref={stampRef} type="file" accept="image/*" className="hidden" onChange={handleStampChange} />
+                <button type="button" onClick={() => stampRef.current?.click()} className="btn-secondary text-sm">
+                  {(stampPreview && !stampRemoved) ? 'Change Stamp' : 'Choose Image'}
+                </button>
+                {(stampPreview && !stampRemoved) && (
+                  <button type="button" onClick={() => { setStampPreview(null); setStampFile(null); setStampRemoved(true) }} className="block text-xs text-red-400 hover:text-red-300">
+                    Remove stamp
+                  </button>
+                )}
+                <p className="text-xs text-slate-500">PNG with transparent background recommended · Max 2MB</p>
+              </div>
+            </div>
+          </div>
+
+          <button onClick={saveCompany} disabled={savingCompany} className="btn-primary flex items-center gap-2 disabled:opacity-50">
+            {savingCompany ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle size={15} />}
+            Save Template Settings
+          </button>
+          </div>{/* end left column */}
+
+          {/* ── Right: full A4 preview ──────────────────────── */}
+          <div className="sticky top-4">
+            <p className="text-xs text-slate-500 uppercase tracking-wider font-medium mb-3">Live Preview</p>
+            <div className="rounded-xl overflow-hidden shadow-2xl border border-surface-700 bg-white" style={{ fontFamily: 'Arial, sans-serif' }}>
+              {/* CLASSIC */}
+              {company.invoice_template === 'classic' && (
+                <div style={{ fontSize: 11, color: '#1e293b' }}>
+                  <div style={{ background: company.brand_color || '#f97316', padding: '20px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <div>
+                      <div style={{ width: 48, height: 48, background: 'rgba(255,255,255,0.25)', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 8, fontSize: 9, color: 'rgba(255,255,255,0.8)', fontWeight: 600 }}>LOGO</div>
+                      <div style={{ color: 'white', fontWeight: 700, fontSize: 16 }}>Acme Business Ltd</div>
+                      <div style={{ color: 'rgba(255,255,255,0.75)', fontSize: 10, marginTop: 2 }}>12 Marina Street, Lagos Island</div>
+                      <div style={{ color: 'rgba(255,255,255,0.75)', fontSize: 10 }}>info@acmebiz.ng · 0801 234 5678</div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ color: 'white', fontWeight: 800, fontSize: 22, letterSpacing: 2 }}>INVOICE</div>
+                      <div style={{ color: 'rgba(255,255,255,0.85)', fontSize: 10, marginTop: 4 }}>#INV-0042</div>
+                      <div style={{ color: 'rgba(255,255,255,0.75)', fontSize: 10 }}>Date: 22 Mar 2026</div>
+                      <div style={{ color: 'rgba(255,255,255,0.75)', fontSize: 10 }}>Due: 21 Apr 2026</div>
+                    </div>
+                  </div>
+                  <div style={{ padding: '16px 24px', display: 'flex', justifyContent: 'space-between' }}>
+                    <div>
+                      <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', color: '#94a3b8', marginBottom: 4 }}>Bill To</div>
+                      <div style={{ fontWeight: 600 }}>Global Ventures Ltd</div>
+                      <div style={{ color: '#64748b', fontSize: 10 }}>45 Broad St, Victoria Island</div>
+                      <div style={{ color: '#64748b', fontSize: 10 }}>Lagos, Nigeria</div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', color: '#94a3b8', marginBottom: 4 }}>Payment Terms</div>
+                      <div style={{ fontSize: 10, color: '#64748b' }}>Net 30 days</div>
+                      <div style={{ fontSize: 9, color: '#94a3b8', marginTop: 6 }}>TIN: 12345678-0001</div>
+                    </div>
+                  </div>
+                  <div style={{ margin: '0 24px' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10 }}>
+                      <thead>
+                        <tr style={{ background: company.brand_color || '#f97316' }}>
+                          {['Description', 'Qty', 'Unit Price', 'Total'].map(h => (
+                            <th key={h} style={{ color: 'white', padding: '7px 8px', textAlign: h === 'Description' ? 'left' : 'right', fontWeight: 600, fontSize: 9 }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[['Web Design Service', '1', '₦150,000', '₦150,000'], ['SEO Optimisation', '3', '₦25,000', '₦75,000'], ['Monthly Hosting', '12', '₦8,500', '₦102,000'], ['SSL Certificate', '1', '₦12,000', '₦12,000']].map(([d, q, u, t], i) => (
+                          <tr key={i} style={{ background: i % 2 === 0 ? '#f8fafc' : 'white' }}>
+                            <td style={{ padding: '6px 8px' }}>{d}</td>
+                            <td style={{ padding: '6px 8px', textAlign: 'right' }}>{q}</td>
+                            <td style={{ padding: '6px 8px', textAlign: 'right' }}>{u}</td>
+                            <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 600 }}>{t}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div style={{ padding: '12px 24px', display: 'flex', justifyContent: 'flex-end' }}>
+                    <div style={{ minWidth: 180 }}>
+                      {[['Subtotal', '₦339,000'], ['VAT (7.5%)', '₦25,425']].map(([l, v]) => (
+                        <div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', color: '#64748b', fontSize: 10 }}>
+                          <span>{l}</span><span>{v}</span>
+                        </div>
+                      ))}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', background: company.brand_color || '#f97316', color: 'white', padding: '7px 10px', borderRadius: 6, marginTop: 6, fontWeight: 700, fontSize: 12 }}>
+                        <span>Total</span><span>₦364,425</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ background: '#f8fafc', borderTop: '1px solid #e2e8f0', padding: '10px 24px', fontSize: 9, color: '#94a3b8', display: 'flex', justifyContent: 'space-between' }}>
+                    <span>Bank: First Bank · Acme Business Ltd · 3012345678</span>
+                    <span>Thank you for your business!</span>
+                  </div>
+                </div>
+              )}
+
+              {/* MODERN */}
+              {company.invoice_template === 'modern' && (
+                <div style={{ fontSize: 11, color: '#1e293b' }}>
+                  {/* 4px brand accent bar */}
+                  <div style={{ height: 4, background: company.brand_color || '#f97316' }} />
+                  {/* Header: company left, INVOICE + info-box right */}
+                  <div style={{ padding: '16px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <div>
+                      <div style={{ width: 40, height: 40, background: '#f1f5f9', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 6, fontSize: 8, color: '#94a3b8', fontWeight: 600, border: '1px dashed #cbd5e1' }}>LOGO</div>
+                      <div style={{ fontWeight: 700, fontSize: 14 }}>Acme Business Ltd</div>
+                      <div style={{ color: '#64748b', fontSize: 9, marginTop: 2 }}>12 Marina Street, Lagos Island</div>
+                      <div style={{ color: '#64748b', fontSize: 9 }}>info@acmebiz.ng</div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ color: company.brand_color || '#f97316', fontWeight: 800, fontSize: 22, letterSpacing: 3 }}>INVOICE</div>
+                      {/* Floating rounded info box — matches jsPDF roundedRect */}
+                      <div style={{ background: '#f8fafc', borderRadius: 6, padding: '6px 10px', marginTop: 4, fontSize: 9 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 20 }}><span style={{ color: '#94a3b8' }}>Number</span><strong style={{ color: '#1e293b' }}>#INV-0042</strong></div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 20, marginTop: 3 }}><span style={{ color: '#94a3b8' }}>Date</span><strong style={{ color: '#1e293b' }}>22 Mar 2026</strong></div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 20, marginTop: 3 }}><span style={{ color: '#94a3b8' }}>Status</span><strong style={{ color: '#1e293b' }}>PAID</strong></div>
+                      </div>
+                    </div>
+                  </div>
+                  {/* Brand-color divider line — matches doc.line(...BRAND...) */}
+                  <div style={{ height: 1, background: company.brand_color || '#f97316', margin: '0 24px 12px' }} />
+                  {/* Bill To */}
+                  <div style={{ padding: '0 24px 10px' }}>
+                    <div style={{ fontSize: 8, fontWeight: 700, textTransform: 'uppercase', color: company.brand_color || '#f97316', marginBottom: 3 }}>Bill To</div>
+                    <div style={{ fontWeight: 600 }}>Global Ventures Ltd</div>
+                    <div style={{ color: '#64748b', fontSize: 9 }}>45 Broad St, Victoria Island, Lagos</div>
+                  </div>
+                  <div style={{ margin: '0 24px' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10 }}>
+                      <thead>
+                        <tr style={{ background: company.brand_color || '#f97316' }}>
+                          {['Description', 'Qty', 'Unit Price', 'Total'].map(h => (
+                            <th key={h} style={{ color: 'white', padding: '6px 4px', textAlign: h === 'Description' ? 'left' : 'right', fontWeight: 600, fontSize: 9 }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[['Web Design Service', '1', '₦150,000', '₦150,000'], ['SEO Optimisation', '3', '₦25,000', '₦75,000'], ['Monthly Hosting', '12', '₦8,500', '₦102,000'], ['SSL Certificate', '1', '₦12,000', '₦12,000']].map(([d, q, u, t], i) => (
+                          <tr key={i} style={{ background: i % 2 === 0 ? '#f8f8f8' : 'white' }}>
+                            <td style={{ padding: '6px 4px' }}>{d}</td>
+                            <td style={{ padding: '6px 4px', textAlign: 'right', color: '#64748b' }}>{q}</td>
+                            <td style={{ padding: '6px 4px', textAlign: 'right', color: '#64748b' }}>{u}</td>
+                            <td style={{ padding: '6px 4px', textAlign: 'right', fontWeight: 600 }}>{t}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div style={{ padding: '12px 24px 16px', display: 'flex', justifyContent: 'flex-end' }}>
+                    <div style={{ minWidth: 190 }}>
+                      {[['Subtotal', '₦339,000'], ['VAT (7.5%)', '₦25,425']].map(([l, v]) => (
+                        <div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', color: '#64748b', fontSize: 10 }}>
+                          <span>{l}</span><span>{v}</span>
+                        </div>
+                      ))}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', background: company.brand_color || '#f97316', color: 'white', padding: '7px 10px', borderRadius: 6, marginTop: 6, fontWeight: 700, fontSize: 12 }}>
+                        <span>Total</span><span>₦364,425</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* MINIMAL */}
+              {company.invoice_template === 'minimal' && (
+                <div style={{ fontSize: 11, color: '#1e293b', padding: '24px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
+                    <div>
+                      <div style={{ width: 44, height: 44, background: '#f1f5f9', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 8, fontSize: 9, color: '#94a3b8', fontWeight: 600, border: '1px dashed #cbd5e1' }}>LOGO</div>
+                      <div style={{ fontWeight: 700, fontSize: 14 }}>Acme Business Ltd</div>
+                      <div style={{ color: '#64748b', fontSize: 10 }}>12 Marina Street, Lagos Island</div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontWeight: 800, fontSize: 18, letterSpacing: 2, color: '#1e293b' }}>INVOICE</div>
+                      <div style={{ fontSize: 10, color: '#64748b', marginTop: 4 }}>#INV-0042</div>
+                      <div style={{ fontSize: 10, color: '#64748b' }}>22 Mar 2026</div>
+                      <div style={{ fontSize: 10, color: '#64748b' }}>Due: 21 Apr 2026</div>
+                    </div>
+                  </div>
+                  <div style={{ borderTop: '2px solid #1e293b', borderBottom: '1px solid #e2e8f0', padding: '10px 0', marginBottom: 12, display: 'flex', justifyContent: 'space-between' }}>
+                    <div>
+                      <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', color: '#1e293b', marginBottom: 3 }}>Bill To</div>
+                      <div style={{ fontWeight: 600 }}>Global Ventures Ltd</div>
+                      <div style={{ color: '#64748b', fontSize: 10 }}>45 Broad St, Victoria Island</div>
+                    </div>
+                  </div>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10 }}>
+                    <thead>
+                      <tr style={{ background: '#1e293b' }}>
+                        {['Description', 'Qty', 'Unit Price', 'Total'].map(h => (
+                          <th key={h} style={{ color: 'white', padding: '5px 4px', textAlign: h === 'Description' ? 'left' : 'right', fontWeight: 700, fontSize: 9, textTransform: 'uppercase' }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[['Web Design Service', '1', '₦150,000', '₦150,000'], ['SEO Optimisation', '3', '₦25,000', '₦75,000'], ['Monthly Hosting', '12', '₦8,500', '₦102,000'], ['SSL Certificate', '1', '₦12,000', '₦12,000']].map(([d, q, u, t], i) => (
+                        <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                          <td style={{ padding: '6px 4px' }}>{d}</td>
+                          <td style={{ padding: '6px 4px', textAlign: 'right', color: '#64748b' }}>{q}</td>
+                          <td style={{ padding: '6px 4px', textAlign: 'right', color: '#64748b' }}>{u}</td>
+                          <td style={{ padding: '6px 4px', textAlign: 'right', fontWeight: 600 }}>{t}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <div style={{ borderTop: '2px solid #1e293b', marginTop: 8, paddingTop: 8, display: 'flex', justifyContent: 'flex-end' }}>
+                    <div style={{ minWidth: 180 }}>
+                      {[['Subtotal', '₦339,000'], ['VAT (7.5%)', '₦25,425']].map(([l, v]) => (
+                        <div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', color: '#64748b', fontSize: 10 }}><span>{l}</span><span>{v}</span></div>
+                      ))}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 800, fontSize: 13, marginTop: 6, paddingTop: 6, borderTop: '1px solid #1e293b' }}>
+                        <span>Total</span><span>₦364,425</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ marginTop: 16, fontSize: 9, color: '#94a3b8', borderTop: '1px solid #e2e8f0', paddingTop: 8 }}>
+                    Bank: First Bank · Acme Business Ltd · 3012345678
+                  </div>
+                </div>
+              )}
+
+              {/* PROFESSIONAL */}
+              {company.invoice_template === 'professional' && (
+                <div style={{ fontSize: 11, color: '#1e293b' }}>
+                  {/* Split header: brand-color left (~46%) | light right */}
+                  <div style={{ display: 'flex' }}>
+                    <div style={{ background: company.brand_color || '#f97316', width: '46%', padding: '20px 18px', minHeight: 110 }}>
+                      <div style={{ width: 40, height: 40, background: 'rgba(255,255,255,0.2)', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 8, fontSize: 8, color: 'rgba(255,255,255,0.8)', fontWeight: 600 }}>LOGO</div>
+                      <div style={{ color: 'white', fontWeight: 700, fontSize: 13 }}>Acme Business Ltd</div>
+                      <div style={{ color: 'rgba(255,255,255,0.75)', fontSize: 9, marginTop: 3 }}>12 Marina Street, Lagos</div>
+                      <div style={{ color: 'rgba(255,255,255,0.75)', fontSize: 9 }}>info@acmebiz.ng</div>
+                    </div>
+                    <div style={{ flex: 1, background: '#f8fafc', padding: '16px 18px' }}>
+                      <div style={{ fontWeight: 800, fontSize: 16, letterSpacing: 2, color: '#1e293b', textAlign: 'right' }}>INVOICE</div>
+                      <div style={{ fontSize: 9, color: '#64748b', marginTop: 6, lineHeight: 1.9 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#94a3b8' }}>Invoice No.</span><strong style={{ color: '#1e293b' }}>#INV-0042</strong></div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#94a3b8' }}>Date</span><strong style={{ color: '#1e293b' }}>22 Mar 2026</strong></div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#94a3b8' }}>Payment</span><strong style={{ color: '#1e293b' }}>Cash</strong></div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#94a3b8' }}>Status</span><strong style={{ color: '#1e293b' }}>PAID</strong></div>
+                      </div>
+                    </div>
+                  </div>
+                  {/* Bill To */}
+                  <div style={{ padding: '10px 18px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+                    <div style={{ fontSize: 8, fontWeight: 700, textTransform: 'uppercase', color: company.brand_color || '#f97316', marginBottom: 3 }}>Bill To</div>
+                    <div style={{ fontWeight: 600, fontSize: 10 }}>Global Ventures Ltd</div>
+                    <div style={{ color: '#64748b', fontSize: 9 }}>45 Broad St, Victoria Island, Lagos</div>
+                  </div>
+                  <div style={{ padding: '0 18px 4px' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10, marginTop: 8 }}>
+                      <thead>
+                        <tr style={{ background: company.brand_color || '#f97316' }}>
+                          {['Description', 'Qty', 'Unit Price', 'Total'].map(h => (
+                            <th key={h} style={{ color: 'white', padding: '7px 6px', textAlign: h === 'Description' ? 'left' : 'right', fontWeight: 600, fontSize: 9 }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[['Web Design Service', '1', '₦150,000', '₦150,000'], ['SEO Optimisation', '3', '₦25,000', '₦75,000'], ['Monthly Hosting', '12', '₦8,500', '₦102,000'], ['SSL Certificate', '1', '₦12,000', '₦12,000']].map(([d, q, u, t], i) => (
+                          <tr key={i} style={{ background: i % 2 === 0 ? '#f8fafc' : 'white' }}>
+                            <td style={{ padding: '6px 6px' }}>{d}</td>
+                            <td style={{ padding: '6px 6px', textAlign: 'right', color: '#64748b' }}>{q}</td>
+                            <td style={{ padding: '6px 6px', textAlign: 'right', color: '#64748b' }}>{u}</td>
+                            <td style={{ padding: '6px 6px', textAlign: 'right', fontWeight: 600 }}>{t}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div style={{ padding: '10px 18px 16px', display: 'flex', justifyContent: 'flex-end' }}>
+                    <div style={{ minWidth: 185 }}>
+                      {[['Subtotal', '₦339,000'], ['VAT (7.5%)', '₦25,425']].map(([l, v]) => (
+                        <div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', color: '#64748b', fontSize: 10 }}><span>{l}</span><span>{v}</span></div>
+                      ))}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', background: company.brand_color || '#f97316', color: 'white', padding: '7px 10px', borderRadius: 6, marginTop: 6, fontWeight: 700, fontSize: 12 }}>
+                        <span>Total</span><span>₦364,425</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+            <p className="text-xs text-slate-600 mt-2 text-center">Preview uses dummy data · Brand colour applied from Company tab</p>
+          </div>
+        </div>
+      )}
+
+      {/* ── AI Assistant ─────────────────────────────────────────────────── */}
+      {activeTab === 'ai' && (
+        <div className="space-y-6">
+          <div className="card p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-brand-500/20 flex items-center justify-center">
+                <Bot size={20} className="text-brand-400" />
+              </div>
+              <div>
+                <h3 className="text-base font-semibold text-white">AI Financial Assistant</h3>
+                <p className="text-sm text-slate-400">Powered by Groq · Trained on your live financial data</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="card p-6 space-y-4">
+            <div>
+              <h3 className="text-base font-semibold text-white mb-1">Business Context</h3>
+              <p className="text-sm text-slate-400 mb-3">
+                Describe your business to personalise AI responses. Include industry, type of business, key goals, and anything the AI should know.
+              </p>
+              <textarea
+                className="input resize-none w-full"
+                rows={6}
+                placeholder={`Example:\nWe are a wholesale food distribution company based in Lagos. We sell to retailers and supermarkets. Our main costs are logistics and procurement. We want to grow revenue by 30% this year and reduce our overdue invoices.\n\nFocus on cash flow, overdue customers, and profitability advice.`}
+                value={company.ai_custom_context}
+                onChange={(e) => setCompany((c: typeof company) => ({ ...c, ai_custom_context: e.target.value }))}
+                maxLength={2000}
+              />
+              <p className="text-xs text-slate-500 mt-1 text-right">{(company.ai_custom_context ?? '').length}/2000</p>
+            </div>
+            <button onClick={saveAIContext} disabled={savingCompany} className="btn-primary flex items-center gap-2 disabled:opacity-50">
+              {savingCompany ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle size={15} />}
+              Save AI Context
+            </button>
+          </div>
+
+          <div className="card p-6 space-y-3">
+            <h3 className="text-base font-semibold text-white">Quick Test</h3>
+            <p className="text-sm text-slate-400">Go to the Dashboard and click <strong className="text-brand-400">Explain My Money</strong> to open the AI assistant.</p>
+            <div className="flex items-center gap-2 text-xs text-slate-400">
+              <Bot size={13} className="text-brand-400" />
+              Ask things like: "Am I making profit?", "Where am I losing money?", "How is my cash flow?"
             </div>
           </div>
         </div>
