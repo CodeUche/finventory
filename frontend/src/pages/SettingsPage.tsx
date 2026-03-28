@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { User, Building2, Shield, Loader2, Camera, CreditCard, CheckCircle, Moon, Sun, Mail, Lock, Unlock, LandmarkIcon, UsersRound, UserPlus, X, ChevronDown, ChevronUp, Bot, Layout } from 'lucide-react'
+import { User, Building2, Shield, Loader2, Camera, CreditCard, CheckCircle, Moon, Sun, Mail, Lock, Unlock, LandmarkIcon, UsersRound, UserPlus, X, ChevronDown, ChevronUp, Bot, Layout, Copy } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { authApi, orgApi, paymentGatewayApi, accountingApi, teamApi, tauriFetch } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
@@ -765,6 +765,16 @@ export default function SettingsPage() {
             <div>
               <p className="font-semibold text-white">{organisation?.name}</p>
               <p className="text-sm text-slate-400">{organisation?.currency} · {organisation?.country}</p>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Workspace ID:{' '}
+                <button
+                  onClick={() => { navigator.clipboard.writeText(organisation?.slug ?? ''); toast.success('Workspace ID copied') }}
+                  className="font-mono text-brand-400 hover:text-brand-300 inline-flex items-center gap-1"
+                  title="Click to copy"
+                >
+                  {organisation?.slug} <Copy size={10} />
+                </button>
+              </p>
               <div className="flex items-center gap-3 mt-1">
                 <button onClick={() => logoRef.current?.click()} className="text-xs text-brand-400 hover:text-brand-300">
                   Change logo
@@ -973,6 +983,45 @@ export default function SettingsPage() {
       {/* ── Team Members ── */}
       {activeTab === 'team' && (
         <div className="space-y-5">
+          {/* Workspace ID — staff use this to log in */}
+          <div className="card p-5 border border-brand-500/20 bg-brand-500/5">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-xl bg-brand-500/15 flex items-center justify-center flex-shrink-0">
+                <Shield size={17} className="text-brand-400" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-white">Your Workspace ID</p>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Share this with your staff. They enter it in the{' '}
+                  <strong className="text-slate-300">Staff Login</strong> portal together with their username and password.
+                </p>
+                <div className="mt-3 flex items-center gap-2">
+                  <div className="flex-1 bg-surface-900 border border-surface-600 rounded-lg px-3 py-2 font-mono text-sm text-brand-300 select-all truncate">
+                    {organisation?.slug}
+                  </div>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(organisation?.slug ?? '')
+                      toast.success('Workspace ID copied')
+                    }}
+                    className="btn-secondary px-3 py-2 shrink-0"
+                    title="Copy workspace ID"
+                  >
+                    <Copy size={14} />
+                  </button>
+                </div>
+                <p className="text-xs text-slate-500 mt-2">
+                  Staff login format: <span className="font-mono text-slate-400">username</span>
+                  {' '}+{' '}
+                  <span className="font-mono text-brand-400">{organisation?.slug}</span>
+                  {' '}+{' '}
+                  <span className="font-mono text-slate-400">password</span>
+                  {' '}at the <strong className="text-slate-300">Staff Sign In</strong> page.
+                </p>
+              </div>
+            </div>
+          </div>
+
           {/* Header */}
           <div className="card p-5">
             <div className="flex items-start justify-between gap-4">
