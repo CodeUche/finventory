@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
-  Building2, Calculator, ChevronDown, ChevronUp, Edit2, ExternalLink, Plus, Receipt, Trash2, X, Zap, AlertCircle, Lock,
+  Building2, Calculator, ChevronDown, ChevronUp, Edit2, ExternalLink, Plus, Receipt, Trash2, X, Zap, AlertCircle, Lock, Star,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { openExternal } from '@/lib/openExternal'
@@ -38,13 +38,17 @@ const EMPTY_BRACKET: BracketRow = { lower_bound: '', upper_bound: '', rate: '', 
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-// Tabs locked behind Professional/Business (not available on vat_only / Starter)
+// Starter: all advanced tabs locked
 const ADVANCED_TABS: Tab[] = ['income', 'tools', 'excise', 'wht', 'filing']
+// Professional: WHT, Excise, Filing locked (Income Tax + Tools are available)
+const PRO_LOCKED_TABS: Tab[] = ['wht', 'excise', 'filing']
 
 export default function TaxPage() {
-  const { planTaxEngine, user } = useAuthStore()
+  const { planTaxEngine, planName, user } = useAuthStore()
   // vat_only = Starter plan; null = superuser / no restriction
   const vatOnly = !user?.is_superuser && planTaxEngine === 'vat_only'
+  // professional plan: Income Tax available, but WHT / Excise / Filing locked
+  const proPlan = !user?.is_superuser && planName === 'professional'
 
   const [tab, setTab] = useState<Tab>('vat')
 
@@ -300,12 +304,17 @@ export default function TaxPage() {
           ['wht', 'WHT'],
           ['filing', 'Filing Guide'],
         ] as [Tab, string][]).map(([t, label]) => {
-          const locked = vatOnly && ADVANCED_TABS.includes(t)
+          const locked =
+            (vatOnly && ADVANCED_TABS.includes(t)) ||
+            (proPlan && PRO_LOCKED_TABS.includes(t))
+          const lockTitle = vatOnly && ADVANCED_TABS.includes(t)
+            ? 'Upgrade to Professional or Business to unlock'
+            : 'Upgrade to Business to unlock'
           return (
             <button
               key={t}
               onClick={() => { if (!locked) setTab(t) }}
-              title={locked ? 'Upgrade to Professional or Business to unlock' : undefined}
+              title={locked ? lockTitle : undefined}
               className={
                 locked
                   ? 'px-4 py-2 rounded-lg text-sm text-slate-600 flex items-center gap-1.5 cursor-not-allowed whitespace-nowrap'
@@ -330,6 +339,20 @@ export default function TaxPage() {
             <p className="text-xs text-slate-400 mt-0.5">
               Income Tax, Corporate Tax, Excise Duty and WHT are available on the{' '}
               <strong className="text-white">Professional</strong> and <strong className="text-white">Business</strong> plans.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Professional plan partial-tax notice */}
+      {proPlan && (
+        <div className="flex items-start gap-3 p-4 rounded-xl bg-amber-500/8 border border-amber-500/20">
+          <Star size={16} className="text-amber-400 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-medium text-amber-300">Professional Plan — VAT &amp; Income Tax included</p>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Excise Duty, WHT, and the Filing Guide are exclusive to the{' '}
+              <strong className="text-white">Business</strong> plan.
             </p>
           </div>
         </div>
@@ -1098,7 +1121,25 @@ export default function TaxPage() {
       )}
       {/* ── Filing Guide Tab ─────────────────────────────────────────────────── */}
       {tab === 'filing' && (
-        <div className="space-y-6">
+        <div className="space-y-6 relative">
+          {/* Business-plan upgrade gate: blur content for Pro users */}
+          {proPlan && (
+            <div className="absolute inset-0 z-20 flex flex-col items-center justify-center rounded-2xl bg-surface-900/60 backdrop-blur-md">
+              <div className="text-center max-w-sm px-6">
+                <div className="w-14 h-14 bg-amber-500/15 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                  <Lock size={28} className="text-amber-400" />
+                </div>
+                <p className="text-white font-bold text-lg">Business Plan Feature</p>
+                <p className="text-slate-400 text-sm mt-2">
+                  The full Nigerian Tax Filing Guide — PAYE, VAT returns, CIT, and WHT step-by-step walkthroughs — is available on the <strong className="text-amber-300">Business</strong> plan.
+                </p>
+                <a href="/billing" className="btn-primary mt-5 inline-flex items-center gap-2 text-sm">
+                  <Star size={14} /> Upgrade to Business
+                </a>
+              </div>
+            </div>
+          )}
+          <div className={proPlan ? 'blur-sm pointer-events-none select-none' : ''}>
           <div>
             <h2 className="text-white font-semibold">Nigerian Tax Filing Guide</h2>
             <p className="text-slate-500 text-xs mt-0.5">Step-by-step instructions for filing your taxes — simplified for business owners and employees.</p>
@@ -1303,6 +1344,7 @@ export default function TaxPage() {
               ))}
             </div>
           </div>
+          </div>{/* end blur wrapper */}
         </div>
       )}
     </div>

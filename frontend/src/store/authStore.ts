@@ -21,6 +21,8 @@ interface AuthState {
   planModules: string[] | null
   // Tax engine tier for the active plan: 'vat_only' | 'advanced' | null (null = unrestricted)
   planTaxEngine: string | null
+  // Lowercase plan name: 'starter' | 'professional' | 'business' | null
+  planName: string | null
   // Whether the current subscription is expired
   subscriptionExpired: boolean
 
@@ -31,6 +33,7 @@ interface AuthState {
   setMembership: (role: string, perms: Partial<Record<ModuleKey, AccessLevel>>) => void
   setPlanModules: (modules: string[] | null) => void
   setPlanTaxEngine: (engine: string | null) => void
+  setPlanName: (name: string | null) => void
   setSubscriptionExpired: (expired: boolean) => void
   updateUser: (user: Partial<User>) => void
   updateOrganisation: (org: Partial<Organisation>) => void
@@ -51,6 +54,7 @@ export const useAuthStore = create<AuthState>()(
       modulePermissions: {},
       planModules: null,
       planTaxEngine: null,
+      planName: null,
       subscriptionExpired: false,
 
       setRememberMe: (val) => {
@@ -75,6 +79,8 @@ export const useAuthStore = create<AuthState>()(
 
       setPlanTaxEngine: (engine) => set({ planTaxEngine: engine }),
 
+      setPlanName: (name) => set({ planName: name }),
+
       setSubscriptionExpired: (expired) => set({ subscriptionExpired: expired }),
 
       updateUser: (partial) =>
@@ -98,7 +104,7 @@ export const useAuthStore = create<AuthState>()(
         set({
           user: null, tokens: null, organisation: null, isAuthenticated: false,
           rememberMe: false, memberRole: null, modulePermissions: {}, planModules: null,
-          planTaxEngine: null, subscriptionExpired: false,
+          planTaxEngine: null, planName: null, subscriptionExpired: false,
         })
       },
     }),
@@ -119,6 +125,7 @@ export const useAuthStore = create<AuthState>()(
         modulePermissions: state.modulePermissions,
         planModules: state.planModules,
         planTaxEngine: state.planTaxEngine,
+        planName: state.planName,
         subscriptionExpired: state.subscriptionExpired,
       }),
     },
