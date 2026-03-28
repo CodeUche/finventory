@@ -6,10 +6,22 @@ Keeps views thin and logic testable in isolation.
 """
 
 import logging
+import re
+import secrets
 from datetime import timedelta
 
 from django.utils import timezone
 from django.utils.text import slugify
+
+# Common business-type words that inflate org names but carry no uniqueness.
+# Stripping them before slugifying means "Acme Ltd" and "Acme Limited" share
+# the same normalised base and cannot silently collide into near-identical slugs.
+_BUSINESS_NOISE = re.compile(
+    r'\b(ltd|limited|plc|inc|incorporated|llc|llp|co|corp|corporation|company|'
+    r'enterprises?|services?|solutions?|group|holdings?|associates?|partners?|'
+    r'international|global|africa|african|ng|nig|nigeria|nigerian)\b',
+    re.IGNORECASE,
+)
 
 from .models import Invitation, Membership, Organisation
 
@@ -307,11 +319,30 @@ class OrganisationService:
 
     @staticmethod
     def _unique_slug(name: str) -> str:
-        """Generate a unique slug from the organisation name."""
-        base_slug = slugify(name)[:90]
-        slug = base_slug
-        counter = 1
-        while Organisation.objects.filter(slug=slug).exists():
-            slug = f"{base_slug}-{counter}"
-            counter += 1
-        return slug
+        """Generate a unique, non-enumerable slug from the organisation name.
+
+        Steps:
+        1. Strip common business-type noise words (Ltd, Limited, PLC, Inc…)
+           so that "Acme Ltd" and "Acme Limited" produce the same base slug
+           and cannot silently occupy near-identical workspace IDs.
+        2. If the normalised base is already taken, append a cryptographically
+           random 4-char hex tag (e.g. "acme-3f9a") instead of a predictable
+           counter, making workspace IDs unguessable and clearly distinct.
+        """
+        cleaned = _BUSINESS_NOISE.sub("", name).strip()
+        base_slug = slugify(cleaned)[:80].strip("-")
+        # Fallback: if stripping left nothing (name was all noise words), use raw name
+        if not base_slug:
+            base_slug = slugify(name)[:80]
+
+        if not Organisation.objects.filter(slug=base_slug).exists():
+            return base_slug
+
+        # Collision resolution — random hex tag, never a predictable counter
+        for _ in range(20):
+            candidate = f"{base_slug}-{secrets.token_hex(2)}"
+            if not Organisation.objects.filter(slug=candidate).exists():
+                return candidate
+
+        # Ultra-rare fallback (astronomically unlikely after 20 tries)
+        return f"{base_slug}-{secrets.token_hex(4)}"
