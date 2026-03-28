@@ -66,11 +66,11 @@ const MODULE_ROWS: ModuleRow[] = [
   { icon: DollarSign,    label: 'Budget Planning',         tip: 'Set spending budgets per category, compare actual vs planned spend',                     starter: true,      professional: true,       business: true },
   { icon: Calculator,    label: 'Tax Engine',              tip: 'Starter: VAT only. Professional: VAT + Income Tax + Tools. Business: Full (adds Excise Duty, WHT, Filing Guide)', starter: 'VAT only', professional: 'VAT + Income Tax', business: 'Full' },
   { icon: BarChart3,     label: 'Reports & Analytics',    tip: 'P&L, revenue trends, top products, top customers, expense breakdown and balance sheet',  starter: 'Basic',   professional: 'Advanced', business: 'Advanced' },
+  { icon: FileText,      label: 'Audit Log',               tip: 'Full trail of every action taken in the system — who did what and when',                 starter: false,     professional: true,       business: true },
+  { icon: Users,         label: 'Team & Permissions',     tip: 'Invite staff with custom access levels per module (e.g. view-only, write, full edit)',    starter: false,     professional: true,       business: true },
   { icon: Briefcase,     label: 'Payroll',                 tip: 'Manage employees, run payroll, compute PAYE and pension deductions',                     starter: false,     professional: false,      business: true },
   { icon: Calculator,    label: 'Accounting Ledger',      tip: 'Full chart of accounts, journal entries, fixed assets, bank reconciliation',              starter: false,     professional: false,      business: true },
   { icon: Shield,        label: 'Owner Analytics',         tip: 'Private profit view using your personal cost price — only you can see this',             starter: false,     professional: false,      business: true },
-  { icon: FileText,      label: 'Audit Log',               tip: 'Full trail of every action taken in the system — who did what and when',                 starter: false,     professional: true,       business: true },
-  { icon: Users,         label: 'Team & Permissions',     tip: 'Invite staff with custom access levels per module (e.g. view-only, write, full edit)',    starter: false,     professional: true,       business: true },
   { icon: Package,       label: 'API Access',              tip: 'Connect Audity to your own tools and integrations via REST API',                         starter: false,     professional: false,      business: true },
 ]
 
