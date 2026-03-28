@@ -265,6 +265,7 @@ export default function OnboardingPage() {
     setInitiatingPay(true)
     try {
       await subscriptionApi.startTrial(plan.id)
+      await markOnboardingComplete()
       toast.success(`${plan.name} trial started! You have 14 days free.`)
       navigate('/dashboard')
     } catch (err: any) {
@@ -592,21 +593,35 @@ export default function OnboardingPage() {
                 >
                   <span className="flex items-center gap-2">
                     {initiatingPay ? (
-                      <><Loader2 size={16} className="animate-spin" /> Starting trial…</>
+                      <><Loader2 size={16} className="animate-spin" /> Setting up your workspace…</>
                     ) : selectedPlan?.is_free ? (
                       <>Get started for free <ChevronRight size={16} /></>
                     ) : (
-                      <><Clock size={16} /> Start 14-Day Free Trial</>
+                      <><Clock size={16} /> Start Free — No card required</>
                     )}
                   </span>
                 </button>
 
-                <button
-                  onClick={() => setStep(1)}
-                  className="w-full text-center text-sm text-slate-500 hover:text-slate-400 flex items-center justify-center gap-1"
-                >
-                  <ArrowLeft size={14} /> Change my answers
-                </button>
+                {!selectedPlan?.is_free && (
+                  <p className="text-center text-xs text-slate-500">
+                    14 days free, full {selectedPlan?.name} access. Cancel anytime before the trial ends and you won't be charged.
+                  </p>
+                )}
+
+                <div className="flex items-center justify-between">
+                  <button
+                    onClick={() => setStep(1)}
+                    className="text-sm text-slate-500 hover:text-slate-400 flex items-center gap-1"
+                  >
+                    <ArrowLeft size={14} /> Change answers
+                  </button>
+                  <button
+                    onClick={async () => { await markOnboardingComplete(); navigate('/dashboard') }}
+                    className="text-sm text-slate-600 hover:text-slate-400"
+                  >
+                    Skip for now →
+                  </button>
+                </div>
               </>
             ) : null}
           </div>
