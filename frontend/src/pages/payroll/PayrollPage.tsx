@@ -370,7 +370,8 @@ export default function PayrollPage() {
     try {
       const resp = await payrollApi.exportBankFile(id)
       const run = runs.find(r => r.id === id)
-      saveBlobFile(resp.data, `${run?.run_number ?? 'payroll'}-bank-transfer.csv`)
+      const period = run ? `-${run.period_year}${String(run.period_month).padStart(2, '0')}` : ''
+      saveBlobFile(resp.data, `${run?.run_number ?? 'payroll'}-bank-payment${period}.xlsx`)
       toast.success('Bank transfer file downloaded')
     } catch { toast.error('Failed to export') }
     finally { setExportingBankFile(null) }

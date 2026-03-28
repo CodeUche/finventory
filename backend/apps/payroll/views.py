@@ -1,6 +1,11 @@
 import csv
 import io
 import json as _json
+from openpyxl import Workbook
+from openpyxl.styles import (
+    PatternFill, Font, Alignment, Border, Side, numbers as xl_numbers,
+)
+from openpyxl.utils import get_column_letter
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -605,128 +610,256 @@ class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         """
         GET /payroll/runs/{id}/export_bank_file/
 
-        Returns an industry-standard Nigerian payroll bulk-payment CSV compatible
-        with NIBSS EFT / NIP and the bulk-salary upload portals of GTBank, Zenith,
-        Access, UBA, First Bank, and other CBN-licensed commercial banks.
+        Returns a professionally formatted Excel workbook (.xlsx) for bank
+        submission — NIBSS EFT / NIP compatible.
 
-        Structure
-        ---------
-        Section A : File header  (company, period, run metadata)
-        Section B : Payment schedule — one row per employee with complete
-                    earnings, statutory deductions, and net pay breakdown
-        Section C : Exceptions  — employees whose bank details are incomplete
-                    and require manual processing
-        Section D : Summary totals row
+        Workbook structure
+        ------------------
+        Sheet 1 — Payment Schedule   (ready-to-transfer employees, full breakdown)
+        Sheet 2 — Statutory Summary  (employer remittance obligations)
+        Sheet 3 — Exceptions         (employees with missing bank details)
         """
-        import calendar
-        from datetime import date
+        from datetime import date as _date
 
-        run = self.get_object()
-        org = run.organisation
+        run  = self.get_object()
+        org  = run.organisation
+        curr = org.currency or 'NGN'
         payslips = run.payslips.select_related('employee').order_by(
             'employee__department', 'employee__last_name'
         )
 
-        MONTHS = [
-            '', 'January', 'February', 'March', 'April', 'May', 'June',
-            'July', 'August', 'September', 'October', 'November', 'December',
-        ]
-        period_label = f"{MONTHS[run.period_month]} {run.period_year}"
-        generated_on = date.today().strftime('%d %B %Y')
-        processed_by = (
+        MONTHS = ['', 'January', 'February', 'March', 'April', 'May', 'June',
+                  'July', 'August', 'September', 'October', 'November', 'December']
+
+        period_label  = f"{MONTHS[run.period_month]} {run.period_year}"
+        generated_on  = _date.today().strftime('%d %B %Y')
+        payment_date  = (run.payment_date.strftime('%d %B %Y')
+                         if run.payment_date else 'Pending')
+        processed_by  = (
             f"{run.processed_by.first_name} {run.processed_by.last_name}".strip()
             or run.processed_by.email
         )
-        approved_by = ''
-        if run.approved_by:
-            approved_by = (
-                f"{run.approved_by.first_name} {run.approved_by.last_name}".strip()
-                or run.approved_by.email
-            )
+        approved_by = (
+            (f"{run.approved_by.first_name} {run.approved_by.last_name}".strip()
+             or run.approved_by.email)
+            if run.approved_by else 'Pending Approval'
+        )
 
-        # Partition payslips
+        def _d(v):
+            try:
+                return float(v or 0)
+            except Exception:
+                return 0.0
+
         ready, exceptions = [], []
         for p in payslips:
-            emp = p.employee
-            if emp.account_number and emp.account_number.strip() and emp.bank_code and emp.bank_code.strip():
+            e = p.employee
+            if (e.account_number or '').strip() and (e.bank_code or '').strip():
                 ready.append(p)
             else:
                 exceptions.append(p)
 
-        # Totals across ready-to-pay employees only
-        def _d(val):
-            """Safely convert MoneyField / Decimal to float."""
-            try:
-                return float(val or 0)
-            except Exception:
-                return 0.0
+        # Aggregate totals (ready employees only)
+        tot_basic     = sum(_d(p.basic_salary)          for p in ready)
+        tot_housing   = sum(_d(p.housing_allowance)     for p in ready)
+        tot_transport = sum(_d(p.transport_allowance)   for p in ready)
+        tot_leave     = sum(_d(p.leave_allowance)       for p in ready)
+        tot_other     = sum(_d(p.other_allowances)      for p in ready)
+        tot_gross     = sum(_d(p.gross_salary)          for p in ready)
+        tot_bonus     = sum(_d(p.bonus_amount)          for p in ready)
+        tot_overtime  = sum(_d(p.overtime_amount)       for p in ready)
+        tot_earnings  = tot_gross + tot_bonus + tot_overtime
+        tot_pen_emp   = sum(_d(p.employee_pension)      for p in ready)
+        tot_nhf       = sum(_d(p.nhf)                   for p in ready)
+        tot_nsitf     = sum(_d(p.nsitf)                 for p in ready)
+        tot_paye      = sum(_d(p.paye_tax)              for p in ready)
+        tot_att       = sum(_d(p.attendance_deduction)  for p in ready)
+        tot_loan      = sum(_d(p.loan_deductions)       for p in ready)
+        tot_penalty   = sum(_d(p.penalty_deductions)    for p in ready)
+        tot_deduct    = sum(_d(p.total_deductions)      for p in ready)
+        tot_net       = sum(_d(p.net_salary)            for p in ready)
+        tot_pen_er    = _d(run.total_pension_employer)
 
-        total_gross       = sum(_d(p.gross_salary)         for p in ready)
-        total_bonus       = sum(_d(p.bonus_amount)         for p in ready)
-        total_overtime    = sum(_d(p.overtime_amount)      for p in ready)
-        total_earnings    = sum(_d(p.gross_salary) + _d(p.bonus_amount) + _d(p.overtime_amount) for p in ready)
-        total_pension_emp = sum(_d(p.employee_pension)     for p in ready)
-        total_nhf         = sum(_d(p.nhf)                  for p in ready)
-        total_nsitf       = sum(_d(p.nsitf)               for p in ready)
-        total_paye        = sum(_d(p.paye_tax)             for p in ready)
-        total_att_ded     = sum(_d(p.attendance_deduction) for p in ready)
-        total_loan        = sum(_d(p.loan_deductions)      for p in ready)
-        total_penalty     = sum(_d(p.penalty_deductions)   for p in ready)
-        total_deductions  = sum(_d(p.total_deductions)     for p in ready)
-        total_net         = sum(_d(p.net_salary)           for p in ready)
+        # ── Shared style helpers ─────────────────────────────────────────────────
 
-        output = io.StringIO()
-        writer = csv.writer(output)
+        # Palette (navy + gold — investment-grade standard)
+        NAVY   = '0D1F3C'   # header background
+        GOLD   = 'C9A84C'   # accent / totals row
+        WHITE  = 'FFFFFF'
+        LIGHT  = 'F4F6FA'   # alternate row tint
+        MID    = 'DDE3ED'   # section header tint
+        RED_BG = 'FFF0F0'   # exception rows
+        RED_TX = 'C0392B'
 
-        # ── Section A: File Header ───────────────────────────────────────────────
-        writer.writerow(['PAYROLL BULK PAYMENT FILE'])
-        writer.writerow(['Company Name',        org.name])
-        writer.writerow(['Company Address',     org.address or ''])
-        writer.writerow(['Tax ID (TIN/VAT)',    org.tax_id or ''])
-        writer.writerow(['Pay Period',          period_label])
-        writer.writerow(['Run Reference',       run.run_number])
-        writer.writerow(['Run Status',          run.status.upper()])
-        writer.writerow(['Payment Date',        run.payment_date.strftime('%d %B %Y') if run.payment_date else 'Pending'])
-        writer.writerow(['Currency',            org.currency or 'NGN'])
-        writer.writerow(['Total Employees (Ready to Pay)', len(ready)])
-        writer.writerow(['Total Employees (Exceptions)',   len(exceptions)])
-        writer.writerow(['Total Net Pay (Transfer Amount)', f'{total_net:,.2f}'])
-        writer.writerow(['Processed By',        processed_by])
-        writer.writerow(['Approved By',         approved_by or 'Pending Approval'])
-        writer.writerow(['Generated On',        generated_on])
-        writer.writerow([])  # blank separator
+        def _fill(hex_color):
+            return PatternFill('solid', fgColor=hex_color)
 
-        # ── Section B: Payment Schedule ─────────────────────────────────────────
-        writer.writerow(['SECTION B — PAYMENT SCHEDULE (Ready to Transfer)'])
-        writer.writerow([
-            # Identity
+        def _font(bold=False, color=WHITE, size=10, italic=False):
+            return Font(name='Calibri', bold=bold, color=color, size=size,
+                        italic=italic)
+
+        def _border(style='thin'):
+            s = Side(style=style, color='B0BAC9')
+            return Border(left=s, right=s, top=s, bottom=s)
+
+        def _align(h='left', v='center', wrap=False):
+            return Alignment(horizontal=h, vertical=v, wrap_text=wrap)
+
+        MONEY_FMT  = f'"{curr}" #,##0.00'
+        NUMBER_FMT = '#,##0'
+
+        def _set_col_widths(ws, widths):
+            for col_idx, w in enumerate(widths, start=1):
+                ws.column_dimensions[get_column_letter(col_idx)].width = w
+
+        def _freeze(ws, cell='A1'):
+            ws.freeze_panes = cell
+
+        # ── Workbook ─────────────────────────────────────────────────────────────
+        wb = Workbook()
+
+        # ═══════════════════════════════════════════════════════════════════════
+        # SHEET 1 — Payment Schedule
+        # ═══════════════════════════════════════════════════════════════════════
+        ws1 = wb.active
+        ws1.title = 'Payment Schedule'
+        ws1.sheet_view.showGridLines = False
+
+        # ── Cover block (rows 1-12) ───────────────────────────────────────────
+        TOTAL_COLS = 30   # widest data section width in columns
+
+        def _cover_row(ws, row, label, value, label_col=1, val_col=3,
+                       label_font=None, val_font=None):
+            lc = ws.cell(row=row, column=label_col, value=label)
+            lc.font      = label_font or _font(bold=True, color='0D1F3C', size=10)
+            lc.alignment = _align('left')
+            vc = ws.cell(row=row, column=val_col, value=value)
+            vc.font      = val_font or _font(bold=False, color='1A1A2E', size=10)
+            vc.alignment = _align('left')
+
+        # Title banner — merged across all columns
+        ws1.merge_cells(start_row=1, start_column=1,
+                         end_row=2,   end_column=TOTAL_COLS)
+        title_cell = ws1.cell(row=1, column=1,
+                               value='PAYROLL BULK PAYMENT FILE')
+        title_cell.fill      = _fill(NAVY)
+        title_cell.font      = Font(name='Calibri', bold=True, color=WHITE,
+                                    size=18)
+        title_cell.alignment = _align('center', 'center')
+        ws1.row_dimensions[1].height = 36
+        ws1.row_dimensions[2].height = 6   # spacer within merge
+
+        # Sub-header: company name + document class
+        ws1.merge_cells(start_row=3, start_column=1,
+                         end_row=3,   end_column=TOTAL_COLS)
+        sub = ws1.cell(row=3, column=1, value=org.name.upper())
+        sub.fill      = _fill(GOLD)
+        sub.font      = Font(name='Calibri', bold=True, color=NAVY, size=12)
+        sub.alignment = _align('center', 'center')
+        ws1.row_dimensions[3].height = 22
+
+        # Blank gap row
+        ws1.row_dimensions[4].height = 6
+
+        # Meta fields (two-column pairs side by side)
+        meta_pairs = [
+            ('Pay Period',              period_label,
+             'Run Reference',           run.run_number),
+            ('Run Status',              run.status.upper(),
+             'Payment Date',            payment_date),
+            ('Currency',                curr,
+             'Total Employees (Ready)', len(ready)),
+            ('Total Employees (Exceptions)', len(exceptions),
+             'Total Net Transfer',      tot_net),
+            ('Processed By',            processed_by,
+             'Approved By',             approved_by),
+            ('Company Address',         org.address or '—',
+             'Tax ID (TIN/VAT)',         org.tax_id or '—'),
+            ('Generated On',            generated_on,
+             'CONFIDENTIAL',
+             'For authorised recipients only'),
+        ]
+        for i, (l1, v1, l2, v2) in enumerate(meta_pairs, start=5):
+            row = i
+            ws1.row_dimensions[row].height = 17
+            # Left pair
+            lc = ws1.cell(row=row, column=1, value=l1)
+            lc.font = _font(bold=True, color=NAVY, size=9)
+            lc.fill = _fill(MID)
+            lc.alignment = _align('left')
+            lc.border = _border()
+            vc = ws1.cell(row=row, column=3, value=v1)
+            vc.font = _font(bold=False, color='1A1A2E', size=9)
+            vc.alignment = _align('left')
+            vc.border = _border()
+            ws1.merge_cells(start_row=row, start_column=3,
+                             end_row=row,   end_column=9)
+            if l1 == 'Total Net Transfer':
+                vc.number_format = MONEY_FMT
+                vc.value = tot_net
+            # Right pair
+            lc2 = ws1.cell(row=row, column=11, value=l2)
+            lc2.font = _font(bold=True, color=NAVY, size=9)
+            lc2.fill = _fill(MID)
+            lc2.alignment = _align('left')
+            lc2.border = _border()
+            vc2 = ws1.cell(row=row, column=13, value=v2)
+            vc2.font = _font(bold=False, color='1A1A2E', size=9)
+            vc2.alignment = _align('left')
+            vc2.border = _border()
+            ws1.merge_cells(start_row=row, start_column=13,
+                             end_row=row,   end_column=20)
+
+        # Divider row before table
+        div_row = len(meta_pairs) + 5 + 1
+        ws1.row_dimensions[div_row].height = 6
+
+        # ── Column headers (row after divider) ───────────────────────────────
+        hdr_row = div_row + 1
+        ws1.row_dimensions[hdr_row].height = 42
+
+        HEADERS = [
+            # identity
             'S/N', 'Employee ID', 'Full Name', 'Job Title', 'Department',
-            # Bank (NIBSS/NIP fields)
-            'Bank Name', 'Account Number (NUBAN)', 'Account Name', 'Bank Code (CBN)',
-            # Earnings breakdown
-            'Basic Salary', 'Housing Allowance', 'Transport Allowance',
-            'Leave Allowance', 'Other Allowances', 'Gross Salary',
-            'Bonus', 'Overtime', 'Total Earnings',
-            # Statutory deductions (employee)
-            'Employee Pension (8%)', 'NHF (2.5%)', 'NSITF (1%)', 'PAYE Tax',
-            # Other deductions
-            'Attendance Deduction', 'Loan Repayment', 'Penalty Deduction',
-            'Total Deductions',
-            # Net pay (the amount actually transferred)
-            'Net Pay (Transfer Amount)',
-            # Statutory IDs for remittance
-            "Employee's PFA", 'RSA PIN (PFA Number)', 'TIN',
-            # Bank narration (what appears on the beneficiary's bank statement)
-            'Narration',
-        ])
+            # bank
+            'Bank Name', 'Account Number\n(NUBAN)', 'Account Name', 'Bank\nCode (CBN)',
+            # earnings
+            'Basic\nSalary', 'Housing\nAllowance', 'Transport\nAllowance',
+            'Leave\nAllowance', 'Other\nAllowances', 'Gross\nSalary',
+            'Bonus', 'Overtime', 'Total\nEarnings',
+            # deductions
+            'Employee\nPension (8%)', 'NHF\n(2.5%)', 'NSITF\n(1%)', 'PAYE\nTax',
+            'Attendance\nDeduction', 'Loan\nRepayment', 'Penalty\nDeduction',
+            'Total\nDeductions',
+            # net
+            f'NET PAY\n({curr})',
+            # statutory IDs
+            "Employee's\nPFA", 'RSA PIN\n(PFA No.)', 'TIN',
+            # narration
+            'Bank Narration',
+        ]
+        MONEY_COLS = set(range(10, 28))  # 1-indexed columns that hold currency
 
+        for col, hdr in enumerate(HEADERS, start=1):
+            c = ws1.cell(row=hdr_row, column=col, value=hdr)
+            c.fill      = _fill(NAVY)
+            c.font      = _font(bold=True, color=WHITE, size=9)
+            c.alignment = _align('center', 'center', wrap=True)
+            c.border    = _border()
+
+        # ── Data rows ────────────────────────────────────────────────────────
+        first_data = hdr_row + 1
         for sn, p in enumerate(ready, start=1):
-            emp = p.employee
-            full_name = f"{emp.first_name} {emp.last_name}".strip()
-            # Narration format: SALARY/APR-2025/EMP-001  (≤ 100 chars, bank-safe)
-            narration = f"SALARY/{MONTHS[run.period_month][:3].upper()}-{run.period_year}/{emp.employee_id}"
+            emp   = p.employee
+            drow  = first_data + sn - 1
+            ws1.row_dimensions[drow].height = 16
+            bg = LIGHT if sn % 2 == 0 else WHITE
+            full_name   = f"{emp.first_name} {emp.last_name}".strip()
+            narration   = (f"SALARY/{MONTHS[run.period_month][:3].upper()}"
+                           f"-{run.period_year}/{emp.employee_id}")
             gross_total = _d(p.gross_salary) + _d(p.bonus_amount) + _d(p.overtime_amount)
-            writer.writerow([
+
+            row_data = [
                 sn,
                 emp.employee_id,
                 full_name,
@@ -736,41 +869,262 @@ class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                 emp.account_number or '',
                 emp.account_name or full_name,
                 emp.bank_code or '',
-                f"{_d(p.basic_salary):,.2f}",
-                f"{_d(p.housing_allowance):,.2f}",
-                f"{_d(p.transport_allowance):,.2f}",
-                f"{_d(p.leave_allowance):,.2f}",
-                f"{_d(p.other_allowances):,.2f}",
-                f"{_d(p.gross_salary):,.2f}",
-                f"{_d(p.bonus_amount):,.2f}",
-                f"{_d(p.overtime_amount):,.2f}",
-                f"{gross_total:,.2f}",
-                f"{_d(p.employee_pension):,.2f}",
-                f"{_d(p.nhf):,.2f}",
-                f"{_d(p.nsitf):,.2f}",
-                f"{_d(p.paye_tax):,.2f}",
-                f"{_d(p.attendance_deduction):,.2f}",
-                f"{_d(p.loan_deductions):,.2f}",
-                f"{_d(p.penalty_deductions):,.2f}",
-                f"{_d(p.total_deductions):,.2f}",
-                f"{_d(p.net_salary):,.2f}",
+                _d(p.basic_salary),
+                _d(p.housing_allowance),
+                _d(p.transport_allowance),
+                _d(p.leave_allowance),
+                _d(p.other_allowances),
+                _d(p.gross_salary),
+                _d(p.bonus_amount),
+                _d(p.overtime_amount),
+                gross_total,
+                _d(p.employee_pension),
+                _d(p.nhf),
+                _d(p.nsitf),
+                _d(p.paye_tax),
+                _d(p.attendance_deduction),
+                _d(p.loan_deductions),
+                _d(p.penalty_deductions),
+                _d(p.total_deductions),
+                _d(p.net_salary),
                 emp.pfa_name or '',
                 emp.pfa_number or '',
                 emp.tin or '',
                 narration,
-            ])
+            ]
+            for col, val in enumerate(row_data, start=1):
+                c = ws1.cell(row=drow, column=col, value=val)
+                c.fill      = _fill(bg)
+                c.border    = _border()
+                c.font      = Font(name='Calibri', size=9, color='1A1A2E')
+                if col in MONEY_COLS:
+                    c.number_format = MONEY_FMT
+                    c.alignment     = _align('right')
+                elif col == 1:
+                    c.alignment = _align('center')
+                else:
+                    c.alignment = _align('left')
 
-        # ── Section C: Exceptions ────────────────────────────────────────────────
-        writer.writerow([])
-        writer.writerow(['SECTION C — EXCEPTIONS (Incomplete Bank Details — Manual Processing Required)'])
+        # ── Totals row ───────────────────────────────────────────────────────
+        tot_row = first_data + len(ready)
+        ws1.row_dimensions[tot_row].height = 18
+        totals_map = {
+            1:  'TOTALS',
+            10: tot_basic,   11: tot_housing,  12: tot_transport,
+            13: tot_leave,   14: tot_other,    15: tot_gross,
+            16: tot_bonus,   17: tot_overtime, 18: tot_earnings,
+            19: tot_pen_emp, 20: tot_nhf,      21: tot_nsitf,
+            22: tot_paye,    23: tot_att,      24: tot_loan,
+            25: tot_penalty, 26: tot_deduct,   27: tot_net,
+        }
+        for col in range(1, len(HEADERS) + 1):
+            c = ws1.cell(row=tot_row, column=col,
+                          value=totals_map.get(col, ''))
+            c.fill      = _fill(GOLD)
+            c.font      = Font(name='Calibri', bold=True, color=NAVY, size=9)
+            c.border    = _border('medium')
+            if col in MONEY_COLS:
+                c.number_format = MONEY_FMT
+                c.alignment     = _align('right')
+            elif col == 1:
+                c.alignment = _align('center')
+            else:
+                c.alignment = _align('left')
+
+        # Confidentiality footer
+        footer_row = tot_row + 2
+        ws1.merge_cells(start_row=footer_row, start_column=1,
+                         end_row=footer_row,   end_column=TOTAL_COLS)
+        fc = ws1.cell(row=footer_row, column=1,
+                       value=(
+                           'CONFIDENTIAL — This document contains sensitive payroll '
+                           'and banking information. Authorised recipients only. '
+                           f'Generated by {org.name} on {generated_on}.'
+                       ))
+        fc.font      = _font(italic=True, color='6B7280', size=8)
+        fc.alignment = _align('center')
+
+        # Column widths (Sheet 1)
+        _set_col_widths(ws1, [
+            5,   # S/N
+            12,  # Employee ID
+            24,  # Full Name
+            20,  # Job Title
+            18,  # Department
+            22,  # Bank Name
+            18,  # Account Number
+            24,  # Account Name
+            10,  # Bank Code
+            14,  # Basic
+            14,  # Housing
+            14,  # Transport
+            14,  # Leave
+            14,  # Other
+            14,  # Gross
+            12,  # Bonus
+            12,  # Overtime
+            14,  # Total Earnings
+            14,  # Pension emp
+            12,  # NHF
+            12,  # NSITF
+            13,  # PAYE
+            14,  # Attendance
+            13,  # Loan
+            13,  # Penalty
+            15,  # Total Deductions
+            16,  # NET PAY
+            22,  # PFA
+            18,  # RSA PIN
+            16,  # TIN
+            38,  # Narration
+        ])
+        _freeze(ws1, f'A{hdr_row + 1}')
+
+        # ═══════════════════════════════════════════════════════════════════════
+        # SHEET 2 — Statutory Remittance Summary
+        # ═══════════════════════════════════════════════════════════════════════
+        ws2 = wb.create_sheet('Statutory Summary')
+        ws2.sheet_view.showGridLines = False
+
+        ws2.merge_cells('A1:E1')
+        t2 = ws2.cell(row=1, column=1, value='STATUTORY REMITTANCE SUMMARY')
+        t2.fill      = _fill(NAVY)
+        t2.font      = Font(name='Calibri', bold=True, color=WHITE, size=14)
+        t2.alignment = _align('center', 'center')
+        ws2.row_dimensions[1].height = 32
+
+        ws2.merge_cells('A2:E2')
+        s2 = ws2.cell(row=2, column=1,
+                       value=f"{org.name}  ·  {period_label}  ·  Ref: {run.run_number}")
+        s2.fill      = _fill(GOLD)
+        s2.font      = Font(name='Calibri', bold=True, color=NAVY, size=10)
+        s2.alignment = _align('center', 'center')
+        ws2.row_dimensions[2].height = 18
+
+        # Table header
+        for col, hdr in enumerate(
+            ['Statutory Obligation', 'Rate / Basis', f'Amount ({curr})',
+             'Remittance Deadline', 'Remit To'],
+            start=1,
+        ):
+            c = ws2.cell(row=4, column=col, value=hdr)
+            c.fill      = _fill(NAVY)
+            c.font      = _font(bold=True, color=WHITE, size=10)
+            c.alignment = _align('center', 'center', wrap=True)
+            c.border    = _border()
+        ws2.row_dimensions[4].height = 28
+
+        stat_data = [
+            # Employee deductions (already in net pay calc)
+            ('Employee Pension Contribution',
+             '8% of (Basic + Housing + Transport)',
+             tot_pen_emp,
+             '7th of following month',
+             'Pension Fund Administrator (PFA)'),
+            ('National Housing Fund (NHF)',
+             '2.5% of Basic Salary',
+             tot_nhf,
+             '1st week of following month',
+             'Federal Mortgage Bank of Nigeria (FMBN)'),
+            ('NSITF Contribution (Employee)',
+             '1% of Gross Salary',
+             tot_nsitf,
+             '1st week of following month',
+             'NSITF Board'),
+            ('PAYE Tax (Employee)',
+             'Progressive brackets per Finance Act',
+             tot_paye,
+             '10th of following month',
+             'State Internal Revenue Service (LIRS/SIRS)'),
+            # Employer obligations (additional cost to company)
+            ('Employer Pension Contribution',
+             '10% of (Basic + Housing + Transport)',
+             tot_pen_er,
+             '7th of following month',
+             'Pension Fund Administrator (PFA)'),
+            ('Net Salary Bank Transfer',
+             'Total net pay for all employees',
+             tot_net,
+             payment_date,
+             'Employees\' bank accounts via NIBSS NIP'),
+        ]
+
+        for i, (obligation, rate, amount, deadline, remit_to) in \
+                enumerate(stat_data, start=5):
+            bg = LIGHT if i % 2 == 0 else WHITE
+            ws2.row_dimensions[i].height = 18
+            is_employer = 'Employer' in obligation or 'Transfer' in obligation
+            row_vals = [obligation, rate, amount, deadline, remit_to]
+            for col, val in enumerate(row_vals, start=1):
+                c = ws2.cell(row=i, column=col, value=val)
+                c.fill      = _fill(bg)
+                c.font      = Font(
+                    name='Calibri', size=9, color='1A1A2E',
+                    bold=(col == 3 and is_employer),
+                )
+                c.border    = _border()
+                c.alignment = _align('left' if col != 3 else 'right',
+                                     wrap=(col == 1))
+                if col == 3:
+                    c.number_format = MONEY_FMT
+
+        # Grand total
+        grand_row = len(stat_data) + 5
+        ws2.row_dimensions[grand_row].height = 20
+        labels = ['TOTAL EMPLOYER OBLIGATION', '(Pension + NHF + NSITF + PAYE + Net Pay)',
+                  tot_pen_er + tot_nhf + tot_nsitf + tot_paye + tot_net, '', '']
+        for col, val in enumerate(labels, start=1):
+            c = ws2.cell(row=grand_row, column=col, value=val)
+            c.fill      = _fill(GOLD)
+            c.font      = Font(name='Calibri', bold=True, color=NAVY, size=10)
+            c.border    = _border('medium')
+            c.alignment = _align('right' if col == 3 else 'left')
+            if col == 3:
+                c.number_format = MONEY_FMT
+
+        _set_col_widths(ws2, [38, 38, 18, 28, 42])
+
+        # ═══════════════════════════════════════════════════════════════════════
+        # SHEET 3 — Exceptions
+        # ═══════════════════════════════════════════════════════════════════════
+        ws3 = wb.create_sheet('Exceptions')
+        ws3.sheet_view.showGridLines = False
+
+        ws3.merge_cells('A1:L1')
+        t3 = ws3.cell(row=1, column=1,
+                       value='EXCEPTIONS — INCOMPLETE BANK DETAILS')
+        t3.fill      = PatternFill('solid', fgColor='8B0000')
+        t3.font      = Font(name='Calibri', bold=True, color=WHITE, size=14)
+        t3.alignment = _align('center', 'center')
+        ws3.row_dimensions[1].height = 30
+
+        ws3.merge_cells('A2:L2')
+        s3 = ws3.cell(row=2, column=1,
+                       value=(f"{len(exceptions)} employee(s) excluded from bank transfer — "
+                              "update their bank details and re-run."))
+        s3.fill      = PatternFill('solid', fgColor='FFE4E4')
+        s3.font      = Font(name='Calibri', italic=True, color=RED_TX, size=10)
+        s3.alignment = _align('center')
+        ws3.row_dimensions[2].height = 18
+
+        exc_headers = [
+            'S/N', 'Employee ID', 'Full Name', 'Job Title', 'Department',
+            'Bank Name', 'Account Number', 'Account Name', 'Bank Code',
+            f'Net Pay Due ({curr})', 'Missing Fields', 'Action Required',
+        ]
+        for col, hdr in enumerate(exc_headers, start=1):
+            c = ws3.cell(row=4, column=col, value=hdr)
+            c.fill      = PatternFill('solid', fgColor='8B0000')
+            c.font      = _font(bold=True, color=WHITE, size=9)
+            c.alignment = _align('center', 'center', wrap=True)
+            c.border    = _border()
+        ws3.row_dimensions[4].height = 28
+
         if exceptions:
-            writer.writerow([
-                'S/N', 'Employee ID', 'Full Name', 'Job Title', 'Department',
-                'Bank Name', 'Account Number', 'Account Name', 'Bank Code',
-                'Net Pay Due', 'Missing Fields', 'Action Required',
-            ])
             for sn, p in enumerate(exceptions, start=1):
-                emp = p.employee
+                emp  = p.employee
+                drow = sn + 4
+                ws3.row_dimensions[drow].height = 16
                 missing = []
                 if not (emp.account_number or '').strip():
                     missing.append('Account Number')
@@ -778,7 +1132,7 @@ class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                     missing.append('Bank Code')
                 if not (emp.account_name or '').strip():
                     missing.append('Account Name')
-                writer.writerow([
+                exc_row = [
                     sn,
                     emp.employee_id,
                     f"{emp.first_name} {emp.last_name}".strip(),
@@ -788,37 +1142,44 @@ class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                     emp.account_number or 'NOT SET',
                     emp.account_name or 'NOT SET',
                     emp.bank_code or 'NOT SET',
-                    f"{_d(p.net_salary):,.2f}",
+                    _d(p.net_salary),
                     ', '.join(missing),
-                    'Update employee bank details in payroll settings',
-                ])
+                    'Update bank details in Payroll → Employees',
+                ]
+                for col, val in enumerate(exc_row, start=1):
+                    c = ws3.cell(row=drow, column=col, value=val)
+                    c.fill      = _fill(RED_BG)
+                    c.font      = Font(name='Calibri', size=9, color=RED_TX)
+                    c.border    = _border()
+                    c.alignment = _align(
+                        'right' if col == 10 else 'center' if col == 1 else 'left'
+                    )
+                    if col == 10:
+                        c.number_format = MONEY_FMT
         else:
-            writer.writerow(['No exceptions — all employees have complete bank details.'])
+            ws3.merge_cells('A5:L5')
+            ok = ws3.cell(row=5, column=1,
+                           value='✓  No exceptions — all employees have complete bank details.')
+            ok.fill      = PatternFill('solid', fgColor='E6F9EC')
+            ok.font      = Font(name='Calibri', color='166534', bold=True, size=10)
+            ok.alignment = _align('center')
 
-        # ── Section D: Summary Totals ────────────────────────────────────────────
-        writer.writerow([])
-        writer.writerow(['SECTION D — PAYROLL SUMMARY'])
-        writer.writerow(['Description', f'Amount ({org.currency or "NGN"})'])
-        writer.writerow(['Total Gross Salary',          f'{total_gross:,.2f}'])
-        writer.writerow(['Total Bonus & Overtime',      f'{total_bonus + total_overtime:,.2f}'])
-        writer.writerow(['Total Earnings',              f'{total_earnings:,.2f}'])
-        writer.writerow(['—', ''])
-        writer.writerow(['Employee Pension (8%)',        f'{total_pension_emp:,.2f}'])
-        writer.writerow(['NHF (2.5% of Basic)',          f'{total_nhf:,.2f}'])
-        writer.writerow(['NSITF (1% of Gross)',          f'{total_nsitf:,.2f}'])
-        writer.writerow(['PAYE Tax',                     f'{total_paye:,.2f}'])
-        writer.writerow(['Attendance / Loan / Penalty',  f'{total_att_ded + total_loan + total_penalty:,.2f}'])
-        writer.writerow(['Total Deductions',             f'{total_deductions:,.2f}'])
-        writer.writerow(['—', ''])
-        writer.writerow(['NET PAY (Bank Transfer Total)', f'{total_net:,.2f}'])
-        writer.writerow(['—', ''])
-        writer.writerow(['Employer Pension (10%) — Remit to PFA', f'{_d(run.total_pension_employer):,.2f}'])
-        writer.writerow(['PAYE — Remit to LIRS/SIRS by 10th',     f'{_d(run.total_paye):,.2f}'])
-        writer.writerow(['NHF — Remit to Federal Mortgage Bank',   f'{_d(run.total_nhf):,.2f}'])
-        writer.writerow(['NSITF — Remit to NSITF Board',           f'{_d(run.total_nsitf):,.2f}'])
+        _set_col_widths(ws3, [5, 12, 24, 20, 18, 22, 18, 24, 10, 16, 30, 36])
 
-        filename = f'{run.run_number}-bank-payment-{run.period_year}{run.period_month:02d}.csv'
-        response = HttpResponse(output.getvalue(), content_type='text/csv; charset=utf-8')
+        # ── Serialize and respond ────────────────────────────────────────────────
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+
+        filename = (f'{run.run_number}-payroll-bank-file-'
+                    f'{run.period_year}{run.period_month:02d}.xlsx')
+        response = HttpResponse(
+            buf.read(),
+            content_type=(
+                'application/vnd.openxmlformats-officedocument'
+                '.spreadsheetml.sheet'
+            ),
+        )
         response['Content-Disposition'] = f'attachment; filename="{filename}"'
         return response
 
