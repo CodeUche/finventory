@@ -62,22 +62,33 @@ class AuditLogView(APIView):
         if date_to:
             qs = qs.filter(created_at__date__lte=date_to)
 
+        # Add user search filter
+        user_search = request.query_params.get('user')
+        if user_search:
+            qs = qs.filter(user_email__icontains=user_search)
+
         data = []
         for entry in qs[:500]:
-            changes = entry.changes
-            if isinstance(changes, dict) and changes:
-                summary = ', '.join(f"{k}: {v}" for k, v in list(changes.items())[:3])
-            else:
-                summary = ''
+            changes = entry.changes or {}
+            # Build a clean field-level diff list
+            change_list = []
+            if isinstance(changes, dict):
+                for field, val in changes.items():
+                    if isinstance(val, dict) and 'old' in val and 'new' in val:
+                        change_list.append({'field': field, 'old': val['old'], 'new': val['new']})
+                    else:
+                        change_list.append({'field': field, 'old': None, 'new': val})
+
             data.append({
                 'id': str(entry.id),
                 'timestamp': entry.created_at.isoformat(),
-                'user': str(entry.user_id) if entry.user_id else '',
                 'user_email': entry.user_email,
                 'action': entry.action,
                 'model': entry.model_name,
+                'object_id': entry.object_id,
                 'object_repr': entry.object_repr,
-                'changes_summary': summary,
+                'changes': change_list,
+                'ip_address': entry.ip_address,
             })
 
         return Response(data)
