@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
-import { Plus, X, ClipboardList, Loader2, FileText, ChevronDown, ChevronUp, Trash2, FileDown, Mail, MessageCircle } from 'lucide-react'
+import { Plus, X, ClipboardList, Loader2, FileText, ChevronDown, ChevronUp, Trash2, FileDown, Mail, MessageCircle, CheckCircle, ExternalLink } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { quoteApi, customerApi, inventoryApi, tauriFetch } from '@/services/api'
+import { quoteApi, customerApi, inventoryApi, salesApi, tauriFetch } from '@/services/api'
 import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
 import { saveBlobFile } from '@/lib/saveBlobFile'
-import type { Quote, Customer, Warehouse, Product } from '@/types'
+import type { Quote, Customer, Warehouse, Product, Invoice } from '@/types'
 import DateInput from '@/components/DateInput'
 import YearFilter, { yearToDateParams } from '@/components/YearFilter'
 import { FieldTooltip } from '@/components/FieldTooltip'
@@ -362,6 +362,10 @@ export default function QuotesPage() {
   const [saving, setSaving] = useState(false)
   const [expandedRow, setExpandedRow] = useState<string | null>(null)
 
+  // Converted invoice — shown as inline banner + drawer
+  const [convertedInvoice, setConvertedInvoice] = useState<Invoice | null>(null)
+  const [viewingInvoice, setViewingInvoice] = useState(false)
+
   // PDF / share state
   const [pdfPreview, setPdfPreview] = useState<PdfPreview | null>(null)
   const [exporting, setExporting] = useState<string | null>(null) // quoteId being exported
@@ -423,9 +427,16 @@ export default function QuotesPage() {
     if (q.status === 'expired') { toast.error('This quote has expired. Please create a new quote'); return }
     if (!confirm(`Convert quote ${q.quote_number} to invoice?`)) return
     try {
-      await quoteApi.convert(q.id)
-      toast.success('Converted to invoice')
+      const { data } = await quoteApi.convert(q.id)
       load()
+      // Fetch the full invoice and show the inline banner
+      if (data?.invoice_id) {
+        try {
+          const invRes = await salesApi.invoice(data.invoice_id)
+          setConvertedInvoice(invRes.data)
+          setViewingInvoice(false)
+        } catch { /* non-fatal — banner just won't show */ }
+      }
     } catch (err: any) {
       const apiErr = err?.response?.data?.error
       const msg = typeof apiErr === 'string' ? apiErr : (apiErr?.message ?? 'Failed to convert quote')
@@ -556,6 +567,30 @@ export default function QuotesPage() {
           <Plus size={16} /> New Quote
         </button>
       </div>
+
+      {/* Converted invoice banner */}
+      {convertedInvoice && (
+        <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-green-500/10 border border-green-500/25">
+          <CheckCircle size={16} className="text-green-400 shrink-0" />
+          <p className="text-sm text-green-300 flex-1">
+            Quote converted — Invoice{' '}
+            <span className="font-mono font-semibold text-white">{convertedInvoice.invoice_number}</span>{' '}
+            created successfully.
+          </p>
+          <button
+            onClick={() => setViewingInvoice(true)}
+            className="flex items-center gap-1.5 text-xs font-medium text-green-300 hover:text-white bg-green-500/15 hover:bg-green-500/25 px-3 py-1.5 rounded-lg transition-colors shrink-0"
+          >
+            <ExternalLink size={12} /> View Invoice
+          </button>
+          <button
+            onClick={() => setConvertedInvoice(null)}
+            className="text-slate-500 hover:text-slate-300 transition-colors shrink-0"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -857,6 +892,115 @@ export default function QuotesPage() {
               <button className="btn-primary flex-1 py-2.5 justify-center disabled:opacity-50" onClick={handleCreate} disabled={saving}>
                 {saving ? <Loader2 size={16} className="animate-spin" /> : <><FileText size={15} /> Create Quote</>}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Invoice viewer drawer */}
+      {viewingInvoice && convertedInvoice && (
+        <div className="fixed inset-0 z-50 flex justify-end">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setViewingInvoice(false)} />
+          <div className="relative bg-surface-900 border-l border-surface-700 w-full max-w-lg flex flex-col shadow-2xl overflow-y-auto">
+            {/* Drawer header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-surface-700 sticky top-0 bg-surface-900 z-10">
+              <div>
+                <p className="text-xs text-slate-500 uppercase tracking-wider">Invoice</p>
+                <h2 className="text-lg font-bold text-white font-mono">{convertedInvoice.invoice_number}</h2>
+              </div>
+              <button onClick={() => setViewingInvoice(false)} className="btn-ghost p-2">
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-5">
+              {/* Status + dates */}
+              <div className="flex flex-wrap gap-2 items-center">
+                <span className={`badge ${
+                  convertedInvoice.status === 'paid' ? 'badge-green'
+                  : convertedInvoice.status === 'overdue' ? 'badge-red'
+                  : convertedInvoice.status === 'confirmed' ? 'badge-blue'
+                  : 'badge-slate'
+                }`}>
+                  {convertedInvoice.status}
+                </span>
+                <span className="text-xs text-slate-500">{formatDate(convertedInvoice.issue_date)}</span>
+                {convertedInvoice.due_date && (
+                  <span className="text-xs text-slate-500">Due {formatDate(convertedInvoice.due_date)}</span>
+                )}
+              </div>
+
+              {/* Customer */}
+              {convertedInvoice.customer_name && (
+                <div className="card-sm">
+                  <p className="text-xs text-slate-500 mb-0.5">Billed To</p>
+                  <p className="text-white font-medium">{convertedInvoice.customer_name}</p>
+                </div>
+              )}
+
+              {/* Line items */}
+              <div>
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Items</p>
+                <div className="card-sm p-0 overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-surface-700">
+                        <th className="text-left px-4 py-2.5 text-xs text-slate-500 font-medium">Item</th>
+                        <th className="text-center px-3 py-2.5 text-xs text-slate-500 font-medium">Qty</th>
+                        <th className="text-right px-4 py-2.5 text-xs text-slate-500 font-medium">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {convertedInvoice.items?.map((item, i) => (
+                        <tr key={i} className="border-b border-surface-700 last:border-0">
+                          <td className="px-4 py-2.5 text-slate-200">{item.product_name}</td>
+                          <td className="px-3 py-2.5 text-center text-slate-400">{item.quantity}</td>
+                          <td className="px-4 py-2.5 text-right text-white font-mono">
+                            {formatCurrency(String(parseFloat(item.unit_price) * parseFloat(item.quantity)))}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Totals */}
+              <div className="card-sm space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-400">Subtotal</span>
+                  <span className="text-white">{formatCurrency(convertedInvoice.subtotal)}</span>
+                </div>
+                {parseFloat(convertedInvoice.discount_amount) > 0 && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-400">Discount</span>
+                    <span className="text-red-400">− {formatCurrency(convertedInvoice.discount_amount)}</span>
+                  </div>
+                )}
+                {parseFloat(convertedInvoice.tax_amount) > 0 && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-400">Tax</span>
+                    <span className="text-white">{formatCurrency(convertedInvoice.tax_amount)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between text-base font-bold border-t border-surface-700 pt-2 mt-1">
+                  <span className="text-white">Total</span>
+                  <span className="text-brand-400">{formatCurrency(convertedInvoice.total_amount)}</span>
+                </div>
+                {parseFloat(convertedInvoice.amount_due) > 0 && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-400">Amount Due</span>
+                    <span className="text-amber-400 font-semibold">{formatCurrency(convertedInvoice.amount_due)}</span>
+                  </div>
+                )}
+              </div>
+
+              {convertedInvoice.notes && (
+                <div>
+                  <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Notes</p>
+                  <p className="text-sm text-slate-300">{convertedInvoice.notes}</p>
+                </div>
+              )}
             </div>
           </div>
         </div>
