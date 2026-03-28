@@ -60,8 +60,12 @@ export default function LoginPage() {
       const { data } = await authApi.mfaVerify(mfaToken, mfaCode)
       await finishLogin(data.user, data.tokens)
     } catch (err: any) {
-      const apiErr = err.response?.data?.error
-      const msg = typeof apiErr === 'string' ? apiErr : (apiErr?.message ?? 'Invalid code.')
+      const data = err.response?.data
+      // Handle envelope {error: {message}} format, plain {error: string}, or SimpleJWT {detail: string}
+      const apiErr = data?.error
+      const msg = typeof apiErr === 'string'
+        ? apiErr
+        : (apiErr?.message ?? (typeof data?.detail === 'string' ? 'MFA session expired. Please log in again.' : 'Invalid or expired code. Please try again.'))
       toast.error(msg)
     } finally {
       setMfaLoading(false)

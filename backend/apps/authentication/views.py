@@ -258,6 +258,7 @@ class LoginView(TokenObtainPairView):
     - Tracks last login IP for security auditing.
     """
 
+    authentication_classes = []   # stale Bearer tokens must not block login
     serializer_class = CustomTokenObtainPairSerializer
     throttle_classes = [LoginRateThrottle]
 
@@ -455,6 +456,9 @@ class MFAVerifyView(APIView):
     Completes MFA login. Verifies the TOTP code (or a backup code)
     and returns full JWT tokens.
     """
+    # No authentication_classes: a stale Bearer token in the request header
+    # must NOT cause DRF to reject this endpoint before the view runs.
+    authentication_classes = []
     permission_classes = [AllowAny]
     throttle_classes = [MFAVerifyRateThrottle]
 
