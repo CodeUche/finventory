@@ -289,8 +289,10 @@ class SubscriptionViewSet(viewsets.GenericViewSet):
         except Plan.DoesNotExist:
             return Response({"error": "Plan not found."}, status=400)
 
-        if plan.slug == "free":
-            return Response({"error": "Use the free plan endpoint for free plans."}, status=400)
+        # Free plan (price=0): activate with no expiry instead of starting a trial
+        if float(plan.price) == 0:
+            sub = SubscriptionService.activate_free_plan(request.organisation)
+            return Response(SubscriptionSerializer(sub).data, status=status.HTTP_200_OK)
 
         sub = SubscriptionService.start_trial_for_plan(request.organisation, plan)
         return Response(SubscriptionSerializer(sub).data, status=status.HTTP_201_CREATED)

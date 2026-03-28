@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Audity — Download Mockups</title>
+<script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --s950:#030712;--s900:#0f172a;--s800:#1e293b;--s700:#334155;
+  --s600:#475569;--s500:#64748b;--s400:#94a3b8;--s300:#cbd5e1;
+  --brand:#f97316;--brand4:#fb923c;--brand3:#fdba74;
+  --green:#22c55e;--blue:#3b82f6;--red:#ef4444;--amber:#f59e0b;
+  --purple:#a855f7;--emerald:#10b981;
+}
+html,body{background:#000;font-family:-apple-system,'Inter','Segoe UI',sans-serif;color:#fff;min-height:100vh;-webkit-font-smoothing:antialiased}
+
+/* ── Page header ── */
+.page-hdr{text-align:center;padding:40px 20px 28px;background:linear-gradient(180deg,#0f172a 0%,#030712 100%);border-bottom:1px solid #1e293b}
+.page-hdr h1{font-size:28px;font-weight:900;letter-spacing:-.5px}
+.page-hdr p{color:#94a3b8;font-size:14px;margin-top:6px}
+.page-hdr .badge-row{display:flex;justify-content:center;gap:8px;margin-top:14px;flex-wrap:wrap}
+
+/* ── Gallery grid ── */
+.gallery{display:grid;grid-template-columns:1fr 1fr;gap:20px;padding:24px 20px;max-width:800px;margin:0 auto}
+
+/* ── Card ── */
+.card{background:#0f172a;border:1px solid #1e293b;border-radius:16px;overflow:hidden;display:flex;flex-direction:column}
+.card-label{padding:12px 14px 0;font-size:12px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.6px}
+.card-name{padding:4px 14px 10px;font-size:15px;font-weight:800;color:#fff}
+
+/* ── Preview box (shows screen at 50% scale) ── */
+.preview-box{
+  width:270px;height:480px;overflow:hidden;position:relative;
+  border-radius:0;cursor:pointer;flex-shrink:0;align-self:center;
+  border-top:1px solid #1e293b;border-bottom:1px solid #1e293b;
+}
+.preview-box .screen-inner{
+  width:540px;height:960px;
+  transform:scale(0.5);transform-origin:top left;
+  pointer-events:none;
+}
+
+/* ── Download button ── */
+.dl-btn{
+  margin:12px 14px 14px;
+  background:var(--brand);color:#fff;font-size:13px;font-weight:700;
+  border:none;border-radius:10px;padding:11px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;gap:8px;
+  transition:opacity .2s;
+}
+.dl-btn:hover{opacity:.85}
+.dl-btn:disabled{opacity:.5;cursor:not-allowed}
+.dl-btn.loading{background:#334155;color:#94a3b8}
+
+/* ── Screen styles (same as mockups.html) ── */
+.screen-inner{background:var(--s950)}
+.topbar{height:60px;padding:0 20px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--s700);background:var(--s950);flex-shrink:0}
+.topbar-logo{display:flex;align-items:center;gap:8px}
+.topbar-logo img{width:28px;height:28px;border-radius:8px}
+.topbar-logo span{font-size:16px;font-weight:800;color:#fff;letter-spacing:-.3px}
+.topbar-title{font-size:15px;font-weight:700;color:#fff}
+.topbar-right{display:flex;align-items:center;gap:10px}
+.icon-btn{width:34px;height:34px;border-radius:10px;background:var(--s800);border:1px solid var(--s700);display:flex;align-items:center;justify-content:center;font-size:16px;position:relative}
+.notif-dot{position:absolute;top:6px;right:6px;width:8px;height:8px;background:var(--red);border-radius:50%;border:1.5px solid var(--s950)}
+.avatar{width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,var(--brand),#c2410c);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:#fff}
+.content{height:900px;overflow:hidden;padding:20px;display:flex;flex-direction:column;gap:14px;background:var(--s950)}
+.card-ui{background:var(--s800);border:1px solid var(--s700);border-radius:16px;padding:16px}
+.stat2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.stat-tile{background:var(--s800);border:1px solid var(--s700);border-radius:12px;padding:12px}
+.tile-lbl{font-size:10px;color:var(--s400);text-transform:uppercase;letter-spacing:.6px;font-weight:600}
+.tile-val{font-size:22px;font-weight:800;color:#fff;margin-top:4px;letter-spacing:-.5px}
+.tile-val.sm{font-size:17px}
+.tile-chg{font-size:11px;margin-top:3px}
+.up{color:var(--green)}.down{color:var(--red)}.muted{color:var(--s400)}
+.sec-lbl{font-size:11px;font-weight:700;color:var(--s400);text-transform:uppercase;letter-spacing:.8px}
+.badge{font-size:11px;font-weight:700;padding:3px 9px;border-radius:7px;display:inline-flex;align-items:center;gap:4px}
+.bg{background:rgba(34,197,94,.14);color:var(--green)}
+.bb{background:rgba(59,130,246,.14);color:var(--blue)}
+.br{background:rgba(239,68,68,.14);color:var(--red)}
+.ba{background:rgba(245,158,11,.14);color:var(--amber)}
+.bo{background:rgba(249,115,22,.14);color:var(--brand)}
+.bs{background:rgba(100,116,139,.18);color:var(--s400)}
+.bp{background:rgba(168,85,247,.14);color:var(--purple)}
+.be{background:rgba(16,185,129,.14);color:var(--emerald)}
+.tbl{width:100%;border-collapse:collapse}
+.tbl th{font-size:10px;font-weight:700;color:var(--s400);text-transform:uppercase;letter-spacing:.6px;padding:8px 10px;text-align:left;border-bottom:1px solid var(--s700)}
+.tbl td{font-size:13px;color:var(--s300);padding:9px 10px;border-bottom:1px solid var(--s700)}
+.tbl tr:last-child td{border-bottom:none}
+.td-main{color:#fff!important;font-weight:600}
+.td-mono{font-family:monospace;font-size:11px!important;color:var(--s400)!important}
+.td-amt{color:#fff!important;font-weight:700}
+.row-item{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-radius:12px;background:var(--s800);border:1px solid var(--s700);gap:10px}
+.row-item-sm{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--s700);gap:10px}
+.row-item-sm:last-child{border-bottom:none}
+.tabs{display:flex;gap:4px;background:var(--s800);border-radius:12px;padding:4px}
+.tab{padding:7px 16px;border-radius:9px;font-size:12px;font-weight:600;color:var(--s400)}
+.tab.on{background:var(--brand);color:#fff}
+.btn-pr{background:var(--brand);color:#fff;font-size:13px;font-weight:700;border:none;border-radius:10px;padding:10px 18px;display:inline-flex;align-items:center;gap:6px}
+.btn-gh{background:var(--s800);border:1px solid var(--s700);color:var(--s300);font-size:13px;font-weight:600;border-radius:10px;padding:10px 18px;display:inline-flex;align-items:center;gap:6px}
+.btn-sm{font-size:11px!important;padding:6px 12px!important}
+.inp{background:var(--s800);border:1px solid var(--s700);color:#fff;border-radius:10px;padding:10px 12px;font-size:13px}
+.av{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:#fff;flex-shrink:0}
+.act-row{display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid var(--s700)}
+.act-row:last-child{border-bottom:none}
+.notif-row{display:flex;gap:10px;padding:12px 14px;border-radius:12px;align-items:flex-start}
+.plan-card{border-radius:16px;padding:18px;border:2px solid var(--s700);background:var(--s800);position:relative;overflow:hidden}
+.plan-card.featured{border-color:var(--brand)}
+.plan-feat{font-size:12px;color:var(--s400);display:flex;align-items:center;gap:6px;margin-top:6px}
+.plan-feat::before{content:"✓";color:var(--green);font-weight:700}
+</style>
+</head>
+<body>
+
+<div class="page-hdr">
+  <h1>🎨 Audity — UI Mockups</h1>
+  <p>9:16 format · 1080 × 1920 px · Click any screen to download PNG</p>
+  <div class="badge-row">
+    <span class="badge bg">8 Screens</span>
+    <span class="badge bb">1080 × 1920 px</span>
+    <span class="badge bo">PNG Format</span>
+    <span class="badge bs">Import to Canva / Jitter / Rotato</span>
+  </div>
+</div>
+
+<div class="gallery" id="gallery"></div>
+
+<!-- ═══ SCREEN TEMPLATES (off-screen, full 540×960) ═══ -->
+<div id="screens" style="position:fixed;left:-9999px;top:0;visibility:hidden">
+
+<!-- ── S1: DASHBOARD ── -->
+<div class="screen-inner" id="sc1" style="width:540px;height:960px;overflow:hidden">
+  <div class="topbar">
+    <div class="topbar-logo"><div style="width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,#f97316,#c2410c);display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:900;color:#fff;letter-spacing:-.5px;flex-shrink:0">A</div><span>Audity</span></div>
+    <div class="topbar-right">
+      <div class="icon-btn">🔔<div class="notif-dot"></div></div>
+      <div class="avatar">AO</div>
+    </div>
+  </div>
+  <div class="content">
+    <div>
+      <div style="font-size:22px;font-weight:800;color:#fff;letter-spacing:-.4px">Good morning, <span style="color:var(--brand)">Adaeze</span> 👋</div>
+      <div style="font-size:13px;color:var(--s400);margin-top:3px">Saturday, 28 March 2026 · TechBridge Solutions Ltd</div>
+    </div>
+    <div class="stat2">
+      <div class="stat-tile"><div class="tile-lbl">Total Revenue</div><div class="tile-val">₦12.4M</div><div class="tile-chg up">↑ 18% this month</div></div>
+      <div class="stat-tile"><div class="tile-lbl">Outstanding</div><div class="tile-val" style="color:var(--amber)">₦2.89M</div><div class="tile-chg muted">6 invoices pending</div></div>
+    </div>
+    <div class="stat2">
+      <div class="stat-tile"><div class="tile-lbl">Total Expenses</div><div class="tile-val sm" style="color:var(--red)">₦3.24M</div><div class="tile-chg down">↑ 4% vs last month</div></div>
+      <div class="stat-tile"><div class="tile-lbl">Net Profit</div><div class="tile-val sm" style="color:var(--green)">₦9.19M</div><div class="tile-chg up">↑ 23%</div></div>
+    </div>
+    <div class="card-ui" style="padding:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div><div style="font-size:13px;font-weight:700;color:#fff">Revenue Trend</div><div style="font-size:11px;color:var(--s400)">Oct 2025 — Mar 2026</div></div>
+        <span class="badge bg">+18%</span>
+      </div>
+      <svg viewBox="0 0 460 100" width="100%" height="100">
+        <defs><linearGradient id="g1" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#f97316" stop-opacity=".35"/><stop offset="100%" stop-color="#f97316" stop-opacity="0"/></linearGradient></defs>
+        <line x1="0" y1="80" x2="460" y2="80" stroke="#334155" stroke-width="1"/>
+        <line x1="0" y1="50" x2="460" y2="50" stroke="#334155" stroke-width="1" stroke-dasharray="4,4"/>
+        <line x1="0" y1="20" x2="460" y2="20" stroke="#334155" stroke-width="1" stroke-dasharray="4,4"/>
+        <path d="M0,75 C60,68 120,55 180,40 C240,26 300,14 360,8 C400,4 430,5 460,4 L460,100 L0,100Z" fill="url(#g1)"/>
+        <path d="M0,75 C60,68 120,55 180,40 C240,26 300,14 360,8 C400,4 430,5 460,4" fill="none" stroke="#f97316" stroke-width="2.5" stroke-linecap="round"/>
+        <circle cx="0" cy="75" r="4" fill="#f97316"/><circle cx="90" cy="62" r="4" fill="#f97316"/><circle cx="180" cy="40" r="4" fill="#f97316"/><circle cx="270" cy="20" r="4" fill="#f97316"/><circle cx="360" cy="8" r="5" fill="#f97316" stroke="#030712" stroke-width="2"/>
+        <text x="0" y="118" fill="#64748b" font-size="11" font-family="sans-serif">Oct</text><text x="82" y="118" fill="#64748b" font-size="11" font-family="sans-serif">Nov</text><text x="168" y="118" fill="#64748b" font-size="11" font-family="sans-serif">Dec</text><text x="256" y="118" fill="#64748b" font-size="11" font-family="sans-serif">Jan</text><text x="346" y="118" fill="#64748b" font-size="11" font-family="sans-serif">Feb</text><text x="436" y="118" fill="#f97316" font-size="11" font-family="sans-serif" font-weight="700">Mar</text>
+      </svg>
+    </div>
+    <div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div class="sec-lbl">Recent Invoices</div><span style="font-size:12px;color:var(--brand);font-weight:600">View all →</span></div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div class="row-item"><div><div style="font-size:10px;color:var(--s400);font-family:monospace">INV-A3F2-000047</div><div style="font-size:14px;font-weight:700;color:#fff;margin-top:2px">MTN Nigeria</div></div><div style="text-align:right"><div style="font-size:15px;font-weight:800;color:#fff">₦450,000</div><span class="badge bg" style="margin-top:3px">Paid</span></div></div>
+        <div class="row-item"><div><div style="font-size:10px;color:var(--s400);font-family:monospace">INV-A3F2-000046</div><div style="font-size:14px;font-weight:700;color:#fff;margin-top:2px">Dangote Group</div></div><div style="text-align:right"><div style="font-size:15px;font-weight:800;color:#fff">₦1,200,000</div><span class="badge ba" style="margin-top:3px">Pending</span></div></div>
+        <div class="row-item"><div><div style="font-size:10px;color:var(--s400);font-family:monospace">INV-A3F2-000045</div><div style="font-size:14px;font-weight:700;color:#fff;margin-top:2px">GTBank Plc</div></div><div style="text-align:right"><div style="font-size:15px;font-weight:800;color:#fff">₦85,000</div><span class="badge br" style="margin-top:3px">Overdue</span></div></div>
+      </div>
+    </div>
+    <div class="notif-row" style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:14px">
+      <div style="width:36px;height:36px;background:rgba(239,68,68,.15);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">⚠️</div>
+      <div><div style="font-size:13px;font-weight:700;color:#fff">Low Stock Alert</div><div style="font-size:12px;color:var(--s400);margin-top:2px">Office Desk Pro — only 3 units remaining</div><span class="badge br" style="margin-top:6px;font-size:10px">Reorder now</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── S2: SALES ── -->
+<div class="screen-inner" id="sc2" style="width:540px;height:960px;overflow:hidden">
+  <div class="topbar"><div class="topbar-title">Sales & Invoices</div><button class="btn-pr btn-sm">+ New Invoice</button></div>
+  <div class="content">
+    <div class="stat2">
+      <div class="stat-tile"><div class="tile-lbl">Revenue (Mar)</div><div class="tile-val sm">₦4,832,500</div><div class="tile-chg up">↑ 12%</div></div>
+      <div class="stat-tile"><div class="tile-lbl">Outstanding</div><div class="tile-val sm" style="color:var(--amber)">₦1,285,000</div><div class="tile-chg muted">4 invoices</div></div>
+    </div>
+    <div class="stat2">
+      <div class="stat-tile" style="background:rgba(34,197,94,.06);border-color:rgba(34,197,94,.2)"><div class="tile-lbl">Paid This Month</div><div class="tile-val sm" style="color:var(--green)">₦3,547,500</div><div class="tile-chg up">↑ 19%</div></div>
+      <div class="stat-tile" style="background:rgba(239,68,68,.06);border-color:rgba(239,68,68,.2)"><div class="tile-lbl">Overdue</div><div class="tile-val sm" style="color:var(--red)">₦450,000</div><div class="tile-chg muted">1 invoice</div></div>
+    </div>
+    <div class="tabs"><div class="tab on">All</div><div class="tab">Paid</div><div class="tab">Pending</div><div class="tab">Overdue</div></div>
+    <div style="background:var(--s800);border:1px solid var(--s700);border-radius:12px;overflow:hidden">
+      <table class="tbl" style="width:100%">
+        <thead><tr><th>Invoice</th><th>Customer</th><th>Amount</th><th>Status</th></tr></thead>
+        <tbody>
+          <tr><td><span class="td-mono">INV-A3F2-000047</span><br><span style="font-size:10px;color:var(--s500)">28 Mar</span></td><td class="td-main">MTN Nigeria</td><td class="td-amt">₦450,000</td><td><span class="badge bg">Paid</span></td></tr>
+          <tr><td><span class="td-mono">INV-A3F2-000046</span><br><span style="font-size:10px;color:var(--s500)">26 Mar</span></td><td class="td-main">Dangote Group</td><td class="td-amt">₦1,200,000</td><td><span class="badge ba">Pending</span></td></tr>
+          <tr><td><span class="td-mono">INV-A3F2-000045</span><br><span style="font-size:10px;color:var(--s500)">21 Mar</span></td><td class="td-main">GTBank Plc</td><td class="td-amt">₦85,000</td><td><span class="badge br">Overdue</span></td></tr>
+          <tr><td><span class="td-mono">INV-A3F2-000044</span><br><span style="font-size:10px;color:var(--s500)">19 Mar</span></td><td class="td-main">Nestlé Nigeria</td><td class="td-amt">₦670,000</td><td><span class="badge bg">Paid</span></td></tr>
+          <tr><td><span class="td-mono">INV-A3F2-000043</span><br><span style="font-size:10px;color:var(--s500)">15 Mar</span></td><td class="td-main">Unilever Nigeria</td><td class="td-amt">₦220,000</td><td><span class="badge bb">Confirmed</span></td></tr>
+          <tr><td><span class="td-mono">INV-A3F2-000042</span><br><span style="font-size:10px;color:var(--s500)">10 Mar</span></td><td class="td-main">Total Energies</td><td class="td-amt">₦540,000</td><td><span class="badge bg">Paid</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ── S3: INVOICE DETAIL ── -->
+<div class="screen-inner" id="sc3" style="width:540px;height:960px;overflow:hidden">
+  <div class="topbar"><div style="font-size:13px;color:var(--s400)">← Sales</div><div class="topbar-title" style="font-size:13px;font-family:monospace">INV-A3F2-000047</div><span class="badge bg">Paid ✓</span></div>
+  <div class="content">
+    <div class="card-ui" style="background:linear-gradient(135deg,rgba(249,115,22,.12),rgba(249,115,22,.04));border:1px solid rgba(249,115,22,.25);padding:16px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start">
+        <div><div style="font-size:11px;color:var(--brand);font-weight:700;text-transform:uppercase;letter-spacing:.8px">Invoice</div><div style="font-size:22px;font-weight:900;color:#fff;font-family:monospace;margin-top:4px">INV-A3F2-000047</div></div>
+        <div class="avatar" style="width:44px;height:44px;font-size:16px;border-radius:12px">A</div>
+      </div>
+      <div style="margin-top:14px;display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div><div style="font-size:10px;color:var(--s400);font-weight:600;text-transform:uppercase">Billed To</div><div style="font-size:14px;font-weight:700;color:#fff;margin-top:3px">MTN Nigeria</div><div style="font-size:11px;color:var(--s400)">Lagos, Nigeria</div></div>
+        <div style="text-align:right"><div style="font-size:10px;color:var(--s400);font-weight:600;text-transform:uppercase">Invoice Date</div><div style="font-size:13px;font-weight:600;color:#fff;margin-top:3px">28 Mar 2026</div><div style="font-size:10px;color:var(--s400)">Due: 27 Apr 2026</div></div>
+      </div>
+    </div>
+    <div style="background:var(--s800);border:1px solid var(--s700);border-radius:12px;overflow:hidden">
+      <table class="tbl" style="width:100%">
+        <thead><tr><th>Item</th><th style="text-align:center">Qty</th><th style="text-align:right">Unit</th><th style="text-align:right">Total</th></tr></thead>
+        <tbody>
+          <tr><td class="td-main" style="font-size:12px">Office Desk Pro</td><td style="text-align:center">5</td><td style="text-align:right;color:#fff">₦45,000</td><td style="text-align:right" class="td-amt">₦225,000</td></tr>
+          <tr><td class="td-main" style="font-size:12px">Ergonomic Chair</td><td style="text-align:center">3</td><td style="text-align:right;color:#fff">₦35,000</td><td style="text-align:right" class="td-amt">₦105,000</td></tr>
+          <tr><td class="td-main" style="font-size:12px">Monitor Stand</td><td style="text-align:center">10</td><td style="text-align:right;color:#fff">₦12,000</td><td style="text-align:right" class="td-amt">₦120,000</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="card-ui" style="padding:14px">
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;justify-content:space-between"><span style="color:var(--s400);font-size:13px">Subtotal</span><span style="color:#fff;font-weight:600">₦450,000</span></div>
+        <div style="display:flex;justify-content:space-between"><span style="color:var(--s400);font-size:13px">VAT (7.5%)</span><span style="color:#fff;font-weight:600">₦33,750</span></div>
+        <div style="height:1px;background:var(--s700)"></div>
+        <div style="display:flex;justify-content:space-between;align-items:center"><span style="color:#fff;font-size:15px;font-weight:700">Total</span><span style="color:var(--brand);font-size:22px;font-weight:900">₦483,750</span></div>
+        <div style="display:flex;justify-content:space-between"><span style="color:var(--s400);font-size:12px">Amount Paid</span><span style="color:var(--green);font-weight:700">₦483,750 ✓</span></div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <button class="btn-pr" style="justify-content:center;padding:12px;border-radius:10px">📄 Download PDF</button>
+      <button class="btn-gh" style="justify-content:center;padding:12px;border-radius:10px">✉️ Send Email</button>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <button class="btn-gh" style="justify-content:center;padding:12px;border-radius:10px">💬 WhatsApp</button>
+      <button class="btn-gh" style="justify-content:center;padding:12px;border-radius:10px">💰 Record Payment</button>
+    </div>
+    <div class="card-ui" style="padding:12px;background:rgba(34,197,94,.06);border:1px solid rgba(34,197,94,.2)">
+      <div style="font-size:12px;color:var(--s400)">Payment received via <strong style="color:#fff">Bank Transfer</strong> on <strong style="color:#fff">28 Mar 2026</strong></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── S4: PRODUCTS ── -->
+<div class="screen-inner" id="sc4" style="width:540px;height:960px;overflow:hidden">
+  <div class="topbar"><div class="topbar-title">Products</div><button class="btn-pr btn-sm">+ Add Product</button></div>
+  <div class="content">
+    <div style="position:relative"><span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:16px">🔍</span><input class="inp" style="padding-left:36px;width:100%" placeholder="Search products…"></div>
+    <div class="tabs"><div class="tab on">All Products</div><div class="tab">Low Stock</div><div class="tab">Out of Stock</div></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+      <div class="stat-tile" style="padding:10px"><div class="tile-lbl" style="font-size:9px">Products</div><div class="tile-val sm">24</div></div>
+      <div class="stat-tile" style="padding:10px;border-color:rgba(239,68,68,.3)"><div class="tile-lbl" style="font-size:9px">Low Stock</div><div class="tile-val sm" style="color:var(--red)">3</div></div>
+      <div class="stat-tile" style="padding:10px"><div class="tile-lbl" style="font-size:9px">Stock Value</div><div class="tile-val sm" style="font-size:14px">₦8.2M</div></div>
+    </div>
+    <div style="background:var(--s800);border:1px solid var(--s700);border-radius:12px;overflow:hidden">
+      <div style="padding:12px 14px;border-bottom:1px solid var(--s700);display:flex;align-items:center;gap:10px"><div style="width:40px;height:40px;background:rgba(249,115,22,.15);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px">🪑</div><div style="flex:1"><div style="font-size:14px;font-weight:700;color:#fff">Office Desk Pro</div><div style="font-size:11px;color:var(--s400)">Furniture · SKU-0021</div></div><div style="text-align:right"><div style="font-size:14px;font-weight:700;color:#fff">₦45,000</div><span class="badge br" style="font-size:10px">3 left ⚠</span></div></div>
+      <div style="padding:12px 14px;border-bottom:1px solid var(--s700);display:flex;align-items:center;gap:10px"><div style="width:40px;height:40px;background:rgba(59,130,246,.15);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px">💺</div><div style="flex:1"><div style="font-size:14px;font-weight:700;color:#fff">Ergonomic Chair</div><div style="font-size:11px;color:var(--s400)">Furniture · SKU-0019</div></div><div style="text-align:right"><div style="font-size:14px;font-weight:700;color:#fff">₦35,000</div><span class="badge bg" style="font-size:10px">24 in stock</span></div></div>
+      <div style="padding:12px 14px;border-bottom:1px solid var(--s700);display:flex;align-items:center;gap:10px"><div style="width:40px;height:40px;background:rgba(168,85,247,.15);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px">🖥</div><div style="flex:1"><div style="font-size:14px;font-weight:700;color:#fff">Standing Desk</div><div style="font-size:11px;color:var(--s400)">Furniture · SKU-0024</div></div><div style="text-align:right"><div style="font-size:14px;font-weight:700;color:#fff">₦65,000</div><span class="badge ba" style="font-size:10px">8 left</span></div></div>
+      <div style="padding:12px 14px;border-bottom:1px solid var(--s700);display:flex;align-items:center;gap:10px"><div style="width:40px;height:40px;background:rgba(16,185,129,.15);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px">🖱</div><div style="flex:1"><div style="font-size:14px;font-weight:700;color:#fff">Monitor Stand</div><div style="font-size:11px;color:var(--s400)">Electronics · SKU-0017</div></div><div style="text-align:right"><div style="font-size:14px;font-weight:700;color:#fff">₦12,000</div><span class="badge bg" style="font-size:10px">47 in stock</span></div></div>
+      <div style="padding:12px 14px;display:flex;align-items:center;gap:10px"><div style="width:40px;height:40px;background:rgba(239,68,68,.15);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px">💼</div><div style="flex:1"><div style="font-size:14px;font-weight:700;color:#fff">Laptop Bag Pro</div><div style="font-size:11px;color:var(--s400)">Accessories · SKU-0031</div></div><div style="text-align:right"><div style="font-size:14px;font-weight:700;color:#fff">₦8,500</div><span class="badge br" style="font-size:10px">Out of stock</span></div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── S5: PAYROLL ── -->
+<div class="screen-inner" id="sc5" style="width:540px;height:960px;overflow:hidden">
+  <div class="topbar"><div class="topbar-title">Payroll</div><button class="btn-pr btn-sm">Run Payroll</button></div>
+  <div class="content">
+    <div class="card-ui" style="background:linear-gradient(135deg,rgba(59,130,246,.12),rgba(59,130,246,.04));border:1px solid rgba(59,130,246,.25);padding:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:11px;color:var(--blue);font-weight:700;text-transform:uppercase;letter-spacing:.6px">Current Period</div><div style="font-size:20px;font-weight:800;color:#fff;margin-top:3px">March 2026</div></div><span class="badge bb">5 Employees</span></div>
+    </div>
+    <div class="stat2">
+      <div class="stat-tile"><div class="tile-lbl">Gross Salary</div><div class="tile-val sm">₦2,850,000</div></div>
+      <div class="stat-tile"><div class="tile-lbl">Net Pay</div><div class="tile-val sm" style="color:var(--green)">₦2,081,500</div></div>
+      <div class="stat-tile"><div class="tile-lbl">PAYE Tax</div><div class="tile-val sm" style="color:var(--amber);font-size:16px">₦312,500</div></div>
+      <div class="stat-tile"><div class="tile-lbl">Pension</div><div class="tile-val sm" style="color:var(--purple);font-size:16px">₦456,000</div></div>
+    </div>
+    <div class="sec-lbl">Employees</div>
+    <div style="background:var(--s800);border:1px solid var(--s700);border-radius:12px;overflow:hidden">
+      <div class="act-row" style="padding:12px 14px"><div class="av" style="background:linear-gradient(135deg,#f97316,#c2410c)">CO</div><div style="flex:1"><div style="font-size:14px;font-weight:700;color:#fff">Chukwuemeka Obi</div><div style="font-size:11px;color:var(--s400)">General Manager</div><div style="font-size:11px;color:var(--s500);margin-top:2px">PAYE ₦105,000 · Pension ₦136,000</div></div><div style="text-align:right"><div style="font-size:14px;font-weight:700;color:#fff">₦782,000</div><div style="font-size:10px;color:var(--s500)">net pay</div></div></div>
+      <div class="act-row" style="padding:12px 14px"><div class="av" style="background:linear-gradient(135deg,#3b82f6,#1d4ed8)">NA</div><div style="flex:1"><div style="font-size:14px;font-weight:700;color:#fff">Ngozi Adeyemi</div><div style="font-size:11px;color:var(--s400)">Accountant</div><div style="font-size:11px;color:var(--s500);margin-top:2px">PAYE ₦78,000 · Pension ₦104,000</div></div><div style="text-align:right"><div style="font-size:14px;font-weight:700;color:#fff">₦601,000</div><div style="font-size:10px;color:var(--s500)">net pay</div></div></div>
+      <div class="act-row" style="padding:12px 14px"><div class="av" style="background:linear-gradient(135deg,#22c55e,#15803d)">BA</div><div style="flex:1"><div style="font-size:14px;font-weight:700;color:#fff">Babatunde Akinwale</div><div style="font-size:11px;color:var(--s400)">Sales Executive</div><div style="font-size:11px;color:var(--s500);margin-top:2px">PAYE ₦52,000 · Pension ₦83,200</div></div><div style="text-align:right"><div style="font-size:14px;font-weight:700;color:#fff">₦483,000</div><div style="font-size:10px;color:var(--s500)">net pay</div></div></div>
+      <div class="act-row" style="padding:12px 14px;border:none"><div class="av" style="background:linear-gradient(135deg,#a855f7,#7c3aed)">AN</div><div style="flex:1"><div style="font-size:14px;font-weight:700;color:#fff">Amara Nwosu</div><div style="font-size:11px;color:var(--s400)">Admin Officer</div><div style="font-size:11px;color:var(--s500);margin-top:2px">PAYE ₦42,000 · Pension ₦67,200</div></div><div style="text-align:right"><div style="font-size:14px;font-weight:700;color:#fff">₦392,000</div><div style="font-size:10px;color:var(--s500)">net pay</div></div></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <button class="btn-gh" style="justify-content:center;padding:12px;font-size:12px;border-radius:10px">🏦 Bank File (.xlsx)</button>
+      <button class="btn-gh" style="justify-content:center;padding:12px;font-size:12px;border-radius:10px">📋 FIRS PAYE Report</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── S6: REPORTS ── -->
+<div class="screen-inner" id="sc6" style="width:540px;height:960px;overflow:hidden">
+  <div class="topbar"><div class="topbar-title">Reports — P&amp;L</div><div class="tabs" style="background:transparent;padding:0"><div class="tab on" style="font-size:11px;padding:6px 12px">P&amp;L</div><div class="tab" style="font-size:11px;padding:6px 12px">Balance Sheet</div></div></div>
+  <div class="content">
+    <div style="display:flex;gap:8px;align-items:center"><div class="inp" style="padding:8px 12px;flex:1;font-size:12px">📅  January — March 2026</div><button class="btn-gh btn-sm" style="border-radius:10px">Export</button></div>
+    <div class="card-ui" style="background:linear-gradient(135deg,rgba(34,197,94,.08),rgba(34,197,94,.02));border:1px solid rgba(34,197,94,.2);padding:14px">
+      <div style="font-size:11px;color:var(--s400);font-weight:700;text-transform:uppercase;letter-spacing:.6px;margin-bottom:12px">Profit & Loss Summary</div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;justify-content:space-between;align-items:center"><span style="color:var(--s300);font-size:13px">Total Revenue</span><span style="color:#fff;font-weight:700;font-size:15px">₦12,432,500</span></div>
+        <div style="display:flex;justify-content:space-between;align-items:center"><span style="color:var(--s300);font-size:13px">Cost of Goods Sold</span><span style="color:var(--red);font-weight:600;font-size:14px">− ₦4,123,000</span></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--s700);border-bottom:1px solid var(--s700)"><span style="color:#fff;font-weight:700;font-size:13px">Gross Profit</span><div style="text-align:right"><div style="color:#fff;font-weight:800;font-size:15px">₦8,309,500</div><div style="font-size:11px;color:var(--green)">66.8% margin</div></div></div>
+        <div style="display:flex;justify-content:space-between;align-items:center"><span style="color:var(--s300);font-size:13px">Operating Expenses</span><span style="color:var(--red);font-weight:600;font-size:14px">− ₦3,241,000</span></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding-top:8px;border-top:2px solid var(--s700)"><span style="color:#fff;font-weight:800;font-size:15px">Net Profit</span><div style="text-align:right"><div style="color:var(--green);font-weight:900;font-size:20px">₦5,068,500</div><div style="font-size:11px;color:var(--green)">40.8% net margin</div></div></div>
+      </div>
+    </div>
+    <div class="card-ui" style="padding:14px">
+      <div style="font-size:13px;font-weight:700;color:#fff;margin-bottom:10px">Revenue vs Expenses — 6 months</div>
+      <svg viewBox="0 0 460 100" width="100%" height="100">
+        <rect x="10" y="30" width="38" height="60" rx="4" fill="#f97316" opacity=".9"/><rect x="52" y="72" width="26" height="18" rx="3" fill="#334155"/>
+        <rect x="88" y="20" width="38" height="70" rx="4" fill="#f97316" opacity=".9"/><rect x="130" y="62" width="26" height="28" rx="3" fill="#334155"/>
+        <rect x="166" y="10" width="38" height="80" rx="4" fill="#f97316"/><rect x="208" y="55" width="26" height="35" rx="3" fill="#334155"/>
+        <rect x="244" y="5" width="38" height="85" rx="4" fill="#f97316"/><rect x="286" y="50" width="26" height="40" rx="3" fill="#334155"/>
+        <rect x="322" y="12" width="38" height="78" rx="4" fill="#f97316" opacity=".9"/><rect x="364" y="56" width="26" height="34" rx="3" fill="#334155"/>
+        <rect x="400" y="4" width="38" height="86" rx="4" fill="#f97316"/><rect x="442" y="48" width="18" height="42" rx="3" fill="#334155"/>
+        <text x="28" y="118" fill="#64748b" font-size="11" font-family="sans-serif" text-anchor="middle">Oct</text>
+        <text x="108" y="118" fill="#64748b" font-size="11" font-family="sans-serif" text-anchor="middle">Nov</text>
+        <text x="186" y="118" fill="#64748b" font-size="11" font-family="sans-serif" text-anchor="middle">Dec</text>
+        <text x="264" y="118" fill="#64748b" font-size="11" font-family="sans-serif" text-anchor="middle">Jan</text>
+        <text x="342" y="118" fill="#64748b" font-size="11" font-family="sans-serif" text-anchor="middle">Feb</text>
+        <text x="418" y="118" fill="#f97316" font-size="11" font-family="sans-serif" text-anchor="middle" font-weight="700">Mar</text>
+      </svg>
+      <div style="display:flex;gap:16px;margin-top:4px"><div style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--s400)"><div style="width:10px;height:10px;background:var(--brand);border-radius:2px"></div>Revenue</div><div style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--s400)"><div style="width:10px;height:10px;background:var(--s700);border-radius:2px"></div>Expenses</div></div>
+    </div>
+    <div><div class="sec-lbl" style="margin-bottom:10px">Top Customers</div>
+    <div style="background:var(--s800);border:1px solid var(--s700);border-radius:12px;overflow:hidden">
+      <div class="row-item-sm" style="padding:10px 14px"><div style="display:flex;align-items:center;gap:8px"><span style="font-size:13px;font-weight:800;color:var(--brand);width:16px">#1</span><span style="font-weight:600;color:#fff;font-size:13px">MTN Nigeria</span></div><span style="font-weight:700;color:#fff">₦2,450,000</span></div>
+      <div class="row-item-sm" style="padding:10px 14px"><div style="display:flex;align-items:center;gap:8px"><span style="font-size:13px;font-weight:800;color:var(--s400);width:16px">#2</span><span style="font-weight:600;color:#fff;font-size:13px">Dangote Group</span></div><span style="font-weight:700;color:#fff">₦1,890,000</span></div>
+      <div class="row-item-sm" style="padding:10px 14px"><div style="display:flex;align-items:center;gap:8px"><span style="font-size:13px;font-weight:800;color:var(--s400);width:16px">#3</span><span style="font-weight:600;color:#fff;font-size:13px">Nestlé Nigeria</span></div><span style="font-weight:700;color:#fff">₦1,640,000</span></div>
+      <div class="row-item-sm" style="padding:10px 14px;border-bottom:none"><div style="display:flex;align-items:center;gap:8px"><span style="font-size:13px;font-weight:800;color:var(--s400);width:16px">#4</span><span style="font-weight:600;color:#fff;font-size:13px">GTBank Plc</span></div><span style="font-weight:700;color:#fff">₦1,200,000</span></div>
+    </div></div>
+  </div>
+</div>
+
+<!-- ── S7: TAX ── -->
+<div class="screen-inner" id="sc7" style="width:540px;height:960px;overflow:hidden">
+  <div class="topbar"><div class="topbar-title">Tax Management</div><span class="badge bb">Professional</span></div>
+  <div class="content">
+    <div class="tabs"><div class="tab on">VAT Classes</div><div class="tab">Income Tax</div><div class="tab">Tax Tools</div></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+      <div class="stat-tile" style="background:rgba(249,115,22,.08);border-color:rgba(249,115,22,.25)"><div class="tile-lbl" style="font-size:9px">Output VAT</div><div style="font-size:15px;font-weight:800;color:var(--brand);margin-top:4px">₦324.5K</div></div>
+      <div class="stat-tile"><div class="tile-lbl" style="font-size:9px">Input VAT</div><div style="font-size:15px;font-weight:800;color:var(--s300);margin-top:4px">₦87.2K</div></div>
+      <div class="stat-tile" style="background:rgba(239,68,68,.08);border-color:rgba(239,68,68,.25)"><div class="tile-lbl" style="font-size:9px">Net Payable</div><div style="font-size:15px;font-weight:800;color:var(--red);margin-top:4px">₦237.3K</div></div>
+    </div>
+    <div style="background:var(--s800);border:1px solid var(--s700);border-radius:12px;overflow:hidden">
+      <div style="padding:14px;border-bottom:1px solid var(--s700);display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:14px;font-weight:700;color:#fff">Standard Rate</div><div style="font-size:11px;color:var(--s400);margin-top:2px">Goods & standard services</div></div><div style="text-align:right"><span class="badge bo" style="font-size:13px;font-weight:800">7.5%</span><div style="font-size:10px;color:var(--green);margin-top:4px">Auto-applied at POS</div></div></div>
+      <div style="padding:14px;border-bottom:1px solid var(--s700);display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:14px;font-weight:700;color:#fff">Zero Rated</div><div style="font-size:11px;color:var(--s400);margin-top:2px">Exports & essential goods</div></div><span class="badge bb" style="font-size:13px;font-weight:800">0%</span></div>
+      <div style="padding:14px;display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:14px;font-weight:700;color:#fff">Exempt</div><div style="font-size:11px;color:var(--s400);margin-top:2px">Medical, education, land</div></div><span class="badge bs" style="font-size:13px">N/A</span></div>
+    </div>
+    <div class="card-ui" style="background:rgba(16,185,129,.07);border:1px solid rgba(16,185,129,.25);padding:14px"><div style="display:flex;align-items:center;justify-content:space-between"><div><div style="font-size:11px;color:var(--emerald);font-weight:700;text-transform:uppercase;letter-spacing:.6px">Income Tax</div><div style="font-size:14px;font-weight:700;color:#fff;margin-top:3px">Nigeria PIT 2026</div><div style="font-size:11px;color:var(--s400);margin-top:2px">6 brackets configured · PITA compliant</div></div><span class="badge be">Active</span></div></div>
+    <div class="card-ui" style="background:rgba(59,130,246,.07);border:1px solid rgba(59,130,246,.25);padding:14px"><div style="font-size:11px;color:var(--blue);font-weight:700;text-transform:uppercase;letter-spacing:.6px">Tax Calculator</div><div style="font-size:14px;font-weight:600;color:#fff;margin-top:4px">Compute personal & corporate tax instantly</div><div style="display:flex;gap:8px;margin-top:12px"><button class="btn-pr btn-sm" style="border-radius:8px">Calculate PIT</button><button class="btn-gh btn-sm" style="border-radius:8px">Corporate Tax</button></div></div>
+    <div class="notif-row" style="background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.2);border-radius:14px"><div style="width:36px;height:36px;background:rgba(245,158,11,.15);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">📅</div><div><div style="font-size:13px;font-weight:700;color:#fff">VAT Filing Due</div><div style="font-size:12px;color:var(--s400);margin-top:2px">21 April 2026 — File March return on TaxPro MAX</div></div></div>
+  </div>
+</div>
+
+<!-- ── S8: BILLING ── -->
+<div class="screen-inner" id="sc8" style="width:540px;height:960px;overflow:hidden">
+  <div class="topbar"><div class="topbar-title">Billing & Plans</div><span class="badge bg" style="font-size:11px">14 days left</span></div>
+  <div class="content">
+    <div class="card-ui" style="background:linear-gradient(135deg,rgba(249,115,22,.18),rgba(249,115,22,.05));border:1px solid rgba(249,115,22,.3)">
+      <div style="font-size:11px;color:var(--brand);font-weight:700;text-transform:uppercase;letter-spacing:.8px">Current Plan</div>
+      <div style="font-size:26px;font-weight:900;color:#fff;margin-top:4px">Professional</div>
+      <div style="font-size:13px;color:var(--s400);margin-top:3px">Trial ends 11 April 2026 · No card required</div>
+      <div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:6px"><span class="badge bg" style="font-size:10px">✓ Sales & Invoicing</span><span class="badge bg" style="font-size:10px">✓ Tax Engine</span><span class="badge bg" style="font-size:10px">✓ Audit Log</span><span class="badge bg" style="font-size:10px">✓ Team Access</span></div>
+    </div>
+    <div class="plan-card"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div><div style="font-size:17px;font-weight:800;color:#fff">Starter</div><div style="font-size:28px;font-weight:900;color:#fff;margin:8px 0 2px;letter-spacing:-.5px">Free <span style="font-size:13px;font-weight:500;color:var(--s400)">/ forever</span></div></div><span class="badge bs">Basic</span></div><div class="plan-feat">Sales, Quotes, Expenses, Inventory</div><div class="plan-feat">VAT automation only</div><div class="plan-feat">Up to 2 team members</div></div>
+    <div class="plan-card featured" style="background:linear-gradient(135deg,rgba(249,115,22,.1),rgba(249,115,22,.03))">
+      <div style="position:absolute;top:-1px;right:20px;background:var(--brand);color:#fff;font-size:10px;font-weight:800;padding:4px 12px;border-radius:0 0 8px 8px;text-transform:uppercase;letter-spacing:.6px">Current Plan</div>
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-top:8px"><div><div style="font-size:17px;font-weight:800;color:#fff">Professional</div><div style="font-size:28px;font-weight:900;color:#fff;margin:8px 0 2px;letter-spacing:-.5px">₦20,000 <span style="font-size:13px;font-weight:500;color:var(--s400)">/month</span></div></div><span class="badge bo">Popular</span></div>
+      <div class="plan-feat">Everything in Starter</div><div class="plan-feat">VAT + Income Tax engine</div><div class="plan-feat">Audit Log & Team permissions</div><div class="plan-feat">Advanced reports</div>
+    </div>
+    <div class="plan-card"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div><div style="font-size:17px;font-weight:800;color:#fff">Business</div><div style="font-size:28px;font-weight:900;color:#fff;margin:8px 0 2px;letter-spacing:-.5px">₦45,000 <span style="font-size:13px;font-weight:500;color:var(--s400)">/month</span></div></div><span class="badge bp">Enterprise</span></div><div class="plan-feat">Full Tax Engine (WHT, Excise, Filing)</div><div class="plan-feat">Payroll + PAYE automation</div><div class="plan-feat">Accounting Ledger & Owner Analytics</div><div class="plan-feat">API Access</div><button class="btn-pr" style="width:100%;justify-content:center;margin-top:14px;padding:12px;border-radius:10px">Upgrade to Business →</button></div>
+  </div>
+</div>
+
+</div><!-- #screens -->
+
+<script>
+const SCREENS = [
+  { id:'sc1', label:'Dashboard',        name:'01-dashboard'        },
+  { id:'sc2', label:'Sales & Invoices', name:'02-sales-invoices'   },
+  { id:'sc3', label:'Invoice Detail',   name:'03-invoice-detail'   },
+  { id:'sc4', label:'Products',         name:'04-products'         },
+  { id:'sc5', label:'Payroll',          name:'05-payroll'          },
+  { id:'sc6', label:'Reports (P&L)',    name:'06-reports'          },
+  { id:'sc7', label:'Tax Management',   name:'07-tax'              },
+  { id:'sc8', label:'Billing & Plans',  name:'08-billing'          },
+];
+
+// Build gallery
+const gallery = document.getElementById('gallery');
+SCREENS.forEach((s, i) => {
+  const sc = document.getElementById(s.id);
+
+  // Card
+  const card = document.createElement('div');
+  card.className = 'card';
+
+  // Label
+  const lbl = document.createElement('div');
+  lbl.className = 'card-label';
+  lbl.textContent = 'Screen ' + (i+1);
+
+  const name = document.createElement('div');
+  name.className = 'card-name';
+  name.textContent = s.label;
+
+  // Preview box — clone the screen and scale it
+  const box = document.createElement('div');
+  box.className = 'preview-box';
+  const clone = sc.cloneNode(true);
+  clone.id = '';
+  clone.classList.add('screen-inner');
+  box.appendChild(clone);
+
+  // Download button
+  const btn = document.createElement('button');
+  btn.className = 'dl-btn';
+  btn.innerHTML = '⬇ Download PNG  <span style="font-size:11px;opacity:.7;font-weight:500">1080 × 1920</span>';
+  btn.onclick = () => downloadScreen(s.id, s.name, btn);
+
+  card.appendChild(lbl);
+  card.appendChild(name);
+  card.appendChild(box);
+  card.appendChild(btn);
+  gallery.appendChild(card);
+});
+
+async function downloadScreen(id, filename, btn) {
+  btn.disabled = true;
+  btn.className = 'dl-btn loading';
+  btn.textContent = '⏳ Rendering…';
+
+  const el = document.getElementById(id);
+
+  // Temporarily make visible for capture
+  el.style.visibility = 'visible';
+  el.style.left = '-9999px';
+
+  try {
+    const canvas = await html2canvas(el, {
+      width: 540,
+      height: 960,
+      scale: 2,           // → 1080 × 1920
+      backgroundColor: '#030712',
+      useCORS: true,
+      allowTaint: true,
+      logging: false,
+      imageTimeout: 0,
+    });
+
+    const a = document.createElement('a');
+    a.download = 'audity-' + filename + '.png';
+    a.href = canvas.toDataURL('image/png');
+    a.click();
+  } catch(e) {
+    alert('Render failed: ' + e.message);
+  }
+
+  el.style.visibility = 'hidden';
+  btn.disabled = false;
+  btn.className = 'dl-btn';
+  btn.innerHTML = '✅ Downloaded!  <span style="font-size:11px;opacity:.7;font-weight:500">1080 × 1920</span>';
+  setTimeout(() => {
+    btn.innerHTML = '⬇ Download PNG  <span style="font-size:11px;opacity:.7;font-weight:500">1080 × 1920</span>';
+  }, 3000);
+}
+</script>
+</body>
+</html>

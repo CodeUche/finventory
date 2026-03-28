@@ -37,41 +37,42 @@ function loadPaystackScript(): Promise<void> {
 }
 
 const PLAN_ICONS: Record<string, React.ElementType> = {
+  free: Zap,
   starter: Zap,
   professional: Star,
+  'professional-annual': Star,
   business: Building2,
+  'business-annual': Building2,
 }
 
 // Hardcoded per-plan module details for clear comparison
-// Each entry: [icon, label, tooltip description, starter, professional, business]
 type ModuleRow = {
   icon: React.ElementType
   label: string
   tip: string
-  starter: boolean | string
+  free: boolean | string
   professional: boolean | string
   business: boolean | string
 }
 
 const MODULE_ROWS: ModuleRow[] = [
-  { icon: ShoppingCart,  label: 'Sales & Invoicing',       tip: 'Create invoices, record payments, manage your sales pipeline',                          starter: true,      professional: true,       business: true },
-  { icon: FileText,      label: 'Quotes & Estimates',      tip: 'Send price quotes to customers before converting them to invoices',                      starter: true,      professional: true,       business: true },
-  { icon: Clock,         label: 'Recurring Invoices',      tip: 'Auto-generate invoices on a schedule for subscription or retainer clients',              starter: true,      professional: true,       business: true },
-  { icon: Truck,         label: 'Purchase Orders',         tip: 'Raise purchase orders to suppliers and track delivery and receipt',                      starter: true,      professional: true,       business: true },
-  { icon: Receipt,       label: 'Bills & Payables',        tip: 'Track bills owed to suppliers, schedule payments, manage folders',                       starter: true,      professional: true,       business: true },
-  { icon: Wallet,        label: 'Expense Tracking',        tip: 'Record business expenses and income, group by category, track savings',                  starter: true,      professional: true,       business: true },
-  { icon: Package,       label: 'Inventory Management',   tip: 'Manage products, track stock levels, set reorder alerts, handle batches and lots',        starter: true,      professional: true,       business: true },
-  { icon: Users,         label: 'Customer Management',    tip: 'Maintain a full customer database, view statement, track credits and balances',           starter: true,      professional: true,       business: true },
-  { icon: Truck,         label: 'Supplier Management',    tip: 'Manage your supplier contacts and link them to purchases and bills',                      starter: true,      professional: true,       business: true },
-  { icon: DollarSign,    label: 'Budget Planning',         tip: 'Set spending budgets per category, compare actual vs planned spend',                     starter: true,      professional: true,       business: true },
-  { icon: Calculator,    label: 'Tax Engine',              tip: 'Starter: VAT only. Professional: VAT + Income Tax + Tools. Business: Full (adds Excise Duty, WHT, Filing Guide)', starter: 'VAT only', professional: 'VAT + Income Tax', business: 'Full' },
-  { icon: BarChart3,     label: 'Reports & Analytics',    tip: 'P&L, revenue trends, top products, top customers, expense breakdown and balance sheet',  starter: 'Basic',   professional: 'Advanced', business: 'Advanced' },
-  { icon: FileText,      label: 'Audit Log',               tip: 'Full trail of every action taken in the system — who did what and when',                 starter: false,     professional: true,       business: true },
-  { icon: Users,         label: 'Team & Permissions',     tip: 'Invite staff with custom access levels per module (e.g. view-only, write, full edit)',    starter: false,     professional: true,       business: true },
-  { icon: Briefcase,     label: 'Payroll',                 tip: 'Manage employees, run payroll, compute PAYE and pension deductions',                     starter: false,     professional: false,      business: true },
-  { icon: Calculator,    label: 'Accounting Ledger',      tip: 'Full chart of accounts, journal entries, fixed assets, bank reconciliation',              starter: false,     professional: false,      business: true },
-  { icon: Shield,        label: 'Owner Analytics',         tip: 'Private profit view using your personal cost price — only you can see this',             starter: false,     professional: false,      business: true },
-  { icon: Package,       label: 'API Access',              tip: 'Connect Audity to your own tools and integrations via REST API',                         starter: false,     professional: false,      business: true },
+  { icon: ShoppingCart,  label: 'Sales & Invoicing',      tip: 'Create invoices, record payments, manage your sales pipeline',                                                          free: '10/month',   professional: true,              business: true },
+  { icon: Users,         label: 'Customer Management',   tip: 'Maintain a full customer database, view statement, track credits and balances',                                          free: 'Up to 20',   professional: true,              business: true },
+  { icon: Package,       label: 'Inventory Management',  tip: 'Manage products, track stock levels, set reorder alerts, handle batches and lots',                                       free: 'Up to 20',   professional: true,              business: true },
+  { icon: Wallet,        label: 'Expense Tracking',       tip: 'Record business expenses and income, group by category, track savings',                                                  free: '10/month',   professional: true,              business: true },
+  { icon: Calculator,    label: 'Tax Engine',             tip: 'Free: VAT only. Professional: VAT + Income Tax. Business: Full (WHT, Excise Duty, Filing Guide)',                       free: 'VAT only',   professional: 'VAT + Income Tax', business: 'Full' },
+  { icon: BarChart3,     label: 'Reports & Analytics',   tip: 'P&L, revenue trends, top products, top customers, expense breakdown and balance sheet',                                  free: 'Basic',      professional: 'Advanced',        business: 'Advanced' },
+  { icon: FileText,      label: 'Quotes & Estimates',    tip: 'Send price quotes to customers before converting them to invoices',                                                      free: false,        professional: true,              business: true },
+  { icon: Clock,         label: 'Recurring Invoices',    tip: 'Auto-generate invoices on a schedule for subscription or retainer clients',                                             free: false,        professional: true,              business: true },
+  { icon: Truck,         label: 'Purchase Orders',       tip: 'Raise purchase orders to suppliers and track delivery and receipt',                                                      free: false,        professional: true,              business: true },
+  { icon: Receipt,       label: 'Bills & Payables',      tip: 'Track bills owed to suppliers, schedule payments, manage folders',                                                       free: false,        professional: true,              business: true },
+  { icon: DollarSign,    label: 'Budget Planning',        tip: 'Set spending budgets per category, compare actual vs planned spend',                                                     free: false,        professional: true,              business: true },
+  { icon: Shield,        label: 'Audit Log',              tip: 'Full trail of every action taken in the system — who did what and when',                                                 free: false,        professional: true,              business: true },
+  { icon: Users,         label: 'Team & Permissions',    tip: 'Invite staff with custom access levels per module (e.g. view-only, write, full edit)',                                   free: false,        professional: true,              business: true },
+  { icon: Briefcase,     label: 'Payroll',                tip: 'Manage employees, run payroll, compute PAYE and pension deductions',                                                     free: false,        professional: false,             business: true },
+  { icon: Calculator,    label: 'Accounting Ledger',     tip: 'Full chart of accounts, journal entries, fixed assets, bank reconciliation',                                             free: false,        professional: false,             business: true },
+  { icon: Shield,        label: 'Owner Analytics',        tip: 'Private profit view using your personal cost price — only you can see this',                                             free: false,        professional: false,             business: true },
+  { icon: Package,       label: 'API Access',             tip: 'Connect Audity to your own tools and integrations via REST API',                                                         free: false,        professional: false,             business: true },
 ]
 
 const STATUS_COLORS: Record<string, string> = {
@@ -92,13 +93,21 @@ function fmtDate(dt: string | null) {
   return new Date(dt).toLocaleDateString('en-NG', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
+// Map annual slug → base plan slug for feature column lookup
+function basePlanSlug(slug: string): 'free' | 'professional' | 'business' {
+  if (slug === 'professional' || slug === 'professional-annual') return 'professional'
+  if (slug === 'business' || slug === 'business-annual') return 'business'
+  return 'free'
+}
+
 export default function BillingPage() {
   const [plans, setPlans] = useState<Plan[]>([])
   const [subscription, setSubscription] = useState<Subscription | null>(null)
   const [payments, setPayments] = useState<SubscriptionPayment[]>([])
   const [loading, setLoading] = useState(true)
-  const [subscribing, setSubscribing] = useState<string | null>(null) // plan id being processed
+  const [subscribing, setSubscribing] = useState<string | null>(null)
   const [canceling, setCanceling] = useState(false)
+  const [billingInterval, setBillingInterval] = useState<'monthly' | 'annual'>('monthly')
 
   const load = async () => {
     setLoading(true)
@@ -226,7 +235,7 @@ export default function BillingPage() {
             </div>
           </div>
           <div className="flex items-center gap-3 flex-wrap">
-            {currentPlanSlug !== 'business' && (
+            {currentPlanSlug !== 'business' && currentPlanSlug !== 'business-annual' && (
               <a
                 href="#plans"
                 className="btn-primary text-sm flex items-center gap-1.5"
@@ -235,7 +244,7 @@ export default function BillingPage() {
                 <Zap size={14} /> Upgrade Plan
               </a>
             )}
-            {subscription.status !== 'canceled' && currentPlanSlug !== 'free' && (
+            {subscription.status !== 'canceled' && currentPlanSlug !== 'free' && currentPlanSlug !== 'starter' && (
               <button
                 onClick={handleCancel}
                 disabled={canceling}
@@ -251,22 +260,53 @@ export default function BillingPage() {
 
       {/* Plan cards */}
       <div id="plans-section">
-        <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wide mb-4">Available Plans</h2>
+        <div className="flex flex-col sm:flex-row sm:items-center gap-4 mb-5">
+          <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Available Plans</h2>
+          {/* Monthly / Annual toggle */}
+          <div className="flex items-center gap-1 bg-surface-800 border border-surface-700 rounded-xl p-1">
+            <button
+              onClick={() => setBillingInterval('monthly')}
+              className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-colors ${billingInterval === 'monthly' ? 'bg-brand-500 text-white' : 'text-slate-400 hover:text-white'}`}
+            >
+              Monthly
+            </button>
+            <button
+              onClick={() => setBillingInterval('annual')}
+              className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold transition-colors ${billingInterval === 'annual' ? 'bg-brand-500 text-white' : 'text-slate-400 hover:text-white'}`}
+            >
+              Annual
+              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${billingInterval === 'annual' ? 'bg-white/20 text-white' : 'bg-green-500/20 text-green-400'}`}>
+                1 month free
+              </span>
+            </button>
+          </div>
+        </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {plans.map((plan) => {
+          {plans.filter((p) => {
+            const isFree = parseFloat(p.price) === 0
+            if (isFree) return billingInterval === 'monthly'  // free only in monthly view
+            return p.interval === billingInterval
+          }).map((plan) => {
             const Icon = PLAN_ICONS[plan.slug] ?? CreditCard
             const isCurrent = plan.slug === currentPlanSlug
             const isPopular = plan.slug === 'professional'
+            const isAnnual = plan.interval === 'annual'
             const price = parseFloat(plan.price)
+            const isFree = price === 0
 
             return (
               <div
                 key={plan.id}
                 className={`card relative flex flex-col gap-4 ${isPopular ? 'border-brand-500/50 ring-1 ring-brand-500/30' : ''} ${isCurrent ? 'border-green-500/40' : ''}`}
               >
-                {isPopular && (
+                {isPopular && !isAnnual && (
                   <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-brand-500 text-white text-xs font-semibold px-3 py-0.5 rounded-full">
                     Most Popular
+                  </span>
+                )}
+                {isAnnual && (
+                  <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-green-500 text-white text-xs font-semibold px-3 py-0.5 rounded-full flex items-center gap-1">
+                    <CheckCircle size={10} /> 1 Month Free
                   </span>
                 )}
                 {isCurrent && (
@@ -280,30 +320,54 @@ export default function BillingPage() {
                     <Icon size={18} className="text-brand-400" />
                   </div>
                   <div>
-                    <p className="text-white font-semibold">{plan.name}</p>
+                    <p className="text-white font-semibold">{plan.name.replace(' Annual', '')}</p>
                     <p className="text-xs text-slate-500">{plan.description}</p>
                   </div>
                 </div>
 
                 <div>
                   <span className="text-3xl font-bold text-white">
-                    {price === 0 ? 'Free' : `₦${price.toLocaleString()}`}
+                    {isFree ? 'Free' : `₦${price.toLocaleString()}`}
                   </span>
-                  {price > 0 && <span className="text-slate-400 text-sm">/{plan.interval}</span>}
+                  {!isFree && (
+                    <span className="text-slate-400 text-sm">/{isAnnual ? 'year' : 'month'}</span>
+                  )}
+                  {isAnnual && (
+                    <p className="text-xs text-green-400 mt-0.5">
+                      ₦{Math.round(price / 12).toLocaleString()}/mo · save ₦{Math.round(price / 11).toLocaleString()}
+                    </p>
+                  )}
                 </div>
 
-                {/* Limits row */}
+                {/* Limits tiles */}
                 <div className="grid grid-cols-3 gap-2 text-center">
-                  {[
-                    { val: plan.features.max_products === 999999 ? '∞' : plan.features.max_products, sub: 'products' },
-                    { val: plan.features.max_users === 999999 ? '∞' : plan.features.max_users, sub: 'users' },
-                    { val: plan.features.max_warehouses === 999999 ? '∞' : plan.features.max_warehouses, sub: 'locations' },
-                  ].map(({ val, sub }) => (
-                    <div key={sub} className="rounded-lg bg-surface-700/40 border border-surface-600 py-2">
-                      <p className="text-white font-bold text-lg leading-none">{val}</p>
-                      <p className="text-xs text-slate-500 mt-0.5">{sub}</p>
-                    </div>
-                  ))}
+                  {isFree ? (
+                    <>
+                      <div className="rounded-lg bg-surface-700/40 border border-surface-600 py-2">
+                        <p className="text-white font-bold text-base leading-none">10</p>
+                        <p className="text-xs text-slate-500 mt-0.5">inv/month</p>
+                      </div>
+                      <div className="rounded-lg bg-surface-700/40 border border-surface-600 py-2">
+                        <p className="text-white font-bold text-base leading-none">20</p>
+                        <p className="text-xs text-slate-500 mt-0.5">customers</p>
+                      </div>
+                      <div className="rounded-lg bg-surface-700/40 border border-surface-600 py-2">
+                        <p className="text-white font-bold text-base leading-none">20</p>
+                        <p className="text-xs text-slate-500 mt-0.5">products</p>
+                      </div>
+                    </>
+                  ) : (
+                    [
+                      { val: (plan.features as any).max_products >= 999999 ? '∞' : (plan.features as any).max_products, sub: 'products' },
+                      { val: (plan.features as any).max_users >= 999999 ? '∞' : (plan.features as any).max_users, sub: 'users' },
+                      { val: (plan.features as any).max_warehouses >= 999999 ? '∞' : (plan.features as any).max_warehouses, sub: 'locations' },
+                    ].map(({ val, sub }) => (
+                      <div key={sub} className="rounded-lg bg-surface-700/40 border border-surface-600 py-2">
+                        <p className="text-white font-bold text-lg leading-none">{val}</p>
+                        <p className="text-xs text-slate-500 mt-0.5">{sub}</p>
+                      </div>
+                    ))
+                  )}
                 </div>
 
                 {/* Module list */}
@@ -315,12 +379,12 @@ export default function BillingPage() {
 
                 <button
                   onClick={() => handleSubscribe(plan)}
-                  disabled={isCurrent || subscribing === plan.id || price === 0}
+                  disabled={isCurrent || subscribing === plan.id || isFree}
                   className={`w-full flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-semibold transition-colors ${
                     isCurrent
                       ? 'bg-green-500/10 text-green-400 cursor-default'
-                      : price === 0
-                      ? 'bg-slate-700/40 text-slate-500 cursor-default'
+                      : isFree
+                      ? 'bg-surface-700/40 text-slate-400 cursor-default'
                       : 'btn-primary'
                   }`}
                 >
@@ -328,10 +392,10 @@ export default function BillingPage() {
                     <Loader2 size={14} className="animate-spin" />
                   ) : isCurrent ? (
                     <><CheckCircle size={14} /> Current plan</>
-                  ) : price === 0 ? (
-                    'Free plan'
+                  ) : isFree ? (
+                    'Always free'
                   ) : (
-                    <><ExternalLink size={14} /> Subscribe — {fmt(plan.price)}/{plan.interval}</>
+                    <><ExternalLink size={14} /> Subscribe — {fmt(plan.price)}/{isAnnual ? 'yr' : 'mo'}</>
                   )}
                 </button>
               </div>
@@ -393,8 +457,7 @@ export default function BillingPage() {
 
 function PlanModuleList({ slug }: { slug: string }) {
   const [expanded, setExpanded] = useState(false)
-  const key = slug as keyof Pick<ModuleRow, 'starter' | 'professional' | 'business'>
-  const validKey = ['starter', 'professional', 'business'].includes(key) ? key : 'starter'
+  const validKey = basePlanSlug(slug)
 
   const SHOW_INITIAL = 8
   const visible = expanded ? MODULE_ROWS : MODULE_ROWS.slice(0, SHOW_INITIAL)
@@ -402,7 +465,7 @@ function PlanModuleList({ slug }: { slug: string }) {
   return (
     <div className="space-y-1 flex-1">
       {visible.map((row) => {
-        const val = row[validKey as 'starter' | 'professional' | 'business']
+        const val = row[validKey as 'free' | 'professional' | 'business']
         const included = val !== false
         const badge = typeof val === 'string' ? val : null
         const Icon = row.icon

@@ -256,21 +256,20 @@ export default function OnboardingPage() {
 
   const handleSelectAndPay = async (plan: Plan) => {
     setSelectedPlan(plan)
-    if (plan.is_free) {
-      await markOnboardingComplete()
-      toast.success(`You're on the ${plan.name} plan!`)
-      navigate('/dashboard')
-      return
-    }
     setInitiatingPay(true)
     try {
+      // startTrial handles both free (activates ACTIVE, no expiry) and paid (14-day trial)
       await subscriptionApi.startTrial(plan.id)
       await markOnboardingComplete()
-      toast.success(`${plan.name} trial started! You have 14 days free.`)
+      if (plan.is_free) {
+        toast.success('Welcome to Audity Free! No card needed.')
+      } else {
+        toast.success(`${plan.name} trial started! You have 14 days free.`)
+      }
       navigate('/dashboard')
     } catch (err: any) {
-      const msg = err?.response?.data?.error?.message ?? err?.response?.data?.error ?? 'Could not start trial.'
-      toast.error(typeof msg === 'string' ? msg : 'Could not start trial.')
+      const msg = err?.response?.data?.error?.message ?? err?.response?.data?.error ?? 'Could not start. Please try again.'
+      toast.error(typeof msg === 'string' ? msg : 'Could not start. Please try again.')
     } finally {
       setInitiatingPay(false)
     }

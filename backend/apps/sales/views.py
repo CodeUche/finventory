@@ -89,6 +89,21 @@ class InvoiceViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
 
     def create(self, request, *args, **kwargs):
         """Create a confirmed sale invoice."""
+        # ── Plan limit check ─────────────────────────────────────────────────
+        org = self._get_organisation()
+        from django.utils import timezone as _tz
+        from apps.subscriptions.services import SubscriptionService
+        _now = _tz.now()
+        monthly_count = Invoice.objects.filter(
+            organisation=org,
+            created_at__year=_now.year,
+            created_at__month=_now.month,
+        ).count()
+        _limit_err = SubscriptionService.get_write_limit_error(org, "max_invoices_per_month", monthly_count)
+        if _limit_err:
+            return Response({"error": _limit_err, "upgrade_required": True}, status=402)
+        # ─────────────────────────────────────────────────────────────────────
+
         serializer = CreateSaleSerializer(data=request.data)
         if not serializer.is_valid():
             # Flatten DRF validation errors into a single readable string

@@ -1,6 +1,7 @@
 import django_filters
 from datetime import date, datetime
 from decimal import Decimal
+from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -40,6 +41,15 @@ class CustomerViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
     filterset_class = CustomerFilter
     search_fields = ["name", "code", "email", "phone"]
     ordering_fields = ["name", "outstanding_balance", "created_at"]
+
+    def create(self, request, *args, **kwargs):
+        org = self._get_organisation()
+        from apps.subscriptions.services import SubscriptionService
+        count = Customer.objects.filter(organisation=org).count()
+        err = SubscriptionService.get_write_limit_error(org, "max_customers", count)
+        if err:
+            return Response({"error": err, "upgrade_required": True}, status=402)
+        return super().create(request, *args, **kwargs)
 
     @action(detail=True, methods=["get"], url_path="statement")
     def statement(self, request, pk=None):

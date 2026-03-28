@@ -99,6 +99,65 @@ class SubscriptionService:
         return sub
 
     @staticmethod
+    def activate_free_plan(organisation) -> "Subscription":
+        """
+        Set the organisation's subscription to the Free plan with ACTIVE status
+        and no expiry date. Safe to call multiple times.
+        """
+        try:
+            plan = Plan.objects.get(slug="free", is_active=True)
+        except Plan.DoesNotExist:
+            raise ValueError("Free plan not found. Run migrations first.")
+
+        sub = organisation.subscription
+        if sub:
+            sub.plan = plan
+            sub.status = Subscription.Status.ACTIVE
+            sub.trial_end = None
+            sub.current_period_start = timezone.now()
+            sub.current_period_end = None  # Free plan never expires
+            sub.save(update_fields=[
+                "plan", "status", "trial_end",
+                "current_period_start", "current_period_end", "updated_at",
+            ])
+        else:
+            sub = Subscription.objects.create(
+                plan=plan,
+                status=Subscription.Status.ACTIVE,
+                current_period_start=timezone.now(),
+                current_period_end=None,
+            )
+            organisation.subscription = sub
+            organisation.save(update_fields=["subscription"])
+
+        if not organisation.onboarding_completed:
+            organisation.onboarding_completed = True
+            organisation.save(update_fields=["onboarding_completed"])
+
+        logger.info("Free plan activated for org %s", organisation.id)
+        return sub
+
+    @staticmethod
+    def get_write_limit_error(organisation, limit_key: str, current_count: int) -> str | None:
+        """
+        Returns an upgrade error message if the org has hit a plan write limit.
+        Returns None if within limits or the plan has no limit for this key.
+        """
+        sub = getattr(organisation, "subscription", None)
+        if sub is None:
+            return None
+        limit = sub.plan.features.get(limit_key)
+        if limit is None or int(limit) >= 999999:
+            return None
+        if current_count >= int(limit):
+            friendly = limit_key.replace("_per_month", "/month").replace("max_", "").replace("_", " ")
+            return (
+                f"You've reached your plan limit of {limit} {friendly}. "
+                f"Upgrade your plan to add more."
+            )
+        return None
+
+    @staticmethod
     def check_feature(organisation, feature_key: str, threshold=None) -> bool:
         """
         Returns True if the organisation's active subscription

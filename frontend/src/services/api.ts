@@ -221,6 +221,18 @@ api.interceptors.response.use(
       }
     }
 
+    // 402 — plan limit reached: show upgrade prompt
+    if (error.response?.status === 402) {
+      const errMsg = (error.response.data as any)?.error
+      const msg = typeof errMsg === 'string' ? errMsg : 'Plan limit reached.'
+      toast.error(`${msg} Upgrade your plan to continue.`, {
+        id: 'plan-limit',
+        duration: 6000,
+        icon: '⚡',
+      })
+      return Promise.reject(error)
+    }
+
     // Show toast for API errors (deduplicate using toast ID so poll loops don't spam)
     const errData = (error.response?.data as any)?.error
     if (errData?.message && error.response?.status !== 401) {
