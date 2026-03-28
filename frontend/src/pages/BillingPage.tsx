@@ -1,9 +1,40 @@
-import { useEffect, useState } from 'react'
-import { CheckCircle, X as XIcon, Loader2, CreditCard, Zap, Building2, Star, AlertCircle, ExternalLink, RefreshCw, Package, ShoppingCart, FileText, Receipt, Users, Truck, BarChart3, Calculator, Briefcase, Wallet, Clock, DollarSign, Shield, ChevronDown, ChevronUp } from 'lucide-react'
+import { useEffect, useState, useCallback } from 'react'
+import { CheckCircle, X as XIcon, Loader2, CreditCard, Zap, Building2, Star, AlertCircle, RefreshCw, Package, ShoppingCart, FileText, Receipt, Users, Truck, BarChart3, Calculator, Briefcase, Wallet, Clock, DollarSign, Shield, ChevronDown, ChevronUp } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { openExternal } from '@/lib/openExternal'
 import { subscriptionApi } from '@/services/api'
 import type { Plan, Subscription, SubscriptionPayment } from '@/types'
+
+// Paystack Inline JS type declaration
+declare global {
+  interface Window {
+    PaystackPop: {
+      setup(opts: {
+        key: string
+        email: string
+        amount: number
+        ref: string
+        currency?: string
+        onClose: () => void
+        callback: (response: { reference: string }) => void
+      }): { openIframe(): void }
+    }
+  }
+}
+
+/** Dynamically load the Paystack Inline JS once per session. */
+function loadPaystackScript(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (window.PaystackPop) { resolve(); return }
+    const existing = document.getElementById('paystack-inline-js')
+    if (existing) { existing.addEventListener('load', () => resolve()); return }
+    const script = document.createElement('script')
+    script.id = 'paystack-inline-js'
+    script.src = 'https://js.paystack.co/v1/inline.js'
+    script.onload = () => resolve()
+    script.onerror = () => reject(new Error('Failed to load Paystack script'))
+    document.head.appendChild(script)
+  })
+}
 
 const PLAN_ICONS: Record<string, React.ElementType> = {
   starter: Zap,
@@ -67,8 +98,6 @@ export default function BillingPage() {
   const [payments, setPayments] = useState<SubscriptionPayment[]>([])
   const [loading, setLoading] = useState(true)
   const [subscribing, setSubscribing] = useState<string | null>(null) // plan id being processed
-  const [verifyRef, setVerifyRef] = useState('')
-  const [verifying, setVerifying] = useState(false)
   const [canceling, setCanceling] = useState(false)
 
   const load = async () => {
@@ -89,39 +118,57 @@ export default function BillingPage() {
 
   useEffect(() => { load() }, [])
 
+  const handlePaymentSuccess = useCallback(async (reference: string) => {
+    toast.loading('Confirming payment…', { id: 'pay-verify' })
+    try {
+      const res = await subscriptionApi.verifyPayment(reference)
+      setSubscription(res.data)
+      toast.success('Payment confirmed! Your subscription is now active.', { id: 'pay-verify' })
+      load()
+    } catch (err: any) {
+      const msg = err?.response?.data?.error ?? 'Payment verification failed'
+      toast.error(typeof msg === 'string' ? msg : msg?.message ?? 'Verification failed', { id: 'pay-verify' })
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleSubscribe = async (plan: Plan) => {
     if (plan.price === '0.00' || parseFloat(plan.price) === 0) return
     setSubscribing(plan.id)
     try {
+      // Step 1: initialise transaction on backend (creates pending PaymentHistory record)
       const res = await subscriptionApi.initiatePayment(plan.id)
-      const { authorization_url, reference } = res.data
-      // Open Paystack checkout in the system browser
-      await openExternal(authorization_url)
-      // Store reference so user can paste it back to verify
-      setVerifyRef(reference)
-      toast.success('Complete payment in the browser window that just opened, then click "Verify Payment" below.')
+      const { access_code, reference, public_key, amount_kobo, email } = res.data
+
+      if (!public_key) {
+        toast.error('Paystack public key is not configured. Contact support.')
+        return
+      }
+
+      // Step 2: load Paystack Inline JS (cached after first load)
+      await loadPaystackScript()
+
+      // Step 3: open the in-app Paystack payment modal
+      const handler = window.PaystackPop.setup({
+        key: public_key,
+        email,
+        amount: amount_kobo,
+        ref: reference,
+        // access_code pre-populates the checkout — faster and already tied to this transaction
+        ...(access_code ? { accessCode: access_code } : {}),
+        currency: 'NGN',
+        onClose: () => {
+          toast('Payment cancelled.', { icon: '🚫' })
+        },
+        callback: (response) => {
+          handlePaymentSuccess(response.reference)
+        },
+      })
+      handler.openIframe()
     } catch (err: any) {
-      const msg = err?.response?.data?.error ?? 'Failed to initiate payment'
+      const msg = err?.response?.data?.error ?? err?.message ?? 'Failed to initiate payment'
       toast.error(typeof msg === 'string' ? msg : msg?.message ?? 'Failed to initiate payment')
     } finally {
       setSubscribing(null)
-    }
-  }
-
-  const handleVerify = async () => {
-    if (!verifyRef.trim()) { toast.error('Enter the payment reference'); return }
-    setVerifying(true)
-    try {
-      const res = await subscriptionApi.verifyPayment(verifyRef.trim())
-      setSubscription(res.data)
-      setVerifyRef('')
-      toast.success('Payment verified! Your subscription is now active.')
-      load()
-    } catch (err: any) {
-      const msg = err?.response?.data?.error ?? 'Verification failed'
-      toast.error(typeof msg === 'string' ? msg : msg?.message ?? 'Verification failed')
-    } finally {
-      setVerifying(false)
     }
   }
 
@@ -198,44 +245,6 @@ export default function BillingPage() {
                 Cancel subscription
               </button>
             )}
-          </div>
-        </div>
-      )}
-
-      {/* Pending payment verification */}
-      {verifyRef && (
-        <div className="card border border-amber-500/30 bg-amber-500/5">
-          <div className="flex items-start gap-3">
-            <AlertCircle size={18} className="text-amber-400 mt-0.5 shrink-0" />
-            <div className="flex-1">
-              <p className="text-white text-sm font-medium">Complete your payment</p>
-              <p className="text-slate-400 text-xs mt-0.5 mb-3">
-                After paying in the browser, click "Verify Payment" to activate your subscription.
-              </p>
-              <div className="flex gap-2 flex-wrap">
-                <input
-                  type="text"
-                  value={verifyRef}
-                  onChange={(e) => setVerifyRef(e.target.value)}
-                  placeholder="Payment reference (SUB-...)"
-                  className="input text-sm flex-1 min-w-48"
-                />
-                <button
-                  onClick={handleVerify}
-                  disabled={verifying}
-                  className="btn-primary flex items-center gap-1.5 text-sm"
-                >
-                  {verifying ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle size={14} />}
-                  Verify Payment
-                </button>
-                <button
-                  onClick={() => setVerifyRef('')}
-                  className="btn-ghost text-sm text-slate-400"
-                >
-                  Dismiss
-                </button>
-              </div>
-            </div>
           </div>
         </div>
       )}
@@ -368,23 +377,16 @@ export default function BillingPage() {
         </div>
       )}
 
-      {/* Manual verify section (if user lost the reference) */}
-      {!verifyRef && (
-        <div className="card border-dashed">
-          <div className="flex items-center gap-3">
-            <RefreshCw size={16} className="text-slate-500" />
-            <div className="flex-1">
-              <p className="text-sm text-slate-400">Already paid but plan not activated?</p>
-            </div>
-            <button
-              onClick={() => setVerifyRef(' ')}
-              className="btn-ghost text-xs text-brand-400"
-            >
-              Verify payment
-            </button>
-          </div>
+      {/* Fallback: paid but not activated (e.g. closed popup before callback fired) */}
+      <div className="card border-dashed">
+        <div className="flex items-center gap-3">
+          <RefreshCw size={16} className="text-slate-500" />
+          <p className="text-sm text-slate-400 flex-1">Paid but plan not activated?</p>
+          <button onClick={load} className="btn-ghost text-xs text-brand-400">
+            <RefreshCw size={13} /> Refresh status
+          </button>
         </div>
-      )}
+      </div>
     </div>
   )
 }

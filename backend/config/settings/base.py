@@ -29,6 +29,7 @@ ALLOWED_HOSTS: list[str] = config("ALLOWED_HOSTS", default="localhost,127.0.0.1"
 # Paystack secret key — used for NUBAN account name resolution on the employee form.
 # Get yours at https://dashboard.paystack.com/#/settings/developers
 PAYSTACK_SECRET_KEY = config("PAYSTACK_SECRET_KEY", default="")
+PAYSTACK_PUBLIC_KEY = config("PAYSTACK_PUBLIC_KEY", default="")
 
 # Frontend base URL (kept for reference; verify-email now uses backend URL directly)
 FRONTEND_URL = config("FRONTEND_URL", default="http://localhost:3000")

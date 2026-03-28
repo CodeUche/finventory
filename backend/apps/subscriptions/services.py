@@ -220,10 +220,14 @@ class PaystackSubscriptionService:
             "Paystack transaction initialized for org %s, plan %s, ref %s",
             organisation.id, plan.slug, reference,
         )
+        public_key = getattr(settings, "PAYSTACK_PUBLIC_KEY", "")
         return {
             "authorization_url": data["data"]["authorization_url"],
             "reference": reference,
             "access_code": data["data"].get("access_code", ""),
+            "public_key": public_key,
+            "amount_kobo": amount_kobo,
+            "email": user_email,
         }
 
     @staticmethod

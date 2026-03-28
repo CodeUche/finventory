@@ -22,7 +22,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' http://localhost:8000 http://127.0.0.1:8000 https:; object-src 'none'; frame-src blob: 'self'; base-uri 'self'; form-action 'self';"
+      "csp": "default-src 'self'; script-src 'self' https://js.paystack.co; style-src 'self'; style-src-elem 'self' https://js.paystack.co; style-src-attr 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data: https://js.paystack.co; connect-src 'self' http://localhost:8000 http://127.0.0.1:8000 https:; object-src 'none'; frame-src blob: 'self' https://checkout.paystack.com; base-uri 'self'; form-action 'self';"
     }
   },
   "bundle": {
