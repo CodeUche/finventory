@@ -313,6 +313,61 @@ class ReportService:
             'invoices': sorted(invoice_list, key=lambda x: x['days_overdue'], reverse=True),
         }
 
+    # ─── AP Aging ─────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def ap_aging(organisation, as_of=None) -> dict:
+        """
+        Bucket outstanding bills by days overdue.
+
+        Mirrors AR Aging but for payables (bills).
+        Buckets: current (0), 1-30, 31-60, 61-90, 90+
+        """
+        from datetime import date as _date
+        from apps.bills.models import Bill
+
+        as_of = as_of or _date.today()
+        bills = Bill.objects.filter(
+            organisation=organisation,
+            status__in=['approved', 'received', 'partially_paid', 'overdue'],
+            amount_due__gt=0,
+        ).select_related('supplier')
+
+        buckets = {'current': Decimal('0'), '1_30': Decimal('0'), '31_60': Decimal('0'), '61_90': Decimal('0'), 'over_90': Decimal('0')}
+        bill_list = []
+
+        for bill in bills:
+            due_date = bill.due_date or bill.issue_date
+            days = (as_of - due_date).days if due_date else 0
+            amount_due = Decimal(str(bill.amount_due or 0))
+
+            if days <= 0:
+                buckets['current'] += amount_due
+            elif days <= 30:
+                buckets['1_30'] += amount_due
+            elif days <= 60:
+                buckets['31_60'] += amount_due
+            elif days <= 90:
+                buckets['61_90'] += amount_due
+            else:
+                buckets['over_90'] += amount_due
+
+            bill_list.append({
+                'id': str(bill.id),
+                'bill_number': bill.bill_number,
+                'supplier_name': bill.supplier.name if bill.supplier else 'Walk-in',
+                'amount_due': amount_due,
+                'due_date': due_date,
+                'days_overdue': max(0, days),
+            })
+
+        return {
+            'as_of': as_of,
+            'buckets': buckets,
+            'total_outstanding': sum(buckets.values()),
+            'bills': sorted(bill_list, key=lambda x: x['days_overdue'], reverse=True),
+        }
+
     # ─── VAT Summary ──────────────────────────────────────────────────────────
 
     @staticmethod

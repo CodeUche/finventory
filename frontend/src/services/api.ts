@@ -423,6 +423,7 @@ export const reportApi = {
   cashFlow: (params: object) => api.get('/reports/cash-flow/', { params }),
   expenses: (params: object) => api.get('/reports/expenses/', { params }),
   arAging: (params?: object) => api.get('/reports/ar-aging/', { params }),
+  apAging: (params?: object) => api.get('/reports/ap-aging/', { params }),
   vatSummary: (params: object) => api.get('/reports/vat-summary/', { params }),
 }
 

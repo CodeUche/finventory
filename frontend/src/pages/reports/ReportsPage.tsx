@@ -14,7 +14,7 @@ import {
   ResponsiveContainer,
   Legend,
 } from 'recharts'
-import { BarChart2, RefreshCw, TrendingDown, TrendingUp, Clock, Receipt, Download } from 'lucide-react'
+import { BarChart2, RefreshCw, TrendingDown, TrendingUp, Clock, Receipt, Download, ArrowDownCircle, ArrowUpCircle, Landmark } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { reportApi } from '@/services/api'
 import { formatCurrency, formatNumber, formatDate, getCurrencySymbol } from '@/lib/utils'
@@ -56,6 +56,8 @@ export default function ReportsPage() {
   const [topCustomers, setTopCustomers] = useState<TopCustomer[]>([])
   const [expenseBreakdown, setExpenseBreakdown] = useState<ExpenseBreakdown[]>([])
   const [arAging, setArAging] = useState<ARAgingReport | null>(null)
+  const [apAging, setApAging] = useState<ARAgingReport | null>(null)
+  const [cashFlow, setCashFlow] = useState<{ cash_inflows: string; cash_outflows: string; net_cash_flow: string } | null>(null)
   const [vatSummary, setVatSummary] = useState<VATSummary | null>(null)
 
   const downloadVATReport = async () => {
@@ -193,13 +195,15 @@ export default function ReportsPage() {
     const range = buildDateRange()
     const granularity = days <= 30 ? 'daily' : days <= 90 ? 'weekly' : 'monthly'
     try {
-      const [pnlRes, salesRes, prodRes, custRes, expRes, arRes, vatRes] = await Promise.allSettled([
+      const [pnlRes, salesRes, prodRes, custRes, expRes, arRes, apRes, cfRes, vatRes] = await Promise.allSettled([
         reportApi.pnl(range),
         reportApi.sales({ ...range, granularity }),
         reportApi.topProducts({ ...range, limit: 6 }),
         reportApi.topCustomers({ ...range, limit: 5 }),
         reportApi.expenses(range),
         reportApi.arAging(),
+        reportApi.apAging(),
+        reportApi.cashFlow(range),
         reportApi.vatSummary(range),
       ])
 
@@ -209,6 +213,8 @@ export default function ReportsPage() {
       if (custRes.status === 'fulfilled') setTopCustomers(custRes.value.data.results ?? custRes.value.data)
       if (expRes.status === 'fulfilled') setExpenseBreakdown(expRes.value.data.results ?? expRes.value.data)
       if (arRes.status === 'fulfilled') setArAging(arRes.value.data)
+      if (apRes.status === 'fulfilled') setApAging(apRes.value.data)
+      if (cfRes.status === 'fulfilled') setCashFlow(cfRes.value.data)
       if (vatRes.status === 'fulfilled') setVatSummary(vatRes.value.data)
     } catch { toast.error('Failed to load reports') }
     finally { setLoading(false) }
@@ -513,6 +519,99 @@ export default function ReportsPage() {
           ) : (
             <div className="h-40 flex items-center justify-center text-slate-500 text-sm">
               {loading ? 'Loading…' : 'No VAT data for this period'}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Cash Flow + AP Aging row */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Cash Flow Statement */}
+        <div className="card p-5">
+          <div className="flex items-center gap-2 mb-4">
+            <Landmark size={18} className="text-emerald-400" />
+            <h2 className="text-base font-semibold text-white">Cash Flow Statement</h2>
+          </div>
+          {cashFlow ? (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between p-3 rounded-xl bg-green-500/8 border border-green-500/20">
+                <div className="flex items-center gap-2">
+                  <ArrowDownCircle size={16} className="text-green-400" />
+                  <span className="text-sm text-slate-300">Cash Inflows</span>
+                </div>
+                <span className="font-bold text-green-400">{formatCurrency(cashFlow.cash_inflows)}</span>
+              </div>
+              <div className="flex items-center justify-between p-3 rounded-xl bg-red-500/8 border border-red-500/20">
+                <div className="flex items-center gap-2">
+                  <ArrowUpCircle size={16} className="text-red-400" />
+                  <span className="text-sm text-slate-300">Cash Outflows</span>
+                </div>
+                <span className="font-bold text-red-400">({formatCurrency(cashFlow.cash_outflows)})</span>
+              </div>
+              <div className={`flex items-center justify-between p-4 rounded-xl border ${parseFloat(cashFlow.net_cash_flow) >= 0 ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
+                <span className="text-sm font-semibold text-white">Net Cash Flow</span>
+                <span className={`text-lg font-bold ${parseFloat(cashFlow.net_cash_flow) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {parseFloat(cashFlow.net_cash_flow) >= 0 ? '' : '-'}{formatCurrency(Math.abs(parseFloat(cashFlow.net_cash_flow)))}
+                </span>
+              </div>
+              <p className="text-xs text-slate-600 mt-1">Inflows: cash/bank/POS sales + misc income · Outflows: all expenses</p>
+            </div>
+          ) : (
+            <div className="h-40 flex items-center justify-center text-slate-500 text-sm">
+              {loading ? 'Loading…' : 'No cash flow data for this period'}
+            </div>
+          )}
+        </div>
+
+        {/* AP Aging */}
+        <div className="card p-5">
+          <div className="flex items-center gap-2 mb-4">
+            <Clock size={18} className="text-red-400" />
+            <h2 className="text-base font-semibold text-white">Accounts Payable Aging</h2>
+          </div>
+          {apAging ? (
+            <div className="space-y-3">
+              <p className="text-xs text-slate-500">As of {formatDate(apAging.as_of)} · Total Payable: <span className="text-white font-semibold">{formatCurrency(apAging.total_outstanding)}</span></p>
+              {([
+                { label: 'Current (not due)', key: 'current' as const, color: 'text-green-400 bg-green-500/10' },
+                { label: '1–30 days overdue', key: '1_30' as const, color: 'text-yellow-400 bg-yellow-500/10' },
+                { label: '31–60 days overdue', key: '31_60' as const, color: 'text-orange-400 bg-orange-500/10' },
+                { label: '61–90 days overdue', key: '61_90' as const, color: 'text-red-400 bg-red-500/10' },
+                { label: '90+ days overdue', key: 'over_90' as const, color: 'text-red-600 bg-red-600/10' },
+              ] as const).map(({ label, key, color }) => {
+                const amount = apAging.buckets[key] ?? 0
+                const total = parseFloat(apAging.total_outstanding) || 1
+                const pct = Math.round((Number(amount) / total) * 100)
+                return (
+                  <div key={key}>
+                    <div className="flex justify-between text-xs mb-1">
+                      <span className="text-slate-400">{label}</span>
+                      <span className={`font-semibold ${color.split(' ')[0]}`}>{formatCurrency(String(amount))}</span>
+                    </div>
+                    <div className="h-1.5 bg-surface-700 rounded-full">
+                      <div className={`h-full rounded-full ${color.split(' ')[1]}`} style={{ width: `${pct}%` }} />
+                    </div>
+                  </div>
+                )
+              })}
+              {apAging.invoices.slice(0, 4).length > 0 && (
+                <div className="mt-3 pt-3 border-t border-surface-700">
+                  <p className="text-xs text-slate-500 mb-2">Most Overdue Payables</p>
+                  {apAging.invoices.slice(0, 4).map((item) => (
+                    <div key={item.id} className="flex items-center justify-between py-1.5">
+                      <div>
+                        <p className="text-xs font-medium text-white">{item.customer_name ?? 'Supplier'}</p>
+                        <p className="text-xs text-slate-500">{item.invoice_number} · {item.days_overdue}d overdue</p>
+                      </div>
+                      <span className="text-xs font-semibold text-red-400">{formatCurrency(item.amount_due)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="h-40 flex items-center justify-center text-slate-500 text-sm">
+              {loading ? 'Loading…' : 'No outstanding payables'}
             </div>
           )}
         </div>

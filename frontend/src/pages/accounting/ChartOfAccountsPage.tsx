@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Plus, X, BookOpen, Edit2, Trash2, Loader2 } from 'lucide-react'
+import { Plus, X, BookOpen, Edit2, Trash2, Loader2, Download } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { accountingApi } from '@/services/api'
 import { formatCurrency } from '@/lib/utils'
@@ -263,37 +263,89 @@ export default function ChartOfAccountsPage() {
       )}
 
       {/* Trial Balance Modal */}
-      {showTrialBalance && trialBalance && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setShowTrialBalance(false)} />
-          <div className="relative card w-full max-w-2xl p-6 space-y-4 overflow-y-auto max-h-[85vh]">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-bold text-white">Trial Balance</h2>
-              <button onClick={() => setShowTrialBalance(false)} className="text-slate-400 hover:text-white"><X size={20} /></button>
-            </div>
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-surface-700">
-                  <th className="py-2.5 text-left text-xs font-semibold text-slate-400 uppercase">Account</th>
-                  <th className="py-2.5 text-right text-xs font-semibold text-slate-400 uppercase">Debit</th>
-                  <th className="py-2.5 text-right text-xs font-semibold text-slate-400 uppercase">Credit</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-surface-700">
-                {Array.isArray((trialBalance as { accounts?: unknown[] }).accounts) ? (trialBalance as { accounts: { name: string; debit: string; credit: string }[] }).accounts.map((row, i) => (
-                  <tr key={i} className="table-row">
-                    <td className="py-2.5 text-slate-300">{row.name}</td>
-                    <td className="py-2.5 text-right font-mono text-white">{parseFloat(row.debit) > 0 ? formatCurrency(row.debit) : '—'}</td>
-                    <td className="py-2.5 text-right font-mono text-white">{parseFloat(row.credit) > 0 ? formatCurrency(row.credit) : '—'}</td>
+      {showTrialBalance && trialBalance && (() => {
+        // Backend returns: [{code, name, type, balance}] — plain array
+        const rawRows = Array.isArray(trialBalance)
+          ? (trialBalance as { code: string; name: string; type: string; balance: number }[])
+          : []
+        // Split balance into debit/credit by normal balance convention
+        const DEBIT_TYPES = ['asset', 'expense', 'cogs']
+        const rows = rawRows.map((r) => {
+          const bal = parseFloat(String(r.balance)) || 0
+          const isDebitNormal = DEBIT_TYPES.includes(r.type)
+          const debit = isDebitNormal ? Math.max(0, bal) : Math.max(0, -bal)
+          const credit = isDebitNormal ? Math.max(0, -bal) : Math.max(0, bal)
+          return { ...r, debit, credit }
+        })
+        const totalDebit = rows.reduce((s, r) => s + r.debit, 0)
+        const totalCredit = rows.reduce((s, r) => s + r.credit, 0)
+        const balanced = Math.abs(totalDebit - totalCredit) < 0.01
+
+        const downloadCSV = () => {
+          const header = 'Code,Account,Type,Debit,Credit\n'
+          const body = rows.map((r) => `${r.code},"${r.name}",${r.type},${r.debit.toFixed(2)},${r.credit.toFixed(2)}`).join('\n')
+          const totals = `\n,TOTAL,,${totalDebit.toFixed(2)},${totalCredit.toFixed(2)}`
+          const blob = new Blob([header + body + totals], { type: 'text/csv' })
+          const a = document.createElement('a'); a.href = URL.createObjectURL(blob)
+          a.download = `trial-balance-${new Date().toISOString().split('T')[0]}.csv`; a.click()
+        }
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setShowTrialBalance(false)} />
+            <div className="relative card w-full max-w-2xl p-6 space-y-4 overflow-y-auto max-h-[85vh]">
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-bold text-white">Trial Balance</h2>
+                <div className="flex items-center gap-2">
+                  {rows.length > 0 && (
+                    <button onClick={downloadCSV} className="flex items-center gap-1.5 text-xs text-brand-400 hover:text-brand-300 transition-colors">
+                      <Download size={13} /> Export CSV
+                    </button>
+                  )}
+                  <button onClick={() => setShowTrialBalance(false)} className="text-slate-400 hover:text-white"><X size={20} /></button>
+                </div>
+              </div>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-surface-700">
+                    <th className="py-2.5 text-left text-xs font-semibold text-slate-400 uppercase w-16">Code</th>
+                    <th className="py-2.5 text-left text-xs font-semibold text-slate-400 uppercase">Account</th>
+                    <th className="py-2.5 text-right text-xs font-semibold text-slate-400 uppercase">Debit</th>
+                    <th className="py-2.5 text-right text-xs font-semibold text-slate-400 uppercase">Credit</th>
                   </tr>
-                )) : (
-                  <tr><td colSpan={3} className="py-4 text-slate-500 text-center">No data</td></tr>
+                </thead>
+                <tbody className="divide-y divide-surface-700">
+                  {rows.length > 0 ? rows.map((row, i) => (
+                    <tr key={i} className="table-row">
+                      <td className="py-2.5 font-mono text-xs text-slate-500">{row.code}</td>
+                      <td className="py-2.5 text-slate-300">{row.name}</td>
+                      <td className="py-2.5 text-right font-mono text-white">{row.debit > 0 ? formatCurrency(row.debit) : '—'}</td>
+                      <td className="py-2.5 text-right font-mono text-white">{row.credit > 0 ? formatCurrency(row.credit) : '—'}</td>
+                    </tr>
+                  )) : (
+                    <tr><td colSpan={4} className="py-4 text-slate-500 text-center">No posted journal entries yet</td></tr>
+                  )}
+                </tbody>
+                {rows.length > 0 && (
+                  <tfoot>
+                    <tr className="border-t-2 border-surface-600 bg-surface-800/40">
+                      <td colSpan={2} className="py-3 px-1 text-xs font-bold text-slate-300 uppercase tracking-wider">
+                        TOTAL
+                        {balanced
+                          ? <span className="ml-2 text-green-400 font-semibold normal-case tracking-normal">✓ Balanced</span>
+                          : <span className="ml-2 text-red-400 font-semibold normal-case tracking-normal">⚠ Not balanced</span>
+                        }
+                      </td>
+                      <td className="py-3 text-right font-bold font-mono text-white">{formatCurrency(totalDebit)}</td>
+                      <td className="py-3 text-right font-bold font-mono text-white">{formatCurrency(totalCredit)}</td>
+                    </tr>
+                  </tfoot>
                 )}
-              </tbody>
-            </table>
+              </table>
+            </div>
           </div>
-        </div>
-      )}
+        )
+      })()}
     </div>
   )
 }

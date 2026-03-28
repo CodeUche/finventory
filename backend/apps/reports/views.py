@@ -120,6 +120,20 @@ class ARAgingView(BaseDateRangeView):
         return Response(data)
 
 
+class APAgingView(BaseDateRangeView):
+    """GET /api/v1/reports/ap-aging/ — Accounts payable aging buckets."""
+
+    def get(self, request):
+        from datetime import date, datetime
+        as_of_str = request.query_params.get('as_of')
+        try:
+            as_of = datetime.strptime(as_of_str, '%Y-%m-%d').date() if as_of_str else date.today()
+        except ValueError:
+            as_of = date.today()
+        data = ReportService.ap_aging(request.organisation, as_of)
+        return Response(data)
+
+
 class VATSummaryView(BaseDateRangeView):
     """GET /api/v1/reports/vat-summary/ — VAT output vs input summary."""
 
