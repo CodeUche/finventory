@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
-import { CheckCircle, X as XIcon, Loader2, CreditCard, Zap, Building2, Star, AlertCircle, RefreshCw, Package, ShoppingCart, FileText, Receipt, Users, Truck, BarChart3, Calculator, Briefcase, Wallet, Clock, DollarSign, Shield, ChevronDown, ChevronUp } from 'lucide-react'
+import { CheckCircle, X as XIcon, Loader2, CreditCard, Zap, Building2, Star, ExternalLink, RefreshCw, Package, ShoppingCart, FileText, Receipt, Users, Truck, BarChart3, Calculator, Briefcase, Wallet, Clock, DollarSign, Shield, ChevronDown, ChevronUp } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { subscriptionApi } from '@/services/api'
 import type { Plan, Subscription, SubscriptionPayment } from '@/types'
