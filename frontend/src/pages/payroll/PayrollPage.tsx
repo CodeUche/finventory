@@ -189,7 +189,7 @@ const STATUTORY_ITEMS = (pensionProvider: string, run: PayrollRun) => {
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function PayrollPage() {
-  const { user } = useAuthStore()
+  const { user, organisation } = useAuthStore()
   const isOwnerOrAdmin = user?.is_superuser || ['owner', 'admin'].includes((user as any)?.role ?? '')
 
   const now = new Date()
@@ -210,7 +210,7 @@ export default function PayrollPage() {
   const [retrying, setRetrying] = useState(false)
   const [transferResults, setTransferResults] = useState<TransferResult[] | null>(null)
   const [archiveYear, setArchiveYear] = useState<number | null>(null)
-  const [pensionProvider, setPensionProvider] = useState('')
+  const [pensionProvider, setPensionProvider] = useState(organisation?.pension_provider ?? '')
   const [activePaymentKey, setActivePaymentKey] = useState<string | null>(null)
   const [exportingBankFile, setExportingBankFile] = useState<string | null>(null)
 
