@@ -19,6 +19,7 @@ export default function AppLayout() {
   const setOrganisation = useAuthStore((s) => s.setOrganisation)
   const setMembership = useAuthStore((s) => s.setMembership)
   const setPlanModules = useAuthStore((s) => s.setPlanModules)
+  const setPlanTaxEngine = useAuthStore((s) => s.setPlanTaxEngine)
   const setSubscriptionExpired = useAuthStore((s) => s.setSubscriptionExpired)
   const subscriptionExpired = useAuthStore((s) => s.subscriptionExpired)
   const user = useAuthStore((s) => s.user)
@@ -61,14 +62,15 @@ export default function AppLayout() {
     subscriptionApi.current().then(({ data }) => {
       const modules: string[] | null = data?.plan?.features?.modules ?? null
       setPlanModules(modules)
+      setPlanTaxEngine(data?.plan?.features?.tax_engine ?? null)
       if (data?.is_expired && !user?.is_superuser) {
         setSubscriptionExpired(true)
         setSubscriptionData(data)
       } else {
         setSubscriptionExpired(false)
       }
-    }).catch(() => setPlanModules(null))
-  }, [organisation?.id, user?.is_superuser, setPlanModules, setSubscriptionExpired])
+    }).catch(() => { setPlanModules(null); setPlanTaxEngine(null) })
+  }, [organisation?.id, user?.is_superuser, setPlanModules, setPlanTaxEngine, setSubscriptionExpired])
 
   const handlePaywallDismiss = () => {
     setSubscriptionExpired(false)
@@ -78,6 +80,7 @@ export default function AppLayout() {
       subscriptionApi.current().then(({ data }) => {
         const modules: string[] | null = data?.plan?.features?.modules ?? null
         setPlanModules(modules)
+        setPlanTaxEngine(data?.plan?.features?.tax_engine ?? null)
         if (data?.is_expired) {
           setSubscriptionExpired(true)
           setSubscriptionData(data)

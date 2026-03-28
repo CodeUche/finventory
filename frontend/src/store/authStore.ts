@@ -19,6 +19,8 @@ interface AuthState {
   modulePermissions: Partial<Record<ModuleKey, AccessLevel>>
   // Modules allowed by the active subscription plan; null = no restriction
   planModules: string[] | null
+  // Tax engine tier for the active plan: 'vat_only' | 'advanced' | null (null = unrestricted)
+  planTaxEngine: string | null
   // Whether the current subscription is expired
   subscriptionExpired: boolean
 
@@ -28,6 +30,7 @@ interface AuthState {
   setRememberMe: (val: boolean) => void
   setMembership: (role: string, perms: Partial<Record<ModuleKey, AccessLevel>>) => void
   setPlanModules: (modules: string[] | null) => void
+  setPlanTaxEngine: (engine: string | null) => void
   setSubscriptionExpired: (expired: boolean) => void
   updateUser: (user: Partial<User>) => void
   updateOrganisation: (org: Partial<Organisation>) => void
@@ -47,6 +50,7 @@ export const useAuthStore = create<AuthState>()(
       memberRole: null,
       modulePermissions: {},
       planModules: null,
+      planTaxEngine: null,
       subscriptionExpired: false,
 
       setRememberMe: (val) => {
@@ -68,6 +72,8 @@ export const useAuthStore = create<AuthState>()(
       setMembership: (role, perms) => set({ memberRole: role, modulePermissions: perms }),
 
       setPlanModules: (modules) => set({ planModules: modules }),
+
+      setPlanTaxEngine: (engine) => set({ planTaxEngine: engine }),
 
       setSubscriptionExpired: (expired) => set({ subscriptionExpired: expired }),
 
@@ -92,7 +98,7 @@ export const useAuthStore = create<AuthState>()(
         set({
           user: null, tokens: null, organisation: null, isAuthenticated: false,
           rememberMe: false, memberRole: null, modulePermissions: {}, planModules: null,
-          subscriptionExpired: false,
+          planTaxEngine: null, subscriptionExpired: false,
         })
       },
     }),
@@ -112,6 +118,7 @@ export const useAuthStore = create<AuthState>()(
         memberRole: state.memberRole,
         modulePermissions: state.modulePermissions,
         planModules: state.planModules,
+        planTaxEngine: state.planTaxEngine,
         subscriptionExpired: state.subscriptionExpired,
       }),
     },

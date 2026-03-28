@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
-  Building2, Calculator, ChevronDown, ChevronUp, Edit2, ExternalLink, Plus, Receipt, Trash2, X, Zap, AlertCircle,
+  Building2, Calculator, ChevronDown, ChevronUp, Edit2, ExternalLink, Plus, Receipt, Trash2, X, Zap, AlertCircle, Lock,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { openExternal } from '@/lib/openExternal'
@@ -8,6 +8,7 @@ import { taxApi, exciseApi, whtApi } from '@/services/api'
 import { formatCurrency } from '@/lib/utils'
 import type { TaxClass, TaxConfig, ExciseDuty, WHTRate, WHTTransaction } from '@/types'
 import DateInput from '@/components/DateInput'
+import { useAuthStore } from '@/store/authStore'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -37,7 +38,14 @@ const EMPTY_BRACKET: BracketRow = { lower_bound: '', upper_bound: '', rate: '', 
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
+// Tabs locked behind Professional/Business (not available on vat_only / Starter)
+const ADVANCED_TABS: Tab[] = ['income', 'tools', 'excise', 'wht', 'filing']
+
 export default function TaxPage() {
+  const { planTaxEngine, user } = useAuthStore()
+  // vat_only = Starter plan; null = superuser / no restriction
+  const vatOnly = !user?.is_superuser && planTaxEngine === 'vat_only'
+
   const [tab, setTab] = useState<Tab>('vat')
 
   // ── VAT Classes ─────────────────────────────────────────────────────────────
@@ -291,18 +299,41 @@ export default function TaxPage() {
           ['excise', 'Excise Duty'],
           ['wht', 'WHT'],
           ['filing', 'Filing Guide'],
-        ] as [Tab, string][]).map(([t, label]) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={tab === t
-              ? 'px-4 py-2 rounded-lg text-sm font-semibold bg-brand-500 text-white whitespace-nowrap'
-              : 'px-4 py-2 rounded-lg text-sm text-slate-400 hover:text-white transition-colors whitespace-nowrap'}
-          >
-            {label}
-          </button>
-        ))}
+        ] as [Tab, string][]).map(([t, label]) => {
+          const locked = vatOnly && ADVANCED_TABS.includes(t)
+          return (
+            <button
+              key={t}
+              onClick={() => { if (!locked) setTab(t) }}
+              title={locked ? 'Upgrade to Professional or Business to unlock' : undefined}
+              className={
+                locked
+                  ? 'px-4 py-2 rounded-lg text-sm text-slate-600 flex items-center gap-1.5 cursor-not-allowed whitespace-nowrap'
+                  : tab === t
+                    ? 'px-4 py-2 rounded-lg text-sm font-semibold bg-brand-500 text-white whitespace-nowrap'
+                    : 'px-4 py-2 rounded-lg text-sm text-slate-400 hover:text-white transition-colors whitespace-nowrap'
+              }
+            >
+              {locked && <Lock size={11} />}
+              {label}
+            </button>
+          )
+        })}
       </div>
+
+      {/* Starter plan VAT-only notice */}
+      {vatOnly && (
+        <div className="flex items-start gap-3 p-4 rounded-xl bg-brand-500/8 border border-brand-500/20">
+          <Zap size={16} className="text-brand-400 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-medium text-brand-300">Starter Plan — VAT Automation included</p>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Income Tax, Corporate Tax, Excise Duty and WHT are available on the{' '}
+              <strong className="text-white">Professional</strong> and <strong className="text-white">Business</strong> plans.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* ── VAT Classes Tab ──────────────────────────────────────────────────── */}
       {tab === 'vat' && (
