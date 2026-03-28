@@ -107,6 +107,14 @@ export default function OnboardingPage() {
   const { user, organisation, setOrganisation } = useAuthStore()
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  // Sub-accounts must never reach onboarding — redirect immediately
+  useEffect(() => {
+    if (user?.is_sub_account) {
+      navigate('/dashboard', { replace: true })
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.is_sub_account])
+
   // Step 0: workspace, 1: questionnaire, 2: recommendation, 3: payment
   const [step, setStep] = useState(0)
 
@@ -294,6 +302,9 @@ export default function OnboardingPage() {
         if (val) items.push(label)
       } else if (val === null || val === -1 || val === 0) {
         items.push(`Unlimited ${label}`)
+      } else if (typeof val === 'string' && isNaN(Number(val))) {
+        // Non-numeric string (e.g. "basic", "advanced") — just show the label
+        items.push(label)
       } else {
         items.push(`Up to ${Number(val).toLocaleString()} ${label}`)
       }
