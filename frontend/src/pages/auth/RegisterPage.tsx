@@ -1,8 +1,9 @@
-import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useState, useEffect, useRef } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { Eye, EyeOff, Loader2, CheckCircle2, XCircle, Mail } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { authApi } from '@/services/api'
+import { authApi, orgApi } from '@/services/api'
+import { useAuthStore } from '@/store/authStore'
 
 const PW_CRITERIA = [
   { label: 'At least 10 characters', test: (p: string) => p.length >= 10 },
@@ -13,6 +14,10 @@ const PW_CRITERIA = [
 ]
 
 export default function RegisterPage() {
+  const navigate = useNavigate()
+  const { setAuth, setOrganisation, setOrganisations } = useAuthStore()
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
   const [form, setForm] = useState({
     email: '', first_name: '', last_name: '', phone: '',
     password: '', password_confirm: '',
@@ -22,6 +27,32 @@ export default function RegisterPage() {
   const [pwFocused, setPwFocused] = useState(false)
   const [registered, setRegistered] = useState(false)
   const [resending, setResending] = useState(false)
+
+  // Poll every 5s once on "check your email" screen — auto-advance when verified
+  useEffect(() => {
+    if (!registered) return
+    pollRef.current = setInterval(async () => {
+      try {
+        const { data } = await authApi.checkVerification(form.email)
+        if (data.verified) {
+          clearInterval(pollRef.current!)
+          setAuth(data.user, data.tokens)
+          try {
+            const orgsRes = await orgApi.list()
+            const orgs = orgsRes.data.results ?? orgsRes.data
+            setOrganisations(orgs)
+            if (orgs.length > 0) setOrganisation(orgs[0])
+            navigate(orgs.length > 0 ? '/dashboard' : '/onboarding')
+          } catch {
+            navigate('/onboarding')
+          }
+        }
+      } catch {
+        // Non-fatal — keep polling
+      }
+    }, 5000)
+    return () => { if (pollRef.current) clearInterval(pollRef.current) }
+  }, [registered]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const pwMet = PW_CRITERIA.map(c => c.test(form.password))
   const pwValid = pwMet.every(Boolean)

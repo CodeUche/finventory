@@ -289,3 +289,101 @@ class Invitation(TimeStampedModel):
 
     def __str__(self):
         return f"Invite {self.email} → {self.organisation}"
+
+
+class PartnerProfile(TimeStampedModel):
+    """
+    Accountant / bookkeeper partner profile.
+
+    A user with a PartnerProfile can manage multiple SMB client organisations
+    from a single dashboard. They pay a partner-tier licence fee and each SMB
+    they bring on is an independent Audity subscriber.
+
+    Tiers (controlled by plan slug on their personal subscription):
+        partner-starter  — up to 10 clients
+        partner-pro      — up to 30 clients
+        partner-agency   — unlimited clients
+
+    Revenue layers:
+        1. Partner licence fee   — the partner subscription itself
+        2. Per-client seat       — each SMB org retains its own subscription
+        3. Volume tiers          — higher caps at higher tier
+        4. Referral commission   — commission_rate % on referred client payments
+        5. Premium tools upsell  — white_label, consolidated_reporting flags
+    """
+
+    class Tier(models.TextChoices):
+        STARTER = "starter", "Partner Starter (10 clients)"
+        PRO     = "pro",     "Partner Pro (30 clients)"
+        AGENCY  = "agency",  "Partner Agency (Unlimited)"
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="partner_profile",
+    )
+    tier = models.CharField(max_length=20, choices=Tier.choices, default=Tier.STARTER)
+    firm_name = models.CharField(max_length=200, blank=True)
+    firm_logo = models.ImageField(upload_to="partner_logos/", null=True, blank=True)
+    # Max clients allowed — enforced in PartnerClientLink
+    max_clients = models.PositiveIntegerField(default=10)
+    # Referral commission earned (percentage)
+    commission_rate = models.DecimalField(max_digits=5, decimal_places=2, default=5)
+    total_commission_earned = models.DecimalField(max_digits=15, decimal_places=4, default=0)
+    # Unique referral code — share this link with prospective clients
+    # Format: REF-XXXXXX (6 uppercase hex chars derived from user UUID)
+    referral_code = models.CharField(max_length=20, unique=True, blank=True, db_index=True)
+    # Premium tool flags (unlocked by higher tiers)
+    white_label_reports = models.BooleanField(default=False)
+    consolidated_reporting = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
+
+    class Meta(TimeStampedModel.Meta):
+        verbose_name = "Partner Profile"
+
+    def save(self, *args, **kwargs):
+        if not self.referral_code:
+            self.referral_code = f"REF-{str(self.user.id).replace('-', '').upper()[:6]}"
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"Partner: {self.user.email} ({self.tier})"
+
+    @property
+    def active_client_count(self):
+        return self.clients.filter(is_active=True).count()
+
+    @property
+    def can_add_client(self):
+        if self.max_clients >= 999999:
+            return True
+        return self.active_client_count < self.max_clients
+
+
+class PartnerClientLink(TimeStampedModel):
+    """
+    Links a partner to a client organisation they manage.
+
+    The client org retains its own subscription; the partner just gains
+    read-access to all its data for advisory and reporting purposes.
+    """
+
+    partner = models.ForeignKey(
+        PartnerProfile, on_delete=models.CASCADE, related_name="clients"
+    )
+    organisation = models.ForeignKey(
+        Organisation, on_delete=models.CASCADE, related_name="partner_managers"
+    )
+    # Referral tracking — did this partner bring this client on?
+    is_referred = models.BooleanField(default=True)
+    commission_earned = models.DecimalField(max_digits=15, decimal_places=4, default=0)
+    notes = models.CharField(max_length=255, blank=True)
+    is_active = models.BooleanField(default=True)
+    linked_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta(TimeStampedModel.Meta):
+        unique_together = [["partner", "organisation"]]
+        verbose_name = "Partner Client"
+
+    def __str__(self):
+        return f"{self.partner.user.email} → {self.organisation.name}"

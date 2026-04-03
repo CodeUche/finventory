@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Plus, Search, Users, X, Pencil, Loader2, FileText, RefreshCw, Download, Trash2 } from 'lucide-react'
+import { Plus, Search, Users, X, Pencil, Loader2, FileText, RefreshCw, Download, Trash2, MinusCircle, ChevronRight, Maximize2, Minimize2 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { customerApi } from '@/services/api'
+import { customerApi, tauriFetch } from '@/services/api'
 import ExportButton from '@/components/ExportButton'
 import { formatCurrency, formatDate, getStatusColor, getCurrencySymbol } from '@/lib/utils'
 import DateInput from '@/components/DateInput'
@@ -90,6 +90,12 @@ export default function CustomersPage() {
   })
   const [stmtTo, setStmtTo] = useState(() => new Date().toISOString().split('T')[0])
   const [loadingStmt, setLoadingStmt] = useState(false)
+const [stmtMaximized, setStmtMaximized] = useState(false)
+
+  // Debit modal
+  const [showDebitModal, setShowDebitModal] = useState(false)
+  const [debitForm, setDebitForm] = useState({ amount: '', reference: '', description: '', debit_date: new Date().toISOString().split('T')[0] })
+  const [savingDebit, setSavingDebit] = useState(false)
 
   const load = async () => {
     setLoading(true)
@@ -164,9 +170,9 @@ export default function CustomersPage() {
     if (!statementData || !selected) return
     const { jsPDF } = await import('jspdf')
     const { default: autoTable } = await import('jspdf-autotable')
-    const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+    const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' })
     const sym = getCurrencySymbol()
-    const pageW = doc.internal.pageSize.getWidth()
+    const pageW = doc.internal.pageSize.getWidth() // 297mm in landscape
 
     // Resolve brand color
     const brandRgb = (hex?: string): [number, number, number] => {
@@ -179,10 +185,10 @@ export default function CustomersPage() {
     const MUTED: [number, number, number] = [100, 100, 100]
     const tmpl = organisation?.invoice_template ?? 'classic'
 
-    // Helper to fetch URL → base64 data URL
+    // Helper to fetch URL → base64 data URL (uses tauriFetch for Tauri compatibility)
     const fetchDataUrl = async (url: string): Promise<string | null> => {
       try {
-        const res = await fetch(url)
+        const res = await tauriFetch(url)
         const blob = await res.blob()
         return await new Promise<string>((resolve, reject) => {
           const r = new FileReader()
@@ -197,47 +203,51 @@ export default function CustomersPage() {
     let logoData: string | null = null
     if (organisation?.logo) logoData = await fetchDataUrl(organisation.logo)
 
-    // ── Template-aware header ──────────────────────────────────────────────────
+    // ── Font / style settings ──────────────────────────────────────────────────
     const hexToRgb = (hex?: string): [number, number, number] => {
       const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex ?? '')
       if (!m) return [30, 30, 30]
       return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)]
     }
+    const pdfFont = organisation?.company_name_font?.toLowerCase().includes('times') ||
+      ['Georgia','Playfair Display','Merriweather','Lora','Libre Baskerville','EB Garamond',
+       'Crimson Text','Cinzel','Cormorant Garamond','Spectral'].includes(organisation?.company_name_font ?? '')
+      ? 'times'
+      : ['courier','JetBrains Mono','Fira Code'].includes(organisation?.company_name_font ?? '')
+      ? 'courier' : 'helvetica'
+    const isBold   = organisation?.company_name_font_bold !== false
+    const isItalic = organisation?.company_name_font_italic === true
+    const pdfStyle = isBold && isItalic ? 'bolditalic' : isBold ? 'bold' : isItalic ? 'italic' : 'normal'
+    const fontSize = Math.max(8, Math.min(36, organisation?.company_name_font_size ?? 14))
     const nameColor: [number, number, number] = (() => {
       const c = organisation?.company_name_font_color
       if (!c || c === '#ffffff') return (tmpl === 'modern' || tmpl === 'minimal') ? DARK : [255, 255, 255]
       return hexToRgb(c)
     })()
-    const showName = organisation?.show_company_name_on_pdf ?? true
-    const displayName = showName ? (organisation?.invoice_company_name?.trim() || organisation?.name || 'Company') : ''
     const { applyDocHeader, templateHeadFill } = await import('@/lib/pdfUtils')
+    const displayName = organisation?.show_company_name_on_pdf === false
+      ? '' : (organisation?.invoice_company_name?.trim() || organisation?.name || 'Audity')
     let y = applyDocHeader(doc, {
       tmpl, pageW, BRAND, DARK, MUTED,
       logoData,
       displayName,
-      nameColor,
-      showCompanyName: showName,
       orgAddress: organisation?.address,
       orgEmail: organisation?.email,
       orgPhone: organisation?.phone,
+      pdfFont,
+      fontSize,
+      pdfStyle,
+      nameColor,
+      companyFontUnderline: organisation?.company_name_font_underline,
+      showCompanyName: organisation?.show_company_name_on_pdf !== false,
       docTitle: 'CUSTOMER STATEMENT',
       metaRows: [
-        ['Period', `${formatDate(stmtFrom)} – ${formatDate(stmtTo)}`],
-        ['Generated', formatDate(new Date().toISOString().split('T')[0])],
+        ['Customer',   selected.name],
+        ['Ref',        selected.code],
+        ['Period',     `${formatDate(stmtFrom)} – ${formatDate(stmtTo)}`],
+        ['Generated',  formatDate(new Date().toISOString().split('T')[0])],
       ],
     })
-    // Customer block
-    doc.setFontSize(10)
-    doc.setFont('helvetica', 'bold')
-    doc.setTextColor(30, 41, 59)
-    doc.text('Bill To:', 14, y)
-    doc.setFont('helvetica', 'normal')
-    doc.setFontSize(9)
-    doc.setTextColor(51, 65, 85)
-    doc.text(selected.name, 14, y + 5)
-    doc.text(selected.code, 14, y + 10)
-    if (selected.email) doc.text(selected.email, 14, y + 15)
-    if (selected.phone) doc.text(selected.phone, 14, y + 20)
 
     // Summary KPIs
     const kpis = [
@@ -261,105 +271,134 @@ export default function CustomersPage() {
     })
     y += 28
 
-    // Invoices table
-    if (statementData.invoices.length > 0) {
-      doc.setFontSize(9)
-      doc.setFont('helvetica', 'bold')
-      doc.setTextColor(30, 41, 59)
-      doc.text('Invoices', 14, y)
-      y += 4
+    // Build combined chronological ledger (with product line items expanded)
+    const fmtMoney = (v: number) => `${sym}${v.toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    // Columns: Trans Date | Trans Ref | Description | Product | Qty | Unit Cost | Sold By | Debit | Credit | Balance
+    type LedgerRow = [string, string, string, string, string, string, string, string, string, string]
+    const ledger: LedgerRow[] = []
+    const itemRowIndices: number[] = []
+    const debitRowIndices: number[] = []
+    let runBalance = 0
 
-      // Dynamic money column widths
-      const invTotals = [...statementData.invoices.map((inv: any) =>
-        `${sym}${parseFloat(inv.total_amount).toLocaleString('en', { minimumFractionDigits: 2 })}`
-      ), 'Total', 'Paid', 'Balance']
-      doc.setFontSize(8)
-      const moneyW = Math.min(40, Math.max(22, Math.max(...invTotals.map((s: string) => doc.getTextWidth(s))) + 8))
+    // Merge invoices (expanded to items), debits, payments — sorted by date
+    type Event = { date: string; type: 'invoice' | 'payment' | 'debit'; data: any }
+    const events: Event[] = []
+    for (const inv of statementData.invoices) {
+      events.push({ date: inv.issue_date, type: 'invoice', data: inv })
+    }
+    for (const p of statementData.payments) {
+      events.push({ date: p.received_at ? String(p.received_at).split('T')[0] : '', type: 'payment', data: p })
+    }
+    for (const d of (statementData.debits ?? [])) {
+      events.push({ date: d.debit_date, type: 'debit', data: d })
+    }
+    events.sort((a, b) => a.date.localeCompare(b.date))
 
-      autoTable(doc, {
-        startY: y,
-        head: [['Invoice #', 'Date', 'Due Date', 'Total', 'Paid', 'Balance', 'Status']],
-        body: statementData.invoices.map((inv: any) => [
-          inv.invoice_number,
-          formatDate(inv.issue_date),
-          inv.due_date ? formatDate(inv.due_date) : '—',
-          `${sym}${parseFloat(inv.total_amount).toLocaleString('en', { minimumFractionDigits: 2 })}`,
-          `${sym}${parseFloat(inv.amount_paid).toLocaleString('en', { minimumFractionDigits: 2 })}`,
-          `${sym}${parseFloat(inv.amount_due).toLocaleString('en', { minimumFractionDigits: 2 })}`,
-          inv.status.replace('_', ' ').toUpperCase(),
-        ]),
-        styles: { fontSize: 8, cellPadding: 3 },
-        headStyles: { fillColor: templateHeadFill(tmpl, BRAND), textColor: 255, fontStyle: 'bold', fontSize: 7 },
-        columnStyles: {
-          0: { fontStyle: 'bold', cellWidth: 'auto' },
-          3: { halign: 'right', cellWidth: moneyW },
-          4: { halign: 'right', cellWidth: moneyW },
-          5: { halign: 'right', cellWidth: moneyW, fontStyle: 'bold' },
-          6: { fontStyle: 'bold', cellWidth: 20 },
-        },
-        alternateRowStyles: { fillColor: [248, 250, 252] },
-        margin: { left: 14, right: 14 },
-      })
-      y = (doc as any).lastAutoTable.finalY + 6
+    for (const e of events) {
+      if (e.type === 'invoice') {
+        const inv = e.data
+        const invTotal = parseFloat(inv.total_amount)
+        if (inv.items && inv.items.length > 0) {
+          for (const item of inv.items) {
+            runBalance += parseFloat(item.line_total)
+            itemRowIndices.push(ledger.length)
+            ledger.push([
+              formatDate(e.date),
+              inv.invoice_number,
+              `Invoice · ${inv.status.replace('_', ' ')}`,
+              item.product,
+              item.qty,
+              fmtMoney(parseFloat(item.unit_cost)),
+              inv.sold_by || '—',
+              fmtMoney(parseFloat(item.line_total)),
+              '',
+              fmtMoney(runBalance),
+            ])
+          }
+        } else {
+          runBalance += invTotal
+          ledger.push([
+            formatDate(e.date),
+            inv.invoice_number,
+            `Invoice · ${inv.status.replace('_', ' ')}`,
+            '', '', '',
+            inv.sold_by || '—',
+            fmtMoney(invTotal),
+            '',
+            fmtMoney(runBalance),
+          ])
+        }
+      } else if (e.type === 'payment') {
+        const p = e.data
+        runBalance -= parseFloat(p.amount)
+        ledger.push([
+          formatDate(e.date),
+          p.invoice_number || p.reference || '—',
+          `Payment · ${p.method.replace('_', ' ')}`,
+          '', '', '', '',
+          '',
+          fmtMoney(parseFloat(p.amount)),
+          fmtMoney(runBalance),
+        ])
+      } else {
+        const d = e.data
+        runBalance += parseFloat(d.amount)
+        debitRowIndices.push(ledger.length)
+        ledger.push([
+          formatDate(e.date),
+          d.reference || '—',
+          d.description || 'Manual Debit',
+          '', '', '', '',
+          fmtMoney(parseFloat(d.amount)),
+          '',
+          fmtMoney(runBalance),
+        ])
+      }
     }
 
-    // Payments table
-    if (statementData.payments.length > 0) {
-      doc.setFontSize(9)
-      doc.setFont('helvetica', 'bold')
-      doc.setTextColor(30, 41, 59)
-      doc.text('Payments Received', 14, y)
-      y += 4
+    // Grand Total row
+    const totalCharged = parseFloat(statementData.summary.total_charged)
+    const totalCredit = parseFloat(statementData.summary.total_paid)
+    ledger.push(['', '', 'GRAND TOTAL', '', '', '', '', fmtMoney(totalCharged), fmtMoney(totalCredit), fmtMoney(totalCharged - totalCredit)])
 
-      // Dynamic amount column width
-      const payAmounts = [...statementData.payments.map((p: any) =>
-        `${sym}${parseFloat(p.amount).toLocaleString('en', { minimumFractionDigits: 2 })}`
-      ), 'Amount']
-      doc.setFontSize(8)
-      const payAmtW = Math.min(48, Math.max(24, Math.max(...payAmounts.map((s: string) => doc.getTextWidth(s))) + 8))
-
-      autoTable(doc, {
-        startY: y,
-        head: [['Invoice #', 'Date', 'Method', 'Amount']],
-        body: statementData.payments.map((p: any) => [
-          p.invoice_number,
-          formatDate(p.received_at),
-          p.method.replace('_', ' '),
-          `${sym}${parseFloat(p.amount).toLocaleString('en', { minimumFractionDigits: 2 })}`,
-        ]),
-        styles: { fontSize: 8, cellPadding: 3 },
-        headStyles: { fillColor: templateHeadFill(tmpl, BRAND), textColor: 255, fontStyle: 'bold', fontSize: 7 },
-        columnStyles: {
-          0: { cellWidth: 'auto' },
-          3: { halign: 'right', cellWidth: payAmtW, fontStyle: 'bold' },
-        },
-        alternateRowStyles: { fillColor: [240, 253, 244] },
-        margin: { left: 14, right: 14 },
-      })
-    }
-
-    // Bank details block (if configured)
-    const hasBankDetails = organisation?.bank_name || organisation?.bank_account_number
-    if (hasBankDetails) {
-      const finalY = (doc as any).lastAutoTable?.finalY ?? y
-      const by = finalY + 8
-      doc.setFillColor(241, 245, 249)
-      doc.roundedRect(14, by, pageW - 28, 22, 2, 2, 'F')
-      doc.setFontSize(7.5)
-      doc.setFont('helvetica', 'bold')
-      doc.setTextColor(30, 41, 59)
-      doc.text('PAYMENT DETAILS', 18, by + 6)
-      doc.setFont('helvetica', 'normal')
-      doc.setTextColor(51, 65, 85)
-      const bankParts: string[] = []
-      if (organisation?.bank_name) bankParts.push(`Bank: ${organisation.bank_name}`)
-      if (organisation?.bank_account_name) bankParts.push(`Account Name: ${organisation.bank_account_name}`)
-      if (organisation?.bank_account_number) bankParts.push(`Account No: ${organisation.bank_account_number}`)
-      if (organisation?.bank_sort_code) bankParts.push(`Sort Code: ${organisation.bank_sort_code}`)
-      const midIdx = Math.ceil(bankParts.length / 2)
-      bankParts.slice(0, midIdx).forEach((p, i) => doc.text(p, 18, by + 12 + i * 4))
-      bankParts.slice(midIdx).forEach((p, i) => doc.text(p, pageW / 2, by + 12 + i * 4))
-    }
+    // Landscape A4: 297mm − 28mm margins = 269mm usable
+    // Col widths: 20+32+32+44+10+28+28+26+28+28+28 wait — 10 cols, 269mm
+    // 20+32+32+38+10+26+26+27+28+30 = 269mm
+    autoTable(doc, {
+      startY: y,
+      head: [['Trans Date', 'Trans Ref', 'Description', 'Product', 'Qty', 'Unit Cost', 'Sold By', 'Debit', 'Credit', 'Balance']],
+      body: ledger,
+      styles: { fontSize: 7, cellPadding: 2.5, overflow: 'ellipsize' },
+      headStyles: { fillColor: templateHeadFill(tmpl, BRAND), textColor: 255, fontStyle: 'bold', fontSize: 6.5 },
+      columnStyles: {
+        0: { cellWidth: 20 },
+        1: { cellWidth: 32, fontStyle: 'bold', overflow: 'ellipsize' },
+        2: { cellWidth: 32 },
+        3: { cellWidth: 38 },
+        4: { halign: 'right', cellWidth: 10 },
+        5: { halign: 'right', cellWidth: 26 },
+        6: { cellWidth: 27 },
+        7: { halign: 'right', cellWidth: 28 },
+        8: { halign: 'right', cellWidth: 28 },
+        9: { halign: 'right', cellWidth: 28, fontStyle: 'bold' },
+      },
+      didParseCell: (data: any) => {
+        if (data.row.index === ledger.length - 1) {
+          data.cell.styles.fontStyle = 'bold'
+          data.cell.styles.fillColor = [241, 245, 249]
+        }
+        if (itemRowIndices.includes(data.row.index)) {
+          data.cell.styles.fillColor = [248, 252, 255]
+        }
+        if (debitRowIndices.includes(data.row.index)) {
+          data.cell.styles.textColor = [185, 28, 28]
+        }
+      },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
+      showHead: 'everyPage',
+      margin: { left: 14, right: 14 },
+    })
+    y = (doc as any).lastAutoTable.finalY + 6
 
     // Footer on every page
     const pageCount = (doc.internal as any).getNumberOfPages()
@@ -376,6 +415,24 @@ export default function CustomersPage() {
     }
 
     await saveBlobFile(doc.output('blob'), `statement-${selected.code}-${stmtFrom}-${stmtTo}.pdf`)
+  }
+
+  const handleRecordDebit = async () => {
+    if (!selected || !debitForm.amount || !debitForm.debit_date) { toast.error('Amount and date required'); return }
+    setSavingDebit(true)
+    try {
+      const [d, m, y] = debitForm.debit_date.includes('/') ? debitForm.debit_date.split('/') : [null, null, null]
+      const isoDate = d ? `${y}-${m}-${d}` : debitForm.debit_date
+      await customerApi.recordDebit(selected.id, { ...debitForm, debit_date: isoDate, amount: debitForm.amount })
+      toast.success('Debit recorded')
+      setShowDebitModal(false)
+      setDebitForm({ amount: '', reference: '', description: '', debit_date: new Date().toISOString().split('T')[0] })
+      // Refresh statement if open
+      if (showStatement) loadStatement(selected.id)
+    } catch (err: any) {
+      const msg = err?.response?.data?.error
+      toast.error(typeof msg === 'string' ? msg : 'Failed to record debit')
+    } finally { setSavingDebit(false) }
   }
 
   const openStatement = (c: Customer) => {
@@ -599,13 +656,34 @@ export default function CustomersPage() {
                 {[
                   { label: 'Email', value: selected.email || '—' },
                   { label: 'Phone', value: selected.phone || '—' },
+                  { label: 'Shipping Address', value: selected.address || '—' },
                   { label: 'Status', value: selected.is_credit_blocked ? 'Credit Blocked' : 'Active' },
                 ].map(({ label, value }) => (
                   <div key={label} className="flex justify-between py-2 border-b border-surface-700">
                     <span className="text-slate-400">{label}</span>
-                    <span className="text-white font-medium">{value}</span>
+                    <span className="text-white font-medium text-right max-w-[60%]">{value}</span>
                   </div>
                 ))}
+              </div>
+
+              {/* Account actions */}
+              <div className="pt-1">
+                <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Account Actions</p>
+                <button
+                  onClick={() => setShowDebitModal(true)}
+                  className="w-full flex items-center justify-between px-4 py-3 rounded-xl border border-orange-500/30 bg-orange-500/5 hover:bg-orange-500/10 transition-colors group"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-orange-500/15 flex items-center justify-center">
+                      <MinusCircle size={15} className="text-orange-400" />
+                    </div>
+                    <div className="text-left">
+                      <p className="text-sm font-medium text-white">Issue Debit Note</p>
+                      <p className="text-[10px] text-slate-500">Raise a charge against this account</p>
+                    </div>
+                  </div>
+                  <ChevronRight size={14} className="text-slate-500 group-hover:text-orange-400 transition-colors" />
+                </button>
               </div>
             </div>
           </aside>
@@ -649,7 +727,7 @@ export default function CustomersPage() {
                 <input type="email" className="input" value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} />
               </div>
               <div className="col-span-2">
-                <label className="text-xs text-slate-400 mb-1 block">Address<FieldTooltip text="The customer's delivery or billing address. Printed on their invoices." /></label>
+                <label className="text-xs text-slate-400 mb-1 block">Shipping Address<FieldTooltip text="The customer's shipping/delivery address. Printed on invoices and delivery notes." /></label>
                 <textarea className="input resize-none" rows={2} value={editForm.address}
                   onChange={(e) => setEditForm({ ...editForm, address: e.target.value })} />
               </div>
@@ -668,11 +746,16 @@ export default function CustomersPage() {
 
       {/* Statement modal */}
       {showStatement && selected && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setShowStatement(false)} />
-          <div className="relative bg-surface-900 border border-surface-700 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+        <div className={['fixed inset-0 z-[60] flex items-center justify-center', stmtMaximized ? '' : 'p-4'].join(' ')}>
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => { setShowStatement(false); setStmtMaximized(false) }} />
+          <div className={[
+            'relative bg-surface-900 border border-surface-700 shadow-2xl flex flex-col transition-all duration-200',
+            stmtMaximized
+              ? 'w-full h-full rounded-none'
+              : 'w-full max-w-3xl max-h-[90vh] rounded-2xl',
+          ].join(' ')}>
             {/* Header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-surface-700">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-surface-700 shrink-0">
               <div>
                 <h2 className="text-lg font-bold text-white">{selected.name} — Statement</h2>
                 <p className="text-xs text-slate-500">{selected.code}</p>
@@ -687,7 +770,14 @@ export default function CustomersPage() {
                     <Download size={13} /> Export PDF
                   </button>
                 )}
-                <button onClick={() => setShowStatement(false)} className="btn-ghost p-2"><X size={18} /></button>
+                <button
+                  onClick={() => setStmtMaximized((v) => !v)}
+                  className="btn-ghost p-2"
+                  title={stmtMaximized ? 'Restore' : 'Expand'}
+                >
+                  {stmtMaximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+                </button>
+                <button onClick={() => { setShowStatement(false); setStmtMaximized(false) }} className="btn-ghost p-2"><X size={18} /></button>
               </div>
             </div>
             {/* Date range controls */}
@@ -717,73 +807,294 @@ export default function CustomersPage() {
                 ))}</div>
               ) : !statementData ? null : (
                 <>
-                  {/* Summary KPIs */}
-                  <div className="grid grid-cols-3 gap-3">
+                  {/* Summary KPIs — row 1 */}
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                     {[
-                      { label: 'Total Invoiced', value: formatCurrency(statementData.summary.total_invoiced), color: 'text-white' },
-                      { label: 'Total Paid', value: formatCurrency(statementData.summary.total_paid), color: 'text-green-400' },
-                      { label: 'Balance Due', value: formatCurrency(statementData.summary.balance_due), color: parseFloat(statementData.summary.balance_due) > 0 ? 'text-red-400' : 'text-green-400' },
-                    ].map(({ label, value, color }) => (
+                      { label: 'Total Invoiced', value: formatCurrency(statementData.summary.total_invoiced), color: 'text-red-400', sub: `${statementData.invoices.length} invoice${statementData.invoices.length !== 1 ? 's' : ''}` },
+                      { label: 'Discounts Given', value: formatCurrency(statementData.summary.total_discounts ?? '0'), color: 'text-green-400', sub: 'Savings on invoices' },
+                      { label: 'VAT Charged', value: formatCurrency(statementData.summary.total_tax ?? '0'), color: 'text-blue-400', sub: 'Tax on invoices' },
+                      { label: 'Total Paid', value: formatCurrency(statementData.summary.total_paid), color: 'text-green-400', sub: `${statementData.payments.length} payment${statementData.payments.length !== 1 ? 's' : ''}` },
+                      { label: 'Balance Due', value: formatCurrency(statementData.summary.balance_due), color: parseFloat(statementData.summary.balance_due) > 0 ? 'text-amber-400' : 'text-green-400', sub: parseFloat(statementData.summary.balance_due) > 0 ? 'Outstanding' : 'Settled' },
+                    ].map(({ label, value, color, sub }) => (
                       <div key={label} className="bg-surface-800 rounded-xl p-3 text-center">
-                        <p className="text-xs text-slate-500 mb-1">{label}</p>
-                        <p className={`text-base font-bold ${color}`}>{value}</p>
+                        <p className="text-[10px] text-slate-500 mb-1 leading-tight">{label}</p>
+                        <p className={`text-sm font-bold ${color}`}>{value}</p>
+                        <p className="text-[10px] text-slate-600 mt-0.5">{sub}</p>
                       </div>
                     ))}
                   </div>
 
-                  {/* Invoices */}
-                  <div>
-                    <p className="text-xs text-slate-500 uppercase tracking-wider mb-2">Invoices ({statementData.invoices.length})</p>
-                    {statementData.invoices.length === 0 ? (
-                      <p className="text-slate-600 text-sm text-center py-4">No invoices in this period</p>
-                    ) : (
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-xs">
-                          <thead>
-                            <tr className="border-b border-surface-700">
-                              {['Invoice #', 'Date', 'Total', 'Paid', 'Due', 'Status'].map((h) => (
-                                <th key={h} className="px-3 py-2 text-left text-slate-400 font-medium">{h}</th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {statementData.invoices.map((inv: any) => (
-                              <tr key={inv.id} className="border-b border-surface-700/50">
-                                <td className="px-3 py-2 font-mono text-brand-400">{inv.invoice_number}</td>
-                                <td className="px-3 py-2 text-slate-400">{formatDate(inv.issue_date)}</td>
-                                <td className="px-3 py-2 text-white">{formatCurrency(inv.total_amount)}</td>
-                                <td className="px-3 py-2 text-green-400">{formatCurrency(inv.amount_paid)}</td>
-                                <td className="px-3 py-2 text-red-400">{formatCurrency(inv.amount_due)}</td>
-                                <td className="px-3 py-2">
-                                  <span className={getStatusColor(inv.status)}>{inv.status.replace('_', ' ')}</span>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
+                  {/* Summary panels — Payment / Debit / Credit */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    {/* Payment Summary */}
+                    <div className="bg-surface-800 rounded-xl p-3 space-y-2">
+                      <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Payment Summary</p>
+                      {statementData.payments.length === 0 ? (
+                        <p className="text-[11px] text-slate-600">No payments recorded</p>
+                      ) : (
+                        <>
+                          {Object.entries(statementData.summary.payment_by_method ?? {}).map(([method, amount]) => (
+                            <div key={method} className="flex justify-between items-center">
+                              <span className="text-[11px] text-slate-400 capitalize">{method}</span>
+                              <span className="text-[11px] font-semibold text-green-400">{formatCurrency(amount as string)}</span>
+                            </div>
+                          ))}
+                          <div className="flex justify-between items-center border-t border-surface-700 pt-1.5 mt-1">
+                            <span className="text-[11px] text-slate-300 font-semibold">Total</span>
+                            <span className="text-[11px] font-bold text-green-400">{formatCurrency(statementData.summary.total_paid)}</span>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                    {/* Debit Summary */}
+                    <div className="bg-surface-800 rounded-xl p-3 space-y-2">
+                      <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Debit Summary</p>
+                      {(statementData.debits ?? []).length === 0 ? (
+                        <p className="text-[11px] text-slate-600">No manual debits recorded</p>
+                      ) : (
+                        <>
+                          {(statementData.debits ?? []).map((d: any) => (
+                            <div key={d.id} className="flex justify-between items-start gap-2">
+                              <span className="text-[11px] text-slate-400 truncate">{d.description || d.reference || 'Manual Debit'}</span>
+                              <span className="text-[11px] font-semibold text-orange-400 whitespace-nowrap">{formatCurrency(d.amount)}</span>
+                            </div>
+                          ))}
+                          <div className="flex justify-between items-center border-t border-surface-700 pt-1.5 mt-1">
+                            <span className="text-[11px] text-slate-300 font-semibold">Total</span>
+                            <span className="text-[11px] font-bold text-orange-400">{formatCurrency(statementData.summary.total_debits ?? '0')}</span>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                    {/* Credit / Returns Summary */}
+                    <div className="bg-surface-800 rounded-xl p-3 space-y-2">
+                      <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Credit Summary</p>
+                      {(statementData.returns ?? []).length === 0 ? (
+                        <p className="text-[11px] text-slate-600">No returns or credits recorded</p>
+                      ) : (
+                        <>
+                          {(statementData.returns ?? []).map((r: any) => (
+                            <div key={r.id} className="flex justify-between items-start gap-2">
+                              <span className="text-[11px] text-slate-400 truncate">{r.invoice_number} {r.reason ? `· ${r.reason}` : ''}</span>
+                              <span className="text-[11px] font-semibold text-blue-400 whitespace-nowrap">{formatCurrency(r.amount)}</span>
+                            </div>
+                          ))}
+                          <div className="flex justify-between items-center border-t border-surface-700 pt-1.5 mt-1">
+                            <span className="text-[11px] text-slate-300 font-semibold">Total Returns</span>
+                            <span className="text-[11px] font-bold text-blue-400">{formatCurrency(statementData.summary.total_returns ?? '0')}</span>
+                          </div>
+                        </>
+                      )}
+                    </div>
                   </div>
 
-                  {/* Payments */}
-                  {statementData.payments.length > 0 && (
-                    <div>
-                      <p className="text-xs text-slate-500 uppercase tracking-wider mb-2">Payments ({statementData.payments.length})</p>
-                      <div className="space-y-1.5">
-                        {statementData.payments.map((p: any) => (
-                          <div key={p.id} className="flex items-center justify-between bg-surface-800 rounded-lg px-3 py-2">
-                            <div>
-                              <p className="text-xs font-medium text-white">{p.invoice_number}</p>
-                              <p className="text-[10px] text-slate-500">{p.method.replace('_', ' ')} · {formatDate(p.received_at)}</p>
-                            </div>
-                            <p className="text-sm font-semibold text-green-400">{formatCurrency(p.amount)}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                  {/* Combined transaction ledger */}
+                  <div>
+                    <p className="text-xs text-slate-500 uppercase tracking-wider mb-2">Transaction History</p>
+                    {(() => {
+                      type Evt = { date: string; type: 'invoice' | 'payment' | 'debit' | 'return'; data: any }
+                      const events: Evt[] = []
+                      for (const inv of statementData.invoices) events.push({ date: inv.issue_date, type: 'invoice', data: inv })
+                      for (const p of statementData.payments) events.push({ date: p.received_at ? String(p.received_at).split('T')[0] : '', type: 'payment', data: p })
+                      for (const d of (statementData.debits ?? [])) events.push({ date: d.debit_date, type: 'debit', data: d })
+                      for (const r of (statementData.returns ?? [])) events.push({ date: r.created_at ? String(r.created_at).split('T')[0] : '', type: 'return', data: r })
+                      events.sort((a, b) => a.date.localeCompare(b.date))
+                      let balance = 0
+                      return events.length === 0 ? (
+                        <p className="text-slate-600 text-sm text-center py-4">No transactions in this period</p>
+                      ) : (
+                        <div className="overflow-x-auto rounded-lg border border-surface-700/50">
+                          <table className="w-full text-xs" style={{ tableLayout: 'fixed', minWidth: '820px' }}>
+                            <colgroup>
+                              <col style={{ width: '7%' }}  />  {/* Date */}
+                              <col style={{ width: '10%' }} />  {/* Reference */}
+                              <col style={{ width: '20%' }} />  {/* Product / Description */}
+                              <col style={{ width: '4%' }}  />  {/* Qty */}
+                              <col style={{ width: '10%' }} />  {/* Unit Cost */}
+                              <col style={{ width: '8%' }}  />  {/* Pay Method */}
+                              <col style={{ width: '9%' }}  />  {/* Sold By */}
+                              <col style={{ width: '10%' }} />  {/* Debit */}
+                              <col style={{ width: '10%' }} />  {/* Credit */}
+                              <col style={{ width: '12%' }} />  {/* Balance */}
+                            </colgroup>
+                            <thead>
+                              <tr className="border-b-2 border-surface-700 bg-surface-800/60">
+                                {[
+                                  { h: 'Date',                  right: false },
+                                  { h: 'Reference',             right: false },
+                                  { h: 'Product / Description', right: false },
+                                  { h: 'Qty',                   right: true  },
+                                  { h: 'Unit Cost',             right: true  },
+                                  { h: 'Pay Method',            right: false },
+                                  { h: 'Sold By',               right: false },
+                                  { h: 'Debit',                 right: true  },
+                                  { h: 'Credit',                right: true  },
+                                  { h: 'Balance',               right: true  },
+                                ].map(({ h, right }) => (
+                                  <th
+                                    key={h}
+                                    className={`px-2 py-2.5 text-slate-400 font-semibold text-[10px] uppercase tracking-wider overflow-hidden text-ellipsis whitespace-nowrap ${right ? 'text-right' : 'text-left'}`}
+                                  >{h}</th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {events.map((e, ei) => {
+                                if (e.type === 'invoice') {
+                                  const inv = e.data
+                                  const hasItems = inv.items && inv.items.length > 0
+                                  const rows: JSX.Element[] = []
+                                  if (hasItems) {
+                                    for (const item of inv.items) {
+                                      balance += parseFloat(item.line_total)
+                                      const disc = parseFloat(item.discount_amount ?? '0')
+                                      const vat  = parseFloat(item.tax_amount ?? '0')
+                                      rows.push(
+                                        <tr key={`item-${ei}-${item.product}`} className="border-b border-surface-700/40 hover:bg-surface-700/20 transition-colors">
+                                          <td className="px-2 py-2.5 text-slate-400 whitespace-nowrap overflow-hidden">{formatDate(e.date)}</td>
+                                          <td className="px-2 py-2.5 font-mono text-brand-400 text-[11px] overflow-hidden text-ellipsis whitespace-nowrap">{inv.invoice_number}</td>
+                                          <td className="px-2 py-2.5 text-slate-300 overflow-hidden">
+                                            <span className="font-medium block truncate">{item.product}</span>
+                                            {(disc > 0 || vat > 0) && (
+                                              <span className="text-[10px] text-slate-500 flex gap-1 flex-wrap">
+                                                {disc > 0 && <span className="text-green-500">−{formatCurrency(disc)} disc</span>}
+                                                {vat > 0  && <span className="text-blue-400">+{formatCurrency(vat)} VAT</span>}
+                                              </span>
+                                            )}
+                                          </td>
+                                          <td className="px-2 py-2.5 text-slate-400 text-right whitespace-nowrap">{item.qty}</td>
+                                          <td className="px-2 py-2.5 text-slate-400 text-right whitespace-nowrap">{formatCurrency(parseFloat(item.unit_cost))}</td>
+                                          <td className="px-2 py-2.5 text-slate-600 text-[11px]">—</td>
+                                          <td className="px-2 py-2.5 text-slate-400 text-[11px] overflow-hidden text-ellipsis whitespace-nowrap">{inv.sold_by || '—'}</td>
+                                          <td className="px-2 py-2.5 text-red-400 text-right whitespace-nowrap font-medium">{formatCurrency(parseFloat(item.line_total))}</td>
+                                          <td className="px-2 py-2.5" />
+                                          <td className={`px-2 py-2.5 text-right font-semibold whitespace-nowrap ${balance > 0 ? 'text-amber-400' : 'text-green-400'}`}>{formatCurrency(balance)}</td>
+                                        </tr>
+                                      )
+                                    }
+                                  } else {
+                                    balance += parseFloat(inv.total_amount)
+                                    rows.push(
+                                      <tr key={`inv-${ei}`} className="border-b border-surface-700/40 hover:bg-surface-700/20">
+                                        <td className="px-2 py-2.5 text-slate-400 whitespace-nowrap">{formatDate(e.date)}</td>
+                                        <td className="px-2 py-2.5 font-mono text-brand-400 text-[11px] whitespace-nowrap">{inv.invoice_number}</td>
+                                        <td className="px-2 py-2.5 text-slate-300 overflow-hidden text-ellipsis whitespace-nowrap">Invoice · <span className="capitalize">{inv.status.replace('_',' ')}</span></td>
+                                        <td className="px-2 py-2.5" /><td className="px-2 py-2.5" /><td className="px-2 py-2.5" />
+                                        <td className="px-2 py-2.5 text-slate-400 text-[11px] overflow-hidden text-ellipsis whitespace-nowrap">{inv.sold_by || '—'}</td>
+                                        <td className="px-2 py-2.5 text-red-400 text-right whitespace-nowrap font-medium">{formatCurrency(parseFloat(inv.total_amount))}</td>
+                                        <td className="px-2 py-2.5" />
+                                        <td className={`px-2 py-2.5 text-right font-semibold whitespace-nowrap ${balance > 0 ? 'text-amber-400' : 'text-green-400'}`}>{formatCurrency(balance)}</td>
+                                      </tr>
+                                    )
+                                  }
+                                  return rows
+                                } else if (e.type === 'payment') {
+                                  const p = e.data
+                                  balance -= parseFloat(p.amount)
+                                  return (
+                                    <tr key={`pay-${ei}`} className="border-b border-surface-700/40 hover:bg-surface-700/20 bg-emerald-500/[0.03]">
+                                      <td className="px-2 py-2.5 text-slate-400 whitespace-nowrap">{formatDate(e.date)}</td>
+                                      <td className="px-2 py-2.5 font-mono text-brand-400 text-[11px] whitespace-nowrap">{p.invoice_number || p.reference || '—'}</td>
+                                      <td className="px-2 py-2.5 text-green-400 font-medium overflow-hidden text-ellipsis whitespace-nowrap">Payment received</td>
+                                      <td className="px-2 py-2.5" /><td className="px-2 py-2.5" />
+                                      <td className="px-2 py-2.5 text-slate-300 text-[11px] capitalize">{p.method.replace('_',' ')}</td>
+                                      <td className="px-2 py-2.5" />
+                                      <td className="px-2 py-2.5" />
+                                      <td className="px-2 py-2.5 text-green-400 text-right whitespace-nowrap font-medium">{formatCurrency(parseFloat(p.amount))}</td>
+                                      <td className={`px-2 py-2.5 text-right font-semibold whitespace-nowrap ${balance > 0 ? 'text-amber-400' : 'text-green-400'}`}>{formatCurrency(balance)}</td>
+                                    </tr>
+                                  )
+                                } else if (e.type === 'return') {
+                                  const r = e.data
+                                  balance -= parseFloat(r.amount)
+                                  return (
+                                    <tr key={`ret-${ei}`} className="border-b border-surface-700/40 hover:bg-surface-700/20 bg-blue-500/[0.03]">
+                                      <td className="px-2 py-2.5 text-slate-400 whitespace-nowrap">{formatDate(e.date)}</td>
+                                      <td className="px-2 py-2.5 font-mono text-blue-400 text-[11px] whitespace-nowrap">{r.invoice_number || '—'}</td>
+                                      <td className="px-2 py-2.5 text-blue-400 overflow-hidden text-ellipsis whitespace-nowrap">Credit Note{r.reason ? ` · ${r.reason}` : ''}</td>
+                                      <td className="px-2 py-2.5" /><td className="px-2 py-2.5" /><td className="px-2 py-2.5" /><td className="px-2 py-2.5" />
+                                      <td className="px-2 py-2.5" />
+                                      <td className="px-2 py-2.5 text-blue-400 text-right whitespace-nowrap font-medium">{formatCurrency(parseFloat(r.amount))}</td>
+                                      <td className={`px-2 py-2.5 text-right font-semibold whitespace-nowrap ${balance > 0 ? 'text-amber-400' : 'text-green-400'}`}>{formatCurrency(balance)}</td>
+                                    </tr>
+                                  )
+                                } else {
+                                  const d = e.data
+                                  balance += parseFloat(d.amount)
+                                  return (
+                                    <tr key={`dbt-${ei}`} className="border-b border-surface-700/40 hover:bg-surface-700/20 bg-orange-500/[0.03]">
+                                      <td className="px-2 py-2.5 text-slate-400 whitespace-nowrap">{formatDate(e.date)}</td>
+                                      <td className="px-2 py-2.5 font-mono text-orange-400 text-[11px] whitespace-nowrap">{d.reference || '—'}</td>
+                                      <td className="px-2 py-2.5 text-orange-400 overflow-hidden text-ellipsis whitespace-nowrap">{d.description || 'Manual Debit'}</td>
+                                      <td className="px-2 py-2.5" /><td className="px-2 py-2.5" /><td className="px-2 py-2.5" /><td className="px-2 py-2.5" />
+                                      <td className="px-2 py-2.5 text-orange-400 text-right whitespace-nowrap font-medium">{formatCurrency(parseFloat(d.amount))}</td>
+                                      <td className="px-2 py-2.5" />
+                                      <td className={`px-2 py-2.5 text-right font-semibold whitespace-nowrap ${balance > 0 ? 'text-amber-400' : 'text-green-400'}`}>{formatCurrency(balance)}</td>
+                                    </tr>
+                                  )
+                                }
+                              })}
+                              {/* Grand total row */}
+                              <tr className="border-t-2 border-surface-600 bg-surface-800/80">
+                                <td colSpan={7} className="px-2 py-3 font-bold text-slate-300 text-right text-xs">Grand Total</td>
+                                <td className="px-2 py-3 text-right font-bold text-red-400">{formatCurrency(parseFloat(statementData.summary.total_charged ?? statementData.summary.total_invoiced))}</td>
+                                <td className="px-2 py-3 text-right font-bold text-green-400">{formatCurrency(parseFloat(statementData.summary.total_paid))}</td>
+                                <td className={`px-2 py-3 text-right font-bold ${parseFloat(statementData.summary.balance_due) > 0 ? 'text-amber-400' : 'text-green-400'}`}>{formatCurrency(parseFloat(statementData.summary.balance_due))}</td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                      )
+                    })()}
+                  </div>
                 </>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Record Debit modal */}
+      {showDebitModal && selected && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setShowDebitModal(false)} />
+          <div className="relative card w-full max-w-md p-6 space-y-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-bold text-white">Record Manual Debit</h2>
+                <p className="text-xs text-slate-500">{selected.name}</p>
+              </div>
+              <button onClick={() => setShowDebitModal(false)} className="text-slate-400 hover:text-white"><X size={20} /></button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Amount *</label>
+                <input className="input" placeholder="0.00" value={debitForm.amount}
+                  onChange={(e) => setDebitForm({ ...debitForm, amount: e.target.value })} />
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Date *</label>
+                <DateInput value={debitForm.debit_date} onChange={(v) => setDebitForm({ ...debitForm, debit_date: v })} />
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Reference</label>
+                <input className="input" placeholder="e.g. DEBIT-001" value={debitForm.reference}
+                  onChange={(e) => setDebitForm({ ...debitForm, reference: e.target.value })} />
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Description</label>
+                <textarea className="input resize-none" rows={2} placeholder="Reason for debit charge…"
+                  value={debitForm.description} onChange={(e) => setDebitForm({ ...debitForm, description: e.target.value })} />
+              </div>
+            </div>
+            <div className="flex gap-3 pt-1">
+              <button className="flex-1 py-2.5 rounded-xl border border-surface-600 text-slate-400 hover:text-white hover:border-surface-500 transition-colors text-sm"
+                onClick={() => setShowDebitModal(false)}>Cancel</button>
+              <button className="flex-1 py-2.5 rounded-xl bg-orange-600 hover:bg-orange-700 text-white font-semibold text-sm disabled:opacity-50 flex items-center justify-center gap-2"
+                onClick={handleRecordDebit} disabled={savingDebit}>
+                {savingDebit ? <Loader2 size={16} className="animate-spin" /> : <MinusCircle size={16} />}
+                {savingDebit ? 'Saving…' : 'Record Debit'}
+              </button>
             </div>
           </div>
         </div>
@@ -853,11 +1164,11 @@ export default function CustomersPage() {
               </div>
 
               <div className="col-span-2">
-                <label className="text-xs text-slate-400 mb-1 block">Address<FieldTooltip text="The customer's delivery or billing address. Printed on their invoices." /></label>
+                <label className="text-xs text-slate-400 mb-1 block">Shipping Address<FieldTooltip text="The customer's shipping/delivery address. Printed on invoices and delivery notes." /></label>
                 <textarea
                   className="input resize-none"
                   rows={2}
-                  placeholder="Street, City, State"
+                  placeholder="e.g. 12 Adeola Hopewell St, Victoria Island, Lagos"
                   value={form.address}
                   onChange={(e) => setForm({ ...form, address: e.target.value })}
                 />

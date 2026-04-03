@@ -10,8 +10,8 @@ import pytest
 @pytest.mark.integration
 class TestRegistration:
 
-    def test_register_returns_tokens(self, api_client, db):
-        """Successful registration should return JWT tokens."""
+    def test_register_returns_verification_message(self, api_client, db):
+        """Successful registration should return 201 with a verification message (email verification required)."""
         response = api_client.post("/api/v1/auth/register/", {
             "email": "newuser@test.com",
             "first_name": "New",
@@ -20,9 +20,7 @@ class TestRegistration:
             "password_confirm": "SecurePass2024!",
         }, format="json")
         assert response.status_code == 201
-        assert "tokens" in response.data
-        assert "access" in response.data["tokens"]
-        assert "refresh" in response.data["tokens"]
+        assert "message" in response.data
 
     def test_register_password_mismatch(self, api_client, db):
         """Mismatched passwords should return 400."""
@@ -35,8 +33,11 @@ class TestRegistration:
         }, format="json")
         assert response.status_code == 400
 
-    def test_register_duplicate_email(self, api_client, user, db):
-        """Registering with an existing email should return 400."""
+    def test_register_established_duplicate_email(self, api_client, user, db):
+        """Registering with an email that has an active org membership should return 400."""
+        from apps.tenancy.models import Organisation, Membership
+        org = Organisation.objects.create(name="Existing Org", slug="existing-org", currency="NGN", owner=user)
+        Membership.objects.create(user=user, organisation=org, role="owner", is_active=True)
         response = api_client.post("/api/v1/auth/register/", {
             "email": user.email,
             "first_name": "Dup",

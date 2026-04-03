@@ -108,6 +108,7 @@ class ExpenseViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
         is_income = serializer.validated_data.get('is_income', False)
         category = self._resolve_category(label, is_income, org)
         expense = serializer.save(organisation=org, recorded_by=self.request.user, category=category)
+        self._write_audit('create', expense, {k: {'old': None, 'new': str(v)} for k, v in serializer.validated_data.items()})
 
         # Auto-post journal entry (non-blocking)
         try:
@@ -118,9 +119,14 @@ class ExpenseViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
     def perform_update(self, serializer):
         org = self.request.organisation
         label = serializer.validated_data.pop('category_label', None)
+        instance = serializer.instance
+        before = {f: getattr(instance, f, None) for f in serializer.validated_data}
         if label is not None:
             is_income = serializer.validated_data.get('is_income', serializer.instance.is_income)
             category = self._resolve_category(label, is_income, org)
             serializer.save(category=category)
         else:
             serializer.save()
+        after = {f: getattr(serializer.instance, f, None) for f in before}
+        changes = {f: {'old': str(before[f]), 'new': str(after[f])} for f in before if str(before[f]) != str(after[f])}
+        self._write_audit('update', serializer.instance, changes)

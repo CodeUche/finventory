@@ -234,9 +234,11 @@ api.interceptors.response.use(
     }
 
     // Show toast for API errors (deduplicate using toast ID so poll loops don't spam)
+    // Skip 401 (handled by refresh logic) and 403 (permission denials — handled silently at component level)
     const errData = (error.response?.data as any)?.error
-    if (errData?.message && error.response?.status !== 401) {
-      const toastId = `api-err-${error.response?.status}-${original.url}`
+    const status = error.response?.status
+    if (errData?.message && status !== 401 && status !== 403) {
+      const toastId = `api-err-${status}-${original.url}`
       toast.error(errData.message, { id: toastId, duration: 4000 })
     }
 
@@ -307,6 +309,8 @@ export const authApi = {
     api.post('/auth/password-reset/confirm/', data),
   verifyEmail: (token: string) =>
     api.get('/auth/verify-email/', { params: { token } }),
+  checkVerification: (email: string) =>
+    api.post('/auth/check-verification/', { email }),
   resendVerification: (email: string) =>
     api.post('/auth/resend-verification/', { email }),
   mfaSetup: () => api.post('/auth/mfa/setup/'),
@@ -337,6 +341,7 @@ export const orgApi = {
 export const teamApi = {
   members: () => api.get('/tenancy/memberships/'),
   updateMember: (id: string, data: object) => api.patch(`/tenancy/memberships/${id}/`, data),
+  deleteMember: (id: string) => api.delete(`/tenancy/memberships/${id}/`),
   setPermissions: (id: string, permissions: { module: string; access_level: string }[]) =>
     api.post(`/tenancy/memberships/${id}/set_permissions/`, { permissions }),
 }
@@ -355,8 +360,10 @@ export const inventoryApi = {
   updateWarehouse: (id: string, data: object) => api.patch(`/inventory/warehouses/${id}/`, data),
   deleteWarehouse: (id: string) => api.delete(`/inventory/warehouses/${id}/`),
   adjustStock: (data: object) => api.post('/inventory/movements/adjust/', data),
+  transferStock: (data: object) => api.post('/inventory/movements/transfer/', data),
   batches: (params?: object) => api.get('/inventory/batches/', { params }),
   createBatch: (data: object) => api.post('/inventory/batches/', data),
+  deleteBatch: (id: string) => api.delete(`/inventory/batches/${id}/`),
 }
 
 export const salesApi = {
@@ -374,6 +381,8 @@ export const salesApi = {
     api.post(`/sales/invoices/${invoiceId}/send_email/`, data),
   confirmProforma: (invoiceId: string) =>
     api.post(`/sales/invoices/${invoiceId}/confirm_proforma/`),
+  extendDueDate: (invoiceId: string, data: { new_due_date: string; reason?: string }) =>
+    api.post(`/sales/invoices/${invoiceId}/extend_due_date/`, data),
   productHistory: (productId: string) =>
     api.get('/sales/invoices/product_history/', { params: { product_id: productId } }),
   warehouseSales: (period?: string) =>
@@ -389,6 +398,7 @@ export const customerApi = {
   update: (id: string, data: object) => api.patch(`/customers/${id}/`, data),
   delete: (id: string) => api.delete(`/customers/${id}/`),
   statement: (id: string, params?: object) => api.get(`/customers/${id}/statement/`, { params }),
+  recordDebit: (id: string, data: object) => api.post(`/customers/${id}/record_debit/`, data),
 }
 
 export const expenseApi = {
@@ -489,6 +499,30 @@ export const invoiceFolderApi = {
   contents: (id: string) => api.get(`/sales/folders/${id}/contents/`),
 }
 
+export const locationApi = {
+  list: (params?: object) => api.get('/sales/locations/', { params }),
+  create: (data: object) => api.post('/sales/locations/', data),
+  update: (id: string, data: object) => api.patch(`/sales/locations/${id}/`, data),
+  delete: (id: string) => api.delete(`/sales/locations/${id}/`),
+  salesAnalytics: (period?: string) => api.get('/sales/locations/sales_analytics/', { params: { period } }),
+}
+
+export const stockReportApi = {
+  availability: (params?: object) => api.get('/inventory/products/stock-availability/', { params }),
+  usage: (params?: object) => api.get('/inventory/products/usage-report/', { params }),
+  transfers: (params?: object) => api.get('/inventory/products/transfer-report/', { params }),
+  stockCard: (params: object) => api.get('/inventory/products/stock-card/', { params }),
+}
+
+export const partnerApi = {
+  profile: ()                          => api.get('/tenancy/partner/profile/'),
+  updateProfile: (data: object)        => api.put('/tenancy/partner/profile/', data),
+  clients: ()                          => api.get('/tenancy/partner/clients/'),
+  addClient: (data: object)            => api.post('/tenancy/partner/clients/', data),
+  removeClient: (id: string)           => api.delete(`/tenancy/partner/${id}/clients/`),
+  consolidated: ()                     => api.get('/tenancy/partner/consolidated/'),
+}
+
 export const accountingApi = {
   accounts: (params?: object) => api.get('/accounting/accounts/', { params }),
   createAccount: (data: object) => api.post('/accounting/accounts/', data),
@@ -534,7 +568,8 @@ export const payrollApi = {
   approvePayroll: (id: string) => api.post(`/payroll/runs/${id}/approve/`),
   markPaid: (id: string, data: object) => api.post(`/payroll/runs/${id}/mark_paid/`, data),
   initiateTransfers: (id: string) => api.post(`/payroll/runs/${id}/initiate_transfers/`),
-  submitForApproval: (id: string) => api.post(`/payroll/runs/${id}/submit_for_approval/`),
+  eligibleApprovers: () => api.get('/payroll/runs/eligible_approvers/'),
+  submitForApproval: (id: string, data?: object) => api.post(`/payroll/runs/${id}/submit_for_approval/`, data ?? {}),
   retryFailed: (id: string) => api.post(`/payroll/runs/${id}/retry_failed/`),
   exportBankFile: (id: string) => api.get(`/payroll/runs/${id}/export_bank_file/`, { responseType: 'blob' }),
   pendingApprovals: () => api.get('/payroll/runs/pending_approvals/'),
@@ -630,4 +665,5 @@ export const subscriptionApi = {
 export const aiApi = {
   status: () => api.get('/ai/status/'),
   chat: (message: string) => api.post('/ai/chat/', { message }),
+  support: (message: string) => api.post('/ai/support/', { message }),
 }

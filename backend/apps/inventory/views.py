@@ -17,6 +17,7 @@ from .serializers import (
     StockAdjustmentSerializer,
     StockItemSerializer,
     StockMovementSerializer,
+    StockTransferSerializer,
     WarehouseSerializer,
 )
 from .services import InventoryService
@@ -46,6 +47,15 @@ class WarehouseViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     queryset = Warehouse.objects.filter(is_active=True)
     serializer_class = WarehouseSerializer
     permission_classes = [IsAuthenticated, IsManager]
+
+    def create(self, request, *args, **kwargs):
+        org = self._get_organisation()
+        from apps.subscriptions.services import SubscriptionService
+        count = Warehouse.objects.filter(organisation=org, is_active=True).count()
+        err = SubscriptionService.get_write_limit_error(org, "max_warehouses", count)
+        if err:
+            return Response({"error": err, "upgrade_required": True}, status=402)
+        return super().create(request, *args, **kwargs)
 
 
 class ProductViewSet(TenantFilterMixin, viewsets.ModelViewSet):
@@ -120,6 +130,268 @@ class ProductViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         ]
         return Response(data)
 
+    @action(detail=False, methods=["get"], url_path="stock-availability")
+    def stock_availability(self, request):
+        """
+        GET /api/v1/inventory/products/stock-availability/
+        ?date_to=YYYY-MM-DD  (optional — defaults to today)
+
+        Returns all products with current stock levels vs min/max safety levels.
+        """
+        from apps.inventory.models import StockItem
+        org = self._get_organisation()
+        products = self.get_queryset()
+        stock_map: dict = {}
+        for si in StockItem.objects.filter(organisation=org).select_related("product", "warehouse"):
+            pid = str(si.product_id)
+            if pid not in stock_map:
+                stock_map[pid] = {"qty": 0, "warehouses": []}
+            stock_map[pid]["qty"] += si.quantity_on_hand
+            stock_map[pid]["warehouses"].append({
+                "warehouse": si.warehouse.name,
+                "qty": si.quantity_on_hand,
+            })
+
+        data = []
+        for p in products:
+            pid = str(p.id)
+            qty = stock_map.get(pid, {}).get("qty", 0)
+            warehouses = stock_map.get(pid, {}).get("warehouses", [])
+            status = "ok"
+            if qty <= 0:
+                status = "out_of_stock"
+            elif qty <= p.reorder_level:
+                status = "low"
+            elif p.max_stock_level and qty >= p.max_stock_level:
+                status = "overstocked"
+            data.append({
+                "id": str(p.id),
+                "sku": p.sku,
+                "name": p.name,
+                "category": p.category.name if p.category else None,
+                "unit_of_measure": p.unit_of_measure,
+                "quantity_on_hand": qty,
+                "min_safety_level": p.reorder_level,
+                "max_safety_level": p.max_stock_level,
+                "reorder_quantity": p.reorder_quantity,
+                "quantity_in_pack": float(p.quantity_in_pack),
+                "cost_price": float(p.cost_price),
+                "selling_price": float(p.selling_price),
+                "status": status,
+                "warehouses": warehouses,
+            })
+        return Response(data)
+
+    @action(detail=False, methods=["get"], url_path="usage-report")
+    def usage_report(self, request):
+        """
+        GET /api/v1/inventory/products/usage-report/?date_from=&date_to=
+        Stock usage (sales deductions) over a date range — summary + transaction breakdown.
+        """
+        from django.db.models import Sum
+        from apps.inventory.models import StockMovement
+
+        org = self._get_organisation()
+        date_from_str = request.query_params.get("date_from")
+        date_to_str = request.query_params.get("date_to")
+
+        qs = StockMovement.objects.filter(
+            organisation=org,
+            movement_type=StockMovement.MovementType.SALE_OUT,
+        )
+        if date_from_str:
+            qs = qs.filter(created_at__date__gte=date_from_str)
+        if date_to_str:
+            qs = qs.filter(created_at__date__lte=date_to_str)
+
+        # Summary rows (aggregated by product)
+        summary_rows = (
+            qs.values("product__id", "product__sku", "product__name", "product__unit_of_measure")
+            .annotate(total_used=Sum("quantity"))
+            .order_by("-total_used")
+        )
+        summary = [
+            {
+                "id": str(r["product__id"]),
+                "sku": r["product__sku"],
+                "name": r["product__name"],
+                "unit_of_measure": r["product__unit_of_measure"],
+                "total_used": abs(float(r["total_used"] or 0)),
+            }
+            for r in summary_rows
+        ]
+
+        # Per-transaction breakdown (most recent 500)
+        transactions = []
+        for m in qs.select_related("product", "warehouse", "batch", "created_by").order_by("-created_at")[:500]:
+            by = ""
+            if m.created_by:
+                by = f"{m.created_by.first_name} {m.created_by.last_name}".strip() or m.created_by.email
+
+            # Try to fetch customer from invoice via reference (invoice_number stored in reference)
+            customer_name = ""
+            try:
+                from apps.sales.models import Invoice
+                inv = Invoice.objects.filter(
+                    organisation=org, invoice_number=m.reference
+                ).select_related("customer").first()
+                if inv and inv.customer:
+                    customer_name = inv.customer.name
+                elif inv and inv.sold_by:
+                    pass  # no customer (walk-in)
+            except Exception:
+                pass
+
+            transactions.append({
+                "date": m.created_at.strftime("%Y-%m-%d %H:%M"),
+                "product_name": m.product.name,
+                "product_sku": m.product.sku,
+                "warehouse": m.warehouse.name,
+                "quantity": abs(float(m.quantity)),
+                "unit_cost": str(m.unit_cost) if m.unit_cost else "",
+                "invoice_no": m.reference or "",
+                "customer": customer_name,
+                "batch_number": m.batch.batch_number if m.batch else "",
+                "sold_by": by,
+                "notes": m.notes,
+            })
+
+        return Response({"summary": summary, "transactions": transactions})
+
+    @action(detail=False, methods=["get"], url_path="transfer-report")
+    def transfer_report(self, request):
+        """
+        GET /api/v1/inventory/products/transfer-report/?date_from=&date_to=
+        Stock transfer and purchase-in history with full traceability.
+        """
+        from apps.inventory.models import StockMovement
+
+        org = self._get_organisation()
+        date_from_str = request.query_params.get("date_from")
+        date_to_str = request.query_params.get("date_to")
+
+        qs = StockMovement.objects.filter(
+            organisation=org,
+            movement_type__in=[
+                StockMovement.MovementType.TRANSFER_IN,
+                StockMovement.MovementType.TRANSFER_OUT,
+                StockMovement.MovementType.PURCHASE_IN,
+            ],
+        ).select_related("product", "warehouse", "batch", "created_by")
+        if date_from_str:
+            qs = qs.filter(created_at__date__gte=date_from_str)
+        if date_to_str:
+            qs = qs.filter(created_at__date__lte=date_to_str)
+
+        movements = list(qs.order_by("-created_at")[:500])
+
+        # For PURCHASE_IN: look up supplier via PO reference
+        po_refs = {m.reference for m in movements if m.movement_type == StockMovement.MovementType.PURCHASE_IN and m.reference}
+        supplier_map = {}
+        if po_refs:
+            try:
+                from apps.purchases.models import PurchaseOrder
+                for po in PurchaseOrder.objects.filter(
+                    organisation=org, po_number__in=po_refs
+                ).select_related("supplier"):
+                    supplier_map[po.po_number] = po.supplier.name if po.supplier else ""
+            except Exception:
+                pass
+
+        data = []
+        for m in movements:
+            by = ""
+            if m.created_by:
+                by = f"{m.created_by.first_name} {m.created_by.last_name}".strip() or m.created_by.email
+
+            supplier = ""
+            if m.movement_type == StockMovement.MovementType.PURCHASE_IN and m.reference:
+                supplier = supplier_map.get(m.reference, "")
+
+            data.append({
+                "id": str(m.id),
+                "date": m.created_at.strftime("%Y-%m-%d %H:%M"),
+                "movement_type": m.movement_type,
+                "movement_label": m.get_movement_type_display(),
+                "product_name": m.product.name,
+                "product_sku": m.product.sku,
+                "warehouse": m.warehouse.name,
+                "quantity": float(abs(m.quantity)),
+                "unit_cost": str(m.unit_cost) if m.unit_cost else "",
+                "reference": m.reference,
+                "supplier": supplier,
+                "batch_number": m.batch.batch_number if m.batch else "",
+                "batch_expiry": str(m.batch.expiry_date) if m.batch and m.batch.expiry_date else "",
+                "received_by": by,
+                "notes": m.notes,
+            })
+        return Response(data)
+
+    @action(detail=False, methods=["get"], url_path="stock-card")
+    def stock_card(self, request):
+        """
+        GET /api/v1/inventory/products/stock-card/?product_id=&date_from=&date_to=
+        Returns full stock movement history for a product as a stock card
+        with DATE, IN, OUT, BALANCE, INVOICE_NO, REMARK columns.
+        """
+        from apps.inventory.models import StockMovement
+        org = self._get_organisation()
+        product_id = request.query_params.get("product_id")
+        date_from_str = request.query_params.get("date_from")
+        date_to_str = request.query_params.get("date_to")
+
+        if not product_id:
+            return Response({"error": "product_id is required"}, status=400)
+
+        qs = StockMovement.objects.filter(
+            organisation=org, product_id=product_id,
+        ).select_related("product", "warehouse", "batch", "created_by").order_by("created_at")
+
+        if date_from_str:
+            qs = qs.filter(created_at__date__gte=date_from_str)
+        if date_to_str:
+            qs = qs.filter(created_at__date__lte=date_to_str)
+
+        # Compute running balance
+        IN_TYPES = {
+            StockMovement.MovementType.PURCHASE_IN,
+            StockMovement.MovementType.ADJUSTMENT_IN,
+            StockMovement.MovementType.TRANSFER_IN,
+        }
+        balance = 0.0
+        data = []
+        for m in qs:
+            qty = float(m.quantity)
+            if m.movement_type in IN_TYPES:
+                in_qty, out_qty = qty, 0
+                balance += qty
+            else:
+                in_qty, out_qty = 0, qty
+                balance -= qty
+
+            by = ""
+            if m.created_by:
+                by = f"{m.created_by.first_name} {m.created_by.last_name}".strip() or m.created_by.email
+
+            data.append({
+                "date": m.created_at.strftime("%Y-%m-%d %H:%M"),
+                "warehouse": m.warehouse.name,
+                "in": in_qty if in_qty else None,
+                "out": out_qty if out_qty else None,
+                "balance": balance,
+                "unit_cost": str(m.unit_cost) if m.unit_cost else "",
+                "invoice_no": m.reference or "",
+                "batch_number": m.batch.batch_number if m.batch else "",
+                "remark": m.notes or m.movement_type.replace("_", " ").title(),
+                "created_by": by,
+            })
+
+        product = self.get_queryset().filter(id=product_id).first()
+        return Response({
+            "product": {"id": product_id, "name": product.name if product else "", "sku": product.sku if product else ""},
+            "rows": data,
+        })
+
 
 class BatchViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     queryset = Batch.objects.select_related("product", "warehouse")
@@ -174,15 +446,16 @@ class StockMovementViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         d = serializer.validated_data
 
+        org = self._get_organisation()
         try:
-            product = Product.objects.get(id=d["product_id"], organisation=request.organisation)
-            warehouse = Warehouse.objects.get(id=d["warehouse_id"], organisation=request.organisation)
+            product = Product.objects.get(id=d["product_id"], organisation=org)
+            warehouse = Warehouse.objects.get(id=d["warehouse_id"], organisation=org)
         except (Product.DoesNotExist, Warehouse.DoesNotExist):
             return Response({"error": "Product or warehouse not found."}, status=404)
 
         try:
             movement = InventoryService.adjust_stock(
-                organisation=request.organisation,
+                organisation=org,
                 product=product,
                 warehouse=warehouse,
                 quantity=d["quantity"],
@@ -190,5 +463,43 @@ class StockMovementViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                 created_by=request.user,
             )
             return Response(StockMovementSerializer(movement).data, status=201)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=422)
+
+    @action(detail=False, methods=["post"], permission_classes=[IsAuthenticated, IsManager])
+    def transfer(self, request):
+        """
+        POST /api/v1/inventory/movements/transfer/
+
+        Move stock between warehouses.
+        Body: { product_id, from_warehouse_id, to_warehouse_id, quantity, notes }
+        """
+        serializer = StockTransferSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        d = serializer.validated_data
+
+        org = self._get_organisation()
+        try:
+            product = Product.objects.get(id=d["product_id"], organisation=org)
+            from_wh = Warehouse.objects.get(id=d["from_warehouse_id"], organisation=org)
+            to_wh = Warehouse.objects.get(id=d["to_warehouse_id"], organisation=org)
+        except (Product.DoesNotExist, Warehouse.DoesNotExist):
+            return Response({"error": "Product or warehouse not found."}, status=404)
+
+        try:
+            result = InventoryService.transfer_stock(
+                organisation=org,
+                product=product,
+                from_warehouse=from_wh,
+                to_warehouse=to_wh,
+                quantity=d["quantity"],
+                notes=d.get("notes", ""),
+                created_by=request.user,
+            )
+            return Response({
+                "reference": result["reference"],
+                "out": StockMovementSerializer(result["out"]).data,
+                "in": StockMovementSerializer(result["in"]).data,
+            }, status=201)
         except ValueError as e:
             return Response({"error": str(e)}, status=422)

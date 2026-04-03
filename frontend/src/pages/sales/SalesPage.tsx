@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Plus, Receipt, Search, X, Loader2, CheckCircle, Ban, FileDown, Mail, MessageCircle, RotateCcw, Truck, Pencil, Trash2 } from 'lucide-react'
+import { Plus, Receipt, Search, X, Loader2, CheckCircle, Ban, FileDown, Mail, MessageCircle, RotateCcw, Truck, Pencil, Trash2, CalendarClock } from 'lucide-react'
 import SortSelect from '@/components/SortSelect'
 import YearFilter, { yearToDateParams } from '@/components/YearFilter'
 import ExportButton from '@/components/ExportButton'
@@ -84,8 +84,6 @@ async function buildInvoicePDF(
   const DARK:   [number, number, number] = [30,  30,  30]
   const MUTED:  [number, number, number] = [100, 100, 100]
   const LIGHT:  [number, number, number] = [250, 250, 248]
-  const NAVY:   [number, number, number] = [15,  23,  42]
-  const SLATE4: [number, number, number] = [148, 163, 184]
 
   const displayName = showCompanyName === false ? '' : (companyNameOverride?.trim() || orgName)
   const pdfFontFamily = companyFont?.toLowerCase().includes('times') || companyFont === 'Georgia'
@@ -99,8 +97,6 @@ async function buildInvoicePDF(
   const isItalic = companyFontItalic === true
   const pdfStyle = isBold && isItalic ? 'bolditalic' : isBold ? 'bold' : isItalic ? 'italic' : 'normal'
   const fontSize = Math.max(8, Math.min(36, companyFontSize ?? 14))
-  // Smart default: white on dark-background templates, dark on light-background templates.
-  // Custom color (anything other than the default #fff) is always used as-is.
   const nameColor: [number, number, number] = (() => {
     if (!companyFontColor || companyFontColor === '#ffffff') {
       return (tmpl === 'modern' || tmpl === 'minimal') ? DARK : [255, 255, 255]
@@ -112,171 +108,30 @@ async function buildInvoicePDF(
   let logoData: string | null = null
   if (orgLogo) { try { logoData = await urlToDataUrl(orgLogo) } catch { /* skip */ } }
 
-  // ── HEADER: switch by template ─────────────────────────────────────────────
-  let y = 0
+  const { applyDocHeader, templateHeadFill, templateAltRowFill, templateTableLine } = await import('@/lib/pdfUtils')
 
-  if (tmpl === 'classic') {
-    // Full brand-colour header bar (36mm) with logo + name + INVOICE inside
-    const H = 36
-    doc.setFillColor(...BRAND)
-    doc.rect(0, 0, pageW, H, 'F')
-    if (logoData) {
-      const fmt = logoData.includes('image/png') ? 'PNG' : 'JPEG'
-      doc.addImage(logoData, fmt, 8, 6, 22, 22)
-    }
-    const nameX = logoData ? 34 : 10
-    if (displayName) {
-      doc.setFontSize(fontSize); doc.setFont(pdfFontFamily, pdfStyle)
-      doc.setTextColor(...nameColor)
-      doc.text(displayName, nameX, 15)
-      if (companyFontUnderline) {
-        const tw = doc.getTextWidth(displayName)
-        doc.setDrawColor(...nameColor); doc.setLineWidth(0.3)
-        doc.line(nameX, 16.5, nameX + tw, 16.5)
-      }
-    }
-    doc.setFontSize(8); doc.setFont('helvetica', 'normal')
-    doc.setTextColor(220, 220, 220)
-    let iy = 21
-    if (orgAddress) { doc.text(orgAddress, nameX, iy); iy += 4 }
-    if (orgPhone)   { doc.text(orgPhone, nameX, iy); iy += 4 }
-    if (orgEmail)   { doc.text(orgEmail, nameX, iy) }
-    // INVOICE right
-    doc.setFontSize(22); doc.setFont('helvetica', 'bold'); doc.setTextColor(255, 255, 255)
-    doc.text('INVOICE', pageW - 10, 14, { align: 'right' })
-    const mRows: [string, string][] = [
-      ['No.', inv.invoice_number],
-      ['Date', formatDate(inv.issue_date)],
-      ['Status', inv.status.replace(/_/g, ' ').toUpperCase()],
-    ]
-    mRows.forEach(([lbl, val], i) => {
-      doc.setFontSize(7.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(200, 200, 200)
-      doc.text(lbl, pageW - 65, 20 + i * 5)
-      doc.setFont('helvetica', 'bold'); doc.setTextColor(255, 255, 255)
-      doc.text(val, pageW - 10, 20 + i * 5, { align: 'right' })
-    })
-    y = H + 8
-
-  } else if (tmpl === 'modern') {
-    // Thin top accent line + white header + brand-colour INVOICE word
-    doc.setFillColor(...BRAND); doc.rect(0, 0, pageW, 4, 'F')
-    y = 10
-    if (logoData) {
-      const fmt = logoData.includes('image/png') ? 'PNG' : 'JPEG'
-      doc.addImage(logoData, fmt, 14, y + 2, 22, 22)
-    }
-    const nameX = logoData ? 40 : 14
-    doc.setFontSize(fontSize); doc.setFont(pdfFontFamily, pdfStyle); doc.setTextColor(...nameColor)
-    doc.text(displayName, nameX, y + 12)
-    if (companyFontUnderline) {
-      const tw = doc.getTextWidth(displayName)
-      doc.setDrawColor(...nameColor); doc.setLineWidth(0.3)
-      doc.line(nameX, y + 13.5, nameX + tw, y + 13.5)
-    }
-    doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(...MUTED)
-    let iy = y + 18
-    if (orgAddress) { doc.text(orgAddress, nameX, iy); iy += 4 }
-    if (orgEmail)   { doc.text(orgEmail, nameX, iy) }
-    // INVOICE label in brand colour
-    doc.setFontSize(24); doc.setFont('helvetica', 'bold'); doc.setTextColor(...BRAND)
-    doc.text('INVOICE', pageW - 14, y + 12, { align: 'right' })
-    // Info box right
-    doc.setFillColor(248, 250, 252)
-    doc.roundedRect(pageW - 76, y + 16, 62, 22, 2, 2, 'F')
-    const infoRows: [string, string][] = [
-      ['Number', inv.invoice_number],
-      ['Date',   formatDate(inv.issue_date)],
-      ['Status', inv.status.replace(/_/g, ' ').toUpperCase()],
-    ]
-    infoRows.forEach(([lbl, val], i) => {
-      doc.setFontSize(7.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(...MUTED)
-      doc.text(lbl, pageW - 73, y + 22 + i * 5.5)
-      doc.setFont('helvetica', 'bold'); doc.setTextColor(...DARK)
-      doc.text(val, pageW - 16, y + 22 + i * 5.5, { align: 'right' })
-    })
-    y = y + 42
-    doc.setDrawColor(...BRAND); doc.setLineWidth(0.5)
-    doc.line(14, y, pageW - 14, y)
-    y += 8
-
-  } else if (tmpl === 'minimal') {
-    // No colour — pure typography
-    y = 12
-    if (logoData) {
-      const fmt = logoData.includes('image/png') ? 'PNG' : 'JPEG'
-      doc.addImage(logoData, fmt, 14, y, 22, 22)
-    }
-    const nameX = logoData ? 40 : 14
-    doc.setFontSize(fontSize); doc.setFont(pdfFontFamily, pdfStyle); doc.setTextColor(...nameColor)
-    doc.text(displayName, nameX, y + 10)
-    if (companyFontUnderline) {
-      const tw = doc.getTextWidth(displayName)
-      doc.setDrawColor(...nameColor); doc.setLineWidth(0.3)
-      doc.line(nameX, y + 11.5, nameX + tw, y + 11.5)
-    }
-    doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(...MUTED)
-    let iy = y + 16
-    if (orgAddress) { doc.text(orgAddress, nameX, iy); iy += 4 }
-    if (orgEmail)   { doc.text(orgEmail, nameX, iy) }
-    // INVOICE in dark, right
-    doc.setFontSize(22); doc.setFont('helvetica', 'bold'); doc.setTextColor(...DARK)
-    doc.text('INVOICE', pageW - 14, y + 10, { align: 'right' })
-    const mRows: [string, string][] = [
-      ['No.', inv.invoice_number],
-      ['Date', formatDate(inv.issue_date)],
-    ]
-    mRows.forEach(([lbl, val], i) => {
-      doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(...MUTED)
-      doc.text(lbl, pageW - 65, y + 17 + i * 5.5)
-      doc.setFont('helvetica', 'bold'); doc.setTextColor(...DARK)
-      doc.text(val, pageW - 14, y + 17 + i * 5.5, { align: 'right' })
-    })
-    y = y + 32
-    doc.setDrawColor(...DARK); doc.setLineWidth(1.2)
-    doc.line(14, y, pageW - 14, y)
-    y += 8
-
-  } else {
-    // professional — split header: dark left panel | light right panel
-    const H = 40
-    const splitX = pageW * 0.46
-    doc.setFillColor(...BRAND); doc.rect(0, 0, splitX, H, 'F')
-    doc.setFillColor(248, 250, 252); doc.rect(splitX, 0, pageW - splitX, H, 'F')
-    if (logoData) {
-      const fmt = logoData.includes('image/png') ? 'PNG' : 'JPEG'
-      doc.addImage(logoData, fmt, 8, 6, 22, 22)
-    }
-    const nameX = logoData ? 33 : 10
-    if (displayName) {
-      doc.setFontSize(fontSize); doc.setFont(pdfFontFamily, pdfStyle); doc.setTextColor(...nameColor)
-      doc.text(displayName, nameX, 16)
-      if (companyFontUnderline) {
-        const tw = doc.getTextWidth(displayName)
-        doc.setDrawColor(...nameColor); doc.setLineWidth(0.3)
-        doc.line(nameX, 17.5, nameX + tw, 17.5)
-      }
-    }
-    doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(...SLATE4)
-    let iy = 22
-    if (orgAddress) { doc.text(orgAddress.slice(0, 30), nameX, iy); iy += 4 }
-    if (orgEmail)   { doc.text(orgEmail, nameX, iy) }
-    // Right panel
-    doc.setFontSize(16); doc.setFont('helvetica', 'bold'); doc.setTextColor(...DARK)
-    doc.text('INVOICE', pageW - 14, 13, { align: 'right' })
-    const pRows: [string, string][] = [
-      ['Invoice No.', inv.invoice_number],
-      ['Date',        formatDate(inv.issue_date)],
-      ['Payment',     inv.payment_method.replace(/_/g, ' ')],
-      ['Status',      inv.status.replace(/_/g, ' ').toUpperCase()],
-    ]
-    pRows.forEach(([lbl, val], i) => {
-      doc.setFontSize(7.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(...SLATE4)
-      doc.text(lbl, splitX + 5, 18 + i * 5.2)
-      doc.setFont('helvetica', 'bold'); doc.setTextColor(...DARK)
-      doc.text(val, pageW - 14, 18 + i * 5.2, { align: 'right' })
-    })
-    y = H + 8
-  }
+  let y = applyDocHeader(doc, {
+    tmpl, pageW, BRAND, DARK, MUTED,
+    logoData,
+    displayName,
+    orgAddress,
+    orgPhone,
+    orgEmail,
+    pdfFont: pdfFontFamily,
+    fontSize,
+    pdfStyle,
+    nameColor,
+    companyFontUnderline,
+    showCompanyName: showCompanyName !== false,
+    docTitle: 'INVOICE',
+    metaRows: [
+      ['No.',     inv.invoice_number],
+      ['Date',    formatDate(inv.issue_date)],
+      ['Payment', inv.payment_method.replace(/_/g, ' ')],
+      ['Status',  inv.status.replace(/_/g, ' ').toUpperCase()],
+      ...(inv.sold_by ? [['Sold By', inv.sold_by] as [string, string]] : []),
+    ],
+  })
 
   // ── Bill To block (shared, slight colour variation by template) ────────────
   const billLabelColor: [number, number, number] = tmpl === 'minimal' ? DARK : BRAND
@@ -294,7 +149,7 @@ async function buildInvoicePDF(
   y += 28
 
   // ── Items table (headStyle varies by template) ─────────────────────────────
-  const headFill: [number, number, number] = tmpl === 'minimal' ? DARK : BRAND
+  const headFill = templateHeadFill(tmpl, BRAND)
 
   // Dynamically size the Unit Price and Amount columns so large numbers
   // (e.g. ₦250,000,000.00) always fit, and Product / Description takes whatever
@@ -329,7 +184,7 @@ async function buildInvoicePDF(
       fontStyle: 'bold',
       fontSize: 8,
     },
-    alternateRowStyles: { fillColor: tmpl === 'minimal' ? [255, 255, 255] : [248, 248, 248] },
+    alternateRowStyles: { fillColor: templateAltRowFill(tmpl) },
     columnStyles: {
       0: { cellWidth: 10,        halign: 'center' },
       1: { cellWidth: 'auto' },
@@ -339,8 +194,8 @@ async function buildInvoicePDF(
       5: { cellWidth: amtColW,   halign: 'right', fontStyle: 'bold' },
     },
     margin: { left: 14, right: 14 },
-    tableLineColor: tmpl === 'minimal' ? DARK : [225, 225, 225],
-    tableLineWidth: tmpl === 'minimal' ? 0.4 : 0.2,
+    tableLineColor: templateTableLine(tmpl, DARK).color,
+    tableLineWidth: templateTableLine(tmpl, DARK).width,
   })
 
   // ── Totals block ──────────────────────────────────────────────────────────
@@ -426,8 +281,7 @@ async function buildInvoicePDF(
     doc.text(`Generated by Audity  ·  ${new Date().toLocaleDateString()}`, pageW / 2, pageH - 6, { align: 'center' })
     if (orgEmail) doc.text(orgEmail, pageW - 14, pageH - 6, { align: 'right' })
   } else {
-    const footerFill: [number, number, number] = tmpl === 'professional' ? NAVY : BRAND
-    doc.setFillColor(...footerFill); doc.rect(0, pageH - 12, pageW, 12, 'F')
+    doc.setFillColor(...BRAND); doc.rect(0, pageH - 12, pageW, 12, 'F')
     doc.setFontSize(7); doc.setFont('helvetica', 'normal'); doc.setTextColor(255, 255, 255)
     doc.text(orgName, 14, pageH - 4.5)
     doc.text(`Generated by Audity  ·  ${new Date().toLocaleDateString()}`, pageW / 2, pageH - 4.5, { align: 'center' })
@@ -468,6 +322,12 @@ async function buildDeliveryNotePDF(
   invoiceTemplate?: string,
   showCompanyName?: boolean,
   companyFontColor?: string,
+  companyFontSize?: number,
+  companyFontBold?: boolean,
+  companyFontItalic?: boolean,
+  companyFontUnderline?: boolean,
+  orgPhone?: string,
+  orgEmail?: string,
 ): Promise<PdfPreview> {
   const { jsPDF } = await import('jspdf')
   const { default: autoTable } = await import('jspdf-autotable')
@@ -479,7 +339,17 @@ async function buildDeliveryNotePDF(
   const MUTED: [number, number, number] = [100, 100, 100]
   const tmpl = invoiceTemplate ?? 'classic'
   const displayName = showCompanyName === false ? '' : (companyNameOverride?.trim() || orgName)
-  const pdfFont = (companyFont === 'times' || companyFont === 'courier') ? companyFont : 'helvetica'
+  const pdfFont = companyFont?.toLowerCase().includes('times') || companyFont === 'Georgia'
+    || companyFont === 'Playfair Display' || companyFont === 'Merriweather' || companyFont === 'Lora'
+    || companyFont === 'Libre Baskerville' || companyFont === 'EB Garamond' || companyFont === 'Crimson Text'
+    || companyFont === 'Cinzel' || companyFont === 'Cormorant Garamond' || companyFont === 'Spectral'
+    ? 'times'
+    : companyFont === 'courier' || companyFont === 'JetBrains Mono' || companyFont === 'Fira Code'
+    ? 'courier' : 'helvetica'
+  const isBold   = companyFontBold !== false
+  const isItalic = companyFontItalic === true
+  const pdfStyle = isBold && isItalic ? 'bolditalic' : isBold ? 'bold' : isItalic ? 'italic' : 'normal'
+  const fontSize = Math.max(8, Math.min(36, companyFontSize ?? 14))
   const nameColor: [number, number, number] = (() => {
     if (!companyFontColor || companyFontColor === '#ffffff') {
       return (tmpl === 'modern' || tmpl === 'minimal') ? DARK : [255, 255, 255]
@@ -497,8 +367,13 @@ async function buildDeliveryNotePDF(
     logoData,
     displayName,
     orgAddress,
+    orgPhone,
+    orgEmail,
     pdfFont,
+    fontSize,
+    pdfStyle,
     nameColor,
+    companyFontUnderline,
     showCompanyName: showCompanyName !== false,
     docTitle: 'DELIVERY NOTE',
     metaRows: [
@@ -556,9 +431,9 @@ async function buildDeliveryNotePDF(
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function SalesPage() {
-  const { organisation, memberRole } = useAuthStore()
+  const { organisation, memberRole, user } = useAuthStore()
   const { canEdit: canEditSales } = useModuleAccess('sales')
-  const isOwnerOrAdmin = !memberRole || memberRole === 'owner' || memberRole === 'admin'
+  const isOwnerOrAdmin = memberRole === 'owner' || memberRole === 'admin' || user?.is_superuser === true
   const [invoices, setInvoices] = useState<Invoice[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -590,6 +465,10 @@ export default function SalesPage() {
   const [returnRestocked, setReturnRestocked] = useState(true)
   const [processingReturn, setProcessingReturn] = useState(false)
   const [archiveYear, setArchiveYear] = useState<number | null>(null)
+  const [showExtendDue, setShowExtendDue] = useState(false)
+  const [extendDueDate, setExtendDueDate] = useState('')
+  const [extendReason, setExtendReason] = useState('')
+  const [extendingDue, setExtendingDue] = useState(false)
 
   const load = async () => {
     setLoading(true)
@@ -640,6 +519,26 @@ export default function SalesPage() {
       closeDetail(); load()
     } catch { toast.error('Failed to void invoice') }
     finally { setActing(false) }
+  }
+
+  const handleExtendDue = async () => {
+    if (!selected || !extendDueDate) return
+    setExtendingDue(true)
+    try {
+      const [d, m, y] = extendDueDate.split('/')
+      const isoDate = `${y}-${m}-${d}`
+      const res = await salesApi.extendDueDate(selected.id, { new_due_date: isoDate, reason: extendReason })
+      setDetail(res.data)
+      setSelected(res.data)
+      setInvoices((prev) => prev.map((i) => i.id === selected.id ? res.data : i))
+      setShowExtendDue(false)
+      setExtendDueDate('')
+      setExtendReason('')
+      toast.success('Due date extended')
+    } catch (err: any) {
+      const msg = err?.response?.data?.error
+      toast.error(typeof msg === 'string' ? msg : 'Failed to extend due date')
+    } finally { setExtendingDue(false) }
   }
 
   const openEditModal = () => {
@@ -767,6 +666,12 @@ export default function SalesPage() {
         organisation?.invoice_template,
         organisation?.show_company_name_on_pdf ?? true,
         organisation?.company_name_font_color,
+        organisation?.company_name_font_size,
+        organisation?.company_name_font_bold,
+        organisation?.company_name_font_italic,
+        organisation?.company_name_font_underline,
+        organisation?.phone,
+        organisation?.email,
       )
       setPdfPreview(preview)
     } catch { toast.error('Failed to generate delivery note') }
@@ -982,9 +887,50 @@ export default function SalesPage() {
                       <span className={getStatusColor(inv.status)}>{inv.status.replace('_', ' ')}</span>
                     </td>
                     <td className="px-5 py-3.5">
-                      <button onClick={() => openDetail(inv)} className="text-xs text-brand-400 hover:text-brand-300 font-medium">
-                        View
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => openDetail(inv)} className="btn-ghost p-1.5 text-brand-400 hover:text-brand-300" title="View details">
+                          <Receipt size={14} />
+                        </button>
+                        {(isOwnerOrAdmin || canEditSales) && inv.status !== 'voided' && (
+                          <button
+                            onClick={async (e) => {
+                              e.stopPropagation()
+                              await openDetail(inv)
+                              setEditInvoiceForm({
+                                notes: inv.notes ?? '',
+                                due_date: inv.due_date ?? '',
+                                issue_date: inv.issue_date ?? '',
+                                payment_method: inv.payment_method ?? '',
+                              })
+                              setShowEditInvoice(true)
+                            }}
+                            className="btn-ghost p-1.5 text-slate-400 hover:text-white"
+                            title="Edit invoice"
+                          >
+                            <Pencil size={14} />
+                          </button>
+                        )}
+                        {isOwnerOrAdmin && (inv.status === 'draft' || inv.status === 'proforma') && (
+                          <button
+                            onClick={async (e) => {
+                              e.stopPropagation()
+                              if (!confirm(`Delete invoice ${inv.invoice_number}?`)) return
+                              try {
+                                await salesApi.deleteInvoice(inv.id)
+                                toast.success('Invoice deleted')
+                                load()
+                              } catch (err: any) {
+                                const apiErr = err?.response?.data?.error
+                                toast.error(typeof apiErr === 'string' ? apiErr : (apiErr?.message ?? 'Failed to delete'))
+                              }
+                            }}
+                            className="btn-ghost p-1.5 text-slate-400 hover:text-red-400"
+                            title="Delete invoice"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -1063,6 +1009,12 @@ export default function SalesPage() {
                   <p className="text-xs text-slate-500 mb-1">Payment</p>
                   <p className="text-sm text-slate-300">{inv?.payment_method.replace('_', ' ')}</p>
                 </div>
+                {inv?.sold_by && (
+                  <div>
+                    <p className="text-xs text-slate-500 mb-1">Sold By</p>
+                    <p className="text-sm text-slate-300">{inv.sold_by}</p>
+                  </div>
+                )}
               </div>
 
               {/* Line items */}
@@ -1172,6 +1124,14 @@ export default function SalesPage() {
                     <RotateCcw size={14} /> Process Return / Credit Note
                   </button>
                 )}
+                {(inv?.status === 'credit' || inv?.status === 'overdue' || inv?.status === 'partially_paid') && (
+                  <button
+                    onClick={() => setShowExtendDue(true)}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-sky-500/30 text-sky-400 hover:bg-sky-500/10 text-sm font-medium transition-colors"
+                  >
+                    <CalendarClock size={14} /> Extend Due Date
+                  </button>
+                )}
                 <button
                   onClick={handleVoid}
                   disabled={acting}
@@ -1250,6 +1210,49 @@ export default function SalesPage() {
               <button onClick={handleSaveEdit} disabled={savingEdit} className="btn-primary flex-1 flex items-center justify-center gap-2">
                 {savingEdit ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle size={15} />}
                 Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Extend Due Date Modal ──────────────────────────────────────────── */}
+      {showExtendDue && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60" onClick={() => setShowExtendDue(false)} />
+          <div className="relative bg-surface-900 border border-surface-700 rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold text-white">Extend Due Date</h2>
+              <button onClick={() => setShowExtendDue(false)} className="btn-ghost p-1.5"><X size={18} /></button>
+            </div>
+            <p className="text-xs text-slate-500">
+              Invoice <span className="text-brand-400 font-mono">{inv?.invoice_number}</span> · Current due date: <span className="text-white">{inv?.due_date ? formatDate(inv.due_date) : '—'}</span>
+            </p>
+            <div className="space-y-3">
+              <div>
+                <label className="label">New Due Date</label>
+                <DateInput
+                  value={extendDueDate}
+                  onChange={setExtendDueDate}
+                  placeholder="DD/MM/YYYY"
+                />
+              </div>
+              <div>
+                <label className="label">Reason (optional)</label>
+                <textarea
+                  className="input resize-none"
+                  rows={2}
+                  value={extendReason}
+                  onChange={(e) => setExtendReason(e.target.value)}
+                  placeholder="e.g. Customer requested extension…"
+                />
+              </div>
+            </div>
+            <div className="flex gap-3 pt-1">
+              <button onClick={() => setShowExtendDue(false)} className="btn-ghost flex-1">Cancel</button>
+              <button onClick={handleExtendDue} disabled={extendingDue || !extendDueDate} className="btn-primary flex-1 flex items-center justify-center gap-2">
+                {extendingDue ? <Loader2 size={15} className="animate-spin" /> : <CalendarClock size={15} />}
+                Extend
               </button>
             </div>
           </div>

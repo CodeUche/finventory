@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { User, Building2, Shield, Loader2, Camera, CreditCard, CheckCircle, Moon, Sun, Mail, Lock, Unlock, LandmarkIcon, UsersRound, UserPlus, X, ChevronDown, ChevronUp, Bot, Layout, Copy } from 'lucide-react'
+import { User, Building2, Shield, Loader2, Camera, CreditCard, CheckCircle, Mail, Lock, Unlock, LandmarkIcon, UsersRound, UserPlus, X, ChevronDown, ChevronUp, Bot, Layout, Copy } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { authApi, orgApi, paymentGatewayApi, accountingApi, teamApi, tauriFetch } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
@@ -9,7 +9,6 @@ import {
   setTimeoutPreference,
   type TimeoutOption,
 } from '@/hooks/useInactivityTimeout'
-import { getStoredTheme, setTheme, type Theme } from '@/hooks/useTheme'
 import type { PaymentGatewayConfig, FinancialPeriod, TeamMember, ModuleKey, AccessLevel } from '@/types'
 
 const ALL_MODULES: { key: ModuleKey; label: string }[] = [
@@ -46,7 +45,14 @@ const ROLE_BADGE: Record<string, string> = {
   viewer: 'bg-slate-600/15 text-slate-400',
 }
 
-const MAX_MEMBERS = 3
+// Derive max members from the plan name; backend enforces the real limit.
+function getPlanMaxMembers(planName: string | null): number {
+  if (!planName) return 3
+  if (planName.includes('enterprise')) return 999
+  if (planName.includes('business')) return 5
+  if (planName.includes('professional')) return 3
+  return 1 // free / unknown
+}
 
 // Full list of Nigerian banks (commercial, MFBs, mobile operators)
 const NIGERIAN_BANKS = [
@@ -101,13 +107,13 @@ const TIMEOUT_OPTIONS: { value: TimeoutOption; label: string }[] = [
   { value: '4h', label: '4 hours (recommended)' },
 ]
 
-type Tab = 'profile' | 'company' | 'security' | 'payments' | 'email' | 'appearance' | 'periods' | 'team' | 'invoice_templates' | 'ai'
+type Tab = 'profile' | 'company' | 'security' | 'payments' | 'email' | 'periods' | 'team' | 'invoice_templates' | 'ai'
 
 export default function SettingsPage() {
   const navigate = useNavigate()
-  const { user, organisation, updateUser, updateOrganisation, memberRole, modulePermissions, planModules } = useAuthStore()
+  const { user, organisation, updateUser, updateOrganisation, memberRole, modulePermissions, planModules, planName } = useAuthStore()
   // Owners, admins, and superusers have full settings access
-  const isOwner = !memberRole || memberRole === 'owner' || memberRole === 'admin' || user?.is_superuser
+  const isOwner = memberRole === 'owner' || memberRole === 'admin' || user?.is_superuser === true
   // Sub-accounts need explicit 'settings' module permission to access org settings tabs
   const hasSettingsPerm = isOwner || ((): boolean => {
     const lvl = modulePermissions?.['settings'] ?? 'none'
@@ -275,9 +281,6 @@ export default function SettingsPage() {
     }
   }
 
-  // ─── Appearance state ────────────────────────────────────────────────────────
-  const [currentTheme, setCurrentTheme] = useState<Theme>(getStoredTheme())
-
   // ─── Email / SMTP state ──────────────────────────────────────────────────────
   const [emailForm, setEmailForm] = useState({
     smtp_host: 'smtp.gmail.com', smtp_port: '587', smtp_username: '',
@@ -301,6 +304,9 @@ export default function SettingsPage() {
   // draft permissions per membership id: { module → access_level }
   const [draftPerms, setDraftPerms] = useState<Record<string, Record<ModuleKey, AccessLevel>>>({})
   const [savingPerms, setSavingPerms] = useState<string | null>(null)
+  // Deactivate confirmation modal
+  const [deactivateTarget, setDeactivateTarget] = useState<TeamMember | null>(null)
+  const [deactivating, setDeactivating] = useState(false)
 
   useEffect(() => {
     if (activeTab === 'payments') {
@@ -520,11 +526,6 @@ export default function SettingsPage() {
     }
   }
 
-  const handleThemeChange = (theme: Theme) => {
-    setTheme(theme)
-    setCurrentTheme(theme)
-    toast.success(`Switched to ${theme} mode`)
-  }
 
   const saveEmail = async () => {
     if (!organisation?.id) return
@@ -603,14 +604,28 @@ export default function SettingsPage() {
     }
   }
 
-  const handleDeactivate = async (m: TeamMember) => {
-    if (!confirm(`Deactivate ${m.user_full_name || m.user_email}? They will lose access immediately.`)) return
+  const handleDeactivate = (m: TeamMember) => {
+    setDeactivateTarget(m)
+  }
+
+  const confirmDeactivate = async (permanent: boolean) => {
+    if (!deactivateTarget) return
+    setDeactivating(true)
     try {
-      await teamApi.updateMember(m.id, { is_active: false })
-      toast.success('Member deactivated')
-      setTeamMembers((prev) => prev.map((tm) => tm.id === m.id ? { ...tm, is_active: false } : tm))
+      if (permanent) {
+        await teamApi.deleteMember(deactivateTarget.id)
+        toast.success(`${deactivateTarget.user_full_name || deactivateTarget.user_email} permanently removed`)
+        setTeamMembers((prev) => prev.filter((tm) => tm.id !== deactivateTarget.id))
+      } else {
+        await teamApi.updateMember(deactivateTarget.id, { is_active: false })
+        toast.success('Member deactivated')
+        setTeamMembers((prev) => prev.map((tm) => tm.id === deactivateTarget.id ? { ...tm, is_active: false } : tm))
+      }
+      setDeactivateTarget(null)
     } catch {
-      toast.error('Failed to deactivate member')
+      toast.error(permanent ? 'Failed to remove member' : 'Failed to deactivate member')
+    } finally {
+      setDeactivating(false)
     }
   }
 
@@ -640,22 +655,23 @@ export default function SettingsPage() {
   }
 
   const activeNonOwners = teamMembers.filter((m) => m.is_active && m.role !== 'owner')
+  const MAX_MEMBERS = getPlanMaxMembers(planName)
 
-  const allTabs: { id: Tab; label: string; icon: React.ElementType; ownerOnly?: boolean; requiresSettings?: boolean }[] = [
-    { id: 'profile',           label: 'My Profile',   icon: User },
-    { id: 'company',           label: 'Company',      icon: Building2,  requiresSettings: true },
-    { id: 'team',              label: 'Team',         icon: UsersRound, ownerOnly: true },
-    { id: 'security',          label: 'Security',     icon: Shield },
-    { id: 'payments',          label: 'Payments',     icon: CreditCard, requiresSettings: true },
-    { id: 'email',             label: 'Email',        icon: Mail,       ownerOnly: true },
-    { id: 'periods',           label: 'Periods',      icon: Lock,       requiresSettings: true },
-    { id: 'appearance',        label: 'Appearance',   icon: Moon },
-    { id: 'invoice_templates', label: 'Templates',    icon: Layout,     ownerOnly: true },
-    { id: 'ai',                label: 'AI Assistant', icon: Bot,        ownerOnly: true },
+  const allTabs: { id: Tab; label: string; icon: React.ElementType; ownerOnly?: boolean; requiresSettings?: boolean; requiresPlan?: string }[] = [
+    { id: 'profile',           label: 'Profile',    icon: User },
+    { id: 'company',           label: 'Company',    icon: Building2,  requiresSettings: true },
+    { id: 'security',          label: 'Security',   icon: Shield },
+    { id: 'team',              label: 'Team',       icon: UsersRound, ownerOnly: true },
+    { id: 'payments',          label: 'Payments',   icon: CreditCard, requiresSettings: true },
+    { id: 'email',             label: 'Email',      icon: Mail,       ownerOnly: true },
+    { id: 'periods',           label: 'Periods',    icon: Lock,       requiresSettings: true },
+    { id: 'invoice_templates', label: 'Templates',  icon: Layout,     ownerOnly: true },
+    { id: 'ai',                label: 'AI',         icon: Bot,        ownerOnly: true },
   ]
   const tabs = allTabs.filter((t) => {
-    if (t.ownerOnly && !isOwner) return false           // owner-only tabs
-    if (t.requiresSettings && !hasSettingsPerm) return false  // org-settings tabs need permission
+    if (t.ownerOnly && !isOwner) return false
+    if (t.requiresSettings && !hasSettingsPerm) return false
+    if (t.requiresPlan && planModules !== null && !planModules.includes(t.requiresPlan) && !user?.is_superuser) return false
     return true
   })
 
@@ -664,6 +680,7 @@ export default function SettingsPage() {
   const activeTab = validTabIds.includes(tab) ? tab : 'profile'
 
   return (
+    <>
     <div className={`space-y-6 ${activeTab === 'invoice_templates' ? '' : 'max-w-2xl'}`}>
       <div>
         <h1 className="text-2xl font-bold text-white">Settings</h1>
@@ -671,19 +688,20 @@ export default function SettingsPage() {
       </div>
 
       {/* Tab bar */}
-      <div className="flex gap-1 p-1 bg-surface-800 border border-surface-700 rounded-xl w-fit">
+      <div className="flex flex-wrap gap-1 p-1 bg-surface-800 border border-surface-700 rounded-xl w-fit max-w-full">
         {tabs.map((t) => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+            title={t.label}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
               activeTab === t.id
-                ? 'bg-brand-500 text-white shadow-glow-orange'
+                ? 'bg-brand-500 text-white'
                 : 'text-slate-400 hover:text-white'
             }`}
           >
             <t.icon size={15} />
-            {t.label}
+            <span className="hidden sm:inline">{t.label}</span>
           </button>
         ))}
       </div>
@@ -773,6 +791,16 @@ export default function SettingsPage() {
                   title="Click to copy"
                 >
                   {organisation?.slug} <Copy size={10} />
+                </button>
+              </p>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Organisation ID:{' '}
+                <button
+                  onClick={() => { navigator.clipboard.writeText(organisation?.id ?? ''); toast.success('Organisation ID copied') }}
+                  className="font-mono text-slate-400 hover:text-slate-300 inline-flex items-center gap-1 break-all text-left"
+                  title="Click to copy — share this with your accountant partner"
+                >
+                  {organisation?.id} <Copy size={10} className="shrink-0" />
                 </button>
               </p>
               <div className="flex items-center gap-3 mt-1">
@@ -1139,10 +1167,15 @@ export default function SettingsPage() {
                       {(m.user_full_name || m.user_email)[0]?.toUpperCase()}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <p className="text-white font-medium text-sm truncate">{m.user_full_name || '—'}</p>
                         {organisation?.slug && m.user_email.endsWith(`@${organisation.slug}`) && (
                           <span className="text-xs bg-brand-500/15 text-brand-400 px-1.5 py-0.5 rounded-md shrink-0">sub-account</span>
+                        )}
+                        {m.partner_firm_name && (
+                          <span className="text-xs bg-purple-500/15 text-purple-400 px-1.5 py-0.5 rounded-md shrink-0">
+                            Accountant · {m.partner_firm_name}
+                          </span>
                         )}
                       </div>
                       <p className="text-xs text-slate-500 truncate">{m.user_email}</p>
@@ -1599,57 +1632,6 @@ export default function SettingsPage() {
           <button onClick={saveEmail} disabled={savingEmail} className="btn-primary">
             {savingEmail ? <><Loader2 size={16} className="animate-spin" /> Saving…</> : 'Save Email Settings'}
           </button>
-        </div>
-      )}
-
-      {/* ── Appearance ── */}
-      {activeTab === 'appearance' && (
-        <div className="card p-6 space-y-6">
-          <div>
-            <h3 className="text-base font-semibold text-white mb-1">Theme</h3>
-            <p className="text-sm text-slate-400 mb-4">Choose between dark and light mode. Your preference is saved locally.</p>
-            <div className="grid grid-cols-2 gap-4">
-              <button
-                onClick={() => handleThemeChange('dark')}
-                className={`flex flex-col items-center gap-3 p-5 rounded-2xl border-2 transition-all ${
-                  currentTheme === 'dark'
-                    ? 'border-brand-500 bg-brand-500/10'
-                    : 'border-surface-700 hover:border-surface-600'
-                }`}
-              >
-                <div className="w-14 h-14 rounded-2xl bg-surface-900 border border-surface-700 flex items-center justify-center">
-                  <Moon size={26} className="text-slate-300" />
-                </div>
-                <div className="text-center">
-                  <p className="text-sm font-semibold text-white">Dark Mode</p>
-                  <p className="text-xs text-slate-500 mt-0.5">Easy on the eyes</p>
-                </div>
-                {currentTheme === 'dark' && (
-                  <CheckCircle size={16} className="text-brand-400" />
-                )}
-              </button>
-
-              <button
-                onClick={() => handleThemeChange('light')}
-                className={`flex flex-col items-center gap-3 p-5 rounded-2xl border-2 transition-all ${
-                  currentTheme === 'light'
-                    ? 'border-brand-500 bg-brand-500/10'
-                    : 'border-surface-700 hover:border-surface-600'
-                }`}
-              >
-                <div className="w-14 h-14 rounded-2xl bg-slate-100 border border-slate-200 flex items-center justify-center">
-                  <Sun size={26} className="text-amber-500" />
-                </div>
-                <div className="text-center">
-                  <p className="text-sm font-semibold text-white">Light Mode</p>
-                  <p className="text-xs text-slate-500 mt-0.5">Bright and clear</p>
-                </div>
-                {currentTheme === 'light' && (
-                  <CheckCircle size={16} className="text-brand-400" />
-                )}
-              </button>
-            </div>
-          </div>
         </div>
       )}
 
@@ -2421,5 +2403,45 @@ export default function SettingsPage() {
         </div>
       )}
     </div>
+
+    {/* Deactivate confirmation modal */}
+    {deactivateTarget && (
+      <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
+        <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setDeactivateTarget(null)} />
+        <div className="relative card w-full max-w-sm p-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-base font-bold text-white">Remove Team Member</h2>
+            <button onClick={() => setDeactivateTarget(null)} className="text-slate-400 hover:text-white"><X size={18} /></button>
+          </div>
+          <p className="text-sm text-slate-400">
+            How do you want to remove <span className="font-semibold text-white">{deactivateTarget.user_full_name || deactivateTarget.user_email}</span>?
+          </p>
+          <div className="space-y-2">
+            <button
+              onClick={() => confirmDeactivate(false)}
+              disabled={deactivating}
+              className="w-full flex flex-col items-start px-4 py-3 rounded-xl border border-surface-600 bg-surface-700/40 hover:bg-surface-700/80 text-left transition-colors disabled:opacity-50"
+            >
+              <span className="text-sm font-semibold text-white">Temporarily Deactivate</span>
+              <span className="text-xs text-slate-400 mt-0.5">Revokes access but keeps the member record. Can be reactivated later.</span>
+            </button>
+            <button
+              onClick={() => confirmDeactivate(true)}
+              disabled={deactivating}
+              className="w-full flex flex-col items-start px-4 py-3 rounded-xl border border-red-500/30 bg-red-500/5 hover:bg-red-500/10 text-left transition-colors disabled:opacity-50"
+            >
+              <span className="text-sm font-semibold text-red-400">Permanently Remove</span>
+              <span className="text-xs text-slate-400 mt-0.5">Deletes all access and privileges. This action cannot be undone.</span>
+            </button>
+          </div>
+          {deactivating && (
+            <div className="flex justify-center py-1">
+              <Loader2 size={18} className="animate-spin text-brand-400" />
+            </div>
+          )}
+        </div>
+      </div>
+    )}
+    </>
   )
 }

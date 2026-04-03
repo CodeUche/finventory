@@ -10,6 +10,7 @@ export interface User {
   is_staff?: boolean
   is_sub_account?: boolean
   mfa_enabled?: boolean
+  has_partner_profile?: boolean
   avatar?: string
 }
 
@@ -51,6 +52,8 @@ export interface Organisation {
   invoice_template?: string
   pension_provider?: string
   ai_custom_context?: string
+  managing_firm_name?: string | null
+  managing_firm_logo?: string | null
 }
 
 // ─── Product ──────────────────────────────────────────────────────────────────
@@ -133,6 +136,7 @@ export interface Invoice {
   amount_paid: string
   amount_due: string
   notes: string
+  sold_by?: string
   items: SaleItem[]
   payments: SalePayment[]
   created_at: string
@@ -763,6 +767,7 @@ export interface TeamMember {
   is_active: boolean
   joined_at: string | null
   module_permissions: ModulePermission[]
+  partner_firm_name?: string | null
 }
 
 // ─── Subscription / Billing ──────────────────────────────────────────────────

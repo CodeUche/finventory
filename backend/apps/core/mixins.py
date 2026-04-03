@@ -21,6 +21,32 @@ from apps.core.exceptions import TenantViolationError
 logger = logging.getLogger(__name__)
 
 
+def _safe_str(v):
+    """Convert any value to a JSON-safe string for audit diffs."""
+    if v is None:
+        return None
+    if isinstance(v, (str, int, float, bool)):
+        return str(v)
+    try:
+        import uuid
+        if isinstance(v, uuid.UUID):
+            return str(v)
+    except Exception:
+        pass
+    try:
+        return str(v)
+    except Exception:
+        return '(unrepresentable)'
+
+
+def _changes_from_data(validated_data):
+    """Build a simple changes dict from serializer.validated_data (for CREATE events)."""
+    changes = {}
+    for k, v in validated_data.items():
+        changes[k] = {'old': None, 'new': _safe_str(v)}
+    return changes
+
+
 class TenantFilterMixin:
     """
     Mixin that scopes all queries to the current organisation.
@@ -59,22 +85,43 @@ class TenantFilterMixin:
         return qs.filter(**{self.tenant_field: org})
 
     def perform_create(self, serializer):
-        """Automatically inject organisation on create."""
+        """Inject organisation on create + write audit log."""
         org = self._get_organisation()
         serializer.save(**{self.tenant_field: org})
+        self._write_audit('create', serializer.instance, _changes_from_data(serializer.validated_data))
 
     def perform_update(self, serializer):
+        """Save + write audit log with field-level diff."""
+        instance = serializer.instance
+        before = {f: getattr(instance, f, None) for f in serializer.validated_data}
         serializer.save()
+        after = {f: getattr(serializer.instance, f, None) for f in serializer.validated_data}
+        changes = {
+            f: {'old': _safe_str(before[f]), 'new': _safe_str(after[f])}
+            for f in before if _safe_str(before[f]) != _safe_str(after[f])
+        }
+        self._write_audit('update', serializer.instance, changes)
 
+    def perform_destroy(self, instance):
+        self._write_audit('delete', instance, {})
+        instance.delete()
 
-class AuditMixin:
-    """Injects created_by / updated_by on write operations."""
-
-    def perform_create(self, serializer):
-        serializer.save()
-
-    def perform_update(self, serializer):
-        serializer.save()
+    def _write_audit(self, action, instance, changes):
+        try:
+            from apps.core.models import AuditLog
+            org = getattr(self.request, 'organisation', None) or self._get_organisation()
+            AuditLog.log(
+                action=action,
+                user=self.request.user if self.request else None,
+                organisation=org,
+                model_name=instance.__class__.__name__,
+                object_id=str(instance.pk),
+                object_repr=str(instance),
+                changes=changes,
+                request=self.request,
+            )
+        except Exception:
+            pass  # Audit failures must never break the main operation
 
 
 class ExportMixin:

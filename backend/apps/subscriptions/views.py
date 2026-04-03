@@ -215,6 +215,15 @@ class SubscriptionViewSet(viewsets.GenericViewSet):
             )
         except ValueError as e:
             return Response({"error": str(e)}, status=400)
+        except Exception as e:
+            logger.exception(
+                "Unexpected error in initiate_payment for org %s, plan %s",
+                request.organisation.id, plan.slug,
+            )
+            return Response(
+                {"error": f"Payment initialization failed: {e}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
         return Response(result, status=status.HTTP_200_OK)
 

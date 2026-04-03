@@ -40,6 +40,7 @@ export default function TopBar({ onMenuClick }: TopBarProps) {
   const [results, setResults] = useState<SearchResult[]>([])
   const [searching, setSearching] = useState(false)
   const [showDrop, setShowDrop] = useState(false)
+  const [activeIndex, setActiveIndex] = useState(-1)
   const inputRef = useRef<HTMLInputElement>(null)
   const dropRef = useRef<HTMLDivElement>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -104,6 +105,7 @@ export default function TopBar({ onMenuClick }: TopBarProps) {
       }
 
       setResults(out)
+      setActiveIndex(-1)
       setShowDrop(true)
     } catch {
       // silently fail
@@ -140,6 +142,7 @@ export default function TopBar({ onMenuClick }: TopBarProps) {
   const handleSelect = (r: SearchResult) => {
     setQuery('')
     setShowDrop(false)
+    setActiveIndex(-1)
     navigate(r.href)
   }
 
@@ -147,7 +150,25 @@ export default function TopBar({ onMenuClick }: TopBarProps) {
     setQuery('')
     setResults([])
     setShowDrop(false)
+    setActiveIndex(-1)
     inputRef.current?.focus()
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!showDrop || results.length === 0) return
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setActiveIndex((prev) => Math.min(prev + 1, results.length - 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setActiveIndex((prev) => Math.max(prev - 1, 0))
+    } else if (e.key === 'Enter' && activeIndex >= 0) {
+      e.preventDefault()
+      handleSelect(results[activeIndex])
+    } else if (e.key === 'Escape') {
+      setShowDrop(false)
+      setActiveIndex(-1)
+    }
   }
 
   const iconFor = (type: SearchResult['type']) => {
@@ -160,6 +181,27 @@ export default function TopBar({ onMenuClick }: TopBarProps) {
     if (type === 'product') return 'Product'
     if (type === 'invoice') return 'Invoice'
     return 'Customer'
+  }
+
+  /** Splits `text` at every occurrence of `q` and wraps matches in a highlight span. */
+  const highlight = (text: string, q: string) => {
+    if (!q.trim()) return <span>{text}</span>
+    const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const parts = text.split(new RegExp(`(${escaped})`, 'gi'))
+    const lower = q.toLowerCase()
+    return (
+      <>
+        {parts.map((part, i) =>
+          part.toLowerCase() === lower ? (
+            <mark key={i} className="bg-brand-500/30 text-brand-300 rounded px-0.5 not-italic font-semibold">
+              {part}
+            </mark>
+          ) : (
+            <span key={i}>{part}</span>
+          )
+        )}
+      </>
+    )
   }
 
   return (
@@ -178,6 +220,7 @@ export default function TopBar({ onMenuClick }: TopBarProps) {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onFocus={() => { if (results.length > 0) setShowDrop(true) }}
+            onKeyDown={handleKeyDown}
             placeholder="Search products, invoices, customers..."
             className="w-full bg-surface-800 border border-surface-700 rounded-xl pl-9 pr-8 py-2 text-sm text-slate-300 placeholder:text-slate-500 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500/30 transition-all"
           />
@@ -197,25 +240,38 @@ export default function TopBar({ onMenuClick }: TopBarProps) {
               <div className="px-4 py-3 text-xs text-slate-500">No results for "{query}"</div>
             ) : (
               <ul>
-                {results.map((r) => (
-                  <li key={`${r.type}-${r.id}`}>
-                    <button
-                      onClick={() => handleSelect(r)}
-                      className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-surface-700/60 transition-colors text-left"
-                    >
-                      <div className="w-6 h-6 rounded-md bg-surface-700 flex items-center justify-center shrink-0">
-                        {iconFor(r.type)}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm text-white truncate">{r.primary}</p>
-                        <p className="text-xs text-slate-500 truncate">{r.secondary}</p>
-                      </div>
-                      <span className="text-[10px] text-slate-600 font-medium uppercase tracking-wider shrink-0">
-                        {labelFor(r.type)}
-                      </span>
-                    </button>
-                  </li>
-                ))}
+                {results.map((r, idx) => {
+                  const isActive = idx === activeIndex
+                  return (
+                    <li key={`${r.type}-${r.id}`}>
+                      <button
+                        onClick={() => handleSelect(r)}
+                        onMouseEnter={() => setActiveIndex(idx)}
+                        className={[
+                          'w-full flex items-center gap-3 px-4 py-2.5 transition-colors text-left',
+                          isActive ? 'bg-brand-500/15 border-l-2 border-brand-500' : 'hover:bg-surface-700/60 border-l-2 border-transparent',
+                        ].join(' ')}
+                      >
+                        <div className={[
+                          'w-6 h-6 rounded-md flex items-center justify-center shrink-0 transition-colors',
+                          isActive ? 'bg-brand-500/20' : 'bg-surface-700',
+                        ].join(' ')}>
+                          {iconFor(r.type)}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-white truncate">{highlight(r.primary, query)}</p>
+                          <p className="text-xs text-slate-500 truncate">{highlight(r.secondary, query)}</p>
+                        </div>
+                        <span className={[
+                          'text-[10px] font-medium uppercase tracking-wider shrink-0',
+                          isActive ? 'text-brand-400' : 'text-slate-600',
+                        ].join(' ')}>
+                          {labelFor(r.type)}
+                        </span>
+                      </button>
+                    </li>
+                  )
+                })}
               </ul>
             )}
           </div>

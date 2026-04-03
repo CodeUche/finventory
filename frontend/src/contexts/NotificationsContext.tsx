@@ -47,12 +47,22 @@ export interface PayrollPendingAlert {
   total_net: string
 }
 
+export interface CustomerDueAlert {
+  id: string
+  invoice_number: string
+  customer_name: string | null
+  amount_due: string
+  due_date: string
+  days_until_due: number
+}
+
 interface NotificationsCtx {
   alerts: StockAlert[]
   overdueAlerts: OverdueAlert[]
   expiryAlerts: ExpiryAlert[]
   billDueAlerts: BillDueAlert[]
   payrollPendingAlerts: PayrollPendingAlert[]
+  customerDueAlerts: CustomerDueAlert[]
   count: number
   dismiss: (id: string) => void
   dismissAll: () => void
@@ -60,6 +70,7 @@ interface NotificationsCtx {
   dismissExpiry: (id: string) => void
   dismissBillDue: (id: string) => void
   dismissPayrollPending: (id: string) => void
+  dismissCustomerDue: (id: string) => void
   refetch: () => void
 }
 
@@ -69,6 +80,7 @@ const Ctx = createContext<NotificationsCtx>({
   expiryAlerts: [],
   billDueAlerts: [],
   payrollPendingAlerts: [],
+  customerDueAlerts: [],
   count: 0,
   dismiss: () => {},
   dismissAll: () => {},
@@ -76,6 +88,7 @@ const Ctx = createContext<NotificationsCtx>({
   dismissExpiry: () => {},
   dismissBillDue: () => {},
   dismissPayrollPending: () => {},
+  dismissCustomerDue: () => {},
   refetch: () => {},
 })
 
@@ -98,6 +111,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
   const [expiryAlerts, setExpiryAlerts] = useState<ExpiryAlert[]>([])
   const [billDueAlerts, setBillDueAlerts] = useState<BillDueAlert[]>([])
   const [payrollPendingAlerts, setPayrollPendingAlerts] = useState<PayrollPendingAlert[]>([])
+  const [customerDueAlerts, setCustomerDueAlerts] = useState<CustomerDueAlert[]>([])
   const prevIdsRef    = useRef<Set<string>>(new Set())
   const dismissedRef  = useRef<Set<string>>(loadDismissed())
   const firstPollRef  = useRef(true)
@@ -105,16 +119,20 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
 
   // tomorrow's date as YYYY-MM-DD
   const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0]
+  // 7 days from now
+  const in7Days = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0]
 
   const poll = useCallback(async () => {
     if (!isAuthenticated) return
     try {
-      const [stockData, overdueData, batchData, billDueData, payrollData] = await Promise.allSettled([
+      const [stockData, overdueData, batchData, billDueData, payrollData, customerDueData] = await Promise.allSettled([
         inventoryApi.lowStock(),
         salesApi.invoices({ status: 'overdue', page_size: 20 }),
         inventoryApi.batches({ page_size: 200 }),
         billApi.list({ due_date: tomorrow, status: 'approved', page_size: 50 }),
         payrollApi.runs(),
+        // Invoices on credit / partially paid due within the next 7 days
+        salesApi.invoices({ due_date_from: today, due_date_to: in7Days, page_size: 20 }),
       ])
 
       if (stockData.status === 'fulfilled') {
@@ -219,6 +237,31 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
           }))
         setPayrollPendingAlerts(pending)
       }
+
+      // Customer invoices due within 7 days (credit / partially_paid)
+      if (customerDueData.status === 'fulfilled') {
+        const invoices = customerDueData.value.data.results ?? customerDueData.value.data
+        const due: CustomerDueAlert[] = (invoices as any[])
+          .filter((inv: any) =>
+            inv.due_date &&
+            ['credit', 'partially_paid', 'confirmed'].includes(inv.status) &&
+            !dismissedRef.current.has(`cdu-${inv.id}`)
+          )
+          .map((inv: any) => {
+            const daysLeft = Math.ceil(
+              (new Date(inv.due_date).getTime() - new Date(today).getTime()) / 86400000
+            )
+            return {
+              id: `cdu-${inv.id}`,
+              invoice_number: inv.invoice_number,
+              customer_name: inv.customer_name ?? null,
+              amount_due: inv.amount_due,
+              due_date: inv.due_date,
+              days_until_due: daysLeft,
+            }
+          })
+        setCustomerDueAlerts(due)
+      }
     } catch {
       // Silently ignore poll failures
     }
@@ -249,6 +292,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     setExpiryAlerts((prev) => { prev.forEach((a) => addDismissed(a.id)); return [] })
     setBillDueAlerts((prev) => { prev.forEach((a) => addDismissed(a.id)); return [] })
     setPayrollPendingAlerts((prev) => { prev.forEach((a) => addDismissed(a.id)); return [] })
+    setCustomerDueAlerts((prev) => { prev.forEach((a) => addDismissed(a.id)); return [] })
     prevIdsRef.current = new Set()
   }, [addDismissed])
 
@@ -272,17 +316,22 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     setPayrollPendingAlerts((prev) => prev.filter((a) => a.id !== id))
   }, [addDismissed])
 
+  const dismissCustomerDue = useCallback((id: string) => {
+    addDismissed(id)
+    setCustomerDueAlerts((prev) => prev.filter((a) => a.id !== id))
+  }, [addDismissed])
+
   const refetch = useCallback(() => { poll() }, [poll])
 
   const count =
     alerts.length + overdueAlerts.length + expiryAlerts.length +
-    billDueAlerts.length + payrollPendingAlerts.length
+    billDueAlerts.length + payrollPendingAlerts.length + customerDueAlerts.length
 
   return (
     <Ctx.Provider value={{
-      alerts, overdueAlerts, expiryAlerts, billDueAlerts, payrollPendingAlerts,
+      alerts, overdueAlerts, expiryAlerts, billDueAlerts, payrollPendingAlerts, customerDueAlerts,
       count, dismiss, dismissAll, dismissOverdue, dismissExpiry,
-      dismissBillDue, dismissPayrollPending, refetch,
+      dismissBillDue, dismissPayrollPending, dismissCustomerDue, refetch,
     }}>
       {children}
     </Ctx.Provider>

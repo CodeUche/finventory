@@ -67,24 +67,32 @@ class IsTenantMember(BasePermission):
 
 class IsOwnerOrAdmin(BasePermission):
     def has_permission(self, request, view):
+        if request.user and request.user.is_superuser:
+            return True
         org = _get_or_resolve_org(request)
         return bool(org and has_minimum_role(request.user, org, "admin"))
 
 
 class IsManager(BasePermission):
     def has_permission(self, request, view):
+        if request.user and request.user.is_superuser:
+            return True
         org = _get_or_resolve_org(request)
         return bool(org and has_minimum_role(request.user, org, "manager"))
 
 
 class IsAccountant(BasePermission):
     def has_permission(self, request, view):
+        if request.user and request.user.is_superuser:
+            return True
         org = _get_or_resolve_org(request)
         return bool(org and has_minimum_role(request.user, org, "accountant"))
 
 
 class IsStaff(BasePermission):
     def has_permission(self, request, view):
+        if request.user and request.user.is_superuser:
+            return True
         org = _get_or_resolve_org(request)
         return bool(org and has_minimum_role(request.user, org, "staff"))
 

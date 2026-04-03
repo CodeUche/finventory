@@ -16,10 +16,12 @@ from apps.inventory.models import Product, Warehouse
 
 logger = logging.getLogger(__name__)
 
-from .models import Invoice, InvoiceFolder, RecurringInvoice, SaleItem, SaleReturn
+from .models import Invoice, InvoiceFolder, Location, RecurringInvoice, SaleItem, SalePayment, SaleReturn
 from .serializers import (
     CreateSaleSerializer,
+    InvoiceFolderSerializer,
     InvoiceSerializer,
+    LocationSerializer,
     RecordPaymentSerializer,
     SalePaymentSerializer,
     RecurringInvoiceSerializer,
@@ -130,6 +132,19 @@ class InvoiceViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
                 customer = Customer.objects.get(
                     id=d["customer_id"], organisation=request.organisation
                 )
+            location = None
+            if d.get("location_id"):
+                location = Location.objects.get(
+                    id=d["location_id"], organisation=request.organisation
+                )
+
+            # Security: staff can only record themselves as sold_by.
+            # Managers, admins, owners, and superusers may specify any name.
+            raw_sold_by = d.get("sold_by", "").strip()
+            can_override = request.user.is_superuser or has_minimum_role(
+                request.user, request.organisation, "manager"
+            )
+            sold_by = raw_sold_by if (raw_sold_by and can_override) else ""
 
             invoice = SaleService.create_sale(
                 organisation=request.organisation,
@@ -139,13 +154,29 @@ class InvoiceViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
                 items=d["items"],
                 payment_method=d["payment_method"],
                 notes=d.get("notes", ""),
+                sold_by=sold_by,
                 issue_date=d.get("issue_date"),
                 due_date=d.get("due_date"),
                 is_proforma=d.get("is_proforma", False),
                 amount_paid=d.get("amount_paid"),
                 amount_tendered=d.get("amount_tendered"),
                 credit_applied=d.get("credit_applied"),
+                location=location,
             )
+            try:
+                from apps.core.models import AuditLog as _AL
+                _AL.log(
+                    action=_AL.CREATE,
+                    user=request.user,
+                    organisation=request.organisation,
+                    model_name='Invoice',
+                    object_id=str(invoice.id),
+                    object_repr=str(invoice),
+                    changes={'invoice_number': {'old': None, 'new': invoice.invoice_number}},
+                    request=request,
+                )
+            except Exception:
+                pass
             return Response(InvoiceSerializer(invoice).data, status=status.HTTP_201_CREATED)
 
         except (Warehouse.DoesNotExist, Customer.DoesNotExist) as e:
@@ -462,6 +493,40 @@ class InvoiceViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
             logger.exception("Email send failed")
             return Response({"error": f"Failed to send email: {str(e)}"}, status=422)
 
+
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsStaff])
+    def extend_due_date(self, request, pk=None):
+        """POST /api/v1/sales/invoices/{id}/extend_due_date/
+        Body: { new_due_date: "YYYY-MM-DD", reason: "optional note" }
+        """
+        from datetime import date
+        invoice = self.get_object()
+        new_due_date = request.data.get("new_due_date")
+        reason = request.data.get("reason", "")
+        if not new_due_date:
+            return Response({"error": "new_due_date is required"}, status=422)
+        try:
+            parsed = date.fromisoformat(new_due_date)
+        except ValueError:
+            return Response({"error": "Invalid date format. Use YYYY-MM-DD."}, status=422)
+        if parsed <= date.today():
+            return Response({"error": "New due date must be in the future."}, status=422)
+
+        old_date = invoice.due_date
+        invoice.due_date = parsed
+        # If the invoice was overdue, reset status back to credit so it's collectable again
+        if invoice.status == "overdue":
+            invoice.status = "credit"
+        invoice.save(update_fields=["due_date", "status"])
+
+        try:
+            from apps.core.utils import log_audit
+            log_audit(request, invoice, "UPDATE",
+                      f"Due date extended from {old_date} to {parsed}. Reason: {reason}")
+        except Exception:
+            pass
+
+        return Response(InvoiceSerializer(invoice, context={"request": request}).data)
 
     @action(detail=False, methods=["get"])
     def owner_analytics(self, request):
@@ -843,3 +908,92 @@ class RecurringInvoiceViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         except Exception as e:
             logger.exception("generate_now failed")
             return Response({'error': f"[{type(e).__name__}] {str(e)}"}, status=400)
+
+
+
+class LocationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+    """CRUD for sales locations / branches."""
+
+    serializer_class = LocationSerializer
+    permission_classes = [IsStaff, IsOwnerOrAdmin]
+
+    def get_queryset(self):
+        return Location.objects.filter(organisation=self.request.organisation)
+
+    @action(detail=False, methods=["get"], url_path="sales_analytics")
+    def sales_analytics(self, request):
+        """GET /sales/locations/sales_analytics/?period=month
+        Returns revenue totals grouped by sales location (Invoice.location).
+        """
+        from django.db.models import Sum, Count, DecimalField
+        from django.db.models.functions import Coalesce
+        import decimal
+
+        org = self._get_organisation()
+        period = request.query_params.get("period", "month")
+
+        today = timezone.now().date()
+        if period == "today":
+            date_from = today
+        elif period == "week":
+            date_from = today - datetime.timedelta(days=7)
+        elif period == "year":
+            date_from = today - datetime.timedelta(days=365)
+        elif period == "all":
+            date_from = None
+        else:
+            date_from = today - datetime.timedelta(days=30)
+
+        active_statuses = [
+            Invoice.Status.CONFIRMED, Invoice.Status.PAID,
+            Invoice.Status.PARTIALLY_PAID, Invoice.Status.OVERDUE,
+            Invoice.Status.CREDIT,
+        ]
+        qs = Invoice.objects.filter(organisation=org, status__in=active_statuses)
+        if date_from:
+            qs = qs.filter(issue_date__gte=date_from)
+
+        location_totals = (
+            qs.values("location__id", "location__name")
+            .annotate(
+                total_revenue=Coalesce(Sum("total_amount"), decimal.Decimal("0"), output_field=DecimalField()),
+                invoice_count=Count("id"),
+            )
+            .order_by("-total_revenue")
+        )
+
+        results = []
+        for row in location_totals:
+            lid = row["location__id"]
+            item_qs = SaleItem.objects.filter(
+                invoice__organisation=org,
+                invoice__status__in=active_statuses,
+                invoice__location_id=lid,
+            )
+            if date_from:
+                item_qs = item_qs.filter(invoice__issue_date__gte=date_from)
+            top_products = (
+                item_qs
+                .values("product__name")
+                .annotate(
+                    units=Coalesce(Sum("quantity"), decimal.Decimal("0"), output_field=DecimalField()),
+                    revenue=Coalesce(Sum("line_total"), decimal.Decimal("0"), output_field=DecimalField()),
+                )
+                .order_by("-revenue")[:5]
+            )
+            results.append({
+                "location_id": str(lid) if lid else None,
+                "location_name": row["location__name"] or "No Location",
+                "total_revenue": str(row["total_revenue"]),
+                "invoice_count": row["invoice_count"],
+                "top_products": [
+                    {
+                        "product_name": p["product__name"],
+                        "units_sold": str(p["units"]),
+                        "revenue": str(p["revenue"]),
+                    }
+                    for p in top_products
+                ],
+            })
+
+        return Response({"period": period, "results": results})

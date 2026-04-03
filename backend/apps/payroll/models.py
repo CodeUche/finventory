@@ -80,6 +80,8 @@ class PayrollRun(TenantAwareModel):
     # Multi-level approval: HR/Manager submits → Owner/Admin approves
     submitted_for_approval = models.BooleanField(default=False)
     submitted_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='payroll_runs_submitted')
+    target_approver = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='payroll_runs_to_approve',
+        help_text="The specific admin/owner the submitter directed this approval to")
     payment_date = models.DateField(null=True, blank=True)
     transfer_reference = models.CharField(max_length=200, blank=True,
         help_text="Paystack bulk transfer batch_transfer_code or reference")

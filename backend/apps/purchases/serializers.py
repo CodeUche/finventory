@@ -37,7 +37,7 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
             "id", "po_number", "supplier", "supplier_name",
             "warehouse", "warehouse_name", "status", "order_date", "expected_date",
             "received_date", "subtotal", "tax_amount", "total_amount",
-            "notes", "receipt", "items", "created_at",
+            "delivery_type", "delivery_notes", "notes", "receipt", "items", "created_at",
         ]
         read_only_fields = ["id", "po_number", "subtotal", "tax_amount", "total_amount", "created_at"]
         extra_kwargs = {

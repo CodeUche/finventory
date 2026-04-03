@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { Bell, X, Package, ChevronRight, AlertCircle, CalendarClock, Receipt, Users } from 'lucide-react'
+import { Bell, X, Package, AlertCircle, CalendarClock, Receipt, Users, Clock } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useNotifications } from '@/contexts/NotificationsContext'
 import { formatCurrency, formatDate } from '@/lib/utils'
@@ -7,8 +7,8 @@ import { cn } from '@/lib/utils'
 
 export default function NotificationBell() {
   const {
-    alerts, overdueAlerts, expiryAlerts, billDueAlerts, payrollPendingAlerts,
-    count, dismiss, dismissAll, dismissOverdue, dismissExpiry, dismissBillDue, dismissPayrollPending,
+    alerts, overdueAlerts, expiryAlerts, billDueAlerts, payrollPendingAlerts, customerDueAlerts,
+    count, dismiss, dismissAll, dismissOverdue, dismissExpiry, dismissBillDue, dismissPayrollPending, dismissCustomerDue,
   } = useNotifications()
   const [open, setOpen] = useState(false)
   const navigate = useNavigate()
@@ -54,17 +54,40 @@ export default function NotificationBell() {
                 </div>
               ) : (
                 <>
+                  {/* Customer payments due within 7 days */}
+                  {customerDueAlerts.length > 0 && (
+                    <>
+                      {customerDueAlerts.map((inv) => (
+                        <div
+                          key={inv.id}
+                          className="flex items-start gap-3 px-4 py-3 border-b border-surface-700/60 hover:bg-surface-700/30 transition-colors cursor-pointer"
+                          onClick={() => go('/sales')}
+                        >
+                          <div className="w-7 h-7 rounded-lg bg-cyan-500/10 flex items-center justify-center shrink-0 mt-0.5">
+                            <Clock size={13} className="text-cyan-400" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-medium text-white truncate">
+                              {inv.invoice_number} · {inv.customer_name ?? 'Walk-in'}
+                            </p>
+                            <p className="text-xs text-slate-500">
+                              {formatCurrency(inv.amount_due)} · due {inv.days_until_due === 0 ? 'today' : `in ${inv.days_until_due}d`} ({formatDate(inv.due_date)})
+                            </p>
+                          </div>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); dismissCustomerDue(inv.id) }}
+                            className="shrink-0 p-0.5 text-slate-600 hover:text-slate-400 transition-colors"
+                          >
+                            <X size={12} />
+                          </button>
+                        </div>
+                      ))}
+                    </>
+                  )}
+
                   {/* Bills due tomorrow */}
                   {billDueAlerts.length > 0 && (
                     <>
-                      <button
-                        onClick={() => go('/bills')}
-                        className="w-full flex items-center gap-2 px-4 py-2.5 bg-purple-500/5 border-b border-surface-700 text-xs text-purple-400 hover:bg-purple-500/10 transition-colors"
-                      >
-                        <Receipt size={13} />
-                        {billDueAlerts.length} bill{billDueAlerts.length > 1 ? 's' : ''} due tomorrow
-                        <ChevronRight size={13} className="ml-auto" />
-                      </button>
                       {billDueAlerts.map((b) => (
                         <div
                           key={b.id}
@@ -92,14 +115,6 @@ export default function NotificationBell() {
                   {/* Payroll pending approval */}
                   {payrollPendingAlerts.length > 0 && (
                     <>
-                      <button
-                        onClick={() => go('/payroll/runs')}
-                        className="w-full flex items-center gap-2 px-4 py-2.5 bg-blue-500/5 border-b border-surface-700 text-xs text-blue-400 hover:bg-blue-500/10 transition-colors"
-                      >
-                        <Users size={13} />
-                        {payrollPendingAlerts.length} payroll run{payrollPendingAlerts.length > 1 ? 's' : ''} awaiting approval
-                        <ChevronRight size={13} className="ml-auto" />
-                      </button>
                       {payrollPendingAlerts.map((r) => (
                         <div
                           key={r.id}
@@ -129,14 +144,6 @@ export default function NotificationBell() {
                   {/* Low Stock Section */}
                   {alerts.length > 0 && (
                     <>
-                      <button
-                        onClick={() => go('/inventory/stock?filter=low')}
-                        className="w-full flex items-center gap-2 px-4 py-2.5 bg-yellow-500/5 border-b border-surface-700 text-xs text-yellow-400 hover:bg-yellow-500/10 transition-colors"
-                      >
-                        <Package size={13} />
-                        {alerts.length} product{alerts.length > 1 ? 's' : ''} low on stock
-                        <ChevronRight size={13} className="ml-auto" />
-                      </button>
                       {alerts.map((alert) => (
                         <div
                           key={alert.id}
@@ -165,14 +172,6 @@ export default function NotificationBell() {
                   {/* Overdue Invoices Section */}
                   {overdueAlerts.length > 0 && (
                     <>
-                      <button
-                        onClick={() => go('/sales?status=overdue')}
-                        className="w-full flex items-center gap-2 px-4 py-2.5 bg-red-500/5 border-b border-surface-700 text-xs text-red-400 hover:bg-red-500/10 transition-colors"
-                      >
-                        <AlertCircle size={13} />
-                        {overdueAlerts.length} overdue invoice{overdueAlerts.length > 1 ? 's' : ''}
-                        <ChevronRight size={13} className="ml-auto" />
-                      </button>
                       {overdueAlerts.map((inv) => (
                         <div
                           key={inv.id}
@@ -204,18 +203,6 @@ export default function NotificationBell() {
                   {/* Batch Expiry Section */}
                   {expiryAlerts.length > 0 && (
                     <>
-                      <button
-                        onClick={() => go('/inventory/batches')}
-                        className="w-full flex items-center gap-2 px-4 py-2.5 bg-orange-500/5 border-b border-surface-700 text-xs text-orange-400 hover:bg-orange-500/10 transition-colors"
-                      >
-                        <CalendarClock size={13} />
-                        {expiryAlerts.filter((a) => a.is_expired).length > 0
-                          ? `${expiryAlerts.filter((a) => a.is_expired).length} expired`
-                          : ''}{expiryAlerts.filter((a) => !a.is_expired).length > 0
-                          ? ` ${expiryAlerts.filter((a) => !a.is_expired).length} expiring soon`
-                          : ''} batch{expiryAlerts.length > 1 ? 'es' : ''}
-                        <ChevronRight size={13} className="ml-auto" />
-                      </button>
                       {expiryAlerts.slice(0, 5).map((b) => (
                         <div
                           key={b.id}
@@ -246,35 +233,6 @@ export default function NotificationBell() {
               )}
             </div>
 
-            {count > 0 && (
-              <div className="flex flex-wrap border-t border-surface-700">
-                {billDueAlerts.length > 0 && (
-                  <button onClick={() => go('/bills')} className="flex-1 px-3 py-2.5 text-xs text-purple-400 hover:text-purple-300 font-medium text-center hover:bg-surface-700/30 transition-colors">
-                    Bills →
-                  </button>
-                )}
-                {payrollPendingAlerts.length > 0 && (
-                  <button onClick={() => go('/payroll/runs')} className="flex-1 px-3 py-2.5 text-xs text-blue-400 hover:text-blue-300 font-medium text-center hover:bg-surface-700/30 transition-colors border-l border-surface-700">
-                    Payroll →
-                  </button>
-                )}
-                {alerts.length > 0 && (
-                  <button onClick={() => go('/inventory/stock?filter=low')} className="flex-1 px-3 py-2.5 text-xs text-yellow-400 hover:text-yellow-300 font-medium text-center hover:bg-surface-700/30 transition-colors border-l border-surface-700">
-                    Stock →
-                  </button>
-                )}
-                {overdueAlerts.length > 0 && (
-                  <button onClick={() => go('/sales?status=overdue')} className="flex-1 px-3 py-2.5 text-xs text-red-400 hover:text-red-300 font-medium text-center hover:bg-surface-700/30 transition-colors border-l border-surface-700">
-                    Overdue →
-                  </button>
-                )}
-                {expiryAlerts.length > 0 && (
-                  <button onClick={() => go('/inventory/batches')} className="flex-1 px-3 py-2.5 text-xs text-orange-400 hover:text-orange-300 font-medium text-center hover:bg-surface-700/30 transition-colors border-l border-surface-700">
-                    Batches →
-                  </button>
-                )}
-              </div>
-            )}
           </div>
         </>
       )}

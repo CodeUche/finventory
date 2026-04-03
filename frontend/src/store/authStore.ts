@@ -64,7 +64,8 @@ export const useAuthStore = create<AuthState>()(
       },
 
       setAuth: (user, tokens) => {
-        set({ user, tokens, isAuthenticated: true })
+        // Clear stale membership from any previous session so the next myMembership load starts clean
+        set({ user, tokens, isAuthenticated: true, memberRole: null, modulePermissions: {} })
       },
 
       setOrganisation: (org) => {

@@ -61,8 +61,6 @@ async function buildQuotePDF(
   const DARK:   [number, number, number] = [30,  30,  30]
   const MUTED:  [number, number, number] = [100, 100, 100]
   const LIGHT:  [number, number, number] = [250, 250, 248]
-  const NAVY:   [number, number, number] = [15,  23,  42]
-  const SLATE4: [number, number, number] = [148, 163, 184]
 
   const displayName = companyNameOverride?.trim() || orgName
   const pdfFontFamily = companyFont?.toLowerCase().includes('times') || companyFont === 'Georgia'
@@ -76,104 +74,38 @@ async function buildQuotePDF(
   const isItalic = companyFontItalic === true
   const pdfStyle = isBold && isItalic ? 'bolditalic' : isBold ? 'bold' : isItalic ? 'italic' : 'normal'
   const fontSize = Math.max(8, Math.min(36, companyFontSize ?? 14))
-  const nameColor: [number, number, number] = companyFontColor ? hexToRgb(companyFontColor) : DARK
+  const nameColor: [number, number, number] = (() => {
+    const c = companyFontColor
+    if (!c || c === '#ffffff') return (tmpl === 'modern' || tmpl === 'minimal') ? DARK : [255, 255, 255]
+    return hexToRgb(c)
+  })()
 
   let logoData: string | null = null
   if (orgLogo) { try { logoData = await urlToDataUrl(orgLogo) } catch { /* skip */ } }
 
-  let y = 0
+  const { applyDocHeader, templateHeadFill, templateAltRowFill, templateTableLine } = await import('@/lib/pdfUtils')
 
-  if (tmpl === 'classic') {
-    const H = 36
-    doc.setFillColor(...BRAND); doc.rect(0, 0, pageW, H, 'F')
-    if (logoData) { const fmt = logoData.includes('image/png') ? 'PNG' : 'JPEG'; doc.addImage(logoData, fmt, 8, 6, 22, 22) }
-    const nameX = logoData ? 34 : 10
-    doc.setFontSize(fontSize); doc.setFont(pdfFontFamily, pdfStyle); doc.setTextColor(255, 255, 255)
-    doc.text(displayName, nameX, 15)
-    if (companyFontUnderline) { const tw = doc.getTextWidth(displayName); doc.setDrawColor(255, 255, 255); doc.setLineWidth(0.3); doc.line(nameX, 16.5, nameX + tw, 16.5) }
-    doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(220, 220, 220)
-    let iy = 21
-    if (orgAddress) { doc.text(orgAddress, nameX, iy); iy += 4 }
-    if (orgPhone)   { doc.text(orgPhone, nameX, iy); iy += 4 }
-    if (orgEmail)   { doc.text(orgEmail, nameX, iy) }
-    doc.setFontSize(22); doc.setFont('helvetica', 'bold'); doc.setTextColor(255, 255, 255)
-    doc.text('QUOTE', pageW - 10, 14, { align: 'right' })
-    const mRows: [string, string][] = [['No.', q.quote_number], ['Date', formatDate(q.issue_date)], ['Valid Until', formatDate(q.valid_until)]]
-    mRows.forEach(([lbl, val], i) => {
-      doc.setFontSize(7.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(200, 200, 200)
-      doc.text(lbl, pageW - 65, 20 + i * 5)
-      doc.setFont('helvetica', 'bold'); doc.setTextColor(255, 255, 255)
-      doc.text(val, pageW - 10, 20 + i * 5, { align: 'right' })
-    })
-    y = H + 8
+  const metaRows: [string, string][] = [
+    ['No.', q.quote_number],
+    ['Date', formatDate(q.issue_date)],
+    ['Valid Until', formatDate(q.valid_until)],
+  ]
 
-  } else if (tmpl === 'modern') {
-    doc.setFillColor(...BRAND); doc.rect(0, 0, pageW, 4, 'F')
-    y = 10
-    if (logoData) { const fmt = logoData.includes('image/png') ? 'PNG' : 'JPEG'; doc.addImage(logoData, fmt, 14, y + 2, 22, 22) }
-    const nameX = logoData ? 40 : 14
-    doc.setFontSize(fontSize); doc.setFont(pdfFontFamily, pdfStyle); doc.setTextColor(...nameColor)
-    doc.text(displayName, nameX, y + 12)
-    if (companyFontUnderline) { const tw = doc.getTextWidth(displayName); doc.setDrawColor(...nameColor); doc.setLineWidth(0.3); doc.line(nameX, y + 13.5, nameX + tw, y + 13.5) }
-    doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(...MUTED)
-    let iy = y + 18
-    if (orgAddress) { doc.text(orgAddress, nameX, iy); iy += 4 }
-    if (orgEmail)   { doc.text(orgEmail, nameX, iy) }
-    doc.setFontSize(24); doc.setFont('helvetica', 'bold'); doc.setTextColor(...BRAND)
-    doc.text('QUOTE', pageW - 14, y + 12, { align: 'right' })
-    doc.setFillColor(248, 250, 252); doc.roundedRect(pageW - 76, y + 16, 62, 22, 2, 2, 'F')
-    const infoRows: [string, string][] = [['Number', q.quote_number], ['Date', formatDate(q.issue_date)], ['Valid Until', formatDate(q.valid_until)]]
-    infoRows.forEach(([lbl, val], i) => {
-      doc.setFontSize(7.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(...MUTED)
-      doc.text(lbl, pageW - 73, y + 22 + i * 5.5)
-      doc.setFont('helvetica', 'bold'); doc.setTextColor(...DARK)
-      doc.text(val, pageW - 16, y + 22 + i * 5.5, { align: 'right' })
-    })
-    y = y + 42; doc.setDrawColor(...BRAND); doc.setLineWidth(0.5); doc.line(14, y, pageW - 14, y); y += 8
-
-  } else if (tmpl === 'minimal') {
-    y = 12
-    if (logoData) { const fmt = logoData.includes('image/png') ? 'PNG' : 'JPEG'; doc.addImage(logoData, fmt, 14, y, 22, 22) }
-    const nameX = logoData ? 40 : 14
-    doc.setFontSize(fontSize); doc.setFont(pdfFontFamily, pdfStyle); doc.setTextColor(...nameColor)
-    doc.text(displayName, nameX, y + 10)
-    if (companyFontUnderline) { const tw = doc.getTextWidth(displayName); doc.setDrawColor(...nameColor); doc.setLineWidth(0.3); doc.line(nameX, y + 11.5, nameX + tw, y + 11.5) }
-    doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(...MUTED)
-    let iy = y + 16
-    if (orgAddress) { doc.text(orgAddress, nameX, iy); iy += 4 }
-    if (orgEmail)   { doc.text(orgEmail, nameX, iy) }
-    doc.setFontSize(22); doc.setFont('helvetica', 'bold'); doc.setTextColor(...DARK)
-    doc.text('QUOTE', pageW - 14, y + 10, { align: 'right' })
-    const mRows: [string, string][] = [['No.', q.quote_number], ['Valid Until', formatDate(q.valid_until)]]
-    mRows.forEach(([lbl, val], i) => {
-      doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(...MUTED); doc.text(lbl, pageW - 65, y + 17 + i * 5.5)
-      doc.setFont('helvetica', 'bold'); doc.setTextColor(...DARK); doc.text(val, pageW - 14, y + 17 + i * 5.5, { align: 'right' })
-    })
-    y = y + 32; doc.setDrawColor(...DARK); doc.setLineWidth(1.2); doc.line(14, y, pageW - 14, y); y += 8
-
-  } else {
-    // professional
-    const H = 40; const splitX = pageW * 0.46
-    doc.setFillColor(...NAVY); doc.rect(0, 0, splitX, H, 'F')
-    doc.setFillColor(248, 250, 252); doc.rect(splitX, 0, pageW - splitX, H, 'F')
-    if (logoData) { const fmt = logoData.includes('image/png') ? 'PNG' : 'JPEG'; doc.addImage(logoData, fmt, 8, 6, 22, 22) }
-    const nameX = logoData ? 33 : 10
-    doc.setFontSize(fontSize); doc.setFont(pdfFontFamily, pdfStyle); doc.setTextColor(255, 255, 255)
-    doc.text(displayName, nameX, 16)
-    if (companyFontUnderline) { const tw = doc.getTextWidth(displayName); doc.setDrawColor(255, 255, 255); doc.setLineWidth(0.3); doc.line(nameX, 17.5, nameX + tw, 17.5) }
-    doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(...SLATE4)
-    let iy = 22
-    if (orgAddress) { doc.text(orgAddress.slice(0, 30), nameX, iy); iy += 4 }
-    if (orgEmail)   { doc.text(orgEmail, nameX, iy) }
-    doc.setFontSize(16); doc.setFont('helvetica', 'bold'); doc.setTextColor(...NAVY)
-    doc.text('QUOTE', pageW - 14, 13, { align: 'right' })
-    const pRows: [string, string][] = [['Quote No.', q.quote_number], ['Date', formatDate(q.issue_date)], ['Valid Until', formatDate(q.valid_until)], ['Status', q.status.toUpperCase()]]
-    pRows.forEach(([lbl, val], i) => {
-      doc.setFontSize(7.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(...SLATE4); doc.text(lbl, splitX + 5, 18 + i * 5.2)
-      doc.setFont('helvetica', 'bold'); doc.setTextColor(...NAVY); doc.text(val, pageW - 14, 18 + i * 5.2, { align: 'right' })
-    })
-    y = H + 8
-  }
+  let y = applyDocHeader(doc, {
+    tmpl, pageW, BRAND, DARK, MUTED,
+    logoData,
+    displayName,
+    orgAddress,
+    orgPhone,
+    orgEmail,
+    pdfFont: pdfFontFamily,
+    fontSize,
+    pdfStyle,
+    nameColor,
+    companyFontUnderline,
+    docTitle: 'QUOTE',
+    metaRows,
+  })
 
   // Bill To block
   const billLabelColor: [number, number, number] = tmpl === 'minimal' ? DARK : BRAND
@@ -188,7 +120,7 @@ async function buildQuotePDF(
   y += 28
 
   // Items table
-  const headFill: [number, number, number] = tmpl === 'professional' ? NAVY : tmpl === 'minimal' ? DARK : BRAND
+  const headFill = templateHeadFill(tmpl, BRAND)
 
   // Dynamic column widths so large amounts (e.g. ₦250,000,000.00) always fit;
   // Product / Description column absorbs the remaining space via cellWidth: 'auto'.
@@ -213,7 +145,7 @@ async function buildQuotePDF(
     ]),
     styles: { fontSize: 9, cellPadding: { top: 4, bottom: 4, left: 5, right: 5 }, textColor: DARK },
     headStyles: { fillColor: headFill, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
-    alternateRowStyles: { fillColor: tmpl === 'minimal' ? [255, 255, 255] : [248, 248, 248] },
+    alternateRowStyles: { fillColor: templateAltRowFill(tmpl) },
     columnStyles: {
       0: { cellWidth: 10,        halign: 'center' },
       1: { cellWidth: 'auto' },
@@ -223,8 +155,8 @@ async function buildQuotePDF(
       5: { cellWidth: amtColW,   halign: 'right', fontStyle: 'bold' },
     },
     margin: { left: 14, right: 14 },
-    tableLineColor: tmpl === 'minimal' ? DARK : [225, 225, 225],
-    tableLineWidth: tmpl === 'minimal' ? 0.4 : 0.2,
+    tableLineColor: templateTableLine(tmpl, DARK).color,
+    tableLineWidth: templateTableLine(tmpl, DARK).width,
   })
 
   // Totals block
@@ -280,8 +212,7 @@ async function buildQuotePDF(
     doc.text(`Generated by Audity  ·  ${new Date().toLocaleDateString()}`, pageW / 2, pageH - 6, { align: 'center' })
     if (orgEmail) doc.text(orgEmail, pageW - 14, pageH - 6, { align: 'right' })
   } else {
-    const footerFill: [number, number, number] = tmpl === 'professional' ? NAVY : BRAND
-    doc.setFillColor(...footerFill); doc.rect(0, pageH - 12, pageW, 12, 'F')
+    doc.setFillColor(...BRAND); doc.rect(0, pageH - 12, pageW, 12, 'F')
     doc.setFontSize(7); doc.setFont('helvetica', 'normal'); doc.setTextColor(255, 255, 255)
     doc.text(orgName, 14, pageH - 4.5)
     doc.text(`Generated by Audity  ·  ${new Date().toLocaleDateString()}`, pageW / 2, pageH - 4.5, { align: 'center' })

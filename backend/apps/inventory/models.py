@@ -123,7 +123,14 @@ class Product(TenantAwareModel):
 
     # Stock control
     reorder_level = models.PositiveIntegerField(
-        default=10, help_text="Alert when stock drops below this level"
+        default=10, help_text="Minimum safety level — alert when stock drops below this"
+    )
+    max_stock_level = models.PositiveIntegerField(
+        null=True, blank=True, help_text="Maximum safety level — do not order above this"
+    )
+    quantity_in_pack = models.DecimalField(
+        max_digits=10, decimal_places=2, default=1,
+        help_text="Number of units in one pack / carton"
     )
     reorder_quantity = models.PositiveIntegerField(default=50)
 
@@ -163,6 +170,9 @@ class Batch(TenantAwareModel):
     unit_cost = MoneyField(help_text="Cost per unit for this specific batch")
     manufacture_date = models.DateField(null=True, blank=True)
     expiry_date = models.DateField(null=True, blank=True, db_index=True)
+    min_quantity = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True, help_text="Minimum quantity threshold")
+    max_quantity = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True, help_text="Maximum quantity cap")
+    qty_per_pack = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, help_text="Units per pack/carton in this batch")
     is_active = models.BooleanField(default=True)
 
     class Meta(TenantAwareModel.Meta):

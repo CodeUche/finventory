@@ -272,6 +272,23 @@ class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
         )
 
+    @action(detail=False, methods=['get'])
+    def eligible_approvers(self, request):
+        """Return org members with admin or owner role — valid approvers for payroll."""
+        from apps.tenancy.models import Membership
+        org = self._get_organisation()
+        members = (
+            Membership.objects
+            .filter(organisation=org, is_active=True, role__in=['owner', 'admin'])
+            .select_related('user')
+            .exclude(user=request.user)
+        )
+        data = [
+            {'id': str(m.user.id), 'name': f"{m.user.first_name} {m.user.last_name}".strip() or m.user.email, 'email': m.user.email, 'role': m.role}
+            for m in members
+        ]
+        return Response(data)
+
     @action(detail=True, methods=['post'])
     def submit_for_approval(self, request, pk=None):
         """Manager/HR submits a processed payroll for admin/owner approval."""
@@ -280,7 +297,18 @@ class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             return Response({'error': 'Only processing payrolls can be submitted for approval'}, status=400)
         run.submitted_for_approval = True
         run.submitted_by = request.user
-        run.save(update_fields=['submitted_for_approval', 'submitted_by'])
+
+        # Optional: target a specific approver
+        approver_id = request.data.get('approver_id')
+        if approver_id:
+            from django.contrib.auth import get_user_model
+            try:
+                approver = get_user_model().objects.get(id=approver_id)
+                run.target_approver = approver
+            except Exception:
+                pass
+
+        run.save(update_fields=['submitted_for_approval', 'submitted_by', 'target_approver'])
 
         # Notify admins/owners via audit log (notifications picked up by frontend polling)
         try:

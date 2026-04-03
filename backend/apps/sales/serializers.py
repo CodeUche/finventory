@@ -4,7 +4,21 @@ from decimal import Decimal
 
 from rest_framework import serializers
 
-from .models import Invoice, InvoiceFolder, SaleItem, SalePayment, RecurringInvoice, SaleReturn, SaleReturnItem
+from .models import Invoice, InvoiceFolder, Location, SaleItem, SalePayment, RecurringInvoice, SaleReturn, SaleReturnItem
+
+
+class LocationSerializer(serializers.ModelSerializer):
+    manager_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Location
+        fields = ["id", "name", "address", "phone", "manager", "manager_name", "is_active", "created_at"]
+        read_only_fields = ["id", "created_at"]
+
+    def get_manager_name(self, obj):
+        if obj.manager:
+            return f"{obj.manager.first_name} {obj.manager.last_name}".strip() or obj.manager.email
+        return None
 
 
 class InvoiceFolderSerializer(serializers.ModelSerializer):
@@ -55,14 +69,16 @@ class InvoiceSerializer(serializers.ModelSerializer):
     payments = SalePaymentSerializer(many=True, read_only=True)
     customer_name = serializers.CharField(source="customer.name", read_only=True, allow_null=True)
     folder_name = serializers.CharField(source="folder.name", read_only=True, allow_null=True)
+    location_name = serializers.CharField(source="location.name", read_only=True, allow_null=True)
 
     class Meta:
         model = Invoice
         fields = [
             "id", "invoice_number", "folder", "folder_name", "customer", "customer_name",
             "status", "payment_method", "issue_date", "due_date", "warehouse",
+            "location", "location_name",
             "subtotal", "discount_amount", "tax_amount", "total_amount",
-            "credit_applied", "amount_paid", "amount_due", "notes",
+            "credit_applied", "amount_paid", "amount_due", "notes", "sold_by",
             "items", "payments", "created_at",
         ]
         read_only_fields = [
@@ -85,11 +101,13 @@ class CreateSaleSerializer(serializers.Serializer):
 
     customer_id = serializers.UUIDField(required=False, allow_null=True)
     warehouse_id = serializers.UUIDField()
+    location_id = serializers.UUIDField(required=False, allow_null=True)
     payment_method = serializers.ChoiceField(choices=Invoice.PaymentMethod.choices)
     # Cap line items to 200 — prevents absurdly large payloads
     items = ItemInputSerializer(many=True, min_length=1, max_length=200)
     # max_length guards against oversized text being stored in the DB
     notes = serializers.CharField(required=False, default="", allow_blank=True, max_length=2000)
+    sold_by = serializers.CharField(required=False, allow_blank=True, max_length=200)
     issue_date = serializers.DateField(required=False)
     due_date = serializers.DateField(required=False, allow_null=True)
     is_proforma = serializers.BooleanField(required=False, default=False)

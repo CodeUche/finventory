@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  Building2, ChevronRight, Sparkles, Check, Loader2,
-  Clock, Star, ArrowLeft,
+  ChevronRight, Sparkles, Check, Loader2,
+  Clock, Star, ArrowLeft, Package, Users, Receipt,
+  BarChart3, Calculator, Briefcase, Shield, CheckCircle2,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { orgApi, subscriptionApi } from '@/services/api'
@@ -24,42 +25,43 @@ const PRESETS = [
   { country: 'GB', currency: 'GBP', flag: '🇬🇧', label: 'United Kingdom' },
 ]
 
+// Focused set of questions — only what's needed for a good recommendation
 const QUESTIONS = [
   {
     key: 'business_type',
-    label: 'What type of business do you run?',
+    emoji: '🏪',
+    label: 'What kind of business do you run?',
+    sub: 'This helps us tailor your experience.',
     options: ['Retail / Shop', 'Wholesale / Distribution', 'Services', 'Manufacturing', 'E-commerce', 'Other'],
   },
   {
-    key: 'monthly_transactions',
-    label: 'How many transactions do you process per month?',
-    options: ['Under 50', '50–200', '200–500', '500–2,000', 'Over 2,000'],
+    key: 'has_inventory',
+    emoji: '📦',
+    label: 'Do you manage physical stock or inventory?',
+    sub: 'Products you buy, store, and sell.',
+    options: ['Yes — I track stock levels', 'Sometimes', 'No — I sell services only'],
   },
   {
     key: 'team_size',
+    emoji: '👥',
     label: 'How many people will use Audity?',
-    options: ['Just me', '2–3 people', '4–10 people', '11–25 people', 'Over 25 people'],
+    sub: 'You can always add more later.',
+    options: ['Just me', '2–5 people', '6–15 people', 'More than 15'],
   },
   {
-    key: 'has_inventory',
-    label: 'Do you manage physical inventory / stock?',
-    options: ['Yes, actively', 'Sometimes', 'No, services only'],
-  },
-  {
-    key: 'locations',
-    label: 'How many locations or branches do you operate?',
-    options: ['1 location', '2–3 locations', '4–10 locations', 'More than 10'],
+    key: 'monthly_transactions',
+    emoji: '📊',
+    label: 'How many sales or invoices do you process monthly?',
+    sub: 'Rough estimate is fine.',
+    options: ['Under 20', '20–100', '100–500', 'Over 500'],
   },
   {
     key: 'priority_feature',
-    label: 'What is your top priority right now?',
-    options: ['Invoicing & Sales', 'Expense Tracking', 'Inventory Management', 'Payroll', 'Financial Reports', 'Tax Compliance'],
+    emoji: '🎯',
+    label: 'What matters most to you right now?',
+    sub: 'Pick everything that applies.',
+    options: ['Invoicing & Sales', 'Inventory & Stock', 'Payroll & HR', 'Accounting & Ledger', 'Tax & Compliance', 'Financial Reports'],
     multi: true,
-  },
-  {
-    key: 'business_stage',
-    label: 'What stage is your business at?',
-    options: ['Just starting out', 'Growing steadily', 'Established & scaling', 'Large enterprise'],
   },
 ]
 
@@ -83,92 +85,106 @@ interface Recommendation {
   plans: Plan[]
 }
 
-// ─── Step indicators ──────────────────────────────────────────────────────────
+// Per-plan feature highlights shown on the card (independent of backend features object)
+const PLAN_HIGHLIGHTS: Record<string, { icon: React.ElementType; text: string }[]> = {
+  free: [
+    { icon: Receipt, text: '10 invoices/month' },
+    { icon: Package, text: 'Up to 20 products' },
+    { icon: Users, text: 'Solo use only' },
+    { icon: BarChart3, text: 'Basic reports' },
+  ],
+  professional: [
+    { icon: Receipt, text: 'Unlimited invoicing' },
+    { icon: Package, text: 'Unlimited products' },
+    { icon: Users, text: 'Up to 5 team members' },
+    { icon: BarChart3, text: 'Advanced reports' },
+    { icon: Calculator, text: 'VAT + Income Tax' },
+    { icon: Shield, text: 'Audit log' },
+  ],
+  business: [
+    { icon: Receipt, text: 'Unlimited everything' },
+    { icon: Briefcase, text: 'Full payroll & HR' },
+    { icon: Calculator, text: 'Full accounting ledger' },
+    { icon: Users, text: 'Unlimited team members' },
+    { icon: BarChart3, text: 'All reports + analytics' },
+    { icon: Shield, text: 'Full tax engine' },
+  ],
+}
 
-function StepDots({ step, total }: { step: number; total: number }) {
+const PLAN_COLOR: Record<string, { border: string; badge: string; button: string; glow: string }> = {
+  free:          { border: 'border-surface-600', badge: 'bg-emerald-500', button: 'bg-emerald-600 hover:bg-emerald-500', glow: '' },
+  professional:  { border: 'border-brand-500/50 ring-1 ring-brand-500/20', badge: 'bg-brand-500', button: 'bg-brand-500 hover:bg-brand-400', glow: 'shadow-brand-500/10 shadow-lg' },
+  business:      { border: 'border-purple-500/40', badge: 'bg-purple-500', button: 'bg-purple-600 hover:bg-purple-500', glow: '' },
+}
+
+// ─── Progress bar ──────────────────────────────────────────────────────────────
+function ProgressBar({ current, total }: { current: number; total: number }) {
   return (
-    <div className="flex items-center gap-2 justify-center mb-6">
-      {Array.from({ length: total }).map((_, i) => (
+    <div className="flex items-center gap-2">
+      <div className="flex-1 h-1.5 bg-surface-700 rounded-full overflow-hidden">
         <div
-          key={i}
-          className={`rounded-full transition-all duration-300 ${
-            i < step ? 'w-6 h-2 bg-brand-500' : i === step ? 'w-6 h-2 bg-brand-400' : 'w-2 h-2 bg-surface-600'
-          }`}
+          className="h-full bg-brand-500 rounded-full transition-all duration-500"
+          style={{ width: `${((current + 1) / total) * 100}%` }}
         />
-      ))}
+      </div>
+      <span className="text-xs text-slate-500 shrink-0">{current + 1} / {total}</span>
     </div>
   )
 }
 
-// ─── Main Component ───────────────────────────────────────────────────────────
-
+// ─── Main Component ────────────────────────────────────────────────────────────
 export default function OnboardingPage() {
   const navigate = useNavigate()
   const { user, organisation, setOrganisation } = useAuthStore()
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // Sub-accounts must never reach onboarding — redirect immediately
   useEffect(() => {
-    if (user?.is_sub_account) {
-      navigate('/dashboard', { replace: true })
-    }
+    if (user?.is_sub_account) navigate('/dashboard', { replace: true })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.is_sub_account])
 
-  // Step 0: workspace, 1: questionnaire, 2: recommendation, 3: payment
+  // Step 0: workspace, 1: questionnaire (one-at-a-time), 2: plan selection
   const [step, setStep] = useState(0)
+  const [qIndex, setQIndex] = useState(0)   // which question we're on in step 1
 
   // Step 0
   const [orgForm, setOrgForm] = useState({ name: '', account_type: 'business', country: 'NG', currency: 'NGN' })
   const [orgSaving, setOrgSaving] = useState(false)
-  const [_createdOrg, setCreatedOrg] = useState<{ id: string; name: string } | null>(null)
 
-  // Step 1 — answers: string for single-select, string[] for multi-select
+  // Step 1
   const [answers, setAnswers] = useState<Record<string, string | string[]>>({})
 
   // Step 2
   const [loadingRec, setLoadingRec] = useState(false)
   const [recommendation, setRecommendation] = useState<Recommendation | null>(null)
   const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null)
-
-  // Step 3 (kept for success screen)
   const [initiatingPay, setInitiatingPay] = useState(false)
 
-  // If org already exists (user returning mid-onboarding), skip to plan selection
+  // If org already exists skip to plan step
   useEffect(() => {
     if (organisation?.id) {
-      // Org exists but onboarding not complete — jump to step 2, load plans
       setStep(2)
       setLoadingRec(true)
       subscriptionApi.plans()
         .then(({ data }) => {
           const plans = data.results ?? data
-          setRecommendation({
-            recommended_plan_slug: '',
-            confidence: '',
-            reasons: [],
-            alternative_plan_slug: '',
-            alternative_reasons: [],
-            plans,
-          })
-          setSelectedPlan(plans[0] ?? null)
+          setRecommendation({ recommended_plan_slug: '', confidence: '', reasons: [], alternative_plan_slug: '', alternative_reasons: [], plans })
+          setSelectedPlan(plans.find((p: Plan) => p.slug === 'professional') ?? plans[0] ?? null)
         })
-        .catch(() => toast.error('Could not load plans. Please try again.'))
+        .catch(() => toast.error('Could not load plans.'))
         .finally(() => setLoadingRec(false))
     }
     return () => { if (pollRef.current) clearInterval(pollRef.current) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // ── Step 0: Create workspace ────────────────────────────────────────────────
-
+  // ── Step 0 ──────────────────────────────────────────────────────────────────
   const handleCreateOrg = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!orgForm.name.trim()) { toast.error('Organisation name is required'); return }
     setOrgSaving(true)
     try {
       const { data } = await orgApi.create(orgForm)
-      setCreatedOrg(data)
       setOrganisation(data)
       setStep(1)
     } catch (err: any) {
@@ -183,25 +199,19 @@ export default function OnboardingPage() {
     }
   }
 
-  // ── Step 1: Questionnaire → get recommendation ──────────────────────────────
-
-  const allAnswered = QUESTIONS.every((q) => {
-    const val = answers[q.key]
-    return Array.isArray(val) ? val.length > 0 : !!val
-  })
+  // ── Step 1: One question at a time ──────────────────────────────────────────
+  const currentQ = QUESTIONS[qIndex]
 
   const toggleAnswer = (key: string, opt: string, multi?: boolean) => {
     if (!multi) {
       setAnswers((a) => ({ ...a, [key]: opt }))
-      return
+    } else {
+      setAnswers((a) => {
+        const current = (a[key] as string[] | undefined) ?? []
+        const next = current.includes(opt) ? current.filter((v) => v !== opt) : [...current, opt]
+        return { ...a, [key]: next }
+      })
     }
-    setAnswers((a) => {
-      const current = (a[key] as string[] | undefined) ?? []
-      const next = current.includes(opt)
-        ? current.filter((v) => v !== opt)
-        : [...current, opt]
-      return { ...a, [key]: next }
-    })
   }
 
   const isSelected = (key: string, opt: string) => {
@@ -209,27 +219,42 @@ export default function OnboardingPage() {
     return Array.isArray(val) ? val.includes(opt) : val === opt
   }
 
-  // Serialize answers to strings for API (multi → comma-joined)
-  const serializedAnswers = Object.fromEntries(
-    Object.entries(answers).map(([k, v]) => [k, Array.isArray(v) ? v.join(', ') : v])
-  )
+  const currentAnswered = () => {
+    const val = answers[currentQ.key]
+    return Array.isArray(val) ? val.length > 0 : !!val
+  }
 
+  const handleNext = () => {
+    if (qIndex < QUESTIONS.length - 1) {
+      setQIndex((i) => i + 1)
+    } else {
+      handleGetRecommendation()
+    }
+  }
+
+  const handleBack = () => {
+    if (qIndex > 0) setQIndex((i) => i - 1)
+    else setStep(0)
+  }
+
+  // ── Get recommendation ──────────────────────────────────────────────────────
   const handleGetRecommendation = async () => {
     setLoadingRec(true)
     setStep(2)
+    const serialized = Object.fromEntries(
+      Object.entries(answers).map(([k, v]) => [k, Array.isArray(v) ? v.join(', ') : v])
+    )
     try {
-      const { data } = await subscriptionApi.recommendPlan(serializedAnswers)
+      const { data } = await subscriptionApi.recommendPlan(serialized)
       setRecommendation(data)
-      // Pre-select recommended plan
       const rec = data.plans.find((p: Plan) => p.slug === data.recommended_plan_slug) ?? data.plans[0]
       setSelectedPlan(rec)
-    } catch (err: any) {
-      toast.error('Could not load plan recommendation. Please select a plan manually.')
-      // Still show step 2 with plans if available
+    } catch {
       try {
         const { data } = await subscriptionApi.plans()
-        setRecommendation({ recommended_plan_slug: '', confidence: '', reasons: [], alternative_plan_slug: '', alternative_reasons: [], plans: data })
-        setSelectedPlan(data[0] ?? null)
+        const plans = data.results ?? data
+        setRecommendation({ recommended_plan_slug: '', confidence: '', reasons: [], alternative_plan_slug: '', alternative_reasons: [], plans })
+        setSelectedPlan(plans.find((p: Plan) => p.slug === 'professional') ?? plans[0] ?? null)
       } catch {
         toast.error('Failed to load plans.')
         setStep(1)
@@ -239,32 +264,26 @@ export default function OnboardingPage() {
     }
   }
 
-  // ── Helpers ─────────────────────────────────────────────────────────────────
-
+  // ── Start trial ─────────────────────────────────────────────────────────────
   const markOnboardingComplete = async () => {
     const orgId = organisation?.id
     if (!orgId) return
     try {
       const updated = await orgApi.update(orgId, { onboarding_completed: true })
       setOrganisation(updated.data)
-    } catch {
-      // Non-fatal — the user is in the app; flag can be fixed on next login
-    }
+    } catch { /* non-fatal */ }
   }
-
-  // ── Step 2: Select plan → start trial ──────────────────────────────────────
 
   const handleSelectAndPay = async (plan: Plan) => {
     setSelectedPlan(plan)
     setInitiatingPay(true)
     try {
-      // startTrial handles both free (activates ACTIVE, no expiry) and paid (14-day trial)
       await subscriptionApi.startTrial(plan.id)
       await markOnboardingComplete()
       if (plan.is_free) {
-        toast.success('Welcome to Audity Free! No card needed.')
+        toast.success('Welcome to Audity! No card needed.')
       } else {
-        toast.success(`${plan.name} trial started! You have 14 days free.`)
+        toast.success(`${plan.name} trial started — 14 days free!`)
       }
       navigate('/dashboard')
     } catch (err: any) {
@@ -275,85 +294,47 @@ export default function OnboardingPage() {
     }
   }
 
-  // ── Helpers ──────────────────────────────────────────────────────────────────
-
-  const formatPlanPrice = (price: string) => {
-    const num = parseFloat(price)
-    if (isNaN(num)) return price
-    return num.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-  }
-
-  const FEATURE_LABELS: Record<string, string> = {
-    max_products: 'products',
-    max_users: 'team members',
-    multi_warehouse: 'Multi-warehouse',
-    advanced_reports: 'Advanced reports',
-    api_access: 'API access',
-    tax_engine: 'Tax engine',
-    max_invoices: 'invoices/month',
-  }
-
-  const renderFeatures = (features: Record<string, unknown>) => {
-    const items: string[] = []
-    for (const [key, val] of Object.entries(features)) {
-      const label = FEATURE_LABELS[key]
-      if (!label) continue
-      if (typeof val === 'boolean') {
-        if (val) items.push(label)
-      } else if (val === null || val === -1 || val === 0) {
-        items.push(`Unlimited ${label}`)
-      } else if (typeof val === 'string' && isNaN(Number(val))) {
-        // Non-numeric string (e.g. "basic", "advanced") — just show the label
-        items.push(label)
-      } else {
-        items.push(`Up to ${Number(val).toLocaleString()} ${label}`)
-      }
-    }
-    return items
+  const basePlanSlug = (slug: string) => {
+    if (slug.startsWith('professional')) return 'professional'
+    if (slug.startsWith('business')) return 'business'
+    return 'free'
   }
 
   const getPlanBadge = (plan: Plan) => {
     if (!recommendation) return null
-    if (plan.slug === recommendation.recommended_plan_slug) return { label: 'Recommended', color: 'bg-brand-500' }
-    if (plan.slug === recommendation.alternative_plan_slug) return { label: 'Alternative', color: 'bg-amber-500' }
+    if (plan.slug === recommendation.recommended_plan_slug) return { label: '⭐ Recommended for you', color: 'bg-brand-500' }
+    if (plan.slug === recommendation.alternative_plan_slug) return { label: 'Good alternative', color: 'bg-amber-500' }
     return null
   }
 
   // ─── Render ─────────────────────────────────────────────────────────────────
-
   return (
     <div className="min-h-screen bg-surface-950 flex items-center justify-center p-6">
       <div className="w-full max-w-2xl space-y-6">
+
         {/* Logo */}
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-full bg-white overflow-hidden flex items-center justify-center flex-shrink-0">
             <img src="/audity-logo.png" alt="Audity" className="w-8 h-8 object-contain" />
           </div>
-          <h1 className="text-xl font-bold text-white">Audity</h1>
+          <span className="text-xl font-bold text-white">Audity</span>
         </div>
-
-        <StepDots step={step} total={4} />
 
         {/* ── Step 0: Workspace setup ── */}
         {step === 0 && (
-          <div className="card">
-            <div className="flex items-center gap-3 mb-1">
-              <div className="w-10 h-10 bg-brand-500/15 rounded-xl flex items-center justify-center">
-                <Building2 size={20} className="text-brand-400" />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-white">Set up your workspace</h2>
-                <p className="text-slate-400 text-sm">
-                  {user?.first_name ? `Hey ${user.first_name}! ` : ''}Create your organisation to get started.
-                </p>
-              </div>
+          <div className="card space-y-6">
+            <div className="space-y-1">
+              <h2 className="text-2xl font-bold text-white">
+                {user?.first_name ? `Welcome, ${user.first_name}! 👋` : 'Welcome! 👋'}
+              </h2>
+              <p className="text-slate-400 text-sm">Let's get your workspace ready in under a minute.</p>
             </div>
 
-            <form onSubmit={handleCreateOrg} className="mt-6 space-y-5">
+            <form onSubmit={handleCreateOrg} className="space-y-5">
               <div>
-                <label className="label">Organisation name *</label>
+                <label className="label">What's your business called?</label>
                 <input
-                  className="input"
+                  className="input text-base"
                   placeholder="e.g., Ola Liquor Distributors Ltd"
                   value={orgForm.name}
                   onChange={(e) => setOrgForm((f) => ({ ...f, name: e.target.value }))}
@@ -384,251 +365,264 @@ export default function OnboardingPage() {
               </div>
 
               <div>
-                <label className="label">Country & Currency</label>
+                <label className="label">Where are you based?</label>
                 <div className="grid grid-cols-3 gap-2">
                   {PRESETS.map((p) => (
                     <button
                       key={p.country}
                       type="button"
                       onClick={() => setOrgForm((f) => ({ ...f, country: p.country, currency: p.currency }))}
-                      className={`py-2 px-3 rounded-xl border text-xs font-medium flex items-center gap-2 transition-all ${
+                      className={`py-2.5 px-3 rounded-xl border text-xs font-medium flex items-center gap-2 transition-all ${
                         orgForm.country === p.country
                           ? 'bg-brand-500/15 border-brand-500 text-white'
                           : 'border-surface-600 text-slate-400 hover:border-surface-500'
                       }`}
                     >
-                      <span>{p.flag}</span>
+                      <span className="text-base">{p.flag}</span>
                       <span className="truncate">{p.label}</span>
                     </button>
                   ))}
                 </div>
-                <p className="text-xs text-slate-500 mt-2">
-                  Currency: <span className="text-slate-400 font-mono">{orgForm.currency}</span>
-                  {' · '}Country: <span className="text-slate-400 font-mono">{orgForm.country}</span>
-                </p>
               </div>
 
               <button
                 type="submit"
-                disabled={orgSaving}
-                className="btn-primary w-full justify-center py-3 mt-2 disabled:opacity-50"
+                disabled={orgSaving || !orgForm.name.trim()}
+                className="btn-primary w-full justify-center py-3 disabled:opacity-50"
               >
-                {orgSaving ? 'Creating workspace…' : (
-                  <span className="flex items-center gap-2">Continue <ChevronRight size={16} /></span>
-                )}
+                {orgSaving
+                  ? <><Loader2 size={16} className="animate-spin" /> Creating workspace…</>
+                  : <span className="flex items-center gap-2">Continue <ChevronRight size={16} /></span>
+                }
               </button>
             </form>
           </div>
         )}
 
-        {/* ── Step 1: Questionnaire ── */}
+        {/* ── Step 1: One question at a time ── */}
         {step === 1 && (
           <div className="card space-y-6">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-brand-500/15 rounded-xl flex items-center justify-center">
-                <Sparkles size={20} className="text-brand-400" />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-white">Tell us about your business</h2>
-                <p className="text-slate-400 text-sm">We'll use AI to recommend the best plan for you.</p>
-              </div>
+            {/* Progress */}
+            <ProgressBar current={qIndex} total={QUESTIONS.length} />
+
+            {/* Question */}
+            <div className="space-y-2 text-center py-2">
+              <span className="text-4xl">{currentQ.emoji}</span>
+              <h2 className="text-xl font-bold text-white mt-2">{currentQ.label}</h2>
+              <p className="text-slate-400 text-sm">{currentQ.sub}</p>
+              {currentQ.multi && <p className="text-xs text-brand-400">Select all that apply</p>}
             </div>
 
-            <div className="space-y-5">
-              {QUESTIONS.map((q) => (
-                <div key={q.key}>
-                  <div className="flex items-center gap-2 mb-1">
-                    <label className="label mb-0">{q.label}</label>
-                    {q.multi && (
-                      <span className="text-xs text-slate-500 italic">select all that apply</span>
-                    )}
-                  </div>
-                  <div className="flex flex-wrap gap-2 mt-1">
-                    {q.options.map((opt) => {
-                      const selected = isSelected(q.key, opt)
-                      return (
-                        <button
-                          key={opt}
-                          type="button"
-                          onClick={() => toggleAnswer(q.key, opt, q.multi)}
-                          className={`px-3 py-1.5 rounded-lg border text-sm transition-all ${
-                            selected
-                              ? 'bg-brand-500/20 border-brand-500 text-brand-300'
-                              : 'border-surface-600 text-slate-400 hover:border-surface-500'
-                          }`}
-                        >
-                          {selected && <Check size={12} className="inline mr-1" />}
-                          {opt}
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-              ))}
+            {/* Options */}
+            <div className="grid grid-cols-2 gap-2.5">
+              {currentQ.options.map((opt) => {
+                const sel = isSelected(currentQ.key, opt)
+                return (
+                  <button
+                    key={opt}
+                    type="button"
+                    onClick={() => toggleAnswer(currentQ.key, opt, currentQ.multi)}
+                    className={`p-3.5 rounded-xl border text-sm font-medium text-left transition-all flex items-center gap-2 ${
+                      sel
+                        ? 'bg-brand-500/20 border-brand-500 text-white'
+                        : 'border-surface-600 text-slate-300 hover:border-surface-500 hover:text-white'
+                    }`}
+                  >
+                    <span className={`w-4 h-4 rounded-full border-2 flex-shrink-0 flex items-center justify-center transition-all ${
+                      sel ? 'bg-brand-500 border-brand-500' : 'border-slate-600'
+                    }`}>
+                      {sel && <Check size={10} className="text-white" />}
+                    </span>
+                    {opt}
+                  </button>
+                )
+              })}
             </div>
 
-            <button
-              disabled={!allAnswered}
-              onClick={handleGetRecommendation}
-              className="btn-primary w-full justify-center py-3 disabled:opacity-40"
-            >
-              <span className="flex items-center gap-2">
-                <Sparkles size={16} />
-                Get AI recommendation
-              </span>
-            </button>
+            {/* Nav */}
+            <div className="flex items-center gap-3 pt-1">
+              <button
+                onClick={handleBack}
+                className="flex items-center gap-1 text-sm text-slate-500 hover:text-slate-300 transition-colors"
+              >
+                <ArrowLeft size={14} /> Back
+              </button>
+              <button
+                onClick={handleNext}
+                disabled={!currentAnswered()}
+                className="btn-primary flex-1 justify-center py-3 disabled:opacity-40"
+              >
+                {qIndex < QUESTIONS.length - 1
+                  ? <span className="flex items-center gap-2">Next <ChevronRight size={16} /></span>
+                  : <span className="flex items-center gap-2"><Sparkles size={16} /> Get my recommendation</span>
+                }
+              </button>
+            </div>
           </div>
         )}
 
-        {/* ── Step 2: Recommendation + plan selection ── */}
-        {step === 2 && (
-          <div className="space-y-4">
-            {loadingRec ? (
-              <div className="card flex flex-col items-center gap-4 py-12">
-                <div className="w-14 h-14 bg-brand-500/15 rounded-full flex items-center justify-center">
-                  <Sparkles size={24} className="text-brand-400 animate-pulse" />
-                </div>
-                <p className="text-white font-semibold">Analysing your business…</p>
-                <p className="text-slate-400 text-sm">Our AI is finding the best plan for you.</p>
-                <Loader2 size={20} className="text-brand-400 animate-spin mt-2" />
-              </div>
-            ) : recommendation ? (
-              <>
-                {/* Recommendation summary */}
-                {recommendation.reasons.length > 0 && (
-                  <div className="card border border-brand-500/30 bg-brand-500/5">
-                    <div className="flex items-center gap-2 mb-3">
-                      <Sparkles size={16} className="text-brand-400" />
-                      <span className="text-brand-300 font-semibold text-sm">AI Recommendation</span>
-                      {recommendation.confidence && (
-                        <span className="ml-auto text-xs text-slate-500 capitalize">{recommendation.confidence} confidence</span>
-                      )}
-                    </div>
-                    <ul className="space-y-1">
-                      {recommendation.reasons.map((r, i) => (
-                        <li key={i} className="flex items-start gap-2 text-sm text-slate-300">
-                          <Check size={14} className="text-brand-400 mt-0.5 flex-shrink-0" />
-                          {r}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
+        {/* ── Step 2: Loading ── */}
+        {step === 2 && loadingRec && (
+          <div className="card flex flex-col items-center gap-5 py-16 text-center">
+            <div className="w-16 h-16 bg-brand-500/15 rounded-full flex items-center justify-center">
+              <Sparkles size={28} className="text-brand-400 animate-pulse" />
+            </div>
+            <div className="space-y-1">
+              <p className="text-white font-bold text-lg">Finding the right plan for you…</p>
+              <p className="text-slate-400 text-sm">Our AI is analysing your answers.</p>
+            </div>
+            <Loader2 size={22} className="text-brand-400 animate-spin" />
+          </div>
+        )}
 
-                {/* Plan cards */}
-                <div className="grid gap-3">
-                  {recommendation.plans.map((plan) => {
-                    const badge = getPlanBadge(plan)
-                    const isSelected = selectedPlan?.id === plan.id
-                    return (
-                      <div
-                        key={plan.id}
-                        onClick={() => setSelectedPlan(plan)}
-                        className={`card cursor-pointer transition-all border-2 ${
-                          isSelected ? 'border-brand-500 bg-brand-500/5' : 'border-surface-600 hover:border-surface-500'
-                        }`}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-white font-bold">{plan.name}</span>
-                              {badge && (
-                                <span className={`text-xs px-2 py-0.5 rounded-full text-white font-medium ${badge.color}`}>
-                                  {badge.label}
-                                </span>
-                              )}
-                              {plan.is_free && (
-                                <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-medium">
-                                  Free
-                                </span>
-                              )}
-                            </div>
-                            <p className="text-slate-400 text-sm mt-0.5">
-                              {plan.is_free
-                                ? 'No payment required'
-                                : `14 days free, then ₦${formatPlanPrice(plan.price)}/month`}
-                            </p>
-                            {/* Feature list */}
-                            {Object.keys(plan.features).length > 0 && (
-                              <ul className="mt-2 flex flex-wrap gap-x-3 gap-y-0.5">
-                                {renderFeatures(plan.features).map((f, i) => (
-                                  <li key={i} className="text-xs text-slate-400 flex items-center gap-1">
-                                    <Check size={10} className="text-emerald-400 flex-shrink-0" />
-                                    {f}
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-                            {plan.description && (
-                              <p className="text-xs text-slate-500 mt-1.5 italic">{plan.description}</p>
-                            )}
-                            {/* Show alternative reasons if this is the alt plan */}
-                            {plan.slug === recommendation.alternative_plan_slug && recommendation.alternative_reasons.length > 0 && (
-                              <ul className="mt-2 space-y-0.5">
-                                {recommendation.alternative_reasons.map((r, i) => (
-                                  <li key={i} className="text-xs text-slate-400 flex items-start gap-1.5">
-                                    <Star size={11} className="text-amber-400 mt-0.5 flex-shrink-0" />
-                                    {r}
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-                          </div>
-                          <div className={`w-5 h-5 rounded-full border-2 flex-shrink-0 mt-0.5 transition-all ${
-                            isSelected ? 'bg-brand-500 border-brand-500' : 'border-surface-500'
-                          }`}>
-                            {isSelected && <Check size={12} className="text-white m-auto" style={{ marginTop: '2px', marginLeft: '2px' }} />}
-                          </div>
-                        </div>
+        {/* ── Step 2: Plan selection ── */}
+        {step === 2 && !loadingRec && recommendation && (
+          <div className="space-y-5">
+
+            {/* AI summary card */}
+            {recommendation.reasons.length > 0 && (
+              <div className="rounded-2xl border border-brand-500/30 bg-brand-500/5 p-4 space-y-2">
+                <div className="flex items-center gap-2">
+                  <Sparkles size={15} className="text-brand-400" />
+                  <span className="text-brand-300 font-semibold text-sm">AI recommendation</span>
+                  {recommendation.confidence && (
+                    <span className="ml-auto text-xs text-slate-500 capitalize">{recommendation.confidence} confidence</span>
+                  )}
+                </div>
+                <ul className="space-y-1">
+                  {recommendation.reasons.map((r, i) => (
+                    <li key={i} className="flex items-start gap-2 text-sm text-slate-300">
+                      <CheckCircle2 size={13} className="text-brand-400 mt-0.5 flex-shrink-0" />
+                      {r}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <p className="text-white font-semibold text-base">Choose your plan</p>
+
+            {/* Plan cards grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              {recommendation.plans.map((plan) => {
+                const badge = getPlanBadge(plan)
+                const isSel = selectedPlan?.id === plan.id
+                const base = basePlanSlug(plan.slug)
+                const colors = PLAN_COLOR[base] ?? PLAN_COLOR.free
+                const highlights = PLAN_HIGHLIGHTS[base] ?? []
+
+                return (
+                  <div
+                    key={plan.id}
+                    onClick={() => setSelectedPlan(plan)}
+                    className={`relative flex flex-col rounded-2xl border p-4 gap-3 cursor-pointer transition-all ${colors.border} ${colors.glow} ${
+                      isSel ? 'ring-2 ring-brand-500 bg-brand-500/5' : 'hover:border-surface-500 bg-surface-800/40'
+                    }`}
+                  >
+                    {/* Recommended badge */}
+                    {badge && (
+                      <span className={`absolute -top-3 left-1/2 -translate-x-1/2 whitespace-nowrap text-xs font-semibold px-3 py-1 rounded-full text-white ${badge.color}`}>
+                        {badge.label}
+                      </span>
+                    )}
+
+                    {/* Plan name */}
+                    <div className="flex items-center justify-between mt-1">
+                      <div>
+                        <p className="text-white font-bold text-base">{plan.name}</p>
+                        {plan.is_free
+                          ? <p className="text-emerald-400 text-xs font-medium mt-0.5">Always free</p>
+                          : <p className="text-slate-400 text-xs mt-0.5">14-day free trial</p>
+                        }
                       </div>
-                    )
-                  })}
-                </div>
+                      <div className={`w-5 h-5 rounded-full border-2 flex-shrink-0 flex items-center justify-center transition-all ${
+                        isSel ? 'bg-brand-500 border-brand-500' : 'border-slate-600'
+                      }`}>
+                        {isSel && <Check size={11} className="text-white" />}
+                      </div>
+                    </div>
 
-                <button
-                  disabled={!selectedPlan || initiatingPay}
-                  onClick={() => selectedPlan && handleSelectAndPay(selectedPlan)}
-                  className="btn-primary w-full justify-center py-3 disabled:opacity-40"
-                >
-                  <span className="flex items-center gap-2">
-                    {initiatingPay ? (
-                      <><Loader2 size={16} className="animate-spin" /> Setting up your workspace…</>
-                    ) : selectedPlan?.is_free ? (
-                      <>Get started for free <ChevronRight size={16} /></>
-                    ) : (
-                      <><Clock size={16} /> Start Free — No card required</>
+                    {/* Price */}
+                    <div>
+                      {plan.is_free
+                        ? <span className="text-3xl font-bold text-white">Free</span>
+                        : (
+                          <>
+                            <span className="text-3xl font-bold text-white">
+                              ₦{parseFloat(plan.price).toLocaleString('en-NG', { maximumFractionDigits: 0 })}
+                            </span>
+                            <span className="text-slate-400 text-sm">/mo</span>
+                          </>
+                        )
+                      }
+                    </div>
+
+                    {/* Features */}
+                    <div className="space-y-1.5 flex-1">
+                      {highlights.map(({ icon: Icon, text }) => (
+                        <div key={text} className="flex items-center gap-2 text-xs text-slate-300">
+                          <Icon size={12} className="text-brand-400 shrink-0" />
+                          {text}
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Alt reasons */}
+                    {plan.slug === recommendation.alternative_plan_slug && recommendation.alternative_reasons.length > 0 && (
+                      <div className="pt-2 border-t border-surface-700 space-y-1">
+                        {recommendation.alternative_reasons.slice(0, 2).map((r, i) => (
+                          <p key={i} className="text-xs text-slate-400 flex items-start gap-1.5">
+                            <Star size={10} className="text-amber-400 mt-0.5 shrink-0" />
+                            {r}
+                          </p>
+                        ))}
+                      </div>
                     )}
-                  </span>
-                </button>
+                  </div>
+                )
+              })}
+            </div>
 
-                {!selectedPlan?.is_free && (
-                  <p className="text-center text-xs text-slate-500">
-                    14 days free, full {selectedPlan?.name} access. Cancel anytime before the trial ends and you won't be charged.
-                  </p>
-                )}
+            {/* CTA */}
+            <button
+              disabled={!selectedPlan || initiatingPay}
+              onClick={() => selectedPlan && handleSelectAndPay(selectedPlan)}
+              className="btn-primary w-full justify-center py-3.5 text-base disabled:opacity-40"
+            >
+              {initiatingPay ? (
+                <><Loader2 size={16} className="animate-spin" /> Setting things up…</>
+              ) : selectedPlan?.is_free ? (
+                <span className="flex items-center gap-2"><CheckCircle2 size={17} /> Start for free — no card needed</span>
+              ) : (
+                <span className="flex items-center gap-2"><Clock size={17} /> Start 14-day free trial</span>
+              )}
+            </button>
 
-                <div className="flex items-center justify-between">
-                  <button
-                    onClick={() => setStep(1)}
-                    className="text-sm text-slate-500 hover:text-slate-400 flex items-center gap-1"
-                  >
-                    <ArrowLeft size={14} /> Change answers
-                  </button>
-                  <button
-                    onClick={async () => { await markOnboardingComplete(); navigate('/dashboard') }}
-                    className="text-sm text-slate-600 hover:text-slate-400"
-                  >
-                    Skip for now →
-                  </button>
-                </div>
-              </>
-            ) : null}
+            {!selectedPlan?.is_free && (
+              <p className="text-center text-xs text-slate-500">
+                Full {selectedPlan?.name} access for 14 days. No card required upfront. Cancel anytime.
+              </p>
+            )}
+
+            <div className="flex items-center justify-between text-sm">
+              <button
+                onClick={() => { setStep(1); setQIndex(QUESTIONS.length - 1) }}
+                className="text-slate-500 hover:text-slate-400 flex items-center gap-1"
+              >
+                <ArrowLeft size={13} /> Change answers
+              </button>
+              <button
+                onClick={async () => { await markOnboardingComplete(); navigate('/dashboard') }}
+                className="text-slate-600 hover:text-slate-400"
+              >
+                Skip for now →
+              </button>
+            </div>
           </div>
         )}
-
 
         <p className="text-center text-xs text-slate-600">
-          You can add more organisations and invite team members after setup.
+          You can switch plans or invite team members any time from Settings.
         </p>
       </div>
     </div>

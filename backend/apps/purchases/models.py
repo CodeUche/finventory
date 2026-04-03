@@ -22,6 +22,11 @@ class PurchaseOrder(TenantAwareModel):
         CLOSED = "closed", "Closed"
         CANCELED = "canceled", "Canceled"
 
+    class DeliveryType(models.TextChoices):
+        SELF_COLLECTION = "self_collection", "Self Collection"
+        HAULAGE = "haulage", "Haulage / Courier"
+        OTHER = "other", "Other"
+
     po_number = models.CharField(max_length=50, unique=True, db_index=True)
     supplier = models.ForeignKey(
         "suppliers.Supplier", on_delete=models.PROTECT, related_name="purchase_orders"
@@ -36,6 +41,11 @@ class PurchaseOrder(TenantAwareModel):
     subtotal = MoneyField()
     tax_amount = MoneyField()
     total_amount = MoneyField()
+    delivery_type = models.CharField(
+        max_length=20, choices=DeliveryType.choices,
+        default=DeliveryType.SELF_COLLECTION, blank=True
+    )
+    delivery_notes = models.CharField(max_length=255, blank=True, help_text="Custom delivery instructions")
     notes = models.TextField(blank=True)
     receipt = models.FileField(upload_to="purchase_receipts/", null=True, blank=True)
     created_by = models.ForeignKey(
@@ -50,10 +60,35 @@ class PurchaseOrder(TenantAwareModel):
 
     @classmethod
     def generate_number(cls, organisation):
-        # po_number is GLOBALLY unique, so we must use a global count
-        # to avoid conflicts across multiple organisations.
-        count = cls.objects.count() + 1
-        return f"PO-{count:06d}"
+        """
+        Generate a collision-safe PO number using org-specific prefix + MAX().
+
+        Format: PO-XXXX-000001  (XXXX = first 4 hex chars of org UUID)
+        Uses MAX() on existing numbers (not count) so deletions/voids never
+        cause duplicate key errors.
+        """
+        from django.db.models import Max
+        import re
+
+        prefix = str(organisation.id).replace("-", "")[:4].upper()
+        pattern = f"PO-{prefix}-"
+
+        last = (
+            cls.objects.filter(po_number__startswith=pattern)
+            .aggregate(m=Max("po_number"))["m"]
+        )
+        if last:
+            m = re.search(r"-(\d+)$", last)
+            next_seq = (int(m.group(1)) + 1) if m else 1
+        else:
+            next_seq = 1
+
+        candidate = f"{pattern}{next_seq:06d}"
+        # Safety: if somehow a collision still exists, keep incrementing
+        while cls.objects.filter(po_number=candidate).exists():
+            next_seq += 1
+            candidate = f"{pattern}{next_seq:06d}"
+        return candidate
 
 
 class PurchaseOrderItem(TenantAwareModel):

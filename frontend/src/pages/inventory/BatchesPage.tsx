@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Layers, Search } from 'lucide-react'
+import { Layers, Plus, Search, Trash2, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { inventoryApi } from '@/services/api'
 import { formatDate } from '@/lib/utils'
+import DateInput from '@/components/DateInput'
+import type { Product, Warehouse } from '@/types'
 
 interface BatchItem {
   id: string
@@ -13,9 +15,20 @@ interface BatchItem {
   warehouse: string
   warehouse_name: string
   quantity: string
+  unit_cost: string
   manufacture_date: string | null
   expiry_date: string | null
   days_to_expiry: number | null
+}
+
+interface BatchForm {
+  product_id: string
+  warehouse_id: string
+  batch_number: string
+  quantity: string
+  unit_cost: string
+  manufacture_date: string
+  expiry_date: string
 }
 
 type ExpiryFilter = 'all' | 'expiring' | 'expired' | 'ok'
@@ -28,13 +41,24 @@ function getExpiryStatus(batch: BatchItem): { label: string; badge: string; days
   return { label: 'OK', badge: 'badge-green', daysLeft: days }
 }
 
+const BLANK_FORM: BatchForm = {
+  product_id: '', warehouse_id: '', batch_number: '',
+  quantity: '', unit_cost: '', manufacture_date: '', expiry_date: '',
+}
+
 export default function BatchesPage() {
   const [batches, setBatches] = useState<BatchItem[]>([])
-  const [warehouses, setWarehouses] = useState<{ id: string; name: string }[]>([])
+  const [products, setProducts] = useState<Product[]>([])
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [warehouseFilter, setWarehouseFilter] = useState('')
   const [expiryFilter, setExpiryFilter] = useState<ExpiryFilter>('all')
+
+  // ── Create modal ──────────────────────────────────────────────────────────
+  const [showCreate, setShowCreate] = useState(false)
+  const [form, setForm] = useState<BatchForm>(BLANK_FORM)
+  const [saving, setSaving] = useState(false)
 
   const load = async () => {
     setLoading(true)
@@ -49,11 +73,64 @@ export default function BatchesPage() {
     } catch {
       setBatches([])
       toast.error('Failed to load batches')
-    }
-    finally { setLoading(false) }
+    } finally { setLoading(false) }
   }
 
   useEffect(() => { load() }, [search, warehouseFilter, expiryFilter])
+
+  const openCreate = async () => {
+    try {
+      const pRes = await inventoryApi.products({ page_size: 200, is_active: true })
+      const pList: Product[] = pRes.data.results ?? pRes.data
+      setProducts(pList)
+      const defaultWarehouse = warehouses.find((w) => w.is_default) ?? warehouses[0]
+      setForm({
+        ...BLANK_FORM,
+        product_id: pList[0]?.id ?? '',
+        warehouse_id: defaultWarehouse?.id ?? '',
+      })
+      setShowCreate(true)
+    } catch { toast.error('Failed to load products') }
+  }
+
+  const handleCreate = async () => {
+    if (!form.product_id) { toast.error('Select a product'); return }
+    if (!form.warehouse_id) { toast.error('Select a location'); return }
+    if (!form.batch_number.trim()) { toast.error('Enter a batch / lot number'); return }
+    if (!form.quantity || parseFloat(form.quantity) <= 0) { toast.error('Enter a valid quantity'); return }
+
+    setSaving(true)
+    try {
+      await inventoryApi.createBatch({
+        product: form.product_id,
+        warehouse: form.warehouse_id,
+        batch_number: form.batch_number.trim(),
+        quantity: parseFloat(form.quantity),
+        unit_cost: form.unit_cost ? parseFloat(form.unit_cost) : 0,
+        manufacture_date: form.manufacture_date || null,
+        expiry_date: form.expiry_date || null,
+      })
+      toast.success('Batch created')
+      setShowCreate(false)
+      load()
+    } catch (err: any) {
+      const apiErr = err?.response?.data
+      const msg = apiErr?.batch_number?.[0] ?? apiErr?.non_field_errors?.[0]
+        ?? apiErr?.error?.message ?? apiErr?.error ?? 'Failed to create batch'
+      toast.error(typeof msg === 'string' ? msg : JSON.stringify(msg))
+    } finally { setSaving(false) }
+  }
+
+  const handleDelete = async (id: string, batchNum: string) => {
+    if (!confirm(`Delete batch "${batchNum}"? This cannot be undone.`)) return
+    try {
+      await inventoryApi.deleteBatch(id)
+      toast.success('Batch deleted')
+      setBatches((prev) => prev.filter((b) => b.id !== id))
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error ?? 'Failed to delete batch')
+    }
+  }
 
   // Summary stats
   const expiring = batches.filter((b) => {
@@ -74,9 +151,15 @@ export default function BatchesPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-white">Batches & Lots</h1>
-        <p className="text-slate-400 text-sm">Track batch expiry dates and lot numbers. Batches are created via purchase receiving.</p>
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Batches & Lots</h1>
+          <p className="text-slate-400 text-sm">Track batch numbers, lot codes, and expiry dates per product and location.</p>
+        </div>
+        <button onClick={openCreate} className="btn-primary flex items-center gap-2">
+          <Plus size={15} />
+          New Batch / Lot
+        </button>
       </div>
 
       {/* Summary */}
@@ -113,7 +196,7 @@ export default function BatchesPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-surface-700">
-                {['Batch #', 'Product', 'SKU', 'Location', 'Qty', 'Manufacture Date', 'Expiry Date', 'Status'].map((h) => (
+                {['Batch #', 'Product', 'SKU', 'Location', 'Qty', 'Unit Cost', 'Manufacture Date', 'Expiry Date', 'Status', ''].map((h) => (
                   <th key={h} className="px-4 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
                 ))}
               </tr>
@@ -122,17 +205,20 @@ export default function BatchesPage() {
               {loading ? (
                 Array.from({ length: 7 }).map((_, i) => (
                   <tr key={i} className="table-row">
-                    {Array.from({ length: 8 }).map((_, j) => (
+                    {Array.from({ length: 10 }).map((_, j) => (
                       <td key={j} className="px-4 py-3.5"><div className="h-4 bg-surface-700 rounded animate-pulse w-16" /></td>
                     ))}
                   </tr>
                 ))
               ) : batches.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-12 text-center">
+                  <td colSpan={10} className="px-4 py-12 text-center">
                     <Layers size={32} className="mx-auto mb-2 text-slate-600" />
                     <p className="text-slate-500">No batch records found</p>
-                    <p className="text-xs text-slate-600 mt-1">Batches are created automatically when you receive purchase orders with batch/lot information.</p>
+                    <p className="text-xs text-slate-600 mt-1 mb-4">Create batches manually or they are auto-created when you receive purchase orders.</p>
+                    <button onClick={openCreate} className="btn-primary inline-flex items-center gap-2 text-sm">
+                      <Plus size={14} /> New Batch / Lot
+                    </button>
                   </td>
                 </tr>
               ) : batches.map((b) => {
@@ -143,10 +229,20 @@ export default function BatchesPage() {
                     <td className="px-4 py-3.5 text-white">{b.product_name}</td>
                     <td className="px-4 py-3.5 font-mono text-slate-500 text-xs">{b.product_sku}</td>
                     <td className="px-4 py-3.5 text-slate-400">{b.warehouse_name}</td>
-                    <td className="px-4 py-3.5 text-white font-semibold">{b.quantity}</td>
+                    <td className="px-4 py-3.5 text-white font-semibold">{parseFloat(b.quantity).toFixed(0)}</td>
+                    <td className="px-4 py-3.5 text-slate-400">{b.unit_cost ? `${parseFloat(b.unit_cost).toLocaleString()}` : '—'}</td>
                     <td className="px-4 py-3.5 text-slate-400">{b.manufacture_date ? formatDate(b.manufacture_date) : '—'}</td>
                     <td className="px-4 py-3.5 text-slate-400">{b.expiry_date ? formatDate(b.expiry_date) : '—'}</td>
                     <td className="px-4 py-3.5"><span className={badge}>{label}</span></td>
+                    <td className="px-4 py-3.5">
+                      <button
+                        onClick={() => handleDelete(b.id, b.batch_number)}
+                        className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                        title="Delete batch"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </td>
                   </tr>
                 )
               })}
@@ -154,6 +250,92 @@ export default function BatchesPage() {
           </table>
         </div>
       </div>
+
+      {/* New Batch Modal */}
+      {showCreate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-surface-800 border border-surface-600 rounded-2xl p-6 w-full max-w-lg shadow-2xl">
+            <div className="flex items-center justify-between mb-1">
+              <h2 className="text-lg font-bold text-white">New Batch / Lot</h2>
+              <button onClick={() => setShowCreate(false)} className="btn-ghost p-1"><X size={18} /></button>
+            </div>
+            <p className="text-xs text-slate-400 mb-5">
+              Associate a batch or lot number with a product and location. Use this for items with expiry dates, recall tracking, or FEFO management.
+            </p>
+
+            <div className="space-y-4">
+              {/* Product */}
+              <div>
+                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Product *</label>
+                <select className="input" value={form.product_id}
+                  onChange={(e) => setForm({ ...form, product_id: e.target.value })}>
+                  <option value="">Select product…</option>
+                  {products.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name} ({p.sku})</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Location */}
+              <div>
+                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Location *</label>
+                <select className="input" value={form.warehouse_id}
+                  onChange={(e) => setForm({ ...form, warehouse_id: e.target.value })}>
+                  <option value="">Select location…</option>
+                  {warehouses.map((w) => (
+                    <option key={w.id} value={w.id}>{w.name}{w.is_default ? ' (default)' : ''}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Batch number + Quantity */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Batch / Lot Number *</label>
+                  <input className="input" placeholder="e.g. LOT-2024-001"
+                    value={form.batch_number}
+                    onChange={(e) => setForm({ ...form, batch_number: e.target.value })} />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Quantity *</label>
+                  <input type="text" inputMode="decimal" className="input" placeholder="0"
+                    value={form.quantity}
+                    onChange={(e) => setForm({ ...form, quantity: e.target.value })} />
+                </div>
+              </div>
+
+              {/* Unit cost */}
+              <div>
+                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Unit Cost <span className="font-normal text-slate-500 normal-case">(optional)</span></label>
+                <input type="text" inputMode="decimal" className="input" placeholder="0.00"
+                  value={form.unit_cost}
+                  onChange={(e) => setForm({ ...form, unit_cost: e.target.value })} />
+              </div>
+
+              {/* Dates */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Manufacture Date</label>
+                  <DateInput value={form.manufacture_date}
+                    onChange={(v) => setForm({ ...form, manufacture_date: v })} />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Expiry Date</label>
+                  <DateInput value={form.expiry_date}
+                    onChange={(v) => setForm({ ...form, expiry_date: v })} />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <button onClick={() => setShowCreate(false)} className="btn-ghost flex-1">Cancel</button>
+              <button onClick={handleCreate} disabled={saving} className="btn-primary flex-1 disabled:opacity-50">
+                {saving ? 'Creating…' : 'Create Batch'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

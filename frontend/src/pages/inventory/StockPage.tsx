@@ -1,10 +1,18 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
-import { AlertTriangle, Boxes, Plus, RefreshCw } from 'lucide-react'
+import { AlertTriangle, Boxes, Plus, RefreshCw, ArrowLeftRight } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { inventoryApi } from '@/services/api'
 import { formatAmountInput, stripCommas } from '@/lib/utils'
 import type { Product, StockItem, Warehouse } from '@/types'
+
+interface TransferForm {
+  product_id: string
+  from_warehouse_id: string
+  to_warehouse_id: string
+  quantity: string
+  notes: string
+}
 
 interface AdjustForm {
   product_id: string
@@ -41,6 +49,13 @@ export default function StockPage() {
   const [saving, setSaving] = useState(false)
   const [newProduct, setNewProduct] = useState<NewProductMini>({ name: '', sku: '', cost_price: '', selling_price: '' })
   const [creatingProduct, setCreatingProduct] = useState(false)
+
+  // ── Stock transfer modal ─────────────────────────────────────────────────
+  const [showTransfer, setShowTransfer] = useState(false)
+  const [transferForm, setTransferForm] = useState<TransferForm>({
+    product_id: '', from_warehouse_id: '', to_warehouse_id: '', quantity: '', notes: ''
+  })
+  const [transferSaving, setTransferSaving] = useState(false)
 
   const load = async () => {
     setLoading(true)
@@ -137,6 +152,53 @@ export default function StockPage() {
     }
   }
 
+  const openTransfer = async () => {
+    try {
+      const pRes = await inventoryApi.products({ page_size: 200, is_active: true })
+      const pList: Product[] = pRes.data.results ?? pRes.data
+      setProducts(pList)
+      setTransferForm({
+        product_id: pList[0]?.id ?? '',
+        from_warehouse_id: warehouses[0]?.id ?? '',
+        to_warehouse_id: warehouses[1]?.id ?? warehouses[0]?.id ?? '',
+        quantity: '',
+        notes: '',
+      })
+      setShowTransfer(true)
+    } catch { toast.error('Failed to load products') }
+  }
+
+  const handleTransfer = async () => {
+    if (!transferForm.product_id) { toast.error('Select a product'); return }
+    if (!transferForm.from_warehouse_id) { toast.error('Select a source location'); return }
+    if (!transferForm.to_warehouse_id) { toast.error('Select a destination location'); return }
+    if (transferForm.from_warehouse_id === transferForm.to_warehouse_id) {
+      toast.error('Source and destination must be different locations'); return
+    }
+    const qty = parseFloat(transferForm.quantity)
+    if (!transferForm.quantity || isNaN(qty) || qty <= 0) {
+      toast.error('Enter a positive quantity'); return
+    }
+    setTransferSaving(true)
+    try {
+      const result = await inventoryApi.transferStock({
+        product_id: transferForm.product_id,
+        from_warehouse_id: transferForm.from_warehouse_id,
+        to_warehouse_id: transferForm.to_warehouse_id,
+        quantity: qty,
+        notes: transferForm.notes,
+      })
+      toast.success(`Stock transferred · Ref: ${result.data.reference}`)
+      setShowTransfer(false)
+      load()
+    } catch (err: any) {
+      const apiErr = err?.response?.data?.error
+      toast.error(typeof apiErr === 'string' ? apiErr : (apiErr?.message ?? 'Transfer failed'))
+    } finally {
+      setTransferSaving(false)
+    }
+  }
+
   // lowStockTotal from the dedicated endpoint (includes products with no stock movements)
   const lowCount = lowStockTotal || items.filter((i) => i.stock_level === 'low' || i.is_low_stock).length
   const mediumCount = items.filter((i) => i.stock_level === 'medium').length
@@ -176,6 +238,10 @@ export default function StockPage() {
             <AlertTriangle size={14} /> Low Stock {lowCount > 0 && `(${lowCount})`}
           </button>
           <button onClick={load} className="btn-ghost p-2.5"><RefreshCw size={16} /></button>
+          <button onClick={openTransfer} className="btn-secondary flex items-center gap-2 py-2 px-4" title="Transfer stock between locations">
+            <ArrowLeftRight size={15} />
+            Transfer
+          </button>
           <button onClick={openAdjust} className="btn-primary flex items-center gap-2 py-2 px-4">
             <Plus size={15} />
             Add / Adjust Stock
@@ -362,6 +428,99 @@ export default function StockPage() {
               <button onClick={() => setShowAdjust(false)} className="btn-ghost flex-1">Cancel</button>
               <button onClick={handleAdjust} disabled={saving || creatingProduct} className="btn-primary flex-1 disabled:opacity-50">
                 {creatingProduct ? 'Creating product…' : saving ? 'Saving…' : adjustForm.product_id === '__new__' ? 'Create & Add Stock' : 'Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Transfer Stock Modal */}
+      {showTransfer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-surface-800 border border-surface-600 rounded-2xl p-6 w-full max-w-md shadow-2xl">
+            <div className="flex items-center gap-3 mb-1">
+              <div className="w-9 h-9 rounded-xl bg-brand-500/15 flex items-center justify-center">
+                <ArrowLeftRight size={18} className="text-brand-400" />
+              </div>
+              <h2 className="text-lg font-bold text-white">Transfer Stock</h2>
+            </div>
+            <p className="text-xs text-slate-400 mb-5">
+              Move stock between locations. Stock is deducted from the source and added to the destination atomically.
+            </p>
+
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Product *</label>
+                <select className="input" value={transferForm.product_id}
+                  onChange={(e) => setTransferForm({ ...transferForm, product_id: e.target.value })}>
+                  <option value="">Select product…</option>
+                  {products.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name} ({p.sku})</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">From *</label>
+                  <select className="input" value={transferForm.from_warehouse_id}
+                    onChange={(e) => setTransferForm({ ...transferForm, from_warehouse_id: e.target.value })}>
+                    <option value="">Source location…</option>
+                    {warehouses.map((w) => (
+                      <option key={w.id} value={w.id}>{w.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">To *</label>
+                  <select className="input" value={transferForm.to_warehouse_id}
+                    onChange={(e) => setTransferForm({ ...transferForm, to_warehouse_id: e.target.value })}>
+                    <option value="">Destination…</option>
+                    {warehouses
+                      .filter((w) => w.id !== transferForm.from_warehouse_id)
+                      .map((w) => (
+                        <option key={w.id} value={w.id}>{w.name}</option>
+                      ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Arrow indicator */}
+              {transferForm.from_warehouse_id && transferForm.to_warehouse_id && (
+                <div className="flex items-center gap-2 text-xs text-slate-500 bg-surface-700/50 rounded-xl px-3 py-2">
+                  <span className="text-white font-medium">
+                    {warehouses.find((w) => w.id === transferForm.from_warehouse_id)?.name}
+                  </span>
+                  <ArrowLeftRight size={12} className="text-brand-400 shrink-0" />
+                  <span className="text-white font-medium">
+                    {warehouses.find((w) => w.id === transferForm.to_warehouse_id)?.name}
+                  </span>
+                </div>
+              )}
+
+              <div>
+                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Quantity *</label>
+                <input
+                  type="text" inputMode="decimal" className="input"
+                  placeholder="e.g. 50"
+                  value={transferForm.quantity}
+                  onChange={(e) => setTransferForm({ ...transferForm, quantity: e.target.value })}
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Notes <span className="font-normal text-slate-500 normal-case">(optional)</span></label>
+                <input className="input" placeholder="e.g. Replenishing branch stock"
+                  value={transferForm.notes}
+                  onChange={(e) => setTransferForm({ ...transferForm, notes: e.target.value })}
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <button onClick={() => setShowTransfer(false)} className="btn-ghost flex-1">Cancel</button>
+              <button onClick={handleTransfer} disabled={transferSaving} className="btn-primary flex-1 disabled:opacity-50 flex items-center justify-center gap-2">
+                {transferSaving ? 'Transferring…' : <><ArrowLeftRight size={14} /> Transfer Stock</>}
               </button>
             </div>
           </div>

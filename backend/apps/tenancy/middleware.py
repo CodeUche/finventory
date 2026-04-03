@@ -86,7 +86,8 @@ def resolve_organisation(request):
     if org_id:
         try:
             org = Organisation.objects.get(id=org_id, is_active=True)
-            if request.user.memberships.filter(organisation=org, is_active=True).exists():
+            # Superusers can access any organisation without a membership record
+            if request.user.is_superuser or request.user.memberships.filter(organisation=org, is_active=True).exists():
                 request.organisation = org
                 return org
             else:

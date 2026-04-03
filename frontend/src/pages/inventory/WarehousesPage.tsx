@@ -1,9 +1,8 @@
 import { useEffect, useState, useCallback } from 'react'
-import { Edit2, Plus, Trash2, Warehouse, ChevronDown, ChevronUp, Package, Loader2, TrendingUp, BarChart3 } from 'lucide-react'
+import { Edit2, Plus, Trash2, Warehouse, ChevronDown, ChevronUp, Package, Loader2 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { inventoryApi, salesApi } from '@/services/api'
-import { formatCurrency } from '@/lib/utils'
-import type { Warehouse as WarehouseType, StockItem, WarehouseSalesRow } from '@/types'
+import { inventoryApi } from '@/services/api'
+import type { Warehouse as WarehouseType, StockItem } from '@/types'
 
 interface WarehouseForm {
   name: string
@@ -27,12 +26,6 @@ export default function WarehousesPage() {
   const [warehouseStock, setWarehouseStock] = useState<Record<string, StockItem[]>>({})
   const [loadingStock, setLoadingStock] = useState<string | null>(null)
 
-  // Sales analytics
-  const [salesPeriod, setSalesPeriod] = useState<string>('month')
-  const [warehouseSales, setWarehouseSales] = useState<WarehouseSalesRow[]>([])
-  const [loadingSales, setLoadingSales] = useState(false)
-  const [expandedSales, setExpandedSales] = useState<string | null>(null)
-
   const load = async () => {
     try {
       const { data } = await inventoryApi.warehouses()
@@ -45,20 +38,6 @@ export default function WarehousesPage() {
   }
 
   useEffect(() => { load() }, [])
-
-  const loadSales = useCallback(async (period: string) => {
-    setLoadingSales(true)
-    try {
-      const { data } = await salesApi.warehouseSales(period)
-      setWarehouseSales(data.results ?? [])
-    } catch {
-      toast.error('Failed to load sales data')
-    } finally {
-      setLoadingSales(false)
-    }
-  }, [])
-
-  useEffect(() => { loadSales(salesPeriod) }, [salesPeriod, loadSales])
 
   const toggleExpand = useCallback(async (warehouseId: string) => {
     if (expanded === warehouseId) {
@@ -92,20 +71,20 @@ export default function WarehousesPage() {
   }
 
   const handleSave = async () => {
-    if (!form.name.trim()) { toast.error('Location name is required'); return }
+    if (!form.name.trim()) { toast.error('Warehouse name is required'); return }
     setSaving(true)
     try {
       if (editingId) {
         await inventoryApi.updateWarehouse(editingId, form)
-        toast.success('Location updated')
+        toast.success('Warehouse updated')
       } else {
         await inventoryApi.createWarehouse(form)
-        toast.success('Location created')
+        toast.success('Warehouse created')
       }
       setShowModal(false)
       load()
     } catch {
-      toast.error('Failed to save location')
+      toast.error('Failed to save warehouse')
     } finally {
       setSaving(false)
     }
@@ -113,13 +92,13 @@ export default function WarehousesPage() {
 
   const handleDelete = async (id: string, name: string, e: React.MouseEvent) => {
     e.stopPropagation()
-    if (!confirm(`Delete location "${name}"? This cannot be undone.`)) return
+    if (!confirm(`Delete warehouse "${name}"? This cannot be undone.`)) return
     try {
       await inventoryApi.deleteWarehouse(id)
-      toast.success('Location deleted')
+      toast.success('Warehouse deleted')
       load()
     } catch {
-      toast.error('Cannot delete location — it may have stock or orders linked to it')
+      toast.error('Cannot delete warehouse — it may have stock or orders linked to it')
     }
   }
 
@@ -128,11 +107,11 @@ export default function WarehousesPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Locations</h1>
-          <p className="text-slate-400 text-sm mt-0.5">Click a location to view its products</p>
+          <h1 className="text-2xl font-bold text-white">Warehouses</h1>
+          <p className="text-slate-400 text-sm mt-0.5">Click a warehouse to view its products</p>
         </div>
         <button onClick={openCreate} className="btn-primary flex items-center gap-2">
-          <Plus size={16} /> Add Location
+          <Plus size={16} /> Add Warehouse
         </button>
       </div>
 
@@ -143,10 +122,10 @@ export default function WarehousesPage() {
       ) : warehouses.length === 0 ? (
         <div className="card p-12 text-center">
           <Warehouse size={40} className="mx-auto text-slate-600 mb-3" />
-          <p className="text-slate-400 font-medium">No locations yet</p>
-          <p className="text-slate-500 text-sm mt-1">Add a location to start tracking stock</p>
+          <p className="text-slate-400 font-medium">No warehouses yet</p>
+          <p className="text-slate-500 text-sm mt-1">Add a warehouse to start tracking stock</p>
           <button onClick={openCreate} className="btn-primary mt-4 inline-flex items-center gap-2">
-            <Plus size={15} /> Add First Location
+            <Plus size={15} /> Add First Warehouse
           </button>
         </div>
       ) : (
@@ -204,7 +183,7 @@ export default function WarehousesPage() {
                     ) : stock.length === 0 ? (
                       <div className="py-8 text-center">
                         <Package size={28} className="mx-auto mb-2 text-slate-600" />
-                        <p className="text-slate-500 text-sm">No products in this location</p>
+                        <p className="text-slate-500 text-sm">No products in this warehouse</p>
                       </div>
                     ) : (
                       <table className="w-full text-sm">
@@ -241,90 +220,12 @@ export default function WarehousesPage() {
         </div>
       )}
 
-      {/* Sales Analytics */}
-      <div className="card p-5 space-y-4">
-        <div className="flex items-center justify-between flex-wrap gap-3">
-          <div className="flex items-center gap-2">
-            <BarChart3 size={18} className="text-brand-400" />
-            <h2 className="text-base font-semibold text-white">Sales by Location</h2>
-          </div>
-          <select
-            className="input w-auto text-sm py-1.5"
-            value={salesPeriod}
-            onChange={(e) => setSalesPeriod(e.target.value)}
-          >
-            <option value="today">Today</option>
-            <option value="week">Last 7 days</option>
-            <option value="month">Last 30 days</option>
-            <option value="year">Last 12 months</option>
-            <option value="all">All time</option>
-          </select>
-        </div>
-
-        {loadingSales ? (
-          <div className="py-6 text-center"><Loader2 size={20} className="animate-spin mx-auto text-brand-400" /></div>
-        ) : warehouseSales.length === 0 ? (
-          <div className="py-6 text-center text-slate-500 text-sm">No sales recorded for this period.</div>
-        ) : (
-          <div className="space-y-2">
-            {warehouseSales.map((row) => {
-              const isOpen = expandedSales === row.warehouse_id
-              return (
-                <div key={row.warehouse_id} className="rounded-xl border border-surface-700 overflow-hidden">
-                  <button
-                    className="w-full flex items-center gap-3 px-4 py-3 hover:bg-surface-700/30 transition-colors text-left"
-                    onClick={() => setExpandedSales(isOpen ? null : row.warehouse_id)}
-                  >
-                    <div className="w-8 h-8 rounded-lg bg-brand-500/10 flex items-center justify-center shrink-0">
-                      <Warehouse size={14} className="text-brand-400" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium text-white text-sm">{row.warehouse_name}</p>
-                      <p className="text-xs text-slate-500">{row.invoice_count} invoice{row.invoice_count !== 1 ? 's' : ''}</p>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <span className="font-mono font-bold text-brand-400 text-sm">{formatCurrency(row.total_revenue)}</span>
-                      {isOpen ? <ChevronUp size={14} className="text-slate-400" /> : <ChevronDown size={14} className="text-slate-400" />}
-                    </div>
-                  </button>
-                  {isOpen && row.top_products.length > 0 && (
-                    <div className="border-t border-surface-700 bg-surface-900/30">
-                      <table className="w-full text-xs">
-                        <thead>
-                          <tr className="border-b border-surface-700/50">
-                            <th className="px-4 py-2 text-left text-slate-500 font-medium">Product</th>
-                            <th className="px-4 py-2 text-right text-slate-500 font-medium">Units Sold</th>
-                            <th className="px-4 py-2 text-right text-slate-500 font-medium">Revenue</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {row.top_products.map((p, i) => (
-                            <tr key={i} className="border-b border-surface-700/30 last:border-0">
-                              <td className="px-4 py-2 text-slate-300 flex items-center gap-1.5">
-                                <TrendingUp size={11} className="text-brand-400 shrink-0" />
-                                {p.product_name}
-                              </td>
-                              <td className="px-4 py-2 text-right text-slate-400 font-mono">{parseFloat(p.units_sold).toLocaleString()}</td>
-                              <td className="px-4 py-2 text-right font-mono text-white">{formatCurrency(p.revenue)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        )}
-      </div>
-
       {/* Create / Edit Modal */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
           <div className="bg-surface-800 border border-surface-600 rounded-2xl p-6 w-full max-w-md shadow-2xl">
             <h2 className="text-lg font-bold text-white mb-5">
-              {editingId ? 'Edit Location' : 'Add Location'}
+              {editingId ? 'Edit Warehouse' : 'Add Warehouse'}
             </h2>
 
             <div className="space-y-4">
@@ -370,14 +271,14 @@ export default function WarehousesPage() {
                   checked={form.is_default}
                   onChange={(e) => setForm({ ...form, is_default: e.target.checked })}
                 />
-                <span className="text-sm text-slate-300">Set as default location</span>
+                <span className="text-sm text-slate-300">Set as default warehouse</span>
               </label>
             </div>
 
             <div className="flex gap-3 mt-6">
               <button onClick={() => setShowModal(false)} className="btn-ghost flex-1">Cancel</button>
               <button onClick={handleSave} disabled={saving} className="btn-primary flex-1 disabled:opacity-50">
-                {saving ? <Loader2 size={15} className="animate-spin mx-auto" /> : editingId ? 'Save Changes' : 'Add Location'}
+                {saving ? <Loader2 size={15} className="animate-spin mx-auto" /> : editingId ? 'Save Changes' : 'Add Warehouse'}
               </button>
             </div>
           </div>

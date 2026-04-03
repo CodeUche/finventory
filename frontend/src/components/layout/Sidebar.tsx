@@ -1,11 +1,12 @@
 import { useState } from 'react'
-import { NavLink, useNavigate } from 'react-router-dom'
+import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard, Package, Boxes, Plus, Layers,
   Users, Receipt, BarChart3, LogOut, X, FileText, RefreshCw,
   CreditCard, Truck, Building2, Warehouse, Calculator, BookOpen,
   BookMarked, Landmark, UsersRound, Banknote, ArrowDownCircle,
   PieChart, Scale, Shield, ClipboardList, ChevronDown, ChevronRight, ShieldCheck,
+  MapPin, ClipboardCheck, GraduationCap,
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { authApi } from '@/services/api'
@@ -15,18 +16,22 @@ import type { ModuleKey } from '@/types'
 // ─── Navigation structure ─────────────────────────────────────────────────────
 // `module` maps to ModuleKey for permission filtering; null = always visible
 // `ownerOnly` = only owners/admins see this item (no sub-account access)
-const navGroups: { label: string | null; items: { name: string; href: string; icon: React.ElementType; module?: ModuleKey; ownerOnly?: boolean }[] }[] = [
+const navGroups: { label: string | null; items: { name: string; href: string; icon: React.ElementType; module?: ModuleKey; ownerOnly?: boolean; partnerOnly?: boolean }[] }[] = [
   {
     label: null,
-    items: [{ name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard }],
+    items: [
+      { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
+      { name: 'Partner Dashboard', href: '/partner', icon: GraduationCap, ownerOnly: true, partnerOnly: true },
+    ],
   },
   {
     label: 'INVENTORY',
     items: [
       { name: 'Products', href: '/inventory/products', icon: Package, module: 'inventory' },
       { name: 'Stock Levels', href: '/inventory/stock', icon: Boxes, module: 'inventory' },
-      { name: 'Locations', href: '/inventory/warehouses', icon: Warehouse, module: 'inventory' },
+      { name: 'Warehouses', href: '/inventory/warehouses', icon: Warehouse, module: 'inventory' },
       { name: 'Batches & Lots', href: '/inventory/batches', icon: Layers, module: 'inventory' },
+      { name: 'Stock Reports', href: '/inventory/stock-reports', icon: ClipboardCheck, module: 'inventory' },
     ],
   },
   {
@@ -34,6 +39,7 @@ const navGroups: { label: string | null; items: { name: string; href: string; ic
     items: [
       { name: 'Invoices', href: '/sales', icon: FileText, module: 'sales' },
       { name: 'New Sale', href: '/sales/new', icon: Plus, module: 'sales' },
+      { name: 'Locations', href: '/locations', icon: MapPin, module: 'sales' },
       { name: 'Quotes', href: '/quotes', icon: ClipboardList, module: 'quotes' },
       { name: 'Recurring', href: '/recurring', icon: RefreshCw, module: 'recurring' },
     ],
@@ -41,9 +47,9 @@ const navGroups: { label: string | null; items: { name: string; href: string; ic
   {
     label: 'PROCUREMENT',
     items: [
+      { name: 'Suppliers', href: '/suppliers', icon: Building2, module: 'suppliers' },
       { name: 'Purchase Orders', href: '/purchases', icon: Truck, module: 'purchases' },
       { name: 'Bills (AP)', href: '/bills', icon: Receipt, module: 'bills' },
-      { name: 'Suppliers', href: '/suppliers', icon: Building2, module: 'suppliers' },
     ],
   },
   {
@@ -86,7 +92,7 @@ const navGroups: { label: string | null; items: { name: string; href: string; ic
     ],
   },
   {
-    label: 'ACCOUNT',
+    label: 'BILLING',
     items: [
       { name: 'Billing & Plans', href: '/billing', icon: CreditCard, ownerOnly: true },
     ],
@@ -102,12 +108,15 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
   const { user, organisation, tokens, logout, memberRole, modulePermissions, planModules } = useAuthStore()
   const navigate = useNavigate()
 
-  const isOwnerOrAdmin = !memberRole || memberRole === 'owner' || memberRole === 'admin' || user?.is_superuser
+  // null = membership not yet loaded; treat as restricted (not full access) until confirmed
+  const isOwnerOrAdmin = user?.is_superuser === true || memberRole === 'owner' || memberRole === 'admin'
+  const { pathname } = useLocation()
 
   // Returns true if the nav item should be visible.
   // Checks: ownerOnly → plan modules → sub-account RBAC permissions
-  const canSeeItem = (mod?: ModuleKey, ownerOnly?: boolean) => {
+  const canSeeItem = (mod?: ModuleKey, ownerOnly?: boolean, partnerOnly?: boolean) => {
     if (ownerOnly && !isOwnerOrAdmin) return false   // explicitly owner-only items
+    if (partnerOnly && !user?.has_partner_profile) return false  // partner accounts only
     if (!mod) return true                             // no module restriction (dashboard, settings)
     if (user?.is_superuser) return true              // superusers always see everything
     // Plan-level gate: if the active plan restricts modules, only show allowed ones
@@ -117,8 +126,17 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
     return level === 'view' || level === 'write' || level === 'edit'
   }
 
-  // Track which groups are collapsed. All start expanded.
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+  // Track which groups are collapsed.
+  // A group starts collapsed only if it contains no active route.
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => {
+    const init: Record<string, boolean> = {}
+    navGroups.forEach((group) => {
+      if (!group.label) return
+      const hasActive = group.items.some((item) => pathname.startsWith(item.href))
+      init[group.label] = !hasActive
+    })
+    return init
+  })
 
   const toggleGroup = (label: string) => {
     setCollapsed((prev) => ({ ...prev, [label]: !prev[label] }))
@@ -161,9 +179,14 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
 
       {/* Org badge */}
       {organisation && (
-        <div className="mx-3 mt-3 px-3 py-2 bg-brand-500/10 border border-brand-500/20 rounded-xl shrink-0">
-          <p className="text-xs text-slate-400 truncate">{organisation.name}</p>
-          <p className="text-xs font-mono text-brand-400">{organisation.currency}</p>
+        <div className={`mx-3 mt-3 px-3 py-2 rounded-xl shrink-0 border ${organisation.managing_firm_name ? 'bg-amber-500/10 border-amber-500/20' : 'bg-brand-500/10 border-brand-500/20'}`}>
+          <div className="flex items-center gap-1.5">
+            <p className="text-xs text-slate-400 truncate flex-1">{organisation.name}</p>
+            {organisation.managing_firm_name && (
+              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 shrink-0 uppercase tracking-wide">CLIENT</span>
+            )}
+          </div>
+          <p className={`text-xs font-mono ${organisation.managing_firm_name ? 'text-amber-400' : 'text-brand-400'}`}>{organisation.currency}</p>
         </div>
       )}
 
@@ -171,7 +194,7 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
       <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-0.5">
         {navGroups.map((group, gi) => {
           const isCollapsed = group.label ? (collapsed[group.label] ?? false) : false
-          const visibleItems = group.items.filter((item) => canSeeItem(item.module, item.ownerOnly))
+          const visibleItems = group.items.filter((item) => canSeeItem(item.module, item.ownerOnly, item.partnerOnly))
           if (group.label && visibleItems.length === 0) return null
 
           return (
@@ -181,12 +204,12 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
                   onClick={() => toggleGroup(group.label!)}
                   className="w-full flex items-center justify-between px-3 pt-4 pb-1 text-left group"
                 >
-                  <span className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest group-hover:text-slate-500 transition-colors">
+                  <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest group-hover:text-slate-300 transition-colors">
                     {group.label}
                   </span>
                   {isCollapsed
-                    ? <ChevronRight size={12} className="text-slate-600 group-hover:text-slate-500 transition-colors" />
-                    : <ChevronDown size={12} className="text-slate-600 group-hover:text-slate-500 transition-colors" />
+                    ? <ChevronRight size={12} className="text-slate-400 group-hover:text-slate-300 transition-colors" />
+                    : <ChevronDown size={12} className="text-slate-400 group-hover:text-slate-300 transition-colors" />
                   }
                 </button>
               )}

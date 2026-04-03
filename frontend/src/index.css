@@ -86,8 +86,9 @@
   }
 
   .sidebar-item {
-    @apply flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-400 font-medium
+    @apply flex items-center gap-3 px-3 py-2.5 rounded-xl font-medium
            hover:text-white hover:bg-surface-700/60 transition-all duration-200;
+    color: #CACACA;
   }
 
   .sidebar-item-active {
@@ -170,11 +171,11 @@ html.light .table-row:hover {
 
 html.light .text-slate-100 { color: #0f172a; }
 html.light .text-slate-200 { color: #1e293b; }
-html.light .text-slate-300 { color: #334155; }
-html.light .text-slate-400 { color: #64748b; }
-html.light .text-slate-500 { color: #94a3b8; }
-html.light .text-slate-600 { color: #64748b; }
-html.light .text-slate-700 { color: #334155; }
+html.light .text-slate-300 { color: #1e293b; }  /* was #334155 — bumped darker */
+html.light .text-slate-400 { color: #334155; }  /* was #64748b — much darker  */
+html.light .text-slate-500 { color: #475569; }  /* was #94a3b8 — big fix      */
+html.light .text-slate-600 { color: #334155; }  /* was #64748b — darker       */
+html.light .text-slate-700 { color: #1e293b; }
 html.light .text-white     { color: #0f172a; }
 
 /* ── Surface background overrides ──────────────────────────────────────── */
@@ -194,6 +195,10 @@ html.light .bg-surface-700\/50 { background-color: rgba(226, 232, 240, 0.7); }
 html.light .bg-surface-700\/60 { background-color: rgba(226, 232, 240, 0.8); }
 html.light .bg-surface-800\/40 { background-color: rgba(255, 255, 255, 0.6); }
 html.light .bg-surface-800\/50 { background-color: rgba(255, 255, 255, 0.7); }
+html.light .bg-surface-800\/60 { background-color: rgba(241, 245, 249, 0.8); }
+html.light .bg-surface-800\/70 { background-color: rgba(241, 245, 249, 0.9); }
+html.light .bg-surface-800\/80 { background-color: #f1f5f9; }
+html.light .bg-surface-800\/90 { background-color: #e2e8f0; }
 html.light .bg-surface-900\/30 { background-color: rgba(248, 250, 252, 0.5); }
 html.light .bg-surface-900\/40 { background-color: rgba(248, 250, 252, 0.6); }
 html.light .bg-surface-900\/50 { background-color: rgba(248, 250, 252, 0.7); }
@@ -232,6 +237,47 @@ html.light .text-cyan-400   { color: #0e7490; }   /* cyan-700    */
 html.light .text-sky-400    { color: #0369a1; }   /* sky-700     */
 html.light .text-brand-400  { color: #c2410c; }   /* same as orange-700 */
 
+/* -300 shades are pastel — near-invisible on white. Remap to -700/-800 equivalents */
+html.light .text-red-300     { color: #b91c1c; }
+html.light .text-rose-300    { color: #be123c; }
+html.light .text-orange-300  { color: #c2410c; }
+html.light .text-amber-300   { color: #92400e; }
+html.light .text-yellow-300  { color: #854d0e; }
+html.light .text-emerald-300 { color: #047857; }
+html.light .text-green-300   { color: #15803d; }
+html.light .text-teal-300    { color: #0f766e; }
+html.light .text-blue-300    { color: #1d4ed8; }
+html.light .text-indigo-300  { color: #4338ca; }
+html.light .text-violet-300  { color: #6d28d9; }
+html.light .text-purple-300  { color: #7e22ce; }
+html.light .text-fuchsia-300 { color: #a21caf; }
+html.light .text-pink-300    { color: #be185d; }
+html.light .text-cyan-300    { color: #0e7490; }
+html.light .text-sky-300     { color: #0369a1; }
+html.light .text-brand-300   { color: #c2410c; }
+
+/* -500 shades on light bg */
+html.light .text-red-500     { color: #991b1b; }
+html.light .text-orange-500  { color: #9a3412; }
+html.light .text-amber-500   { color: #78350f; }
+html.light .text-emerald-500 { color: #065f46; }
+html.light .text-green-500   { color: #14532d; }
+html.light .text-blue-500    { color: #1e40af; }
+html.light .text-purple-500  { color: #581c87; }
+html.light .text-brand-500   { color: #9a3412; }
+
+/* label utility */
+
+/* label utility */
+html.light .label { color: #334155; }
+
+/* select element text colour */
+html.light select { color: #0f172a; }
+html.light select option { color: #0f172a; background-color: #ffffff; }
+
+/* mono / code text */
+html.light .font-mono { color: #1e293b; }
+
 /* Badge backgrounds need higher contrast in light mode too */
 html.light .badge-red    { background-color: #fee2e2; color: #991b1b; border-color: #fca5a5; }
 html.light .badge-green  { background-color: #dcfce7; color: #166534; border-color: #86efac; }
@@ -241,6 +287,25 @@ html.light .badge-orange { background-color: #ffedd5; color: #9a3412; border-col
 html.light .badge-purple { background-color: #f3e8ff; color: #6b21a8; border-color: #d8b4fe; }
 html.light .badge-slate  { background-color: #f1f5f9; color: #334155; border-color: #cbd5e1; }
 
+/* Recharts SVG text elements */
+html.light .recharts-text { fill: #334155 !important; }
+html.light .recharts-cartesian-axis-tick-value { fill: #475569 !important; }
+html.light .recharts-legend-item-text { color: #334155 !important; }
+html.light .recharts-tooltip-wrapper .recharts-default-tooltip {
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+  color: #0f172a !important;
+}
+
+/* th / thead text inside tables */
+html.light thead th { color: #475569; }
+
+/* Headings that use text-white stay legible via the text-white override,
+   but explicit h1-h6 and p defaults ensure readability even without a class */
+html.light h1, html.light h2, html.light h3,
+html.light h4, html.light h5, html.light h6 { color: #0f172a; }
+html.light p { color: #334155; }
+
 /* Force-dark panel — always renders with dark background/text regardless of theme (e.g. auth page left panel) */
 html.light .force-dark { background: linear-gradient(135deg, #1e293b, #0f172a) !important; }
 html.light .force-dark .text-white { color: #f8fafc !important; }
@@ -248,3 +313,8 @@ html.light .force-dark .text-slate-100 { color: #f1f5f9 !important; }
 html.light .force-dark .text-slate-200 { color: #e2e8f0 !important; }
 html.light .force-dark .text-slate-300 { color: #cbd5e1 !important; }
 html.light .force-dark .text-slate-400 { color: #94a3b8 !important; }
+html.light .force-dark .text-green-300  { color: #86efac !important; }
+html.light .force-dark .text-orange-300 { color: #fdba74 !important; }
+html.light .force-dark .text-red-400    { color: #f87171 !important; }
+html.light .force-dark .text-amber-400  { color: #fbbf24 !important; }
+html.light .force-dark .text-emerald-400 { color: #34d399 !important; }

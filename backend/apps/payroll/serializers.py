@@ -133,6 +133,7 @@ class PayslipLineSerializer(serializers.ModelSerializer):
 class PayrollRunSerializer(serializers.ModelSerializer):
     payslips = PayslipLineSerializer(many=True, read_only=True)
     employee_count = serializers.SerializerMethodField()
+    target_approver_name = serializers.SerializerMethodField()
 
     class Meta:
         model = PayrollRun
@@ -141,7 +142,7 @@ class PayrollRunSerializer(serializers.ModelSerializer):
             'total_gross', 'total_deductions', 'total_net', 'total_paye',
             'total_pension_employee', 'total_pension_employer', 'total_nhf', 'total_nsitf',
             'total_bonus', 'total_overtime',
-            'submitted_for_approval', 'submitted_by',
+            'submitted_for_approval', 'submitted_by', 'target_approver', 'target_approver_name',
             'payment_date', 'transfer_reference', 'created_at', 'payslips', 'employee_count',
         ]
         read_only_fields = [
@@ -149,8 +150,14 @@ class PayrollRunSerializer(serializers.ModelSerializer):
             'total_gross', 'total_deductions', 'total_net', 'total_paye',
             'total_pension_employee', 'total_pension_employer', 'total_nhf', 'total_nsitf',
             'total_bonus', 'total_overtime',
-            'transfer_reference', 'submitted_for_approval', 'submitted_by', 'employee_count',
+            'transfer_reference', 'submitted_for_approval', 'submitted_by', 'target_approver_name', 'employee_count',
         ]
 
     def get_employee_count(self, obj):
         return obj.payslips.count()
+
+    def get_target_approver_name(self, obj):
+        if obj.target_approver:
+            name = f"{obj.target_approver.first_name} {obj.target_approver.last_name}".strip()
+            return name or obj.target_approver.email
+        return None

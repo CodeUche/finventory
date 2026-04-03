@@ -16,7 +16,7 @@ import {
 } from 'recharts'
 import { BarChart2, RefreshCw, TrendingDown, TrendingUp, Clock, Receipt, Download, ArrowDownCircle, ArrowUpCircle, Landmark } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { reportApi } from '@/services/api'
+import { reportApi, tauriFetch } from '@/services/api'
 import { formatCurrency, formatNumber, formatDate, getCurrencySymbol } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
 import { saveBlobFile } from '@/lib/saveBlobFile'
@@ -77,11 +77,11 @@ export default function ReportsPage() {
       const MUTED: [number,number,number] = [100, 100, 100]
       const tmpl = organisation?.invoice_template ?? 'classic'
 
-      // Pre-load logo
+      // Pre-load logo (tauriFetch for Tauri compatibility)
       let vatLogoData: string | null = null
       if (organisation?.logo) {
         try {
-          const res = await fetch(organisation.logo)
+          const res = await tauriFetch(organisation.logo)
           const blob = await res.blob()
           vatLogoData = await new Promise<string>((resolve, reject) => {
             const r = new FileReader(); r.onloadend = () => resolve(r.result as string); r.onerror = reject; r.readAsDataURL(blob)
@@ -95,6 +95,16 @@ export default function ReportsPage() {
         if (!m) return [30, 30, 30]
         return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)]
       }
+      const vatPdfFont = organisation?.company_name_font?.toLowerCase().includes('times') ||
+        ['Georgia','Playfair Display','Merriweather','Lora','Libre Baskerville','EB Garamond',
+         'Crimson Text','Cinzel','Cormorant Garamond','Spectral'].includes(organisation?.company_name_font ?? '')
+        ? 'times'
+        : ['courier','JetBrains Mono','Fira Code'].includes(organisation?.company_name_font ?? '')
+        ? 'courier' : 'helvetica'
+      const vatBold   = organisation?.company_name_font_bold !== false
+      const vatItalic = organisation?.company_name_font_italic === true
+      const vatPdfStyle = vatBold && vatItalic ? 'bolditalic' : vatBold ? 'bold' : vatItalic ? 'italic' : 'normal'
+      const vatFontSize = Math.max(8, Math.min(36, organisation?.company_name_font_size ?? 14))
       const vatNameColor: [number, number, number] = (() => {
         const c = organisation?.company_name_font_color
         if (!c || c === '#ffffff') return (tmpl === 'modern' || tmpl === 'minimal') ? DARK : [255, 255, 255]
@@ -108,10 +118,15 @@ export default function ReportsPage() {
         tmpl, pageW, BRAND, DARK, MUTED,
         logoData: vatLogoData,
         displayName: vatDisplayName,
-        nameColor: vatNameColor,
-        showCompanyName: vatShowName,
         orgAddress: organisation?.address,
         orgEmail: organisation?.email,
+        orgPhone: organisation?.phone,
+        pdfFont: vatPdfFont,
+        fontSize: vatFontSize,
+        pdfStyle: vatPdfStyle,
+        nameColor: vatNameColor,
+        companyFontUnderline: organisation?.company_name_font_underline,
+        showCompanyName: vatShowName,
         docTitle: 'VAT RETURN REPORT',
         metaRows: [
           ['Organisation', organisation?.name ?? ''],
@@ -363,7 +378,7 @@ export default function ReportsPage() {
             <ResponsiveContainer width="100%" height={220}>
               <BarChart
                 data={topProducts.map((p) => ({
-                  name: p.product_name.length > 16 ? p.product_name.slice(0, 16) + '…' : p.product_name,
+                  name: (p.product_name ?? 'Unknown').length > 16 ? (p.product_name ?? 'Unknown').slice(0, 16) + '…' : (p.product_name ?? 'Unknown'),
                   Revenue: parseFloat(p.revenue),
                   Units: parseFloat(p.units_sold),
                 }))}

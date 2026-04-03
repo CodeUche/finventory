@@ -22,12 +22,8 @@ export function useModuleAccess(module: ModuleKey) {
   const { memberRole, modulePermissions, user } = useAuthStore()
 
   // Platform superusers and org owners/admins always have unrestricted access
-  if (
-    user?.is_superuser ||
-    !memberRole ||
-    memberRole === 'owner' ||
-    memberRole === 'admin'
-  ) {
+  // null memberRole = membership still loading; treat as no access until confirmed
+  if (user?.is_superuser || memberRole === 'owner' || memberRole === 'admin') {
     return FULL
   }
 

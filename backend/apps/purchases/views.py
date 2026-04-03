@@ -1,8 +1,5 @@
-from django.db import IntegrityError
-
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
@@ -51,23 +48,11 @@ class PurchaseOrderViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet
     def perform_create(self, serializer):
         org = self.request.organisation
         po_number = PurchaseOrder.generate_number(org)
-        try:
-            serializer.save(
-                organisation=org,
-                po_number=po_number,
-                created_by=self.request.user,
-            )
-        except IntegrityError:
-            # po_number collision (rare race condition) — retry with a larger offset
-            po_number = PurchaseOrder.generate_number(org) + "-R"
-            try:
-                serializer.save(
-                    organisation=org,
-                    po_number=po_number,
-                    created_by=self.request.user,
-                )
-            except IntegrityError as e:
-                raise ValidationError({"detail": f"Could not generate a unique PO number: {e}"})
+        serializer.save(
+            organisation=org,
+            po_number=po_number,
+            created_by=self.request.user,
+        )
 
     @action(detail=True, methods=["post"], url_path="clear_receipt")
     def clear_receipt(self, request, pk=None):

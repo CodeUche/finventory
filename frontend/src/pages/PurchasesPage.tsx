@@ -36,11 +36,19 @@ function inferMime(url: string): string {
   return map[ext] ?? 'application/octet-stream'
 }
 
+const DELIVERY_TYPES = [
+  { value: 'self_collection', label: 'Self Collection' },
+  { value: 'haulage', label: 'Haulage / Courier' },
+  { value: 'other', label: 'Other / Custom' },
+]
+
 const BLANK = {
   supplier: '',
   warehouse: '',
   order_date: today,
   expected_date: '',
+  delivery_type: 'self_collection',
+  delivery_notes: '',
   notes: '',
 }
 
@@ -161,6 +169,8 @@ export default function PurchasesPage() {
         supplier: form.supplier || null,
         warehouse: form.warehouse,
         order_date: form.order_date,
+        delivery_type: form.delivery_type,
+        delivery_notes: form.delivery_notes,
         notes: form.notes,
         items: validItems,
       }
@@ -544,6 +554,22 @@ export default function PurchasesPage() {
                   <label className="label">Expected Delivery <FieldTooltip text="When you expect the goods to arrive. Helps you plan stock levels and production schedules." /></label>
                   <DateInput value={form.expected_date} onChange={(v) => setForm((f) => ({ ...f, expected_date: v }))} />
                 </div>
+                <div>
+                  <label className="label">Delivery Type</label>
+                  <select className="input" value={form.delivery_type} onChange={upd('delivery_type')}>
+                    {DELIVERY_TYPES.map((d) => (
+                      <option key={d.value} value={d.value}>{d.label}</option>
+                    ))}
+                  </select>
+                </div>
+                {(form.delivery_type === 'haulage' || form.delivery_type === 'other') && (
+                  <div>
+                    <label className="label">Delivery Details</label>
+                    <input className="input" placeholder="e.g. courier name, tracking, address…"
+                      value={form.delivery_notes}
+                      onChange={(e) => setForm((f) => ({ ...f, delivery_notes: e.target.value }))} />
+                  </div>
+                )}
                 <div className="col-span-2">
                   <label className="label">Notes <FieldTooltip text="Any special instructions for this order — e.g. delivery terms, packaging requirements, or contact details." /></label>
                   <textarea className="input resize-none" rows={2} value={form.notes}

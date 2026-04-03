@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
-import { CheckCircle, X as XIcon, Loader2, CreditCard, Zap, Building2, Star, ExternalLink, RefreshCw, Package, ShoppingCart, FileText, Receipt, Users, Truck, BarChart3, Calculator, Briefcase, Wallet, Clock, DollarSign, Shield, ChevronDown, ChevronUp } from 'lucide-react'
+import { CheckCircle, X as XIcon, Loader2, CreditCard, Zap, Building2, Star, ExternalLink, RefreshCw, Package, ShoppingCart, FileText, Receipt, Users, Truck, BarChart3, Calculator, Briefcase, Wallet, Clock, DollarSign, Shield, ChevronDown, ChevronUp, GraduationCap, LayoutDashboard, FileBarChart2, Layers } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { subscriptionApi } from '@/services/api'
 import type { Plan, Subscription, SubscriptionPayment } from '@/types'
@@ -174,8 +174,13 @@ export default function BillingPage() {
       })
       handler.openIframe()
     } catch (err: any) {
-      const msg = err?.response?.data?.error ?? err?.message ?? 'Failed to initiate payment'
-      toast.error(typeof msg === 'string' ? msg : msg?.message ?? 'Failed to initiate payment')
+      // The Axios interceptor already shows a toast when errData.message is set (envelope errors).
+      // Only show a component-level toast for non-envelope errors to avoid duplicates.
+      const errData = err?.response?.data?.error
+      if (!errData?.message) {
+        const msg = typeof errData === 'string' ? errData : err?.message ?? 'Failed to initiate payment'
+        toast.error(msg)
+      }
     } finally {
       setSubscribing(null)
     }
@@ -404,6 +409,9 @@ export default function BillingPage() {
         </div>
       </div>
 
+      {/* ── Partner / Accountant Channel ─────────────────────────────────── */}
+      <PartnerChannelSection plans={plans} currentPlanSlug={currentPlanSlug} onSubscribe={handleSubscribe} subscribing={subscribing} />
+
       {/* Payment history */}
       {payments.length > 0 && (
         <div>
@@ -451,6 +459,210 @@ export default function BillingPage() {
           </button>
         </div>
       </div>
+    </div>
+  )
+}
+
+// ── Partner / Accountant Channel ──────────────────────────────────────────────
+
+const PARTNER_TIERS = [
+  {
+    slug: 'partner-starter',
+    name: 'Partner Starter',
+    price: 30000,
+    clients: '10 clients',
+    badge: null,
+    features: [
+      'Your own full Business-tier account',
+      'Multi-client dashboard (up to 10 SMBs)',
+      'Per-client seat billing',
+      'Referral commission tracking',
+      '14-day free trial',
+    ],
+  },
+  {
+    slug: 'partner-pro',
+    name: 'Partner Pro',
+    price: 75000,
+    clients: '30 clients',
+    badge: 'Popular',
+    features: [
+      'Everything in Partner Starter',
+      'Up to 30 SMB clients',
+      'White-label reports (your logo)',
+      'Consolidated cross-client reporting',
+      'Volume pricing as your base grows',
+    ],
+  },
+  {
+    slug: 'partner-agency',
+    name: 'Partner Agency',
+    price: 150000,
+    clients: 'Unlimited clients',
+    badge: 'Enterprise',
+    features: [
+      'Everything in Partner Pro',
+      'Unlimited SMB clients',
+      'Full custom branding',
+      'Client health dashboard',
+      'Dedicated support + SLA',
+    ],
+  },
+]
+
+const PARTNER_COLOR: Record<string, { border: string; badge: string; icon: string }> = {
+  'partner-starter': { border: 'border-slate-600/50', badge: '', icon: 'text-slate-400' },
+  'partner-pro':     { border: 'border-amber-500/50 ring-1 ring-amber-500/20', badge: 'bg-amber-500 text-white', icon: 'text-amber-400' },
+  'partner-agency':  { border: 'border-purple-500/40 ring-1 ring-purple-500/20', badge: 'bg-purple-500 text-white', icon: 'text-purple-400' },
+}
+
+function PartnerChannelSection({
+  plans,
+  currentPlanSlug,
+  onSubscribe,
+  subscribing,
+}: {
+  plans: Plan[]
+  currentPlanSlug: string | undefined
+  onSubscribe: (plan: Plan) => void
+  subscribing: string | null
+}) {
+  const [open, setOpen] = useState(true)
+
+  const partnerPlanBySlug = (slug: string) => plans.find((p) => p.slug === slug)
+
+  return (
+    <div className="space-y-4">
+      {/* Collapsible header */}
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between p-4 card hover:border-brand-500/30 transition-colors"
+      >
+        <div className="flex items-center gap-3 text-left">
+          <div className="w-9 h-9 rounded-xl bg-purple-500/10 flex items-center justify-center shrink-0">
+            <GraduationCap size={18} className="text-purple-400" />
+          </div>
+          <div>
+            <p className="text-white font-semibold text-sm">Partner / Accountant Channel</p>
+            <p className="text-xs text-slate-400">
+              Resell Audity to your SMB clients — your licence fee + per-client seats + referral commissions
+            </p>
+          </div>
+        </div>
+        {open ? <ChevronUp size={16} className="text-slate-400 shrink-0" /> : <ChevronDown size={16} className="text-slate-400 shrink-0" />}
+      </button>
+
+      {open && (
+        <div className="space-y-6">
+          {/* 5-layer revenue model explainer */}
+          <div className="card bg-purple-500/5 border-purple-500/20 space-y-3">
+            <p className="text-sm font-semibold text-purple-300 flex items-center gap-2">
+              <Layers size={14} /> 5-Layer Revenue Model
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs">
+              {[
+                { n: '1', label: 'Partner Licence Fee', desc: 'Your monthly plan price' },
+                { n: '2', label: 'Per-Client Seat', desc: 'Each SMB org has its own subscription' },
+                { n: '3', label: 'Volume Tiers', desc: 'More clients = higher tier = higher licence fee' },
+                { n: '4', label: 'Referral Commission', desc: 'Earn % of each client\'s subscription' },
+                { n: '5', label: 'Premium Tools Upsell', desc: 'White-label, consolidated reports, SLA support' },
+              ].map(({ n, label, desc }) => (
+                <div key={n} className="flex items-start gap-2 p-2 rounded-lg bg-surface-800/60">
+                  <span className="w-5 h-5 rounded-full bg-purple-500/20 text-purple-300 text-[10px] font-bold flex items-center justify-center shrink-0 mt-0.5">{n}</span>
+                  <div>
+                    <p className="text-white font-medium">{label}</p>
+                    <p className="text-slate-400">{desc}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Tier cards */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {PARTNER_TIERS.map((tier) => {
+              const plan = partnerPlanBySlug(tier.slug)
+              const isCurrent = tier.slug === currentPlanSlug
+              const colors = PARTNER_COLOR[tier.slug]
+              const isSubscribing = plan && subscribing === plan.id
+
+              return (
+                <div key={tier.slug} className={`card relative flex flex-col gap-4 ${colors.border}`}>
+                  {tier.badge && (
+                    <span className={`absolute -top-3 left-1/2 -translate-x-1/2 text-xs font-semibold px-3 py-0.5 rounded-full ${colors.badge}`}>
+                      {tier.badge}
+                    </span>
+                  )}
+                  {isCurrent && (
+                    <span className="absolute -top-3 right-4 bg-green-500 text-white text-xs font-semibold px-3 py-0.5 rounded-full flex items-center gap-1">
+                      <CheckCircle size={10} /> Current
+                    </span>
+                  )}
+
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-purple-500/10 flex items-center justify-center shrink-0">
+                      <GraduationCap size={16} className={colors.icon} />
+                    </div>
+                    <div>
+                      <p className="text-white font-semibold text-sm">{tier.name}</p>
+                      <p className="text-xs text-slate-500">{tier.clients}</p>
+                    </div>
+                  </div>
+
+                  <div>
+                    <span className="text-3xl font-bold text-white">₦{tier.price.toLocaleString()}</span>
+                    <span className="text-slate-400 text-sm">/month</span>
+                  </div>
+
+                  {/* Tiles row */}
+                  <div className="grid grid-cols-2 gap-2 text-center">
+                    <div className="rounded-lg bg-surface-700/40 border border-surface-600 py-2">
+                      <LayoutDashboard size={14} className="text-purple-400 mx-auto mb-0.5" />
+                      <p className="text-xs text-slate-400">Multi-client</p>
+                    </div>
+                    <div className="rounded-lg bg-surface-700/40 border border-surface-600 py-2">
+                      <FileBarChart2 size={14} className="text-purple-400 mx-auto mb-0.5" />
+                      <p className="text-xs text-slate-400">
+                        {tier.slug === 'partner-starter' ? 'Standard reports' : 'White-label'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Feature list */}
+                  <div className="space-y-1 flex-1">
+                    {tier.features.map((f) => (
+                      <div key={f} className="flex items-center gap-2">
+                        <CheckCircle size={12} className="text-green-400 shrink-0" />
+                        <span className="text-xs text-slate-300">{f}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  <button
+                    onClick={() => plan && onSubscribe(plan)}
+                    disabled={isCurrent || isSubscribing || !plan}
+                    className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold transition-colors ${
+                      isCurrent
+                        ? 'bg-green-500/10 text-green-400 cursor-default'
+                        : tier.slug === 'partner-pro'
+                        ? 'bg-amber-500 hover:bg-amber-400 text-white disabled:opacity-50'
+                        : 'bg-purple-500 hover:bg-purple-400 text-white disabled:opacity-50'
+                    }`}
+                  >
+                    {isSubscribing ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : isCurrent ? (
+                      <><CheckCircle size={14} /> Current plan</>
+                    ) : (
+                      <><ExternalLink size={14} /> Subscribe — ₦{tier.price.toLocaleString()}/mo</>
+                    )}
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

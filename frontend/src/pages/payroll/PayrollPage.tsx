@@ -204,6 +204,11 @@ export default function PayrollPage() {
   const [running, setRunning] = useState(false)
   const [submittingId, setSubmittingId] = useState<string | null>(null)
   const [approvingId, setApprovingId] = useState<string | null>(null)
+  // Approver picker modal
+  const [approverPickerId, setApproverPickerId] = useState<string | null>(null)
+  const [approvers, setApprovers] = useState<{ id: string; name: string; email: string; role: string }[]>([])
+  const [selectedApproverId, setSelectedApproverId] = useState<string>('')
+  const [loadingApprovers, setLoadingApprovers] = useState(false)
   const [markPayId, setMarkPayId] = useState<string | null>(null)
   const [paymentDate, setPaymentDate] = useState(now.toISOString().split('T')[0])
   const [initiatingTransfer, setInitiatingTransfer] = useState(false)
@@ -301,11 +306,25 @@ export default function PayrollPage() {
     } finally { setRunning(false) }
   }
 
-  const handleSubmitForApproval = async (id: string) => {
-    setSubmittingId(id)
+  const openApproverPicker = async (id: string) => {
+    setApproverPickerId(id)
+    setSelectedApproverId('')
+    setLoadingApprovers(true)
     try {
-      await payrollApi.submitForApproval(id)
-      toast.success('Submitted for approval — admins notified')
+      const { data } = await payrollApi.eligibleApprovers()
+      setApprovers(data)
+    } catch { setApprovers([]) }
+    finally { setLoadingApprovers(false) }
+  }
+
+  const handleSubmitForApproval = async () => {
+    if (!approverPickerId) return
+    setSubmittingId(approverPickerId)
+    setApproverPickerId(null)
+    try {
+      await payrollApi.submitForApproval(approverPickerId, selectedApproverId ? { approver_id: selectedApproverId } : {})
+      const approver = approvers.find((a) => a.id === selectedApproverId)
+      toast.success(approver ? `Submitted to ${approver.name} for approval` : 'Submitted for approval')
       loadRuns()
     } catch { toast.error('Failed to submit for approval') }
     finally { setSubmittingId(null) }
@@ -666,7 +685,7 @@ export default function PayrollPage() {
                         <td className="px-4 py-3.5">
                           <div className="flex items-center gap-1.5 flex-wrap">
                             {r.status === 'processing' && !r.submitted_for_approval && (
-                              <button onClick={() => handleSubmitForApproval(r.id)} disabled={submittingId === r.id}
+                              <button onClick={() => openApproverPicker(r.id)} disabled={submittingId === r.id}
                                 className="text-xs px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-400 hover:bg-amber-500/25 disabled:opacity-50">
                                 {submittingId === r.id ? <Loader2 size={10} className="animate-spin inline mr-1" /> : null}Submit for Approval
                               </button>
@@ -1217,6 +1236,44 @@ export default function PayrollPage() {
                 </button>
               </div>
               <p className="text-center text-[10px] text-slate-600">Paystack bulk transfers require sufficient Paystack balance and a verified business account.</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Approver Picker Modal ─────────────────────────────────────────── */}
+      {approverPickerId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setApproverPickerId(null)} />
+          <div className="relative bg-surface-800 border border-surface-700 rounded-2xl shadow-2xl p-6 w-full max-w-sm space-y-4 z-10">
+            <div className="flex items-center justify-between">
+              <h3 className="text-white font-semibold flex items-center gap-2"><Users size={16} className="text-amber-400" /> Send for Approval</h3>
+              <button onClick={() => setApproverPickerId(null)} className="text-slate-500 hover:text-white"><X size={16} /></button>
+            </div>
+            <p className="text-sm text-slate-400">Select which admin or owner should review and approve this payroll run.</p>
+            {loadingApprovers ? (
+              <div className="flex justify-center py-4"><Loader2 size={18} className="animate-spin text-brand-400" /></div>
+            ) : approvers.length === 0 ? (
+              <p className="text-sm text-slate-500 text-center py-3">No other admins or owners found. You can still submit — any admin can approve.</p>
+            ) : (
+              <div className="space-y-2">
+                {approvers.map((a) => (
+                  <label key={a.id} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${selectedApproverId === a.id ? 'border-brand-500/50 bg-brand-500/5' : 'border-surface-600 hover:border-surface-500'}`}>
+                    <input type="radio" name="approver" value={a.id} checked={selectedApproverId === a.id}
+                      onChange={() => setSelectedApproverId(a.id)} className="text-brand-500" />
+                    <div>
+                      <p className="text-sm text-white font-medium">{a.name}</p>
+                      <p className="text-xs text-slate-500">{a.email} · <span className="capitalize">{a.role}</span></p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            )}
+            <div className="flex gap-2 pt-2">
+              <button onClick={() => setApproverPickerId(null)} className="flex-1 btn-ghost text-sm">Cancel</button>
+              <button onClick={handleSubmitForApproval} className="flex-1 btn-primary text-sm flex items-center justify-center gap-1.5">
+                <Send size={13} /> Submit
+              </button>
             </div>
           </div>
         </div>

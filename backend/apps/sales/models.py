@@ -16,6 +16,32 @@ from apps.core.models import MoneyField, TenantAwareModel
 from apps.core.utils import generate_reference
 
 
+class Location(TenantAwareModel):
+    """
+    A sales location / branch / store where transactions happen.
+
+    Distinct from Warehouse (storage only). Locations are where sales are
+    recorded — e.g. Main Branch, Victoria Island Showroom, Online Store.
+    """
+
+    name = models.CharField(max_length=200)
+    address = models.TextField(blank=True)
+    phone = models.CharField(max_length=30, blank=True)
+    manager = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name="managed_locations",
+    )
+    is_active = models.BooleanField(default=True)
+
+    class Meta(TenantAwareModel.Meta):
+        unique_together = [["organisation", "name"]]
+
+    def __str__(self):
+        return self.name
+
+
 class InvoiceFolder(TenantAwareModel):
     """
     A named folder for organising sales invoices.
@@ -94,6 +120,12 @@ class Invoice(TenantAwareModel):
         on_delete=models.PROTECT,
         related_name="invoices",
     )
+    location = models.ForeignKey(
+        Location,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name="invoices",
+    )
 
     # Financials (all denormalised from line items for performance)
     subtotal = MoneyField()
@@ -105,6 +137,7 @@ class Invoice(TenantAwareModel):
     amount_due = MoneyField()
 
     notes = models.TextField(blank=True)
+    sold_by = models.CharField(max_length=200, blank=True, db_index=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.PROTECT,

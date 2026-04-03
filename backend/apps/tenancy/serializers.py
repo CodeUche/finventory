@@ -10,6 +10,25 @@ from .models import Invitation, Membership, ModulePermission, Organisation
 
 
 class OrganisationSerializer(serializers.ModelSerializer):
+    managing_firm_name = serializers.SerializerMethodField()
+    managing_firm_logo = serializers.SerializerMethodField()
+
+    def get_managing_firm_name(self, obj):
+        """Return the partner firm name if this org has an active partner managing it."""
+        link = obj.partner_managers.filter(is_active=True).select_related("partner").first()
+        if link:
+            return link.partner.firm_name or link.partner.user.email
+        return None
+
+    def get_managing_firm_logo(self, obj):
+        """Return the partner firm logo URL if available."""
+        link = obj.partner_managers.filter(is_active=True).select_related("partner").first()
+        if link and link.partner.firm_logo:
+            request = self.context.get("request")
+            if request:
+                return request.build_absolute_uri(link.partner.firm_logo.url)
+        return None
+
     class Meta:
         model = Organisation
         fields = [
@@ -24,8 +43,9 @@ class OrganisationSerializer(serializers.ModelSerializer):
             "show_company_name_on_pdf",
             "invoice_template", "pension_provider", "ai_custom_context",
             "onboarding_completed",
+            "managing_firm_name", "managing_firm_logo",
         ]
-        read_only_fields = ["id", "slug", "created_at", "updated_at"]
+        read_only_fields = ["id", "slug", "created_at", "updated_at", "managing_firm_name", "managing_firm_logo"]
         extra_kwargs = {
             # Enforce upload validators so only safe image formats reach the server
             "logo": {"validators": [validate_image_upload], "required": False},
@@ -72,14 +92,26 @@ class MembershipSerializer(serializers.ModelSerializer):
     user_email = serializers.EmailField(source="user.email", read_only=True)
     user_full_name = serializers.CharField(source="user.get_full_name", read_only=True)
     module_permissions = ModulePermissionSerializer(many=True, read_only=True)
+    partner_firm_name = serializers.SerializerMethodField()
+
+    def get_partner_firm_name(self, obj):
+        """Return the partner firm name if this member is a linked accountant partner."""
+        try:
+            profile = obj.user.partner_profile
+            # Confirm there's an active link between this partner and this org
+            if profile.clients.filter(organisation=obj.organisation, is_active=True).exists():
+                return profile.firm_name or obj.user.email
+        except Exception:
+            pass
+        return None
 
     class Meta:
         model = Membership
         fields = [
             "id", "user", "user_email", "user_full_name", "role",
-            "is_active", "joined_at", "module_permissions",
+            "is_active", "joined_at", "module_permissions", "partner_firm_name",
         ]
-        read_only_fields = ["id", "user", "joined_at"]
+        read_only_fields = ["id", "user", "joined_at", "partner_firm_name"]
 
 
 class InvitationSerializer(serializers.ModelSerializer):
@@ -87,3 +119,37 @@ class InvitationSerializer(serializers.ModelSerializer):
         model = Invitation
         fields = ["id", "email", "role", "is_consumed", "expires_at", "created_at"]
         read_only_fields = ["id", "token", "is_consumed", "created_at"]
+
+
+class PartnerProfileSerializer(serializers.ModelSerializer):
+    active_client_count = serializers.IntegerField(read_only=True)
+    can_add_client = serializers.BooleanField(read_only=True)
+    user_email = serializers.EmailField(source="user.email", read_only=True)
+
+    class Meta:
+        from apps.tenancy.models import PartnerProfile
+        model = PartnerProfile
+        fields = [
+            "id", "user_email", "tier", "firm_name", "firm_logo",
+            "max_clients", "commission_rate", "total_commission_earned",
+            "white_label_reports", "consolidated_reporting", "is_active",
+            "referral_code", "active_client_count", "can_add_client", "created_at",
+        ]
+        read_only_fields = [
+            "id", "user_email", "max_clients", "commission_rate",
+            "total_commission_earned", "referral_code", "active_client_count", "can_add_client", "created_at",
+        ]
+
+
+class PartnerClientLinkSerializer(serializers.ModelSerializer):
+    org_name = serializers.CharField(source="organisation.name", read_only=True)
+    org_currency = serializers.CharField(source="organisation.currency", read_only=True)
+
+    class Meta:
+        from apps.tenancy.models import PartnerClientLink
+        model = PartnerClientLink
+        fields = [
+            "id", "organisation", "org_name", "org_currency",
+            "is_referred", "commission_earned", "notes", "is_active", "linked_at",
+        ]
+        read_only_fields = ["id", "org_name", "org_currency", "commission_earned", "linked_at"]

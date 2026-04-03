@@ -24,6 +24,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from django.contrib.auth import authenticate as django_authenticate
 from apps.core.throttles import (
+    CheckVerificationRateThrottle,
     LoginRateThrottle,
     MFAVerifyRateThrottle,
     PasswordChangeRateThrottle,
@@ -100,6 +101,7 @@ class RegisterView(APIView):
     The user must verify their email before they can log in.
     """
 
+    authentication_classes = []
     permission_classes = [AllowAny]
     throttle_classes = [RegisterRateThrottle]
 
@@ -119,6 +121,12 @@ class RegisterView(APIView):
         serializer = RegisterSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()  # is_verified=False by default
+
+        # Store referral code on user for post-verification linking
+        referral_code = (request.data.get("referral_code") or "").strip().upper()
+        if referral_code:
+            user.referred_by_code = referral_code
+            user.save(update_fields=["referred_by_code"])
 
         try:
             _send_verification_email(user, request)
@@ -247,6 +255,44 @@ class ResendVerificationView(APIView):
         return Response({"message": "If that email is registered and unverified, a new verification link has been sent."})
 
 
+class CheckVerificationView(APIView):
+    """
+    POST /api/v1/auth/check-verification/
+    Body: { "email": "user@example.com" }
+
+    Lightweight polling endpoint for the "Check your email" screen.
+    The app calls this every 5 seconds; when is_verified flips to True
+    (user clicked the email link), we issue fresh JWTs so the app can
+    log the user in immediately without requiring manual sign-in.
+
+    Returns consistent shape to avoid email enumeration timing attacks.
+    """
+
+    permission_classes = [AllowAny]
+    throttle_classes = [CheckVerificationRateThrottle]
+
+    def post(self, request):
+        email = (request.data.get("email") or "").lower().strip()
+        if not email:
+            return Response({"verified": False})
+
+        try:
+            user = User.objects.get(email=email, is_active=True)
+        except User.DoesNotExist:
+            return Response({"verified": False})
+
+        if not user.is_verified:
+            return Response({"verified": False})
+
+        # Verified — issue tokens so the app can auto-login
+        tokens = _issue_tokens(user)
+        return Response({
+            "verified": True,
+            "user": UserProfileSerializer(user, context={"request": request}).data,
+            "tokens": tokens,
+        })
+
+
 class LoginView(TokenObtainPairView):
     """
     POST /api/v1/auth/login/
@@ -337,6 +383,19 @@ class LoginView(TokenObtainPairView):
 
                 # Normal login — attach full user profile
                 response.data["user"] = UserProfileSerializer(user).data
+                try:
+                    from apps.core.models import AuditLog as _AL
+                    _AL.log(
+                        action=_AL.LOGIN,
+                        user=user,
+                        organisation=None,
+                        model_name='User',
+                        object_id=str(user.id),
+                        object_repr=user.email,
+                        request=request,
+                    )
+                except Exception:
+                    pass
             else:
                 # Failure — increment counter, lock if threshold reached
                 user.failed_login_attempts += 1
@@ -592,6 +651,19 @@ class LogoutView(APIView):
             logger.info("User logged out: %s", request.user.email)
         except Exception as e:
             logger.warning("Logout error for %s: %s", request.user.email, e)
+        try:
+            from apps.core.models import AuditLog as _AL
+            _AL.log(
+                action=_AL.LOGOUT,
+                user=request.user,
+                organisation=None,
+                model_name='User',
+                object_id=str(request.user.id),
+                object_repr=request.user.email,
+                request=request,
+            )
+        except Exception:
+            pass
         return Response({"message": "Logged out successfully."})
 
 

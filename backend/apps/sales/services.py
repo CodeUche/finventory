@@ -39,12 +39,14 @@ class SaleService:
         items: list[dict],
         payment_method: str,
         notes: str = "",
+        sold_by: str = "",
         issue_date=None,
         due_date=None,
         is_proforma: bool = False,
         amount_paid: Decimal = None,
         amount_tendered: Decimal = None,
         credit_applied: Decimal = None,
+        location=None,
     ) -> Invoice:
         """
         Create a confirmed sale invoice with stock deductions.
@@ -79,6 +81,13 @@ class SaleService:
                 )
             credit_to_apply = credit_applied
 
+        # Resolve sold_by: use provided name or fall back to creating user's full name
+        resolved_sold_by = (
+            sold_by.strip()
+            if sold_by and sold_by.strip()
+            else f"{created_by.first_name} {created_by.last_name}".strip() or created_by.email
+        )
+
         invoice = Invoice.objects.create(
             organisation=organisation,
             invoice_number=Invoice.generate_number(organisation),
@@ -88,7 +97,9 @@ class SaleService:
             issue_date=issue_date,
             due_date=due_date,
             warehouse=warehouse,
+            location=location,
             notes=notes,
+            sold_by=resolved_sold_by,
             created_by=created_by,
             subtotal=Decimal("0"),
             discount_amount=Decimal("0"),
@@ -136,7 +147,7 @@ class SaleService:
         if is_proforma:
             invoice.status = Invoice.Status.PROFORMA
         elif payment_method == Invoice.PaymentMethod.CREDIT:
-            SaleService._handle_credit_sale(invoice, customer, effective_due)
+            SaleService._handle_credit_sale(invoice, customer, effective_due, created_by)
         elif credit_to_apply >= total:
             # Credit covers the entire invoice — mark as paid immediately
             invoice.status = Invoice.Status.PAID
@@ -243,7 +254,7 @@ class SaleService:
         }
 
     @staticmethod
-    def _handle_credit_sale(invoice: Invoice, customer, total: Decimal):
+    def _handle_credit_sale(invoice: Invoice, customer, total: Decimal, recorded_by=None):
         """Mark as credit sale, create credit ledger entry, and update customer balance."""
         if customer is None:
             raise ValueError("Customer is required for credit sales.")
@@ -261,6 +272,7 @@ class SaleService:
             amount=total,
             invoice=invoice,
             due_date=invoice.due_date,
+            recorded_by=recorded_by,
             description=f"Credit sale – {invoice.invoice_number}",
         )
 

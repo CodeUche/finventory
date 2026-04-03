@@ -104,13 +104,19 @@ class RegisterSerializer(serializers.ModelSerializer):
 class UserProfileSerializer(serializers.ModelSerializer):
     """Read/update current user profile."""
 
+    has_partner_profile = serializers.SerializerMethodField()
+
+    def get_has_partner_profile(self, obj):
+        return hasattr(obj, 'partner_profile') and obj.partner_profile.is_active
+
     class Meta:
         model = User
         fields = [
             "id", "email", "first_name", "last_name", "phone",
-            "avatar", "is_verified", "is_superuser", "is_staff", "is_sub_account", "mfa_enabled", "created_at",
+            "avatar", "is_verified", "is_superuser", "is_staff", "is_sub_account", "mfa_enabled",
+            "has_partner_profile", "created_at",
         ]
-        read_only_fields = ["id", "email", "is_verified", "is_superuser", "is_staff", "is_sub_account", "mfa_enabled", "created_at"]
+        read_only_fields = ["id", "email", "is_verified", "is_superuser", "is_staff", "is_sub_account", "mfa_enabled", "has_partner_profile", "created_at"]
         extra_kwargs = {
             "first_name": {"max_length": 150, "required": False, "allow_blank": True},
             "last_name": {"max_length": 150, "required": False, "allow_blank": True},

@@ -50,6 +50,11 @@ class ResendVerificationRateThrottle(AnonRateThrottle):
     scope = "resend_verification"
 
 
+class CheckVerificationRateThrottle(AnonRateThrottle):
+    """30 verification status polls per minute per IP — allows polling every 2s."""
+    scope = "check_verification"
+
+
 class MFAVerifyRateThrottle(AnonRateThrottle):
     """10 MFA verify attempts per minute per IP — brute-force OTP protection."""
     scope = "mfa_verify"

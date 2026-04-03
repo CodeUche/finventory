@@ -223,6 +223,7 @@ REST_FRAMEWORK = {
         "password_reset_request": "5/hour",   # PasswordResetRequestRateThrottle
         "password_reset_confirm": "10/hour",  # PasswordResetConfirmRateThrottle
         "resend_verification": "3/hour",      # ResendVerificationRateThrottle
+        "check_verification": "30/minute",    # CheckVerificationRateThrottle
         "mfa_verify": "10/minute",            # MFAVerifyRateThrottle
         # ── Business endpoints ─────────────────────────────────────────────
         "bank_resolve": "20/minute",   # BankResolveRateThrottle — Paystack proxy

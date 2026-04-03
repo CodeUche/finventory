@@ -2,7 +2,7 @@ import uuid
 
 from rest_framework import serializers
 
-from .models import Customer
+from .models import Customer, CustomerDebit
 
 
 class CustomerSerializer(serializers.ModelSerializer):
@@ -56,3 +56,10 @@ class CustomerSerializer(serializers.ModelSerializer):
             suffix = uuid.uuid4().hex[:6].upper()
             validated_data["code"] = f"{prefix}-{suffix}"
         return super().create(validated_data)
+
+
+class CustomerDebitSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CustomerDebit
+        fields = ["id", "customer", "amount", "reference", "description", "debit_date", "recorded_by", "created_at"]
+        read_only_fields = ["id", "recorded_by", "created_at"]

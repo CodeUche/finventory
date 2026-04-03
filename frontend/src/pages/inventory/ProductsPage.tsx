@@ -1,36 +1,16 @@
 import { useEffect, useState } from 'react'
-import { Plus, Search, Package, AlertTriangle, X, Pencil, Loader2, TrendingUp, TrendingDown, History, Maximize2, Minimize2, ShieldCheck } from 'lucide-react'
+import { Plus, Search, Package, AlertTriangle, X, Pencil, Loader2, TrendingUp, TrendingDown, History, Maximize2, Minimize2, ShieldCheck, FileDown, Table2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { inventoryApi, taxApi, salesApi } from '@/services/api'
 import { formatCurrency, formatAmountInput, stripCommas, formatDate } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
-import type { Product, TaxClass } from '@/types'
+import type { Product, TaxClass, Organisation } from '@/types'
 import SortSelect from '@/components/SortSelect'
 import { FieldTooltip } from '@/components/FieldTooltip'
-
-const BLANK = {
-  sku: '', name: '', brand: '', unit_of_measure: 'unit',
-  product_type: 'physical',
-  cost_price: '', owner_cost_price: '', selling_price: '', reorder_level: '10',
-  alcohol_percentage: '', volume_ml: '',
-  is_taxable: false, tax_class: '',
-}
-
-const BLANK_BATCH = {
-  enabled: false,
-  quantity: '',
-  warehouse: '',
-}
-
-const PRODUCT_TYPES = [
-  { value: 'physical', label: 'Physical (tracked inventory)' },
-  { value: 'service', label: 'Service (no inventory)' },
-  { value: 'digital', label: 'Digital (no inventory)' },
-]
-
-const UNITS_OF_MEASURE = [
-  'bottle', 'carton', 'case', 'dozen', 'litre', 'pack', 'unit', 'hour', 'day', 'kg', 'piece',
-]
+import DateInput from '@/components/DateInput'
+// @ts-ignore
+import autoTable from 'jspdf-autotable'
+import jsPDF from 'jspdf'
 
 interface SalesHistoryItem {
   invoice_id: string
@@ -46,9 +26,111 @@ interface SalesHistoryItem {
   status: string
 }
 
+async function exportHistoryPDF(items: SalesHistoryItem[], product: Product, org?: Organisation | null) {
+  const { saveBlobFile } = await import('@/lib/saveBlobFile')
+  const { applyDocHeader, templateHeadFill } = await import('@/lib/pdfUtils')
+  const hexToRgb = (hex?: string): [number,number,number] => {
+    const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex ?? '')
+    if (!m) return [249, 115, 22]; return [parseInt(m[1],16), parseInt(m[2],16), parseInt(m[3],16)]
+  }
+  const BRAND: [number,number,number] = hexToRgb(org?.brand_color)
+  const DARK:  [number,number,number] = [30, 30, 30]
+  const MUTED: [number,number,number] = [100, 100, 100]
+  const tmpl = org?.invoice_template ?? 'classic'
+  const pdfFont = org?.company_name_font?.toLowerCase().includes('times') ? 'times'
+    : org?.company_name_font?.toLowerCase().includes('courier') ? 'courier' : 'helvetica'
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+  const pageW = doc.internal.pageSize.getWidth()
+  let y = applyDocHeader(doc, {
+    tmpl, pageW, BRAND, DARK, MUTED,
+    displayName: org?.invoice_company_name?.trim() || org?.name || 'Audity',
+    orgAddress: org?.address,
+    orgEmail: org?.email,
+    orgPhone: org?.phone,
+    pdfFont,
+    docTitle: 'SALES HISTORY',
+    metaRows: [
+      ['Product', product.name],
+      ['SKU', product.sku],
+      ['Exported', new Date().toLocaleDateString()],
+    ],
+  })
+  autoTable(doc, {
+    startY: y,
+    head: [['Invoice', 'Date', 'Customer', 'Sold By', 'Location', 'Payment', 'Qty', 'Unit Price', 'Total', 'Status']],
+    body: items.map((i) => [
+      i.invoice_number,
+      formatDate(i.issue_date),
+      i.customer_name,
+      i.sold_by,
+      i.warehouse,
+      i.payment_method.replace('_', ' '),
+      i.quantity,
+      formatCurrency(i.unit_price),
+      formatCurrency(i.line_total),
+      i.status,
+    ]),
+    styles: { fontSize: 8 },
+    headStyles: { fillColor: templateHeadFill(tmpl, BRAND), textColor: [255, 255, 255], fontStyle: 'bold' },
+    showHead: 'everyPage',
+  })
+  await saveBlobFile(doc.output('blob'), `sales-history-${product.sku}.pdf`)
+}
+
+async function exportHistoryCSV(items: SalesHistoryItem[], product: Product) {
+  const { saveBlobFile } = await import('@/lib/saveBlobFile')
+  const headers = ['Invoice', 'Date', 'Customer', 'Sold By', 'Location', 'Payment', 'Qty', 'Unit Price', 'Total', 'Status']
+  const rows = items.map((i) => [
+    i.invoice_number,
+    formatDate(i.issue_date),
+    i.customer_name,
+    i.sold_by,
+    i.warehouse,
+    i.payment_method.replace('_', ' '),
+    i.quantity,
+    i.unit_price,
+    i.line_total,
+    i.status,
+  ])
+  const csv = [headers, ...rows].map((r) => r.map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\n')
+  const blob = new Blob([csv], { type: 'text/csv' })
+  await saveBlobFile(blob, `sales-history-${product.sku}.csv`)
+}
+
+const BLANK = {
+  sku: '', name: '', brand: '', unit_of_measure: 'unit',
+  product_type: 'physical',
+  cost_price: '', owner_cost_price: '', selling_price: '', wholesale_price: '',
+  reorder_level: '10', max_stock_level: '', quantity_in_pack: '1',
+  alcohol_percentage: '', volume_ml: '',
+  is_taxable: false, tax_class: '',
+}
+
+const BLANK_BATCH = {
+  quantity: '',
+  warehouse: '',
+  batch_number: '',
+  unit_cost: '',
+  manufacture_date: '',
+  expiry_date: '',
+  min_quantity: '',
+  max_quantity: '',
+  qty_per_pack: '',
+}
+
+const PRODUCT_TYPES = [
+  { value: 'physical', label: 'Physical (tracked inventory)' },
+  { value: 'service', label: 'Service (no inventory)' },
+  { value: 'digital', label: 'Digital (no inventory)' },
+]
+
+const UNITS_OF_MEASURE = [
+  'bottle', 'carton', 'case', 'dozen', 'litre', 'pack', 'unit', 'hour', 'day', 'kg', 'piece',
+]
+
 export default function ProductsPage() {
-  const { user, memberRole, planModules } = useAuthStore()
-  const isOwner = !memberRole || memberRole === 'owner' || user?.is_superuser
+  const { user, memberRole, planModules, organisation } = useAuthStore()
+  const isOwner = memberRole === 'owner' || memberRole === 'admin' || user?.is_superuser === true
   // Owner-only features (cost price, owner column) hidden on Starter — single-user plan doesn't need them
   const showOwnerFeatures = isOwner && (planModules === null || planModules.includes('owner_analytics'))
   const [products, setProducts] = useState<Product[]>([])
@@ -90,9 +172,13 @@ export default function ProductsPage() {
     setEditId(null)
     setForm({ ...BLANK })
     setBatchForm({ ...BLANK_BATCH })
-    if (warehouses.length === 0) {
-      inventoryApi.warehouses().then(({ data }) => setWarehouses(data.results ?? data)).catch(() => {})
-    }
+    inventoryApi.warehouses().then(({ data }) => {
+      const list: { id: string; name: string; is_default?: boolean }[] = data.results ?? data
+      setWarehouses(list)
+      // Auto-select the default warehouse
+      const def = list.find((w) => w.is_default) ?? list[0]
+      if (def) setBatchForm((b) => ({ ...b, warehouse: def.id }))
+    }).catch(() => {})
     setShowModal(true)
   }
 
@@ -107,7 +193,10 @@ export default function ProductsPage() {
       cost_price: formatAmountInput(p.cost_price),
       owner_cost_price: formatAmountInput(p.owner_cost_price ?? '0'),
       selling_price: formatAmountInput(p.selling_price),
+      wholesale_price: formatAmountInput((p as any).wholesale_price ?? '0'),
       reorder_level: String(p.reorder_level),
+      max_stock_level: String((p as any).max_stock_level ?? ''),
+      quantity_in_pack: String((p as any).quantity_in_pack ?? '1'),
       alcohol_percentage: String(p.alcohol_percentage ?? ''),
       volume_ml: String(p.volume_ml ?? ''),
       is_taxable: p.is_taxable,
@@ -125,9 +214,12 @@ export default function ProductsPage() {
       cost_price: stripCommas(form.cost_price),
       owner_cost_price: stripCommas(form.owner_cost_price) || '0',
       selling_price: stripCommas(form.selling_price),
+      wholesale_price: stripCommas(form.wholesale_price) || '0',
+      quantity_in_pack: form.quantity_in_pack || '1',
     }
     if (!payload.alcohol_percentage) delete payload.alcohol_percentage
     if (!payload.volume_ml) delete payload.volume_ml
+    if (!payload.max_stock_level) delete payload.max_stock_level
     // Send null for tax_class when empty, or when is_taxable is false
     if (!payload.is_taxable) payload.tax_class = null
     else if (!payload.tax_class) payload.tax_class = null
@@ -137,19 +229,57 @@ export default function ProductsPage() {
         toast.success('Product updated')
       } else {
         const { data: newProduct } = await inventoryApi.createProduct(payload)
-        // Set opening stock if requested
-        if (batchForm.enabled && batchForm.quantity && batchForm.warehouse && form.product_type === 'physical') {
-          try {
-            await inventoryApi.adjustStock({
-              product_id: newProduct.id,
-              warehouse_id: batchForm.warehouse,
-              quantity: parseFloat(batchForm.quantity),
-              reason: 'Opening stock',
-            })
-            toast.success('Product created with opening stock')
-          } catch {
-            toast.success('Product created')
-            toast.error('Opening stock could not be saved — add it from the Stock page')
+        // Set opening stock if a quantity was provided
+        const qty = parseFloat(batchForm.quantity)
+        if (qty > 0 && batchForm.warehouse && form.product_type === 'physical') {
+          if (batchForm.batch_number) {
+            // Create a tracked Batch record (appears in Batches & Lots module)
+            try {
+              const batchPayload: Record<string, unknown> = {
+                product: newProduct.id,
+                warehouse: batchForm.warehouse,
+                batch_number: batchForm.batch_number,
+                quantity: qty,
+                unit_cost: stripCommas(batchForm.unit_cost) || stripCommas(form.cost_price) || '0',
+              }
+              if (batchForm.manufacture_date) {
+                const [d, m, y] = batchForm.manufacture_date.split('/')
+                batchPayload.manufacture_date = `${y}-${m}-${d}`
+              }
+              if (batchForm.expiry_date) {
+                const [d, m, y] = batchForm.expiry_date.split('/')
+                batchPayload.expiry_date = `${y}-${m}-${d}`
+              }
+              if (batchForm.min_quantity) batchPayload.min_quantity = batchForm.min_quantity
+              if (batchForm.max_quantity) batchPayload.max_quantity = batchForm.max_quantity
+              if (batchForm.qty_per_pack) batchPayload.qty_per_pack = batchForm.qty_per_pack
+              await inventoryApi.createBatch(batchPayload)
+              // Also record stock movement so StockItem is updated
+              await inventoryApi.adjustStock({
+                product_id: newProduct.id,
+                warehouse_id: batchForm.warehouse,
+                quantity: qty,
+                reason: `Opening stock — batch ${batchForm.batch_number}`,
+              })
+              toast.success('Product created with batch/lot')
+            } catch {
+              toast.success('Product created')
+              toast.error('Batch could not be saved — add it from Batches & Lots page')
+            }
+          } else {
+            // Simple opening stock (no batch tracking)
+            try {
+              await inventoryApi.adjustStock({
+                product_id: newProduct.id,
+                warehouse_id: batchForm.warehouse,
+                quantity: qty,
+                reason: 'Opening stock',
+              })
+              toast.success('Product created with opening stock')
+            } catch {
+              toast.success('Product created')
+              toast.error('Opening stock could not be saved — add it from the Stock page')
+            }
           }
         } else {
           toast.success('Product created')
@@ -351,11 +481,23 @@ export default function ProductsPage() {
                 </div>
                 {form.product_type === 'physical' && (
                   <div>
-                    <label className="label">Reorder Level <FieldTooltip text="The minimum quantity before you get a low-stock alert. E.g. if you set '10', you'll be notified when only 10 units remain so you can reorder in time." /></label>
-                    <input type="number" className="input" value={form.reorder_level} onChange={upd('reorder_level')} />
+                    <label className="label">Qty in Pack <FieldTooltip text="Number of individual units inside one pack or carton. E.g. '12' means a carton holds 12 bottles." /></label>
+                    <input type="number" min="1" className="input" value={form.quantity_in_pack} onChange={upd('quantity_in_pack')} placeholder="1" />
                   </div>
                 )}
               </div>
+              {form.product_type === 'physical' && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="label">Min Safety Level <FieldTooltip text="Alert when stock drops below this quantity." /></label>
+                    <input type="number" min="0" className="input" value={form.reorder_level} onChange={upd('reorder_level')} />
+                  </div>
+                  <div>
+                    <label className="label">Max Safety Level <FieldTooltip text="Do not stock above this quantity. Leave blank for no limit." /></label>
+                    <input type="number" min="0" className="input" value={form.max_stock_level} onChange={upd('max_stock_level')} placeholder="No limit" />
+                  </div>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="label">Cost Price * <FieldTooltip text="What you paid to buy or produce each unit. Used to calculate your profit margin. Never shown to customers." /></label>
@@ -364,6 +506,12 @@ export default function ProductsPage() {
                 <div>
                   <label className="label">Selling Price * <FieldTooltip text="The price you charge customers. This is what appears on invoices. Should always be higher than your cost price to make a profit." /></label>
                   <input type="text" inputMode="decimal" className="input" value={form.selling_price} onChange={(e) => setForm((f) => ({ ...f, selling_price: formatAmountInput(e.target.value) }))} required placeholder="8,500.00" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="label">Wholesale Price <FieldTooltip text="Discounted price for bulk / wholesale buyers." /></label>
+                  <input type="text" inputMode="decimal" className="input" value={form.wholesale_price} onChange={(e) => setForm((f) => ({ ...f, wholesale_price: formatAmountInput(e.target.value) }))} placeholder="Optional" />
                 </div>
               </div>
               {showOwnerFeatures && (
@@ -431,35 +579,113 @@ export default function ProductsPage() {
                 )}
               </div>
 
-              {/* Opening stock (create only, physical only) */}
+              {/* Opening stock / Batch (create only, physical only) */}
               {!editId && form.product_type === 'physical' && (
                 <div className="border-t border-surface-700 pt-4 space-y-3">
-                  <label className="flex items-center gap-3 cursor-pointer">
+                  <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Opening Stock & Batch/Lot</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="label">Quantity <FieldTooltip text="How many units you currently have. Leave at 0 to add stock later." /></label>
+                      <input
+                        type="number"
+                        className="input"
+                        placeholder="0"
+                        min="0"
+                        value={batchForm.quantity}
+                        onChange={(e) => setBatchForm((b) => ({ ...b, quantity: e.target.value }))}
+                      />
+                    </div>
+                    <div>
+                      <label className="label">Location <FieldTooltip text="Which warehouse or store location holds this stock." /></label>
+                      <select
+                        className="input"
+                        value={batchForm.warehouse}
+                        onChange={(e) => setBatchForm((b) => ({ ...b, warehouse: e.target.value }))}
+                      >
+                        <option value="">— Select location —</option>
+                        {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  {/* Batch / Lot details — optional; if batch number provided, creates a tracked batch */}
+                  <div>
+                    <label className="label">Batch / Lot Number <FieldTooltip text="Optional. Enter to create a tracked batch that appears in Batches & Lots. Leave blank for simple opening stock." /></label>
                     <input
-                      type="checkbox"
-                      checked={batchForm.enabled}
-                      onChange={(e) => setBatchForm((b) => ({ ...b, enabled: e.target.checked }))}
-                      className="w-4 h-4 accent-orange-500"
+                      type="text"
+                      className="input"
+                      placeholder="e.g. LOT-2026-001 (optional)"
+                      value={batchForm.batch_number}
+                      onChange={(e) => setBatchForm((b) => ({ ...b, batch_number: e.target.value }))}
                     />
-                    <span className="text-sm text-slate-300">Set opening stock quantity</span>
-                  </label>
-                  {batchForm.enabled && (
-                    <div className="grid grid-cols-2 gap-3 pl-1">
-                      <div>
-                        <label className="label">Location *</label>
-                        <select className="input" value={batchForm.warehouse}
-                          onChange={(e) => setBatchForm((b) => ({ ...b, warehouse: e.target.value }))}>
-                          <option value="">— Select location —</option>
-                          {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-                        </select>
-                      </div>
-                      <div>
-                        <label className="label">Quantity * <FieldTooltip text="How many units you currently have right now. This sets your starting inventory count. You only need to set this once when adding a new product." /></label>
-                        <input type="number" className="input" placeholder="0" min="0"
-                          value={batchForm.quantity}
-                          onChange={(e) => setBatchForm((b) => ({ ...b, quantity: e.target.value }))} />
+                  </div>
+                  {batchForm.batch_number && (
+                    <div className="space-y-3 border border-surface-700/60 rounded-xl p-3">
+                      <p className="text-xs text-slate-400">Batch details</p>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="label">Unit Cost</label>
+                          <input
+                            type="text"
+                            className="input"
+                            placeholder={stripCommas(form.cost_price) || '0.00'}
+                            value={batchForm.unit_cost}
+                            onChange={(e) => setBatchForm((b) => ({ ...b, unit_cost: formatAmountInput(e.target.value) }))}
+                          />
+                        </div>
+                        <div>
+                          <label className="label">Qty per Pack</label>
+                          <input
+                            type="number"
+                            className="input"
+                            placeholder="1"
+                            min="0"
+                            value={batchForm.qty_per_pack}
+                            onChange={(e) => setBatchForm((b) => ({ ...b, qty_per_pack: e.target.value }))}
+                          />
+                        </div>
+                        <div>
+                          <label className="label">Min Quantity</label>
+                          <input
+                            type="number"
+                            className="input"
+                            placeholder="0"
+                            min="0"
+                            value={batchForm.min_quantity}
+                            onChange={(e) => setBatchForm((b) => ({ ...b, min_quantity: e.target.value }))}
+                          />
+                        </div>
+                        <div>
+                          <label className="label">Max Quantity</label>
+                          <input
+                            type="number"
+                            className="input"
+                            placeholder="0"
+                            min="0"
+                            value={batchForm.max_quantity}
+                            onChange={(e) => setBatchForm((b) => ({ ...b, max_quantity: e.target.value }))}
+                          />
+                        </div>
+                        <div>
+                          <label className="label">Manufacture Date</label>
+                          <DateInput
+                            value={batchForm.manufacture_date}
+                            onChange={(v) => setBatchForm((b) => ({ ...b, manufacture_date: v }))}
+                            placeholder="DD/MM/YYYY"
+                          />
+                        </div>
+                        <div>
+                          <label className="label">Expiry Date</label>
+                          <DateInput
+                            value={batchForm.expiry_date}
+                            onChange={(v) => setBatchForm((b) => ({ ...b, expiry_date: v }))}
+                            placeholder="DD/MM/YYYY"
+                          />
+                        </div>
                       </div>
                     </div>
+                  )}
+                  {parseFloat(batchForm.quantity) > 0 && !batchForm.warehouse && (
+                    <p className="text-xs text-amber-400">Select a location to save the opening stock.</p>
                   )}
                 </div>
               )}
@@ -497,6 +723,24 @@ export default function ProductsPage() {
                     { label: 'Qty ↑', value: 'quantity' },
                   ]}
                 />
+                {historyItems.length > 0 && (
+                  <>
+                    <button
+                      onClick={() => exportHistoryPDF(historyItems, historyProduct, organisation)}
+                      className="btn-ghost p-1.5 text-xs flex items-center gap-1"
+                      title="Export PDF"
+                    >
+                      <FileDown size={15} /> PDF
+                    </button>
+                    <button
+                      onClick={() => exportHistoryCSV(historyItems, historyProduct)}
+                      className="btn-ghost p-1.5 text-xs flex items-center gap-1"
+                      title="Export Excel/CSV"
+                    >
+                      <Table2 size={15} /> Excel
+                    </button>
+                  </>
+                )}
                 <button onClick={() => setHistoryFullscreen(f => !f)} className="btn-ghost p-1.5" title={historyFullscreen ? 'Exit fullscreen' : 'Fullscreen'}>
                   {historyFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
                 </button>

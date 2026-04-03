@@ -2,6 +2,7 @@ from django.urls import path
 
 from .views import (
     ChangePasswordView,
+    CheckVerificationView,
     LoginView,
     LogoutView,
     MFAConfirmSetupView,
@@ -33,6 +34,7 @@ urlpatterns = [
     # Email verification
     path("verify-email/", VerifyEmailView.as_view(), name="auth-verify-email"),
     path("resend-verification/", ResendVerificationView.as_view(), name="auth-resend-verification"),
+    path("check-verification/", CheckVerificationView.as_view(), name="auth-check-verification"),
     # MFA
     path("mfa/setup/", MFASetupView.as_view(), name="auth-mfa-setup"),
     path("mfa/confirm-setup/", MFAConfirmSetupView.as_view(), name="auth-mfa-confirm-setup"),

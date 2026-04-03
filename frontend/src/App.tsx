@@ -40,6 +40,9 @@ import AuditLogPage from '@/pages/AuditLogPage'
 import SettingsPage from '@/pages/SettingsPage'
 import PlatformAdminPage from '@/pages/PlatformAdminPage'
 import BillingPage from '@/pages/BillingPage'
+import LocationsPage from '@/pages/LocationsPage'
+import StockReportsPage from '@/pages/inventory/StockReportsPage'
+import PartnerDashboardPage from '@/pages/PartnerDashboardPage'
 
 // Inner class-based boundary — must be a class to use getDerivedStateFromError
 class ErrorBoundaryInner extends React.Component<
@@ -104,12 +107,27 @@ function SuperuserRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+// Shared loading placeholder shown while membership is being fetched
+function MembershipLoading() {
+  return (
+    <div className="flex-1 flex items-center justify-center py-20">
+      <div className="w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
+    </div>
+  )
+}
+
+// Returns true if this user is confirmed owner/admin (not null — null means still loading)
+function isConfirmedOwnerOrAdmin(user: any, memberRole: string | null) {
+  return user?.is_superuser === true || memberRole === 'owner' || memberRole === 'admin'
+}
+
 /** Allows owners, admins, and superusers; redirects regular sub-accounts and Starter plan users. */
 function OwnerOnlyRoute({ children }: { children: React.ReactNode }) {
   const { user, memberRole, planModules } = useAuthStore()
   if (!user) return <Navigate to="/login" replace />
-  const isOwnerOrAdmin = user.is_superuser || !memberRole || memberRole === 'owner' || memberRole === 'admin'
-  if (!isOwnerOrAdmin) return <Navigate to="/dashboard" replace />
+  // Wait for membership to load before deciding
+  if (memberRole === null && !user.is_superuser) return <MembershipLoading />
+  if (!isConfirmedOwnerOrAdmin(user, memberRole)) return <Navigate to="/dashboard" replace />
   // Starter plan has no 'owner_analytics' module — redirect to billing
   if (planModules !== null && !planModules.includes('owner_analytics') && !user.is_superuser)
     return <Navigate to="/billing" replace />
@@ -122,9 +140,9 @@ function OwnerOnlyRoute({ children }: { children: React.ReactNode }) {
  */
 function ModuleRoute({ module, children }: { module: ModuleKey; children: React.ReactNode }) {
   const { user, memberRole, modulePermissions } = useAuthStore()
-  const isOwnerOrAdmin =
-    user?.is_superuser || !memberRole || memberRole === 'owner' || memberRole === 'admin'
-  if (isOwnerOrAdmin) return <>{children}</>
+  if (isConfirmedOwnerOrAdmin(user, memberRole)) return <>{children}</>
+  // Wait for membership to load — show spinner instead of redirecting prematurely
+  if (memberRole === null) return <MembershipLoading />
   const level = modulePermissions[module] ?? 'none'
   if (level === 'none') return <Navigate to="/dashboard" replace />
   return <>{children}</>
@@ -136,9 +154,8 @@ function ModuleRoute({ module, children }: { module: ModuleKey; children: React.
  */
 function WriteModuleRoute({ module, children }: { module: ModuleKey; children: React.ReactNode }) {
   const { user, memberRole, modulePermissions } = useAuthStore()
-  const isOwnerOrAdmin =
-    user?.is_superuser || !memberRole || memberRole === 'owner' || memberRole === 'admin'
-  if (isOwnerOrAdmin) return <>{children}</>
+  if (isConfirmedOwnerOrAdmin(user, memberRole)) return <>{children}</>
+  if (memberRole === null) return <MembershipLoading />
   const level = modulePermissions[module] ?? 'none'
   if (level === 'none' || level === 'view') return <Navigate to="/dashboard" replace />
   return <>{children}</>
@@ -169,14 +186,16 @@ export default function App() {
         <Route path="dashboard" element={<DashboardPage />} />
 
         {/* Inventory */}
-        <Route path="inventory/products"   element={<ModuleRoute module="inventory"><ProductsPage /></ModuleRoute>} />
-        <Route path="inventory/stock"      element={<ModuleRoute module="inventory"><StockPage /></ModuleRoute>} />
-        <Route path="inventory/warehouses" element={<ModuleRoute module="inventory"><WarehousesPage /></ModuleRoute>} />
-        <Route path="inventory/batches"    element={<ModuleRoute module="inventory"><BatchesPage /></ModuleRoute>} />
+        <Route path="inventory/products"      element={<ModuleRoute module="inventory"><ProductsPage /></ModuleRoute>} />
+        <Route path="inventory/stock"         element={<ModuleRoute module="inventory"><StockPage /></ModuleRoute>} />
+        <Route path="inventory/warehouses"    element={<ModuleRoute module="inventory"><WarehousesPage /></ModuleRoute>} />
+        <Route path="inventory/batches"       element={<ModuleRoute module="inventory"><BatchesPage /></ModuleRoute>} />
+        <Route path="inventory/stock-reports" element={<ModuleRoute module="inventory"><StockReportsPage /></ModuleRoute>} />
 
         {/* Sales */}
         <Route path="sales"     element={<ModuleRoute module="sales"><SalesPage /></ModuleRoute>} />
         <Route path="sales/new" element={<WriteModuleRoute module="sales"><NewSalePage /></WriteModuleRoute>} />
+        <Route path="locations" element={<ModuleRoute module="sales"><LocationsPage /></ModuleRoute>} />
         <Route path="quotes"    element={<ModuleRoute module="quotes"><QuotesPage /></ModuleRoute>} />
         <Route path="recurring" element={<ModuleRoute module="recurring"><RecurringInvoicesPage /></ModuleRoute>} />
 
@@ -214,6 +233,7 @@ export default function App() {
         {/* Settings — always accessible for personal profile/security; org tabs filtered inside the page */}
         <Route path="settings" element={<SettingsPage />} />
         <Route path="billing"  element={<ModuleRoute module="settings"><BillingPage /></ModuleRoute>} />
+        <Route path="partner"  element={<PartnerDashboardPage />} />
 
         {/* Platform Admin — superuser only */}
         <Route path="platform-admin" element={<SuperuserRoute><PlatformAdminPage /></SuperuserRoute>} />

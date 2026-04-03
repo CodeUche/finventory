@@ -1,5 +1,7 @@
 """Inventory serializers."""
 
+from decimal import Decimal
+
 from rest_framework import serializers
 
 from .models import Batch, Category, Product, StockItem, StockMovement, Warehouse
@@ -31,7 +33,7 @@ class ProductSerializer(serializers.ModelSerializer):
             "id", "sku", "name", "description", "category", "category_name",
             "brand", "unit_of_measure", "product_type", "alcohol_percentage", "volume_ml",
             "cost_price", "owner_cost_price", "selling_price", "wholesale_price",
-            "reorder_level", "reorder_quantity", "barcode",
+            "reorder_level", "max_stock_level", "reorder_quantity", "quantity_in_pack", "barcode",
             "is_active", "is_taxable", "tax_class",
             "total_stock", "created_at", "updated_at",
         ]
@@ -82,7 +84,9 @@ class BatchSerializer(serializers.ModelSerializer):
             "id", "product", "product_name", "product_sku",
             "warehouse", "warehouse_name", "batch_number",
             "quantity", "unit_cost", "manufacture_date",
-            "expiry_date", "days_to_expiry", "is_expired", "is_active",
+            "expiry_date", "days_to_expiry", "is_expired",
+            "min_quantity", "max_quantity", "qty_per_pack",
+            "is_active",
         ]
         read_only_fields = ["id"]
 
@@ -137,3 +141,12 @@ class StockAdjustmentSerializer(serializers.Serializer):
     warehouse_id = serializers.UUIDField()
     quantity = serializers.DecimalField(max_digits=12, decimal_places=2)
     reason = serializers.CharField(max_length=500)
+
+
+class StockTransferSerializer(serializers.Serializer):
+    """Input for inter-warehouse stock transfers."""
+    product_id = serializers.UUIDField()
+    from_warehouse_id = serializers.UUIDField()
+    to_warehouse_id = serializers.UUIDField()
+    quantity = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0.01"))
+    notes = serializers.CharField(max_length=500, required=False, allow_blank=True, default="")

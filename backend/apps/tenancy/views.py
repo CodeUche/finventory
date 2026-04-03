@@ -90,16 +90,17 @@ class OrganisationViewSet(viewsets.ModelViewSet):
         """Send an invitation to join this organisation."""
         org = self.get_object()
 
-        # Enforce member limit (owners are excluded from the count)
-        max_members = _get_max_team_members(org)
-        active_non_owner = Membership.objects.filter(
-            organisation=org, is_active=True
-        ).exclude(role=Membership.Role.OWNER).count()
-        if active_non_owner >= max_members:
-            return Response(
-                {"error": {"message": f"Maximum {max_members} team members allowed on your current plan. Upgrade or deactivate a member first."}},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        # Enforce member limit (owners are excluded from the count; superusers bypass)
+        if not request.user.is_superuser:
+            max_members = _get_max_team_members(org)
+            active_non_owner = Membership.objects.filter(
+                organisation=org, is_active=True
+            ).exclude(role=Membership.Role.OWNER).count()
+            if active_non_owner >= max_members:
+                return Response(
+                    {"error": {"message": f"Maximum {max_members} team members allowed on your current plan. Upgrade or deactivate a member first."}},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         invitation = OrganisationService.invite_member(
             organisation=org,
@@ -231,16 +232,17 @@ class OrganisationViewSet(viewsets.ModelViewSet):
         """
         org = self.get_object()
 
-        # Enforce member limit
-        max_members = _get_max_team_members(org)
-        active_non_owner = Membership.objects.filter(
-            organisation=org, is_active=True
-        ).exclude(role=Membership.Role.OWNER).count()
-        if active_non_owner >= max_members:
-            return Response(
-                {"error": {"message": f"Maximum {max_members} team members allowed on your current plan."}},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        # Enforce member limit (superusers bypass)
+        if not request.user.is_superuser:
+            max_members = _get_max_team_members(org)
+            active_non_owner = Membership.objects.filter(
+                organisation=org, is_active=True
+            ).exclude(role=Membership.Role.OWNER).count()
+            if active_non_owner >= max_members:
+                return Response(
+                    {"error": {"message": f"Maximum {max_members} team members allowed on your current plan."}},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         username = (request.data.get("username") or "").strip().lower()
         password = request.data.get("password", "").strip()
@@ -391,6 +393,10 @@ class MembershipViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         org = getattr(self.request, "organisation", None)
+        if org is None:
+            # resolve_organisation handles superusers bypassing the membership check
+            from apps.tenancy.middleware import resolve_organisation
+            org = resolve_organisation(self.request)
         if not org:
             return Membership.objects.none()
         return Membership.objects.filter(organisation=org).select_related("user").prefetch_related("module_permissions")
@@ -441,3 +447,235 @@ class MembershipViewSet(viewsets.ModelViewSet):
 
         membership.refresh_from_db()
         return Response(MembershipSerializer(membership).data)
+
+
+class PartnerViewSet(viewsets.ViewSet):
+    """
+    Partner/Accountant channel endpoints.
+
+    GET  /tenancy/partner/profile/        — get or create own partner profile
+    PUT  /tenancy/partner/profile/        — update firm name, tier etc.
+    GET  /tenancy/partner/clients/        — list managed client orgs
+    POST /tenancy/partner/clients/        — add a client org by invite code / org_id
+    DELETE /tenancy/partner/clients/{id}/ — remove a client link
+    GET  /tenancy/partner/consolidated/   — aggregated dashboard across all clients
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def _get_profile(self, request):
+        from .models import PartnerProfile
+        profile, _ = PartnerProfile.objects.get_or_create(
+            user=request.user,
+            defaults={"tier": "starter", "max_clients": 10},
+        )
+        return profile
+
+    @action(detail=False, methods=["get", "put"], url_path="profile")
+    def profile(self, request):
+        from .models import PartnerProfile
+        from .serializers import PartnerProfileSerializer
+        profile = self._get_profile(request)
+        if request.method == "PUT":
+            serializer = PartnerProfileSerializer(profile, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(serializer.data)
+        return Response(PartnerProfileSerializer(profile).data)
+
+    def _provision_membership(self, partner_user, org):
+        """
+        Auto-create or reactivate a Membership for the partner in the client org
+        with accountant role + appropriate ModulePermissions.
+
+        Access matrix (matches senior accountant recommendation):
+          - reports, accounting, tax, budget : edit  (core advisory work)
+          - sales, purchases, bills, expenses, customers, suppliers, inventory,
+            quotes, recurring, payroll         : view  (read all, write nothing)
+          - settings                           : none  (no access to billing/config)
+        """
+        from django.utils import timezone
+        from .models import Membership, ModulePermission
+
+        membership, _ = Membership.objects.get_or_create(
+            user=partner_user,
+            organisation=org,
+            defaults={
+                "role": Membership.Role.ACCOUNTANT,
+                "is_active": True,
+                "joined_at": timezone.now(),
+            },
+        )
+        # Reactivate if previously deactivated
+        if not membership.is_active:
+            membership.is_active = True
+            membership.role = Membership.Role.ACCOUNTANT
+            membership.save(update_fields=["is_active", "role"])
+
+        # Build permission map
+        EDIT_MODULES = {"reports", "accounting", "tax", "budget"}
+        VIEW_MODULES = {
+            "sales", "purchases", "bills", "expenses", "customers",
+            "suppliers", "inventory", "quotes", "recurring", "payroll",
+        }
+        NO_ACCESS_MODULES = {"settings"}
+
+        module_map = (
+            [(m, "edit") for m in EDIT_MODULES]
+            + [(m, "view") for m in VIEW_MODULES]
+            + [(m, "none") for m in NO_ACCESS_MODULES]
+        )
+        for module, level in module_map:
+            ModulePermission.objects.update_or_create(
+                membership=membership,
+                module=module,
+                defaults={"access_level": level},
+            )
+        return membership
+
+    def _revoke_membership(self, partner_user, org):
+        """Deactivate the partner's membership in the client org."""
+        from .models import Membership
+        Membership.objects.filter(
+            user=partner_user, organisation=org
+        ).update(is_active=False)
+
+    @action(detail=False, methods=["get", "post"], url_path="clients")
+    def clients(self, request):
+        from .models import PartnerClientLink, Organisation
+        from .serializers import PartnerClientLinkSerializer
+        profile = self._get_profile(request)
+
+        if request.method == "POST":
+            org_id = request.data.get("organisation_id")
+            notes = request.data.get("notes", "")
+            if not org_id:
+                return Response({"error": "organisation_id is required"}, status=400)
+            try:
+                org = Organisation.objects.get(id=org_id)
+            except Organisation.DoesNotExist:
+                return Response({"error": "Organisation not found"}, status=404)
+            # Prevent self-linking (accountant adding their own org as a client)
+            if org.owner_id == request.user.id:
+                return Response(
+                    {"error": "You cannot add your own organisation as a client."},
+                    status=400,
+                )
+            if not profile.can_add_client:
+                return Response(
+                    {"error": f"Client limit reached ({profile.max_clients}). Upgrade to Partner Pro or Agency."},
+                    status=403,
+                )
+            # Reject if this org is already an active client of this partner
+            existing = PartnerClientLink.objects.filter(
+                partner=profile, organisation=org
+            ).first()
+            if existing:
+                if existing.is_active:
+                    return Response(
+                        {"error": f"{org.name} is already in your client portfolio."},
+                        status=400,
+                    )
+                # Previously removed — reactivate
+                existing.is_active = True
+                existing.notes = notes or existing.notes
+                existing.save()
+                self._provision_membership(request.user, org)
+                return Response(PartnerClientLinkSerializer(existing).data, status=201)
+
+            link = PartnerClientLink.objects.create(
+                partner=profile,
+                organisation=org,
+                notes=notes,
+                is_active=True,
+                is_referred=request.data.get("is_referred", True),
+            )
+
+            # Provision accountant-role membership in client org
+            self._provision_membership(request.user, org)
+
+            return Response(PartnerClientLinkSerializer(link).data, status=201)
+
+        links = profile.clients.filter(is_active=True).select_related("organisation")
+        return Response(PartnerClientLinkSerializer(links, many=True).data)
+
+    @action(detail=True, methods=["delete"], url_path="clients")
+    def remove_client(self, request, pk=None):
+        from .models import PartnerClientLink
+        profile = self._get_profile(request)
+        try:
+            link = PartnerClientLink.objects.get(id=pk, partner=profile)
+        except PartnerClientLink.DoesNotExist:
+            return Response({"error": "Not found"}, status=404)
+        link.is_active = False
+        link.save()
+        # Revoke accountant membership in client org
+        self._revoke_membership(request.user, link.organisation)
+        return Response(status=204)
+
+    @action(detail=False, methods=["get"], url_path="consolidated")
+    def consolidated(self, request):
+        """
+        Aggregated metrics across all managed client organisations.
+        Returns a summary per client + totals.
+        """
+        from django.db.models import Sum, Count, Q
+        from apps.sales.models import Invoice
+        from apps.inventory.models import Product, StockItem
+        from apps.customers.models import Customer
+        import datetime
+
+        profile = self._get_profile(request)
+        org_ids = list(profile.clients.filter(is_active=True).values_list("organisation_id", flat=True))
+
+        if not org_ids:
+            return Response({"clients": [], "totals": {}})
+
+        today = datetime.date.today()
+        month_start = today.replace(day=1)
+
+        clients_data = []
+        totals = {"total_revenue": 0, "total_outstanding": 0, "total_customers": 0, "total_products": 0}
+
+        for link in profile.clients.filter(is_active=True).select_related("organisation"):
+            org = link.organisation
+            oid = org.id
+
+            # Revenue this month
+            revenue = Invoice.objects.filter(
+                organisation=oid,
+                status__in=["paid", "partially_paid", "credit"],
+                issue_date__gte=month_start,
+            ).aggregate(total=Sum("total_amount"))["total"] or 0
+
+            # Outstanding (overdue + credit)
+            outstanding = Invoice.objects.filter(
+                organisation=oid,
+                status__in=["overdue", "credit", "partially_paid"],
+            ).aggregate(total=Sum("amount_due"))["total"] or 0
+
+            # Counts
+            customers = Customer.objects.filter(organisation=oid, is_active=True).count()
+            products = Product.objects.filter(organisation=oid, is_active=True).count()
+            overdue_count = Invoice.objects.filter(organisation=oid, status="overdue").count()
+
+            clients_data.append({
+                "link_id": str(link.id),
+                "org_id": str(oid),
+                "org_name": org.name,
+                "org_currency": org.currency,
+                "plan": org.subscription.plan.name if hasattr(org, "subscription") else "Unknown",
+                "revenue_this_month": float(revenue),
+                "outstanding_balance": float(outstanding),
+                "overdue_count": overdue_count,
+                "total_customers": customers,
+                "total_products": products,
+                "linked_at": link.linked_at.strftime("%Y-%m-%d"),
+            })
+            totals["total_revenue"] += float(revenue)
+            totals["total_outstanding"] += float(outstanding)
+            totals["total_customers"] += customers
+            totals["total_products"] += products
+
+        totals["client_count"] = len(clients_data)
+        return Response({"clients": clients_data, "totals": totals})

@@ -46,7 +46,7 @@ const PRO_LOCKED_TABS: Tab[] = ['wht', 'excise', 'filing']
 export default function TaxPage() {
   const { planTaxEngine, planName, user } = useAuthStore()
   // vat_only = Starter plan; null = superuser / no restriction
-  const vatOnly = !user?.is_superuser && planTaxEngine === 'vat_only'
+  const vatOnly = !user?.is_superuser && (planTaxEngine === 'vat_only' || planTaxEngine === 'basic')
   // professional plan: Income Tax available, but WHT / Excise / Filing locked
   const proPlan = !user?.is_superuser && planName === 'professional'
 

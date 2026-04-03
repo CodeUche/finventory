@@ -28,7 +28,7 @@ function MetricCard({ label, value, sub, color = 'white' }: { label: string; val
 export default function OwnerAnalyticsPage() {
   const { user, memberRole, planModules } = useAuthStore()
   const navigate = useNavigate()
-  const isOwner = !memberRole || memberRole === 'owner' || user?.is_superuser
+  const isOwner = memberRole === 'owner' || memberRole === 'admin' || user?.is_superuser === true
   const hasAccess = isOwner && (planModules === null || planModules.includes('owner_analytics') || !!user?.is_superuser)
 
   const [period, setPeriod] = useState('month')

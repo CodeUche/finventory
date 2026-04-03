@@ -361,11 +361,13 @@ class ReportService:
                 'days_overdue': max(0, days),
             })
 
+        sorted_bills = sorted(bill_list, key=lambda x: x['days_overdue'], reverse=True)
         return {
             'as_of': as_of,
             'buckets': buckets,
             'total_outstanding': sum(buckets.values()),
-            'bills': sorted(bill_list, key=lambda x: x['days_overdue'], reverse=True),
+            'bills': sorted_bills,
+            'invoices': sorted_bills,  # alias so frontend ARAgingReport type works for both AR and AP
         }
 
     # ─── VAT Summary ──────────────────────────────────────────────────────────

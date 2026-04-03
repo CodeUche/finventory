@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Minus, Plus, Search, ShoppingCart, Trash2, User, Warehouse, X } from 'lucide-react'
+import { ArrowLeft, Minus, Plus, Search, ShoppingCart, Trash2, User, UserCheck, Warehouse, X } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { customerApi, inventoryApi, salesApi } from '@/services/api'
+import { customerApi, inventoryApi, locationApi, salesApi, teamApi } from '@/services/api'
 import { formatCurrency, formatAmountInput, stripCommas } from '@/lib/utils'
 import { useNotifications } from '@/contexts/NotificationsContext'
+import { useAuthStore } from '@/store/authStore'
 import { FieldTooltip } from '@/components/FieldTooltip'
 import type { Customer, Product, Warehouse as WarehouseType } from '@/types'
 
@@ -20,6 +21,11 @@ const PAYMENT_METHODS = ['cash', 'pos', 'bank_transfer', 'credit']
 export default function NewSalePage() {
   const navigate = useNavigate()
   const { refetch: refetchAlerts } = useNotifications()
+  const { user, memberRole } = useAuthStore()
+
+  // Determine if user can override the sold_by field (manager+ can assign to others)
+  const canOverrideSoldBy = memberRole === null || ['owner', 'admin', 'manager'].includes(memberRole ?? '')
+  const currentUserName = user ? `${user.first_name} ${user.last_name}`.trim() || user.email : ''
 
   // ── Product search ─────────────────────────────────────────────────────────
   const [productQuery, setProductQuery] = useState('')
@@ -106,6 +112,8 @@ export default function NewSalePage() {
   // ── Warehouses ────────────────────────────────────────────────────────────
   const [warehouses, setWarehouses] = useState<WarehouseType[]>([])
   const [selectedWarehouse, setSelectedWarehouse] = useState<string>('')
+  const [locations, setLocations] = useState<{ id: string; name: string }[]>([])
+  const [selectedLocation, setSelectedLocation] = useState<string>('')
 
   useEffect(() => {
     inventoryApi.warehouses().then(({ data }) => {
@@ -114,7 +122,31 @@ export default function NewSalePage() {
       const def = list.find((w) => w.is_default) ?? list[0]
       if (def) setSelectedWarehouse(def.id)
     }).catch(() => {})
+    // Load sales locations (optional)
+    locationApi.list({ is_active: true }).then(({ data }) => {
+      setLocations(data.results ?? data)
+    }).catch(() => {})
   }, [])
+
+  // ── Sold By ───────────────────────────────────────────────────────────────
+  const [soldBy, setSoldBy] = useState('')
+  const [teamMembers, setTeamMembers] = useState<{ id: string; name: string; role: string }[]>([])
+
+  useEffect(() => {
+    if (!canOverrideSoldBy) return
+    teamApi.members().then(({ data }) => {
+      const list = (data.results ?? data) as Array<{ id: string; user_full_name: string; user_email: string; role: string; is_active: boolean }>
+      setTeamMembers(
+        list
+          .filter((m) => m.is_active)
+          .map((m) => ({
+            id: m.id,
+            name: m.user_full_name?.trim() || m.user_email,
+            role: m.role,
+          }))
+      )
+    }).catch(() => {})
+  }, [canOverrideSoldBy])
 
   // ── Payment ───────────────────────────────────────────────────────────────
   const [paymentMethod, setPaymentMethod] = useState('cash')
@@ -145,11 +177,13 @@ export default function NewSalePage() {
     return {
       customer_id: selectedCustomer?.id ?? null,
       warehouse_id: selectedWarehouse,
+      location_id: selectedLocation || null,
       payment_method: paymentMethod,
       amount_paid: isCredit || isProforma ? '0' : actualPaid.toFixed(2),
       amount_tendered: !isCredit && !isProforma && rawTendered > 0 ? rawTendered.toFixed(2) : null,
       credit_applied: isProforma ? '0' : creditApplied.toFixed(2),
       notes,
+      sold_by: canOverrideSoldBy ? soldBy.trim() : '',
       is_proforma: isProforma,
       items: cart.map((c) => ({
         product_id: c.product.id,
@@ -351,12 +385,12 @@ export default function NewSalePage() {
           <div className="card p-4 space-y-3">
             <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-2">
               <Warehouse size={14} />
-              Location
-              <FieldTooltip text="The warehouse or shop location this sale is coming from. Stock will be deducted from this location's inventory." />
+              Warehouse (Stock)
+              <FieldTooltip text="The warehouse stock will be deducted from." />
             </p>
             {warehouses.length === 0 ? (
               <p className="text-xs text-amber-400">
-                No locations found.{' '}
+                No warehouses found.{' '}
                 <a href="/inventory/warehouses" className="underline hover:text-amber-300">Add one first →</a>
               </p>
             ) : (
@@ -365,13 +399,32 @@ export default function NewSalePage() {
                 value={selectedWarehouse}
                 onChange={(e) => setSelectedWarehouse(e.target.value)}
               >
-                <option value="">Select location…</option>
+                <option value="">Select warehouse…</option>
                 {warehouses.map((w) => (
                   <option key={w.id} value={w.id}>
                     {w.name}{w.is_default ? ' (default)' : ''}
                   </option>
                 ))}
               </select>
+            )}
+            {/* Sales location (branch/store) — optional */}
+            {locations.length > 0 && (
+              <>
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-2 pt-1">
+                  Sales Location (Branch)
+                  <FieldTooltip text="The branch or store where this sale is happening. Optional." />
+                </p>
+                <select
+                  className="input"
+                  value={selectedLocation}
+                  onChange={(e) => setSelectedLocation(e.target.value)}
+                >
+                  <option value="">— No specific location —</option>
+                  {locations.map((l) => (
+                    <option key={l.id} value={l.id}>{l.name}</option>
+                  ))}
+                </select>
+              </>
             )}
           </div>
 
@@ -544,6 +597,31 @@ export default function NewSalePage() {
                 </>
               )}
             </div>
+          </div>
+
+          {/* Sold By */}
+          <div className="card p-4 space-y-2">
+            <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1">
+              <UserCheck size={13} />
+              Sold By
+              <FieldTooltip text={canOverrideSoldBy ? "Staff member who made this sale. Defaults to you if left blank. Managers and above can assign to any team member." : "Automatically recorded as your name. Only managers and above can assign a sale to another staff member."} />
+            </label>
+            {canOverrideSoldBy ? (
+              <select
+                className="input"
+                value={soldBy}
+                onChange={(e) => setSoldBy(e.target.value)}
+              >
+                <option value="">— {currentUserName} (you) —</option>
+                {teamMembers.map((m) => (
+                  <option key={m.id} value={m.name}>{m.name} · {m.role}</option>
+                ))}
+              </select>
+            ) : (
+              <div className="input bg-surface-800 text-slate-400 cursor-not-allowed select-none">
+                {currentUserName}
+              </div>
+            )}
           </div>
 
           {/* Notes */}

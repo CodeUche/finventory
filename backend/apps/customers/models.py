@@ -1,6 +1,7 @@
 """Customer model for retail and wholesale buyers."""
 
 from django.db import models
+from django.conf import settings
 
 from apps.core.models import MoneyField, TenantAwareModel
 
@@ -62,3 +63,22 @@ class Customer(TenantAwareModel):
     @property
     def is_credit_blocked(self) -> bool:
         return self.outstanding_balance >= self.credit_limit and self.credit_limit > 0
+
+
+class CustomerDebit(TenantAwareModel):
+    """A manual debit charge raised against a customer outside of an invoice."""
+
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name="debits")
+    amount = MoneyField()
+    reference = models.CharField(max_length=100, blank=True)
+    description = models.TextField(blank=True)
+    debit_date = models.DateField()
+    recorded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True
+    )
+
+    class Meta(TenantAwareModel.Meta):
+        ordering = ["-debit_date"]
+
+    def __str__(self):
+        return f"Debit {self.reference or self.id} – {self.customer.name} – {self.amount}"

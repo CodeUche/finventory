@@ -126,3 +126,54 @@ class InventoryService:
             notes=reason,
             created_by=created_by,
         )
+
+    @staticmethod
+    @transaction.atomic
+    def transfer_stock(
+        organisation,
+        product: Product,
+        from_warehouse: Warehouse,
+        to_warehouse: Warehouse,
+        quantity: Decimal,
+        notes: str = "",
+        created_by=None,
+    ) -> dict:
+        """
+        Transfer stock between two warehouses atomically.
+
+        Creates paired TRANSFER_OUT + TRANSFER_IN ledger entries with a shared
+        reference so the pair can always be traced back together.
+        """
+        import uuid as _uuid
+        if from_warehouse.id == to_warehouse.id:
+            raise ValueError("Source and destination warehouses must be different.")
+        if quantity <= 0:
+            raise ValueError("Transfer quantity must be positive.")
+
+        ref = f"TRF-{str(_uuid.uuid4())[:8].upper()}"
+
+        out_movement = InventoryService.record_movement(
+            organisation=organisation,
+            product=product,
+            warehouse=from_warehouse,
+            quantity=-quantity,
+            movement_type=StockMovement.MovementType.TRANSFER_OUT,
+            reference=ref,
+            notes=notes,
+            created_by=created_by,
+        )
+        in_movement = InventoryService.record_movement(
+            organisation=organisation,
+            product=product,
+            warehouse=to_warehouse,
+            quantity=quantity,
+            movement_type=StockMovement.MovementType.TRANSFER_IN,
+            reference=ref,
+            notes=notes,
+            created_by=created_by,
+        )
+        logger.info(
+            "Stock transfer %s: %s × %s from '%s' → '%s'",
+            ref, quantity, product.sku, from_warehouse.name, to_warehouse.name,
+        )
+        return {"reference": ref, "out": out_movement, "in": in_movement}

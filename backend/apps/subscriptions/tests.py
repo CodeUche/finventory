@@ -43,13 +43,14 @@ class PlanModelTests(TestCase):
         self.assertFalse(free.is_public)
 
     def test_paid_plans_are_public(self):
-        for slug in ("starter", "professional", "business"):
+        # Starter is now a legacy plan (is_public=False); only professional and business are public paid plans
+        for slug in ("professional", "business"):
             plan = Plan.objects.get(slug=slug)
             self.assertTrue(plan.is_public, f"{slug} should be public")
 
     def test_plan_feature_getter(self):
-        plan = Plan.objects.get(slug="starter")
-        self.assertEqual(plan.get_feature("max_products"), 100)
+        plan = Plan.objects.get(slug="professional")
+        self.assertEqual(plan.get_feature("max_products"), 500)
         self.assertIsNone(plan.get_feature("nonexistent"))
 
 
