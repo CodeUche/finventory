@@ -1,0 +1,79 @@
+# CodeRabbit configuration for Audity
+# Docs: https://docs.coderabbit.ai/getting-started/configure-coderabbit
+
+language: "en-US"
+
+# Review tone — clear and direct, not overly verbose.
+tone_instructions: >
+  Be concise. Focus on correctness, security, and Django/React best practices.
+  Highlight issues with tenant isolation, permission checks, and JWT handling.
+  Flag any hardcoded secrets, missing authentication, or SQL injection risks.
+  Skip style nits already covered by flake8/black/isort/ESLint.
+
+reviews:
+  # Auto-review every PR.
+  auto_review:
+    enabled: true
+    # Don't review draft PRs until marked ready.
+    drafts: false
+    # Re-review when new commits are pushed.
+    base_branches:
+      - main
+      - develop
+
+  # Post a high-level summary at the top of every PR review.
+  profile: "assertive"
+
+  # Request changes (not just comment) when high-severity issues are found.
+  request_changes_workflow: true
+
+  # Which paths to focus on — skip generated files.
+  path_filters:
+    - "!**/migrations/**"
+    - "!**/node_modules/**"
+    - "!frontend/src-tauri/target/**"
+    - "!**/__pycache__/**"
+    - "!frontend/dist/**"
+    - "!**/*.min.js"
+    - "!**/*.lock"
+    - "!.github/SECRETS.md"
+
+  # Per-file review instructions.
+  path_instructions:
+    - path: "backend/apps/core/permissions.py"
+      instructions: >
+        Verify every permission class correctly enforces tenant isolation.
+        Check that role hierarchy comparisons use >= not ==.
+
+    - path: "backend/apps/core/mixins.py"
+      instructions: >
+        Ensure TenantFilterMixin always calls _get_organisation() before
+        filtering querysets. Confirm audit logging wraps in try/except so it
+        never breaks the primary operation.
+
+    - path: "backend/**/{views,serializers}.py"
+      instructions: >
+        Check for missing X-Organisation-ID enforcement.
+        Flag any endpoint reachable without IsAuthenticated.
+        Watch for N+1 queries — suggest select_related/prefetch_related where appropriate.
+
+    - path: "frontend/src/services/api.ts"
+      instructions: >
+        Verify JWT refresh logic handles concurrent 401s without duplicate refresh calls.
+        Ensure the X-Organisation-ID header is injected on every request.
+
+    - path: "frontend/src/**/*.tsx"
+      instructions: >
+        Flag any direct DOM manipulation or dangerouslySetInnerHTML without sanitisation.
+        Suggest useModuleAccess hook where raw role checks are used inline.
+        Watch for missing loading/error states on async operations.
+
+    - path: ".github/workflows/**"
+      instructions: >
+        Check for hardcoded secrets, missing permissions declarations, and
+        steps that could be supply-chain attack vectors (unpinned third-party actions).
+        Confirm deploy jobs only run on main/tags, not on PRs.
+
+# Chat — allow team to ask CodeRabbit questions in PR comments.
+chat:
+  auto_reply: true
