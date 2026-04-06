@@ -289,6 +289,7 @@ export default function BillingPage() {
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {plans.filter((p) => {
+            if (!FEATURES.PARTNER_CHANNEL && p.slug.startsWith('partner-')) return false
             const isFree = parseFloat(p.price) === 0
             if (isFree) return billingInterval === 'monthly'  // free only in monthly view
             return p.interval === billingInterval
