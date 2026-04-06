@@ -117,8 +117,6 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
   const firstPollRef  = useRef(true)
   const today = new Date().toISOString().split('T')[0]
 
-  // tomorrow's date as YYYY-MM-DD
-  const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0]
   // 7 days from now
   const in7Days = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0]
 
@@ -129,7 +127,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
         inventoryApi.lowStock(),
         salesApi.invoices({ status: 'overdue', page_size: 20 }),
         inventoryApi.batches({ page_size: 200 }),
-        billApi.list({ due_date: tomorrow, status: 'approved', page_size: 50 }),
+        billApi.list({ due_date_from: today, due_date_to: in7Days, status: 'approved', page_size: 50 }),
         payrollApi.runs(),
         // Invoices on credit / partially paid due within the next 7 days
         salesApi.invoices({ due_date_from: today, due_date_to: in7Days, page_size: 20 }),

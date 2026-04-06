@@ -200,6 +200,11 @@ export default function NewSalePage() {
     if (paymentMethod === 'credit' && !selectedCustomer && !isProforma) {
       toast.error('Select a customer for credit sales'); return
     }
+    const zeroPriceItem = cart.find((c) => c.unit_price <= 0)
+    if (zeroPriceItem) {
+      toast.error(`"${zeroPriceItem.product.name}" has a zero or negative price — please correct it before saving`)
+      return
+    }
     setSubmitting(true)
     try {
       await salesApi.create(buildPayload(isProforma))

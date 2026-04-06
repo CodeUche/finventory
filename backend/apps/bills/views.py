@@ -77,6 +77,12 @@ class BillViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
         due_date = self.request.query_params.get('due_date')
         if due_date:
             qs = qs.filter(due_date=due_date)
+        due_date_from = self.request.query_params.get('due_date_from')
+        due_date_to = self.request.query_params.get('due_date_to')
+        if due_date_from:
+            qs = qs.filter(due_date__gte=due_date_from)
+        if due_date_to:
+            qs = qs.filter(due_date__lte=due_date_to)
         return qs
 
     def create(self, request, *args, **kwargs):

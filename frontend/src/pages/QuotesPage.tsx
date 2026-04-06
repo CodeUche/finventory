@@ -383,6 +383,15 @@ export default function QuotesPage() {
     } catch { toast.error('Failed to update quote') }
   }
 
+  const handleReject = async (q: Quote) => {
+    if (!confirm(`Mark quote ${q.quote_number} as rejected?`)) return
+    try {
+      await quoteApi.reject(q.id)
+      toast.success('Quote marked as rejected')
+      load()
+    } catch { toast.error('Failed to reject quote') }
+  }
+
   const updateLine = (i: number, field: keyof QuoteLineForm, value: string) => {
     setLines(lines.map((l, idx) => {
       if (idx !== i) return l
@@ -617,9 +626,14 @@ export default function QuotesPage() {
                           </button>
                         )}
                         {(q.status === 'accepted' || q.status === 'sent') && (
-                          <button onClick={() => handleConvert(q)} className="text-xs px-2.5 py-1 rounded-lg bg-brand-500/15 text-brand-400 hover:bg-brand-500/25 transition-colors">
-                            Convert
-                          </button>
+                          <>
+                            <button onClick={() => handleConvert(q)} className="text-xs px-2.5 py-1 rounded-lg bg-brand-500/15 text-brand-400 hover:bg-brand-500/25 transition-colors">
+                              Convert
+                            </button>
+                            <button onClick={() => handleReject(q)} className="text-xs px-2.5 py-1 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors">
+                              Reject
+                            </button>
+                          </>
                         )}
                         <button
                           onClick={() => handleExportPDF(q)}
