@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { User, Building2, Shield, Loader2, Camera, CreditCard, CheckCircle, Mail, Lock, Unlock, LandmarkIcon, UsersRound, UserPlus, X, ChevronDown, ChevronUp, Bot, Layout, Copy } from 'lucide-react'
+import { User, Building2, Shield, Loader2, Camera, CreditCard, CheckCircle, Mail, Lock, Unlock, LandmarkIcon, UsersRound, UserPlus, X, ChevronDown, ChevronUp, Bot, Layout, Copy, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { authApi, orgApi, paymentGatewayApi, accountingApi, teamApi, tauriFetch } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
@@ -1061,8 +1061,12 @@ export default function SettingsPage() {
                   Owners and admins always have full access.
                 </p>
                 <p className="text-xs mt-2">
-                  <span className={activeNonOwners.length >= MAX_MEMBERS ? 'text-red-400' : 'text-slate-400'}>
+                  <span className={
+                    activeNonOwners.length > MAX_MEMBERS ? 'text-red-400 font-semibold' :
+                    activeNonOwners.length >= MAX_MEMBERS ? 'text-amber-400' : 'text-slate-400'
+                  }>
                     {activeNonOwners.length} / {MAX_MEMBERS} slots used
+                    {activeNonOwners.length > MAX_MEMBERS && ' — over limit, deactivate a member'}
                   </span>
                 </p>
               </div>
@@ -1194,9 +1198,23 @@ export default function SettingsPage() {
                             Deactivate
                           </button>
                         ) : (
-                          <button onClick={() => handleReactivate(m)} className="text-xs text-slate-500 hover:text-green-400 px-2 py-1 rounded-lg hover:bg-green-500/10 transition-colors">
-                            Reactivate
-                          </button>
+                          <>
+                            <button
+                              onClick={() => handleReactivate(m)}
+                              disabled={activeNonOwners.length >= MAX_MEMBERS}
+                              title={activeNonOwners.length >= MAX_MEMBERS ? `Slot limit reached (${MAX_MEMBERS}/${MAX_MEMBERS}). Deactivate another member first.` : 'Reactivate member'}
+                              className="text-xs text-slate-500 hover:text-green-400 px-2 py-1 rounded-lg hover:bg-green-500/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-slate-500 disabled:hover:bg-transparent"
+                            >
+                              Reactivate
+                            </button>
+                            <button
+                              onClick={() => { setDeactivateTarget(m) }}
+                              title="Permanently delete member"
+                              className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </>
                         )}
                         <button
                           onClick={() => setExpandedMember(expandedMember === m.id ? null : m.id)}
@@ -2405,34 +2423,42 @@ export default function SettingsPage() {
       )}
     </div>
 
-    {/* Deactivate confirmation modal */}
+    {/* Member remove / delete modal */}
     {deactivateTarget && (
       <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
         <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setDeactivateTarget(null)} />
         <div className="relative card w-full max-w-sm p-6 space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-base font-bold text-white">Remove Team Member</h2>
+            <h2 className="text-base font-bold text-white">
+              {deactivateTarget.is_active ? 'Remove Team Member' : 'Delete Member'}
+            </h2>
             <button onClick={() => setDeactivateTarget(null)} className="text-slate-400 hover:text-white"><X size={18} /></button>
           </div>
           <p className="text-sm text-slate-400">
-            How do you want to remove <span className="font-semibold text-white">{deactivateTarget.user_full_name || deactivateTarget.user_email}</span>?
+            {deactivateTarget.is_active
+              ? <>How do you want to remove <span className="font-semibold text-white">{deactivateTarget.user_full_name || deactivateTarget.user_email}</span>?</>
+              : <>Permanently delete <span className="font-semibold text-white">{deactivateTarget.user_full_name || deactivateTarget.user_email}</span>? This cannot be undone.</>
+            }
           </p>
           <div className="space-y-2">
-            <button
-              onClick={() => confirmDeactivate(false)}
-              disabled={deactivating}
-              className="w-full flex flex-col items-start px-4 py-3 rounded-xl border border-surface-600 bg-surface-700/40 hover:bg-surface-700/80 text-left transition-colors disabled:opacity-50"
-            >
-              <span className="text-sm font-semibold text-white">Temporarily Deactivate</span>
-              <span className="text-xs text-slate-400 mt-0.5">Revokes access but keeps the member record. Can be reactivated later.</span>
-            </button>
+            {/* Only show deactivate option for currently active members */}
+            {deactivateTarget.is_active && (
+              <button
+                onClick={() => confirmDeactivate(false)}
+                disabled={deactivating}
+                className="w-full flex flex-col items-start px-4 py-3 rounded-xl border border-surface-600 bg-surface-700/40 hover:bg-surface-700/80 text-left transition-colors disabled:opacity-50"
+              >
+                <span className="text-sm font-semibold text-white">Temporarily Deactivate</span>
+                <span className="text-xs text-slate-400 mt-0.5">Revokes access but keeps the record. Frees up a slot for someone else.</span>
+              </button>
+            )}
             <button
               onClick={() => confirmDeactivate(true)}
               disabled={deactivating}
               className="w-full flex flex-col items-start px-4 py-3 rounded-xl border border-red-500/30 bg-red-500/5 hover:bg-red-500/10 text-left transition-colors disabled:opacity-50"
             >
-              <span className="text-sm font-semibold text-red-400">Permanently Remove</span>
-              <span className="text-xs text-slate-400 mt-0.5">Deletes all access and privileges. This action cannot be undone.</span>
+              <span className="text-sm font-semibold text-red-400 flex items-center gap-1.5"><Trash2 size={14} /> Permanently Delete</span>
+              <span className="text-xs text-slate-400 mt-0.5">Removes all access and data. This action cannot be undone.</span>
             </button>
           </div>
           {deactivating && (

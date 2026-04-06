@@ -401,6 +401,42 @@ class MembershipViewSet(viewsets.ModelViewSet):
             return Membership.objects.none()
         return Membership.objects.filter(organisation=org).select_related("user").prefetch_related("module_permissions")
 
+    def partial_update(self, request, *args, **kwargs):
+        """
+        PATCH /tenancy/memberships/{id}/
+        Intercepts reactivation (is_active: True → False → True) and enforces
+        the plan member limit so deactivated + reactivated members can never
+        silently exceed the allowed seat count.
+        """
+        membership = self.get_object()
+
+        # Only enforce the limit when reactivating a currently inactive member.
+        reactivating = (
+            not membership.is_active
+            and str(request.data.get("is_active", "")).lower() in ("true", "1")
+        )
+
+        if reactivating and not request.user.is_superuser:
+            org = membership.organisation
+            max_members = _get_max_team_members(org)
+            active_non_owner = Membership.objects.filter(
+                organisation=org, is_active=True
+            ).exclude(role=Membership.Role.OWNER).count()
+            if active_non_owner >= max_members:
+                return Response(
+                    {
+                        "error": {
+                            "message": (
+                                f"You have reached the {max_members}-member limit on your plan. "
+                                "Deactivate or permanently remove another member before reactivating this one."
+                            )
+                        }
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        return super().partial_update(request, *args, **kwargs)
+
     @action(detail=True, methods=["post"], url_path="set_permissions")
     def set_permissions(self, request, pk=None):
         """
