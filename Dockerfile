@@ -15,8 +15,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies into a prefix dir for clean copying
-COPY backend/requirements/production.txt ./requirements.txt
-RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+# Copy the whole requirements/ folder so -r base.txt resolves correctly
+COPY backend/requirements/ ./requirements/
+RUN pip install --no-cache-dir --prefix=/install -r requirements/production.txt
 
 # ── Stage 2: Runtime ──────────────────────────────────────────
 FROM python:3.13-slim AS runtime
