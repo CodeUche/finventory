@@ -3,6 +3,7 @@ import { CheckCircle, X as XIcon, Loader2, CreditCard, Zap, Building2, Star, Ext
 import toast from 'react-hot-toast'
 import { subscriptionApi } from '@/services/api'
 import type { Plan, Subscription, SubscriptionPayment } from '@/types'
+import { FEATURES } from '@/lib/featureFlags'
 
 // Paystack Inline JS type declaration
 declare global {
@@ -409,8 +410,10 @@ export default function BillingPage() {
         </div>
       </div>
 
-      {/* ── Partner / Accountant Channel ─────────────────────────────────── */}
-      <PartnerChannelSection plans={plans} currentPlanSlug={currentPlanSlug} onSubscribe={handleSubscribe} subscribing={subscribing} />
+      {/* ── Partner / Accountant Channel — hidden until PARTNER_CHANNEL feature enabled ── */}
+      {FEATURES.PARTNER_CHANNEL && (
+        <PartnerChannelSection plans={plans} currentPlanSlug={currentPlanSlug} onSubscribe={handleSubscribe} subscribing={subscribing} />
+      )}
 
       {/* Payment history */}
       {payments.length > 0 && (

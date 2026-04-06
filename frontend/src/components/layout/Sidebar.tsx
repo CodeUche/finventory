@@ -11,6 +11,7 @@ import {
 import { useAuthStore } from '@/store/authStore'
 import { authApi } from '@/services/api'
 import { cn } from '@/lib/utils'
+import { FEATURES } from '@/lib/featureFlags'
 import type { ModuleKey } from '@/types'
 
 // ─── Navigation structure ─────────────────────────────────────────────────────
@@ -116,7 +117,7 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
   // Checks: ownerOnly → plan modules → sub-account RBAC permissions
   const canSeeItem = (mod?: ModuleKey, ownerOnly?: boolean, partnerOnly?: boolean) => {
     if (ownerOnly && !isOwnerOrAdmin) return false   // explicitly owner-only items
-    if (partnerOnly && !user?.has_partner_profile) return false  // partner accounts only
+    if (partnerOnly && (!FEATURES.PARTNER_CHANNEL || !user?.has_partner_profile)) return false
     if (!mod) return true                             // no module restriction (dashboard, settings)
     if (user?.is_superuser) return true              // superusers always see everything
     // Plan-level gate: if the active plan restricts modules, only show allowed ones
@@ -179,14 +180,14 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
 
       {/* Org badge */}
       {organisation && (
-        <div className={`mx-3 mt-3 px-3 py-2 rounded-xl shrink-0 border ${organisation.managing_firm_name ? 'bg-amber-500/10 border-amber-500/20' : 'bg-brand-500/10 border-brand-500/20'}`}>
+        <div className="mx-3 mt-3 px-3 py-2 rounded-xl shrink-0 border bg-brand-500/10 border-brand-500/20">
           <div className="flex items-center gap-1.5">
             <p className="text-xs text-slate-400 truncate flex-1">{organisation.name}</p>
-            {organisation.managing_firm_name && (
+            {FEATURES.PARTNER_CHANNEL && organisation.managing_firm_name && (
               <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 shrink-0 uppercase tracking-wide">CLIENT</span>
             )}
           </div>
-          <p className={`text-xs font-mono ${organisation.managing_firm_name ? 'text-amber-400' : 'text-brand-400'}`}>{organisation.currency}</p>
+          <p className="text-xs font-mono text-brand-400">{organisation.currency}</p>
         </div>
       )}
 

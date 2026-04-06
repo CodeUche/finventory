@@ -12,6 +12,7 @@ import { Briefcase, LogOut, WifiOff } from 'lucide-react'
 import type { AccessLevel, ModuleKey, ModulePermission, Organisation } from '@/types'
 import SubscriptionPaywall from '@/components/SubscriptionPaywall'
 import SupportChat from '@/components/SupportChat'
+import { FEATURES } from '@/lib/featureFlags'
 
 export default function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -123,8 +124,8 @@ export default function AppLayout() {
             You&apos;re offline — read-only mode. Changes will be queued and synced automatically when reconnected.
           </div>
         )}
-        {/* Client view amber banner */}
-        {organisation?.managing_firm_name && (
+        {/* Client view amber banner — hidden until PARTNER_CHANNEL feature is enabled */}
+        {FEATURES.PARTNER_CHANNEL && organisation?.managing_firm_name && (
           <div className="flex items-center justify-between px-4 py-2 bg-amber-500/15 border-b border-amber-500/30 text-amber-400 text-xs font-medium">
             <span className="flex items-center gap-1.5">
               <Briefcase size={13} />

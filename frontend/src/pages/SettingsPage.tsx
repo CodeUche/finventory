@@ -4,6 +4,7 @@ import { User, Building2, Shield, Loader2, Camera, CreditCard, CheckCircle, Mail
 import toast from 'react-hot-toast'
 import { authApi, orgApi, paymentGatewayApi, accountingApi, teamApi, tauriFetch } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
+import { FEATURES } from '@/lib/featureFlags'
 import {
   getTimeoutPreference,
   setTimeoutPreference,
@@ -1172,7 +1173,7 @@ export default function SettingsPage() {
                         {organisation?.slug && m.user_email.endsWith(`@${organisation.slug}`) && (
                           <span className="text-xs bg-brand-500/15 text-brand-400 px-1.5 py-0.5 rounded-md shrink-0">sub-account</span>
                         )}
-                        {m.partner_firm_name && (
+                        {FEATURES.PARTNER_CHANNEL && m.partner_firm_name && (
                           <span className="text-xs bg-purple-500/15 text-purple-400 px-1.5 py-0.5 rounded-md shrink-0">
                             Accountant · {m.partner_firm_name}
                           </span>
