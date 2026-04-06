@@ -12,7 +12,6 @@ All secrets are configured at **Settings → Secrets and variables → Actions**
 |---|---|
 | `RAILWAY_TOKEN` | Railway dashboard → Project → Settings → Tokens → New token |
 | `RAILWAY_BACKEND_SERVICE` | The exact service name shown in your Railway dashboard (e.g. `audity-backend`) |
-| `BACKEND_HEALTH_URL` | Full URL of your deployed health endpoint (e.g. `https://api.audity.com/api/v1/health/`) |
 
 ### Frontend (Tauri Desktop Build)
 
