@@ -74,7 +74,7 @@ function buildTauriAdapter(): AxiosAdapter {
     for (const [k, v] of Object.entries(rawHeaders)) {
       if (typeof v === 'string' && v) headers[k] = v
     }
-    console.debug('[Audity] adapter headers:', JSON.stringify(Object.keys(headers)))
+    if (import.meta.env.DEV) console.debug('[Audity] adapter headers:', JSON.stringify(Object.keys(headers)))
 
     const body = !['GET', 'HEAD'].includes(method) && config.data != null
       ? (config.data instanceof FormData ? config.data : config.data as string)
@@ -89,8 +89,8 @@ function buildTauriAdapter(): AxiosAdapter {
       ipcResponse = await tauriHttpFetch(url, { method, headers, body } as RequestInit)
     } catch (ipcErr) {
       // IPC unavailable or URL not in scope — fall back to native browser fetch.
-      console.error('[Audity] tauriHttpFetch threw:', String(ipcErr))
-      toast.error(`[Audity] IPC error: ${String(ipcErr).slice(0, 100)}`, { id: 'ipc-err', duration: 15000 })
+      if (import.meta.env.DEV) console.error('[Audity] tauriHttpFetch threw:', String(ipcErr))
+      toast.error('Connection error — check your internet and try again.', { id: 'ipc-err', duration: 6000 })
       const resp = await fetch(url, { method, headers, body } as RequestInit)
       return responseToAxios(resp, config)
     }

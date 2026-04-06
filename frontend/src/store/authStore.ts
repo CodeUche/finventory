@@ -117,8 +117,10 @@ export const useAuthStore = create<AuthState>()(
       // so using localStorage + explicit logout() is the only safe approach.
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({
+        // tokens intentionally excluded — kept in memory only.
+        // main.tsx calls logout() on every launch which clears localStorage anyway,
+        // so persisting tokens adds disk exposure with zero UX benefit.
         user: state.user,
-        tokens: state.tokens,
         organisation: state.organisation,
         isAuthenticated: state.isAuthenticated,
         rememberMe: state.rememberMe,

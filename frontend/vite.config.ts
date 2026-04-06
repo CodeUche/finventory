@@ -69,7 +69,9 @@ export default defineConfig(({ mode }) => {
     // Tauri's embedded WebView needs ES2021; safe for modern Android too
     target: ['es2021', 'chrome100', 'safari13'],
     minify: isTauri ? false : 'esbuild',
-    sourcemap: isTauri,
+    // Sourcemaps only in explicit debug/dev mode — never in production builds.
+    // `tauri build` does not set TAURI_DEBUG, so distributed installers are safe.
+    sourcemap: process.env.TAURI_DEBUG !== undefined,
   },
 
   test: {
