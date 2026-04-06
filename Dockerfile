@@ -52,14 +52,12 @@ RUN python manage.py collectstatic --noinput --settings=config.settings.producti
 
 EXPOSE 8000
 
-# Gunicorn with 4 workers per CPU core (adjust for your instance)
-CMD ["gunicorn", \
-    "--bind", "0.0.0.0:8000", \
-    "--workers", "4", \
-    "--worker-class", "sync", \
-    "--worker-tmp-dir", "/dev/shm", \
-    "--access-logfile", "-", \
-    "--error-logfile", "-", \
-    "--log-level", "info", \
-    "--timeout", "30", \
-    "config.wsgi:application"]
+# Default CMD is the web server. worker and beat override this via
+# Railway's "Start Command" setting — no `cd` needed since WORKDIR
+# is already /app/backend.
+# Use shell form (string) so Railway can also override with env vars.
+CMD gunicorn config.wsgi:application --bind "0.0.0.0:${PORT:-8000}" \
+    --workers 2 --worker-class sync \
+    --worker-tmp-dir /dev/shm \
+    --access-logfile - --error-logfile - \
+    --log-level info --timeout 120
