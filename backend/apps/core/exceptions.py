@@ -65,7 +65,23 @@ def custom_exception_handler(exc, context):
         )
 
     error_code = EXCEPTION_CODE_MAP.get(type(exc), "error")
-    message = str(exc.detail) if hasattr(exc, "detail") else str(exc)
+
+    # Build a human-readable message from the detail.
+    # For ValidationError the detail is a dict of field → [ErrorDetail, ...]
+    # or a list of ErrorDetail strings. Flatten to a single readable sentence.
+    detail = exc.detail if hasattr(exc, "detail") else exc
+    if isinstance(detail, dict):
+        parts = []
+        for field, errors in detail.items():
+            if isinstance(errors, list):
+                parts.extend(str(e) for e in errors)
+            else:
+                parts.append(str(errors))
+        message = " ".join(parts)
+    elif isinstance(detail, list):
+        message = " ".join(str(e) for e in detail)
+    else:
+        message = str(detail)
 
     response.data = {
         "error": {

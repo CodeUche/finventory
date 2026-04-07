@@ -74,14 +74,9 @@ export default function RegisterPage() {
       setRegistered(true)
     } catch (err: any) {
       if (!err.response) {
-        toast.error('Cannot connect to server. Make sure the backend is running on port 8000.')
-        return
+        toast.error('Cannot connect to server. Check your internet connection and try again.')
       }
-      const detail = err.response?.data?.error?.detail
-      const msg = typeof detail === 'object' && detail
-        ? Object.values(detail).flat().join(' ')
-        : (err.response?.data?.error?.message ?? 'Registration failed. Please check your details.')
-      toast.error(msg)
+      // Interceptor already shows the error toast for API errors — no duplicate needed
     } finally {
       setLoading(false)
     }
