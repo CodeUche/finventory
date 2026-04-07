@@ -88,7 +88,7 @@ interface Recommendation {
 
 const PLAN_META: Record<string, {
   highlights: { icon: React.ElementType; text: string }[]
-  color: { border: string; ring: string; badge: string; pill: string }
+  color: { border: string; ring: string; pill: string }
   tagline: string
 }> = {
   free: {
@@ -99,7 +99,7 @@ const PLAN_META: Record<string, {
       { icon: Users, text: 'Solo use only' },
       { icon: BarChart3, text: 'Basic reports' },
     ],
-    color: { border: 'border-surface-600', ring: '', badge: 'bg-emerald-500', pill: 'bg-emerald-500/15 text-emerald-400' },
+    color: { border: 'border-surface-600', ring: '', pill: 'bg-emerald-500/15 text-emerald-400' },
   },
   professional: {
     tagline: 'Everything a growing business needs.',
@@ -111,10 +111,10 @@ const PLAN_META: Record<string, {
       { icon: Calculator, text: 'VAT + Income Tax engine' },
       { icon: Shield, text: 'Full audit log' },
     ],
-    color: { border: 'border-brand-500/60', ring: 'ring-2 ring-brand-500/30', badge: 'bg-brand-500', pill: 'bg-brand-500/15 text-brand-300' },
+    color: { border: 'border-brand-500/60', ring: 'ring-2 ring-brand-500/30', pill: 'bg-brand-500/15 text-brand-300' },
   },
   business: {
-    tagline: 'The full suite — payroll, accounting & more.',
+    tagline: 'Payroll, accounting & the full suite.',
     highlights: [
       { icon: Receipt, text: 'Unlimited invoicing & quotes' },
       { icon: Package, text: 'Unlimited products' },
@@ -123,7 +123,19 @@ const PLAN_META: Record<string, {
       { icon: Calculator, text: 'Full accounting ledger' },
       { icon: Shield, text: 'Full tax engine & analytics' },
     ],
-    color: { border: 'border-purple-500/40', ring: '', badge: 'bg-purple-500', pill: 'bg-purple-500/15 text-purple-300' },
+    color: { border: 'border-purple-500/40', ring: '', pill: 'bg-purple-500/15 text-purple-300' },
+  },
+  enterprise: {
+    tagline: 'Custom scale with API & white-label.',
+    highlights: [
+      { icon: Receipt, text: 'Unlimited everything' },
+      { icon: Users, text: 'Unlimited team members' },
+      { icon: Zap, text: 'Full API access' },
+      { icon: Shield, text: 'White-label ready' },
+      { icon: Briefcase, text: 'Dedicated support' },
+      { icon: BarChart3, text: 'Custom integrations' },
+    ],
+    color: { border: 'border-amber-500/40', ring: '', pill: 'bg-amber-500/15 text-amber-300' },
   },
 }
 
@@ -475,11 +487,12 @@ export default function OnboardingPage() {
           // Build a slug → plan map for quick lookup
           const bySlug = Object.fromEntries(recommendation.plans.map(p => [p.slug, p]))
 
-          // The three columns we always show
+          // The four columns we always show
           const columns: Array<{ slug: string; annualSlug: string | null }> = [
             { slug: 'free',         annualSlug: null },
             { slug: 'professional', annualSlug: 'professional-annual' },
             { slug: 'business',     annualSlug: 'business-annual' },
+            { slug: 'enterprise',   annualSlug: 'enterprise-annual' },
           ]
 
           return (
@@ -524,15 +537,16 @@ export default function OnboardingPage() {
                 </button>
               </div>
 
-              {/* Plan cards — always 3 columns */}
-              <div className="grid grid-cols-3 gap-4">
+              {/* Plan cards — always 4 columns */}
+              <div className="grid grid-cols-4 gap-3">
                 {columns.map(({ slug, annualSlug }) => {
                   const annualPlan = annualSlug ? bySlug[annualSlug] : null
                   const monthlyPlan = bySlug[slug]
                   if (!monthlyPlan && !annualPlan) return null
 
                   const activePlan = (billing === 'annual' && annualPlan) ? annualPlan : (monthlyPlan ?? annualPlan!)
-                  const meta = PLAN_META[slug] ?? PLAN_META.free
+                  const metaKey = slug.replace('-annual', '')
+                  const meta = PLAN_META[metaKey] ?? PLAN_META.free
                   const isSel = selectedPlan?.id === activePlan.id
                   const isRec = activePlan.slug === recommendation.recommended_plan_slug ||
                                 monthlyPlan?.slug === recommendation.recommended_plan_slug
@@ -546,7 +560,7 @@ export default function OnboardingPage() {
                     <div
                       key={slug}
                       onClick={() => setSelectedPlan(activePlan)}
-                      className={`relative flex flex-col rounded-2xl border p-5 gap-4 cursor-pointer transition-all ${meta.color.border} ${
+                      className={`relative flex flex-col rounded-2xl border p-4 gap-3 cursor-pointer transition-all ${meta.color.border} ${
                         isSel ? `${meta.color.ring} bg-white/5` : 'hover:bg-white/[0.03] bg-surface-800/40'
                       }`}
                     >
