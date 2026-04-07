@@ -229,9 +229,13 @@ export default function BillingPage() {
               </span>
             </div>
             <div className="text-sm text-slate-400 space-x-4">
-              {subscription.current_period_end && (
+              {subscription.current_period_end && currentPlanSlug !== 'free' && (
                 <span>
-                  {subscription.status === 'canceled' ? 'Access until' : 'Renews'}{' '}
+                  {subscription.status === 'canceled'
+                    ? 'Access until'
+                    : subscription.status === 'trialing'
+                    ? 'Trial expires'
+                    : 'Renews'}{' '}
                   {fmtDate(subscription.current_period_end)}
                 </span>
               )}

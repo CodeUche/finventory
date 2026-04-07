@@ -26,6 +26,8 @@ CELERY_TASK_EAGER_PROPAGATES = True
 
 # Use in-memory email backend — prevents anymail / SMTP from firing in tests
 EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
+# Satisfy anymail app checks without a real API key
+ANYMAIL = {"BREVO_API_KEY": "test-key-not-used"}
 
 # Suppress logs in tests unless DEBUG
 LOGGING["root"]["level"] = "CRITICAL"  # noqa: F405
