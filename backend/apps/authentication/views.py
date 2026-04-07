@@ -226,7 +226,9 @@ class VerifyEmailView(APIView):
             "Email Verified",
             "Email Verified!",
             f"<p>Your account for <strong>{user.email}</strong> is now active.</p>"
-            f"<p>You can close this tab.</p>",
+            f"<p style='margin-top:12px;'>The Audity app will automatically take you to the next step.</p>"
+            f"<p style='margin-top:8px;font-size:13px;color:#64748b;'>You can close this browser tab and return to Audity.</p>"
+            f"<script>setTimeout(function(){{window.close();}}, 4000);</script>",
         )
 
 
