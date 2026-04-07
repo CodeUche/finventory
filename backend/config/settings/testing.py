@@ -24,5 +24,8 @@ PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
 CELERY_TASK_ALWAYS_EAGER = True
 CELERY_TASK_EAGER_PROPAGATES = True
 
+# Use in-memory email backend — prevents anymail / SMTP from firing in tests
+EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
+
 # Suppress logs in tests unless DEBUG
 LOGGING["root"]["level"] = "CRITICAL"  # noqa: F405
