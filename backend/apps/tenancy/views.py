@@ -74,15 +74,19 @@ class OrganisationViewSet(viewsets.ModelViewSet):
         ).values_list("organisation_id", flat=True)
         return Organisation.objects.filter(id__in=user_org_ids, is_active=True)
 
-    def perform_create(self, serializer):
-        if getattr(self.request.user, 'is_sub_account', False):
+    def create(self, request, *args, **kwargs):
+        if getattr(request.user, 'is_sub_account', False):
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("Sub-accounts cannot create organisations. Contact your administrator.")
-        OrganisationService.create_organisation(
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        org = OrganisationService.create_organisation(
             name=serializer.validated_data["name"],
-            owner=self.request.user,
+            owner=request.user,
             extra=serializer.validated_data,
         )
+        out = self.get_serializer(org)
+        return Response(out.data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["post"], permission_classes=[IsOwnerOrAdmin],
             throttle_classes=[InvitationRateThrottle])

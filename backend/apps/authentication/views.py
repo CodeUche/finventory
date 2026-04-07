@@ -50,7 +50,7 @@ User = get_user_model()
 # Security constants
 MAX_LOGIN_ATTEMPTS = 5
 LOCKOUT_MINUTES = 30
-VERIFICATION_MAX_AGE = 86400       # 24 hours
+VERIFICATION_MAX_AGE = 900         # 15 minutes
 MFA_CHALLENGE_MAX_AGE = 300        # 5 minutes
 
 
@@ -77,7 +77,7 @@ def _send_verification_email(user, request=None):
     plain = (
         f"Hi {name},\n\n"
         f"Click the link below to verify your Audity email address.\n"
-        f"This link expires in 24 hours.\n\n"
+        f"This link expires in 15 minutes.\n\n"
         f"{link}\n\n"
         f"If you didn't create an Audity account you can safely ignore this email.\n\n"
         f"— The Audity Team"
@@ -87,7 +87,7 @@ def _send_verification_email(user, request=None):
 <div style="max-width:520px;margin:auto;background:#fff;border-radius:8px;padding:40px;box-shadow:0 2px 8px rgba(0,0,0,.08);">
   <h2 style="color:#1e293b;margin-top:0;">Verify your Audity account</h2>
   <p style="color:#475569;">Hi {name},</p>
-  <p style="color:#475569;">Click the button below to verify your email address. This link expires in <strong>24 hours</strong>.</p>
+  <p style="color:#475569;">Click the button below to verify your email address. This link expires in <strong>15 minutes</strong>.</p>
   <div style="text-align:center;margin:32px 0;">
     <a href="{link}" style="background:#6366f1;color:#fff;padding:14px 32px;border-radius:6px;text-decoration:none;font-weight:bold;display:inline-block;">Verify Email Address</a>
   </div>
@@ -168,7 +168,7 @@ class VerifyEmailView(APIView):
     """
     GET /api/v1/auth/verify-email/?token=<signed_token>
 
-    Verifies a signed email token (24-hour expiry). Sets is_verified=True
+    Verifies a signed email token (15-minute expiry). Sets is_verified=True
     and returns JWT tokens so the user is logged in immediately.
     """
 
@@ -223,7 +223,7 @@ class VerifyEmailView(APIView):
             user_pk = TimestampSigner().unsign(token, max_age=VERIFICATION_MAX_AGE)
         except SignatureExpired:
             return _html("Link Expired", "Verification Link Expired",
-                         "<p>This link has expired (valid for 24 hours).</p>"
+                         "<p>This link has expired (valid for 15 minutes).</p>"
                          "<p>Open Audity and use <strong>Resend verification email</strong> to get a new link.</p>",
                          success=False)
         except BadSignature:
