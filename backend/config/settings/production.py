@@ -60,6 +60,10 @@ if _config("DEBUG", default=False, cast=bool):
 DEBUG = False
 
 # Security headers
+# Railway terminates TLS at the proxy — trust the X-Forwarded-Proto header
+# so Django knows the original request was HTTPS. Without this, SECURE_SSL_REDIRECT
+# causes an infinite redirect loop (Django sees HTTP from the proxy, not HTTPS).
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SECURE_HSTS_SECONDS = 31536000
 SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 SECURE_HSTS_PRELOAD = True
