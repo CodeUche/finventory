@@ -2,8 +2,9 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   ChevronRight, Sparkles, Check, Loader2,
-  Clock, Star, ArrowLeft, Package, Users, Receipt,
+  Clock, ArrowLeft, Package, Users, Receipt,
   BarChart3, Calculator, Briefcase, Shield, CheckCircle2,
+  Zap,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { orgApi, subscriptionApi } from '@/services/api'
@@ -85,36 +86,45 @@ interface Recommendation {
   plans: Plan[]
 }
 
-// Per-plan feature highlights shown on the card (independent of backend features object)
-const PLAN_HIGHLIGHTS: Record<string, { icon: React.ElementType; text: string }[]> = {
-  free: [
-    { icon: Receipt, text: '10 invoices/month' },
-    { icon: Package, text: 'Up to 20 products' },
-    { icon: Users, text: 'Solo use only' },
-    { icon: BarChart3, text: 'Basic reports' },
-  ],
-  professional: [
-    { icon: Receipt, text: 'Unlimited invoicing' },
-    { icon: Package, text: 'Unlimited products' },
-    { icon: Users, text: 'Up to 5 team members' },
-    { icon: BarChart3, text: 'Advanced reports' },
-    { icon: Calculator, text: 'VAT + Income Tax' },
-    { icon: Shield, text: 'Audit log' },
-  ],
-  business: [
-    { icon: Receipt, text: 'Unlimited everything' },
-    { icon: Briefcase, text: 'Full payroll & HR' },
-    { icon: Calculator, text: 'Full accounting ledger' },
-    { icon: Users, text: 'Unlimited team members' },
-    { icon: BarChart3, text: 'All reports + analytics' },
-    { icon: Shield, text: 'Full tax engine' },
-  ],
-}
-
-const PLAN_COLOR: Record<string, { border: string; badge: string; button: string; glow: string }> = {
-  free:          { border: 'border-surface-600', badge: 'bg-emerald-500', button: 'bg-emerald-600 hover:bg-emerald-500', glow: '' },
-  professional:  { border: 'border-brand-500/50 ring-1 ring-brand-500/20', badge: 'bg-brand-500', button: 'bg-brand-500 hover:bg-brand-400', glow: 'shadow-brand-500/10 shadow-lg' },
-  business:      { border: 'border-purple-500/40', badge: 'bg-purple-500', button: 'bg-purple-600 hover:bg-purple-500', glow: '' },
+const PLAN_META: Record<string, {
+  highlights: { icon: React.ElementType; text: string }[]
+  color: { border: string; ring: string; badge: string; pill: string }
+  tagline: string
+}> = {
+  free: {
+    tagline: 'Get a feel for Audity. No card needed.',
+    highlights: [
+      { icon: Receipt, text: '10 invoices / month' },
+      { icon: Package, text: 'Up to 20 products' },
+      { icon: Users, text: 'Solo use only' },
+      { icon: BarChart3, text: 'Basic reports' },
+    ],
+    color: { border: 'border-surface-600', ring: '', badge: 'bg-emerald-500', pill: 'bg-emerald-500/15 text-emerald-400' },
+  },
+  professional: {
+    tagline: 'Everything a growing business needs.',
+    highlights: [
+      { icon: Receipt, text: 'Unlimited invoicing & quotes' },
+      { icon: Package, text: 'Up to 500 products' },
+      { icon: Users, text: 'Up to 5 team members' },
+      { icon: BarChart3, text: 'Advanced reports' },
+      { icon: Calculator, text: 'VAT + Income Tax engine' },
+      { icon: Shield, text: 'Full audit log' },
+    ],
+    color: { border: 'border-brand-500/60', ring: 'ring-2 ring-brand-500/30', badge: 'bg-brand-500', pill: 'bg-brand-500/15 text-brand-300' },
+  },
+  business: {
+    tagline: 'The full suite — payroll, accounting & more.',
+    highlights: [
+      { icon: Receipt, text: 'Unlimited invoicing & quotes' },
+      { icon: Package, text: 'Unlimited products' },
+      { icon: Users, text: 'Unlimited team members' },
+      { icon: Briefcase, text: 'Payroll & HR' },
+      { icon: Calculator, text: 'Full accounting ledger' },
+      { icon: Shield, text: 'Full tax engine & analytics' },
+    ],
+    color: { border: 'border-purple-500/40', ring: '', badge: 'bg-purple-500', pill: 'bg-purple-500/15 text-purple-300' },
+  },
 }
 
 // ─── Progress bar ──────────────────────────────────────────────────────────────
@@ -159,6 +169,7 @@ export default function OnboardingPage() {
   const [recommendation, setRecommendation] = useState<Recommendation | null>(null)
   const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null)
   const [initiatingPay, setInitiatingPay] = useState(false)
+  const [billing, setBilling] = useState<'monthly' | 'annual'>('monthly')
 
   // If org already exists skip to plan step
   useEffect(() => {
@@ -292,19 +303,6 @@ export default function OnboardingPage() {
     } finally {
       setInitiatingPay(false)
     }
-  }
-
-  const basePlanSlug = (slug: string) => {
-    if (slug.startsWith('professional')) return 'professional'
-    if (slug.startsWith('business')) return 'business'
-    return 'free'
-  }
-
-  const getPlanBadge = (plan: Plan) => {
-    if (!recommendation) return null
-    if (plan.slug === recommendation.recommended_plan_slug) return { label: '⭐ Recommended for you', color: 'bg-brand-500' }
-    if (plan.slug === recommendation.alternative_plan_slug) return { label: 'Good alternative', color: 'bg-amber-500' }
-    return null
   }
 
   // ─── Render ─────────────────────────────────────────────────────────────────
@@ -467,159 +465,191 @@ export default function OnboardingPage() {
             <div className="w-16 h-16 bg-brand-500/15 rounded-full flex items-center justify-center">
               <Sparkles size={28} className="text-brand-400 animate-pulse" />
             </div>
-            <div className="space-y-1">
-              <p className="text-white font-bold text-lg">Finding the right plan for you…</p>
-              <p className="text-slate-400 text-sm">Our AI is analysing your answers.</p>
-            </div>
+            <p className="text-white font-bold text-lg">Finding the right plan for you…</p>
             <Loader2 size={22} className="text-brand-400 animate-spin" />
           </div>
         )}
 
         {/* ── Step 2: Plan selection ── */}
-        {step === 2 && !loadingRec && recommendation && (
-          <div className="space-y-5">
+        {step === 2 && !loadingRec && recommendation && (() => {
+          // Build a slug → plan map for quick lookup
+          const bySlug = Object.fromEntries(recommendation.plans.map(p => [p.slug, p]))
 
-            {/* AI summary card */}
-            {recommendation.reasons.length > 0 && (
-              <div className="rounded-2xl border border-brand-500/30 bg-brand-500/5 p-4 space-y-2">
-                <div className="flex items-center gap-2">
-                  <Sparkles size={15} className="text-brand-400" />
-                  <span className="text-brand-300 font-semibold text-sm">AI recommendation</span>
-                  {recommendation.confidence && (
-                    <span className="ml-auto text-xs text-slate-500 capitalize">{recommendation.confidence} confidence</span>
-                  )}
-                </div>
-                <ul className="space-y-1">
-                  {recommendation.reasons.map((r, i) => (
-                    <li key={i} className="flex items-start gap-2 text-sm text-slate-300">
-                      <CheckCircle2 size={13} className="text-brand-400 mt-0.5 flex-shrink-0" />
-                      {r}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
+          // The three columns we always show
+          const columns: Array<{ slug: string; annualSlug: string | null }> = [
+            { slug: 'free',         annualSlug: null },
+            { slug: 'professional', annualSlug: 'professional-annual' },
+            { slug: 'business',     annualSlug: 'business-annual' },
+          ]
 
-            <p className="text-white font-semibold text-base">Choose your plan</p>
-
-            {/* Plan cards grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              {recommendation.plans.map((plan) => {
-                const badge = getPlanBadge(plan)
-                const isSel = selectedPlan?.id === plan.id
-                const base = basePlanSlug(plan.slug)
-                const colors = PLAN_COLOR[base] ?? PLAN_COLOR.free
-                const highlights = PLAN_HIGHLIGHTS[base] ?? []
-
-                return (
-                  <div
-                    key={plan.id}
-                    onClick={() => setSelectedPlan(plan)}
-                    className={`relative flex flex-col rounded-2xl border p-4 gap-3 cursor-pointer transition-all ${colors.border} ${colors.glow} ${
-                      isSel ? 'ring-2 ring-brand-500 bg-brand-500/5' : 'hover:border-surface-500 bg-surface-800/40'
-                    }`}
-                  >
-                    {/* Recommended badge */}
-                    {badge && (
-                      <span className={`absolute -top-3 left-1/2 -translate-x-1/2 whitespace-nowrap text-xs font-semibold px-3 py-1 rounded-full text-white ${badge.color}`}>
-                        {badge.label}
-                      </span>
-                    )}
-
-                    {/* Plan name */}
-                    <div className="flex items-center justify-between mt-1">
-                      <div>
-                        <p className="text-white font-bold text-base">{plan.name}</p>
-                        {plan.is_free
-                          ? <p className="text-emerald-400 text-xs font-medium mt-0.5">Always free</p>
-                          : <p className="text-slate-400 text-xs mt-0.5">14-day free trial</p>
-                        }
-                      </div>
-                      <div className={`w-5 h-5 rounded-full border-2 flex-shrink-0 flex items-center justify-center transition-all ${
-                        isSel ? 'bg-brand-500 border-brand-500' : 'border-slate-600'
-                      }`}>
-                        {isSel && <Check size={11} className="text-white" />}
-                      </div>
-                    </div>
-
-                    {/* Price */}
-                    <div>
-                      {plan.is_free
-                        ? <span className="text-3xl font-bold text-white">Free</span>
-                        : (
-                          <>
-                            <span className="text-3xl font-bold text-white">
-                              ₦{parseFloat(plan.price).toLocaleString('en-NG', { maximumFractionDigits: 0 })}
-                            </span>
-                            <span className="text-slate-400 text-sm">/mo</span>
-                          </>
-                        )
-                      }
-                    </div>
-
-                    {/* Features */}
-                    <div className="space-y-1.5 flex-1">
-                      {highlights.map(({ icon: Icon, text }) => (
-                        <div key={text} className="flex items-center gap-2 text-xs text-slate-300">
-                          <Icon size={12} className="text-brand-400 shrink-0" />
-                          {text}
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Alt reasons */}
-                    {plan.slug === recommendation.alternative_plan_slug && recommendation.alternative_reasons.length > 0 && (
-                      <div className="pt-2 border-t border-surface-700 space-y-1">
-                        {recommendation.alternative_reasons.slice(0, 2).map((r, i) => (
-                          <p key={i} className="text-xs text-slate-400 flex items-start gap-1.5">
-                            <Star size={10} className="text-amber-400 mt-0.5 shrink-0" />
-                            {r}
-                          </p>
-                        ))}
-                      </div>
+          return (
+            <div className="space-y-6 w-full">
+              {/* AI summary */}
+              {recommendation.reasons.length > 0 && (
+                <div className="rounded-2xl border border-brand-500/30 bg-brand-500/5 px-5 py-4 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Sparkles size={14} className="text-brand-400" />
+                    <span className="text-brand-300 font-semibold text-sm">AI recommendation</span>
+                    {recommendation.confidence && (
+                      <span className="ml-auto text-xs text-slate-500 capitalize">{recommendation.confidence} confidence</span>
                     )}
                   </div>
-                )
-              })}
-            </div>
-
-            {/* CTA */}
-            <button
-              disabled={!selectedPlan || initiatingPay}
-              onClick={() => selectedPlan && handleSelectAndPay(selectedPlan)}
-              className="btn-primary w-full justify-center py-3.5 text-base disabled:opacity-40"
-            >
-              {initiatingPay ? (
-                <><Loader2 size={16} className="animate-spin" /> Setting things up…</>
-              ) : selectedPlan?.is_free ? (
-                <span className="flex items-center gap-2"><CheckCircle2 size={17} /> Start for free — no card needed</span>
-              ) : (
-                <span className="flex items-center gap-2"><Clock size={17} /> Start 14-day free trial</span>
+                  <ul className="space-y-1">
+                    {recommendation.reasons.map((r, i) => (
+                      <li key={i} className="flex items-start gap-2 text-sm text-slate-300">
+                        <CheckCircle2 size={13} className="text-brand-400 mt-0.5 shrink-0" />
+                        {r}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               )}
-            </button>
 
-            {!selectedPlan?.is_free && (
-              <p className="text-center text-xs text-slate-500">
-                Full {selectedPlan?.name} access for 14 days. No card required upfront. Cancel anytime.
-              </p>
-            )}
+              {/* Billing toggle */}
+              <div className="flex items-center justify-center gap-1 p-1 bg-surface-800 rounded-xl w-fit mx-auto">
+                <button
+                  onClick={() => setBilling('monthly')}
+                  className={`px-5 py-2 rounded-lg text-sm font-medium transition-all ${
+                    billing === 'monthly' ? 'bg-surface-600 text-white shadow' : 'text-slate-400 hover:text-white'
+                  }`}
+                >Monthly</button>
+                <button
+                  onClick={() => setBilling('annual')}
+                  className={`px-5 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${
+                    billing === 'annual' ? 'bg-surface-600 text-white shadow' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Annual
+                  <span className="text-xs bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full font-semibold">1 month free</span>
+                </button>
+              </div>
 
-            <div className="flex items-center justify-between text-sm">
+              {/* Plan cards — always 3 columns */}
+              <div className="grid grid-cols-3 gap-4">
+                {columns.map(({ slug, annualSlug }) => {
+                  const annualPlan = annualSlug ? bySlug[annualSlug] : null
+                  const monthlyPlan = bySlug[slug]
+                  if (!monthlyPlan && !annualPlan) return null
+
+                  const activePlan = (billing === 'annual' && annualPlan) ? annualPlan : (monthlyPlan ?? annualPlan!)
+                  const meta = PLAN_META[slug] ?? PLAN_META.free
+                  const isSel = selectedPlan?.id === activePlan.id
+                  const isRec = activePlan.slug === recommendation.recommended_plan_slug ||
+                                monthlyPlan?.slug === recommendation.recommended_plan_slug
+
+                  // Per-month equivalent for annual plans
+                  const price = parseFloat(activePlan.price)
+                  const isAnnualVariant = billing === 'annual' && !!annualPlan && !activePlan.is_free
+                  const perMonth = isAnnualVariant ? Math.round(price / 12) : price
+
+                  return (
+                    <div
+                      key={slug}
+                      onClick={() => setSelectedPlan(activePlan)}
+                      className={`relative flex flex-col rounded-2xl border p-5 gap-4 cursor-pointer transition-all ${meta.color.border} ${
+                        isSel ? `${meta.color.ring} bg-white/5` : 'hover:bg-white/[0.03] bg-surface-800/40'
+                      }`}
+                    >
+                      {isRec && (
+                        <span className="absolute -top-3 left-1/2 -translate-x-1/2 whitespace-nowrap text-xs font-bold px-3 py-1 rounded-full text-white bg-brand-500">
+                          ⭐ Recommended
+                        </span>
+                      )}
+
+                      {/* Header */}
+                      <div className="flex items-start justify-between mt-1 gap-2">
+                        <div>
+                          <p className="text-white font-bold text-base leading-tight">{monthlyPlan?.name ?? activePlan.name}</p>
+                          <p className="text-slate-500 text-xs mt-1 leading-snug">{meta.tagline}</p>
+                        </div>
+                        <div className={`w-5 h-5 rounded-full border-2 flex-shrink-0 flex items-center justify-center transition-all mt-0.5 ${
+                          isSel ? 'bg-brand-500 border-brand-500' : 'border-slate-600'
+                        }`}>
+                          {isSel && <Check size={10} className="text-white" />}
+                        </div>
+                      </div>
+
+                      {/* Price */}
+                      <div>
+                        {activePlan.is_free ? (
+                          <div className="flex items-end gap-1">
+                            <span className="text-3xl font-extrabold text-white">Free</span>
+                            <span className="text-emerald-400 text-xs pb-1 font-medium">forever</span>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="flex items-end gap-1">
+                              <span className="text-3xl font-extrabold text-white">
+                                ₦{perMonth.toLocaleString('en-NG')}
+                              </span>
+                              <span className="text-slate-400 text-sm pb-1">/mo</span>
+                            </div>
+                            {isAnnualVariant && (
+                              <p className="text-xs text-emerald-400 mt-0.5">
+                                ₦{price.toLocaleString('en-NG')} billed annually
+                              </p>
+                            )}
+                          </>
+                        )}
+                      </div>
+
+                      {/* Features */}
+                      <div className="space-y-2 flex-1">
+                        {meta.highlights.map(({ icon: Icon, text }) => (
+                          <div key={text} className="flex items-center gap-2 text-xs text-slate-300">
+                            <Icon size={11} className="text-brand-400 shrink-0" />
+                            {text}
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Plan badge */}
+                      <div className={`text-xs font-medium px-3 py-1.5 rounded-lg text-center ${meta.color.pill}`}>
+                        {activePlan.is_free ? 'No card needed' : '14-day free trial'}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+
+              {/* CTA */}
               <button
-                onClick={() => { setStep(1); setQIndex(QUESTIONS.length - 1) }}
-                className="text-slate-500 hover:text-slate-400 flex items-center gap-1"
+                disabled={!selectedPlan || initiatingPay}
+                onClick={() => selectedPlan && handleSelectAndPay(selectedPlan)}
+                className="btn-primary w-full justify-center py-3.5 text-base disabled:opacity-40"
               >
-                <ArrowLeft size={13} /> Change answers
+                {initiatingPay ? (
+                  <><Loader2 size={16} className="animate-spin" /> Setting things up…</>
+                ) : selectedPlan?.is_free ? (
+                  <span className="flex items-center gap-2"><Zap size={17} /> Start for free — no card needed</span>
+                ) : (
+                  <span className="flex items-center gap-2"><Clock size={17} /> Start my 14-day free trial</span>
+                )}
               </button>
-              <button
-                onClick={async () => { await markOnboardingComplete(); navigate('/dashboard') }}
-                className="text-slate-600 hover:text-slate-400"
-              >
-                Skip for now →
-              </button>
+
+              {!selectedPlan?.is_free && (
+                <p className="text-center text-xs text-slate-500">
+                  Full access for 14 days. No card required upfront. Cancel anytime.
+                </p>
+              )}
+
+              <div className="flex items-center justify-between text-sm">
+                <button
+                  onClick={() => { setStep(1); setQIndex(QUESTIONS.length - 1) }}
+                  className="text-slate-500 hover:text-slate-400 flex items-center gap-1"
+                >
+                  <ArrowLeft size={13} /> Change answers
+                </button>
+                <button
+                  onClick={async () => { await markOnboardingComplete(); navigate('/dashboard') }}
+                  className="text-slate-600 hover:text-slate-400"
+                >
+                  Skip for now →
+                </button>
+              </div>
             </div>
-          </div>
-        )}
+          )
+        })()}
 
         <p className="text-center text-xs text-slate-600">
           You can switch plans or invite team members any time from Settings.
