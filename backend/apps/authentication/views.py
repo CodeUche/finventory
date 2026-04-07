@@ -10,7 +10,7 @@ import random
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
-from django.core.mail import send_mail
+from django.core.mail import EmailMultiAlternatives
 from django.core.signing import BadSignature, SignatureExpired, TimestampSigner
 from django.conf import settings
 from django.http import HttpResponse
@@ -72,22 +72,41 @@ def _send_verification_email(user, request=None):
     else:
         backend_url = getattr(settings, "BACKEND_URL", "http://localhost:8000")
         link = f"{backend_url}/api/v1/auth/verify-email/?token={token}"
-    from_email = getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@auditytechnologies.com")
+    from_email = getattr(settings, "DEFAULT_FROM_EMAIL", "info@auditytechnologies.com")
+    name = user.first_name or user.email
+    plain = (
+        f"Hi {name},\n\n"
+        f"Click the link below to verify your Audity email address.\n"
+        f"This link expires in 24 hours.\n\n"
+        f"{link}\n\n"
+        f"If you didn't create an Audity account you can safely ignore this email.\n\n"
+        f"— The Audity Team"
+    )
+    html = f"""<!DOCTYPE html>
+<html><body style="font-family:Arial,sans-serif;background:#f8fafc;margin:0;padding:32px;">
+<div style="max-width:520px;margin:auto;background:#fff;border-radius:8px;padding:40px;box-shadow:0 2px 8px rgba(0,0,0,.08);">
+  <h2 style="color:#1e293b;margin-top:0;">Verify your Audity account</h2>
+  <p style="color:#475569;">Hi {name},</p>
+  <p style="color:#475569;">Click the button below to verify your email address. This link expires in <strong>24 hours</strong>.</p>
+  <div style="text-align:center;margin:32px 0;">
+    <a href="{link}" style="background:#6366f1;color:#fff;padding:14px 32px;border-radius:6px;text-decoration:none;font-weight:bold;display:inline-block;">Verify Email Address</a>
+  </div>
+  <p style="color:#94a3b8;font-size:13px;">If the button doesn't work, copy and paste this link into your browser:<br>
+    <a href="{link}" style="color:#6366f1;word-break:break-all;">{link}</a>
+  </p>
+  <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0;">
+  <p style="color:#94a3b8;font-size:12px;">If you didn't create an Audity account you can safely ignore this email.</p>
+</div>
+</body></html>"""
     try:
-        send_mail(
+        msg = EmailMultiAlternatives(
             subject="Verify your Audity account",
-            message=(
-                f"Hi {user.first_name or user.email},\n\n"
-                f"Click the link below to verify your email address. "
-                f"This link expires in 24 hours.\n\n"
-                f"{link}\n\n"
-                f"If you didn't create an Audity account, you can safely ignore this email.\n\n"
-                f"— The Audity Team"
-            ),
+            body=plain,
             from_email=from_email,
-            recipient_list=[user.email],
-            fail_silently=False,
+            to=[user.email],
         )
+        msg.attach_alternative(html, "text/html")
+        msg.send(fail_silently=False)
     except Exception as e:
         logger.error("Failed to send verification email to %s: %s", user.email, e)
         raise

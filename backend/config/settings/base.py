@@ -60,6 +60,7 @@ THIRD_PARTY_APPS = [
     "django_filters",
     "drf_spectacular",
     "django_celery_beat",
+    "anymail",
 ]
 
 LOCAL_APPS = [
