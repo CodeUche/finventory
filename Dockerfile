@@ -58,6 +58,10 @@ EXPOSE 8000
 # Use shell form (string) so Railway can also override with env vars.
 CMD python manage.py migrate --no-input && \
     python manage.py collectstatic --no-input --clear 2>/dev/null; \
+    if [ -n "$DJANGO_SUPERUSER_EMAIL" ] && [ -n "$DJANGO_SUPERUSER_PASSWORD" ]; then \
+      python manage.py createsuperuser --no-input \
+        --email "$DJANGO_SUPERUSER_EMAIL" 2>/dev/null || true; \
+    fi; \
     gunicorn config.wsgi:application --bind "0.0.0.0:${PORT:-8000}" \
     --workers 2 --worker-class sync \
     --worker-tmp-dir /dev/shm \
