@@ -19,6 +19,7 @@ django-db-geventpool==4.0.8
 redis==5.2.1
 django-redis==5.4.0
 celery==5.4.0
+django-celery-beat==2.7.0
 kombu==5.4.2
 
 # Filtering & Search
