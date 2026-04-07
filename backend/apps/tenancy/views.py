@@ -191,6 +191,58 @@ class OrganisationViewSet(viewsets.ModelViewSet):
         config.save()
         return Response(EmailConfigSerializer(config).data)
 
+    @action(detail=True, methods=["post"], permission_classes=[IsOwnerOrAdmin],
+            url_path="create_entity")
+    def create_entity(self, request, pk=None):
+        """
+        POST /tenancy/organisations/{id}/create_entity/
+        Creates a child entity under this organisation (Enterprise plan only).
+        """
+        from apps.subscriptions.models import Subscription
+        parent = self.get_object()
+
+        # Check Enterprise plan
+        sub = getattr(parent, 'subscription', None)
+        plan_slug = sub.plan.slug if sub and sub.plan else ''
+        if 'enterprise' not in plan_slug:
+            return Response(
+                {"error": {"code": "plan_required", "message": "Multi-entity is an Enterprise feature. Upgrade to create child entities."}},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        name = request.data.get("name", "").strip()
+        entity_group_name = request.data.get("entity_group_name", "").strip()
+        country = request.data.get("country", parent.country)
+        currency = request.data.get("currency", parent.currency)
+
+        if not name:
+            return Response(
+                {"error": {"code": "validation_error", "message": "Entity name is required."}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        child = OrganisationService.create_organisation(
+            name=name,
+            owner=request.user,
+            extra={"country": country, "currency": currency, "account_type": parent.account_type},
+        )
+        child.parent_org = parent
+        child.entity_group_name = entity_group_name or name
+        child.save(update_fields=["parent_org", "entity_group_name"])
+
+        return Response(self.get_serializer(child).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["get"], permission_classes=[IsOwnerOrAdmin],
+            url_path="entities")
+    def entities(self, request, pk=None):
+        """
+        GET /tenancy/organisations/{id}/entities/
+        Lists all child entities of this organisation.
+        """
+        parent = self.get_object()
+        children = parent.child_entities.filter(is_active=True, is_deleted=False)
+        return Response(self.get_serializer(children, many=True).data)
+
     @action(detail=False, methods=["post"])
     def accept_invitation(self, request):
         """Accept a pending invitation using a token."""

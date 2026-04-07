@@ -662,7 +662,7 @@ export default function SettingsPage() {
     { id: 'profile',           label: 'Profile',    icon: User },
     { id: 'company',           label: 'Company',    icon: Building2,  requiresSettings: true },
     { id: 'security',          label: 'Security',   icon: Shield },
-    { id: 'team',              label: 'Team',       icon: UsersRound, ownerOnly: true },
+    { id: 'team',              label: 'Team',       icon: UsersRound, ownerOnly: true, requiresPlan: 'team' },
     { id: 'payments',          label: 'Payments',   icon: CreditCard, requiresSettings: true },
     { id: 'email',             label: 'Email',      icon: Mail,       ownerOnly: true },
     { id: 'periods',           label: 'Periods',    icon: Lock,       requiresSettings: true },
@@ -682,7 +682,7 @@ export default function SettingsPage() {
 
   return (
     <>
-    <div className={`space-y-6 ${activeTab === 'invoice_templates' ? '' : 'max-w-2xl'}`}>
+    <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-white">Settings</h1>
         <p className="text-slate-400 text-sm">Manage your account and organisation</p>
@@ -709,7 +709,7 @@ export default function SettingsPage() {
 
       {/* ── Profile ── */}
       {activeTab === 'profile' && (
-        <div className="card p-6 space-y-6">
+        <div className="card p-6 space-y-6 max-w-3xl">
           {/* Avatar */}
           <div className="flex items-center gap-5">
             <div className="relative group">
@@ -762,7 +762,7 @@ export default function SettingsPage() {
 
       {/* ── Company ── */}
       {activeTab === 'company' && (
-        <div className="card p-6 space-y-6">
+        <div className="card p-6 space-y-6 max-w-3xl">
           {/* Logo */}
           <div className="flex items-center gap-5">
             <div className="relative group">
@@ -952,7 +952,7 @@ export default function SettingsPage() {
 
       {/* ── Financial Periods ── */}
       {activeTab === 'periods' && (
-        <div className="card p-6 space-y-5">
+        <div className="card p-6 space-y-5 max-w-3xl">
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-base font-semibold text-white">Financial Period Locking</h3>
@@ -1011,7 +1011,7 @@ export default function SettingsPage() {
 
       {/* ── Team Members ── */}
       {activeTab === 'team' && (
-        <div className="space-y-5">
+        <div className="space-y-5 max-w-3xl">
           {/* Workspace ID — staff use this to log in */}
           <div className="card p-5 border border-brand-500/20 bg-brand-500/5">
             <div className="flex items-start gap-3">
@@ -1280,7 +1280,7 @@ export default function SettingsPage() {
 
       {/* ── Payments ── */}
       {activeTab === 'payments' && (
-        <div className="space-y-6">
+        <div className="space-y-6 max-w-3xl">
           {!isOwner && (
             <div className="flex items-center gap-3 p-4 rounded-xl bg-surface-800 border border-surface-700 text-sm text-slate-400">
               <Lock size={16} className="text-slate-500 shrink-0" />
@@ -1366,7 +1366,7 @@ export default function SettingsPage() {
 
       {/* ── Security ── */}
       {activeTab === 'security' && (
-        <div className="space-y-4">
+        <div className="space-y-4 max-w-3xl">
           {/* Inactivity Timeout */}
           <div className="card p-6 space-y-4">
             <div>
@@ -1578,7 +1578,7 @@ export default function SettingsPage() {
 
       {/* ── Email / SMTP ── */}
       {activeTab === 'email' && (
-        <div className="card p-6 space-y-5">
+        <div className="card p-6 space-y-5 max-w-3xl">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-brand-500/15 rounded-xl flex items-center justify-center">
               <Mail size={20} className="text-brand-400" />
@@ -2376,7 +2376,7 @@ export default function SettingsPage() {
 
       {/* ── AI Assistant ─────────────────────────────────────────────────── */}
       {activeTab === 'ai' && (
-        <div className="space-y-6">
+        <div className="space-y-6 max-w-3xl">
           <div className="card p-6 space-y-4">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-brand-500/20 flex items-center justify-center">

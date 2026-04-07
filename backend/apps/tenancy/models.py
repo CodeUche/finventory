@@ -123,6 +123,18 @@ class Organisation(SoftDeleteModel):
         on_delete=models.PROTECT,
         related_name="owned_organisations",
     )
+    parent_org = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='child_entities',
+        help_text="Parent organisation for multi-entity groups (Enterprise only).",
+    )
+    entity_group_name = models.CharField(
+        max_length=100, blank=True,
+        help_text="Short label for this entity within the group (e.g. 'Lagos Branch', 'Holdings').",
+    )
     is_active = models.BooleanField(default=True)
     # Set to True once the user explicitly completes the onboarding flow
     # (selects a plan and pays, or deliberately chooses the free plan).

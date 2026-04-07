@@ -336,6 +336,10 @@ export const orgApi = {
   removeStamp: (id: string) => api.post(`/tenancy/organisations/${id}/remove_stamp/`),
   uploadLogo: (id: string, file: File) => uploadFileDirect(`/tenancy/organisations/${id}/upload_logo/`, file),
   uploadStamp: (id: string, file: File) => uploadFileDirect(`/tenancy/organisations/${id}/upload_stamp/`, file),
+  listEntities: (orgId: string) =>
+    api.get(`/tenancy/organisations/${orgId}/entities/`),
+  createEntity: (orgId: string, data: { name: string; entity_group_name?: string; country?: string; currency?: string }) =>
+    api.post(`/tenancy/organisations/${orgId}/create_entity/`, data),
 }
 
 export const teamApi = {

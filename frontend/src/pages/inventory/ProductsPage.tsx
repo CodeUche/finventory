@@ -581,11 +581,15 @@ export default function ProductsPage() {
 
               {/* Opening stock / Batch (create only, physical only) */}
               {!editId && form.product_type === 'physical' && (
-                <div className="border-t border-surface-700 pt-4 space-y-3">
-                  <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Opening Stock & Batch/Lot</p>
+                <div className="rounded-xl border border-brand-500/30 bg-brand-500/5 p-4 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <Package size={15} className="text-brand-400" />
+                    <p className="text-sm font-semibold text-white">Available Quantity (Opening Stock)</p>
+                  </div>
+                  <p className="text-xs text-slate-400 -mt-1">Enter how many units you currently have. This immediately sets your stock level.</p>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="label">Quantity <FieldTooltip text="How many units you currently have. Leave at 0 to add stock later." /></label>
+                      <label className="label">Quantity in Stock <FieldTooltip text="How many units you currently have. Leave at 0 to add stock later." /></label>
                       <input
                         type="number"
                         className="input"
@@ -609,7 +613,7 @@ export default function ProductsPage() {
                   </div>
                   {/* Batch / Lot details — optional; if batch number provided, creates a tracked batch */}
                   <div>
-                    <label className="label">Batch / Lot Number <FieldTooltip text="Optional. Enter to create a tracked batch that appears in Batches & Lots. Leave blank for simple opening stock." /></label>
+                    <label className="label">Batch / Lot Number <span className="text-slate-500 font-normal">(optional)</span> <FieldTooltip text="Optional. Enter to create a tracked batch that appears in Batches & Lots. Leave blank for simple opening stock." /></label>
                     <input
                       type="text"
                       className="input"

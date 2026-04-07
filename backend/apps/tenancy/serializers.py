@@ -12,6 +12,10 @@ from .models import Invitation, Membership, ModulePermission, Organisation
 class OrganisationSerializer(serializers.ModelSerializer):
     managing_firm_name = serializers.SerializerMethodField()
     managing_firm_logo = serializers.SerializerMethodField()
+    child_entity_count = serializers.SerializerMethodField()
+
+    def get_child_entity_count(self, obj):
+        return obj.child_entities.filter(is_active=True, is_deleted=False).count()
 
     def get_managing_firm_name(self, obj):
         """Return the partner firm name if this org has an active partner managing it."""
@@ -44,8 +48,9 @@ class OrganisationSerializer(serializers.ModelSerializer):
             "invoice_template", "pension_provider", "ai_custom_context",
             "onboarding_completed",
             "managing_firm_name", "managing_firm_logo",
+            "parent_org", "entity_group_name", "child_entity_count",
         ]
-        read_only_fields = ["id", "slug", "created_at", "updated_at", "managing_firm_name", "managing_firm_logo"]
+        read_only_fields = ["id", "slug", "created_at", "updated_at", "managing_firm_name", "managing_firm_logo", "child_entity_count"]
         extra_kwargs = {
             # Enforce upload validators so only safe image formats reach the server
             "logo": {"validators": [validate_image_upload], "required": False},

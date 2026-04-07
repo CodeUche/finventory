@@ -44,6 +44,8 @@ const PLAN_ICONS: Record<string, React.ElementType> = {
   'professional-annual': Star,
   business: Building2,
   'business-annual': Building2,
+  enterprise: Layers,
+  'enterprise-annual': Layers,
 }
 
 // Hardcoded per-plan module details for clear comparison
@@ -54,26 +56,31 @@ type ModuleRow = {
   free: boolean | string
   professional: boolean | string
   business: boolean | string
+  enterprise: boolean | string
 }
 
 const MODULE_ROWS: ModuleRow[] = [
-  { icon: ShoppingCart,  label: 'Sales & Invoicing',      tip: 'Create invoices, record payments, manage your sales pipeline',                                                          free: '10/month',   professional: true,              business: true },
-  { icon: Users,         label: 'Customer Management',   tip: 'Maintain a full customer database, view statement, track credits and balances',                                          free: 'Up to 20',   professional: true,              business: true },
-  { icon: Package,       label: 'Inventory Management',  tip: 'Manage products, track stock levels, set reorder alerts, handle batches and lots',                                       free: 'Up to 20',   professional: true,              business: true },
-  { icon: Wallet,        label: 'Expense Tracking',       tip: 'Record business expenses and income, group by category, track savings',                                                  free: '10/month',   professional: true,              business: true },
-  { icon: Calculator,    label: 'Tax Engine',             tip: 'Free: VAT only. Professional: VAT + Income Tax. Business: Full (WHT, Excise Duty, Filing Guide)',                       free: 'VAT only',   professional: 'VAT + Income Tax', business: 'Full' },
-  { icon: BarChart3,     label: 'Reports & Analytics',   tip: 'P&L, revenue trends, top products, top customers, expense breakdown and balance sheet',                                  free: 'Basic',      professional: 'Advanced',        business: 'Advanced' },
-  { icon: FileText,      label: 'Quotes & Estimates',    tip: 'Send price quotes to customers before converting them to invoices',                                                      free: false,        professional: true,              business: true },
-  { icon: Clock,         label: 'Recurring Invoices',    tip: 'Auto-generate invoices on a schedule for subscription or retainer clients',                                             free: false,        professional: true,              business: true },
-  { icon: Truck,         label: 'Purchase Orders',       tip: 'Raise purchase orders to suppliers and track delivery and receipt',                                                      free: false,        professional: true,              business: true },
-  { icon: Receipt,       label: 'Bills & Payables',      tip: 'Track bills owed to suppliers, schedule payments, manage folders',                                                       free: false,        professional: true,              business: true },
-  { icon: DollarSign,    label: 'Budget Planning',        tip: 'Set spending budgets per category, compare actual vs planned spend',                                                     free: false,        professional: true,              business: true },
-  { icon: Shield,        label: 'Audit Log',              tip: 'Full trail of every action taken in the system — who did what and when',                                                 free: false,        professional: true,              business: true },
-  { icon: Users,         label: 'Team & Permissions',    tip: 'Invite staff with custom access levels per module (e.g. view-only, write, full edit)',                                   free: false,        professional: true,              business: true },
-  { icon: Briefcase,     label: 'Payroll',                tip: 'Manage employees, run payroll, compute PAYE and pension deductions',                                                     free: false,        professional: false,             business: true },
-  { icon: Calculator,    label: 'Accounting Ledger',     tip: 'Full chart of accounts, journal entries, fixed assets, bank reconciliation',                                             free: false,        professional: false,             business: true },
-  { icon: Shield,        label: 'Owner Analytics',        tip: 'Private profit view using your personal cost price — only you can see this',                                             free: false,        professional: false,             business: true },
-  { icon: Package,       label: 'API Access',             tip: 'Connect Audity to your own tools and integrations via REST API',                                                         free: false,        professional: false,             business: true },
+  { icon: ShoppingCart,    label: 'Sales & Invoicing',          tip: 'Create invoices, record payments, manage your sales pipeline',                                                free: '10/month',   professional: true,               business: true,               enterprise: true },
+  { icon: Users,           label: 'Customer Management',        tip: 'Full customer database, statements, credits and balances',                                                    free: 'Up to 20',   professional: true,               business: true,               enterprise: true },
+  { icon: Package,         label: 'Inventory Management',       tip: 'Products, stock levels, reorder alerts, batches and lots',                                                    free: 'Up to 20',   professional: true,               business: true,               enterprise: true },
+  { icon: Wallet,          label: 'Expense Tracking',           tip: 'Record expenses by category, track savings vs prior period',                                                  free: '10/month',   professional: true,               business: true,               enterprise: true },
+  { icon: Calculator,      label: 'Tax Engine',                 tip: 'Free: VAT only. Professional: VAT + Income Tax. Business & Enterprise: Full (WHT, Excise, Filing Guide)',   free: 'VAT only',   professional: 'VAT + Income Tax', business: 'Full',             enterprise: 'Full' },
+  { icon: BarChart3,       label: 'Reports & Analytics',        tip: 'P&L, revenue trends, top products, top customers, expense breakdown and balance sheet',                       free: 'Basic',      professional: 'Advanced',         business: 'Advanced',         enterprise: 'Advanced + Custom' },
+  { icon: FileText,        label: 'Quotes & Estimates',         tip: 'Send price quotes before converting to invoices',                                                             free: false,        professional: true,               business: true,               enterprise: true },
+  { icon: Clock,           label: 'Recurring Invoices',         tip: 'Auto-generate invoices on a schedule for retainer clients',                                                   free: false,        professional: true,               business: true,               enterprise: true },
+  { icon: Truck,           label: 'Purchase Orders',            tip: 'Raise POs to suppliers and track delivery and receipt',                                                       free: false,        professional: true,               business: true,               enterprise: true },
+  { icon: Receipt,         label: 'Bills & Payables',           tip: 'Track bills owed, schedule payments, manage folders',                                                         free: false,        professional: true,               business: true,               enterprise: true },
+  { icon: DollarSign,      label: 'Budget Planning',            tip: 'Set spending budgets per category, compare actual vs planned',                                                free: false,        professional: true,               business: true,               enterprise: true },
+  { icon: Shield,          label: 'Audit Log',                  tip: 'Full trail of every action — who did what and when',                                                          free: false,        professional: true,               business: true,               enterprise: true },
+  { icon: Users,           label: 'Team & Permissions',         tip: 'Invite staff with per-module access levels',                                                                  free: false,        professional: 'Up to 5 users',    business: 'Unlimited',        enterprise: 'Unlimited + Custom roles' },
+  { icon: Briefcase,       label: 'Payroll & HR',               tip: 'Manage employees, run payroll, compute PAYE and pension',                                                     free: false,        professional: false,              business: true,               enterprise: true },
+  { icon: Calculator,      label: 'Accounting Ledger',          tip: 'Full chart of accounts, journal entries, fixed assets, bank reconciliation',                                  free: false,        professional: false,              business: true,               enterprise: true },
+  { icon: Shield,          label: 'Owner Analytics',            tip: 'Private profit view using personal cost price — only you see this',                                           free: false,        professional: false,              business: true,               enterprise: true },
+  { icon: Package,         label: 'API Access',                 tip: 'Business: Read-only API. Enterprise: Full read/write REST API + webhooks',                                    free: false,        professional: false,              business: 'Read-only',        enterprise: 'Full + Webhooks' },
+  { icon: Layers,          label: 'Multi-Entity Management',    tip: 'Create branches, subsidiaries or business units — each with its own data and team, managed from one account', free: false,        professional: false,              business: false,              enterprise: true },
+  { icon: LayoutDashboard, label: 'White-Label Branding',       tip: 'Custom logo, brand colours and domain — your clients see your brand, not Audity\'s',                         free: false,        professional: false,              business: false,              enterprise: true },
+  { icon: GraduationCap,   label: 'Dedicated Support & SLA',   tip: 'Named account manager, <4hr priority response, and a guided onboarding session',                              free: false,        professional: false,              business: false,              enterprise: true },
+  { icon: FileBarChart2,   label: 'Bulk Export & Scheduled Reports', tip: 'Automated report delivery on a schedule and bulk data exports across all entities',                     free: false,        professional: false,              business: false,              enterprise: true },
 ]
 
 const STATUS_COLORS: Record<string, string> = {
@@ -95,9 +102,10 @@ function fmtDate(dt: string | null) {
 }
 
 // Map annual slug → base plan slug for feature column lookup
-function basePlanSlug(slug: string): 'free' | 'professional' | 'business' {
+function basePlanSlug(slug: string): 'free' | 'professional' | 'business' | 'enterprise' {
   if (slug === 'professional' || slug === 'professional-annual') return 'professional'
   if (slug === 'business' || slug === 'business-annual') return 'business'
+  if (slug === 'enterprise' || slug === 'enterprise-annual') return 'enterprise'
   return 'free'
 }
 
@@ -291,7 +299,7 @@ export default function BillingPage() {
             </button>
           </div>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
           {plans.filter((p) => {
             if (!FEATURES.PARTNER_CHANNEL && p.slug.startsWith('partner-')) return false
             const isFree = parseFloat(p.price) === 0
@@ -685,7 +693,7 @@ function PlanModuleList({ slug }: { slug: string }) {
   return (
     <div className="space-y-1 flex-1">
       {visible.map((row) => {
-        const val = row[validKey as 'free' | 'professional' | 'business']
+        const val = row[validKey as 'free' | 'professional' | 'business' | 'enterprise']
         const included = val !== false
         const badge = typeof val === 'string' ? val : null
         const Icon = row.icon
