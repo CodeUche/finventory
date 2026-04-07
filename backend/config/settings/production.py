@@ -172,29 +172,21 @@ FILE_UPLOAD_MAX_MEMORY_SIZE = 15 * 1024 * 1024   # 15 MB
 #
 # Use an app-specific password or SMTP API key — NEVER your main account password.
 # Rotate credentials immediately if they are ever exposed.
-EMAIL_BACKEND = "apps.core.email_backend.CertifiEmailBackend"
-EMAIL_HOST          = config("EMAIL_HOST",          default="")
-EMAIL_PORT          = config("EMAIL_PORT",          default=587, cast=int)
-EMAIL_USE_TLS       = True   # STARTTLS on port 587
-EMAIL_USE_SSL       = False  # SSL (port 465) is disabled; mutually exclusive with TLS
-EMAIL_TIMEOUT       = 10     # seconds — prevent hung SMTP connections
-EMAIL_HOST_USER     = config("EMAIL_HOST_USER",     default="")
-EMAIL_HOST_PASSWORD = config("EMAIL_HOST_PASSWORD", default="")
-DEFAULT_FROM_EMAIL  = config("DEFAULT_FROM_EMAIL",  default="")
+# ─── Email — Brevo HTTP API (no SMTP port restrictions) ──────────────────────
+# Railway blocks outbound SMTP ports. We use Brevo's HTTP API via django-anymail
+# which sends email over HTTPS — no firewall issues.
+#
+# Required env vars:
+#   BREVO_API_KEY       — Brevo v3 API key (SMTP & API → API Keys in Brevo dashboard)
+#   DEFAULT_FROM_EMAIL  — verified sender address in Brevo
+_brevo_api_key = config("BREVO_API_KEY", default="")
+DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default="")
 
-# Fail fast if email is partially configured — catch misconfiguration at startup,
-# not silently at runtime when the first password-reset email is attempted.
-if EMAIL_HOST and not EMAIL_HOST_PASSWORD:
-    from django.core.exceptions import ImproperlyConfigured
-    raise ImproperlyConfigured(
-        "[PRODUCTION] EMAIL_HOST is set but EMAIL_HOST_PASSWORD is missing. "
-        "Set EMAIL_HOST_PASSWORD to your SMTP API key or app-specific password. "
-        "NEVER use your main account password — generate an app password or API key "
-        "(Gmail: myaccount.google.com/apppasswords; SendGrid: use the API key as password)."
-    )
-if EMAIL_HOST and not DEFAULT_FROM_EMAIL:
-    from django.core.exceptions import ImproperlyConfigured
-    raise ImproperlyConfigured(
-        "[PRODUCTION] EMAIL_HOST is set but DEFAULT_FROM_EMAIL is missing. "
-        "Set DEFAULT_FROM_EMAIL to a verified sender address, e.g. noreply@yourdomain.com."
-    )
+if _brevo_api_key:
+    EMAIL_BACKEND = "anymail.backends.brevo.EmailBackend"
+    ANYMAIL = {
+        "BREVO_API_KEY": _brevo_api_key,
+    }
+else:
+    # Fallback to console backend if no key set (safe — just logs emails)
+    EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"

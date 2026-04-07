@@ -29,6 +29,9 @@ drf-spectacular==0.28.0
 # HTTP client (Paystack API calls)
 requests==2.32.5
 
+# Transactional email via HTTP API (bypasses SMTP port restrictions on Railway)
+django-anymail[brevo]==12.0
+
 # Utilities
 python-decouple==3.8
 pillow==11.1.0
