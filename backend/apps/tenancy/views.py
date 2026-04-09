@@ -243,6 +243,30 @@ class OrganisationViewSet(viewsets.ModelViewSet):
         children = parent.child_entities.filter(is_active=True, is_deleted=False)
         return Response(self.get_serializer(children, many=True).data)
 
+    @action(detail=True, methods=["post"], url_path="reseed_coa")
+    def reseed_coa(self, request, pk=None):
+        """
+        POST /tenancy/organisations/{id}/reseed_coa/
+        Superuser-only. Re-seeds the chart of accounts for an org that is missing it.
+        Safe to call multiple times (idempotent via get_or_create).
+        """
+        from apps.core.permissions import IsSuperuser
+        if not IsSuperuser().has_permission(request, self):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("Only superusers can reseed chart of accounts.")
+        org = self.get_object()
+        from apps.accounting.services import AccountingService
+        from apps.accounting.models import Account
+        before = Account.objects.filter(organisation=org).count()
+        AccountingService.seed_chart_of_accounts(org)
+        after = Account.objects.filter(organisation=org).count()
+        return Response({
+            "detail": f"COA reseeded for '{org.name}'.",
+            "accounts_before": before,
+            "accounts_after": after,
+            "accounts_added": after - before,
+        })
+
     @action(detail=False, methods=["post"])
     def accept_invitation(self, request):
         """Accept a pending invitation using a token."""

@@ -363,7 +363,18 @@ class AccountingService:
         """
         try:
             if not Account.objects.filter(organisation=organisation).exists():
-                return
+                logger.error(
+                    "AUTO-POST SKIPPED: org %s (%s) has no chart of accounts. "
+                    "Run: python manage.py reseed_coa --org %s",
+                    organisation.id, getattr(organisation, 'name', '?'), organisation.id,
+                )
+                # Auto-heal: seed on the fly so future posts work
+                try:
+                    AccountingService.seed_chart_of_accounts(organisation)
+                    logger.info("Auto-healed COA for org %s", organisation.id)
+                except Exception as heal_exc:
+                    logger.error("COA auto-heal failed for org %s: %s", organisation.id, heal_exc)
+                    return
             with transaction.atomic():
                 entry = JournalEntry.objects.create(
                     organisation=organisation,
