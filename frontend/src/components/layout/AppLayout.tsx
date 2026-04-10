@@ -9,6 +9,7 @@ import { setActiveCurrency } from '@/lib/utils'
 import { useNetworkStatus } from '@/hooks/useNetworkStatus'
 import { orgApi, subscriptionApi } from '@/services/api'
 import { Briefcase, LogOut, WifiOff } from 'lucide-react'
+import { offlineCache, timeAgo } from '@/lib/offlineCache'
 import type { AccessLevel, ModuleKey, ModulePermission, Organisation } from '@/types'
 import SubscriptionPaywall from '@/components/SubscriptionPaywall'
 import SupportChat from '@/components/SupportChat'
@@ -16,8 +17,20 @@ import { FEATURES } from '@/lib/featureFlags'
 
 export default function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [cacheAge, setCacheAge] = useState<string | null>(null)
   useInactivityTimeout()
   const online = useNetworkStatus()
+
+  // When going offline, resolve the cache age to show in the banner
+  useEffect(() => {
+    if (!online) {
+      offlineCache.oldestCachedAt().then((ts) => {
+        setCacheAge(ts ? timeAgo(ts) : null)
+      })
+    } else {
+      setCacheAge(null)
+    }
+  }, [online])
   const navigate = useNavigate()
   const organisation = useAuthStore((s) => s.organisation)
   const organisations = useAuthStore((s) => s.organisations)
@@ -120,8 +133,14 @@ export default function AppLayout() {
         {/* Offline banner */}
         {!online && (
           <div className="flex items-center gap-2 px-4 py-2 bg-amber-500/15 border-b border-amber-500/30 text-amber-400 text-xs font-medium">
-            <WifiOff size={13} />
-            You&apos;re offline — read-only mode. Changes will be queued and synced automatically when reconnected.
+            <WifiOff size={13} className="shrink-0" />
+            <span>
+              You&apos;re offline.{' '}
+              {cacheAge
+                ? <>Showing cached data from <strong>{cacheAge}</strong>. </>
+                : 'Cached data will appear as you navigate. '}
+              New entries are queued and sync automatically when reconnected.
+            </span>
           </div>
         )}
         {/* Client view amber banner — hidden until PARTNER_CHANNEL feature is enabled */}

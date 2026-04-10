@@ -102,6 +102,8 @@ export const useAuthStore = create<AuthState>()(
         localStorage.removeItem(REMEMBER_FLAG_KEY)
         localStorage.removeItem('finventory-auth')
         sessionStorage.removeItem('finventory-auth') // belt-and-suspenders
+        // Clear offline cache so the next user doesn't see stale org data
+        import('@/lib/offlineCache').then(({ offlineCache }) => offlineCache.clearAll()).catch(() => {})
         set({
           user: null, tokens: null, organisation: null, isAuthenticated: false,
           rememberMe: false, memberRole: null, modulePermissions: {}, planModules: null,

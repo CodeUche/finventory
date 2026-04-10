@@ -13,6 +13,7 @@ import { fetch as tauriHttpFetch } from '@tauri-apps/plugin-http'
 import toast from 'react-hot-toast'
 import { useAuthStore } from '@/store/authStore'
 import { offlineQueue } from '@/lib/offlineQueue'
+import { offlineCache } from '@/lib/offlineCache'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '/api/v1'
 
@@ -149,6 +150,20 @@ api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
     return Promise.reject(new AxiosError('Offline — request queued', 'ERR_NETWORK', config))
   }
 
+  // ── Offline cache: serve cached GET responses when network is unavailable ──
+  if (!navigator.onLine && !isMutation) {
+    const cacheUrl = (config.url ?? '') + (config.params ? '?' + new URLSearchParams(config.params as Record<string, string>).toString() : '')
+    // Use a custom adapter so Axios resolves (not rejects) with cached data
+    config.adapter = async (): Promise<AxiosResponse> => {
+      const entry = await offlineCache.get(cacheUrl)
+      if (entry) {
+        return { data: entry.data, status: 200, statusText: 'OK (cached)', headers: {}, config } as AxiosResponse
+      }
+      // No cache — reject so the component shows its empty state
+      throw new AxiosError('No cached data available offline', 'ERR_NETWORK', config)
+    }
+  }
+
   return config
 })
 
@@ -165,7 +180,17 @@ const processQueue = (error: AxiosError | null, token: string | null = null) => 
 }
 
 api.interceptors.response.use(
-  (res) => res,
+  (res) => {
+    // ── Cache every successful GET so it's available offline later ──
+    const method = res.config?.method?.toLowerCase()
+    const url = res.config?.url
+    if (method === 'get' && url && res.data !== undefined) {
+      const params = res.config?.params
+      const cacheUrl = url + (params ? '?' + new URLSearchParams(params as Record<string, string>).toString() : '')
+      offlineCache.set(cacheUrl, res.data)
+    }
+    return res
+  },
   async (error: AxiosError) => {
     const original = error.config as InternalAxiosRequestConfig & { _retry?: boolean }
 
