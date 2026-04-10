@@ -775,19 +775,28 @@ class PasswordResetRequestView(APIView):
         from_email = getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@auditytechnologies.com")
 
         try:
-            send_mail(
-                subject="Your Audity password reset code",
-                message=(
-                    f"Hi {user.first_name},\n\n"
-                    f"Your password reset code is: {code}\n\n"
-                    f"This code expires in 15 minutes. If you didn't request a reset, "
-                    f"you can safely ignore this email.\n\n"
-                    f"— The Audity Team"
-                ),
-                from_email=from_email,
-                recipient_list=[user.email],
-                fail_silently=False,
+            plain = (
+                f"Hi {user.first_name},\n\n"
+                f"Your password reset code is: {code}\n\n"
+                f"This code expires in 15 minutes. If you didn't request a reset, "
+                f"you can safely ignore this email.\n\n"
+                f"— The Audity Team"
             )
+            html = (
+                f"<p>Hi {user.first_name},</p>"
+                f"<p>Your password reset code is: <strong style='font-size:24px;letter-spacing:4px'>{code}</strong></p>"
+                f"<p>This code expires in <strong>15 minutes</strong>. "
+                f"If you didn't request a reset, you can safely ignore this email.</p>"
+                f"<p>— The Audity Team</p>"
+            )
+            msg = EmailMultiAlternatives(
+                subject="Your Audity password reset code",
+                body=plain,
+                from_email=from_email,
+                to=[user.email],
+            )
+            msg.attach_alternative(html, "text/html")
+            msg.send(fail_silently=False)
         except Exception as e:
             logger.error("Failed to send password reset email to %s: %s", email, e)
             return Response(

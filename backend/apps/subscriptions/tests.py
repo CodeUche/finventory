@@ -38,9 +38,10 @@ class PlanModelTests(TestCase):
     def test_free_plan_seeded(self):
         self.assertTrue(Plan.objects.filter(slug="free").exists())
 
-    def test_free_plan_not_public(self):
+    def test_free_plan_is_public(self):
+        # Free plan is intentionally public so users can see it on the plan picker
         free = Plan.objects.get(slug="free")
-        self.assertFalse(free.is_public)
+        self.assertTrue(free.is_public)
 
     def test_paid_plans_are_public(self):
         # Starter is now a legacy plan (is_public=False); only professional and business are public paid plans
@@ -205,8 +206,11 @@ class SubscriptionAPITests(TestCase):
         res = client.get("/api/v1/subscriptions/plans/")
         self.assertEqual(res.status_code, 200)
         slugs = [p["slug"] for p in res.data["results"] if "slug" in p]
-        # Free plan is not public so should not appear
-        self.assertNotIn("free", slugs)
+        # Free plan is public so users can see it on the plan picker
+        self.assertIn("free", slugs)
+        # Core paid plans are also public
+        self.assertIn("professional", slugs)
+        self.assertIn("business", slugs)
 
     def test_current_subscription(self):
         res = self.client.get("/api/v1/subscriptions/current/")

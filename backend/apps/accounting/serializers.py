@@ -36,6 +36,12 @@ class CreateJournalEntrySerializer(serializers.Serializer):
     lines = serializers.ListField(child=serializers.DictField(), min_length=2)
 
 
+class UpdateJournalEntrySerializer(serializers.Serializer):
+    description = serializers.CharField(required=False)
+    entry_date = serializers.DateField(required=False)
+    lines = serializers.ListField(child=serializers.DictField(), min_length=2, required=False)
+
+
 class DepreciationEntrySerializer(serializers.ModelSerializer):
     class Meta:
         model = DepreciationEntry

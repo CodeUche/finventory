@@ -340,6 +340,8 @@ export const orgApi = {
     api.get(`/tenancy/organisations/${orgId}/entities/`),
   createEntity: (orgId: string, data: { name: string; entity_group_name?: string; country?: string; currency?: string }) =>
     api.post(`/tenancy/organisations/${orgId}/create_entity/`, data),
+  reseedCoa: (orgId: string) =>
+    api.post(`/tenancy/organisations/${orgId}/reseed_coa/`),
 }
 
 export const teamApi = {
@@ -537,7 +539,10 @@ export const accountingApi = {
   seedCoa: () => api.post('/accounting/accounts/seed/'),
   journal: (params?: object) => api.get('/accounting/journal/', { params }),
   createJournalEntry: (data: object) => api.post('/accounting/journal/', data),
+  updateJournalEntry: (id: string, data: object) => api.patch(`/accounting/journal/${id}/`, data),
+  deleteJournalEntry: (id: string) => api.delete(`/accounting/journal/${id}/`),
   postJournalEntry: (id: string) => api.post(`/accounting/journal/${id}/post_entry/`),
+  reverseJournalEntry: (id: string, data?: object) => api.post(`/accounting/journal/${id}/reverse/`, data ?? {}),
   assets: () => api.get('/accounting/assets/'),
   createAsset: (data: object) => api.post('/accounting/assets/', data),
   updateAsset: (id: string, data: object) => api.patch(`/accounting/assets/${id}/`, data),

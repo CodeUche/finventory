@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Plus, X, BookMarked, Loader2, ChevronDown, ChevronUp, Trash2 } from 'lucide-react'
+import { Plus, X, BookMarked, Loader2, ChevronDown, ChevronUp, Trash2, Edit2, RotateCcw } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { accountingApi } from '@/services/api'
 import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
@@ -29,9 +29,12 @@ export default function JournalPage() {
   const [expandedRow, setExpandedRow] = useState<string | null>(null)
 
   const [showModal, setShowModal] = useState(false)
+  const [editId, setEditId] = useState<string | null>(null)
   const [form, setForm] = useState<JournalForm>({ description: '', entry_date: today })
   const [lines, setLines] = useState<JournalLineForm[]>([{ ...BLANK_LINE }, { ...BLANK_LINE }])
   const [saving, setSaving] = useState(false)
+
+  const [actionLoading, setActionLoading] = useState<string | null>(null)
 
   const load = async () => {
     setLoading(true)
@@ -49,35 +52,85 @@ export default function JournalPage() {
   const totalCredits = lines.reduce((s, l) => s + (parseFloat(stripCommas(l.credit)) || 0), 0)
   const isBalanced = Math.abs(totalDebits - totalCredits) < 0.01 && totalDebits > 0
 
-  const handleCreate = async () => {
+  const openCreate = () => {
+    setEditId(null)
+    setForm({ description: '', entry_date: today })
+    setLines([{ ...BLANK_LINE }, { ...BLANK_LINE }])
+    setShowModal(true)
+  }
+
+  const openEdit = (e: JournalEntry) => {
+    setEditId(e.id)
+    setForm({ description: e.description, entry_date: e.entry_date })
+    setLines(
+      e.lines.length > 0
+        ? e.lines.map((l) => ({
+            account: l.account as string,
+            description: l.description || '',
+            debit: parseFloat(l.debit) > 0 ? formatAmountInput(l.debit) : '',
+            credit: parseFloat(l.credit) > 0 ? formatAmountInput(l.credit) : '',
+          }))
+        : [{ ...BLANK_LINE }, { ...BLANK_LINE }]
+    )
+    setShowModal(true)
+  }
+
+  const handleSave = async () => {
     if (!form.description.trim()) { toast.error('Description is required'); return }
     if (!isBalanced) { toast.error('Journal entry must be balanced (debits = credits)'); return }
     const validLines = lines.filter((l) => l.account && (parseFloat(stripCommas(l.debit)) > 0 || parseFloat(stripCommas(l.credit)) > 0))
     if (validLines.length < 2) { toast.error('At least 2 lines required'); return }
     setSaving(true)
+    const payload = {
+      ...form,
+      lines: validLines.map((l) => ({
+        account: l.account,
+        description: l.description,
+        debit: parseFloat(stripCommas(l.debit)) || 0,
+        credit: parseFloat(stripCommas(l.credit)) || 0,
+      })),
+    }
     try {
-      await accountingApi.createJournalEntry({
-        ...form,
-        lines: validLines.map((l) => ({
-          account: l.account,
-          description: l.description,
-          debit: parseFloat(stripCommas(l.debit)) || 0,
-          credit: parseFloat(stripCommas(l.credit)) || 0,
-        })),
-      })
-      toast.success('Journal entry created')
+      if (editId) {
+        await accountingApi.updateJournalEntry(editId, payload)
+        toast.success('Journal entry updated')
+      } else {
+        await accountingApi.createJournalEntry(payload)
+        toast.success('Journal entry created')
+      }
       setShowModal(false)
-      setForm({ description: '', entry_date: today })
-      setLines([{ ...BLANK_LINE }, { ...BLANK_LINE }])
       load()
-    } catch { toast.error('Failed to create journal entry') }
-    finally { setSaving(false) }
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+      toast.error(msg || 'Failed to save journal entry')
+    } finally { setSaving(false) }
   }
 
   const handlePost = async (id: string) => {
-    if (!confirm('Post this journal entry? This action cannot be undone.')) return
+    if (!confirm('Post this journal entry? It will be locked and cannot be edited.')) return
+    setActionLoading(id + '-post')
     try { await accountingApi.postJournalEntry(id); toast.success('Entry posted'); load() }
     catch { toast.error('Failed to post entry') }
+    finally { setActionLoading(null) }
+  }
+
+  const handleDelete = async (e: JournalEntry) => {
+    if (!confirm(`Delete draft entry "${e.reference}"? This cannot be undone.`)) return
+    setActionLoading(e.id + '-delete')
+    try { await accountingApi.deleteJournalEntry(e.id); toast.success('Entry deleted'); load() }
+    catch { toast.error('Cannot delete — entry may be in use') }
+    finally { setActionLoading(null) }
+  }
+
+  const handleReverse = async (e: JournalEntry) => {
+    if (!confirm(`Create a reversing entry for "${e.reference}"?\n\nThis will create a new draft entry with all debits and credits flipped. You can review and post it.`)) return
+    setActionLoading(e.id + '-reverse')
+    try {
+      await accountingApi.reverseJournalEntry(e.id)
+      toast.success('Reversing entry created as draft — review and post when ready')
+      load()
+    } catch { toast.error('Failed to create reversing entry') }
+    finally { setActionLoading(null) }
   }
 
   const updateLine = (i: number, field: keyof JournalLineForm, value: string) => {
@@ -85,7 +138,6 @@ export default function JournalPage() {
       if (idx !== i) return l
       const formatted = (field === 'debit' || field === 'credit') ? formatAmountInput(value) : value
       const updated = { ...l, [field]: formatted }
-      // Mutual exclusion: if setting debit, clear credit and vice versa
       if (field === 'debit' && value) updated.credit = ''
       if (field === 'credit' && value) updated.debit = ''
       return updated
@@ -103,9 +155,18 @@ export default function JournalPage() {
           <h1 className="text-2xl font-bold text-white">Journal Entries</h1>
           <p className="text-slate-400 text-sm">{entries.length} entries</p>
         </div>
-        <button className="btn-primary sm:ml-auto" onClick={() => setShowModal(true)}>
+        <button className="btn-primary sm:ml-auto" onClick={openCreate}>
           <Plus size={16} /> New Journal Entry
         </button>
+      </div>
+
+      {/* Info banner */}
+      <div className="rounded-xl border border-slate-700/50 bg-surface-800/40 px-4 py-3 text-xs text-slate-400 flex items-start gap-2">
+        <span className="text-amber-400 mt-0.5">ℹ</span>
+        <span>
+          <strong className="text-slate-300">Draft</strong> entries can be edited or deleted.
+          <strong className="text-slate-300"> Posted</strong> entries are locked — use <strong className="text-slate-300">Reverse</strong> to create a correcting entry (accounting best practice).
+        </span>
       </div>
 
       {/* Table */}
@@ -151,9 +212,46 @@ export default function JournalPage() {
                     </td>
                     <td className="px-4 py-3.5 font-mono text-white">{formatCurrency(String(entryTotalDebit(e)))}</td>
                     <td className="px-4 py-3.5">
-                      {e.status === 'draft' && (
-                        <button onClick={() => handlePost(e.id)} className="text-xs px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 transition-colors">Post</button>
-                      )}
+                      <div className="flex items-center gap-1.5">
+                        {e.status === 'draft' && (
+                          <>
+                            <button
+                              onClick={() => handlePost(e.id)}
+                              disabled={actionLoading === e.id + '-post'}
+                              className="text-xs px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 transition-colors disabled:opacity-50"
+                            >
+                              {actionLoading === e.id + '-post' ? <Loader2 size={11} className="animate-spin" /> : 'Post'}
+                            </button>
+                            <button
+                              onClick={() => openEdit(e)}
+                              title="Edit draft entry"
+                              className="p-1.5 text-slate-500 hover:text-white hover:bg-surface-600 rounded-lg transition-colors"
+                            >
+                              <Edit2 size={13} />
+                            </button>
+                            <button
+                              onClick={() => handleDelete(e)}
+                              disabled={actionLoading === e.id + '-delete'}
+                              title="Delete draft entry"
+                              className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors disabled:opacity-50"
+                            >
+                              {actionLoading === e.id + '-delete' ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                            </button>
+                          </>
+                        )}
+                        {e.status === 'posted' && (
+                          <button
+                            onClick={() => handleReverse(e)}
+                            disabled={actionLoading === e.id + '-reverse'}
+                            title="Create reversing entry"
+                            className="text-xs px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-400 hover:bg-amber-500/25 transition-colors flex items-center gap-1 disabled:opacity-50"
+                          >
+                            {actionLoading === e.id + '-reverse'
+                              ? <Loader2 size={11} className="animate-spin" />
+                              : <><RotateCcw size={11} /> Reverse</>}
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                   {expandedRow === e.id && (
@@ -189,13 +287,13 @@ export default function JournalPage() {
         </div>
       </div>
 
-      {/* New Journal Entry Modal */}
+      {/* Create / Edit Modal */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setShowModal(false)} />
           <div className="relative card w-full max-w-3xl p-6 space-y-5 overflow-y-auto max-h-[90vh]">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-bold text-white">New Journal Entry</h2>
+              <h2 className="text-lg font-bold text-white">{editId ? 'Edit Journal Entry' : 'New Journal Entry'}</h2>
               <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-white"><X size={20} /></button>
             </div>
 
@@ -264,14 +362,14 @@ export default function JournalPage() {
                 <span className="text-slate-400">Credits: <span className="text-white font-mono">{formatCurrency(String(totalCredits))}</span></span>
               </div>
               <span className={`text-sm font-semibold ${isBalanced ? 'text-emerald-400' : 'text-red-400'}`}>
-                {isBalanced ? 'Balanced' : 'Unbalanced'}
+                {isBalanced ? 'Balanced ✓' : 'Unbalanced'}
               </span>
             </div>
 
             <div className="flex gap-3 pt-1">
               <button className="flex-1 py-2.5 rounded-xl border border-surface-600 text-slate-400 hover:text-white hover:border-surface-500 transition-colors text-sm" onClick={() => setShowModal(false)}>Cancel</button>
-              <button className="btn-primary flex-1 py-2.5 justify-center disabled:opacity-50" onClick={handleCreate} disabled={saving || !isBalanced}>
-                {saving ? <Loader2 size={16} className="animate-spin" /> : 'Save Journal Entry'}
+              <button className="btn-primary flex-1 py-2.5 justify-center disabled:opacity-50" onClick={handleSave} disabled={saving || !isBalanced}>
+                {saving ? <Loader2 size={16} className="animate-spin" /> : editId ? 'Save Changes' : 'Save Journal Entry'}
               </button>
             </div>
           </div>

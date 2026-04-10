@@ -7,8 +7,9 @@ from rest_framework.response import Response
 from apps.core.mixins import TenantFilterMixin
 from apps.core.permissions import IsAccountant, IsOwnerOrAdmin
 from .models import Account, JournalEntry, JournalLine, FixedAsset, FinancialPeriod, BankReconciliation, BankReconciliationLine, AIReconMatch
+from django.db import transaction
 from .serializers import (
-    AccountSerializer, JournalEntrySerializer, CreateJournalEntrySerializer,
+    AccountSerializer, JournalEntrySerializer, CreateJournalEntrySerializer, UpdateJournalEntrySerializer,
     FixedAssetSerializer, FinancialPeriodSerializer, BankReconciliationSerializer, BankReconciliationLineSerializer,
     AIReconMatchSerializer,
 )
@@ -62,36 +63,88 @@ class JournalEntryViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
     def get_queryset(self):
         org = self._get_organisation()
-        return JournalEntry.objects.filter(organisation=org).prefetch_related('lines__account')
+        return JournalEntry.objects.filter(organisation=org).prefetch_related('lines__account').order_by('-entry_date', '-created_at')
+
+    def _build_lines(self, org, lines_data):
+        """Validate balance and return JournalLine instances (unsaved)."""
+        total_debit = sum(Decimal(str(l.get('debit', '0'))) for l in lines_data)
+        total_credit = sum(Decimal(str(l.get('credit', '0'))) for l in lines_data)
+        if abs(total_debit - total_credit) > Decimal('0.01'):
+            raise ValueError(f'Journal entry not balanced: debits={total_debit}, credits={total_credit}')
+        instances = []
+        for line in lines_data:
+            acct = Account.objects.get(id=line['account'], organisation=org)
+            instances.append(JournalLine(
+                account=acct,
+                debit=Decimal(str(line.get('debit', '0'))),
+                credit=Decimal(str(line.get('credit', '0'))),
+                description=line.get('description', ''),
+            ))
+        return instances
 
     def create(self, request, *args, **kwargs):
         org = self._get_organisation()
         ser = CreateJournalEntrySerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         d = ser.validated_data
+        try:
+            line_instances = self._build_lines(org, d['lines'])
+        except ValueError as e:
+            return Response({'error': str(e)}, status=400)
+        except Account.DoesNotExist:
+            return Response({'error': 'One or more accounts not found'}, status=400)
 
-        lines_data = d['lines']
-        total_debit = sum(Decimal(str(l.get('debit', '0'))) for l in lines_data)
-        total_credit = sum(Decimal(str(l.get('credit', '0'))) for l in lines_data)
-        if abs(total_debit - total_credit) > Decimal('0.01'):
-            return Response({'error': f'Journal entry not balanced: debits={total_debit}, credits={total_credit}'}, status=400)
-
-        entry = JournalEntry.objects.create(
-            organisation=org,
-            description=d['description'],
-            entry_date=d['entry_date'],
-            created_by=request.user,
-        )
-        for line in lines_data:
-            acct = Account.objects.get(id=line['account'], organisation=org)
-            JournalLine.objects.create(
-                journal_entry=entry,
-                account=acct,
-                debit=Decimal(str(line.get('debit', '0'))),
-                credit=Decimal(str(line.get('credit', '0'))),
-                description=line.get('description', ''),
+        with transaction.atomic():
+            entry = JournalEntry.objects.create(
+                organisation=org,
+                description=d['description'],
+                entry_date=d['entry_date'],
+                created_by=request.user,
             )
+            for li in line_instances:
+                li.journal_entry = entry
+                li.organisation = org
+                li.save()
         return Response(JournalEntrySerializer(entry).data, status=status.HTTP_201_CREATED)
+
+    def update(self, request, *args, **kwargs):
+        entry = self.get_object()
+        if entry.status == JournalEntry.POSTED:
+            return Response({'error': 'Posted entries cannot be edited. Create a reversing entry instead.'}, status=400)
+
+        ser = UpdateJournalEntrySerializer(data=request.data, partial=True)
+        ser.is_valid(raise_exception=True)
+        d = ser.validated_data
+        org = self._get_organisation()
+
+        with transaction.atomic():
+            if 'description' in d:
+                entry.description = d['description']
+            if 'entry_date' in d:
+                entry.entry_date = d['entry_date']
+            if 'lines' in d:
+                try:
+                    line_instances = self._build_lines(org, d['lines'])
+                except ValueError as e:
+                    return Response({'error': str(e)}, status=400)
+                except Account.DoesNotExist:
+                    return Response({'error': 'One or more accounts not found'}, status=400)
+                entry.lines.all().delete()
+                for li in line_instances:
+                    li.journal_entry = entry
+                    li.organisation = org
+                    li.save()
+            entry.save()
+
+        entry.refresh_from_db()
+        return Response(JournalEntrySerializer(entry).data)
+
+    def destroy(self, request, *args, **kwargs):
+        entry = self.get_object()
+        if entry.status == JournalEntry.POSTED:
+            return Response({'error': 'Posted entries cannot be deleted. Use the Reverse action instead.'}, status=400)
+        entry.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=True, methods=['post'])
     def post_entry(self, request, pk=None):
@@ -102,6 +155,40 @@ class JournalEntryViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         entry.posted_by = request.user
         entry.save()
         return Response(JournalEntrySerializer(entry).data)
+
+    @action(detail=True, methods=['post'])
+    def reverse(self, request, pk=None):
+        """
+        Create a reversing journal entry (all DR/CR flipped) as a draft.
+        The accountant reviews and posts it to cancel the original posting.
+        Standard accounting practice — never deletes a posted entry.
+        """
+        original = self.get_object()
+        if original.status != JournalEntry.POSTED:
+            return Response({'error': 'Only posted entries can be reversed.'}, status=400)
+
+        org = self._get_organisation()
+        reversal_date = request.data.get('reversal_date', original.entry_date)
+
+        with transaction.atomic():
+            reversal = JournalEntry.objects.create(
+                organisation=org,
+                description=f'Reversal of {original.reference}: {original.description}',
+                entry_date=reversal_date,
+                created_by=request.user,
+                status=JournalEntry.DRAFT,
+            )
+            for line in original.lines.all():
+                JournalLine.objects.create(
+                    organisation=org,
+                    journal_entry=reversal,
+                    account=line.account,
+                    debit=line.credit,   # flip
+                    credit=line.debit,   # flip
+                    description=f'Reversal: {line.description}' if line.description else 'Reversal',
+                )
+
+        return Response(JournalEntrySerializer(reversal).data, status=status.HTTP_201_CREATED)
 
 
 class FixedAssetViewSet(TenantFilterMixin, viewsets.ModelViewSet):

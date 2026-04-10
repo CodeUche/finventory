@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Shield, Users, Building2, RefreshCw, Loader2, CheckCircle, XCircle, TrendingUp } from 'lucide-react'
+import { Shield, Users, Building2, RefreshCw, Loader2, CheckCircle, XCircle, TrendingUp, BookOpen } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { platformAdminApi } from '@/services/api'
+import { platformAdminApi, orgApi } from '@/services/api'
 import { formatCurrency } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
 import { useNavigate } from 'react-router-dom'
@@ -35,6 +35,7 @@ export default function PlatformAdminPage() {
   const [users, setUsers] = useState<PlatformUser[]>([])
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState<'overview' | 'orgs' | 'users'>('overview')
+  const [reseedingOrg, setReseedingOrg] = useState<string | null>(null)
 
   // Guard: redirect non-superusers
   useEffect(() => {
@@ -62,6 +63,19 @@ export default function PlatformAdminPage() {
   }
 
   useEffect(() => { load() }, [])
+
+  const handleReseedCoa = async (org: OrgRow) => {
+    if (!confirm(`Reseed chart of accounts for "${org.name}"?\n\nThis is safe and idempotent — it only adds missing accounts, never overwrites existing ones.`)) return
+    setReseedingOrg(org.id)
+    try {
+      const { data } = await orgApi.reseedCoa(org.id)
+      toast.success(`COA reseeded for ${org.name} — ${data.accounts_added} accounts added`)
+    } catch {
+      toast.error('Failed to reseed COA')
+    } finally {
+      setReseedingOrg(null)
+    }
+  }
 
   if (!user?.is_superuser) return null
 
@@ -170,7 +184,7 @@ export default function PlatformAdminPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-surface-700">
-                      {['Organisation', 'Owner', 'Plan', 'Status', 'Members', 'Invoices', 'Revenue', 'Active'].map((h) => (
+                      {['Organisation', 'Owner', 'Plan', 'Status', 'Members', 'Invoices', 'Revenue', 'Active', 'Actions'].map((h) => (
                         <th key={h} className="px-4 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
                       ))}
                     </tr>
@@ -192,6 +206,19 @@ export default function PlatformAdminPage() {
                           {org.is_active
                             ? <CheckCircle size={16} className="text-emerald-400" />
                             : <XCircle size={16} className="text-red-400" />}
+                        </td>
+                        <td className="px-4 py-3.5">
+                          <button
+                            onClick={() => handleReseedCoa(org)}
+                            disabled={reseedingOrg === org.id}
+                            title="Re-seed chart of accounts (idempotent)"
+                            className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg bg-surface-700 hover:bg-surface-600 text-slate-400 hover:text-white transition-colors disabled:opacity-50"
+                          >
+                            {reseedingOrg === org.id
+                              ? <Loader2 size={11} className="animate-spin" />
+                              : <BookOpen size={11} />}
+                            Reseed COA
+                          </button>
                         </td>
                       </tr>
                     ))}
