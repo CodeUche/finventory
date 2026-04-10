@@ -76,7 +76,14 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     def validate_email(self, value):
         # Normalise email to lowercase to prevent case-variant duplicates
-        return value.strip().lower()
+        value = value.strip().lower()
+        # Uniqueness is enforced at the view level (with a friendly message) but
+        # we also guard here so direct API calls get a proper 400, not a 500.
+        if User.objects.filter(email=value).exists():
+            raise serializers.ValidationError(
+                "An account with this email address already exists."
+            )
+        return value
 
     def validate_phone(self, value):
         import re
@@ -84,6 +91,11 @@ class RegisterSerializer(serializers.ModelSerializer):
         if value and not re.match(r"^[+\d\s\-\(\)]{0,30}$", value):
             raise serializers.ValidationError(
                 "Phone number may only contain digits, spaces, +, -, and parentheses."
+            )
+        # Enforce phone uniqueness (skip blank values)
+        if value and User.objects.filter(phone=value).exists():
+            raise serializers.ValidationError(
+                "An account with this phone number already exists."
             )
         return value
 

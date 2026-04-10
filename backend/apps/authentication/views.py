@@ -126,14 +126,23 @@ class RegisterView(APIView):
 
     def post(self, request):
         email = (request.data.get("email") or "").lower().strip()
-        # Delete orphaned unverified accounts so the user can re-register.
+        # Guard: reject immediately if a verified or active user already owns this email.
+        # Only orphaned (unverified, no memberships) accounts are cleaned up to allow
+        # the same person to retry a failed registration attempt.
         if email:
             try:
                 existing = User.objects.get(email=email)
                 has_orgs = existing.memberships.filter(is_active=True).exists()
-                if not has_orgs:
-                    existing.delete()
-                    logger.info("Deleted orphaned user %s to allow re-registration", email)
+                if existing.is_verified or has_orgs:
+                    # Real account — do NOT delete, return clear error
+                    return Response(
+                        {"error": {"code": "email_taken", "message": "An account with this email address already exists. Please sign in or use a different email."}},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                # Orphaned unverified account with no orgs — safe to purge so the
+                # user can retry registration (e.g. after a failed email delivery).
+                existing.delete()
+                logger.info("Deleted orphaned unverified user %s to allow re-registration", email)
             except User.DoesNotExist:
                 pass
 
