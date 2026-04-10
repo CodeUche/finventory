@@ -8,7 +8,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.permissions import IsSuperuser, IsOwnerOrAdmin, _get_or_resolve_org
+from apps.core.permissions import IsSuperuser, IsOwnerOrAdmin, IsVerified, _get_or_resolve_org
 
 
 class AuditLogView(APIView):
@@ -19,7 +19,7 @@ class AuditLogView(APIView):
     Accessible to org owners/admins and superusers.
     Supports filters: model, action, date_from, date_to.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsVerified]
 
     def get(self, request):
         from apps.core.models import AuditLog

@@ -1,5 +1,6 @@
 """Tenancy views: Organisations, Memberships, Invitations."""
 
+import logging
 import re
 
 from django.utils import timezone
@@ -8,6 +9,8 @@ from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+
+logger = logging.getLogger(__name__)
 
 from apps.core.permissions import IsOwnerOrAdmin
 from apps.core.throttles import BankResolveRateThrottle, InvitationRateThrottle
@@ -470,6 +473,16 @@ class MembershipViewSet(viewsets.ModelViewSet):
 
     serializer_class = MembershipSerializer
     permission_classes = [IsAuthenticated, IsOwnerOrAdmin]
+    # IsVerified enforced globally in DRF defaults; explicitly added here because
+    # this viewset overrides permission_classes, which would drop the global default.
+
+    def get_permissions(self):
+        from apps.core.permissions import IsVerified
+        perms = super().get_permissions()
+        # Inject IsVerified so unverified users cannot manage team members
+        if not any(isinstance(p, IsVerified) for p in perms):
+            perms.insert(0, IsVerified())
+        return perms
 
     def get_queryset(self):
         org = getattr(self.request, "organisation", None)
@@ -676,6 +689,15 @@ class PartnerViewSet(viewsets.ViewSet):
                 return Response(
                     {"error": "You cannot add your own organisation as a client."},
                     status=400,
+                )
+            # Security: require an active membership in the target org.
+            # The org owner must first invite the partner before they can link it.
+            if not Membership.objects.filter(
+                user=request.user, organisation=org, is_active=True
+            ).exists():
+                return Response(
+                    {"error": "You must be an invited active member of this organisation to add it as a client. Ask the organisation owner to invite you first."},
+                    status=403,
                 )
             if not profile.can_add_client:
                 return Response(

@@ -259,9 +259,11 @@ class SubscriptionViewSet(viewsets.GenericViewSet):
             return Response({"error": "reference is required."}, status=400)
 
         # 1. Check local DB first (fastest — set by webhook or verify_payment)
+        # Scope to request.organisation to prevent cross-org reference leakage
         ph = PaymentHistory.objects.filter(
             provider_payment_id=reference,
             status=PaymentHistory.Status.SUCCEEDED,
+            subscription__organisation=request.organisation,
         ).select_related("subscription").first()
 
         if ph and ph.subscription:
