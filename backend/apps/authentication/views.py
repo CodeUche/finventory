@@ -976,14 +976,16 @@ class SubAccountLoginView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        # Check parent org subscription — block if explicitly canceled
+        # Check parent org subscription — block if expired, canceled, or unpaid.
+        # Uses the Subscription.is_active property which also checks period_end/trial_end
+        # so sub-accounts are blocked the moment the owner's subscription lapses.
         org = memberships.first().organisation
         try:
             sub = org.subscription
-            if sub.status in ("canceled", "unpaid"):
+            if sub is not None and not sub.is_active:
                 logger.warning("Staff login blocked — org subscription %s for %s", sub.status, email)
                 return Response(
-                    {"error": {"code": "subscription_inactive", "message": "Your workspace subscription has ended. Contact your administrator to renew access."}},
+                    {"error": {"code": "subscription_inactive", "message": "Your workspace subscription has expired or been canceled. Contact your administrator to renew access."}},
                     status=status.HTTP_403_FORBIDDEN,
                 )
         except Exception:

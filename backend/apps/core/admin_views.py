@@ -172,3 +172,55 @@ class PlatformUsersView(APIView):
                 'orgs': [{'name': m.organisation.name, 'role': m.role} for m in memberships],
             })
         return Response(data)
+
+
+class PlatformUserDetailView(APIView):
+    """
+    PATCH /api/v1/platform-admin/users/{id}/  — deactivate / reactivate a user (superuser only)
+    DELETE /api/v1/platform-admin/users/{id}/ — permanently delete a user (superuser only)
+
+    Deactivating an owner automatically cascades to all sub-accounts in their orgs
+    via the pre_save signal in apps.tenancy.signals.
+    """
+    permission_classes = [IsAuthenticated, IsSuperuser]
+
+    def _get_user(self, pk):
+        from apps.authentication.models import User
+        try:
+            return User.objects.get(pk=pk)
+        except User.DoesNotExist:
+            return None
+
+    def patch(self, request, pk):
+        user = self._get_user(pk)
+        if not user:
+            return Response({'error': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if user.is_superuser and not request.user.is_superuser:
+            return Response({'error': 'Cannot modify a superuser.'}, status=status.HTTP_403_FORBIDDEN)
+
+        is_active = request.data.get('is_active')
+        if is_active is None:
+            return Response({'error': 'is_active field required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Signal fires on save and cascades to sub-accounts if deactivating an owner
+        user.is_active = bool(is_active)
+        user.save(update_fields=['is_active'])
+
+        action = 'reactivated' if user.is_active else 'deactivated'
+        return Response({'detail': f'User {user.email} {action}.', 'is_active': user.is_active})
+
+    def delete(self, request, pk):
+        user = self._get_user(pk)
+        if not user:
+            return Response({'error': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if user.is_superuser:
+            return Response(
+                {'error': 'Cannot delete a superuser via this endpoint. Use the Django admin.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        email = user.email
+        # Deactivate first so signal cascades to sub-accounts before hard delete
+        user.is_active = False
+        user.save(update_fields=['is_active'])
+        user.delete()
+        return Response({'detail': f'User {email} permanently deleted.'}, status=status.HTTP_200_OK)

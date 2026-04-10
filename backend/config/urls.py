@@ -82,9 +82,10 @@ if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 
 # Platform admin API (superusers only) + Audit log (owner/admin/superuser)
-from apps.core.admin_views import AuditLogView, PlatformStatsView, PlatformUsersView
+from apps.core.admin_views import AuditLogView, PlatformStatsView, PlatformUsersView, PlatformUserDetailView
 urlpatterns += [
     path('api/v1/audit-log/', AuditLogView.as_view(), name='audit-log'),
     path('api/v1/platform/stats/', PlatformStatsView.as_view(), name='platform-stats'),
     path('api/v1/platform/users/', PlatformUsersView.as_view(), name='platform-users'),
+    path('api/v1/platform/users/<uuid:pk>/', PlatformUserDetailView.as_view(), name='platform-user-detail'),
 ]
