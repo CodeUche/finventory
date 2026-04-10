@@ -103,7 +103,6 @@ class JournalEntryViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             )
             for li in line_instances:
                 li.journal_entry = entry
-                li.organisation = org
                 li.save()
         return Response(JournalEntrySerializer(entry).data, status=status.HTTP_201_CREATED)
 
@@ -132,7 +131,6 @@ class JournalEntryViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                 entry.lines.all().delete()
                 for li in line_instances:
                     li.journal_entry = entry
-                    li.organisation = org
                     li.save()
             entry.save()
 
@@ -180,7 +178,6 @@ class JournalEntryViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             )
             for line in original.lines.all():
                 JournalLine.objects.create(
-                    organisation=org,
                     journal_entry=reversal,
                     account=line.account,
                     debit=line.credit,   # flip
