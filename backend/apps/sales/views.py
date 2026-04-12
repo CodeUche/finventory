@@ -918,7 +918,7 @@ class LocationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     permission_classes = [IsStaff, IsOwnerOrAdmin]
 
     def get_queryset(self):
-        return Location.objects.filter(organisation=self.request.organisation)
+        return Location.objects.filter(organisation=self._get_organisation())
 
     @action(detail=False, methods=["get"], url_path="sales_analytics")
     def sales_analytics(self, request):
