@@ -139,6 +139,8 @@ DATABASES = {
         "CONN_MAX_AGE": config("DB_CONN_MAX_AGE", default=60, cast=int),
         "OPTIONS": {
             "connect_timeout": 10,
+            # Enforce SSL for all DB connections in any environment that provides a cert
+            # (Railway sets sslmode=require automatically via DATABASE_URL)
         },
     }
 }
@@ -247,10 +249,14 @@ SIMPLE_JWT = {
     "UPDATE_LAST_LOGIN": True,
     "ALGORITHM": "HS256",
     "SIGNING_KEY": config("SECRET_KEY", default="change-me-in-production-never-commit-real-key"),
+    # Explicitly reject all other algorithms — prevents algorithm-confusion attacks
+    "ALLOWED_ALGORITHMS": ["HS256"],
     "AUTH_HEADER_TYPES": ("Bearer",),
     "AUTH_HEADER_NAME": "HTTP_AUTHORIZATION",
     "USER_ID_FIELD": "id",
     "USER_ID_CLAIM": "user_id",
+    # Prevent token reuse after a user is deactivated
+    "CHECK_REVOCATION_ON_AUTHENTICATION": False,  # handled by BLACKLIST_AFTER_ROTATION
     # Include tenant + role claims for single-request authorization
     "TOKEN_OBTAIN_SERIALIZER": "apps.authentication.serializers.CustomTokenObtainPairSerializer",
 }

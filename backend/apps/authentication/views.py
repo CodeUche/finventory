@@ -181,6 +181,7 @@ class VerifyEmailView(APIView):
     and returns JWT tokens so the user is logged in immediately.
     """
 
+    authentication_classes = []
     permission_classes = [AllowAny]
 
     def get(self, request):
@@ -268,6 +269,7 @@ class ResendVerificationView(APIView):
     Resends the verification email. Always returns 200 to avoid email enumeration.
     """
 
+    authentication_classes = []
     permission_classes = [AllowAny]
     throttle_classes = [ResendVerificationRateThrottle]
 
@@ -298,6 +300,7 @@ class CheckVerificationView(APIView):
     Returns consistent shape to avoid email enumeration timing attacks.
     """
 
+    authentication_classes = []
     permission_classes = [AllowAny]
     throttle_classes = [CheckVerificationRateThrottle]
 
@@ -771,6 +774,7 @@ class PasswordResetRequestView(APIView):
     Body: { "email": "user@example.com" }
     """
 
+    authentication_classes = []   # expired tokens must not block this public endpoint
     permission_classes = [AllowAny]
     throttle_classes = [PasswordResetRequestRateThrottle]
 
@@ -824,6 +828,7 @@ class PasswordResetConfirmView(APIView):
     Body: { "email": "...", "code": "123456", "new_password": "...", "confirm_password": "..." }
     """
 
+    authentication_classes = []   # expired tokens must not block this public endpoint
     permission_classes = [AllowAny]
     throttle_classes = [PasswordResetConfirmRateThrottle]
 
@@ -897,6 +902,7 @@ class SubAccountLoginView(APIView):
       - Verifies: user is_sub_account, membership is_active, org subscription not canceled.
       - Sub-accounts are pre-verified (no email check needed).
     """
+    authentication_classes = []
     permission_classes = [AllowAny]
     throttle_classes = [LoginRateThrottle]
 
