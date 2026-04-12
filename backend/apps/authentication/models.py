@@ -145,4 +145,9 @@ class PasswordResetOTP(models.Model):
         if timezone.now() > self.created_at + timedelta(minutes=15):
             return False
         candidate = hashlib.sha256(code.encode()).hexdigest()
-        return hmac.compare_digest(candidate, self.code_hash)
+        if hmac.compare_digest(candidate, self.code_hash):
+            # Mark as used immediately to prevent replay attacks
+            self.used = True
+            self.save(update_fields=["used"])
+            return True
+        return False

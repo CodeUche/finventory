@@ -308,6 +308,15 @@ class BankReconciliationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         if not csv_file:
             return Response({'error': 'No file provided. Upload a CSV file.'}, status=400)
 
+        # Enforce file size limit (max 5 MB) to prevent DoS via large uploads
+        MAX_CSV_BYTES = 5 * 1024 * 1024
+        if csv_file.size > MAX_CSV_BYTES:
+            return Response({'error': 'File too large. Maximum size is 5 MB.'}, status=400)
+
+        # Enforce .csv extension (basic MIME guard)
+        if not csv_file.name.lower().endswith('.csv'):
+            return Response({'error': 'Only .csv files are accepted.'}, status=400)
+
         try:
             text = csv_file.read().decode('utf-8-sig')  # utf-8-sig strips BOM
         except UnicodeDecodeError:
@@ -340,13 +349,21 @@ class BankReconciliationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                 if not date_str:
                     continue  # skip blank rows
 
+                _MAX_AMOUNT = Decimal('999999999.99')
+
                 if amount_str and not debit_str and not credit_str:
-                    amt = Decimal(amount_str.replace(',', ''))
+                    amt = Decimal(amount_str.replace(',', '')).quantize(Decimal('0.01'))
+                    if abs(amt) > _MAX_AMOUNT:
+                        errors.append(f"Row {i}: amount exceeds maximum allowed value")
+                        continue
                     debit = -amt if amt < 0 else Decimal('0')
                     credit = amt if amt >= 0 else Decimal('0')
                 else:
-                    debit = Decimal(debit_str.replace(',', '') or '0')
-                    credit = Decimal(credit_str.replace(',', '') or '0')
+                    debit = Decimal(debit_str.replace(',', '') or '0').quantize(Decimal('0.01'))
+                    credit = Decimal(credit_str.replace(',', '') or '0').quantize(Decimal('0.01'))
+                    if debit > _MAX_AMOUNT or credit > _MAX_AMOUNT:
+                        errors.append(f"Row {i}: amount exceeds maximum allowed value")
+                        continue
 
                 from datetime import datetime
                 for fmt in ('%Y-%m-%d', '%d/%m/%Y', '%m/%d/%Y', '%d-%m-%Y', '%d %b %Y'):

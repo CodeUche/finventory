@@ -343,20 +343,17 @@ class LoginView(TokenObtainPairView):
         ip = get_client_ip(request)
 
         # Phase 1: check lockout BEFORE attempting authentication
+        # Use a generic message to avoid confirming that an account exists
+        # (prevents email enumeration via lockout response timing/content).
         try:
             user = User.objects.get(email=email)
             if user.is_locked:
-                seconds_left = int((user.locked_until - timezone.now()).total_seconds())
-                minutes_left = max(1, (seconds_left + 59) // 60)
                 logger.warning("Blocked locked login attempt: %s from %s", email, ip)
                 return Response(
                     {
                         "error": {
                             "code": "account_locked",
-                            "message": (
-                                f"Too many failed attempts. Account locked for {minutes_left} more minute(s). "
-                                "Please try again later."
-                            ),
+                            "message": "Too many failed attempts. Please try again in 30 minutes.",
                         }
                     },
                     status=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -531,9 +528,13 @@ class MFAConfirmSetupView(APIView):
         user.save(update_fields=["mfa_secret", "mfa_secret_pending", "mfa_enabled", "mfa_backup_codes"])
 
         logger.info("MFA enabled for user: %s", user.email)
+        # Backup codes are returned ONCE at enable-time over HTTPS.
+        # They are never stored in plain text — only hashed copies are kept.
+        # The frontend must prompt the user to save these immediately.
         return Response({
-            "message": "MFA enabled successfully.",
+            "message": "MFA enabled successfully. Save your backup codes — they will not be shown again.",
             "backup_codes": plain_codes,
+            "backup_codes_warning": "Store these codes in a safe place. Each can only be used once.",
         })
 
 

@@ -4,11 +4,19 @@ from .base import *  # noqa: F401, F403
 
 DEBUG = True
 
-# Allow all hosts in development
-ALLOWED_HOSTS = ["*"]
+# Restrict to known local origins only — prevents host-header injection even in dev
+ALLOWED_HOSTS = ["localhost", "127.0.0.1", "0.0.0.0"]
 
-# Allow all CORS origins in development (covers tauri://, capacitor://, localhost)
-CORS_ALLOW_ALL_ORIGINS = True
+# Whitelist only known local origins in development
+CORS_ALLOW_ALL_ORIGINS = False
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:5173",
+    "tauri://localhost",
+    "capacitor://localhost",
+]
 
 # Show SQL queries in development
 LOGGING["loggers"]["django.db.backends"] = {  # noqa: F405

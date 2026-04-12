@@ -144,25 +144,26 @@ def paystack_webhook(request):
         .first()
     )
 
-    if config and config.webhook_secret:
-        # Read raw body for HMAC computation — request.data is already parsed
-        # by DRF so we must access request.body (always available before response).
-        raw_body = request.body  # bytes
-        if not _verify_paystack_signature(raw_body, config.webhook_secret, received_sig):
-            logger.warning(
-                "Paystack webhook HMAC mismatch from IP %s — possible spoofed event; "
-                "dropping silently",
-                request.META.get("REMOTE_ADDR", "unknown"),
-            )
-            return Response({"status": "ok"})
-        logger.debug("Paystack webhook signature verified OK")
-    else:
-        # No secret configured — accept but warn loudly.
-        logger.warning(
-            "Paystack webhook received but webhook_secret is not set for the active "
-            "Paystack gateway config. Event accepted without verification. "
-            "Set webhook_secret in Settings → Payment Gateways to enable verification."
+    if not config or not config.webhook_secret:
+        # Reject unverified webhooks — accepting without a secret allows payment fraud
+        logger.error(
+            "Paystack webhook rejected from IP %s: webhook_secret is not configured. "
+            "Set webhook_secret in Settings → Payment Gateways.",
+            request.META.get("REMOTE_ADDR", "unknown"),
         )
+        return Response({"status": "error", "detail": "Webhook secret not configured."}, status=400)
+
+    # Read raw body for HMAC computation — request.data is already parsed
+    # by DRF so we must access request.body (always available before response).
+    raw_body = request.body  # bytes
+    if not _verify_paystack_signature(raw_body, config.webhook_secret, received_sig):
+        logger.warning(
+            "Paystack webhook HMAC mismatch from IP %s — possible spoofed event; "
+            "rejecting",
+            request.META.get("REMOTE_ADDR", "unknown"),
+        )
+        return Response({"status": "error"}, status=400)
+    logger.debug("Paystack webhook signature verified OK")
 
     # ── Dispatch event ────────────────────────────────────────────────────────
     event = request.data.get("event", "")
