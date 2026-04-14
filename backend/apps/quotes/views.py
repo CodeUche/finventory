@@ -3,7 +3,9 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from apps.core.mixins import TenantFilterMixin
-from apps.core.permissions import IsStaff
+from apps.core.permissions import IsStaff, plan_requires
+
+_PlanQuotes = plan_requires('quotes')
 from apps.customers.models import Customer
 from apps.inventory.models import Warehouse, Product
 from .models import Quote
@@ -14,7 +16,7 @@ from decimal import Decimal
 
 class QuoteViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     serializer_class = QuoteSerializer
-    permission_classes = [IsAuthenticated, IsStaff]
+    permission_classes = [IsAuthenticated, IsStaff, _PlanQuotes]
     filterset_fields = ['status']
 
     def get_queryset(self):

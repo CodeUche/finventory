@@ -4,7 +4,9 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from apps.core.mixins import TenantFilterMixin
 from apps.core.models import AuditLog
-from apps.core.permissions import IsManagerOrSuperuser
+from apps.core.permissions import IsManagerOrSuperuser, plan_requires
+
+_PlanBudget = plan_requires('budget')
 from .models import Budget, BudgetLine
 from .serializers import BudgetSerializer, BudgetLineSerializer
 from .services import BudgetService
@@ -12,7 +14,7 @@ from .services import BudgetService
 
 class BudgetViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     serializer_class = BudgetSerializer
-    permission_classes = [IsAuthenticated, IsManagerOrSuperuser]
+    permission_classes = [IsAuthenticated, IsManagerOrSuperuser, _PlanBudget]
 
     def perform_update(self, serializer):
         before = {f: str(getattr(serializer.instance, f)) for f in ['name', 'period_type', 'status', 'notes', 'fiscal_year']}

@@ -52,5 +52,8 @@ qrcode[pil]==8.0
 # Logging
 structlog==24.4.0
 
+# File type detection — magic byte sniffing for upload validation (pure Python, no libmagic needed)
+filetype==1.2.0
+
 # AI bank reconciliation — Groq free tier (same key used by AI Financial Assistant)
 groq>=0.8.0

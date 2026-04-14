@@ -10,7 +10,9 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.core.mixins import ExportMixin, TenantFilterMixin
-from apps.core.permissions import IsStaff, IsOwnerOrAdmin, has_minimum_role
+from apps.core.permissions import IsStaff, IsOwnerOrAdmin, has_minimum_role, plan_requires
+
+_PlanRecurring = plan_requires('recurring')
 from apps.customers.models import Customer
 from apps.inventory.models import Product, Warehouse
 
@@ -826,7 +828,7 @@ class RecurringInvoiceViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     """Manage recurring invoice templates."""
 
     serializer_class = RecurringInvoiceSerializer
-    permission_classes = [IsAuthenticated, IsStaff]
+    permission_classes = [IsAuthenticated, IsStaff, _PlanRecurring]
 
     def get_queryset(self):
         org = self._get_organisation()

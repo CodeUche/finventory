@@ -6,6 +6,8 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.authentication.models import User
 from apps.payroll.models import Employee, PayrollRun
+from apps.subscriptions.models import Plan
+from apps.subscriptions.services import SubscriptionService
 from apps.tenancy.services import OrganisationService
 
 
@@ -22,6 +24,13 @@ def _make_org(user, name="Pay Org"):
     )
 
 
+def _upgrade_to_business(org):
+    """Upgrade org to Business plan so plan_requires('payroll') passes."""
+    plan = Plan.objects.get(slug="business")
+    SubscriptionService.upgrade_plan(org, plan)
+    org.refresh_from_db()
+
+
 def _auth_client(user, org):
     client = APIClient()
     refresh = RefreshToken.for_user(user)
@@ -36,6 +45,7 @@ class EmployeeCRUDTests(TestCase):
     def setUp(self):
         self.user = _make_user()
         self.org = _make_org(self.user)
+        _upgrade_to_business(self.org)
         self.client = _auth_client(self.user, self.org)
 
     def _payload(self, **overrides):
@@ -95,6 +105,7 @@ class EmployeeCRUDTests(TestCase):
         eid = create_res.data["id"]
         other_user = _make_user("pay_other@example.com")
         other_org = _make_org(other_user, "Other Pay Org")
+        _upgrade_to_business(other_org)   # give business plan so 403 = tenant isolation, not plan gate
         c = _auth_client(other_user, other_org)
         res = c.get(f"/api/v1/payroll/employees/{eid}/")
         self.assertIn(res.status_code, [403, 404])
@@ -111,6 +122,7 @@ class PayrollRunTests(TestCase):
     def setUp(self):
         self.user = _make_user("run_owner@example.com")
         self.org = _make_org(self.user, "Run Org")
+        _upgrade_to_business(self.org)
         self.client = _auth_client(self.user, self.org)
         # Create an employee
         self.client.post("/api/v1/payroll/employees/", {

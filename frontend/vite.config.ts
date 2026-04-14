@@ -9,7 +9,7 @@ export default defineConfig(({ mode }) => {
   // In both cases the PWA service worker must be disabled — it intercepts
   // every fetch in the WebView2 context and strips the Authorization header
   // on cross-origin requests, causing 401 on all authenticated API calls.
-  const isTauri = mode === 'desktop' || mode === 'android' ||
+  const isTauri = mode === 'desktop' || mode === 'android' || mode === 'cloud' ||
     process.env.TAURI_DEBUG !== undefined || process.env.TAURI_ENV_DEBUG !== undefined
 
   return {

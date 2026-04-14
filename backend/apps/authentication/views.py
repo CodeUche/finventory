@@ -726,12 +726,15 @@ class UploadAvatarView(APIView):
 
     def post(self, request):
         from django.core.files.base import ContentFile
+        from apps.core.validators import sniff_image_bytes
 
         body = request.body
         if not body:
             return Response({"error": {"message": "No file data received."}}, status=status.HTTP_400_BAD_REQUEST)
-        ct = (request.content_type or "image/jpeg").split(";")[0].strip()
-        ext = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}.get(ct, ".jpg")
+        detected_mime = sniff_image_bytes(body[:261])
+        if detected_mime is None:
+            return Response({"error": {"message": "File is not a valid image."}}, status=status.HTTP_400_BAD_REQUEST)
+        ext = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}.get(detected_mime, ".jpg")
         user = request.user
         if user.avatar:
             user.avatar.delete(save=False)
@@ -757,7 +760,11 @@ class ChangePasswordView(APIView):
             )
 
         user.set_password(serializer.validated_data["new_password"])
-        user.save(update_fields=["password"])
+        update_fields = ["password"]
+        if user.must_change_password:
+            user.must_change_password = False
+            update_fields.append("must_change_password")
+        user.save(update_fields=update_fields)
 
         logger.info("Password changed for user: %s", user.email)
         return Response({"message": "Password changed successfully. Please log in again."})
@@ -989,8 +996,8 @@ class SubAccountLoginView(APIView):
         org = memberships.first().organisation
         try:
             sub = org.subscription
-            if sub is not None and not sub.is_active:
-                logger.warning("Staff login blocked — org subscription %s for %s", sub.status, email)
+            if sub is not None and not sub.is_active:  # type: ignore[union-attr]
+                logger.warning("Staff login blocked — org subscription %s for %s", sub.status, email)  # type: ignore[union-attr]
                 return Response(
                     {"error": {"code": "subscription_inactive", "message": "Your workspace subscription has expired or been canceled. Contact your administrator to renew access."}},
                     status=status.HTTP_403_FORBIDDEN,

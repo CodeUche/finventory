@@ -4,7 +4,9 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from apps.core.mixins import ExportMixin, TenantFilterMixin
-from apps.core.permissions import IsStaff, IsManager
+from apps.core.permissions import IsStaff, IsManager, plan_requires
+
+_PlanBills = plan_requires('bills')
 from apps.suppliers.models import Supplier
 from .models import Bill, BillFolder
 from .serializers import BillFolderSerializer, BillSerializer, CreateBillSerializer, RecordBillPaymentSerializer
@@ -14,7 +16,7 @@ from .services import BillService
 class BillFolderViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     """CRUD for bill folders. GET /bills/folders/, POST, PATCH, DELETE."""
     serializer_class = BillFolderSerializer
-    permission_classes = [IsAuthenticated, IsStaff]
+    permission_classes = [IsAuthenticated, IsStaff, _PlanBills]
 
     def get_queryset(self):
         org = self._get_organisation()
@@ -60,7 +62,7 @@ class BillViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
         ('Amount Due', 'amount_due'),
     ]
     serializer_class = BillSerializer
-    permission_classes = [IsAuthenticated, IsStaff]
+    permission_classes = [IsAuthenticated, IsStaff, _PlanBills]
 
     def get_queryset(self):
         org = self._get_organisation()

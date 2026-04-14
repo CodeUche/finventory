@@ -65,6 +65,10 @@ class User(AbstractBaseUser, PermissionsMixin):
         default=False,
         help_text="True for accounts created under a parent organisation. Cannot create orgs or manage billing.",
     )
+    must_change_password = models.BooleanField(
+        default=False,
+        help_text="Forces a password change on next login. Set True for new sub-accounts.",
+    )
 
     # MFA (TOTP)
     mfa_enabled = models.BooleanField(default=False)

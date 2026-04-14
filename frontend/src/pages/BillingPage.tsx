@@ -72,7 +72,7 @@ const MODULE_ROWS: ModuleRow[] = [
   { icon: Receipt,         label: 'Bills & Payables',           tip: 'Track bills owed, schedule payments, manage folders',                                                         free: false,        professional: true,               business: true,               enterprise: true },
   { icon: DollarSign,      label: 'Budget Planning',            tip: 'Set spending budgets per category, compare actual vs planned',                                                free: false,        professional: true,               business: true,               enterprise: true },
   { icon: Shield,          label: 'Audit Log',                  tip: 'Full trail of every action — who did what and when',                                                          free: false,        professional: true,               business: true,               enterprise: true },
-  { icon: Users,           label: 'Team & Permissions',         tip: 'Invite staff with per-module access levels',                                                                  free: false,        professional: 'Up to 5 users',    business: 'Unlimited',        enterprise: 'Unlimited + Custom roles' },
+  { icon: Users,           label: 'Team & Permissions',         tip: 'Invite staff with per-module access levels',                                                                  free: false,        professional: 'Up to 3 users',    business: 'Up to 5 users',    enterprise: 'Unlimited + Custom roles' },
   { icon: Briefcase,       label: 'Payroll & HR',               tip: 'Manage employees, run payroll, compute PAYE and pension',                                                     free: false,        professional: false,              business: true,               enterprise: true },
   { icon: Calculator,      label: 'Accounting Ledger',          tip: 'Full chart of accounts, journal entries, fixed assets, bank reconciliation',                                  free: false,        professional: false,              business: true,               enterprise: true },
   { icon: Shield,          label: 'Owner Analytics',            tip: 'Private profit view using personal cost price — only you see this',                                           free: false,        professional: false,              business: true,               enterprise: true },
@@ -220,7 +220,7 @@ export default function BillingPage() {
   }
 
   return (
-    <div className="space-y-8 max-w-5xl">
+    <div className="space-y-8 w-full">
       <div>
         <h1 className="text-2xl font-bold text-white">Billing & Plans</h1>
         <p className="text-slate-400 text-sm mt-1">Manage your subscription and payment history.</p>
@@ -299,7 +299,7 @@ export default function BillingPage() {
             </button>
           </div>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
           {plans.filter((p) => {
             if (!FEATURES.PARTNER_CHANNEL && p.slug.startsWith('partner-')) return false
             const isFree = parseFloat(p.price) === 0

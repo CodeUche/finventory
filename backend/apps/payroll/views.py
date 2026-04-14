@@ -18,7 +18,9 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from apps.core.mixins import ExportMixin, TenantFilterMixin
-from apps.core.permissions import IsManager, IsStaff, IsOwnerOrAdmin
+from apps.core.permissions import IsManager, IsStaff, IsOwnerOrAdmin, plan_requires
+
+_PlanPayroll = plan_requires('payroll')
 from .models import Employee, EmployeeDocument, EmployeePenalty, EmployeeLoan, PayrollRun, PayslipLine, Bonus, Attendance
 from .serializers import (
     EmployeeSerializer, EmployeeDocumentSerializer,
@@ -44,7 +46,7 @@ class EmployeeViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
         ('Active', lambda o: 'Yes' if o.is_active else 'No'),
     ]
     serializer_class = EmployeeSerializer
-    permission_classes = [IsAuthenticated, IsStaff]
+    permission_classes = [IsAuthenticated, IsStaff, _PlanPayroll]
     search_fields = ["first_name", "last_name", "email", "department", "job_title", "employee_id"]
     ordering_fields = ["first_name", "last_name", "basic_salary", "hire_date"]
     ordering = ["first_name"]
@@ -87,7 +89,7 @@ class EmployeeViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
 
 class EmployeeDocumentViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     serializer_class = EmployeeDocumentSerializer
-    permission_classes = [IsAuthenticated, IsStaff]
+    permission_classes = [IsAuthenticated, IsStaff, _PlanPayroll]
 
     def get_queryset(self):
         org = self._get_organisation()
@@ -105,7 +107,7 @@ class EmployeeDocumentViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
 class EmployeePenaltyViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     serializer_class = EmployeePenaltySerializer
-    permission_classes = [IsAuthenticated, IsStaff]
+    permission_classes = [IsAuthenticated, IsStaff, _PlanPayroll]
 
     def get_queryset(self):
         org = self._get_organisation()
@@ -130,7 +132,7 @@ class EmployeePenaltyViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
 class EmployeeLoanViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     serializer_class = EmployeeLoanSerializer
-    permission_classes = [IsAuthenticated, IsStaff]
+    permission_classes = [IsAuthenticated, IsStaff, _PlanPayroll]
 
     def get_queryset(self):
         org = self._get_organisation()
@@ -155,7 +157,7 @@ class EmployeeLoanViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
 class BonusViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     serializer_class = BonusSerializer
-    permission_classes = [IsAuthenticated, IsStaff]
+    permission_classes = [IsAuthenticated, IsStaff, _PlanPayroll]
 
     def get_queryset(self):
         org = self._get_organisation()
@@ -177,7 +179,7 @@ class BonusViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
 class AttendanceViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     serializer_class = AttendanceSerializer
-    permission_classes = [IsAuthenticated, IsStaff]
+    permission_classes = [IsAuthenticated, IsStaff, _PlanPayroll]
 
     def get_queryset(self):
         org = self._get_organisation()
@@ -241,7 +243,7 @@ class AttendanceViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
 class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     serializer_class = PayrollRunSerializer
-    permission_classes = [IsAuthenticated, IsManager]
+    permission_classes = [IsAuthenticated, IsManager, _PlanPayroll]
 
     def get_queryset(self):
         org = self._get_organisation()

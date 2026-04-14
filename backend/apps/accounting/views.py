@@ -5,7 +5,9 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from apps.core.mixins import TenantFilterMixin
-from apps.core.permissions import IsAccountant, IsOwnerOrAdmin
+from apps.core.permissions import IsAccountant, IsOwnerOrAdmin, plan_requires
+
+_PlanAccounting = plan_requires('accounting')
 from .models import Account, JournalEntry, JournalLine, FixedAsset, FinancialPeriod, BankReconciliation, BankReconciliationLine, AIReconMatch
 from django.db import transaction
 from .serializers import (
@@ -18,7 +20,7 @@ from .services import AccountingService
 
 class AccountViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     serializer_class = AccountSerializer
-    permission_classes = [IsAuthenticated, IsAccountant]
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
 
     def get_queryset(self):
         org = self._get_organisation()
@@ -59,7 +61,7 @@ class AccountViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
 class JournalEntryViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     serializer_class = JournalEntrySerializer
-    permission_classes = [IsAuthenticated, IsAccountant]
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
 
     def get_queryset(self):
         org = self._get_organisation()
@@ -190,7 +192,7 @@ class JournalEntryViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
 class FixedAssetViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     serializer_class = FixedAssetSerializer
-    permission_classes = [IsAuthenticated, IsAccountant]
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
 
     def get_queryset(self):
         org = self._get_organisation()
@@ -208,7 +210,7 @@ class FixedAssetViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
 class FinancialPeriodViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     serializer_class = FinancialPeriodSerializer
-    permission_classes = [IsAuthenticated, IsAccountant]
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
 
     def get_queryset(self):
         org = self._get_organisation()
@@ -228,7 +230,7 @@ class FinancialPeriodViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             period = FinancialPeriod.objects.get(organisation=org, year=year, month=month)
         return Response(FinancialPeriodSerializer(period).data, status=status.HTTP_200_OK)
 
-    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsOwnerOrAdmin])
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsOwnerOrAdmin, _PlanAccounting])
     def lock(self, request, pk=None):
         from django.utils import timezone as tz
         period = self.get_object()
@@ -240,7 +242,7 @@ class FinancialPeriodViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         period.save()
         return Response(FinancialPeriodSerializer(period).data)
 
-    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsOwnerOrAdmin])
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsOwnerOrAdmin, _PlanAccounting])
     def unlock(self, request, pk=None):
         period = self.get_object()
         period.is_locked = False
@@ -252,7 +254,7 @@ class FinancialPeriodViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
 class BankReconciliationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     serializer_class = BankReconciliationSerializer
-    permission_classes = [IsAuthenticated, IsAccountant]
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
 
     def get_queryset(self):
         org = self._get_organisation()

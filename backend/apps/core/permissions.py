@@ -138,6 +138,56 @@ class IsVerified(BasePermission):
         return bool(request.user and request.user.is_authenticated and request.user.is_verified)
 
 
+def plan_requires(module_key: str):
+    """
+    Factory that returns a DRF permission class gating access to a specific
+    plan module.
+
+    Usage::
+        permission_classes = [IsAuthenticated, IsStaff, plan_requires('payroll')]
+
+    Rules:
+    - Superusers bypass all plan restrictions.
+    - If the org has no subscription, access is allowed (prevents lockout
+      during onboarding before plans are seeded).
+    - If the active plan's ``features.modules`` list does NOT include
+      ``module_key``, the request is denied with HTTP 402.
+    - This applies to ALL HTTP methods (GET included) — a module not on
+      the plan is completely inaccessible, matching the sidebar gating.
+    """
+    class _PlanModulePermission(BasePermission):
+        message = (
+            "Your current plan does not include access to this feature. "
+            "Upgrade your plan to continue."
+        )
+
+        def has_permission(self, request, view):
+            if request.user and request.user.is_superuser:
+                return True
+            org = _get_or_resolve_org(request)
+            if not org:
+                return False
+            sub = getattr(org, "subscription", None)
+            # No subscription yet — allow (SubscriptionActive handles expiry)
+            if sub is None:
+                return True
+            # Inactive/expired subscription — let SubscriptionActive handle it
+            if not sub.is_active:
+                return True
+            modules = sub.plan.features.get("modules") or []
+            allowed = module_key in modules
+            if not allowed:
+                self.message = (
+                    f"Your {sub.plan.name} plan does not include {module_key.replace('_', ' ').title()}. "
+                    "Upgrade your plan to access this feature."
+                )
+            return allowed
+
+    _PlanModulePermission.__name__ = f"PlanRequires_{module_key}"
+    _PlanModulePermission.__qualname__ = f"PlanRequires_{module_key}"
+    return _PlanModulePermission
+
+
 class SubscriptionActive(BasePermission):
     """
     Blocks write requests (POST/PUT/PATCH/DELETE) when the organisation's

@@ -147,12 +147,15 @@ class OrganisationViewSet(viewsets.ModelViewSet):
         serialising FormData as application/x-www-form-urlencoded.
         """
         from django.core.files.base import ContentFile
+        from apps.core.validators import sniff_image_bytes
         org = self.get_object()
         body = request.body
         if not body:
             return Response({"error": {"message": "No file data received."}}, status=status.HTTP_400_BAD_REQUEST)
-        ct = (request.content_type or "image/jpeg").split(";")[0].strip()
-        ext = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}.get(ct, ".jpg")
+        detected_mime = sniff_image_bytes(body[:261])
+        if detected_mime is None:
+            return Response({"error": {"message": "File is not a valid image."}}, status=status.HTTP_400_BAD_REQUEST)
+        ext = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}.get(detected_mime, ".jpg")
         if org.logo:
             org.logo.delete(save=False)
         org.logo.save(f"logo_{org.id}{ext}", ContentFile(body), save=True)
@@ -165,12 +168,15 @@ class OrganisationViewSet(viewsets.ModelViewSet):
         Body: raw image binary. Content-Type: image/png | image/jpeg | image/webp
         """
         from django.core.files.base import ContentFile
+        from apps.core.validators import sniff_image_bytes
         org = self.get_object()
         body = request.body
         if not body:
             return Response({"error": {"message": "No file data received."}}, status=status.HTTP_400_BAD_REQUEST)
-        ct = (request.content_type or "image/png").split(";")[0].strip()
-        ext = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}.get(ct, ".png")
+        detected_mime = sniff_image_bytes(body[:261])
+        if detected_mime is None:
+            return Response({"error": {"message": "File is not a valid image."}}, status=status.HTTP_400_BAD_REQUEST)
+        ext = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}.get(detected_mime, ".png")
         if org.company_stamp:
             org.company_stamp.delete(save=False)
         org.company_stamp.save(f"stamp_{org.id}{ext}", ContentFile(body), save=True)
@@ -362,6 +368,7 @@ class OrganisationViewSet(viewsets.ModelViewSet):
             last_name=last_name,
             is_verified=True,
             is_sub_account=True,
+            must_change_password=True,
         )
         membership = Membership.objects.create(
             organisation=org,

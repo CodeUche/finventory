@@ -4,7 +4,9 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.core.mixins import ExportMixin, TenantFilterMixin
-from apps.core.permissions import IsStaff
+from apps.core.permissions import IsStaff, plan_requires
+
+_PlanPurchases = plan_requires('purchases')
 
 from .models import PurchaseOrder
 from .serializers import PurchaseOrderSerializer, ReceiveItemSerializer
@@ -29,7 +31,7 @@ class PurchaseOrderViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet
 
     queryset = PurchaseOrder.objects.select_related("supplier", "warehouse").prefetch_related("items__product")
     serializer_class = PurchaseOrderSerializer
-    permission_classes = [IsAuthenticated, IsStaff]
+    permission_classes = [IsAuthenticated, IsStaff, _PlanPurchases]
     filterset_fields = ["status", "supplier"]
     search_fields = ["po_number", "supplier__name"]
     ordering_fields = ["order_date", "total_amount"]

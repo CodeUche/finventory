@@ -28,6 +28,41 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '/api/v1'
 // Resolved immediately — kept so the interceptor can await it symmetrically.
 const _tauriReady: Promise<void> = Promise.resolve()
 
+// ── Effective-offline tracking (Tauri workaround) ─────────────────────────────
+// navigator.onLine is unreliable in Tauri/WebView2 — it may stay `true` even
+// when the internet is cut and Railway is unreachable. We track actual API
+// reachability here and dispatch synthetic offline/online events so the rest of
+// the app (useNetworkStatus, offline banner) works correctly.
+let _effectivelyOffline = false
+
+function _signalOffline() {
+  if (_effectivelyOffline) return          // already signalled
+  _effectivelyOffline = true
+  if (navigator.onLine) window.dispatchEvent(new Event('offline'))  // synthetic
+}
+
+function _signalOnline() {
+  if (!_effectivelyOffline) return         // wasn't offline
+  _effectivelyOffline = false
+  window.dispatchEvent(new Event('online'))  // triggers flush in useNetworkStatus
+}
+
+// ── In-flight GET deduplication ───────────────────────────────────────────────
+// Prevents duplicate network requests when two components call the same endpoint
+// simultaneously (e.g. on first mount before cache exists).
+interface Deferred {
+  resolve: (v: AxiosResponse) => void
+  reject: (e: unknown) => void
+  promise: Promise<AxiosResponse>
+}
+function makeDeferred(): Deferred {
+  let resolve!: (v: AxiosResponse) => void
+  let reject!: (e: unknown) => void
+  const promise = new Promise<AxiosResponse>((res, rej) => { resolve = res; reject = rej })
+  return { resolve, reject, promise }
+}
+const _inflightGets = new Map<string, Deferred>()
+
 // ── Shared response converter (Response → AxiosResponse) ──────────────────
 async function responseToAxios(resp: Response, config: InternalAxiosRequestConfig): Promise<AxiosResponse> {
   const respHeaders: Record<string, string> = {}
@@ -150,6 +185,44 @@ api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
     return Promise.reject(new AxiosError('Offline — request queued', 'ERR_NETWORK', config))
   }
 
+  // ── Fresh-cache gate + in-flight deduplication for GET requests ─────────────
+  // 1. If cached data is < 5 min old → serve instantly, skip network entirely.
+  // 2. If the same URL is already in-flight → share the existing promise.
+  // Both save bandwidth on slow/intermittent connections.
+  const FRESH_MS = 5 * 60 * 1000
+  const isBypassCache = (config.headers as Record<string, string>)?.['X-Bypass-Cache'] === '1'
+  type ExtConfig = InternalAxiosRequestConfig & { _fromCache?: boolean; _dedupeKey?: string }
+  if (!isMutation && !isBypassCache) {
+    const cacheUrl = (config.url ?? '') + (config.params ? '?' + new URLSearchParams(config.params as Record<string, string>).toString() : '')
+
+    // 1. Fresh-cache: serve without hitting the network
+    if (navigator.onLine) {
+      try {
+        const entry = await offlineCache.get(cacheUrl)
+        if (entry && Date.now() - entry.cachedAt < FRESH_MS) {
+          ;(config as ExtConfig)._fromCache = true
+          config.adapter = async (): Promise<AxiosResponse> => ({
+            data: entry.data, status: 200, statusText: 'OK (fresh cache)', headers: {}, config,
+          } as AxiosResponse)
+          return config
+        }
+      } catch { /* non-fatal — fall through */ }
+    }
+
+    // 2. In-flight deduplication: join an existing request instead of firing a new one
+    const inflight = _inflightGets.get(cacheUrl)
+    if (inflight) {
+      ;(config as ExtConfig)._fromCache = true   // skip re-caching the shared response
+      config.adapter = () => inflight.promise
+      return config
+    }
+
+    // Register a deferred for this URL so subsequent identical requests can join it
+    const deferred = makeDeferred()
+    _inflightGets.set(cacheUrl, deferred)
+    ;(config as ExtConfig)._dedupeKey = cacheUrl
+  }
+
   // ── Offline cache: serve cached GET responses when network is unavailable ──
   if (!navigator.onLine && !isMutation) {
     const cacheUrl = (config.url ?? '') + (config.params ? '?' + new URLSearchParams(config.params as Record<string, string>).toString() : '')
@@ -179,20 +252,67 @@ const processQueue = (error: AxiosError | null, token: string | null = null) => 
   failedQueue = []
 }
 
+type ExtConfig = InternalAxiosRequestConfig & { _fromCache?: boolean; _dedupeKey?: string; _retry?: boolean }
+
 api.interceptors.response.use(
   (res) => {
-    // ── Cache every successful GET so it's available offline later ──
-    const method = res.config?.method?.toLowerCase()
-    const url = res.config?.url
-    if (method === 'get' && url && res.data !== undefined) {
-      const params = res.config?.params
-      const cacheUrl = url + (params ? '?' + new URLSearchParams(params as Record<string, string>).toString() : '')
-      offlineCache.set(cacheUrl, res.data)
+    const cfg = res.config as ExtConfig
+    if (!cfg._fromCache) {
+      // ── Cache every real network GET so it's available offline later ──
+      const method = cfg.method?.toLowerCase()
+      const url = cfg.url
+      if (method === 'get' && url && res.data !== undefined) {
+        const params = cfg.params
+        const cacheUrl = url + (params ? '?' + new URLSearchParams(params as Record<string, string>).toString() : '')
+        offlineCache.set(cacheUrl, res.data)
+        // Resolve any in-flight deduplication waiters
+        if (cfg._dedupeKey) {
+          _inflightGets.get(cfg._dedupeKey)?.resolve(res)
+          _inflightGets.delete(cfg._dedupeKey)
+        }
+      }
+      _signalOnline()
     }
     return res
   },
   async (error: AxiosError) => {
-    const original = error.config as InternalAxiosRequestConfig & { _retry?: boolean }
+    const original = error.config as ExtConfig
+
+    // ── True network failure — no HTTP response received ─────────────────────
+    // Handles the Tauri/WebView2 case where navigator.onLine stays `true` even
+    // when the internet is cut and the Railway backend is unreachable.
+    if (!error.response && original) {
+      const method = original.method?.toLowerCase() ?? ''
+      const url = original.url ?? ''
+      const isRetry = (original.headers as Record<string, string>)?.['X-Offline-Retry'] === '1'
+      const isMut = ['post', 'put', 'patch', 'delete'].includes(method)
+
+      if (!isMut) {
+        // GET: try cache fallback
+        const params = original.params
+        const cacheUrl = url + (params ? '?' + new URLSearchParams(params as Record<string, string>).toString() : '')
+        try {
+          const entry = await offlineCache.get(cacheUrl)
+          if (entry) {
+            _signalOffline()
+            return { data: entry.data, status: 200, statusText: 'OK (cached)', headers: {}, config: original } as AxiosResponse
+          }
+        } catch { /* non-fatal */ }
+      } else if (!isRetry) {
+        // Mutation: queue for later sync
+        offlineQueue.enqueue({ method, url, data: original.data })
+        toast('Request queued — will sync when back online', { icon: '📋', id: 'queue-notice', duration: 3000 })
+      }
+
+      // Reject any in-flight deduplication waiters for this URL
+      if (original._dedupeKey) {
+        _inflightGets.get(original._dedupeKey)?.reject(error)
+        _inflightGets.delete(original._dedupeKey)
+      }
+
+      _signalOffline()
+      return Promise.reject(error)
+    }
 
     // Never attempt a token refresh for auth endpoints — a 401 there is a real credential
     // failure, not an expired token. Bypassing these prevents isRefreshing from getting stuck.
@@ -385,7 +505,7 @@ export const inventoryApi = {
   createProduct: (data: object) => api.post('/inventory/products/', data),
   updateProduct: (id: string, data: object) => api.patch(`/inventory/products/${id}/`, data),
   stock: (params?: object) => api.get('/inventory/stock/', { params }),
-  lowStock: () => api.get('/inventory/products/low-stock/'),
+  lowStock: (params?: object) => api.get('/inventory/products/low-stock/', { params }),
   valuation: () => api.get('/inventory/products/valuation/'),
   movements: (params?: object) => api.get('/inventory/movements/', { params }),
   warehouses: () => api.get('/inventory/warehouses/'),
@@ -599,7 +719,7 @@ export const payrollApi = {
   createEmployee: (data: object) => api.post('/payroll/employees/', data),
   updateEmployee: (id: string, data: object) => api.patch(`/payroll/employees/${id}/`, data),
   deleteEmployee: (id: string) => api.delete(`/payroll/employees/${id}/`),
-  runs: () => api.get('/payroll/runs/'),
+  runs: (params?: object) => api.get('/payroll/runs/', { params }),
   runPayroll: (data: object) => api.post('/payroll/runs/', data),
   approvePayroll: (id: string) => api.post(`/payroll/runs/${id}/approve/`),
   markPaid: (id: string, data: object) => api.post(`/payroll/runs/${id}/mark_paid/`, data),

@@ -34,7 +34,7 @@ export default function StockPage() {
   const [items, setItems] = useState<StockItem[]>([])
   const [loading, setLoading] = useState(true)
   const [lowStockTotal, setLowStockTotal] = useState(0)
-  const [filter, setFilter] = useState<'all' | 'low' | 'medium'>(
+  const [filter, setFilter] = useState<'all' | 'low'>(
     searchParams.get('filter') === 'low' ? 'low' : 'all'
   )
   const [warehouseFilter, setWarehouseFilter] = useState<string>('all')
@@ -96,7 +96,7 @@ export default function StockPage() {
   }
 
   const handleAdjust = async () => {
-    if (!adjustForm.warehouse_id) { toast.error('Select a location'); return }
+    if (!adjustForm.warehouse_id) { toast.error('Select a warehouse'); return }
     if (!adjustForm.quantity || parseFloat(adjustForm.quantity) === 0) {
       toast.error('Enter a non-zero quantity'); return
     }
@@ -170,10 +170,10 @@ export default function StockPage() {
 
   const handleTransfer = async () => {
     if (!transferForm.product_id) { toast.error('Select a product'); return }
-    if (!transferForm.from_warehouse_id) { toast.error('Select a source location'); return }
-    if (!transferForm.to_warehouse_id) { toast.error('Select a destination location'); return }
+    if (!transferForm.from_warehouse_id) { toast.error('Select a source warehouse'); return }
+    if (!transferForm.to_warehouse_id) { toast.error('Select a destination warehouse'); return }
     if (transferForm.from_warehouse_id === transferForm.to_warehouse_id) {
-      toast.error('Source and destination must be different locations'); return
+      toast.error('Source and destination must be different warehouses'); return
     }
     const qty = parseFloat(transferForm.quantity)
     if (!transferForm.quantity || isNaN(qty) || qty <= 0) {
@@ -201,11 +201,9 @@ export default function StockPage() {
 
   // lowStockTotal from the dedicated endpoint (includes products with no stock movements)
   const lowCount = lowStockTotal || items.filter((i) => i.stock_level === 'low' || i.is_low_stock).length
-  const mediumCount = items.filter((i) => i.stock_level === 'medium').length
   const displayed = items
     .filter((i) => {
       if (filter === 'low') return i.stock_level === 'low' || i.is_low_stock
-      if (filter === 'medium') return i.stock_level === 'medium'
       return true
     })
     .filter((i) => warehouseFilter === 'all' ? true : i.warehouse_name === warehouseFilter)
@@ -227,13 +225,11 @@ export default function StockPage() {
             value={warehouseFilter}
             onChange={(e) => setWarehouseFilter(e.target.value)}
           >
-            <option value="all">All Locations</option>
+            <option value="all">All Warehouses</option>
             {warehouseNames.map((w) => <option key={w} value={w}>{w}</option>)}
           </select>
           <button onClick={() => setFilter('all')} className={filter === 'all' ? 'btn-primary py-2 px-4' : 'btn-secondary py-2 px-4'}>All</button>
-          <button onClick={() => setFilter('medium')} className={`flex items-center gap-1.5 py-2 px-4 rounded-lg text-sm font-medium transition-colors ${filter === 'medium' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40' : 'btn-secondary'}`}>
-            <AlertTriangle size={14} /> Medium {mediumCount > 0 && `(${mediumCount})`}
-          </button>
+
           <button onClick={() => setFilter('low')} className={filter === 'low' ? 'btn-danger py-2 px-4' : 'btn-secondary py-2 px-4'}>
             <AlertTriangle size={14} /> Low Stock {lowCount > 0 && `(${lowCount})`}
           </button>
@@ -269,7 +265,7 @@ export default function StockPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-surface-700">
-                {['Product', 'SKU', 'Location', 'On Hand', 'Reserved', 'Available', 'Status'].map((h) => (
+                {['Product', 'SKU', 'Warehouse', 'On Hand', 'Reserved', 'Available', 'Status'].map((h) => (
                   <th key={h} className="px-5 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
                 ))}
               </tr>
@@ -308,10 +304,6 @@ export default function StockPage() {
                     <td className="px-5 py-3.5">
                       {(s.stock_level === 'low' || s.is_low_stock) ? (
                         <span className="badge-red"><AlertTriangle size={11} /> Low</span>
-                      ) : s.stock_level === 'medium' ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30">
-                          <AlertTriangle size={11} /> Medium
-                        </span>
                       ) : (
                         <span className="badge-green">OK</span>
                       )}
@@ -386,13 +378,13 @@ export default function StockPage() {
               )}
 
               <div>
-                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Location *</label>
+                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Warehouse *</label>
                 <select
                   className="input"
                   value={adjustForm.warehouse_id}
                   onChange={(e) => setAdjustForm({ ...adjustForm, warehouse_id: e.target.value })}
                 >
-                  <option value="">Select location…</option>
+                  <option value="">Select warehouse…</option>
                   {warehouses.map((w) => (
                     <option key={w.id} value={w.id}>{w.name}{w.is_default ? ' (default)' : ''}</option>
                   ))}
@@ -465,7 +457,7 @@ export default function StockPage() {
                   <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">From *</label>
                   <select className="input" value={transferForm.from_warehouse_id}
                     onChange={(e) => setTransferForm({ ...transferForm, from_warehouse_id: e.target.value })}>
-                    <option value="">Source location…</option>
+                    <option value="">Source warehouse…</option>
                     {warehouses.map((w) => (
                       <option key={w.id} value={w.id}>{w.name}</option>
                     ))}

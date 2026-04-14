@@ -6,6 +6,8 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.accounting.models import Account, JournalEntry
 from apps.authentication.models import User
+from apps.subscriptions.models import Plan, Subscription
+from apps.subscriptions.services import SubscriptionService
 from apps.tenancy.services import OrganisationService
 
 
@@ -22,6 +24,13 @@ def _make_org(user, name="Acc Org"):
     )
 
 
+def _upgrade_to_business(org):
+    """Upgrade org to the Business plan so plan_requires('accounting') passes."""
+    plan = Plan.objects.get(slug="business")
+    SubscriptionService.upgrade_plan(org, plan)
+    org.refresh_from_db()
+
+
 def _auth_client(user, org):
     client = APIClient()
     refresh = RefreshToken.for_user(user)
@@ -36,6 +45,7 @@ class ChartOfAccountsTests(TestCase):
     def setUp(self):
         self.user = _make_user()
         self.org = _make_org(self.user)
+        _upgrade_to_business(self.org)
         self.client = _auth_client(self.user, self.org)
 
     def test_coa_seeded_on_org_creation(self):
@@ -88,6 +98,7 @@ class JournalEntryTests(TestCase):
     def setUp(self):
         self.user = _make_user("je_owner@example.com")
         self.org = _make_org(self.user, "JE Org")
+        _upgrade_to_business(self.org)
         self.client = _auth_client(self.user, self.org)
         # Get two seeded accounts for balanced entry
         accounts = list(Account.objects.filter(organisation=self.org).order_by("code")[:2])
@@ -152,6 +163,7 @@ class JournalEntryTests(TestCase):
         je_id = create_res.data["id"]
         other_user = _make_user("je_other@example.com")
         other_org = _make_org(other_user, "JE Other Org")
+        _upgrade_to_business(other_org)   # give business plan so 403 = tenant isolation, not plan gate
         c = _auth_client(other_user, other_org)
         res = c.get(f"/api/v1/accounting/journal/{je_id}/")
         self.assertIn(res.status_code, [403, 404])
@@ -161,6 +173,7 @@ class FinancialReportTests(TestCase):
     def setUp(self):
         self.user = _make_user("report_owner@example.com")
         self.org = _make_org(self.user, "Report Org")
+        _upgrade_to_business(self.org)
         self.client = _auth_client(self.user, self.org)
 
     def test_trial_balance_accessible(self):

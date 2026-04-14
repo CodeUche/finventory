@@ -124,13 +124,13 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     if (!isAuthenticated) return
     try {
       const [stockData, overdueData, batchData, billDueData, payrollData, customerDueData] = await Promise.allSettled([
-        inventoryApi.lowStock(),
-        salesApi.invoices({ status: 'overdue', page_size: 20 }),
-        inventoryApi.batches({ page_size: 200 }),
-        billApi.list({ due_date_from: today, due_date_to: in7Days, status: 'approved', page_size: 50 }),
-        payrollApi.runs(),
+        inventoryApi.lowStock({ page_size: 20 }),
+        salesApi.invoices({ status: 'overdue', page_size: 10 }),
+        inventoryApi.batches({ page_size: 30 }),
+        billApi.list({ due_date_from: today, due_date_to: in7Days, status: 'approved', page_size: 10 }),
+        payrollApi.runs({ page_size: 5 }),
         // Invoices on credit / partially paid due within the next 7 days
-        salesApi.invoices({ due_date_from: today, due_date_to: in7Days, page_size: 20 }),
+        salesApi.invoices({ due_date_from: today, due_date_to: in7Days, page_size: 10 }),
       ])
 
       if (stockData.status === 'fulfilled') {
@@ -268,8 +268,27 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
   useEffect(() => {
     if (!isAuthenticated) return
     poll()
-    const interval = setInterval(poll, 30_000)
-    return () => clearInterval(interval)
+    // Poll every 5 minutes — notification data (low stock, overdue invoices,
+    // expiring batches) changes slowly. 30s was 6 API calls/30s = 720/hour.
+    const POLL_MS = 5 * 60 * 1000
+    let intervalId: ReturnType<typeof setInterval> | null = setInterval(poll, POLL_MS)
+
+    // Pause polling when the tab/window is hidden, resume when visible
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        if (intervalId) { clearInterval(intervalId); intervalId = null }
+      } else {
+        // Tab became visible — poll immediately then restart interval
+        poll()
+        if (!intervalId) intervalId = setInterval(poll, POLL_MS)
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+
+    return () => {
+      if (intervalId) clearInterval(intervalId)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
   }, [isAuthenticated, poll])
 
   const addDismissed = useCallback((id: string) => {

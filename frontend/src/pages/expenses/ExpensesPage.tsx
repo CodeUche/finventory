@@ -124,7 +124,7 @@ export default function ExpensesPage() {
 
       // Also load sales invoices for income view (revenue from sales)
       if (typeFilter !== 'expense') {
-        const invParams: Record<string, unknown> = { ...dateParams, page_size: 200 }
+        const invParams: Record<string, unknown> = { ...dateParams, page_size: 50 }
         const invRes = await salesApi.invoices(invParams)
         const allInvoices: Invoice[] = invRes.data.results ?? invRes.data
         // Show all revenue-generating invoices (not draft/proforma/voided)

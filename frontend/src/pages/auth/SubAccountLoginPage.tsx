@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Eye, EyeOff, Loader2, Users } from 'lucide-react'
+import { Eye, EyeOff, Loader2, Users, KeyRound } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { api, authApi, orgApi } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
@@ -11,6 +11,27 @@ export default function SubAccountLoginPage() {
   const [form, setForm] = useState({ username: '', org_slug: '', password: '' })
   const [showPw, setShowPw] = useState(false)
   const [loading, setLoading] = useState(false)
+
+  // Forced password change state
+  const [showForceChange, setShowForceChange] = useState(false)
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [changingPw, setChangingPw] = useState(false)
+
+  const handleForcePasswordChange = async () => {
+    if (newPassword.length < 10) { toast.error('Password must be at least 10 characters'); return }
+    if (newPassword !== confirmPassword) { toast.error('Passwords do not match'); return }
+    setChangingPw(true)
+    try {
+      await authApi.changePassword(form.password, newPassword)
+      toast.success('Password updated. Welcome!')
+      setShowForceChange(false)
+      navigate('/dashboard')
+    } catch {
+      toast.error('Failed to change password. Please try again.')
+    } finally {
+      setChangingPw(false) }
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -28,6 +49,10 @@ export default function SubAccountLoginPage() {
       setOrganisations(orgs)
       if (orgs.length > 0) setOrganisation(orgs[0])
 
+      if (data.user.must_change_password) {
+        setShowForceChange(true)
+        return
+      }
       toast.success('Welcome back!')
       navigate('/dashboard')
     } catch (err: any) {
@@ -176,6 +201,51 @@ export default function SubAccountLoginPage() {
           </p>
         </div>
       </div>
+
+      {/* Forced password change modal */}
+      {showForceChange && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+          <div className="bg-surface-800 border border-surface-600 rounded-2xl p-7 w-full max-w-md shadow-2xl space-y-5">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-500/15 flex items-center justify-center">
+                <KeyRound size={20} className="text-amber-400" />
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-white">Set your password</h2>
+                <p className="text-xs text-slate-400">Your administrator requires you to change your password before continuing.</p>
+              </div>
+            </div>
+            <div>
+              <label className="text-xs text-slate-400 block mb-1.5">New Password <span className="text-red-400">*</span></label>
+              <input
+                type="password"
+                className="input"
+                placeholder="At least 10 characters"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                autoFocus
+              />
+            </div>
+            <div>
+              <label className="text-xs text-slate-400 block mb-1.5">Confirm Password <span className="text-red-400">*</span></label>
+              <input
+                type="password"
+                className="input"
+                placeholder="Repeat new password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+              />
+            </div>
+            <button
+              onClick={handleForcePasswordChange}
+              disabled={changingPw || !newPassword || !confirmPassword}
+              className="btn-primary w-full justify-center py-3 disabled:opacity-50"
+            >
+              {changingPw ? <Loader2 size={16} className="animate-spin" /> : 'Set Password & Continue'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -9,6 +9,7 @@ export interface User {
   is_superuser?: boolean
   is_staff?: boolean
   is_sub_account?: boolean
+  must_change_password?: boolean
   mfa_enabled?: boolean
   has_partner_profile?: boolean
   avatar?: string

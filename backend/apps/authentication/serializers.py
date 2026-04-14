@@ -125,10 +125,11 @@ class UserProfileSerializer(serializers.ModelSerializer):
         model = User
         fields = [
             "id", "email", "first_name", "last_name", "phone",
-            "avatar", "is_verified", "is_superuser", "is_staff", "is_sub_account", "mfa_enabled",
+            "avatar", "is_verified", "is_superuser", "is_staff", "is_sub_account",
+            "must_change_password", "mfa_enabled",
             "has_partner_profile", "created_at",
         ]
-        read_only_fields = ["id", "email", "is_verified", "is_superuser", "is_staff", "is_sub_account", "mfa_enabled", "has_partner_profile", "created_at"]
+        read_only_fields = ["id", "email", "is_verified", "is_superuser", "is_staff", "is_sub_account", "must_change_password", "mfa_enabled", "has_partner_profile", "created_at"]
         extra_kwargs = {
             "first_name": {"max_length": 150, "required": False, "allow_blank": True},
             "last_name": {"max_length": 150, "required": False, "allow_blank": True},

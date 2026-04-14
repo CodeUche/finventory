@@ -51,7 +51,9 @@ class PlanModelTests(TestCase):
 
     def test_plan_feature_getter(self):
         plan = Plan.objects.get(slug="professional")
-        self.assertEqual(plan.get_feature("max_products"), 500)
+        # Canonical migration sets professional max_products to 999999 (unlimited)
+        self.assertEqual(plan.get_feature("max_products"), 999999)
+        self.assertEqual(plan.get_feature("max_users"), 3)
         self.assertIsNone(plan.get_feature("nonexistent"))
 
 

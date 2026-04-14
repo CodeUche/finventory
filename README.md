@@ -212,14 +212,17 @@ cd backend
 pytest
 ```
 
-All 27 tests should pass. Tests use SQLite in-memory, so no Postgres needed.
+All 109 tests should pass. Tests use SQLite in-memory, so no Postgres needed.
 
 ```bash
-# With verbose output
-pytest -v
+# Run via Django test runner (recommended)
+cd backend
+python manage.py test apps.authentication apps.subscriptions apps.tenancy \
+  apps.sales apps.inventory apps.accounting apps.customers apps.payroll \
+  --settings=config.settings.testing
 
-# Run specific test file
-pytest ../tests/test_tax_engine.py -v
+# With verbose output
+python manage.py test ... --verbosity=2
 ```
 
 ---
@@ -355,6 +358,89 @@ print(result.bracket_breakdown) # list of dicts per bracket
 | `CORS_ALLOWED_ORIGINS` | No | localhost | Allowed CORS origins |
 | `JWT_ACCESS_TOKEN_LIFETIME_MINUTES` | No | `60` | Access token TTL |
 | `JWT_REFRESH_TOKEN_LIFETIME_DAYS` | No | `7` | Refresh token TTL |
+
+---
+
+## Deploying Celery on Railway
+
+Celery requires two additional processes alongside the main web dyno: a **worker** and a **beat scheduler**. Both are already declared in the root `Procfile`.
+
+### What each process does
+
+| Process | Command | Purpose |
+|---|---|---|
+| `web` | `gunicorn config.wsgi:application` | Handles HTTP requests |
+| `worker` | `celery -A config.celery worker` | Runs async tasks (email, overdue invoice marking, depreciation) |
+| `beat` | `celery -A config.celery beat` | Fires scheduled tasks on a cron schedule |
+
+### Railway setup (step-by-step)
+
+**1. Add a Redis service**
+
+In your Railway project, click **New** → **Database** → **Redis**. Copy the `REDIS_URL` from the Connect tab.
+
+**2. Set environment variables** (in all three services)
+
+```
+REDIS_URL=redis://...       # From Railway Redis service
+CELERY_BROKER_URL=redis://... # Same as REDIS_URL
+CELERY_RESULT_BACKEND=redis://... # Same as REDIS_URL
+```
+
+**3. Create a Worker service**
+
+- Click **New Service** → **Deploy from GitHub** (same repo)
+- Under **Settings → Deploy**, override the start command:
+  ```
+  cd backend && celery -A config.celery worker --loglevel=info --concurrency=2
+  ```
+- Set `DJANGO_SETTINGS_MODULE=config.settings.production` and all the same env vars as your `web` service
+
+**4. Create a Beat service**
+
+- Same as above but with start command:
+  ```
+  cd backend && celery -A config.celery beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+  ```
+- Beat must connect to the **same PostgreSQL** as the web service (it stores schedule state in the DB)
+- Run only **one** beat instance — multiple instances cause duplicate task firing
+
+**5. Apply the django-celery-beat migration** (if not already done)
+
+The `release` command in the Procfile runs `migrate --noinput` on every deploy, which handles this automatically.
+
+### Scheduled tasks
+
+| Task | Schedule | What it does |
+|---|---|---|
+| `mark_overdue_invoices` | Daily 00:05 | Marks unpaid invoices past due date as `overdue` |
+| `generate_recurring_invoices` | Daily 00:10 | Creates invoices for active recurring templates |
+| `run_monthly_depreciation` | 1st of month 01:00 | Posts depreciation journal entries for fixed assets |
+| `create_invoice_year_archive` | Jan 1 00:30 | Auto-creates year-based invoice folders |
+| `create_bill_year_archive` | Jan 1 00:35 | Auto-creates year-based bill folders |
+| `check_expired_subscriptions` | Every hour | Deactivates expired trials and subscriptions |
+
+### Verifying workers are running
+
+```bash
+# Check worker logs in Railway dashboard, or run locally:
+celery -A config.celery inspect active
+celery -A config.celery inspect scheduled
+```
+
+### Running Celery locally
+
+```bash
+# Terminal 1 — worker
+cd backend
+celery -A config.celery worker --loglevel=info
+
+# Terminal 2 — beat (optional for local dev)
+cd backend
+celery -A config.celery beat --loglevel=info
+```
+
+Redis must be running locally: `redis-server` or `docker run -p 6379:6379 redis:alpine`
 
 ---
 

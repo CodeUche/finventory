@@ -70,10 +70,13 @@ export default function AppLayout() {
         perms[p.module] = p.access_level
       })
       setMembership(data.role as string, perms)
-    }).catch(() => {
-      // If membership fails to load, default to minimum access (viewer, no module permissions).
-      // This prevents non-owners from seeing all items when the call errors.
-      if (!user?.is_superuser) setMembership('viewer', {})
+    }).catch((err) => {
+      // Only lock down to viewer on a real auth/permission error (HTTP response present).
+      // Network failures (no response) should preserve the last-known membership so
+      // the app remains usable offline — the persisted role/permissions from localStorage
+      // are already in the store and correct.
+      const isNetworkErr = !err?.response
+      if (!user?.is_superuser && !isNetworkErr) setMembership('viewer', {})
     })
   }, [organisation?.id, setMembership])
 
@@ -93,7 +96,10 @@ export default function AppLayout() {
       } else {
         setSubscriptionExpired(false)
       }
-    }).catch(() => { setPlanModules(null); setPlanTaxEngine(null); setPlanName(null) })
+    }).catch((err) => {
+      // Network error: keep existing plan state so plan-gated features stay accessible offline
+      if (err?.response) { setPlanModules(null); setPlanTaxEngine(null); setPlanName(null) }
+    })
   }, [organisation?.id, user?.is_superuser, setPlanModules, setPlanTaxEngine, setPlanName, setSubscriptionExpired])
 
   const handlePaywallDismiss = () => {
