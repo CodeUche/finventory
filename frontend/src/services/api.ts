@@ -262,7 +262,7 @@ api.interceptors.response.use(
     // Skip 401 (handled by refresh logic) and 403 (permission denials — handled silently at component level)
     const errData = (error.response?.data as any)?.error
     const status = error.response?.status
-    if (errData?.message && status !== 401 && status !== 403) {
+    if (errData?.message && status !== 401 && status !== 403 && status !== 500) {
       const toastId = `api-err-${status}-${original.url}`
       toast.error(errData.message, { id: toastId, duration: 4000 })
     }
@@ -344,6 +344,8 @@ export const authApi = {
   mfaDisable: (code: string) => api.post('/auth/mfa/disable/', { code }),
   staffLogin: (username: string, orgSlug: string, password: string) =>
     api.post('/auth/staff-login/', { username, org_slug: orgSlug, password }),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    api.post('/auth/change-password/', { current_password: currentPassword, new_password: newPassword }),
 }
 
 export const orgApi = {

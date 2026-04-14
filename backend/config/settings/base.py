@@ -13,6 +13,10 @@ Architecture note:
 import os
 from pathlib import Path
 
+# Ensure the logs directory exists so RotatingFileHandler can write to it.
+# This is a no-op if the directory already exists.
+Path(__file__).resolve().parent.parent.parent.joinpath("logs").mkdir(exist_ok=True)
+
 from decouple import Csv, config
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
@@ -430,6 +434,7 @@ LOGGING = {
             "maxBytes": 1024 * 1024 * 10,  # 10 MB
             "backupCount": 5,
             "formatter": "verbose",
+            "delay": True,  # Don't open the file until the first log message — safe in CI/test envs where logs/ may not exist
         },
     },
     "root": {

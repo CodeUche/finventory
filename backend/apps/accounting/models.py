@@ -60,8 +60,20 @@ class JournalEntry(TenantAwareModel):
 
     def save(self, *args, **kwargs):
         if not self.reference:
-            count = JournalEntry.objects.filter(organisation=self.organisation).count()
-            self.reference = f"JE-{count + 1:05d}"
+            import re
+            from django.db.models import Max
+            last = (
+                JournalEntry.all_objects
+                .filter(organisation=self.organisation)
+                .exclude(reference='')
+                .aggregate(m=Max('reference'))['m']
+            )
+            if last:
+                match = re.search(r'(\d+)$', last)
+                num = int(match.group(1)) + 1 if match else 1
+            else:
+                num = 1
+            self.reference = f"JE-{num:05d}"
         super().save(*args, **kwargs)
 
     def clean(self):

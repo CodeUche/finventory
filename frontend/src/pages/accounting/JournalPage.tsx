@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, Fragment } from 'react'
 import { Plus, X, BookMarked, Loader2, ChevronDown, ChevronUp, Trash2, Edit2, RotateCcw } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { accountingApi } from '@/services/api'
@@ -39,11 +39,24 @@ export default function JournalPage() {
   const load = async () => {
     setLoading(true)
     try {
-      const [jRes, aRes] = await Promise.all([accountingApi.journal(), accountingApi.accounts()])
-      setEntries(jRes.data.results ?? jRes.data)
-      setAccounts(aRes.data.results ?? aRes.data)
-    } catch { toast.error('Failed to load journal entries') }
-    finally { setLoading(false) }
+      const [jRes, aRes] = await Promise.allSettled([accountingApi.journal(), accountingApi.accounts()])
+      if (jRes.status === 'fulfilled') {
+        const data = jRes.value.data.results ?? jRes.value.data
+        setEntries(Array.isArray(data) ? data : [])
+      } else {
+        toast.error('Failed to load journal entries')
+      }
+      if (aRes.status === 'fulfilled') {
+        const raw = aRes.value.data.results ?? aRes.value.data
+        const accts: Account[] = Array.isArray(raw) ? raw : []
+        setAccounts(accts)
+        if (accts.length === 0) toast.error('No chart of accounts found. Ask a superuser to reseed the COA for this organisation.')
+      } else {
+        toast.error('Failed to load chart of accounts')
+      }
+    } catch (e) {
+      console.error('Journal load error:', e)
+    } finally { setLoading(false) }
   }
 
   useEffect(() => { load() }, [])
@@ -63,8 +76,8 @@ export default function JournalPage() {
     setEditId(e.id)
     setForm({ description: e.description, entry_date: e.entry_date })
     setLines(
-      e.lines.length > 0
-        ? e.lines.map((l) => ({
+      (e.lines ?? []).length > 0
+        ? (e.lines ?? []).map((l) => ({
             account: l.account as string,
             description: l.description || '',
             debit: parseFloat(l.debit) > 0 ? formatAmountInput(l.debit) : '',
@@ -101,7 +114,8 @@ export default function JournalPage() {
       setShowModal(false)
       load()
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+      const apiErr = (err as { response?: { data?: { error?: unknown } } })?.response?.data?.error
+      const msg = typeof apiErr === 'string' ? apiErr : (apiErr as { message?: string })?.message
       toast.error(msg || 'Failed to save journal entry')
     } finally { setSaving(false) }
   }
@@ -145,7 +159,7 @@ export default function JournalPage() {
   }
 
   const entryTotalDebit = (entry: JournalEntry) =>
-    entry.lines.reduce((s, l) => s + parseFloat(l.debit || '0'), 0)
+    (entry.lines ?? []).reduce((s, l) => s + parseFloat(l.debit || '0'), 0)
 
   return (
     <div className="space-y-6">
@@ -197,8 +211,8 @@ export default function JournalPage() {
                   </td>
                 </tr>
               ) : entries.map((e) => (
-                <>
-                  <tr key={e.id} className="table-row">
+                <Fragment key={e.id}>
+                  <tr className="table-row">
                     <td className="px-4 py-3.5">
                       <button onClick={() => setExpandedRow(expandedRow === e.id ? null : e.id)} className="text-slate-400 hover:text-white">
                         {expandedRow === e.id ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -255,7 +269,7 @@ export default function JournalPage() {
                     </td>
                   </tr>
                   {expandedRow === e.id && (
-                    <tr key={`${e.id}-lines`} className="bg-surface-900/50">
+                    <tr className="bg-surface-900/50">
                       <td colSpan={7} className="px-6 py-4">
                         <table className="w-full text-xs">
                           <thead>
@@ -267,7 +281,7 @@ export default function JournalPage() {
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-surface-700">
-                            {e.lines.map((l) => (
+                            {(e.lines ?? []).map((l) => (
                               <tr key={l.id}>
                                 <td className="py-2 text-slate-300">{l.account_code} — {l.account_name}</td>
                                 <td className="py-2 text-slate-500">{l.description || '—'}</td>
@@ -280,7 +294,7 @@ export default function JournalPage() {
                       </td>
                     </tr>
                   )}
-                </>
+                </Fragment>
               ))}
             </tbody>
           </table>
@@ -299,7 +313,7 @@ export default function JournalPage() {
 
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2">
-                <label className="text-xs text-slate-400 mb-1 block">Description *</label>
+                <label className="text-xs text-slate-400 mb-1 block">Description <span className="text-red-400">*</span></label>
                 <input className="input" placeholder="e.g. Monthly depreciation, correction entry…" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
               </div>
               <div>
