@@ -125,11 +125,23 @@ function buildTauriAdapter(): AxiosAdapter {
     try {
       ipcResponse = await tauriHttpFetch(url, { method, headers, body } as RequestInit)
     } catch (ipcErr) {
-      // IPC unavailable or URL not in scope — fall back to native browser fetch.
+      // Tauri IPC threw — try native fetch as fallback.
+      // Two sub-cases:
+      //   A) native fetch succeeds → IPC scope/config issue → show connection warning
+      //   B) native fetch also fails → device is truly offline → throw AxiosError with
+      //      config attached so the error interceptor can serve cached data / queue the
+      //      mutation optimistically. A plain TypeError from fetch() does NOT have
+      //      error.config, which would silently bypass all offline handling.
       if (import.meta.env.DEV) console.error('[Audity] tauriHttpFetch threw:', String(ipcErr))
-      toast.error('Connection error — check your internet and try again.', { id: 'ipc-err', duration: 6000 })
-      const resp = await fetch(url, { method, headers, body } as RequestInit)
-      return responseToAxios(resp, config)
+      try {
+        const resp = await fetch(url, { method, headers, body } as RequestInit)
+        // Case A: IPC issue but network is reachable — warn and continue
+        toast.error('Connection error — check your internet and try again.', { id: 'ipc-err', duration: 6000 })
+        return responseToAxios(resp, config)
+      } catch {
+        // Case B: truly offline — throw AxiosError so interceptors handle it correctly
+        throw new AxiosError('Network Error', 'ERR_NETWORK', config, null, undefined)
+      }
     }
     // IPC succeeded — convert and return (throws AxiosError for non-2xx, propagates up)
     return responseToAxios(ipcResponse, config)
@@ -378,7 +390,7 @@ api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
     const cacheUrl = (config.url ?? '') + (config.params ? '?' + new URLSearchParams(config.params as Record<string, string>).toString() : '')
 
     // 1. Fresh-cache: serve without hitting the network
-    if (navigator.onLine) {
+    if (navigator.onLine && !_effectivelyOffline) {
       try {
         const entry = await offlineCache.get(cacheUrl)
         if (entry && Date.now() - entry.cachedAt < FRESH_MS) {
