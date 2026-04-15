@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, Receipt, Search, X, Loader2, CheckCircle, Ban, FileDown, Mail, MessageCircle, RotateCcw, Truck, Pencil, Trash2, CalendarClock } from 'lucide-react'
 import SortSelect from '@/components/SortSelect'
 import YearFilter, { yearToDateParams } from '@/components/YearFilter'
@@ -480,6 +481,7 @@ export default function SalesPage() {
   }
 
   useEffect(() => { load() }, [search, status, sortBy, archiveYear])
+  useDataRefresh(load)
 
   const openDetail = async (inv: Invoice) => {
     setSelected(inv)

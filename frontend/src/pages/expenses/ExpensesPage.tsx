@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { useSearchParams } from 'react-router-dom'
 import {
   ArrowDownCircle, ArrowUpCircle, Plus, Search, X, Pencil, Loader2, Layers,
@@ -139,6 +140,7 @@ export default function ExpensesPage() {
   }
 
   useEffect(() => { loadExpenses() }, [search, typeFilter, periodFilter, archiveYear])
+  useDataRefresh(loadExpenses)
 
   useEffect(() => {
     budgetApi.list().then(({ data }) => {

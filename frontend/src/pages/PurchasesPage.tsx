@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { useSearchParams } from 'react-router-dom'
 import { Plus, Search, Truck, X, Loader2, UploadCloud, FileText, Edit2, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -115,6 +116,7 @@ export default function PurchasesPage() {
   }
 
   useEffect(() => { load() }, [search, statusFilter, archiveYear])
+  useDataRefresh(load)
 
   // Auto-open create modal when navigated from low-stock banner
   useEffect(() => {

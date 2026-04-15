@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useDataRefresh } from '@/hooks/useDataRefresh'
 import {
   Plus, X, UsersRound, Loader2, Search, Edit2, ChevronDown, CheckCircle2,
   AlertTriangle, CreditCard, Trash2, Ban, FileText, Upload, Eye, Download, Mail,
@@ -148,6 +149,7 @@ export default function EmployeesPage() {
   }
 
   useEffect(() => { load() }, [search])
+  useDataRefresh(load)
 
   // Load penalties / loans when tab is activated on an existing employee
   useEffect(() => {

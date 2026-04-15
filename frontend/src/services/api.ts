@@ -12,8 +12,9 @@ import axios, { AxiosError, type AxiosAdapter, type AxiosResponse, type Internal
 import { fetch as tauriHttpFetch } from '@tauri-apps/plugin-http'
 import toast from 'react-hot-toast'
 import { useAuthStore } from '@/store/authStore'
-import { offlineQueue } from '@/lib/offlineQueue'
 import { offlineCache } from '@/lib/offlineCache'
+import { syncEngine, isActionEndpoint, buildListUrl, _extractEntityType, _extractRecordId } from '@/lib/syncEngine'
+import { localStore } from '@/lib/localStore'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '/api/v1'
 
@@ -156,6 +157,186 @@ function getStoredOrgId(): string | null {
   return useAuthStore.getState().organisation?.id ?? null
 }
 
+// ─── Offline mutation helpers ─────────────────────────────────────────────────
+
+/** Strip internal _meta fields before returning data to components. */
+function _stripMetaFields(r: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(r)) {
+    if (!k.startsWith('_')) out[k] = v
+  }
+  return out
+}
+
+/**
+ * Merge optimistic localStore records into an offlineCache list response.
+ * Handles both paginated `{ results: [...] }` and plain array formats.
+ */
+async function _mergeLocalStore(orgId: string, url: string, cacheData: unknown): Promise<unknown> {
+  try {
+    const entityType = _extractEntityType(url)
+    if (!entityType) return cacheData
+    const localRecords = await localStore.getAll(orgId, entityType)
+    if (localRecords.length === 0) return cacheData
+
+    const localMap = new Map(localRecords.map((r) => [r._recordId, _stripMetaFields(r as Record<string, unknown>)]))
+
+    const merge = (list: unknown[]): unknown[] => {
+      const merged = list.map((item) => {
+        const id = (item as { id?: string })?.id
+        return id && localMap.has(id) ? localMap.get(id)! : item
+      })
+      // Append new optimistic records not yet in the server list
+      for (const [id, rec] of localMap) {
+        if (String(id).startsWith('tmp_') && !merged.some((i) => (i as { id?: string })?.id === id)) {
+          merged.unshift(rec)
+        }
+      }
+      return merged
+    }
+
+    if (Array.isArray(cacheData)) return merge(cacheData)
+    const paged = cacheData as { results?: unknown[]; count?: number }
+    if (Array.isArray(paged?.results)) {
+      const mergedResults = merge(paged.results)
+      return { ...paged, results: mergedResults, count: mergedResults.length }
+    }
+  } catch { /* non-fatal */ }
+  return cacheData
+}
+
+/**
+ * Build an Axios adapter that applies the mutation optimistically and queues it.
+ * Called from both the request interceptor and the error interceptor.
+ */
+function _buildOfflineMutationAdapter(config: InternalAxiosRequestConfig): AxiosAdapter {
+  return async (): Promise<AxiosResponse> => {
+    const method = config.method?.toLowerCase() ?? 'post'
+    const url = config.url ?? ''
+    const isPost = method === 'post'
+    const isDelete = method === 'delete'
+    const orgId = getStoredOrgId() ?? 'anonymous'
+
+    let rawData: Record<string, unknown> = {}
+    try {
+      rawData = typeof config.data === 'string' ? JSON.parse(config.data) : (config.data ?? {})
+    } catch { /* non-fatal */ }
+
+    // Generate temp ID for creates
+    const tempId = isPost ? `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}` : undefined
+    const responseData = isDelete ? null : (isPost ? { ...rawData, id: tempId } : rawData)
+    const status = isDelete ? 204 : isPost ? 201 : 200
+
+    // Update localStore immediately (offline reads will see this change)
+    const entityType = isActionEndpoint(url) ? null : _extractEntityType(url)
+    if (entityType) {
+      if (isDelete) {
+        const recordId = _extractRecordId(url)
+        if (recordId) await localStore.remove(orgId, entityType, recordId)
+      } else if (isPost && tempId && responseData) {
+        await localStore.upsert(orgId, entityType, tempId, responseData as Record<string, unknown>)
+      } else if (!isPost && !isDelete && responseData) {
+        const recordId = _extractRecordId(url)
+        if (recordId) await localStore.upsert(orgId, entityType, recordId, responseData as Record<string, unknown>)
+      }
+      // Patch the offlineCache list so the fresh-cache gate serves updated data
+      await _patchCacheList(orgId, url, method, responseData, tempId)
+    }
+
+    // Enqueue for sync — don't await, fire and forget
+    syncEngine.enqueue({ method: config.method!, url, data: config.data, tempId })
+      .catch(() => {/* non-fatal */})
+
+    toast('Saved offline — will sync when back online', { icon: '📋', id: 'offline-save', duration: 3000 })
+    window.dispatchEvent(new CustomEvent('audity:data-changed'))
+
+    return {
+      data: responseData,
+      status,
+      statusText: isPost ? 'Created (offline)' : isDelete ? 'No Content (offline)' : 'OK (offline)',
+      headers: {},
+      config,
+    } as AxiosResponse
+  }
+}
+
+/**
+ * Patch the offlineCache list entry after a mutation.
+ * This keeps the fresh-cache gate serving current data after creates/edits/deletes.
+ */
+async function _patchCacheList(
+  orgId: string,
+  url: string,
+  method: string,
+  responseData: unknown,
+  tempId?: string,
+): Promise<void> {
+  try {
+    const listUrl = buildListUrl(url)
+    if (listUrl === url) return  // this IS the list URL — nothing to patch
+    const entry = await offlineCache.get(listUrl)
+    if (!entry) return
+
+    const isPost = method === 'post'
+    const isPatch = method === 'put' || method === 'patch'
+    const isDelete = method === 'delete'
+    const recordId = tempId ?? _extractRecordId(url) ?? ''
+
+    const update = (list: unknown[]): unknown[] => {
+      if (isPost && responseData) return [responseData, ...list]
+      if (isPatch && responseData) return list.map((i) => ((i as { id?: string })?.id === recordId ? { ...(i as object), ...(responseData as object) } : i))
+      if (isDelete) return list.filter((i) => (i as { id?: string })?.id !== recordId)
+      return list
+    }
+
+    let newData: unknown
+    if (Array.isArray(entry.data)) {
+      newData = update(entry.data)
+    } else {
+      const paged = entry.data as { results?: unknown[]; count?: number }
+      if (Array.isArray(paged?.results)) {
+        const newResults = update(paged.results)
+        newData = { ...paged, results: newResults, count: newResults.length }
+      } else {
+        return
+      }
+    }
+
+    await offlineCache.set(listUrl, newData)
+    // Also invalidate the org-prefixed key so fresh-cache reads pick up the new data
+    void orgId  // used implicitly via offlineCache.set which calls currentOrgId() internally
+  } catch { /* non-fatal */ }
+}
+
+/**
+ * Write-through after a successful ONLINE mutation.
+ * Patches the cached list so offline reads stay current.
+ */
+async function _writeThroughCache(url: string, method: string, responseData: unknown, requestData: unknown): Promise<void> {
+  const orgId = getStoredOrgId() ?? 'anonymous'
+  const recordId = _extractRecordId(url) ?? ''
+
+  // Update localStore
+  const entityType = _extractEntityType(url)
+  if (entityType && !isActionEndpoint(url)) {
+    if (method === 'delete') {
+      await localStore.remove(orgId, entityType, recordId)
+    } else if (responseData && typeof responseData === 'object') {
+      const dataId = (responseData as { id?: string })?.id ?? recordId
+      if (dataId) await localStore.upsert(orgId, entityType, dataId, responseData as Record<string, unknown>)
+    } else if (method === 'post' && requestData && typeof requestData === 'object') {
+      // Some endpoints return minimal data — use request body as fallback
+      const d = requestData as Record<string, unknown>
+      const dataId = (responseData as { id?: string })?.id
+      if (dataId) await localStore.upsert(orgId, entityType, dataId, { ...d, id: dataId })
+    }
+  }
+
+  // Patch offlineCache list
+  await _patchCacheList(orgId, url, method, responseData, undefined)
+  window.dispatchEvent(new CustomEvent('audity:data-changed'))
+}
+
 // ─── Request interceptor ──────────────────────────────────────────────────────
 api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
   await _tauriReady  // no-op (resolved immediately) — kept for symmetry
@@ -175,14 +356,15 @@ api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
     delete config.headers['Content-Type']
   }
 
-  // ── Offline queue: if device is offline and this is a mutation, queue it ──
+  // ── Offline optimistic mutations ────────────────────────────────────────────
+  // When device is offline (or effectively offline), mutations get an immediate
+  // synthetic success response so the UI updates right away.  The real request
+  // is queued in syncEngine and replayed when connectivity is restored.
   const isRetry = (config.headers as Record<string, string>)?.['X-Offline-Retry'] === '1'
   const isMutation = ['post', 'put', 'patch', 'delete'].includes(config.method?.toLowerCase() ?? '')
-  if (!navigator.onLine && isMutation && !isRetry) {
-    offlineQueue.enqueue({ method: config.method!, url: config.url!, data: config.data })
-    toast('Request queued — will sync when back online', { icon: '📋', id: 'queue-notice', duration: 3000 })
-    // Reject with a network-style error so the component catch block fires
-    return Promise.reject(new AxiosError('Offline — request queued', 'ERR_NETWORK', config))
+  if ((!navigator.onLine || _effectivelyOffline) && isMutation && !isRetry) {
+    config.adapter = _buildOfflineMutationAdapter(config)
+    return config
   }
 
   // ── Fresh-cache gate + in-flight deduplication for GET requests ─────────────
@@ -224,15 +406,29 @@ api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
   }
 
   // ── Offline cache: serve cached GET responses when network is unavailable ──
-  if (!navigator.onLine && !isMutation) {
+  if ((!navigator.onLine || _effectivelyOffline) && !isMutation) {
     const cacheUrl = (config.url ?? '') + (config.params ? '?' + new URLSearchParams(config.params as Record<string, string>).toString() : '')
-    // Use a custom adapter so Axios resolves (not rejects) with cached data
     config.adapter = async (): Promise<AxiosResponse> => {
+      const orgId = getStoredOrgId() ?? 'anonymous'
+      // Try offlineCache first (has full paginated response structure)
       const entry = await offlineCache.get(cacheUrl)
       if (entry) {
-        return { data: entry.data, status: 200, statusText: 'OK (cached)', headers: {}, config } as AxiosResponse
+        // Merge in any optimistic local records if the cache looks like a list
+        const merged = await _mergeLocalStore(orgId, config.url ?? '', entry.data)
+        return { data: merged, status: 200, statusText: 'OK (cached)', headers: {}, config } as AxiosResponse
       }
-      // No cache — reject so the component shows its empty state
+      // Fallback: assemble from localStore entities if we have them
+      const entityType = _extractEntityType(config.url ?? '')
+      if (entityType) {
+        const records = await localStore.getAll(orgId, entityType)
+        if (records.length > 0) {
+          const cleaned = records.map(_stripMetaFields)
+          return {
+            data: { count: cleaned.length, next: null, previous: null, results: cleaned },
+            status: 200, statusText: 'OK (local store)', headers: {}, config,
+          } as AxiosResponse
+        }
+      }
       throw new AxiosError('No cached data available offline', 'ERR_NETWORK', config)
     }
   }
@@ -258,9 +454,10 @@ api.interceptors.response.use(
   (res) => {
     const cfg = res.config as ExtConfig
     if (!cfg._fromCache) {
+      const method = cfg.method?.toLowerCase() ?? ''
+      const url = cfg.url ?? ''
+
       // ── Cache every real network GET so it's available offline later ──
-      const method = cfg.method?.toLowerCase()
-      const url = cfg.url
       if (method === 'get' && url && res.data !== undefined) {
         const params = cfg.params
         const cacheUrl = url + (params ? '?' + new URLSearchParams(params as Record<string, string>).toString() : '')
@@ -270,7 +467,28 @@ api.interceptors.response.use(
           _inflightGets.get(cfg._dedupeKey)?.resolve(res)
           _inflightGets.delete(cfg._dedupeKey)
         }
+        // Also seed localStore from list responses for richer offline reads
+        const orgId = getStoredOrgId() ?? 'anonymous'
+        const entityType = _extractEntityType(url)
+        if (entityType && res.data) {
+          const records: unknown[] = Array.isArray(res.data)
+            ? res.data
+            : (res.data as { results?: unknown[] })?.results ?? []
+          if (records.length > 0) {
+            localStore.upsertMany(orgId, entityType, records as Array<Record<string, unknown>>)
+          }
+        }
       }
+
+      // ── Cache write-through for mutations ───────────────────────────────────
+      // After a successful online mutation, patch the cached list so offline
+      // reads stay current without waiting for a full list refresh.
+      const isOnlineMutation = ['post', 'put', 'patch', 'delete'].includes(method)
+      const isRetry = (cfg.headers as Record<string, string>)?.['X-Offline-Retry'] === '1'
+      if (isOnlineMutation && !isRetry && !isActionEndpoint(url)) {
+        _writeThroughCache(url, method, res.data, cfg.data).catch(() => {/* non-fatal */})
+      }
+
       _signalOnline()
     }
     return res
@@ -292,16 +510,25 @@ api.interceptors.response.use(
         const params = original.params
         const cacheUrl = url + (params ? '?' + new URLSearchParams(params as Record<string, string>).toString() : '')
         try {
+          const orgId = getStoredOrgId() ?? 'anonymous'
           const entry = await offlineCache.get(cacheUrl)
           if (entry) {
             _signalOffline()
-            return { data: entry.data, status: 200, statusText: 'OK (cached)', headers: {}, config: original } as AxiosResponse
+            const merged = await _mergeLocalStore(orgId, url, entry.data)
+            return { data: merged, status: 200, statusText: 'OK (cached)', headers: {}, config: original } as AxiosResponse
           }
         } catch { /* non-fatal */ }
       } else if (!isRetry) {
-        // Mutation: queue for later sync
-        offlineQueue.enqueue({ method, url, data: original.data })
-        toast('Request queued — will sync when back online', { icon: '📋', id: 'queue-notice', duration: 3000 })
+        // Mutation failed on the wire — treat optimistically (same as request interceptor)
+        _signalOffline()
+        const adapter = _buildOfflineMutationAdapter(original)
+        // adapter is async — call it directly to get the response
+        try {
+          const optimisticResp = await (adapter as () => Promise<AxiosResponse>)()
+          return optimisticResp
+        } catch {
+          // If optimistic handling itself fails, fall through to the reject below
+        }
       }
 
       // Reject any in-flight deduplication waiters for this URL

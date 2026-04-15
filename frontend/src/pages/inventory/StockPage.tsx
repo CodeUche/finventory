@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { AlertTriangle, Boxes, Plus, RefreshCw, ArrowLeftRight } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -77,6 +78,7 @@ export default function StockPage() {
   }
 
   useEffect(() => { load() }, [])
+  useDataRefresh(load)
 
   const openAdjust = async () => {
     try {

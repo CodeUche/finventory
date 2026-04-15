@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, X, Receipt, Loader2, Search, Trash2, Edit2, Folder } from 'lucide-react'
 import { Link, useSearchParams } from 'react-router-dom'
 import SortSelect from '@/components/SortSelect'
@@ -112,6 +113,7 @@ export default function BillsPage() {
   }
 
   useEffect(() => { load() }, [statusFilter, search, sortBy, archiveYear])
+  useDataRefresh(load)
 
   // Auto-open new bill modal when navigated from folder page with ?openNew=1&folder=<id>
   useEffect(() => {

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, Search, Package, AlertTriangle, X, Pencil, Loader2, TrendingUp, TrendingDown, History, Maximize2, Minimize2, ShieldCheck, FileDown, Table2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { inventoryApi, taxApi, salesApi } from '@/services/api'
@@ -163,6 +164,7 @@ export default function ProductsPage() {
   }
 
   useEffect(() => { fetchProducts() }, [search, sortBy])
+  useDataRefresh(fetchProducts)
 
   useEffect(() => {
     taxApi.classes().then(({ data }) => setTaxClasses(data.results ?? data)).catch(() => {})

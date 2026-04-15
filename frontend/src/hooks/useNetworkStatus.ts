@@ -1,21 +1,25 @@
 import { useEffect, useState } from 'react'
 import toast from 'react-hot-toast'
-import { offlineQueue } from '@/lib/offlineQueue'
+import { syncEngine } from '@/lib/syncEngine'
 
 /**
  * Returns `true` when the browser reports network connectivity.
  *
  * Side effects:
  * - Shows a toast banner when going offline or back online.
- * - On reconnect, flushes any queued mutations from the offline queue.
+ * - On reconnect, flushes any queued mutations via syncEngine.
+ * - On app boot, recovers any items stuck in `syncing` state (app crashed mid-flush).
  */
 export function useNetworkStatus(): boolean {
   const [online, setOnline] = useState(() => navigator.onLine)
 
   useEffect(() => {
+    // Recover stuck items once on mount
+    syncEngine.recoverStuck().catch(() => {/* non-fatal */})
+
     const handleOffline = () => {
       setOnline(false)
-      toast.error('You are offline — changes will be queued and synced when reconnected.', {
+      toast.error('You are offline — changes will be saved locally and synced when reconnected.', {
         id: 'offline-status',
         duration: Infinity,
         icon: '📶',
@@ -26,20 +30,20 @@ export function useNetworkStatus(): boolean {
       setOnline(true)
       toast.dismiss('offline-status')
 
-      const pending = offlineQueue.peek()
-      if (pending.length === 0) {
+      const pending = await syncEngine.pendingCount()
+      if (pending === 0) {
         toast.success('Back online', { duration: 2500 })
         return
       }
 
-      const flushToast = toast.loading(`Syncing ${pending.length} queued request${pending.length > 1 ? 's' : ''}…`)
+      const flushToast = toast.loading(`Syncing ${pending} queued operation${pending > 1 ? 's' : ''}…`)
       try {
-        const { succeeded, failed } = await offlineQueue.flush()
+        const { succeeded, conflicts } = await syncEngine.flush()
         toast.dismiss(flushToast)
-        if (failed === 0) {
+        if (conflicts === 0) {
           toast.success(`Synced ${succeeded} operation${succeeded > 1 ? 's' : ''} successfully.`)
         } else {
-          toast.error(`Sync complete — ${succeeded} succeeded, ${failed} failed.`)
+          toast.error(`Sync complete — ${succeeded} succeeded, ${conflicts} conflict${conflicts > 1 ? 's' : ''} need attention.`, { duration: 6000 })
         }
       } catch {
         toast.dismiss(flushToast)
