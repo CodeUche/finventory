@@ -51,16 +51,16 @@ def _gather_financial_summary(organisation) -> dict:
         from apps.sales.models import Invoice
         invoices = Invoice.objects.filter(
             organisation=organisation,
-            status__in=["confirmed", "credit", "partial"],
+            status__in=["confirmed", "credit", "partially_paid"],
         )
         revenue_mtd = invoices.filter(
-            invoice_date__gte=month_start
+            issue_date__gte=month_start
         ).aggregate(s=Sum("total_amount"))["s"] or Decimal("0")
         revenue_total = invoices.aggregate(s=Sum("total_amount"))["s"] or Decimal("0")
         invoice_count = invoices.count()
         overdue_count = invoices.filter(
             due_date__lt=today,
-            status__in=["confirmed", "partial"],
+            status__in=["confirmed", "partially_paid"],
         ).count()
     except Exception:
         revenue_mtd = revenue_total = Decimal("0")
@@ -133,11 +133,11 @@ def _gather_financial_summary(organisation) -> dict:
         from apps.bills.models import Bill
         bills_due = Bill.objects.filter(
             organisation=organisation,
-            status__in=["received", "partial"],
+            status__in=["received", "approved", "partially_paid"],
         ).aggregate(s=Sum("total_amount"))["s"] or Decimal("0")
         overdue_bills = Bill.objects.filter(
             organisation=organisation,
-            status__in=["received", "partial"],
+            status__in=["received", "approved", "partially_paid"],
             due_date__lt=today,
         ).count()
     except Exception:
@@ -270,6 +270,8 @@ class AIChatView(APIView):
 
         try:
             org = request.organisation
+            if org is None:
+                return Response({"error": "No organisation context. Please include the X-Organisation-ID header."}, status=400)
             summary = _gather_financial_summary(org)
             system_prompt = _build_system_prompt(org, summary)
         except Exception as exc:
