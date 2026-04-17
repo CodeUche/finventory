@@ -103,12 +103,11 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    # PostgreSQL RLS — MUST come before TenantMiddleware so the session variable
+    # is set before TenantMiddleware queries tenancy_organisation (which is RLS-protected).
+    "apps.core.middleware.RLSMiddleware",
     # Custom tenant resolution middleware
     "apps.tenancy.middleware.TenantMiddleware",
-    # PostgreSQL RLS — sets app.current_org_id session variable so row-level
-    # security policies enforce tenant isolation at the database layer.
-    # Must come after TenantMiddleware so the org header is already validated.
-    "apps.core.middleware.RLSMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
