@@ -415,8 +415,47 @@ class PaystackSubscriptionService:
             organisation.onboarding_completed = True
             organisation.save(update_fields=["onboarding_completed"])
 
+        # Provision / sync PartnerProfile when a partner plan is activated
+        if plan.slug.startswith("partner-"):
+            SubscriptionService._provision_partner_profile(organisation, plan)
+
         logger.info(
             "Subscription activated: org=%s plan=%s ref=%s",
             organisation.id, plan.slug, reference,
         )
         return sub
+
+    @staticmethod
+    def _provision_partner_profile(organisation, plan):
+        """
+        Create or update the PartnerProfile for the organisation owner
+        when they subscribe to a partner-tier plan.
+        """
+        from apps.tenancy.models import PartnerProfile
+
+        TIER_MAP = {
+            "partner-starter": ("starter", 10),
+            "partner-pro":     ("pro",     30),
+            "partner-agency":  ("agency",  999999),
+        }
+        tier, max_clients = TIER_MAP.get(plan.slug, ("starter", 10))
+        features = plan.features or {}
+
+        owner = organisation.owner
+        if not owner:
+            return
+
+        profile, _ = PartnerProfile.objects.get_or_create(
+            user=owner,
+            defaults={"tier": tier, "max_clients": max_clients},
+        )
+        # Always sync tier/limits/features from the plan
+        profile.tier = tier
+        profile.max_clients = max_clients
+        profile.white_label_reports = features.get("white_label_reports", False)
+        profile.consolidated_reporting = features.get("consolidated_reporting", False)
+        profile.is_active = True
+        profile.save(update_fields=[
+            "tier", "max_clients", "white_label_reports",
+            "consolidated_reporting", "is_active", "updated_at",
+        ])

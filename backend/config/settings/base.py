@@ -105,6 +105,10 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     # Custom tenant resolution middleware
     "apps.tenancy.middleware.TenantMiddleware",
+    # PostgreSQL RLS — sets app.current_org_id session variable so row-level
+    # security policies enforce tenant isolation at the database layer.
+    # Must come after TenantMiddleware so the org header is already validated.
+    "apps.core.middleware.RLSMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
