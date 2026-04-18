@@ -67,11 +67,34 @@ class TenantMiddleware:
         return any(path.startswith(p) for p in EXEMPT_PATHS)
 
 
+def _sync_rls(org):
+    """
+    Update the PostgreSQL session variable so RLS policies allow queries for
+    this organisation.  Called immediately after org is validated so that the
+    DB session is always in sync, regardless of which code path resolved it.
+
+    This is belt-and-suspenders on top of RLSMiddleware: when no
+    X-Organisation-ID header is sent, RLSMiddleware sets the SENTINEL, but
+    resolve_organisation() picks the user's first org via fallback.  Without
+    this call the RLS variable would remain SENTINEL and every tenant query
+    would return empty / raise PermissionDenied.
+    """
+    try:
+        from apps.core.middleware import _set_org
+        _set_org(str(org.id))
+    except Exception:
+        pass
+
+
 def resolve_organisation(request):
     """
     Phase 2: Resolve and validate organisation after DRF authentication.
 
     Called by TenantFilterMixin.get_queryset() after the user is authenticated.
+    Also called by permission classes (IsStaff, etc.) during has_permission().
+
+    Always calls _sync_rls() on success so the PostgreSQL RLS session variable
+    is updated even when no X-Organisation-ID header was sent (fallback path).
 
     Returns Organisation or None.
     Raises nothing — callers handle None case.
@@ -89,6 +112,7 @@ def resolve_organisation(request):
             # Superusers can access any organisation without a membership record
             if request.user.is_superuser:
                 request.organisation = org
+                _sync_rls(org)
                 return org
             # Use raw SQL to check membership so the RLS tenant_isolation policy
             # on tenancy_membership (which gates on app.current_org_id = SENTINEL
@@ -102,6 +126,7 @@ def resolve_organisation(request):
                 is_member = cur.fetchone() is not None
             if is_member:
                 request.organisation = org
+                _sync_rls(org)
                 return org
             logger.warning(
                 "User %s attempted to access org %s without membership",
@@ -138,6 +163,7 @@ def resolve_organisation(request):
             from apps.tenancy.models import Organisation
             org = Organisation.objects.get(id=row[0])
             request.organisation = org
+            _sync_rls(org)
             return org
     except Exception:
         pass

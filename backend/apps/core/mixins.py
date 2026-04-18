@@ -75,6 +75,14 @@ class TenantFilterMixin:
              queryset is evaluated.
         """
         if getattr(self.request, "organisation", None) is not None:
+            # Sync RLS even on cache hit — if a permission class called
+            # resolve_organisation() before us (setting request.organisation),
+            # the DB session variable may still be SENTINEL (no header path).
+            try:
+                from apps.core.middleware import _set_org
+                _set_org(str(self.request.organisation.id))
+            except Exception:
+                pass
             return self.request.organisation
 
         from apps.tenancy.middleware import resolve_organisation
@@ -90,11 +98,8 @@ class TenantFilterMixin:
                 "Pass the X-Organisation-ID header."
             )
 
-        # Sync the DB-level RLS variable with the validated org.
-        # RLSMiddleware already set it from the raw header, but that may differ
-        # from the resolved org (e.g. fallback path) or may not have been set
-        # at all (e.g. WebSocket / non-HTTP consumers). Calling _set_org here
-        # guarantees the DB session and request.organisation are always in sync.
+        # resolve_organisation() already called _sync_rls(), but call _set_org
+        # again here as belt-and-suspenders in case the import path differed.
         try:
             from apps.core.middleware import _set_org
             _set_org(str(org.id))
