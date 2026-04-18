@@ -49,17 +49,23 @@ export default function AppLayout() {
     if (organisation?.currency) setActiveCurrency(organisation.currency)
   }, [organisation?.currency])
 
-  // Always refresh org data from the API on mount so that fields added since
-  // last login (e.g. invoice_template) are never stale in the persisted store.
+  // Always refresh org data from the API on mount.
+  // IMPORTANT: also runs when organisation is null — this is the recovery path for
+  // fresh installs and sessions where the persisted org was cleared (e.g. after
+  // token rotation logout). Without this, no X-Organisation-ID header is ever sent
+  // and every tenant-scoped endpoint returns "No organisation context".
   useEffect(() => {
-    if (!organisation?.id) return
+    if (!user) return  // not authenticated yet
     orgApi.list().then(({ data }) => {
       const orgs: any[] = data.results ?? data
-      const fresh = orgs.find((o: any) => o.id === organisation.id) ?? orgs[0]
-      if (fresh) setOrganisation(fresh)
-    }).catch(() => { /* non-fatal — use persisted org */ })
+      if (!orgs.length) return
+      // Re-select the previously active org if we still have access to it,
+      // otherwise fall back to the first org in the list.
+      const fresh = orgs.find((o: any) => o.id === organisation?.id) ?? orgs[0]
+      setOrganisation(fresh)
+    }).catch(() => { /* non-fatal — use persisted org if available */ })
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [organisation?.id])
+  }, [user?.id])
 
   // Load the current user's role + module permissions from the API
   useEffect(() => {

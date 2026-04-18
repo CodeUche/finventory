@@ -87,28 +87,58 @@ def resolve_organisation(request):
         try:
             org = Organisation.objects.get(id=org_id, is_active=True)
             # Superusers can access any organisation without a membership record
-            if request.user.is_superuser or request.user.memberships.filter(organisation=org, is_active=True).exists():
+            if request.user.is_superuser:
                 request.organisation = org
                 return org
-            else:
-                logger.warning(
-                    "User %s attempted to access org %s without membership",
-                    request.user.id,
-                    org_id,
+            # Use raw SQL to check membership so the RLS tenant_isolation policy
+            # on tenancy_membership (which gates on app.current_org_id = SENTINEL
+            # for requests without a header) does not block the lookup.
+            from django.db import connection as _conn
+            with _conn.cursor() as cur:
+                cur.execute(
+                    "SELECT 1 FROM tenancy_membership WHERE user_id = %s AND organisation_id = %s AND is_active = TRUE LIMIT 1",
+                    [request.user.pk, str(org.id)],
                 )
-                return None
+                is_member = cur.fetchone() is not None
+            if is_member:
+                request.organisation = org
+                return org
+            logger.warning(
+                "User %s attempted to access org %s without membership",
+                request.user.id,
+                org_id,
+            )
+            return None
         except Exception:
             return None
 
-    # Fallback: user's first active organisation
-    membership = (
-        request.user.memberships
-        .select_related("organisation")
-        .filter(is_active=True, organisation__is_active=True)
-        .order_by("created_at")
-        .first()
-    )
-    if membership:
-        request.organisation = membership.organisation
-        return membership.organisation
+    # Fallback: user's first active organisation.
+    # NOTE: use raw SQL to bypass the RLS tenant_isolation policy on
+    # tenancy_membership (which blocks rows when app.current_org_id is SENTINEL).
+    # This path only executes when no X-Organisation-ID header was provided, so
+    # we are allowed to use the user's own membership as the authoritative source.
+    from django.db import connection
+    try:
+        with connection.cursor() as cur:
+            cur.execute(
+                """
+                SELECT o.id FROM tenancy_organisation o
+                INNER JOIN tenancy_membership m
+                    ON m.organisation_id = o.id
+                WHERE m.user_id = %s
+                  AND m.is_active = TRUE
+                  AND o.is_active  = TRUE
+                ORDER BY m.created_at
+                LIMIT 1
+                """,
+                [request.user.pk],
+            )
+            row = cur.fetchone()
+        if row:
+            from apps.tenancy.models import Organisation
+            org = Organisation.objects.get(id=row[0])
+            request.organisation = org
+            return org
+    except Exception:
+        pass
     return None
