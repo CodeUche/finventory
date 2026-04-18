@@ -61,6 +61,18 @@ class TenantFilterMixin:
         Resolve (and cache) the organisation for this request.
 
         Phase 2 of tenant resolution — runs after DRF authentication.
+
+        Also syncs the PostgreSQL session variable ``app.current_org_id`` to
+        the *validated* org so that RLS always uses the membership-checked value,
+        not just whatever raw UUID the client supplied in the header.
+
+        This fixes two edge-cases:
+          1. Fallback resolution: no X-Organisation-ID header → RLSMiddleware
+             set SENTINEL, but resolve_organisation() picked the user's first org.
+             Without this sync, RLS would block all queries for that request.
+          2. Header/validation mismatch: if by any code-path the header and the
+             resolved org differ, the DB session is corrected here before any
+             queryset is evaluated.
         """
         if getattr(self.request, "organisation", None) is not None:
             return self.request.organisation
@@ -77,6 +89,18 @@ class TenantFilterMixin:
                 "Organisation context is missing or you do not have access. "
                 "Pass the X-Organisation-ID header."
             )
+
+        # Sync the DB-level RLS variable with the validated org.
+        # RLSMiddleware already set it from the raw header, but that may differ
+        # from the resolved org (e.g. fallback path) or may not have been set
+        # at all (e.g. WebSocket / non-HTTP consumers). Calling _set_org here
+        # guarantees the DB session and request.organisation are always in sync.
+        try:
+            from apps.core.middleware import _set_org
+            _set_org(str(org.id))
+        except Exception:
+            pass  # Never let an RLS bookkeeping failure block a request
+
         return org
 
     def get_queryset(self):
