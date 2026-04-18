@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
+import AudityLogo from '@/components/AudityLogo'
 import {
   ChevronRight, Sparkles, Check, Loader2,
   Clock, ArrowLeft, Package, Users, Receipt,
@@ -323,12 +324,7 @@ export default function OnboardingPage() {
       <div className="w-full max-w-2xl space-y-6">
 
         {/* Logo */}
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-white overflow-hidden flex items-center justify-center flex-shrink-0">
-            <img src="/audity-logo.png" alt="Audity" className="w-8 h-8 object-contain" />
-          </div>
-          <span className="text-xl font-bold text-white">Audity</span>
-        </div>
+        <AudityLogo className="h-10 w-auto" />
 
         {/* ── Step 0: Workspace setup ── */}
         {step === 0 && (

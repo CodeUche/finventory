@@ -174,7 +174,12 @@ def plan_requires(module_key: str):
             # Inactive/expired subscription — let SubscriptionActive handle it
             if not sub.is_active:
                 return True
-            modules = sub.plan.features.get("modules") or []
+            modules = sub.plan.features.get("modules") if sub.plan.features else None
+            # If the plan has no modules list at all, treat as unrestricted (legacy
+            # / development plans without explicit module config should not lock out
+            # users). Only enforce the gate when modules is a non-empty list.
+            if not modules:
+                return True
             allowed = module_key in modules
             if not allowed:
                 self.message = (

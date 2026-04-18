@@ -14,5 +14,5 @@ export const FEATURES = {
    *
    * Re-enable: set to `true` and rebuild.
    */
-  PARTNER_CHANNEL: false,
+  PARTNER_CHANNEL: true,
 } as const

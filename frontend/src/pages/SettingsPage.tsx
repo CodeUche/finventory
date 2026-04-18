@@ -665,7 +665,7 @@ export default function SettingsPage() {
     { id: 'team',              label: 'Team',       icon: UsersRound, ownerOnly: true, requiresPlan: 'team' },
     { id: 'payments',          label: 'Payments',   icon: CreditCard, requiresSettings: true },
     { id: 'email',             label: 'Email',      icon: Mail,       ownerOnly: true },
-    { id: 'periods',           label: 'Periods',    icon: Lock,       requiresSettings: true },
+    { id: 'periods',           label: 'Periods',    icon: Lock,       requiresSettings: true, requiresPlan: 'accounting' },
     { id: 'invoice_templates', label: 'Templates',  icon: Layout,     ownerOnly: true },
     { id: 'ai',                label: 'AI',         icon: Bot,        ownerOnly: true },
   ]

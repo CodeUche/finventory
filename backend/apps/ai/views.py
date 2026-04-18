@@ -269,7 +269,8 @@ class AIChatView(APIView):
         message = raw_message[:MAX_USER_MSG_LEN]
 
         try:
-            org = request.organisation
+            from apps.core.permissions import _get_or_resolve_org
+            org = _get_or_resolve_org(request)
             if org is None:
                 return Response({"error": "No organisation context. Please include the X-Organisation-ID header."}, status=400)
             summary = _gather_financial_summary(org)

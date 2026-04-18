@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
+import AudityLogo from '@/components/AudityLogo'
 import { ArrowLeft, Loader2, Mail, KeyRound, Eye, EyeOff, CheckCircle, CheckCircle2, XCircle } from 'lucide-react'
 
 const PW_CRITERIA = [
@@ -77,12 +78,7 @@ export default function ForgotPasswordPage() {
     <div className="min-h-screen bg-surface-950 flex items-center justify-center p-6">
       <div className="w-full max-w-md">
         {/* Logo */}
-        <div className="flex items-center gap-3 mb-8">
-          <div className="w-10 h-10 rounded-full bg-white overflow-hidden flex items-center justify-center flex-shrink-0">
-            <img src="/audity-logo.png" alt="Audity" className="w-8 h-8 object-contain" />
-          </div>
-          <h1 className="text-xl font-bold text-white">Audity</h1>
-        </div>
+        <AudityLogo className="h-10 w-auto mb-8" />
 
         {step === 'done' ? (
           /* ── Success state ── */

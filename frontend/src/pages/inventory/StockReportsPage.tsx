@@ -293,10 +293,16 @@ export default function StockReportsPage() {
   const [products, setProducts] = useState<{ id: string; name: string; sku: string }[]>([])
 
   useEffect(() => {
-    inventoryApi.products({ page_size: 500, is_active: true }).then(({ data }) => {
-      const list = (data.results ?? data) as { id: string; name: string; sku: string }[]
-      setProducts(list)
-    }).catch(() => toast.error('Failed to load products'))
+    const fetchProds = () => {
+      inventoryApi.products({ page_size: 500 }).then(({ data }) => {
+        const list = (data.results ?? data) as { id: string; name: string; sku: string }[]
+        if (list.length > 0) setProducts(list)
+      }).catch(() => {})
+    }
+    fetchProds()
+    // Retry when reconnecting after an offline period
+    window.addEventListener('online', fetchProds)
+    return () => window.removeEventListener('online', fetchProds)
   }, [])
 
   const toISO = (dd: string) => {

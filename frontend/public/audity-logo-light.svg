@@ -1,0 +1,45 @@
+<svg viewBox="0 0 1500 500" xmlns="http://www.w3.org/2000/svg">
+
+<defs>
+  <linearGradient id="fTop" x1="50%" y1="100%" x2="20%" y2="0%">
+    <stop offset="0%" stop-color="#8A6812"/>
+    <stop offset="55%" stop-color="#D4A017"/>
+    <stop offset="100%" stop-color="#F7DC82"/>
+  </linearGradient>
+  <linearGradient id="fRight" x1="0%" y1="0%" x2="100%" y2="100%">
+    <stop offset="0%" stop-color="#1E3162"/>
+    <stop offset="100%" stop-color="#0A1F44"/>
+  </linearGradient>
+  <linearGradient id="fBottom" x1="50%" y1="0%" x2="50%" y2="100%">
+    <stop offset="0%" stop-color="#0A1F44"/>
+    <stop offset="100%" stop-color="#030A1F"/>
+  </linearGradient>
+  <linearGradient id="fLeft" x1="100%" y1="0%" x2="0%" y2="100%">
+    <stop offset="0%" stop-color="#1E3162"/>
+    <stop offset="100%" stop-color="#0A1F44"/>
+  </linearGradient>
+  <linearGradient id="goldLine" x1="0%" y1="0%" x2="100%" y2="100%">
+    <stop offset="0%" stop-color="#F4D06F"/>
+    <stop offset="100%" stop-color="#B8891F"/>
+  </linearGradient>
+  <radialGradient id="centerGlow" cx="50%" cy="50%" r="50%">
+    <stop offset="0%" stop-color="#F7DC82" stop-opacity="0.8"/>
+    <stop offset="100%" stop-color="#D4A017" stop-opacity="0"/>
+  </radialGradient>
+</defs>
+
+<g transform="translate(240, 250)">
+    <polygon points="0,-150 130,0 0,0" fill="url(#fTop)"/>
+    <polygon points="130,0 0,150 0,0" fill="url(#fRight)"/>
+    <polygon points="0,150 -130,0 0,0" fill="url(#fBottom)"/>
+    <polygon points="-130,0 0,-150 0,0" fill="url(#fLeft)"/>
+    <line x1="0" y1="-150" x2="0" y2="150" stroke="url(#goldLine)" stroke-width="1.2" opacity="0.85"/>
+    <line x1="-130" y1="0" x2="130" y2="0" stroke="url(#goldLine)" stroke-width="1.2" opacity="0.85"/>
+    <polygon points="0,-150 130,0 0,150 -130,0" fill="none" stroke="url(#goldLine)" stroke-width="2" stroke-linejoin="round"/>
+    <circle cx="0" cy="0" r="14" fill="url(#centerGlow)"/>
+    <circle cx="0" cy="0" r="3" fill="#F7DC82"/>
+  </g>
+<text x="470" y="305" font-family="-apple-system, 'Inter', 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="175" font-weight="900" fill="#0A1F44" letter-spacing="-6">AUDITY</text>
+<rect x="472" y="325" width="80" height="3" fill="url(#goldLine)"/>
+<text x="565" y="330" font-family="-apple-system, 'Inter', 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="19" font-weight="600" fill="#0A1F44" letter-spacing="5" opacity="0.72">ACCOUNTING · COMPLIANCE · ERP</text>
+</svg>

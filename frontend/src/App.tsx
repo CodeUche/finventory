@@ -190,7 +190,8 @@ export default function App() {
         <Route path="inventory/stock"         element={<ModuleRoute module="inventory"><StockPage /></ModuleRoute>} />
         <Route path="inventory/warehouses"    element={<ModuleRoute module="inventory"><WarehousesPage /></ModuleRoute>} />
         <Route path="inventory/batches"       element={<ModuleRoute module="inventory"><BatchesPage /></ModuleRoute>} />
-        <Route path="inventory/stock-reports" element={<ModuleRoute module="inventory"><StockReportsPage /></ModuleRoute>} />
+        {/* Legacy URL — redirect to new reports module path */}
+        <Route path="inventory/stock-reports" element={<Navigate to="/reports/stock" replace />} />
 
         {/* Sales */}
         <Route path="sales"     element={<ModuleRoute module="sales"><SalesPage /></ModuleRoute>} />
@@ -223,7 +224,8 @@ export default function App() {
         <Route path="expenses"              element={<ModuleRoute module="expenses"><ExpensesPage /></ModuleRoute>} />
         <Route path="budgets"               element={<ModuleRoute module="budget"><BudgetPage /></ModuleRoute>} />
         <Route path="reports"               element={<ModuleRoute module="reports"><ReportsPage /></ModuleRoute>} />
-        <Route path="reports/balance-sheet" element={<ModuleRoute module="reports"><BalanceSheetPage /></ModuleRoute>} />
+        <Route path="reports/balance-sheet" element={<ModuleRoute module="accounting"><BalanceSheetPage /></ModuleRoute>} />
+        <Route path="reports/stock"         element={<ModuleRoute module="inventory"><StockReportsPage /></ModuleRoute>} />
         <Route path="owner-analytics"       element={<OwnerOnlyRoute><OwnerAnalyticsPage /></OwnerOnlyRoute>} />
 
         {/* Compliance */}

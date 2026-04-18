@@ -1,0 +1,45 @@
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+<defs>
+  <linearGradient id="appBg" x1="0%" y1="0%" x2="100%" y2="100%">
+    <stop offset="0%" stop-color="#F4F7FC"/>
+    <stop offset="100%" stop-color="#DCE6F5"/>
+  </linearGradient>
+  <linearGradient id="fTop" x1="50%" y1="100%" x2="20%" y2="0%">
+    <stop offset="0%" stop-color="#8A6812"/>
+    <stop offset="55%" stop-color="#D4A017"/>
+    <stop offset="100%" stop-color="#F7DC82"/>
+  </linearGradient>
+  <linearGradient id="fRight" x1="0%" y1="0%" x2="100%" y2="100%">
+    <stop offset="0%" stop-color="#1E3162"/>
+    <stop offset="100%" stop-color="#0A1F44"/>
+  </linearGradient>
+  <linearGradient id="fBottom" x1="50%" y1="0%" x2="50%" y2="100%">
+    <stop offset="0%" stop-color="#0A1F44"/>
+    <stop offset="100%" stop-color="#030A1F"/>
+  </linearGradient>
+  <linearGradient id="fLeft" x1="100%" y1="0%" x2="0%" y2="100%">
+    <stop offset="0%" stop-color="#1E3162"/>
+    <stop offset="100%" stop-color="#0A1F44"/>
+  </linearGradient>
+  <linearGradient id="goldLine" x1="0%" y1="0%" x2="100%" y2="100%">
+    <stop offset="0%" stop-color="#F4D06F"/>
+    <stop offset="100%" stop-color="#B8891F"/>
+  </linearGradient>
+  <radialGradient id="centerGlow" cx="50%" cy="50%" r="50%">
+    <stop offset="0%" stop-color="#F7DC82" stop-opacity="0.8"/>
+    <stop offset="100%" stop-color="#D4A017" stop-opacity="0"/>
+  </radialGradient>
+</defs>
+<rect width="1024" height="1024" rx="225" fill="url(#appBg)"/>
+<g transform="translate(512, 512)">
+    <polygon points="0,-300 260,0 0,0" fill="url(#fTop)"/>
+    <polygon points="260,0 0,300 0,0" fill="url(#fRight)"/>
+    <polygon points="0,300 -260,0 0,0" fill="url(#fBottom)"/>
+    <polygon points="-260,0 0,-300 0,0" fill="url(#fLeft)"/>
+    <line x1="0" y1="-300" x2="0" y2="300" stroke="url(#goldLine)" stroke-width="2.4" opacity="0.85"/>
+    <line x1="-260" y1="0" x2="260" y2="0" stroke="url(#goldLine)" stroke-width="2.4" opacity="0.85"/>
+    <polygon points="0,-300 260,0 0,300 -260,0" fill="none" stroke="url(#goldLine)" stroke-width="4.0" stroke-linejoin="round"/>
+    <circle cx="0" cy="0" r="28" fill="url(#centerGlow)"/>
+    <circle cx="0" cy="0" r="7" fill="#F7DC82"/>
+  </g>
+</svg>

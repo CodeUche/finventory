@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import AudityLogo from '@/components/AudityLogo'
 import { Link, useNavigate } from 'react-router-dom'
 import { Eye, EyeOff, Loader2, CheckCircle2, XCircle, Mail } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -104,12 +105,7 @@ export default function RegisterPage() {
     return (
       <div className="min-h-screen bg-surface-950 flex items-center justify-center p-6">
         <div className="w-full max-w-md">
-          <div className="flex items-center gap-3 mb-8">
-            <div className="w-10 h-10 rounded-full bg-white overflow-hidden flex items-center justify-center flex-shrink-0">
-              <img src="/audity-logo.png" alt="Audity" className="w-8 h-8 object-contain" />
-            </div>
-            <h1 className="text-xl font-bold text-white">Audity</h1>
-          </div>
+          <AudityLogo className="h-10 w-auto mb-8" />
 
           <div className="card text-center space-y-5">
             <div className="w-16 h-16 bg-brand-500/15 rounded-full flex items-center justify-center mx-auto">
@@ -153,12 +149,7 @@ export default function RegisterPage() {
   return (
     <div className="min-h-screen bg-surface-950 flex items-center justify-center p-6">
       <div className="w-full max-w-lg">
-        <div className="flex items-center gap-3 mb-8">
-          <div className="w-10 h-10 rounded-full bg-white overflow-hidden flex items-center justify-center flex-shrink-0">
-            <img src="/audity-logo.png" alt="Audity" className="w-8 h-8 object-contain" />
-          </div>
-          <h1 className="text-xl font-bold text-white">Audity</h1>
-        </div>
+        <AudityLogo className="h-10 w-auto mb-8" />
 
         <div className="card">
           <h2 className="text-2xl font-bold text-white mb-1">Create account</h2>

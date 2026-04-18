@@ -13,6 +13,7 @@ import { authApi } from '@/services/api'
 import { cn } from '@/lib/utils'
 import { FEATURES } from '@/lib/featureFlags'
 import type { ModuleKey } from '@/types'
+import AudityLogo from '@/components/AudityLogo'
 
 // ─── Navigation structure ─────────────────────────────────────────────────────
 // `module` maps to ModuleKey for permission filtering; null = always visible
@@ -22,7 +23,7 @@ const navGroups: { label: string | null; items: { name: string; href: string; ic
     label: null,
     items: [
       { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-      { name: 'Partner Dashboard', href: '/partner', icon: GraduationCap, ownerOnly: true, partnerOnly: true },
+      { name: 'Partner Dashboard', href: '/partner', icon: GraduationCap, ownerOnly: true },
     ],
   },
   {
@@ -32,17 +33,16 @@ const navGroups: { label: string | null; items: { name: string; href: string; ic
       { name: 'Stock Levels', href: '/inventory/stock', icon: Boxes, module: 'inventory' },
       { name: 'Warehouses', href: '/inventory/warehouses', icon: Warehouse, module: 'inventory' },
       { name: 'Batches & Lots', href: '/inventory/batches', icon: Layers, module: 'inventory' },
-      { name: 'Stock Reports', href: '/inventory/stock-reports', icon: ClipboardCheck, module: 'inventory' },
     ],
   },
   {
     label: 'SALES',
     items: [
-      { name: 'Invoices', href: '/sales', icon: FileText, module: 'sales' },
       { name: 'New Sale', href: '/sales/new', icon: Plus, module: 'sales' },
-      { name: 'Locations', href: '/locations', icon: MapPin, module: 'sales' },
       { name: 'Quotes', href: '/quotes', icon: ClipboardList, module: 'quotes' },
+      { name: 'Invoices', href: '/sales', icon: FileText, module: 'sales' },
       { name: 'Recurring', href: '/recurring', icon: RefreshCw, module: 'recurring' },
+      { name: 'Locations', href: '/locations', icon: MapPin, module: 'sales' },
     ],
   },
   {
@@ -67,7 +67,6 @@ const navGroups: { label: string | null; items: { name: string; href: string; ic
       { name: 'Journal Entries', href: '/accounting/journal', icon: BookMarked, module: 'accounting' },
       { name: 'Fixed Assets', href: '/accounting/assets', icon: Landmark, module: 'accounting' },
       { name: 'Bank Reconciliation', href: '/accounting/reconciliation', icon: Scale, module: 'accounting' },
-      { name: 'Balance Sheet', href: '/reports/balance-sheet', icon: Scale, module: 'accounting' },
     ],
   },
   {
@@ -82,7 +81,14 @@ const navGroups: { label: string | null; items: { name: string; href: string; ic
     items: [
       { name: 'Income & Expenses', href: '/expenses', icon: ArrowDownCircle, module: 'expenses' },
       { name: 'Budgets', href: '/budgets', icon: PieChart, module: 'budget' },
-      { name: 'Reports', href: '/reports', icon: BarChart3, module: 'reports' },
+    ],
+  },
+  {
+    label: 'REPORTS',
+    items: [
+      { name: 'P&L / Cash Flow', href: '/reports', icon: BarChart3, module: 'reports' },
+      { name: 'Balance Sheet', href: '/reports/balance-sheet', icon: Scale, module: 'accounting' },
+      { name: 'Stock Reports', href: '/reports/stock', icon: ClipboardCheck, module: 'inventory' },
     ],
   },
   {
@@ -164,15 +170,7 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
     >
       {/* Logo */}
       <div className="flex items-center justify-between px-5 py-4 border-b border-surface-700 shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-full bg-white overflow-hidden flex items-center justify-center flex-shrink-0">
-              <img src="/audity-logo.png" alt="Audity" className="w-7 h-7 object-contain" />
-            </div>
-          <div>
-            <p className="font-bold text-white text-sm leading-tight">Audity</p>
-            <p className="text-xs text-slate-500 leading-tight">Business Suite</p>
-          </div>
-        </div>
+        <AudityLogo className="h-9 w-auto" />
         <button onClick={onClose} className="lg:hidden btn-ghost p-1">
           <X size={18} />
         </button>

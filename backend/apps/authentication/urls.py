@@ -11,6 +11,7 @@ from .views import (
     MFAVerifyView,
     PasswordResetConfirmView,
     PasswordResetRequestView,
+    PingView,
     RegisterView,
     ResendVerificationView,
     SubAccountLoginView,
@@ -35,6 +36,8 @@ urlpatterns = [
     path("verify-email/", VerifyEmailView.as_view(), name="auth-verify-email"),
     path("resend-verification/", ResendVerificationView.as_view(), name="auth-resend-verification"),
     path("check-verification/", CheckVerificationView.as_view(), name="auth-check-verification"),
+    # Connectivity probe (used by Tauri offline-detection)
+    path("ping/", PingView.as_view(), name="auth-ping"),
     # MFA
     path("mfa/setup/", MFASetupView.as_view(), name="auth-mfa-setup"),
     path("mfa/confirm-setup/", MFAConfirmSetupView.as_view(), name="auth-mfa-confirm-setup"),

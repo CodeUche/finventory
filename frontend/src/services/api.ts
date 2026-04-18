@@ -40,12 +40,41 @@ function _signalOffline() {
   if (_effectivelyOffline) return          // already signalled
   _effectivelyOffline = true
   if (navigator.onLine) window.dispatchEvent(new Event('offline'))  // synthetic
+  _startProbe()  // begin polling so we know when connectivity is restored
 }
 
 function _signalOnline() {
   if (!_effectivelyOffline) return         // wasn't offline
   _effectivelyOffline = false
   window.dispatchEvent(new Event('online'))  // triggers flush in useNetworkStatus
+  _stopProbe()
+}
+
+// ── Background connectivity probe (Tauri workaround) ──────────────────────────
+// When _effectivelyOffline is true the app serves all reads from cache and never
+// makes a real network request — so _signalOnline() would never fire on its own.
+// This probe pings a lightweight endpoint every 15 s until the request succeeds,
+// then calls _signalOnline() to trigger a sync flush.
+let _probeTimer: ReturnType<typeof setInterval> | null = null
+
+function _startProbe() {
+  if (_probeTimer) return  // already running
+  _probeTimer = setInterval(async () => {
+    if (!_effectivelyOffline) { _stopProbe(); return }
+    try {
+      // Use the Tauri adapter directly via tauriHttpFetch so we bypass the Axios
+      // offline gate (which would short-circuit to cache and never hit the network).
+      const base = (import.meta.env.VITE_API_BASE_URL ?? '/api/v1').replace(/\/+$/, '')
+      await tauriHttpFetch(`${base}/auth/ping/`, { method: 'GET' } as RequestInit)
+      _signalOnline()
+    } catch {
+      // Still offline — keep probing
+    }
+  }, 15_000)
+}
+
+function _stopProbe() {
+  if (_probeTimer) { clearInterval(_probeTimer); _probeTimer = null }
 }
 
 // ── In-flight GET deduplication ───────────────────────────────────────────────
@@ -603,6 +632,16 @@ api.interceptors.response.use(
       } finally {
         isRefreshing = false
       }
+    }
+
+    // ── Clean up in-flight deduplication for HTTP errors ─────────────────────
+    // The cleanup inside the !error.response block above only fires for network
+    // failures. For real HTTP errors (401, 403, 500 …) the deferred must also be
+    // rejected & removed, otherwise the next request for the same URL will join
+    // the dead deferred and hang forever.
+    if (original?._dedupeKey) {
+      _inflightGets.get(original._dedupeKey)?.reject(error)
+      _inflightGets.delete(original._dedupeKey)
     }
 
     // 402 — plan limit reached: show upgrade prompt

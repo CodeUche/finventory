@@ -618,6 +618,14 @@ class MFAVerifyView(APIView):
         )
 
 
+class PingView(APIView):
+    """Lightweight connectivity probe used by the Tauri offline-detection probe."""
+    permission_classes = [AllowAny]
+
+    def get(self, _request):
+        return Response({"ok": True})
+
+
 class MFADisableView(APIView):
     """
     POST /api/v1/auth/mfa/disable/

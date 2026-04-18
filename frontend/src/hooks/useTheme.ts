@@ -36,4 +36,5 @@ export function initTheme() {
 export function setTheme(theme: Theme) {
   try { localStorage.setItem(STORAGE_KEY, theme) } catch { /* ignore */ }
   applyTheme(theme)
+  window.dispatchEvent(new CustomEvent('themechange', { detail: theme }))
 }

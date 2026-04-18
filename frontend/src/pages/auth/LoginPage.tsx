@@ -4,6 +4,7 @@ import { Eye, EyeOff, Loader2, AlertCircle, ShieldCheck } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { api, authApi, orgApi } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
+import AudityLogo from '@/components/AudityLogo'
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -122,12 +123,7 @@ export default function LoginPage() {
     return (
       <div className="min-h-screen bg-surface-950 flex items-center justify-center p-6">
         <div className="w-full max-w-md">
-          <div className="flex items-center gap-3 mb-8">
-            <div className="w-10 h-10 rounded-full bg-white overflow-hidden flex items-center justify-center flex-shrink-0">
-              <img src="/audity-logo.png" alt="Audity" className="w-8 h-8 object-contain" />
-            </div>
-            <h1 className="text-xl font-bold text-white">Audity</h1>
-          </div>
+          <AudityLogo className="h-10 w-auto mb-8" />
 
           <div className="card">
             <div className="flex items-center gap-3 mb-5">
@@ -187,15 +183,7 @@ export default function LoginPage() {
         <div className="absolute bottom-0 right-0 w-80 h-80 bg-blue-500/10 rounded-full translate-x-1/2 translate-y-1/2 blur-3xl" />
 
         <div className="relative z-10 max-w-md">
-          <div className="flex items-center gap-3 mb-12">
-            <div className="w-12 h-12 rounded-full bg-white overflow-hidden flex items-center justify-center flex-shrink-0">
-              <img src="/audity-logo.png" alt="Audity" className="w-10 h-10 object-contain" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold text-white">Audity</h1>
-              <p className="text-slate-400 text-sm">Business Suite</p>
-            </div>
-          </div>
+          <AudityLogo className="h-12 w-auto mb-12" />
 
           <h2 className="text-4xl font-bold text-white leading-tight mb-4">
             Manage your<br />
@@ -220,12 +208,7 @@ export default function LoginPage() {
       {/* Right panel — form */}
       <div className="flex-1 flex items-center justify-center p-6">
         <div className="w-full max-w-md">
-          <div className="flex items-center gap-3 mb-8 lg:hidden">
-            <div className="w-10 h-10 rounded-full bg-white overflow-hidden flex items-center justify-center flex-shrink-0">
-              <img src="/audity-logo.png" alt="Audity" className="w-8 h-8 object-contain" />
-            </div>
-            <h1 className="text-xl font-bold text-white">Audity</h1>
-          </div>
+          <AudityLogo className="h-10 w-auto mb-8 lg:hidden" />
 
           <h2 className="text-3xl font-bold text-white mb-2">Sign in</h2>
           <p className="text-slate-400 mb-8">
