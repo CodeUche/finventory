@@ -137,6 +137,19 @@ if _database_url:
         conn_health_checks=True,
     )
 
+# RLS hardening: HTTP workers connect as the limited-privilege `audity_app` role
+# so Row Level Security is fully enforced for every request.
+# Migrations (Procfile `release:` step) keep using DATABASE_URL (superuser,
+# bypasses RLS) so `manage.py migrate` can write to all tables unimpeded.
+_app_database_url = config("APP_DATABASE_URL", default="")
+if _app_database_url:
+    import dj_database_url  # noqa: E402,F811
+    DATABASES["default"] = dj_database_url.parse(  # noqa: F405
+        _app_database_url,
+        conn_max_age=config("DB_CONN_MAX_AGE", default=60, cast=int),
+        conn_health_checks=True,
+    )
+
 # Railway exposes REDIS_URL automatically when you add a Redis service.
 _redis_url = config("REDIS_URL", default="")
 if _redis_url:
