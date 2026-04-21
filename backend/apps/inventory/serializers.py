@@ -57,10 +57,13 @@ class ProductSerializer(serializers.ModelSerializer):
                 )
                 if membership.role not in _OWNER_ROLES and not request.user.is_superuser:
                     data.pop("owner_cost_price", None)
+                    data.pop("cost_price", None)
             except Membership.DoesNotExist:
                 data.pop("owner_cost_price", None)
+                data.pop("cost_price", None)
         else:
             data.pop("owner_cost_price", None)
+            data.pop("cost_price", None)
         return data
 
 

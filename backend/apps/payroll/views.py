@@ -221,8 +221,20 @@ class AttendanceViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         if not emp_ids or not date:
             return Response({'error': 'employee_ids and date are required'}, status=400)
 
+        # Validate every submitted ID belongs to this organisation (prevents IDOR)
+        valid_ids = set(
+            Employee.objects.filter(organisation=org, id__in=emp_ids)
+            .values_list('id', flat=True)
+        )
+        invalid = [str(e) for e in emp_ids if str(e) not in {str(v) for v in valid_ids}]
+        if invalid:
+            return Response(
+                {'error': 'One or more employees not found in your organisation.'},
+                status=403,
+            )
+
         created, updated = 0, 0
-        for emp_id in emp_ids:
+        for emp_id in valid_ids:
             obj, is_new = Attendance.objects.update_or_create(
                 organisation=org,
                 employee_id=emp_id,
@@ -300,15 +312,23 @@ class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         run.submitted_for_approval = True
         run.submitted_by = request.user
 
-        # Optional: target a specific approver
+        # Optional: target a specific approver — must be an active admin/owner in this org
         approver_id = request.data.get('approver_id')
         if approver_id:
-            from django.contrib.auth import get_user_model
+            from apps.tenancy.models import Membership
             try:
-                approver = get_user_model().objects.get(id=approver_id)
-                run.target_approver = approver
-            except Exception:
-                pass
+                membership = Membership.objects.select_related('user').get(
+                    organisation=run.organisation,
+                    user__id=approver_id,
+                    is_active=True,
+                    role__in=['admin', 'owner'],
+                )
+                run.target_approver = membership.user
+            except Membership.DoesNotExist:
+                return Response(
+                    {'error': 'Approver must be an active admin or owner of this organisation.'},
+                    status=400,
+                )
 
         run.save(update_fields=['submitted_for_approval', 'submitted_by', 'target_approver'])
 

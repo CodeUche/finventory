@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.db.models import Sum
 from rest_framework import serializers
 
@@ -73,6 +75,8 @@ class ExpenseSerializer(serializers.ModelSerializer):
             'group': {'required': False},
             'budget': {'required': False},
             # Field-level caps and upload validation
+            'amount': {'min_value': Decimal('0.01')},
+            'previous_price': {'min_value': Decimal('0.01'), 'required': False, 'allow_null': True},
             'reference': {'max_length': 200, 'required': False, 'allow_blank': True},
             'attachment': {'validators': [validate_file_upload], 'required': False},
         }

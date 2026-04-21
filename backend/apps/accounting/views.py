@@ -1,3 +1,4 @@
+import re
 from decimal import Decimal
 from datetime import date
 from rest_framework import viewsets, status
@@ -170,10 +171,15 @@ class JournalEntryViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         org = self._get_organisation()
         reversal_date = request.data.get('reversal_date', original.entry_date)
 
+        def _safe_desc(text, max_len=200):
+            """Strip CSV-injection lead chars and cap length."""
+            cleaned = re.sub(r'^[=+\-@\t\r]+', '', (text or '').strip())
+            return cleaned[:max_len]
+
         with transaction.atomic():
             reversal = JournalEntry.objects.create(
                 organisation=org,
-                description=f'Reversal of {original.reference}: {original.description}',
+                description=f'Reversal of {original.reference}: {_safe_desc(original.description)}',
                 entry_date=reversal_date,
                 created_by=request.user,
                 status=JournalEntry.DRAFT,
@@ -184,7 +190,7 @@ class JournalEntryViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                     account=line.account,
                     debit=line.credit,   # flip
                     credit=line.debit,   # flip
-                    description=f'Reversal: {line.description}' if line.description else 'Reversal',
+                    description=f'Reversal: {_safe_desc(line.description)}' if line.description else 'Reversal',
                 )
 
         return Response(JournalEntrySerializer(reversal).data, status=status.HTTP_201_CREATED)
