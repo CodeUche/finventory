@@ -135,14 +135,26 @@ def paystack_webhook(request):
         # Return 200 to prevent retry floods from misconfigured senders.
         return Response({"status": "ok"})
 
-    # Look up the first active Paystack config to retrieve the webhook secret.
-    # In a multi-org setup you may need to parse the event reference first;
-    # for now we use the platform-level first active config.
-    config = (
-        PaymentGatewayConfig.objects
-        .filter(provider=PaymentGatewayConfig.PAYSTACK, is_active=True)
-        .first()
-    )
+    # Parse the raw payload (without trusting it) to extract org_id from metadata,
+    # then look up that org's specific Paystack config.  This prevents a rogue
+    # request from being verified against the wrong org's secret.
+    import json as _json
+    try:
+        raw_data = _json.loads(request.body)
+        org_id = (raw_data.get("data", {}).get("metadata") or {}).get("org_id")
+    except Exception:
+        org_id = None
+
+    if org_id:
+        config = PaymentGatewayConfig.objects.filter(
+            organisation_id=org_id,
+            provider=PaymentGatewayConfig.PAYSTACK,
+            is_active=True,
+        ).first()
+    else:
+        # No org_id in metadata — fall back to checking all configs
+        # (handles legacy or non-subscription events)
+        config = None
 
     if not config or not config.webhook_secret:
         # Reject unverified webhooks — accepting without a secret allows payment fraud

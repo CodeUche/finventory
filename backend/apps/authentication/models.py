@@ -11,7 +11,7 @@ Security decisions:
     - `is_verified` gate prevents unverified accounts from accessing data.
 """
 
-import random
+import secrets
 import uuid
 
 from django.contrib.auth.models import (
@@ -20,6 +20,8 @@ from django.contrib.auth.models import (
     PermissionsMixin,
 )
 from django.db import models
+
+from apps.core.fields import EncryptedCharField
 
 
 class UserManager(BaseUserManager):
@@ -72,9 +74,12 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     # MFA (TOTP)
     mfa_enabled = models.BooleanField(default=False)
-    mfa_secret = models.CharField(max_length=64, blank=True, default='')
-    mfa_secret_pending = models.CharField(max_length=64, blank=True, default='')
+    mfa_secret = EncryptedCharField(max_length=500, blank=True, default='')
+    mfa_secret_pending = EncryptedCharField(max_length=500, blank=True, default='')
     mfa_backup_codes = models.JSONField(default=list, blank=True)
+
+    # Incremented on password change to invalidate all existing JWTs
+    token_version = models.PositiveIntegerField(default=0)
 
     # Security: track login activity
     last_login_ip = models.GenericIPAddressField(null=True, blank=True)
@@ -134,7 +139,7 @@ class PasswordResetOTP(models.Model):
         """Invalidate previous OTPs and create a new one. Returns plain code."""
         import hashlib
         cls.objects.filter(user=user, used=False).update(used=True)
-        code = str(random.randint(100000, 999999))
+        code = str(secrets.randbelow(900000) + 100000)
         code_hash = hashlib.sha256(code.encode()).hexdigest()
         cls.objects.create(user=user, code_hash=code_hash)
         return code

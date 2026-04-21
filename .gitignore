@@ -55,6 +55,11 @@ frontend/.env
 # Tauri / Rust build artifacts
 frontend/src-tauri/target/
 
+# Tauri signing keys — private keys must NEVER be committed
+*.key
+*.key.pub
+frontend/~/
+
 # Claude Code project files
 .claude/
 

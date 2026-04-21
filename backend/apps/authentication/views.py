@@ -1,12 +1,9 @@
 """Authentication views: register, login, logout, profile, email verification, MFA."""
 
 import base64
-import hashlib
-import hmac
 import io
 import logging
 import os
-import random
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
@@ -57,6 +54,7 @@ MFA_CHALLENGE_MAX_AGE = 300        # 5 minutes
 def _issue_tokens(user):
     """Return {access, refresh} JWT strings for a user."""
     refresh = RefreshToken.for_user(user)
+    refresh["token_version"] = user.token_version
     return {"access": str(refresh.access_token), "refresh": str(refresh)}
 
 
@@ -166,9 +164,17 @@ class RegisterView(APIView):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
+        # Issue a short-lived polling token tied to this registration session.
+        # check-verification requires this token — prevents unauthenticated callers
+        # from receiving JWT tokens for arbitrary verified users (CRIT-01).
+        polling_token = TimestampSigner().sign(str(user.pk))
+
         logger.info("New user registered (pending verification): %s from %s", user.email, get_client_ip(request))
         return Response(
-            {"message": "Account created! Check your email to verify your address before signing in."},
+            {
+                "message": "Account created! Check your email to verify your address before signing in.",
+                "polling_token": polling_token,
+            },
             status=status.HTTP_201_CREATED,
         )
 
@@ -306,13 +312,45 @@ class CheckVerificationView(APIView):
 
     def post(self, request):
         email = (request.data.get("email") or "").lower().strip()
+        polling_token = request.data.get("polling_token", "")
+
         if not email:
             return Response({"verified": False})
+
+        # Require a valid polling token issued at registration time.
+        # Without this, any caller who knows a victim's email could receive
+        # their JWT tokens (CRIT-01 auth bypass).
+        if not polling_token:
+            return Response(
+                {"error": {"code": "missing_polling_token", "message": "polling_token is required."}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Verify the token and extract the user PK (max 30 min — enough to check email)
+        try:
+            token_pk = TimestampSigner().unsign(polling_token, max_age=1800)
+        except SignatureExpired:
+            return Response(
+                {"error": {"code": "polling_token_expired", "message": "Registration session expired. Please register again."}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except BadSignature:
+            return Response(
+                {"error": {"code": "invalid_polling_token", "message": "Invalid polling token."}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
             user = User.objects.get(email=email, is_active=True)
         except User.DoesNotExist:
             return Response({"verified": False})
+
+        # Ensure the token belongs to the same user as the email
+        if str(user.pk) != str(token_pk):
+            return Response(
+                {"error": {"code": "invalid_polling_token", "message": "Invalid polling token."}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         if not user.is_verified:
             return Response({"verified": False})
@@ -454,7 +492,13 @@ def _generate_backup_codes():
 
 
 def _hash_code(code: str) -> str:
-    return hashlib.sha256(code.encode()).hexdigest()
+    from django.contrib.auth.hashers import make_password
+    return make_password(code, salt="audity-backup", hasher="pbkdf2_sha256")
+
+
+def _check_code(plain: str, stored_hash: str) -> bool:
+    from django.contrib.auth.hashers import check_password
+    return check_password(plain, stored_hash)
 
 
 class MFASetupView(APIView):
@@ -596,11 +640,10 @@ class MFAVerifyView(APIView):
                 "tokens": _issue_tokens(user),
             })
 
-        # Try backup codes (constant-time comparison)
-        code_hash = _hash_code(code)
+        # Try backup codes
         backup_codes = list(user.mfa_backup_codes or [])
         for stored_hash in backup_codes:
-            if hmac.compare_digest(code_hash, stored_hash):
+            if _check_code(code, stored_hash):
                 backup_codes.remove(stored_hash)
                 user.mfa_backup_codes = backup_codes
                 user.save(update_fields=["mfa_backup_codes"])
@@ -648,10 +691,9 @@ class MFADisableView(APIView):
 
         # Verify TOTP or backup code before disabling
         totp = pyotp.TOTP(user.mfa_secret)
-        code_hash = _hash_code(code)
         backup_codes = list(user.mfa_backup_codes or [])
         valid = totp.verify(code, valid_window=1) or any(
-            hmac.compare_digest(code_hash, h) for h in backup_codes
+            _check_code(code, h) for h in backup_codes
         )
 
         if not valid:
@@ -768,7 +810,8 @@ class ChangePasswordView(APIView):
             )
 
         user.set_password(serializer.validated_data["new_password"])
-        update_fields = ["password"]
+        user.token_version = (user.token_version or 0) + 1
+        update_fields = ["password", "token_version"]
         if user.must_change_password:
             user.must_change_password = False
             update_fields.append("must_change_password")
@@ -865,9 +908,9 @@ class PasswordResetConfirmView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if len(new_password) < 8:
+        if len(new_password) < 10:
             return Response(
-                {"error": {"code": "password_too_short", "message": "Password must be at least 8 characters."}},
+                {"error": {"code": "password_too_short", "message": "Password must be at least 10 characters."}},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -895,9 +938,10 @@ class PasswordResetConfirmView(APIView):
         otp.save(update_fields=["used"])
 
         user.set_password(new_password)
+        user.token_version = (user.token_version or 0) + 1
         user.failed_login_attempts = 0
         user.locked_until = None
-        user.save(update_fields=["password", "failed_login_attempts", "locked_until"])
+        user.save(update_fields=["password", "token_version", "failed_login_attempts", "locked_until"])
 
         logger.info("Password reset successful for: %s", email)
         return Response({"message": "Password reset successfully. You can now log in."})

@@ -30,6 +30,21 @@ logger = logging.getLogger(__name__)
 # Maximum characters the user can send in a single message
 MAX_USER_MSG_LEN = 1_000
 
+# Prompt injection defence — cap length and strip newlines from data values
+# embedded in the system prompt (org name, category names, custom context).
+_PROMPT_DATA_MAX = 200
+_CUSTOM_CTX_MAX = 500
+
+
+def _sanitize(value: str, max_len: int = _PROMPT_DATA_MAX) -> str:
+    """Strip control characters and newlines to prevent prompt injection."""
+    if not value:
+        return ""
+    # Replace any whitespace sequence (including \n \r \t) with a single space
+    import re
+    value = re.sub(r'\s+', ' ', value).strip()
+    return value[:max_len]
+
 
 # ── Data aggregation ──────────────────────────────────────────────────────────
 
@@ -190,10 +205,11 @@ def models_low_stock_threshold(organisation):
 
 def _build_system_prompt(organisation, summary: dict) -> str:
     """Build the system prompt sent to Claude with org financial context."""
-    custom_ctx = organisation.ai_custom_context.strip() if organisation.ai_custom_context else ""
+    custom_ctx = _sanitize(organisation.ai_custom_context or "", max_len=_CUSTOM_CTX_MAX)
+    org_name = _sanitize(summary['org_name'])
 
     lines = [
-        f"You are Audity AI, the intelligent financial assistant for {summary['org_name']}.",
+        f"You are Audity AI, the intelligent financial assistant for {org_name}.",
         "You help business owners understand their finances in plain, friendly English.",
         "You are concise, insightful, and action-oriented — never use jargon without explaining it.",
         "",
@@ -212,7 +228,7 @@ def _build_system_prompt(organisation, summary: dict) -> str:
     if summary["top_expense_categories"]:
         lines.append("- Top expense categories:")
         for cat in summary["top_expense_categories"]:
-            lines.append(f"    • {cat['category']}: {summary['currency']} {cat['amount']}")
+            lines.append(f"    • {_sanitize(cat['category'])}: {summary['currency']} {cat['amount']}")
 
     if custom_ctx:
         lines += ["", "Business context provided by the owner:", custom_ctx]

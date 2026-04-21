@@ -19,14 +19,15 @@ from django.core.exceptions import ValidationError
 # ── File type allowlists ───────────────────────────────────────────────────────
 # Keep these conservative — only accept formats the UI actually uses.
 
-_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"}
+_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 _IMAGE_MIME_PREFIX = ("image/",)
 
 _DOCUMENT_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png"}
 _DOCUMENT_MIME_TYPES = {"application/pdf", "image/jpeg", "image/png", "image/jpg"}
 
-# Letterhead allows images AND office/PDF documents
-_LETTERHEAD_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".pdf", ".doc", ".docx"}
+# Letterhead allows images AND PDF — SVG excluded (can carry embedded JS)
+_LETTERHEAD_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".pdf"}
+_LETTERHEAD_MIME_TYPES = {"application/pdf", "image/jpeg", "image/png", "image/gif", "image/webp", "image/jpg"}
 
 # Hard upper bounds — settings.DATA_UPLOAD_MAX_MEMORY_SIZE is the global cap,
 # but per-field limits give a tighter, more informative error message.
@@ -117,11 +118,12 @@ def validate_file_upload(value):
 
 def validate_letterhead_upload(value):
     """
-    Validate that an uploaded letterhead file is an acceptable image or document.
+    Validate that an uploaded letterhead file is an acceptable image or PDF.
 
     Checks:
-      1. File extension is in the letterhead allowlist (images + PDF/DOC/DOCX).
-      2. File size does not exceed 10 MB.
+      1. File extension is in the letterhead allowlist (images + PDF; SVG excluded).
+      2. Magic bytes confirm the file type is genuine.
+      3. File size does not exceed 10 MB.
 
     Used on: Organisation.letterhead
     """
@@ -135,3 +137,16 @@ def validate_letterhead_upload(value):
         raise ValidationError(
             f"Letterhead file too large ({value.size // 1024} KB). Maximum allowed: 10 MB."
         )
+    # Magic byte check — prevents disguised executables or SVG-with-JS
+    try:
+        header = value.read(261)
+        value.seek(0)
+        if header:
+            kind = filetype.guess(header)
+            if kind is None or kind.mime not in _LETTERHEAD_MIME_TYPES:
+                raise ValidationError(
+                    "File content does not match an allowed format (PDF or image). "
+                    "Please upload a real PDF, PNG, JPEG, GIF, or WebP file."
+                )
+    except (AttributeError, OSError):
+        pass
