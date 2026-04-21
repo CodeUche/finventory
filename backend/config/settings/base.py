@@ -242,6 +242,8 @@ REST_FRAMEWORK = {
         "invitation": "10/hour",       # InvitationRateThrottle — team management
         "webhook": "300/minute",       # WebhookRateThrottle — Paystack inbound events
         "public_read": "30/minute",    # PublicReadRateThrottle — plan listing etc.
+        "ping": "120/minute",          # PingRateThrottle — Tauri offline probe (15s interval)
+        "ai_support": "20/minute",     # AISupportRateThrottle — public support chat widget
     },
 }
 

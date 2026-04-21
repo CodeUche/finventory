@@ -93,19 +93,23 @@ class InvoiceViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
 
     def create(self, request, *args, **kwargs):
         """Create a confirmed sale invoice."""
-        # ── Plan limit check ─────────────────────────────────────────────────
-        org = self._get_organisation()
+        # ── Plan limit check (atomic to prevent race-condition bypass) ────────
+        from django.db import transaction as _tx
         from django.utils import timezone as _tz
         from apps.subscriptions.services import SubscriptionService
+        from apps.tenancy.models import Organisation
+        org = self._get_organisation()
         _now = _tz.now()
-        monthly_count = Invoice.objects.filter(
-            organisation=org,
-            created_at__year=_now.year,
-            created_at__month=_now.month,
-        ).count()
-        _limit_err = SubscriptionService.get_write_limit_error(org, "max_invoices_per_month", monthly_count)
-        if _limit_err:
-            return Response({"error": _limit_err, "upgrade_required": True}, status=402)
+        with _tx.atomic():
+            Organisation.objects.select_for_update().get(pk=org.pk)
+            monthly_count = Invoice.objects.filter(
+                organisation=org,
+                created_at__year=_now.year,
+                created_at__month=_now.month,
+            ).count()
+            _limit_err = SubscriptionService.get_write_limit_error(org, "max_invoices_per_month", monthly_count)
+            if _limit_err:
+                return Response({"error": _limit_err, "upgrade_required": True}, status=402)
         # ─────────────────────────────────────────────────────────────────────
 
         serializer = CreateSaleSerializer(data=request.data)

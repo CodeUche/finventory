@@ -24,6 +24,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.permissions import IsStaff
+from apps.core.throttles import AISupportRateThrottle
 
 logger = logging.getLogger(__name__)
 
@@ -612,6 +613,7 @@ class AISupportView(APIView):
     """
     authentication_classes = []
     permission_classes = []
+    throttle_classes = [AISupportRateThrottle]
 
     def post(self, request):
         api_key = getattr(settings, "GROQ_API_KEY", "")

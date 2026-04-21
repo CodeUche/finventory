@@ -43,13 +43,17 @@ class CustomerViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
     ordering_fields = ["name", "outstanding_balance", "created_at"]
 
     def create(self, request, *args, **kwargs):
-        org = self._get_organisation()
+        from django.db import transaction
         from apps.subscriptions.services import SubscriptionService
-        count = Customer.objects.filter(organisation=org).count()
-        err = SubscriptionService.get_write_limit_error(org, "max_customers", count)
-        if err:
-            return Response({"error": err, "upgrade_required": True}, status=402)
-        return super().create(request, *args, **kwargs)
+        from apps.tenancy.models import Organisation
+        org = self._get_organisation()
+        with transaction.atomic():
+            Organisation.objects.select_for_update().get(pk=org.pk)
+            count = Customer.objects.filter(organisation=org).count()
+            err = SubscriptionService.get_write_limit_error(org, "max_customers", count)
+            if err:
+                return Response({"error": err, "upgrade_required": True}, status=402)
+            return super().create(request, *args, **kwargs)
 
     @action(detail=True, methods=["get"], url_path="statement")
     def statement(self, request, pk=None):

@@ -27,6 +27,7 @@ from apps.core.throttles import (
     PasswordChangeRateThrottle,
     PasswordResetConfirmRateThrottle,
     PasswordResetRequestRateThrottle,
+    PingRateThrottle,
     RegisterRateThrottle,
     ResendVerificationRateThrottle,
     TokenRefreshRateThrottle,
@@ -640,20 +641,24 @@ class MFAVerifyView(APIView):
                 "tokens": _issue_tokens(user),
             })
 
-        # Try backup codes
-        backup_codes = list(user.mfa_backup_codes or [])
-        for stored_hash in backup_codes:
-            if _check_code(code, stored_hash):
-                backup_codes.remove(stored_hash)
-                user.mfa_backup_codes = backup_codes
-                user.save(update_fields=["mfa_backup_codes"])
-                logger.info("MFA backup code used for: %s (%d remaining)", user.email, len(backup_codes))
-                return Response({
-                    "user": UserProfileSerializer(user).data,
-                    "tokens": _issue_tokens(user),
-                    "backup_code_used": True,
-                    "backup_codes_remaining": len(backup_codes),
-                })
+        # Try backup codes — locked transaction prevents two simultaneous requests
+        # from consuming the same code (race condition / replay).
+        from django.db import transaction as _tx
+        with _tx.atomic():
+            user = User.objects.select_for_update().get(pk=user.pk)
+            backup_codes = list(user.mfa_backup_codes or [])
+            for stored_hash in backup_codes:
+                if _check_code(code, stored_hash):
+                    backup_codes.remove(stored_hash)
+                    user.mfa_backup_codes = backup_codes
+                    user.save(update_fields=["mfa_backup_codes"])
+                    logger.info("MFA backup code used for: %s (%d remaining)", user.email, len(backup_codes))
+                    return Response({
+                        "user": UserProfileSerializer(user).data,
+                        "tokens": _issue_tokens(user),
+                        "backup_code_used": True,
+                        "backup_codes_remaining": len(backup_codes),
+                    })
 
         return Response(
             {"error": {"code": "invalid_code", "message": "Invalid authenticator code."}},
@@ -663,7 +668,9 @@ class MFAVerifyView(APIView):
 
 class PingView(APIView):
     """Lightweight connectivity probe used by the Tauri offline-detection probe."""
+    authentication_classes = []
     permission_classes = [AllowAny]
+    throttle_classes = [PingRateThrottle]
 
     def get(self, _request):
         return Response({"ok": True})
@@ -979,11 +986,16 @@ class SubAccountLoginView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Validate slug format to prevent injection
+        # Validate slug format to prevent injection.
+        # Run a constant-time dummy hash even on format failure to prevent
+        # timing-oracle attacks (invalid format fails fast; valid format hits
+        # the DB — measurable difference reveals valid username/org pairs).
         import re
         if not re.match(r'^[a-z0-9\-]{1,100}$', org_slug) or not re.match(r'^[a-z0-9_\-\.]{1,100}$', username):
+            from django.contrib.auth.hashers import check_password
+            check_password(password, 'pbkdf2_sha256$870000$dummy$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=')
             return Response(
-                {"error": {"code": "invalid_credentials", "message": "Invalid username or workspace."}},
+                {"error": {"code": "invalid_credentials", "message": "Invalid username, workspace, or password."}},
                 status=status.HTTP_401_UNAUTHORIZED,
             )
 

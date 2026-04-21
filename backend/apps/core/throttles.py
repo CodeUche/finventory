@@ -98,3 +98,13 @@ class PublicReadRateThrottle(AnonRateThrottle):
     (e.g., subscription plan listing).
     """
     scope = "public_read"
+
+
+class PingRateThrottle(AnonRateThrottle):
+    """120 pings per minute per IP — allows Tauri's 15s probe but blocks flood attacks."""
+    scope = "ping"
+
+
+class AISupportRateThrottle(AnonRateThrottle):
+    """20 support chat messages per minute per IP — public support widget abuse guard."""
+    scope = "ai_support"

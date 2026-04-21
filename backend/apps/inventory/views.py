@@ -49,13 +49,17 @@ class WarehouseViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, IsManager]
 
     def create(self, request, *args, **kwargs):
-        org = self._get_organisation()
+        from django.db import transaction
         from apps.subscriptions.services import SubscriptionService
-        count = Warehouse.objects.filter(organisation=org, is_active=True).count()
-        err = SubscriptionService.get_write_limit_error(org, "max_warehouses", count)
-        if err:
-            return Response({"error": err, "upgrade_required": True}, status=402)
-        return super().create(request, *args, **kwargs)
+        from apps.tenancy.models import Organisation
+        org = self._get_organisation()
+        with transaction.atomic():
+            Organisation.objects.select_for_update().get(pk=org.pk)
+            count = Warehouse.objects.filter(organisation=org, is_active=True).count()
+            err = SubscriptionService.get_write_limit_error(org, "max_warehouses", count)
+            if err:
+                return Response({"error": err, "upgrade_required": True}, status=402)
+            return super().create(request, *args, **kwargs)
 
 
 class ProductViewSet(TenantFilterMixin, viewsets.ModelViewSet):
@@ -73,13 +77,17 @@ class ProductViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     ordering_fields = ["name", "selling_price", "created_at"]
 
     def create(self, request, *args, **kwargs):
-        org = self._get_organisation()
+        from django.db import transaction
         from apps.subscriptions.services import SubscriptionService
-        count = Product.objects.filter(organisation=org).count()
-        err = SubscriptionService.get_write_limit_error(org, "max_products", count)
-        if err:
-            return Response({"error": err, "upgrade_required": True}, status=402)
-        return super().create(request, *args, **kwargs)
+        from apps.tenancy.models import Organisation
+        org = self._get_organisation()
+        with transaction.atomic():
+            Organisation.objects.select_for_update().get(pk=org.pk)
+            count = Product.objects.filter(organisation=org).count()
+            err = SubscriptionService.get_write_limit_error(org, "max_products", count)
+            if err:
+                return Response({"error": err, "upgrade_required": True}, status=402)
+            return super().create(request, *args, **kwargs)
 
     @action(detail=False, methods=["get"])
     def low_stock(self, request):
