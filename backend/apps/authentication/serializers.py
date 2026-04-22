@@ -39,7 +39,6 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             for m in user.memberships.filter(is_active=True).select_related("organisation")
         }
         token["memberships"] = memberships
-        token["token_version"] = user.token_version
         return token
 
 

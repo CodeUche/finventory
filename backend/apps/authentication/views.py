@@ -56,7 +56,6 @@ MFA_CHALLENGE_MAX_AGE = 300        # 5 minutes
 def _issue_tokens(user):
     """Return {access, refresh} JWT strings for a user."""
     refresh = RefreshToken.for_user(user)
-    refresh["token_version"] = user.token_version
     return {"access": str(refresh.access_token), "refresh": str(refresh)}
 
 
@@ -859,8 +858,7 @@ class ChangePasswordView(APIView):
             )
 
         user.set_password(serializer.validated_data["new_password"])
-        user.token_version = (user.token_version or 0) + 1
-        update_fields = ["password", "token_version"]
+        update_fields = ["password"]
         if user.must_change_password:
             user.must_change_password = False
             update_fields.append("must_change_password")
@@ -991,10 +989,9 @@ class PasswordResetConfirmView(APIView):
         otp.save(update_fields=["used"])
 
         user.set_password(new_password)
-        user.token_version = (user.token_version or 0) + 1
         user.failed_login_attempts = 0
         user.locked_until = None
-        user.save(update_fields=["password", "token_version", "failed_login_attempts", "locked_until"])
+        user.save(update_fields=["password", "failed_login_attempts", "locked_until"])
 
         logger.info("Password reset successful for: %s", email)
         return Response({"message": "Password reset successfully. You can now log in."})
