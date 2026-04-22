@@ -81,7 +81,7 @@ class BillItemInputSerializer(serializers.Serializer):
 
     description = serializers.CharField(max_length=500)
     quantity = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0.001"))
-    unit_cost = serializers.DecimalField(max_digits=15, decimal_places=4, min_value=Decimal("0"))
+    unit_cost = serializers.DecimalField(max_digits=15, decimal_places=4, min_value=Decimal("0.01"))
     # Optional FK references — resolved in the view/service
     expense_category_id = serializers.UUIDField(required=False, allow_null=True)
     account_id = serializers.UUIDField(required=False, allow_null=True)

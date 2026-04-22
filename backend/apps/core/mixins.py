@@ -15,6 +15,7 @@ Note on JWT + Middleware order:
 """
 
 import logging
+import re
 
 from apps.core.exceptions import TenantViolationError
 
@@ -190,9 +191,11 @@ class ExportMixin:
 
         qs = self.filter_queryset(self.get_queryset())
 
+        safe_name = re.sub(r'[^\w\-]', '_', self.export_filename)
+
         if fmt == 'csv':
             response = HttpResponse(content_type='text/csv')
-            response['Content-Disposition'] = f'attachment; filename="{self.export_filename}.csv"'
+            response['Content-Disposition'] = f'attachment; filename="{safe_name}.csv"'
             writer = csv.writer(response)
             headers = [h for h, _ in self.export_fields]
             writer.writerow(headers)
@@ -214,7 +217,7 @@ class ExportMixin:
         from openpyxl.styles import Font, PatternFill, Alignment
         wb = openpyxl.Workbook()
         ws = wb.active
-        ws.title = self.export_filename.capitalize()
+        ws.title = safe_name.capitalize()[:31]
 
         header_font = Font(bold=True, color='FFFFFF')
         header_fill = PatternFill('solid', fgColor='1E293B')
@@ -245,5 +248,5 @@ class ExportMixin:
         wb.save(buf)
         buf.seek(0)
         response = HttpResponse(buf.read(), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-        response['Content-Disposition'] = f'attachment; filename="{self.export_filename}.xlsx"'
+        response['Content-Disposition'] = f'attachment; filename="{safe_name}.xlsx"'
         return response

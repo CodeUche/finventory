@@ -41,6 +41,7 @@ import secrets
 
 from django.core.management.base import BaseCommand
 from django.db import connection
+from psycopg2 import sql as pgsql
 
 
 class Command(BaseCommand):
@@ -69,53 +70,63 @@ class Command(BaseCommand):
             )
             exists = cursor.fetchone()
 
+            R = pgsql.Identifier(role)
+
             if exists:
                 self.stdout.write(f"Role '{role}' already exists — updating password.")
                 cursor.execute(
-                    f'ALTER ROLE "{role}" WITH LOGIN PASSWORD %s', [password]
+                    pgsql.SQL('ALTER ROLE {} WITH LOGIN PASSWORD %s').format(R),
+                    [password],
                 )
             else:
                 self.stdout.write(f"Creating role '{role}'...")
                 cursor.execute(
-                    f"""
-                    CREATE ROLE "{role}"
-                        WITH LOGIN
-                        PASSWORD %s
-                        NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION;
-                    """,
+                    pgsql.SQL(
+                        'CREATE ROLE {} WITH LOGIN PASSWORD %s '
+                        'NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION'
+                    ).format(R),
                     [password],
                 )
 
             # 2. Grant CONNECT on the current database
             db_name = connection.settings_dict["NAME"]
-            cursor.execute(f'GRANT CONNECT ON DATABASE "{db_name}" TO "{role}"')
+            cursor.execute(
+                pgsql.SQL('GRANT CONNECT ON DATABASE {} TO {}').format(
+                    pgsql.Identifier(db_name), R
+                )
+            )
 
             # 3. Grant USAGE on public schema
-            cursor.execute(f'GRANT USAGE ON SCHEMA public TO "{role}"')
+            cursor.execute(pgsql.SQL('GRANT USAGE ON SCHEMA public TO {}').format(R))
 
             # 4. Grant DML on all existing tables
             cursor.execute(
-                f'GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO "{role}"'
+                pgsql.SQL(
+                    'GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {}'
+                ).format(R)
             )
 
             # 5. Grant sequence usage (needed for INSERT with serial / uuid default)
             cursor.execute(
-                f'GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO "{role}"'
+                pgsql.SQL(
+                    'GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {}'
+                ).format(R)
             )
 
             # 6. Default privileges for future tables created by migrations
             current_user = connection.settings_dict["USER"]
+            CU = pgsql.Identifier(current_user)
             cursor.execute(
-                f"""
-                ALTER DEFAULT PRIVILEGES FOR ROLE "{current_user}" IN SCHEMA public
-                    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO "{role}";
-                """
+                pgsql.SQL(
+                    'ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA public '
+                    'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {}'
+                ).format(CU, R)
             )
             cursor.execute(
-                f"""
-                ALTER DEFAULT PRIVILEGES FOR ROLE "{current_user}" IN SCHEMA public
-                    GRANT USAGE, SELECT ON SEQUENCES TO "{role}";
-                """
+                pgsql.SQL(
+                    'ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA public '
+                    'GRANT USAGE, SELECT ON SEQUENCES TO {}'
+                ).format(CU, R)
             )
 
         self.stdout.write(self.style.SUCCESS(f"\n✓ Role '{role}' is ready.\n"))

@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { MessageCircle, X, Send, Loader2, Bot, User, ChevronDown } from 'lucide-react'
+import DOMPurify from 'dompurify'
 import { aiApi } from '@/services/api'
 
 interface Message {
@@ -183,7 +184,7 @@ export default function SupportChat() {
                   {m.role === 'assistant' ? (
                     <div
                       className="prose prose-invert prose-sm max-w-none"
-                      dangerouslySetInnerHTML={{ __html: renderMarkdown(m.content) }}
+                      dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(renderMarkdown(m.content)) }}
                     />
                   ) : (
                     m.content

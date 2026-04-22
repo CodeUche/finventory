@@ -845,9 +845,13 @@ class PasswordResetRequestView(APIView):
 
     def post(self, request):
         email = request.data.get("email", "").lower().strip()
+        _DUMMY_HASH = 'pbkdf2_sha256$870000$audity_dummy_reset$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
         try:
             user = User.objects.get(email=email, is_active=True)
         except User.DoesNotExist:
+            # Constant-time dummy work so response time doesn't reveal whether email exists
+            from django.contrib.auth.hashers import check_password as _cp
+            _cp('x', _DUMMY_HASH)
             return Response({"message": "If that email is registered, a reset code has been sent."})
 
         code = PasswordResetOTP.generate(user)
@@ -1028,7 +1032,7 @@ class SubAccountLoginView(APIView):
 
         # Authenticate password
         auth_user = django_authenticate(request, username=email, password=password)
-        if auth_user is None:
+        if auth_user is None: 
             user.failed_login_attempts += 1
             if user.failed_login_attempts >= MAX_LOGIN_ATTEMPTS:
                 user.locked_until = timezone.now() + timedelta(minutes=LOCKOUT_MINUTES)

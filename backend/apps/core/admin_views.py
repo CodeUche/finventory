@@ -2,8 +2,9 @@
 Platform admin API — superusers only.
 Provides cross-tenant aggregate statistics.
 """
-from django.db.models import Count, Sum
+from django.db.models import Count, Q, Sum
 from rest_framework import status
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -100,23 +101,29 @@ class PlatformStatsView(APIView):
     def get(self, request):
         from apps.tenancy.models import Organisation, Membership
         from apps.authentication.models import User
-        from apps.subscriptions.models import Plan, Subscription
+        from apps.subscriptions.models import Plan
         from apps.sales.models import Invoice
-        from apps.expenses.models import Expense
 
         orgs = Organisation.objects.filter(is_deleted=False)
         users = User.objects.filter(is_active=True)
         invoices = Invoice.objects.all()
-        subs = Subscription.objects.select_related('plan', 'organisation')
 
-        # Org list with key info
+        # Single annotated query — no per-org N+1
+        org_qs = (
+            orgs
+            .select_related('owner', 'subscription__plan')
+            .annotate(
+                member_count=Count('memberships', filter=Q(memberships__is_active=True), distinct=True),
+                invoice_count=Count('invoices', distinct=True),
+                total_revenue=Sum(
+                    'invoices__total_amount',
+                    filter=Q(invoices__status__in=['paid', 'partially_paid', 'confirmed']),
+                ),
+            )
+        )
+
         org_data = []
-        for org in orgs.select_related('owner', 'subscription__plan'):
-            member_count = Membership.objects.filter(organisation=org, is_active=True).count()
-            invoice_count = Invoice.objects.filter(organisation=org).count()
-            total_revenue = Invoice.objects.filter(
-                organisation=org, status__in=['paid', 'partially_paid', 'confirmed']
-            ).aggregate(s=Sum('total_amount'))['s'] or 0
+        for org in org_qs:
             org_data.append({
                 'id': str(org.id),
                 'name': org.name,
@@ -125,9 +132,9 @@ class PlatformStatsView(APIView):
                 'country': org.country,
                 'plan': org.subscription.plan.name if org.subscription else 'None',
                 'sub_status': org.subscription.status if org.subscription else 'none',
-                'member_count': member_count,
-                'invoice_count': invoice_count,
-                'total_revenue': str(total_revenue),
+                'member_count': org.member_count or 0,
+                'invoice_count': org.invoice_count or 0,
+                'total_revenue': str(org.total_revenue or 0),
                 'is_active': org.is_active,
                 'created_at': org.created_at.isoformat(),
             })
@@ -149,17 +156,30 @@ class PlatformStatsView(APIView):
         })
 
 
+class _AdminUserPagination(PageNumberPagination):
+    page_size = 100
+    page_size_query_param = 'page_size'
+    max_page_size = 500
+
+
 class PlatformUsersView(APIView):
     permission_classes = [IsAuthenticated, IsSuperuser]
 
     def get(self, request):
         from apps.authentication.models import User
-        from apps.tenancy.models import Membership
 
-        users = User.objects.all().order_by('-created_at')
+        qs = (
+            User.objects
+            .prefetch_related('memberships__organisation')
+            .order_by('-created_at')
+        )
+
+        paginator = _AdminUserPagination()
+        page = paginator.paginate_queryset(qs, request)
+
         data = []
-        for u in users:
-            memberships = Membership.objects.filter(user=u, is_active=True).select_related('organisation')
+        for u in (page if page is not None else qs):
+            memberships = [m for m in u.memberships.all() if m.is_active]
             data.append({
                 'id': str(u.id),
                 'email': u.email,
@@ -171,6 +191,9 @@ class PlatformUsersView(APIView):
                 'created_at': u.created_at.isoformat(),
                 'orgs': [{'name': m.organisation.name, 'role': m.role} for m in memberships],
             })
+
+        if page is not None:
+            return paginator.get_paginated_response(data)
         return Response(data)
 
 
@@ -219,8 +242,21 @@ class PlatformUserDetailView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
         email = user.email
+        user_id = str(user.pk)
         # Deactivate first so signal cascades to sub-accounts before hard delete
         user.is_active = False
         user.save(update_fields=['is_active'])
         user.delete()
+        try:
+            from apps.core.models import AuditLog
+            AuditLog.log(
+                action=AuditLog.DELETE,
+                user=request.user,
+                model_name='User',
+                object_id=user_id,
+                object_repr=email,
+                request=request,
+            )
+        except Exception:
+            pass
         return Response({'detail': f'User {email} permanently deleted.'}, status=status.HTTP_200_OK)

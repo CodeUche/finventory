@@ -125,6 +125,13 @@ class OrganisationViewSet(viewsets.ModelViewSet):
             org.logo.delete(save=False)
             org.logo = None
             org.save(update_fields=["logo"])
+            try:
+                from apps.core.models import AuditLog
+                AuditLog.log(action=AuditLog.DELETE, user=request.user, organisation=org,
+                             model_name='OrganisationLogo', object_id=str(org.id),
+                             object_repr=f'Logo for {org.name}', request=request)
+            except Exception:
+                pass
         return Response(OrganisationSerializer(org).data)
 
     @action(detail=True, methods=["post"], permission_classes=[IsOwnerOrAdmin], url_path="remove_stamp")
@@ -135,6 +142,13 @@ class OrganisationViewSet(viewsets.ModelViewSet):
             org.company_stamp.delete(save=False)
             org.company_stamp = None
             org.save(update_fields=["company_stamp"])
+            try:
+                from apps.core.models import AuditLog
+                AuditLog.log(action=AuditLog.DELETE, user=request.user, organisation=org,
+                             model_name='OrganisationStamp', object_id=str(org.id),
+                             object_repr=f'Stamp for {org.name}', request=request)
+            except Exception:
+                pass
         return Response(OrganisationSerializer(org).data)
 
     @action(detail=True, methods=["post"], permission_classes=[IsOwnerOrAdmin], url_path="upload_logo")
