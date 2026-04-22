@@ -324,16 +324,18 @@ class InvoiceViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         d = serializer.validated_data
         try:
-            sale_return = SaleService.process_return(
-                organisation=request.organisation,
-                invoice=invoice,
-                items=d["items"],
-                reason=d["reason"],
-                notes=d.get("notes", ""),
-                processed_by=request.user,
-                restocked=d.get("restocked", True),
-                return_date=d.get("return_date"),
-            )
+            from django.db import transaction as _tx
+            with _tx.atomic():
+                sale_return = SaleService.process_return(
+                    organisation=request.organisation,
+                    invoice=invoice,
+                    items=d["items"],
+                    reason=d["reason"],
+                    notes=d.get("notes", ""),
+                    processed_by=request.user,
+                    restocked=d.get("restocked", True),
+                    return_date=d.get("return_date"),
+                )
             return Response(SaleReturnSerializer(sale_return).data, status=201)
         except ValueError as e:
             return Response({"error": str(e)}, status=422)

@@ -689,10 +689,18 @@ class MFADisableView(APIView):
         import pyotp
         user = request.user
         code = str(request.data.get("code", "")).strip()
+        current_password = str(request.data.get("current_password", "")).strip()
 
         if not user.mfa_enabled:
             return Response(
                 {"error": {"code": "mfa_not_enabled", "message": "MFA is not currently enabled."}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Require current password as first factor before disabling second factor
+        if not current_password or not user.check_password(current_password):
+            return Response(
+                {"error": {"code": "invalid_password", "message": "Current password is required to disable MFA."}},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -785,9 +793,12 @@ class UploadAvatarView(APIView):
         from django.core.files.base import ContentFile
         from apps.core.validators import sniff_image_bytes
 
+        _MAX_AVATAR_BYTES = 5 * 1024 * 1024  # 5 MB
         body = request.body
         if not body:
             return Response({"error": {"message": "No file data received."}}, status=status.HTTP_400_BAD_REQUEST)
+        if len(body) > _MAX_AVATAR_BYTES:
+            return Response({"error": {"message": "File too large. Maximum size is 5 MB."}}, status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
         detected_mime = sniff_image_bytes(body[:261])
         if detected_mime is None:
             return Response({"error": {"message": "File is not a valid image."}}, status=status.HTTP_400_BAD_REQUEST)

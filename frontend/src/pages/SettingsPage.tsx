@@ -226,6 +226,7 @@ export default function SettingsPage() {
   const [mfaQr, setMfaQr] = useState('')
   const [mfaSecret, setMfaSecret] = useState('')
   const [mfaCode, setMfaCode] = useState('')
+  const [mfaDisablePassword, setMfaDisablePassword] = useState('')
   const [mfaLoading, setMfaLoading] = useState(false)
   const [backupCodes, setBackupCodes] = useState<string[]>([])
   const [mfaEnabled, setMfaEnabled] = useState(user?.mfa_enabled ?? false)
@@ -268,14 +269,15 @@ export default function SettingsPage() {
   const handleMFADisable = async () => {
     setMfaLoading(true)
     try {
-      await authApi.mfaDisable(mfaCode)
+      await authApi.mfaDisable(mfaCode, mfaDisablePassword)
       setMfaEnabled(false)
       updateUser({ mfa_enabled: false })  // sync to persisted store
       setMfaStep('idle')
       setMfaCode('')
+      setMfaDisablePassword('')
       toast.success('MFA disabled.')
     } catch (err: any) {
-      const msg = err.response?.data?.error?.message ?? 'Invalid code.'
+      const msg = err.response?.data?.error?.message ?? 'Invalid code or password.'
       toast.error(msg)
     } finally {
       setMfaLoading(false)
@@ -1548,7 +1550,17 @@ export default function SettingsPage() {
             {/* Disable confirmation */}
             {mfaStep === 'disable' && (
               <div className="space-y-4">
-                <p className="text-sm text-slate-400">Enter your current authenticator code (or a backup code) to confirm disabling MFA.</p>
+                <p className="text-sm text-slate-400">Enter your current password and authenticator code (or a backup code) to confirm disabling MFA.</p>
+                <div>
+                  <label className="label">Current password</label>
+                  <input
+                    type="password"
+                    className="input"
+                    placeholder="Your account password"
+                    value={mfaDisablePassword}
+                    onChange={(e) => setMfaDisablePassword(e.target.value)}
+                  />
+                </div>
                 <div>
                   <label className="label">Authenticator code</label>
                   <input
@@ -1562,11 +1574,11 @@ export default function SettingsPage() {
                   />
                 </div>
                 <div className="flex gap-3">
-                  <button onClick={handleMFADisable} disabled={mfaLoading || mfaCode.length < 6} className="btn-primary flex-1 bg-red-600 hover:bg-red-700">
+                  <button onClick={handleMFADisable} disabled={mfaLoading || mfaCode.length < 6 || !mfaDisablePassword} className="btn-primary flex-1 bg-red-600 hover:bg-red-700">
                     {mfaLoading ? <Loader2 size={16} className="animate-spin mr-2" /> : null}
                     Disable MFA
                   </button>
-                  <button onClick={() => { setMfaStep('idle'); setMfaCode('') }} className="btn-secondary">
+                  <button onClick={() => { setMfaStep('idle'); setMfaCode(''); setMfaDisablePassword('') }} className="btn-secondary">
                     Cancel
                   </button>
                 </div>

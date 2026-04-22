@@ -220,3 +220,53 @@ class SubscriptionActive(BasePermission):
             # No subscription — allow (prevents lockout before plans are seeded)
             return True
         return sub.is_active
+
+
+class PlanMemberLimitActive(BasePermission):
+    """
+    Enforces member limits on every request after a plan downgrade.
+
+    When an org's active non-owner member count exceeds the plan's max_users,
+    non-owner members are blocked with HTTP 402 until the owner upgrades or
+    deactivates excess members. Owners, admins, and superusers are never blocked.
+    """
+    message = (
+        "Your organisation has exceeded the member limit for its current plan. "
+        "The account owner must upgrade or deactivate excess members."
+    )
+
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return True  # Let auth classes handle unauthenticated requests
+        if request.user.is_superuser:
+            return True
+        org = _get_or_resolve_org(request)
+        if org is None:
+            return True  # No org context — let other permissions handle it
+        try:
+            from apps.tenancy.models import Membership
+            membership = Membership.objects.get(
+                organisation=org, user=request.user, is_active=True
+            )
+            # Owners and admins are never throttled by member limits
+            if membership.role in ("owner", "admin"):
+                return True
+            # Check current plan limit
+            sub = getattr(org, "subscription", None)
+            if sub is None or not sub.is_active:
+                return True
+            max_users = sub.plan.features.get("max_users") if sub.plan.features else None
+            if not max_users:
+                return True
+            active_non_owner = Membership.objects.filter(
+                organisation=org, is_active=True
+            ).exclude(role="owner").count()
+            if active_non_owner > int(max_users):
+                self.message = (
+                    f"Your organisation has exceeded the {max_users}-member limit on its current plan. "
+                    "Please ask the account owner to upgrade or deactivate excess members."
+                )
+                return False
+        except Exception:
+            pass
+        return True

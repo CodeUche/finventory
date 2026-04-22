@@ -162,10 +162,13 @@ class OrganisationViewSet(viewsets.ModelViewSet):
         """
         from django.core.files.base import ContentFile
         from apps.core.validators import sniff_image_bytes
+        _MAX_BYTES = 5 * 1024 * 1024
         org = self.get_object()
         body = request.body
         if not body:
             return Response({"error": {"message": "No file data received."}}, status=status.HTTP_400_BAD_REQUEST)
+        if len(body) > _MAX_BYTES:
+            return Response({"error": {"message": "File too large. Maximum size is 5 MB."}}, status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
         detected_mime = sniff_image_bytes(body[:261])
         if detected_mime is None:
             return Response({"error": {"message": "File is not a valid image."}}, status=status.HTTP_400_BAD_REQUEST)
@@ -183,10 +186,13 @@ class OrganisationViewSet(viewsets.ModelViewSet):
         """
         from django.core.files.base import ContentFile
         from apps.core.validators import sniff_image_bytes
+        _MAX_BYTES = 5 * 1024 * 1024
         org = self.get_object()
         body = request.body
         if not body:
             return Response({"error": {"message": "No file data received."}}, status=status.HTTP_400_BAD_REQUEST)
+        if len(body) > _MAX_BYTES:
+            return Response({"error": {"message": "File too large. Maximum size is 5 MB."}}, status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
         detected_mime = sniff_image_bytes(body[:261])
         if detected_mime is None:
             return Response({"error": {"message": "File is not a valid image."}}, status=status.HTTP_400_BAD_REQUEST)

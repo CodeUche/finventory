@@ -739,7 +739,7 @@ export const authApi = {
   mfaSetup: () => api.post('/auth/mfa/setup/'),
   mfaConfirmSetup: (code: string) => api.post('/auth/mfa/confirm-setup/', { code }),
   mfaVerify: (mfa_token: string, code: string) => api.post('/auth/mfa/verify/', { mfa_token, code }),
-  mfaDisable: (code: string) => api.post('/auth/mfa/disable/', { code }),
+  mfaDisable: (code: string, currentPassword: string) => api.post('/auth/mfa/disable/', { code, current_password: currentPassword }),
   staffLogin: (username: string, orgSlug: string, password: string) =>
     api.post('/auth/staff-login/', { username, org_slug: orgSlug, password }),
   changePassword: (currentPassword: string, newPassword: string) =>

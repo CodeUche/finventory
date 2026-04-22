@@ -93,10 +93,10 @@ class RegisterSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 "Phone number may only contain digits, spaces, +, -, and parentheses."
             )
-        # Enforce phone uniqueness (skip blank values)
+        # Enforce phone uniqueness — generic message to prevent enumeration
         if value and User.objects.filter(phone=value).exists():
             raise serializers.ValidationError(
-                "An account with this phone number already exists."
+                "This information is already in use."
             )
         return value
 

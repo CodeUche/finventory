@@ -9,6 +9,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from celery import shared_task
+from django.db import transaction
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
@@ -54,7 +55,7 @@ def generate_recurring_invoices(self):
     generated = 0
     failed = 0
 
-    for ri in due:
+    for ri in due.select_for_update(skip_locked=True):
         # Stop if past end_date or max_occurrences reached
         if ri.end_date and today > ri.end_date:
             ri.is_active = False
@@ -66,31 +67,32 @@ def generate_recurring_invoices(self):
             continue
 
         try:
-            # Append custom customer name to notes when no FK customer is set
-            notes = ri.notes or ''
-            if not ri.customer and ri.custom_customer_name:
-                prefix = f"Customer: {ri.custom_customer_name}"
-                notes = f"{prefix}\n{notes}".strip() if notes else prefix
+            with transaction.atomic():
+                # Append custom customer name to notes when no FK customer is set
+                notes = ri.notes or ''
+                if not ri.customer and ri.custom_customer_name:
+                    prefix = f"Customer: {ri.custom_customer_name}"
+                    notes = f"{prefix}\n{notes}".strip() if notes else prefix
 
-            invoice = SaleService.create_sale(
-                organisation=ri.organisation,
-                created_by=ri.created_by,
-                customer=ri.customer,
-                warehouse=ri.warehouse,
-                items=ri.items,
-                payment_method=ri.payment_method,
-                notes=notes,
-                issue_date=today,
-            )
-            RecurringInvoiceLog.objects.create(
-                organisation=ri.organisation,
-                recurring_invoice=ri,
-                invoice=invoice,
-                status=RecurringInvoiceLog.SUCCESS,
-            )
-            ri.occurrences_count += 1
-            ri.next_run_date = _next_run(today, ri.frequency, ri.interval)
-            ri.save(update_fields=["occurrences_count", "next_run_date"])
+                invoice = SaleService.create_sale(
+                    organisation=ri.organisation,
+                    created_by=ri.created_by,
+                    customer=ri.customer,
+                    warehouse=ri.warehouse,
+                    items=ri.items,
+                    payment_method=ri.payment_method,
+                    notes=notes,
+                    issue_date=today,
+                )
+                RecurringInvoiceLog.objects.create(
+                    organisation=ri.organisation,
+                    recurring_invoice=ri,
+                    invoice=invoice,
+                    status=RecurringInvoiceLog.SUCCESS,
+                )
+                ri.occurrences_count += 1
+                ri.next_run_date = _next_run(today, ri.frequency, ri.interval)
+                ri.save(update_fields=["occurrences_count", "next_run_date"])
             generated += 1
             logger.info("Recurring invoice generated: %s → %s", ri.template_name, invoice.invoice_number)
         except Exception as exc:
