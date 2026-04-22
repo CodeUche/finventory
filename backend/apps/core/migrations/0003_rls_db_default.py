@@ -20,10 +20,16 @@ def apply(apps, schema_editor):
         return
     db_name = schema_editor.connection.settings_dict["NAME"]
     with schema_editor.connection.cursor() as cursor:
-        cursor.execute(
-            f"ALTER DATABASE \"{db_name}\" SET app.current_org_id = %s",
-            [SENTINEL],
-        )
+        try:
+            cursor.execute(
+                f"ALTER DATABASE \"{db_name}\" SET app.current_org_id = %s",
+                [SENTINEL],
+            )
+        except Exception:
+            # Managed cloud DBs (Railway, Supabase, etc.) restrict ALTER DATABASE
+            # to the superuser. This setting is a nice-to-have default; the
+            # RLS middleware sets the session variable on every request anyway.
+            pass
 
 
 def revert(apps, schema_editor):
@@ -31,9 +37,12 @@ def revert(apps, schema_editor):
         return
     db_name = schema_editor.connection.settings_dict["NAME"]
     with schema_editor.connection.cursor() as cursor:
-        cursor.execute(
-            f"ALTER DATABASE \"{db_name}\" RESET app.current_org_id"
-        )
+        try:
+            cursor.execute(
+                f"ALTER DATABASE \"{db_name}\" RESET app.current_org_id"
+            )
+        except Exception:
+            pass
 
 
 class Migration(migrations.Migration):
