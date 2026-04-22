@@ -286,30 +286,42 @@ class SaleService:
             amount_paid >= total_amount → PAID
             0 < amount_paid < total_amount → PARTIALLY_PAID
         """
-        payment = SalePayment.objects.create(
-            organisation=invoice.organisation,
-            invoice=invoice,
-            amount=amount,
-            method=method,
-            reference=reference,
-            received_by=received_by,
-        )
+        from django.db import transaction as _tx
+        with _tx.atomic():
+            # Re-read with row lock to prevent concurrent payment races
+            invoice = Invoice.objects.select_for_update().get(pk=invoice.pk)
 
-        invoice.amount_paid += amount
-        invoice.amount_due = invoice.total_amount - invoice.amount_paid
-
-        if invoice.amount_paid >= invoice.total_amount:
-            invoice.status = Invoice.Status.PAID
-            # Reduce customer outstanding balance
-            if invoice.customer and invoice.payment_method == Invoice.PaymentMethod.CREDIT:
-                invoice.customer.outstanding_balance = max(
-                    invoice.customer.outstanding_balance - invoice.total_amount, Decimal("0")
+            if invoice.status == Invoice.Status.PAID:
+                raise ValueError("This invoice has already been fully paid.")
+            if amount > invoice.amount_due:
+                raise ValueError(
+                    f"Payment of {amount} exceeds the outstanding balance of {invoice.amount_due}."
                 )
-                invoice.customer.save(update_fields=["outstanding_balance"])
-        elif invoice.amount_paid > 0:
-            invoice.status = Invoice.Status.PARTIALLY_PAID
 
-        invoice.save(update_fields=["amount_paid", "amount_due", "status", "updated_at"])
+            payment = SalePayment.objects.create(
+                organisation=invoice.organisation,
+                invoice=invoice,
+                amount=amount,
+                method=method,
+                reference=reference,
+                received_by=received_by,
+            )
+
+            invoice.amount_paid += amount
+            invoice.amount_due = invoice.total_amount - invoice.amount_paid
+
+            if invoice.amount_paid >= invoice.total_amount:
+                invoice.status = Invoice.Status.PAID
+                # Reduce customer outstanding balance
+                if invoice.customer and invoice.payment_method == Invoice.PaymentMethod.CREDIT:
+                    invoice.customer.outstanding_balance = max(
+                        invoice.customer.outstanding_balance - invoice.total_amount, Decimal("0")
+                    )
+                    invoice.customer.save(update_fields=["outstanding_balance"])
+            elif invoice.amount_paid > 0:
+                invoice.status = Invoice.Status.PARTIALLY_PAID
+
+            invoice.save(update_fields=["amount_paid", "amount_due", "status", "updated_at"])
         return payment
 
     @staticmethod

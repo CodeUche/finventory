@@ -75,6 +75,8 @@ class BillService:
     @staticmethod
     @transaction.atomic
     def approve_bill(bill, approver):
+        if bill.created_by and bill.created_by == approver:
+            raise ValueError("You cannot approve a bill you created.")
         bill.status = Bill.APPROVED
         bill.approved_by = approver
         bill.save()

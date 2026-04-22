@@ -111,6 +111,15 @@ class CreateSaleSerializer(serializers.Serializer):
     issue_date = serializers.DateField(required=False)
     due_date = serializers.DateField(required=False, allow_null=True)
     is_proforma = serializers.BooleanField(required=False, default=False)
+
+    def validate(self, attrs):
+        issue_date = attrs.get('issue_date')
+        due_date = attrs.get('due_date')
+        if issue_date and due_date and due_date < issue_date:
+            raise serializers.ValidationError(
+                {"due_date": "Due date cannot be before the issue date."}
+            )
+        return attrs
     amount_paid = serializers.DecimalField(max_digits=15, decimal_places=4, required=False, default=Decimal("0"), min_value=Decimal("0"))
     amount_tendered = serializers.DecimalField(max_digits=15, decimal_places=4, required=False, allow_null=True)
     credit_applied = serializers.DecimalField(max_digits=15, decimal_places=4, required=False, default=Decimal("0"), min_value=Decimal("0"))

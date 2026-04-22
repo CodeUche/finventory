@@ -350,7 +350,6 @@ class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         if run.status != PayrollRun.PROCESSING:
             return Response({'error': 'Only processing payrolls can be approved'}, status=400)
         if not run.submitted_for_approval:
-            # Allow owners/admins to self-approve without submission step
             from apps.core.permissions import IsOwnerOrAdmin as _IsOwner
             checker = _IsOwner()
             if not checker.has_permission(request, self):
@@ -358,6 +357,12 @@ class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                     {'error': 'This payroll must be submitted for approval first.'},
                     status=400,
                 )
+        # Segregation of duties: the person who submitted cannot approve
+        if run.submitted_by and run.submitted_by == request.user:
+            return Response(
+                {'error': 'You cannot approve a payroll run you submitted. A different owner or admin must approve.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         run.status = PayrollRun.APPROVED
         run.approved_by = request.user
         run.save()
@@ -373,13 +378,22 @@ class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def mark_paid(self, request, pk=None):
-        run = self.get_object()
+        from django.db import transaction as _tx
         from django.utils import timezone
-        run.status = PayrollRun.PAID
-        run.payment_date = request.data.get('payment_date', timezone.now().date())
-        run.save()
-        # Mark all payslips as paid
-        run.payslips.filter(status=PayslipLine.CALCULATED).update(status=PayslipLine.PAID)
+        with _tx.atomic():
+            run = PayrollRun.objects.select_for_update().get(
+                pk=self.get_object().pk,
+                organisation=self._get_organisation(),
+            )
+            if run.status != PayrollRun.APPROVED:
+                return Response(
+                    {'error': 'Only approved payrolls can be marked as paid.'},
+                    status=400,
+                )
+            run.status = PayrollRun.PAID
+            run.payment_date = request.data.get('payment_date', timezone.now().date())
+            run.save()
+            run.payslips.filter(status=PayslipLine.CALCULATED).update(status=PayslipLine.PAID)
         return Response(PayrollRunSerializer(run).data)
 
     @action(detail=True, methods=['post'])

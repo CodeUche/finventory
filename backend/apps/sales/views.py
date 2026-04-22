@@ -347,28 +347,33 @@ class InvoiceViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsStaff])
     def confirm_proforma(self, request, pk=None):
         """POST /api/v1/sales/invoices/{id}/confirm_proforma/ — convert proforma to confirmed invoice."""
-        invoice = self.get_object()
-        if invoice.status != Invoice.Status.PROFORMA:
-            return Response({"error": "Only proforma invoices can be confirmed this way"}, status=422)
         try:
-            # Deduct stock for all physical items now that it's confirmed
+            from django.db import transaction as _tx
             from apps.inventory.services import InventoryService
             from apps.inventory.models import StockMovement
-            for item in invoice.items.all():
-                if item.product.product_type != "service":
-                    InventoryService.record_movement(
-                        organisation=invoice.organisation,
-                        product=item.product,
-                        warehouse=invoice.warehouse,
-                        movement_type=StockMovement.MovementType.SALE_OUT,
-                        quantity=-item.quantity,
-                        unit_cost=item.cost_of_goods / item.quantity if item.quantity else item.product.cost_price,
-                        reference=invoice.invoice_number,
-                        created_by=request.user,
-                        batch=item.batch,
-                    )
-            invoice.status = Invoice.Status.CONFIRMED
-            invoice.save(update_fields=["status"])
+            with _tx.atomic():
+                # Re-read with row lock to prevent concurrent double-confirmation
+                invoice = Invoice.objects.select_for_update().get(
+                    pk=self.get_object().pk,
+                    organisation=request.organisation,
+                )
+                if invoice.status != Invoice.Status.PROFORMA:
+                    return Response({"error": "Only proforma invoices can be confirmed this way"}, status=422)
+                for item in invoice.items.all():
+                    if item.product.product_type != "service":
+                        InventoryService.record_movement(
+                            organisation=invoice.organisation,
+                            product=item.product,
+                            warehouse=invoice.warehouse,
+                            movement_type=StockMovement.MovementType.SALE_OUT,
+                            quantity=-item.quantity,
+                            unit_cost=item.cost_of_goods / item.quantity if item.quantity else item.product.cost_price,
+                            reference=invoice.invoice_number,
+                            created_by=request.user,
+                            batch=item.batch,
+                        )
+                invoice.status = Invoice.Status.CONFIRMED
+                invoice.save(update_fields=["status"])
             return Response(InvoiceSerializer(invoice).data)
         except Exception as e:
             logger.exception("Error confirming proforma")
@@ -378,7 +383,18 @@ class InvoiceViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
     def send_email(self, request, pk=None):
         """POST /api/v1/sales/invoices/{id}/send_email/ — send invoice to customer by email."""
         invoice = self.get_object()
-        to_email = request.data.get("to_email") or (invoice.customer and invoice.customer.email)
+        requested_email = request.data.get("to_email", "").strip()
+
+        # Only owners/admins may override the customer email address
+        if requested_email and invoice.customer and requested_email != invoice.customer.email:
+            from apps.core.permissions import has_minimum_role
+            if not has_minimum_role(request.user, request.organisation, "admin"):
+                return Response(
+                    {"error": "Only admins can redirect an invoice to a different email address."},
+                    status=403,
+                )
+
+        to_email = requested_email or (invoice.customer and invoice.customer.email)
         if not to_email:
             return Response({"error": "No recipient email address provided"}, status=422)
 
