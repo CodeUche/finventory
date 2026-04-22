@@ -13,6 +13,7 @@ from django.conf import settings
 from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework import status
+from rest_framework.exceptions import APIException
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -488,7 +489,30 @@ class LoginView(TokenObtainPairView):
             logger.error("Phase-3 bookkeeping failed for %s: %s", email, _phase3_err)
 
         if auth_exception is not None:
-            raise auth_exception
+            if isinstance(auth_exception, APIException):
+                # DRF exception (wrong credentials, invalid token, etc.) — re-raise
+                # so the standard exception handler converts it to a proper 401/403.
+                raise auth_exception
+            # Non-DRF exception: DB schema error (missing column from unapplied
+            # migration), network failure, import error, etc.  Returning a raw 500
+            # shows users a confusing "unexpected error" message.  Return 503 so
+            # the client retries and Railway logs show the real stacktrace.
+            logger.error(
+                "Authentication system error for %s: %s",
+                email, auth_exception, exc_info=True,
+            )
+            return Response(
+                {
+                    "error": {
+                        "code": "auth_unavailable",
+                        "message": (
+                            "Authentication is temporarily unavailable. "
+                            "Please try again in a moment."
+                        ),
+                    }
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         return response
 
 

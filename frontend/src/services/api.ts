@@ -657,10 +657,14 @@ api.interceptors.response.use(
     }
 
     // Show toast for API errors (deduplicate using toast ID so poll loops don't spam)
-    // Skip 401 (handled by refresh logic) and 403 (permission denials — handled silently at component level)
+    // Skip: 401 (handled by refresh logic), 403 (handled at component level),
+    // 500 (custom_exception_handler already shows a clear message via component),
+    // auth endpoints (LoginPage/StaffLoginPage handle their own error toasts).
     const errData = (error.response?.data as any)?.error
     const status = error.response?.status
-    if (errData?.message && status !== 401 && status !== 403 && status !== 500) {
+    const isAuthUrl = original.url?.includes('/auth/login/') ||
+                      original.url?.includes('/auth/staff-login/')
+    if (errData?.message && status !== 401 && status !== 403 && status !== 500 && !isAuthUrl) {
       const toastId = `api-err-${status}-${original.url}`
       toast.error(errData.message, { id: toastId, duration: 4000 })
     }

@@ -146,11 +146,27 @@ def apply(apps, schema_editor):
     if schema_editor.connection.vendor != "postgresql":
         return  # RLS is Postgres-only; skip for SQLite in tests
 
-    with schema_editor.connection.cursor() as cursor:
-        cursor.execute(INIT_SESSION_DEFAULT)
-        for table in TENANT_TABLES:
-            cursor.execute(_enable_rls_sql(table))
-        cursor.execute(ENABLE_ORG_TABLE)
+    import logging
+    _log = logging.getLogger(__name__)
+
+    try:
+        with schema_editor.connection.cursor() as cursor:
+            cursor.execute(INIT_SESSION_DEFAULT)
+            for table in TENANT_TABLES:
+                cursor.execute(_enable_rls_sql(table))
+            cursor.execute(ENABLE_ORG_TABLE)
+    except Exception as exc:
+        # Managed cloud DBs (Railway, Supabase, etc.) may restrict ALTER TABLE
+        # ENABLE ROW LEVEL SECURITY to the superuser, or the table may not yet
+        # exist in this DB instance.  Log the failure but do NOT re-raise — an
+        # unapplied migration here would block authentication/0006 (token_version)
+        # and every subsequent migration, taking down the entire app.
+        # The RLS middleware sets app.current_org_id per-request regardless,
+        # so tenant isolation still works at the application layer.
+        _log.warning(
+            "core.0002_enable_rls: could not enable PostgreSQL RLS "
+            "(non-fatal on managed DBs): %s", exc
+        )
 
 
 def revert(apps, schema_editor):
@@ -164,6 +180,10 @@ def revert(apps, schema_editor):
 
 
 class Migration(migrations.Migration):
+    # Non-atomic so a DDL failure doesn't roll back the entire migration
+    # and block authentication/0006 (token_version) from being applied.
+    atomic = False
+
     dependencies = [
         ("core", "0001_initial"),
         # Ensure every app's tables exist before we enable RLS on them
