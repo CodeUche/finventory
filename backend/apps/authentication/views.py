@@ -402,6 +402,11 @@ class LoginView(TokenObtainPairView):
                 )
         except User.DoesNotExist:
             pass  # Unknown email — let super() return the standard 401
+        except Exception as _phase1_err:
+            # Catch DB-level errors (e.g. missing column from unapplied migration).
+            # Log and skip the lockout check — Phase 2 authentication will fail
+            # with the correct error if credentials are wrong.
+            logger.error("Phase-1 user lookup failed for %s: %s", email, _phase1_err)
 
         # Phase 2: attempt authentication via SimpleJWT
         auth_exception = None
@@ -479,6 +484,8 @@ class LoginView(TokenObtainPairView):
                 user.save(update_fields=["failed_login_attempts", "locked_until"])
         except User.DoesNotExist:
             pass
+        except Exception as _phase3_err:
+            logger.error("Phase-3 bookkeeping failed for %s: %s", email, _phase3_err)
 
         if auth_exception is not None:
             raise auth_exception
