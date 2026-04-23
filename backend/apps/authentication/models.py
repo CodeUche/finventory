@@ -78,6 +78,9 @@ class User(AbstractBaseUser, PermissionsMixin):
     mfa_secret_pending = EncryptedCharField(max_length=500, blank=True, default='')
     mfa_backup_codes = models.JSONField(default=list, blank=True)
 
+    # Incremented on password change to invalidate all existing JWTs
+    token_version = models.PositiveIntegerField(default=0)
+
     # Security: track login activity
     last_login_ip = models.GenericIPAddressField(null=True, blank=True)
     failed_login_attempts = models.PositiveSmallIntegerField(default=0)

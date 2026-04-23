@@ -1,21 +1,19 @@
 """
-Revised 0006: widen mfa_secret / mfa_secret_pending to TEXT.
+Security hardening: token_version + encrypted MFA fields.
 
-token_version was removed from this migration (and from the model) because
-Railway's managed PostgreSQL does not grant ALTER TABLE ownership to the app
-user, causing `must be owner of table authentication_user` on every deploy.
-
-The mfa_secret AlterField is attempted via a PL/pgSQL DO block that silently
-catches InsufficientPrivilege, so this migration always marks as applied.
-SeparateDatabaseAndState ensures Django's migration state matches the model
-(EncryptedCharField) regardless of whether the DB ALTER TABLE succeeded.
+SeparateDatabaseAndState keeps Django's migration state correct (so
+dependent migrations compile) while the actual DDL is applied via a
+PL/pgSQL block that:
+  - skips token_version if the column already exists (manual add)
+  - skips mfa_secret widening if the column is already TEXT
+  - catches InsufficientPrivilege silently (managed DBs without ALTER)
 """
 
 import apps.core.fields
-from django.db import migrations
+from django.db import migrations, models
 
 
-def _widen_mfa_columns(apps, schema_editor):
+def _apply_schema_changes(apps, schema_editor):
     if schema_editor.connection.vendor != "postgresql":
         return
     import logging
@@ -25,19 +23,37 @@ def _widen_mfa_columns(apps, schema_editor):
             cursor.execute("""
                 DO $$
                 BEGIN
-                    ALTER TABLE authentication_user
-                        ALTER COLUMN mfa_secret TYPE text;
-                    ALTER TABLE authentication_user
-                        ALTER COLUMN mfa_secret_pending TYPE text;
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'authentication_user'
+                          AND column_name = 'token_version'
+                    ) THEN
+                        ALTER TABLE authentication_user
+                            ADD COLUMN token_version integer NOT NULL DEFAULT 0;
+                    END IF;
+
+                    IF (SELECT data_type FROM information_schema.columns
+                        WHERE table_name = 'authentication_user'
+                          AND column_name = 'mfa_secret') <> 'text' THEN
+                        ALTER TABLE authentication_user
+                            ALTER COLUMN mfa_secret TYPE text;
+                    END IF;
+
+                    IF (SELECT data_type FROM information_schema.columns
+                        WHERE table_name = 'authentication_user'
+                          AND column_name = 'mfa_secret_pending') <> 'text' THEN
+                        ALTER TABLE authentication_user
+                            ALTER COLUMN mfa_secret_pending TYPE text;
+                    END IF;
                 EXCEPTION
                     WHEN insufficient_privilege THEN
-                        RAISE NOTICE 'auth.0006: no ALTER TABLE privilege — mfa columns stay varchar(64)';
+                        RAISE NOTICE 'auth.0006: insufficient privilege — DDL skipped';
                     WHEN OTHERS THEN
-                        RAISE NOTICE 'auth.0006: mfa column alter skipped: %', SQLERRM;
+                        RAISE NOTICE 'auth.0006: DDL skipped: %', SQLERRM;
                 END $$;
             """)
     except Exception as exc:
-        log.warning("auth.0006: mfa_secret column alteration skipped: %s", exc)
+        log.warning("auth.0006: schema changes skipped: %s", exc)
 
 
 class Migration(migrations.Migration):
@@ -48,11 +64,14 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        # Update Django's migration state so it knows mfa_secret is now
-        # EncryptedCharField — no DB operation here (done by RunPython below).
         migrations.SeparateDatabaseAndState(
             database_operations=[],
             state_operations=[
+                migrations.AddField(
+                    model_name="user",
+                    name="token_version",
+                    field=models.PositiveIntegerField(default=0),
+                ),
                 migrations.AlterField(
                     model_name="user",
                     name="mfa_secret",
@@ -69,9 +88,8 @@ class Migration(migrations.Migration):
                 ),
             ],
         ),
-        # Try to widen the columns; silently ignores permission errors.
         migrations.RunPython(
-            _widen_mfa_columns,
+            _apply_schema_changes,
             migrations.RunPython.noop,
             atomic=False,
         ),
