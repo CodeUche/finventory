@@ -140,6 +140,16 @@ function buildTauriAdapter(): AxiosAdapter {
     for (const [k, v] of Object.entries(rawHeaders)) {
       if (typeof v === 'string' && v) headers[k] = v
     }
+    // Belt-and-suspenders: AxiosHeaders.toJSON() can silently drop custom headers
+    // when the internal representation uses a case-normalized key that differs from
+    // what Object.entries() sees.  Re-inject auth + org from Zustand state so they
+    // are always present, regardless of serialization quirks.
+    const _auth = getStoredAuth()
+    const _orgId = getStoredOrgId()
+    const hasAuth = Object.keys(headers).some((k) => k.toLowerCase() === 'authorization')
+    const hasOrg  = Object.keys(headers).some((k) => k.toLowerCase() === 'x-organisation-id')
+    if (_auth.access && !hasAuth) headers['Authorization'] = `Bearer ${_auth.access}`
+    if (_orgId && !hasOrg)        headers['X-Organisation-ID'] = _orgId
     if (import.meta.env.DEV) console.debug('[Audity] adapter headers:', JSON.stringify(Object.keys(headers)))
 
     const body = !['GET', 'HEAD'].includes(method) && config.data != null
