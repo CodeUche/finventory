@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
-import { Plus, Search, Package, AlertTriangle, X, Pencil, Loader2, TrendingUp, TrendingDown, History, Maximize2, Minimize2, ShieldCheck, FileDown, Table2 } from 'lucide-react'
+import { Plus, Search, Package, AlertTriangle, X, Pencil, Loader2, TrendingUp, TrendingDown, History, Maximize2, Minimize2, ShieldCheck, FileDown, Table2, ArrowDownCircle } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { inventoryApi, taxApi, salesApi } from '@/services/api'
 import { formatCurrency, formatAmountInput, stripCommas, formatDate } from '@/lib/utils'
@@ -411,10 +411,18 @@ export default function ProductsPage() {
                       {(p as any).product_type === 'service' || (p as any).product_type === 'digital' ? (
                         <span className="badge-slate">N/A</span>
                       ) : (
-                        <span className={p.total_stock <= p.reorder_level ? 'badge-red' : 'badge-green'}>
-                          {p.total_stock <= p.reorder_level && <AlertTriangle size={11} />}
-                          {p.total_stock} units
-                        </span>
+                        <div className="flex flex-col gap-1">
+                          <span className={p.total_stock <= p.reorder_level ? 'badge-red' : 'badge-green'}>
+                            {p.total_stock <= p.reorder_level && <AlertTriangle size={11} />}
+                            {p.total_stock} units
+                          </span>
+                          {(p as any).quantity_incoming > 0 && (
+                            <span className="badge-blue flex items-center gap-1 w-fit">
+                              <ArrowDownCircle size={11} />
+                              +{(p as any).quantity_incoming} incoming
+                            </span>
+                          )}
+                        </div>
                       )}
                     </td>
                     <td className="px-5 py-3.5">

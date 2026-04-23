@@ -227,6 +227,19 @@ export interface CreditTransaction {
 }
 
 // ─── Purchases ────────────────────────────────────────────────────────────────
+export interface PurchaseOrderItem {
+  id: string
+  product: string
+  product_name: string
+  quantity_ordered: string
+  quantity_received: string
+  unit_cost: string
+  line_total: string
+  batch_number: string
+  expiry_date: string | null
+  is_fully_received: boolean
+}
+
 export interface PurchaseOrder {
   id: string
   po_number: string
@@ -241,6 +254,7 @@ export interface PurchaseOrder {
   notes: string
   receipt: string | null
   created_at: string
+  items?: PurchaseOrderItem[]
 }
 
 // ─── Reports ──────────────────────────────────────────────────────────────────

@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { useSearchParams } from 'react-router-dom'
-import { Plus, Search, Truck, X, Loader2, UploadCloud, FileText, Edit2, Trash2 } from 'lucide-react'
+import { Plus, Search, Truck, X, Loader2, UploadCloud, FileText, Edit2, Trash2, ChevronDown, ChevronRight, Package } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { purchaseApi, supplierApi, inventoryApi } from '@/services/api'
 import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
-import type { Product, PurchaseOrder } from '@/types'
+import type { Product, PurchaseOrder, PurchaseOrderItem } from '@/types'
 import DateInput from '@/components/DateInput'
 import YearFilter, { yearToDateParams } from '@/components/YearFilter'
 import ExportButton from '@/components/ExportButton'
@@ -75,6 +75,14 @@ export default function PurchasesPage() {
   // Receipt viewer
   const [receiptViewUrl, setReceiptViewUrl] = useState<string | null>(null)
   const [receiptMime, setReceiptMime] = useState<string>('')
+
+  // Expanded rows (show items inline)
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set())
+  const toggleRow = (id: string) => setExpandedRows((prev) => {
+    const next = new Set(prev)
+    next.has(id) ? next.delete(id) : next.add(id)
+    return next
+  })
 
   // Delete PO
   const [deletingId, setDeletingId] = useState<string | null>(null)
@@ -345,12 +353,38 @@ export default function PurchasesPage() {
                 </td></tr>
               ) : (
                 orders.map((o) => (
-                  <tr key={o.id} className="table-row">
-                    <td className="px-5 py-3.5 font-mono text-brand-400 text-xs font-medium">{o.po_number}</td>
+                  <React.Fragment key={o.id}>
+                  <tr className="table-row">
+                    <td className="px-5 py-3.5">
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => toggleRow(o.id)} className="text-slate-500 hover:text-slate-300 transition-colors">
+                          {expandedRows.has(o.id) ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                        </button>
+                        <span className="font-mono text-brand-400 text-xs font-medium">{o.po_number}</span>
+                      </div>
+                    </td>
                     <td className="px-5 py-3.5 text-white">{o.supplier_name}</td>
                     <td className="px-5 py-3.5 text-slate-300">{o.warehouse_name ?? '—'}</td>
                     <td className="px-5 py-3.5 text-slate-400">{formatDate(o.order_date)}</td>
-                    <td className="px-5 py-3.5 text-slate-400">{o.expected_date ? formatDate(o.expected_date) : '—'}</td>
+                    <td className="px-5 py-3.5">
+                      {o.expected_date ? (() => {
+                        const diff = Math.ceil((new Date(o.expected_date).getTime() - Date.now()) / 86400000)
+                        return (
+                          <div>
+                            <span className="text-slate-400">{formatDate(o.expected_date)}</span>
+                            {diff < 0 && !['received','closed','canceled'].includes(o.status) && (
+                              <span className="block text-xs text-red-400 font-medium">{Math.abs(diff)}d overdue</span>
+                            )}
+                            {diff === 0 && !['received','closed','canceled'].includes(o.status) && (
+                              <span className="block text-xs text-amber-400 font-medium">Due today</span>
+                            )}
+                            {diff > 0 && diff <= 7 && !['received','closed','canceled'].includes(o.status) && (
+                              <span className="block text-xs text-amber-400">In {diff}d</span>
+                            )}
+                          </div>
+                        )
+                      })() : <span className="text-slate-500">—</span>}
+                    </td>
                     <td className="px-5 py-3.5 font-semibold text-white">{formatCurrency(o.total_amount)}</td>
                     <td className="px-5 py-3.5">
                       <span className={STATUS_COLORS[o.status] ?? 'badge-slate'}>{o.status.replace('_', ' ')}</span>
@@ -386,6 +420,38 @@ export default function PurchasesPage() {
                       </div>
                     </td>
                   </tr>
+                  {expandedRows.has(o.id) && o.items && o.items.length > 0 && (
+                    <tr key={`${o.id}-items`} className="bg-surface-800/60">
+                      <td colSpan={8} className="px-8 py-3 border-b border-surface-700/50">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Package size={12} className="text-slate-500" />
+                          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Items on this order</span>
+                        </div>
+                        <div className="grid gap-1.5">
+                          {o.items.map((item: PurchaseOrderItem) => {
+                            const remaining = parseFloat(item.quantity_ordered) - parseFloat(item.quantity_received ?? '0')
+                            return (
+                              <div key={item.id} className="flex items-center justify-between text-xs py-1.5 px-3 bg-surface-700/40 rounded-lg">
+                                <span className="text-slate-200 font-medium">{item.product_name}</span>
+                                <div className="flex items-center gap-4 text-slate-400">
+                                  <span>Ordered: <span className="text-white font-medium">{item.quantity_ordered}</span></span>
+                                  <span>Received: <span className={parseFloat(item.quantity_received) > 0 ? 'text-emerald-400 font-medium' : 'text-slate-500'}>{item.quantity_received ?? 0}</span></span>
+                                  {remaining > 0 && (
+                                    <span className="text-blue-400 font-medium">Pending: {remaining}</span>
+                                  )}
+                                  {item.is_fully_received && (
+                                    <span className="text-emerald-400 font-medium">✓ Complete</span>
+                                  )}
+                                  <span className="text-slate-500">{formatCurrency(item.unit_cost)} / unit</span>
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  </React.Fragment>
                 ))
               )}
             </tbody>

@@ -26,6 +26,7 @@ class WarehouseSerializer(serializers.ModelSerializer):
 class ProductSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True)
     total_stock = serializers.SerializerMethodField()
+    quantity_incoming = serializers.SerializerMethodField()
 
     class Meta:
         model = Product
@@ -35,9 +36,20 @@ class ProductSerializer(serializers.ModelSerializer):
             "cost_price", "owner_cost_price", "selling_price", "wholesale_price",
             "reorder_level", "max_stock_level", "reorder_quantity", "quantity_in_pack", "barcode",
             "is_active", "is_taxable", "tax_class",
-            "total_stock", "created_at", "updated_at",
+            "total_stock", "quantity_incoming", "created_at", "updated_at",
         ]
-        read_only_fields = ["id", "total_stock", "created_at", "updated_at"]
+        read_only_fields = ["id", "total_stock", "quantity_incoming", "created_at", "updated_at"]
+
+    def get_quantity_incoming(self, obj):
+        from apps.purchases.models import PurchaseOrderItem
+        from django.db.models import F, Sum
+        result = PurchaseOrderItem.objects.filter(
+            product=obj,
+            organisation=obj.organisation,
+            purchase_order__status__in=["draft", "sent", "partially_received"],
+        ).aggregate(total=Sum(F("quantity_ordered") - F("quantity_received")))
+        incoming = result["total"] or 0
+        return float(incoming) if incoming > 0 else 0
 
     def get_total_stock(self, obj):
         return sum(

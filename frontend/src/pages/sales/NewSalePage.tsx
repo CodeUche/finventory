@@ -83,9 +83,15 @@ export default function NewSalePage() {
 
   const updateQty = (id: string, delta: number) => {
     setCart((prev) =>
-      prev
-        .map((c) => (c.product.id === id ? { ...c, quantity: Math.max(1, c.quantity + delta) } : c))
+      prev.map((c) => (c.product.id === id ? { ...c, quantity: Math.max(1, c.quantity + delta) } : c))
     )
+  }
+
+  const updateQtyDirect = (id: string, raw: string) => {
+    const v = parseInt(raw, 10)
+    if (!isNaN(v) && v >= 1) {
+      setCart((prev) => prev.map((c) => (c.product.id === id ? { ...c, quantity: v } : c)))
+    }
   }
 
   const updatePrice = (id: string, price: string) => {
@@ -274,7 +280,12 @@ export default function NewSalePage() {
                     >
                       <div>
                         <p className="text-sm font-medium text-white">{p.name}</p>
-                        <p className="text-xs text-slate-400">{p.sku} · {p.unit_of_measure} · Stock: {p.total_stock}</p>
+                        <p className="text-xs text-slate-400">
+                          {p.sku} · {p.unit_of_measure} · Stock: {p.total_stock}
+                          {(p as any).quantity_incoming > 0 && (
+                            <span className="ml-1 text-blue-400"> · +{(p as any).quantity_incoming} incoming</span>
+                          )}
+                        </p>
                       </div>
                       <span className="text-brand-400 font-semibold text-sm">{formatCurrency(p.selling_price)}</span>
                     </button>
@@ -326,16 +337,22 @@ export default function NewSalePage() {
                         <div className="flex items-center gap-1">
                           <button
                             onClick={() => updateQty(item.product.id, -1)}
-                            className="w-7 h-7 rounded-lg bg-surface-700 hover:bg-surface-600 flex items-center justify-center transition-colors"
+                            className="w-7 h-7 rounded-lg bg-surface-700 hover:bg-surface-600 flex items-center justify-center transition-colors flex-shrink-0"
                           >
                             <Minus size={12} className="text-slate-300" />
                           </button>
-                          <span className="w-8 text-center text-sm font-semibold text-white">
-                            {item.quantity}
-                          </span>
+                          <input
+                            type="number"
+                            className="input text-xs py-1 px-1 text-center w-14 font-semibold"
+                            value={item.quantity}
+                            onChange={(e) => updateQtyDirect(item.product.id, e.target.value)}
+                            onFocus={(e) => e.target.select()}
+                            min="1"
+                            step="1"
+                          />
                           <button
                             onClick={() => updateQty(item.product.id, 1)}
-                            className="w-7 h-7 rounded-lg bg-surface-700 hover:bg-surface-600 flex items-center justify-center transition-colors"
+                            className="w-7 h-7 rounded-lg bg-surface-700 hover:bg-surface-600 flex items-center justify-center transition-colors flex-shrink-0"
                           >
                             <Plus size={12} className="text-slate-300" />
                           </button>
@@ -363,6 +380,7 @@ export default function NewSalePage() {
                           className="input text-xs py-1.5 px-2"
                           value={item.discount_percent}
                           onChange={(e) => updateDiscount(item.product.id, e.target.value)}
+                          onFocus={(e) => e.target.select()}
                           min="0"
                           max="100"
                           step="0.5"
