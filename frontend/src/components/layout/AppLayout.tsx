@@ -7,7 +7,7 @@ import { useInactivityTimeout } from '@/hooks/useInactivityTimeout'
 import { useAuthStore } from '@/store/authStore'
 import { setActiveCurrency } from '@/lib/utils'
 import { useNetworkStatus } from '@/hooks/useNetworkStatus'
-import { orgApi, subscriptionApi } from '@/services/api'
+import { api, orgApi, subscriptionApi } from '@/services/api'
 import { Briefcase, LogOut, WifiOff } from 'lucide-react'
 import { offlineCache, timeAgo } from '@/lib/offlineCache'
 import type { AccessLevel, ModuleKey, ModulePermission, Organisation } from '@/types'
@@ -63,6 +63,7 @@ export default function AppLayout() {
       // otherwise fall back to the first org in the list.
       const fresh = orgs.find((o: any) => o.id === organisation?.id) ?? orgs[0]
       setOrganisation(fresh)
+      api.defaults.headers.common['X-Organisation-ID'] = fresh.id
     }).catch(() => { /* non-fatal — use persisted org if available */ })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id])

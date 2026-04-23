@@ -53,7 +53,12 @@ class RLSMiddleware:
 
     def __call__(self, request):
         org_id = request.headers.get("X-Organisation-ID", "").strip()
-        # Basic UUID format validation — don't let arbitrary strings reach Postgres
+        if not _looks_like_uuid(org_id):
+            # Header missing or invalid — fall back to the ?org= query param.
+            # Tauri desktop clients route requests through Rust reqwest which can
+            # silently drop custom headers; the frontend also sends ?org=<uuid> as
+            # a belt-and-suspenders fallback so RLS is always set correctly.
+            org_id = request.GET.get("org", "").strip()
         if not _looks_like_uuid(org_id):
             org_id = SENTINEL
         _set_org(org_id)

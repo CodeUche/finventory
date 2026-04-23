@@ -43,7 +43,10 @@ export default function LoginPage() {
     const orgsRes = await orgApi.list()
     const orgs = orgsRes.data.results ?? orgsRes.data
     setOrganisations(orgs)
-    if (orgs.length > 0) setOrganisation(orgs[0])
+    if (orgs.length > 0) {
+      setOrganisation(orgs[0])
+      api.defaults.headers.common['X-Organisation-ID'] = orgs[0].id
+    }
 
     // Superusers always go to dashboard; everyone else must complete onboarding
     const firstOrg = orgs[0]
