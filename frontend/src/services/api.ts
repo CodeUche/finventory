@@ -400,6 +400,10 @@ api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
   }
   if (orgId) {
     config.headers['X-Organisation-ID'] = orgId
+    // The Tauri IPC layer can silently drop custom headers before they reach
+    // reqwest. Send org ID as a query param too — the backend reads it from
+    // either request.META['HTTP_X_ORGANISATION_ID'] or request.GET['org'].
+    config.params = { ...config.params, org: orgId }
   }
   // FormData must NOT have Content-Type set — the browser adds the correct
   // multipart/form-data boundary automatically. Remove the global JSON default.
