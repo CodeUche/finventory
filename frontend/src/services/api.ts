@@ -59,18 +59,18 @@ let _probeTimer: ReturnType<typeof setInterval> | null = null
 
 function _startProbe() {
   if (_probeTimer) return  // already running
-  _probeTimer = setInterval(async () => {
+  const runProbe = async () => {
     if (!_effectivelyOffline) { _stopProbe(); return }
     try {
-      // Use the Tauri adapter directly via tauriHttpFetch so we bypass the Axios
-      // offline gate (which would short-circuit to cache and never hit the network).
       const base = (import.meta.env.VITE_API_BASE_URL ?? '/api/v1').replace(/\/+$/, '')
       await tauriHttpFetch(`${base}/auth/ping/`, { method: 'GET' } as RequestInit)
       _signalOnline()
     } catch {
       // Still offline — keep probing
     }
-  }, 15_000)
+  }
+  runProbe()  // fire immediately so recovery doesn't wait a full 15 s
+  _probeTimer = setInterval(runProbe, 15_000)
 }
 
 function _stopProbe() {
@@ -578,6 +578,12 @@ api.interceptors.response.use(
         _inflightGets.delete(original._dedupeKey)
       }
 
+      // Show a single diagnostic toast so the user can see the failure reason
+      const netUrl = original.url ?? ''
+      toast.error(`Connection failed: ${error.message ?? 'Network error'}`, {
+        id: `net-err-${netUrl}`,
+        duration: 6000,
+      })
       _signalOffline()
       return Promise.reject(error)
     }
@@ -666,7 +672,12 @@ api.interceptors.response.use(
     if (status === 500 && !isAuthUrl) {
       const msg = (typeof errData === 'string' ? errData : errData?.message) ?? 'Server error (500)'
       toast.error(`Server error: ${msg}`, { id: `500-${original.url}`, duration: 8000 })
-    } else if (errData?.message && status !== 401 && status !== 403 && !isAuthUrl) {
+    } else if (status === 403 && !isAuthUrl) {
+      const forbiddenMsg = (typeof errData === 'string' ? errData : errData?.message)
+        ?? (error.response?.data as any)?.detail
+        ?? 'Access denied (403)'
+      toast.error(forbiddenMsg, { id: `403-${original.url}`, duration: 6000 })
+    } else if (errData?.message && status !== 401 && !isAuthUrl) {
       const toastId = `api-err-${status}-${original.url}`
       toast.error(errData.message, { id: toastId, duration: 4000 })
     }
