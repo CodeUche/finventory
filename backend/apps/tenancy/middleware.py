@@ -145,7 +145,7 @@ def resolve_organisation(request):
                 cur.execute(
                     "SELECT 1 FROM tenancy_membership"
                     " WHERE user_id = %s AND organisation_id = %s AND is_active = TRUE LIMIT 1",
-                    [request.user.pk, str(org.id)],
+                    [str(request.user.pk), str(org.id)],
                 )
                 is_member = cur.fetchone() is not None
             if is_member:

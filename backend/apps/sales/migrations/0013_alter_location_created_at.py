@@ -2,10 +2,28 @@
 #
 # AlterField with db_index=True generates CREATE INDEX which requires table
 # ownership on Railway (PostgreSQL). Use SeparateDatabaseAndState so Django's
-# model state is updated but the database operation is a graceful RunSQL that
-# catches insufficient_privilege instead of aborting the whole migration run.
+# model state is updated but the database operation is a graceful RunPython
+# that skips on SQLite (tests) and catches insufficient_privilege on Postgres.
 
 from django.db import migrations, models
+
+
+def add_index(apps, schema_editor):
+    if schema_editor.connection.vendor != "postgresql":
+        return
+    with schema_editor.connection.cursor() as cur:
+        try:
+            cur.execute("""
+                DO $$
+                BEGIN
+                    CREATE INDEX IF NOT EXISTS sales_location_created_at_idx
+                        ON sales_location (created_at);
+                EXCEPTION WHEN insufficient_privilege THEN
+                    RAISE NOTICE 'Skipping index on sales_location.created_at: insufficient privilege';
+                END $$;
+            """)
+        except Exception:
+            pass
 
 
 class Migration(migrations.Migration):
@@ -24,18 +42,7 @@ class Migration(migrations.Migration):
                 ),
             ],
             database_operations=[
-                migrations.RunSQL(
-                    sql="""
-                        DO $$
-                        BEGIN
-                            CREATE INDEX IF NOT EXISTS sales_location_created_at_idx
-                                ON sales_location (created_at);
-                        EXCEPTION WHEN insufficient_privilege THEN
-                            RAISE NOTICE 'Skipping index on sales_location.created_at: insufficient privilege';
-                        END $$;
-                    """,
-                    reverse_sql=migrations.RunSQL.noop,
-                ),
+                migrations.RunPython(add_index, migrations.RunPython.noop, atomic=False),
             ],
         ),
     ]
