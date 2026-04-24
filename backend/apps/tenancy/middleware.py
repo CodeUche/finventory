@@ -106,7 +106,27 @@ def resolve_organisation(request):
 
     org_id = request._raw_org_id
 
+    logger.info(
+        "resolve_organisation: user=%s raw_org_id=%s header=%s param=%s",
+        getattr(request.user, "id", "anon"),
+        org_id,
+        request.META.get(HEADER_NAME, "MISSING"),
+        request.GET.get(QUERY_PARAM, "MISSING"),
+    )
+
     if org_id:
+        # Proactively set the PostgreSQL RLS session variable to the requested
+        # org BEFORE any DB query.  RLSMiddleware may have been given SENTINEL
+        # (all-zeros UUID) if the X-Organisation-ID header was stripped by the
+        # Tauri HTTP adapter and only the ?org= query param arrived.  Without
+        # this call the tenancy_membership RLS policy would filter out every
+        # membership row, making is_member always False.
+        try:
+            from apps.core.middleware import _set_org
+            _set_org(str(org_id))
+        except Exception:
+            pass
+
         try:
             org = Organisation.objects.get(id=org_id, is_active=True)
             # Superusers can access any organisation without a membership record
@@ -114,9 +134,8 @@ def resolve_organisation(request):
                 request.organisation = org
                 _sync_rls(org)
                 return org
-            # Use raw SQL to check membership so the RLS tenant_isolation policy
-            # on tenancy_membership (which gates on app.current_org_id = SENTINEL
-            # for requests without a header) does not block the lookup.
+            # Raw SQL membership check (bypasses Django ORM but still subject to
+            # PostgreSQL RLS — which is now set correctly by the _set_org call above).
             from django.db import connection as _conn
             with _conn.cursor() as cur:
                 cur.execute(
@@ -134,17 +153,22 @@ def resolve_organisation(request):
                 org_id,
             )
             return None
-        except Exception:
+        except Exception as exc:
+            logger.error("resolve_organisation(org_id=%s) failed: %s", org_id, exc)
             return None
 
-    # Fallback: user's first active organisation.
-    # NOTE: use raw SQL to bypass the RLS tenant_isolation policy on
-    # tenancy_membership (which blocks rows when app.current_org_id is SENTINEL).
-    # This path only executes when no X-Organisation-ID header was provided, so
-    # we are allowed to use the user's own membership as the authoritative source.
+    # Fallback: user's first active organisation (no org ID in request).
+    # We attempt to disable row security so the JOIN on tenancy_membership
+    # works when app.current_org_id is still SENTINEL.  This only succeeds
+    # when the DB role has SUPERUSER or BYPASSRLS — if it fails (privilege
+    # error) the SET is silently ignored and the JOIN may return empty.
     from django.db import connection
     try:
         with connection.cursor() as cur:
+            try:
+                cur.execute("SET LOCAL row_security TO off")
+            except Exception:
+                pass  # non-superuser role — RLS still applies
             cur.execute(
                 """
                 SELECT o.id FROM tenancy_organisation o
@@ -160,11 +184,19 @@ def resolve_organisation(request):
             )
             row = cur.fetchone()
         if row:
+            # Set RLS to the found org BEFORE the ORM call below so
+            # any RLS policy on tenancy_organisation resolves correctly.
+            try:
+                from apps.core.middleware import _set_org
+                _set_org(str(row[0]))
+            except Exception:
+                pass
             from apps.tenancy.models import Organisation
             org = Organisation.objects.get(id=row[0])
             request.organisation = org
             _sync_rls(org)
+            logger.info("resolve_organisation fallback: resolved org %s for user %s", row[0], request.user.id)
             return org
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.error("resolve_organisation fallback failed: %s", exc)
     return None

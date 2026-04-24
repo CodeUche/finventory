@@ -707,6 +707,31 @@ class PingView(APIView):
         return Response({"ok": True})
 
 
+class OrgDebugView(APIView):
+    """
+    Diagnostic endpoint — returns what org-related headers/params this request
+    carried, so the desktop client can verify the X-Organisation-ID is arriving.
+
+    Requires JWT auth but NOT org context. Always returns 200.
+    Remove or gate behind settings.DEBUG once the header issue is diagnosed.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from apps.tenancy.middleware import HEADER_NAME, QUERY_PARAM
+        org_header = request.META.get(HEADER_NAME) or None
+        org_param = request.GET.get(QUERY_PARAM) or None
+        raw_org_id = getattr(request, "_raw_org_id", "ATTR_MISSING")
+        return Response({
+            "org_header": org_header,
+            "org_param": org_param,
+            "raw_org_id": raw_org_id,
+            "user_id": str(request.user.pk),
+            "is_authenticated": request.user.is_authenticated,
+            "header_name_checked": HEADER_NAME,
+        })
+
+
 class MFADisableView(APIView):
     """
     POST /api/v1/auth/mfa/disable/
