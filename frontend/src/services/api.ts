@@ -690,7 +690,11 @@ api.interceptors.response.use(
       const forbiddenMsg = (typeof errData === 'string' ? errData : errData?.message)
         ?? (error.response?.data as any)?.detail
         ?? 'Access denied (403)'
-      toast.error(forbiddenMsg, { id: `403-${original.url}`, duration: 6000 })
+      const diagOrgId = getStoredOrgId()
+      const diagMsg = diagOrgId
+        ? `${forbiddenMsg} [org=${diagOrgId.slice(0, 8)}]`
+        : `${forbiddenMsg} [org=NULL — org not in store!]`
+      toast.error(diagMsg, { id: `403-${original.url}`, duration: 10000 })
     } else if (errData?.message && status !== 401 && !isAuthUrl) {
       const toastId = `api-err-${status}-${original.url}`
       toast.error(errData.message, { id: toastId, duration: 4000 })

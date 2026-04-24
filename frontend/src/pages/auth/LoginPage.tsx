@@ -48,6 +48,22 @@ export default function LoginPage() {
       api.defaults.headers.common['X-Organisation-ID'] = orgs[0].id
     }
 
+    // Diagnostic: verify what the backend actually sees for this request.
+    // Shows a warning toast if the org ID is not reaching Django.
+    if (orgs.length > 0) {
+      api.get('/auth/org-debug/').then(({ data }) => {
+        const received = data.org_header ?? data.org_param ?? null
+        if (!received) {
+          toast.error(
+            `⚠ Org header not reaching server. org_header=${data.org_header} org_param=${data.org_param} raw=${data.raw_org_id}`,
+            { duration: 20000, id: 'org-debug' }
+          )
+        } else {
+          toast.success(`Org context OK: ${received.slice(0, 8)}…`, { duration: 4000, id: 'org-debug' })
+        }
+      }).catch(() => { /* non-fatal diagnostic */ })
+    }
+
     // Superusers always go to dashboard; everyone else must complete onboarding
     const firstOrg = orgs[0]
     const onboardingDone = user.is_superuser || (firstOrg?.onboarding_completed === true)
