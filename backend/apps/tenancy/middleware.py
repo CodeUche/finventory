@@ -158,44 +158,36 @@ def resolve_organisation(request):
             return None
 
     # Fallback: user's first active organisation (no org ID in request).
-    # We attempt to disable row security so the JOIN on tenancy_membership
-    # works when app.current_org_id is still SENTINEL.  This only succeeds
-    # when the DB role has SUPERUSER or BYPASSRLS — if it fails (privilege
-    # error) the SET is silently ignored and the JOIN may return empty.
-    from django.db import connection
+    #
+    # Strategy: query ONLY tenancy_membership (no RLS issue — not filtered by
+    # app.current_org_id) to get the org UUID, then call _set_org() BEFORE
+    # fetching the Organisation object.  Joining tenancy_organisation in the
+    # same query failed because tenancy_organisation IS subject to RLS, so the
+    # INNER JOIN returned zero rows while app.current_org_id = SENTINEL.
+    # This two-step approach mirrors what OrganisationViewSet.get_queryset()
+    # does: it queries memberships first, then filters orgs — and it works.
     try:
-        with connection.cursor() as cur:
-            try:
-                cur.execute("SET LOCAL row_security TO off")
-            except Exception:
-                pass  # non-superuser role — RLS still applies
-            cur.execute(
-                """
-                SELECT o.id FROM tenancy_organisation o
-                INNER JOIN tenancy_membership m
-                    ON m.organisation_id = o.id
-                WHERE m.user_id = %s
-                  AND m.is_active = TRUE
-                  AND o.is_active  = TRUE
-                ORDER BY m.created_at
-                LIMIT 1
-                """,
-                [request.user.pk],
-            )
-            row = cur.fetchone()
-        if row:
-            # Set RLS to the found org BEFORE the ORM call below so
-            # any RLS policy on tenancy_organisation resolves correctly.
+        org_ids = list(
+            request.user.memberships
+            .filter(is_active=True)
+            .order_by("created_at")
+            .values_list("organisation_id", flat=True)[:1]
+        )
+        if org_ids:
+            found_org_id = str(org_ids[0])
+            # Correct the RLS session variable BEFORE querying tenancy_organisation.
             try:
                 from apps.core.middleware import _set_org
-                _set_org(str(row[0]))
+                _set_org(found_org_id)
             except Exception:
                 pass
-            from apps.tenancy.models import Organisation
-            org = Organisation.objects.get(id=row[0])
+            org = Organisation.objects.get(id=found_org_id, is_active=True)
             request.organisation = org
             _sync_rls(org)
-            logger.info("resolve_organisation fallback: resolved org %s for user %s", row[0], request.user.id)
+            logger.info(
+                "resolve_organisation fallback: resolved org %s for user %s",
+                found_org_id, request.user.id,
+            )
             return org
     except Exception as exc:
         logger.error("resolve_organisation fallback failed: %s", exc)
