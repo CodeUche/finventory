@@ -37,20 +37,31 @@ export default function LoginPage() {
   const finishLogin = async (user: any, tokens: { access: string; refresh: string }) => {
     localStorage.setItem('finventory-session-start', String(Date.now()))
     localStorage.setItem('finventory-last-active', String(Date.now()))
-    setAuth(user, tokens)
+
+    // Set the Authorization header FIRST so orgApi.list() can authenticate,
+    // but do NOT call setAuth() yet — setAuth sets isAuthenticated:true which
+    // causes ProtectedRoute to pass through and React mounts the Dashboard,
+    // firing all its API calls before we have the org ID in the store.
     api.defaults.headers.common.Authorization = `Bearer ${tokens.access}`
 
+    // Fetch orgs while still "not authenticated" from React's perspective.
+    // OrganisationViewSet doesn't need X-Organisation-ID so this succeeds.
     const orgsRes = await orgApi.list()
     const orgs = orgsRes.data.results ?? orgsRes.data
+    const firstOrg = orgs[0] ?? null
+
+    // NOW commit everything to the store in one synchronous batch.
+    // React 18 batches these consecutive Zustand updates into a single render,
+    // so when the Dashboard first mounts, organisation is already set.
+    setAuth(user, tokens)
     setOrganisations(orgs)
-    if (orgs.length > 0) {
-      setOrganisation(orgs[0])
-      api.defaults.headers.common['X-Organisation-ID'] = orgs[0].id
+    if (firstOrg) {
+      setOrganisation(firstOrg)
+      api.defaults.headers.common['X-Organisation-ID'] = firstOrg.id
     }
 
-    // Diagnostic: verify what the backend actually sees for this request.
-    // Shows a warning toast if the org ID is not reaching Django.
-    if (orgs.length > 0) {
+    // Diagnostic: verify the backend receives the org ID (non-blocking).
+    if (firstOrg) {
       api.get('/auth/org-debug/').then(({ data }) => {
         const received = data.org_header ?? data.org_param ?? null
         if (!received) {
@@ -64,10 +75,7 @@ export default function LoginPage() {
       }).catch(() => { /* non-fatal diagnostic */ })
     }
 
-    // Superusers always go to dashboard; everyone else must complete onboarding
-    const firstOrg = orgs[0]
     const onboardingDone = user.is_superuser || (firstOrg?.onboarding_completed === true)
-
     toast.success(onboardingDone ? 'Welcome back!' : 'Signed in! Let\'s finish setting up your account.')
     navigate(onboardingDone ? '/dashboard' : '/onboarding')
   }
