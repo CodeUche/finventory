@@ -27,7 +27,7 @@ interface AuthState {
   subscriptionExpired: boolean
 
   setAuth: (user: User, tokens: AuthTokens) => void
-  setOrganisation: (org: Organisation) => void
+  setOrganisation: (org: Organisation | null) => void
   setOrganisations: (orgs: Organisation[]) => void
   setRememberMe: (val: boolean) => void
   setMembership: (role: string, perms: Partial<Record<ModuleKey, AccessLevel>>) => void

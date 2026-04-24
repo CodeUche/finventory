@@ -64,6 +64,15 @@ class OrganisationService:
             joined_at=timezone.now(),
         )
 
+        # Update the RLS session variable so subsequent queries in this request
+        # (subscription assignment, COA seeding, etc.) can read/write the new org.
+        try:
+            from apps.core.middleware import _set_org, _set_user
+            _set_org(str(org.id))
+            _set_user(str(owner.pk))
+        except Exception:
+            pass
+
         # Auto-assign the Free plan so all features are available immediately
         OrganisationService._assign_free_plan(org)
 

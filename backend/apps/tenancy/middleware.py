@@ -93,16 +93,26 @@ def resolve_organisation(request):
     Called by TenantFilterMixin.get_queryset() after the user is authenticated.
     Also called by permission classes (IsStaff, etc.) during has_permission().
 
-    Always calls _sync_rls() on success so the PostgreSQL RLS session variable
-    is updated even when no X-Organisation-ID header was sent (fallback path).
+    Sets app.current_user_id FIRST (from the verified request.user) so the
+    membership_select RLS policy can expose the user's own membership rows
+    even when app.current_org_id is still SENTINEL.
 
-    Returns Organisation or None.
-    Raises nothing — callers handle None case.
+    Returns Organisation or None.  Raises nothing — callers handle None case.
     """
     from apps.tenancy.models import Organisation
 
     if not request.user or not request.user.is_authenticated:
         return None
+
+    # Set the DB-level user identity from the DRF-verified user.  This must
+    # happen BEFORE any membership query so the membership_select RLS policy
+    # (which uses app.current_user_id for the SENTINEL bootstrap branch) can
+    # return the user's own rows.
+    try:
+        from apps.core.middleware import _set_user
+        _set_user(str(request.user.pk))
+    except Exception:
+        pass
 
     org_id = request._raw_org_id
 
@@ -115,12 +125,7 @@ def resolve_organisation(request):
     )
 
     if org_id:
-        # Proactively set the PostgreSQL RLS session variable to the requested
-        # org BEFORE any DB query.  RLSMiddleware may have been given SENTINEL
-        # (all-zeros UUID) if the X-Organisation-ID header was stripped by the
-        # Tauri HTTP adapter and only the ?org= query param arrived.  Without
-        # this call the tenancy_membership RLS policy would filter out every
-        # membership row, making is_member always False.
+        # Set org RLS context before querying the org or memberships.
         try:
             from apps.core.middleware import _set_org
             _set_org(str(org_id))
@@ -129,17 +134,17 @@ def resolve_organisation(request):
 
         try:
             org = Organisation.objects.get(id=org_id, is_active=True)
-            # Superusers can access any organisation without a membership record
+            # Superusers can access any organisation without a membership record.
             if request.user.is_superuser:
                 request.organisation = org
                 _sync_rls(org)
                 return org
-            # Raw SQL membership check (bypasses Django ORM but still subject to
-            # PostgreSQL RLS — which is now set correctly by the _set_org call above).
+            # Membership check via raw SQL (RLS is now set to org_id above).
             from django.db import connection as _conn
             with _conn.cursor() as cur:
                 cur.execute(
-                    "SELECT 1 FROM tenancy_membership WHERE user_id = %s AND organisation_id = %s AND is_active = TRUE LIMIT 1",
+                    "SELECT 1 FROM tenancy_membership"
+                    " WHERE user_id = %s AND organisation_id = %s AND is_active = TRUE LIMIT 1",
                     [request.user.pk, str(org.id)],
                 )
                 is_member = cur.fetchone() is not None
@@ -157,38 +162,13 @@ def resolve_organisation(request):
             logger.error("resolve_organisation(org_id=%s) failed: %s", org_id, exc)
             return None
 
-    # Fallback: user's first active organisation (no org ID in request).
+    # Fallback: no org ID in request — find the user's first active org.
     #
-    # Strategy: query ONLY tenancy_membership (no RLS issue — not filtered by
-    # app.current_org_id) to get the org UUID, then call _set_org() BEFORE
-    # fetching the Organisation object.  Joining tenancy_organisation in the
-    # same query failed because tenancy_organisation IS subject to RLS, so the
-    # INNER JOIN returned zero rows while app.current_org_id = SENTINEL.
-    # This two-step approach mirrors what OrganisationViewSet.get_queryset()
-    # does: it queries memberships first, then filters orgs — and it works.
-
-    # DIAGNOSTIC — remove after confirming fix
-    try:
-        from django.db import connection as _diag_conn
-        with _diag_conn.cursor() as _cur:
-            _cur.execute("SELECT current_user, current_setting('app.current_org_id', TRUE)")
-            _db_user, _cur_org = _cur.fetchone()
-            _cur.execute("SELECT COUNT(*) FROM tenancy_membership WHERE user_id = %s", [str(request.user.pk)])
-            _raw_count = _cur.fetchone()[0]
-            _cur.execute("SELECT COUNT(*) FROM tenancy_membership WHERE user_id = %s AND is_active = TRUE", [str(request.user.pk)])
-            _active_count = _cur.fetchone()[0]
-            _cur.execute("SELECT COUNT(*) FROM pg_policies WHERE tablename = 'tenancy_membership' AND policyname = 'membership_bootstrap'")
-            _policy_exists = _cur.fetchone()[0]
-            _cur.execute("SELECT relrowsecurity FROM pg_class WHERE relname = 'tenancy_membership'")
-            _rls_row = _cur.fetchone()
-            _rls_enabled = _rls_row[0] if _rls_row else 'table-not-found'
-        logger.warning(
-            "DIAG fallback: db_user=%s cur_org=%s raw_membership_count=%s active_count=%s bootstrap_policy=%s rls_enabled=%s user_pk=%s",
-            _db_user, _cur_org, _raw_count, _active_count, _policy_exists, _rls_enabled, request.user.pk,
-        )
-    except Exception as _diag_exc:
-        logger.warning("DIAG failed: %s", _diag_exc)
-
+    # Two-step approach:
+    #   1. Query tenancy_membership (membership_select RLS now allows this
+    #      via app.current_user_id set above) to get the org UUID.
+    #   2. Call _set_org() to update app.current_org_id BEFORE querying
+    #      tenancy_organisation (which requires a matching org_id).
     try:
         org_ids = list(
             request.user.memberships
@@ -198,7 +178,6 @@ def resolve_organisation(request):
         )
         if org_ids:
             found_org_id = str(org_ids[0])
-            # Correct the RLS session variable BEFORE querying tenancy_organisation.
             try:
                 from apps.core.middleware import _set_org
                 _set_org(found_org_id)

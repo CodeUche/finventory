@@ -65,9 +65,10 @@ class RLSMiddleware:
         try:
             response = self.get_response(request)
         finally:
-            # Always clear — prevents the org leaking to the next request on a
-            # pooled connection.
+            # Always clear — prevents org/user leaking to the next request on
+            # a pooled or persistent connection.
             _set_org(SENTINEL)
+            _set_user("")
         return response
 
 
@@ -90,4 +91,22 @@ def _set_org(org_id: str) -> None:
             cursor.execute("SELECT set_config('app.current_org_id', %s, FALSE)", [org_id])
     except Exception:
         # Never crash a request because of an RLS bookkeeping failure.
+        pass
+
+
+def _set_user(user_id: str) -> None:
+    """
+    Set the PostgreSQL session variable ``app.current_user_id`` so the
+    membership_select RLS policy can grant the user read access to their own
+    membership rows when no org context is present (SENTINEL mode).
+
+    Called from the view layer AFTER DRF has verified the JWT and populated
+    request.user — never from unverified middleware.  Using the verified
+    user PK ensures the DB-level user identity always matches the Django
+    session identity.
+    """
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT set_config('app.current_user_id', %s, FALSE)", [str(user_id)])
+    except Exception:
         pass

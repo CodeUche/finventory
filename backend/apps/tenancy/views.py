@@ -71,10 +71,32 @@ class OrganisationViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        # Only return orgs the user is an active member of
-        user_org_ids = self.request.user.memberships.filter(
-            is_active=True
-        ).values_list("organisation_id", flat=True)
+        # Set the DB-level user identity so the membership_select RLS policy
+        # allows reading this user's own membership rows even under SENTINEL.
+        try:
+            from apps.core.middleware import _set_user
+            _set_user(str(self.request.user.pk))
+        except Exception:
+            pass
+
+        if self.request.user.is_superuser:
+            return Organisation.objects.filter(is_active=True)
+
+        # Two-step approach: read membership IDs first (RLS allows via user_id),
+        # then set org context, then read orgs.
+        user_org_ids = list(
+            self.request.user.memberships
+            .filter(is_active=True)
+            .values_list("organisation_id", flat=True)
+        )
+        if user_org_ids:
+            # Update RLS context to the first org so subsequent requests in the
+            # same session see the correct app.current_org_id.
+            try:
+                from apps.core.middleware import _set_org
+                _set_org(str(user_org_ids[0]))
+            except Exception:
+                pass
         return Organisation.objects.filter(id__in=user_org_ids, is_active=True)
 
     def create(self, request, *args, **kwargs):
@@ -83,11 +105,19 @@ class OrganisationViewSet(viewsets.ModelViewSet):
             raise PermissionDenied("Sub-accounts cannot create organisations. Contact your administrator.")
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        org = OrganisationService.create_organisation(
-            name=serializer.validated_data["name"],
-            owner=request.user,
-            extra=serializer.validated_data,
-        )
+        try:
+            org = OrganisationService.create_organisation(
+                name=serializer.validated_data["name"],
+                owner=request.user,
+                extra=serializer.validated_data,
+            )
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).error("create_organisation failed: %s", exc)
+            return Response(
+                {"error": {"message": f"Failed to create organisation: {exc}"}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         out = self.get_serializer(org)
         return Response(out.data, status=status.HTTP_201_CREATED)
 

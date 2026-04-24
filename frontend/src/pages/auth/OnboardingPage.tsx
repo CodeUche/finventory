@@ -8,7 +8,7 @@ import {
   Zap,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { orgApi, subscriptionApi } from '@/services/api'
+import { api, orgApi, subscriptionApi } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -210,17 +210,25 @@ export default function OnboardingPage() {
     try {
       const { data } = await orgApi.create(orgForm)
       setOrganisation(data)
+      // Set org header immediately so subsequent calls in this session work
+      api.defaults.headers.common['X-Organisation-ID'] = data.id
       setStep(1)
     } catch (err: any) {
-      if (!err.response) { toast.error('Cannot connect to server.'); return }
-      const detail = err.response?.data?.error?.detail
+      if (!err.response) { toast.error('Cannot connect to server. Check your connection.'); return }
+      const apiErr = err.response?.data?.error
+      const detail = apiErr?.detail
       const msg = typeof detail === 'object' && detail
         ? Object.values(detail).flat().join(' ')
-        : (err.response?.data?.error?.message ?? 'Failed to create organisation.')
+        : (typeof apiErr === 'string' ? apiErr : (apiErr?.message ?? `Server error (${err.response.status}). Please try again.`))
       toast.error(msg)
     } finally {
       setOrgSaving(false)
     }
+  }
+
+  const handleBackFromOnboarding = () => {
+    useAuthStore.getState().logout()
+    navigate('/login')
   }
 
   // ── Step 1: One question at a time ──────────────────────────────────────────
@@ -400,6 +408,14 @@ export default function OnboardingPage() {
                   ? <><Loader2 size={16} className="animate-spin" /> Creating workspace…</>
                   : <span className="flex items-center gap-2">Continue <ChevronRight size={16} /></span>
                 }
+              </button>
+
+              <button
+                type="button"
+                onClick={handleBackFromOnboarding}
+                className="flex items-center justify-center gap-1.5 w-full text-sm text-slate-500 hover:text-slate-300 transition-colors pt-1"
+              >
+                <ArrowLeft size={14} /> Sign out / use a different account
               </button>
             </form>
           </div>

@@ -58,6 +58,13 @@ export default function LoginPage() {
     if (firstOrg) {
       setOrganisation(firstOrg)
       api.defaults.headers.common['X-Organisation-ID'] = firstOrg.id
+    } else {
+      // No orgs found — clear any stale org left over from a previous session.
+      // Without this, a stale localStorage org ID would be sent as
+      // X-Organisation-ID on every request, causing 403 if that org no longer
+      // exists in the current environment's database.
+      setOrganisation(null)
+      delete api.defaults.headers.common['X-Organisation-ID']
     }
 
     // Diagnostic: verify the backend receives the org ID (non-blocking).
