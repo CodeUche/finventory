@@ -166,6 +166,29 @@ def resolve_organisation(request):
     # INNER JOIN returned zero rows while app.current_org_id = SENTINEL.
     # This two-step approach mirrors what OrganisationViewSet.get_queryset()
     # does: it queries memberships first, then filters orgs — and it works.
+
+    # DIAGNOSTIC — remove after confirming fix
+    try:
+        from django.db import connection as _diag_conn
+        with _diag_conn.cursor() as _cur:
+            _cur.execute("SELECT current_user, current_setting('app.current_org_id', TRUE)")
+            _db_user, _cur_org = _cur.fetchone()
+            _cur.execute("SELECT COUNT(*) FROM tenancy_membership WHERE user_id = %s", [str(request.user.pk)])
+            _raw_count = _cur.fetchone()[0]
+            _cur.execute("SELECT COUNT(*) FROM tenancy_membership WHERE user_id = %s AND is_active = TRUE", [str(request.user.pk)])
+            _active_count = _cur.fetchone()[0]
+            _cur.execute("SELECT COUNT(*) FROM pg_policies WHERE tablename = 'tenancy_membership' AND policyname = 'membership_bootstrap'")
+            _policy_exists = _cur.fetchone()[0]
+            _cur.execute("SELECT relrowsecurity FROM pg_class WHERE relname = 'tenancy_membership'")
+            _rls_row = _cur.fetchone()
+            _rls_enabled = _rls_row[0] if _rls_row else 'table-not-found'
+        logger.warning(
+            "DIAG fallback: db_user=%s cur_org=%s raw_membership_count=%s active_count=%s bootstrap_policy=%s rls_enabled=%s user_pk=%s",
+            _db_user, _cur_org, _raw_count, _active_count, _policy_exists, _rls_enabled, request.user.pk,
+        )
+    except Exception as _diag_exc:
+        logger.warning("DIAG failed: %s", _diag_exc)
+
     try:
         org_ids = list(
             request.user.memberships
