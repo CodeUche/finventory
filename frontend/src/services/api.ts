@@ -150,6 +150,13 @@ function buildTauriAdapter(): AxiosAdapter {
     const hasOrg  = Object.keys(headers).some((k) => k.toLowerCase() === 'x-organisation-id')
     if (_auth.access && !hasAuth) headers['Authorization'] = `Bearer ${_auth.access}`
     if (_orgId && !hasOrg)        headers['X-Organisation-ID'] = _orgId
+    // Second fallback: also send org as ?org= query param.
+    // Tauri's reqwest layer can silently drop custom request headers on some
+    // platforms/OS versions.  RLSMiddleware checks the header first, then falls
+    // back to ?org= so tenant context is always set regardless of header delivery.
+    if (_orgId && !url.includes('org=') && !url.includes('/auth/')) {
+      url += (url.includes('?') ? '&' : '?') + `org=${encodeURIComponent(_orgId)}`
+    }
     if (import.meta.env.DEV) console.debug('[Audity] adapter headers:', JSON.stringify(Object.keys(headers)))
 
     const body = !['GET', 'HEAD'].includes(method) && config.data != null
