@@ -33,6 +33,16 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         token["is_verified"] = user.is_verified
         token["is_sub_account"] = user.is_sub_account
 
+        # Set the DB-level user identity so the membership_select RLS policy
+        # allows reading this user's own membership rows even under SENTINEL.
+        # (membership_select: organisation_id = current_org_id  OR
+        #  current_org_id = SENTINEL AND user_id = current_user_id)
+        try:
+            from apps.core.middleware import _set_user
+            _set_user(str(user.pk))
+        except Exception:
+            pass
+
         # Embed memberships (org_id → role) for fast client-side routing
         memberships = {
             str(m.organisation_id): m.role
