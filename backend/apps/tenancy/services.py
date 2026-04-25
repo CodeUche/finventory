@@ -8,6 +8,7 @@ Keeps views thin and logic testable in isolation.
 import logging
 import re
 import secrets
+import uuid
 from datetime import timedelta
 
 from django.utils import timezone
@@ -43,7 +44,20 @@ class OrganisationService:
         extra = extra or {}
         slug = OrganisationService._unique_slug(name)
 
+        # Pre-generate the org UUID and set the RLS context variable BEFORE the
+        # INSERT so the tenant_isolation WITH CHECK (id = current_org_id) clause
+        # evaluates as (new_uuid = new_uuid) → true.  Without this, the INSERT
+        # runs under SENTINEL and the WITH CHECK rejects it with an RLS violation.
+        org_id = uuid.uuid4()
+        try:
+            from apps.core.middleware import _set_org, _set_user
+            _set_org(str(org_id))
+            _set_user(str(owner.pk))
+        except Exception:
+            pass
+
         org = Organisation.objects.create(
+            id=org_id,
             name=name,
             slug=slug,
             owner=owner,
@@ -63,15 +77,6 @@ class OrganisationService:
             is_active=True,
             joined_at=timezone.now(),
         )
-
-        # Update the RLS session variable so subsequent queries in this request
-        # (subscription assignment, COA seeding, etc.) can read/write the new org.
-        try:
-            from apps.core.middleware import _set_org, _set_user
-            _set_org(str(org.id))
-            _set_user(str(owner.pk))
-        except Exception:
-            pass
 
         # Auto-assign the Free plan so all features are available immediately
         OrganisationService._assign_free_plan(org)

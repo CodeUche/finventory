@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Eye, EyeOff, Loader2, AlertCircle, ShieldCheck } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { api, authApi, orgApi } from '@/services/api'
+import { api, authApi } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
 import AudityLogo from '@/components/AudityLogo'
 
@@ -44,9 +44,32 @@ export default function LoginPage() {
     // firing all its API calls before we have the org ID in the store.
     api.defaults.headers.common.Authorization = `Bearer ${tokens.access}`
 
-    // Fetch orgs while still "not authenticated" from React's perspective.
-    // OrganisationViewSet doesn't need X-Organisation-ID so this succeeds.
-    const orgsRes = await orgApi.list()
+    // Bootstrap the org context from the JWT payload BEFORE calling orgApi.list().
+    // The RLS tenant_isolation policy requires app.current_org_id to match an
+    // existing org row — it blocks all reads under the SENTINEL value.  The JWT
+    // the server just issued already contains the user's memberships dict
+    // {org_id: role}, so we decode it (no signature verification needed — the
+    // server verified credentials before issuing it) to get the first org ID and
+    // pre-set it as X-Organisation-ID.  Without this, orgApi.list() runs under
+    // SENTINEL, the SELECT returns empty, and the app stays stuck on Onboarding.
+    let bootstrapOrgId: string | null = null
+    try {
+      const b64 = tokens.access.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
+      const payload = JSON.parse(atob(b64))
+      const memberships: Record<string, string> = payload.memberships ?? {}
+      bootstrapOrgId = Object.keys(memberships)[0] ?? null
+    } catch { /* non-fatal — proceed without pre-set header */ }
+
+    if (bootstrapOrgId) {
+      api.defaults.headers.common['X-Organisation-ID'] = bootstrapOrgId
+    }
+
+    // Fetch orgs with org context already set (both header and ?org= param).
+    // Passing ?org= explicitly covers Tauri reqwest builds that can silently
+    // drop custom headers on some platforms.
+    const orgsRes = await api.get('/tenancy/organisations/', {
+      params: bootstrapOrgId ? { org: bootstrapOrgId } : {},
+    })
     const orgs = orgsRes.data.results ?? orgsRes.data
     const firstOrg = orgs[0] ?? null
 

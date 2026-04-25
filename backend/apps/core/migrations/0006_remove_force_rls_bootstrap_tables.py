@@ -54,11 +54,18 @@ from django.db import migrations
 def remove_force_rls(apps, schema_editor):
     if schema_editor.connection.vendor != "postgresql":
         return
-    with schema_editor.connection.cursor() as cur:
-        # Remove FORCE — table owner now bypasses RLS on bootstrap tables.
-        # ENABLE ROW LEVEL SECURITY stays, so policies still protect non-owner roles.
-        cur.execute("ALTER TABLE tenancy_membership NO FORCE ROW LEVEL SECURITY")
-        cur.execute("ALTER TABLE tenancy_organisation NO FORCE ROW LEVEL SECURITY")
+    import logging
+    _log = logging.getLogger(__name__)
+    try:
+        with schema_editor.connection.cursor() as cur:
+            # Remove FORCE — table owner now bypasses RLS on bootstrap tables.
+            # ENABLE ROW LEVEL SECURITY stays, so policies still protect non-owner roles.
+            cur.execute("ALTER TABLE tenancy_membership NO FORCE ROW LEVEL SECURITY")
+            cur.execute("ALTER TABLE tenancy_organisation NO FORCE ROW LEVEL SECURITY")
+    except Exception as exc:
+        _log.warning(
+            "core.0006_remove_force_rls: could not alter RLS (non-fatal on managed DBs): %s", exc
+        )
 
 
 def restore_force_rls(apps, schema_editor):
