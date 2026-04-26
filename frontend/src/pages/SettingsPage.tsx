@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { User, Building2, Shield, Loader2, Camera, CreditCard, CheckCircle, Mail, Lock, Unlock, LandmarkIcon, UsersRound, UserPlus, X, ChevronDown, ChevronUp, Bot, Layout, Copy, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { authApi, orgApi, paymentGatewayApi, accountingApi, teamApi, tauriFetch } from '@/services/api'
+import type { AxiosError } from 'axios'
 import { useAuthStore } from '@/store/authStore'
 import { FEATURES } from '@/lib/featureFlags'
 import {
@@ -310,6 +311,13 @@ export default function SettingsPage() {
   // Deactivate confirmation modal
   const [deactivateTarget, setDeactivateTarget] = useState<TeamMember | null>(null)
   const [deactivating, setDeactivating] = useState(false)
+  // Email invite state
+  const [showInviteForm, setShowInviteForm] = useState(false)
+  const [inviteForm, setInviteForm] = useState({ email: '', role: 'staff' as string })
+  const [invitePerms, setInvitePerms] = useState<Record<ModuleKey, AccessLevel>>({} as Record<ModuleKey, AccessLevel>)
+  const [sendingInvite, setSendingInvite] = useState(false)
+  const [pendingInvitations, setPendingInvitations] = useState<{ id: string; email: string; role: string; status: string; created_at: string; expires_at: string }[]>([])
+  const [cancellingInvite, setCancellingInvite] = useState<string | null>(null)
 
   useEffect(() => {
     if (activeTab === 'payments') {
@@ -345,10 +353,12 @@ export default function SettingsPage() {
     }
     if (activeTab === 'team') {
       setLoadingTeam(true)
-      teamApi.members().then(({ data }) => {
-        const members: TeamMember[] = Array.isArray(data) ? data : data.results ?? []
+      Promise.all([
+        teamApi.members(),
+        organisation?.id ? orgApi.listInvitations(organisation.id) : Promise.resolve({ data: [] }),
+      ]).then(([membersRes, inviteRes]) => {
+        const members: TeamMember[] = Array.isArray(membersRes.data) ? membersRes.data : membersRes.data.results ?? []
         setTeamMembers(members)
-        // Initialise draft permissions from existing records
         const drafts: Record<string, Record<ModuleKey, AccessLevel>> = {}
         members.forEach((m) => {
           const map: Record<ModuleKey, AccessLevel> = {} as Record<ModuleKey, AccessLevel>
@@ -357,7 +367,9 @@ export default function SettingsPage() {
           drafts[m.id] = map
         })
         setDraftPerms(drafts)
-      }).catch(() => toast.error('Failed to load team members')).finally(() => setLoadingTeam(false))
+        const invitations = Array.isArray(inviteRes.data) ? inviteRes.data : inviteRes.data.results ?? []
+        setPendingInvitations(invitations.filter((inv: { status: string }) => inv.status === 'pending'))
+      }).catch(() => toast.error('Failed to load team data')).finally(() => setLoadingTeam(false))
     }
   }, [tab])
 
@@ -604,6 +616,49 @@ export default function SettingsPage() {
       toast.error(msg)
     } finally {
       setCreatingSubaccount(false)
+    }
+  }
+
+  const handleSendInvite = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!organisation?.id || !inviteForm.email) return
+    setSendingInvite(true)
+    try {
+      const modulePermsPayload: Record<string, string> = {}
+      ALL_MODULES.forEach(({ key }) => {
+        if (invitePerms[key] && invitePerms[key] !== 'edit') modulePermsPayload[key] = invitePerms[key]
+      })
+      const { data } = await orgApi.invite(organisation.id, {
+        email: inviteForm.email,
+        role: inviteForm.role,
+        module_permissions: Object.keys(modulePermsPayload).length > 0 ? modulePermsPayload : {},
+      })
+      toast.success(`Invitation sent to ${inviteForm.email}`)
+      setShowInviteForm(false)
+      setInviteForm({ email: '', role: 'staff' })
+      setInvitePerms({} as Record<ModuleKey, AccessLevel>)
+      setPendingInvitations((prev) => [data, ...prev])
+    } catch (err: unknown) {
+      const axiosErr = err as AxiosError<{ error?: { message?: string } | string }>
+      const apiErr = axiosErr?.response?.data?.error
+      const msg = typeof apiErr === 'string' ? apiErr : (apiErr?.message ?? 'Failed to send invitation')
+      toast.error(msg)
+    } finally {
+      setSendingInvite(false)
+    }
+  }
+
+  const handleCancelInvite = async (invitationId: string) => {
+    if (!organisation?.id) return
+    setCancellingInvite(invitationId)
+    try {
+      await orgApi.cancelInvitation(organisation.id, invitationId)
+      setPendingInvitations((prev) => prev.filter((inv) => inv.id !== invitationId))
+      toast.success('Invitation cancelled')
+    } catch {
+      toast.error('Failed to cancel invitation')
+    } finally {
+      setCancellingInvite(null)
     }
   }
 
@@ -1077,11 +1132,78 @@ export default function SettingsPage() {
                   <UserPlus size={14} /> Upgrade to Add Members
                 </button>
               ) : activeNonOwners.length < MAX_MEMBERS ? (
-                <button onClick={() => setShowSubaccountForm((v) => !v)} className="btn-primary shrink-0">
-                  <UserPlus size={14} /> Add Member
-                </button>
+                <div className="flex gap-2 shrink-0">
+                  <button onClick={() => { setShowInviteForm((v) => !v); setShowSubaccountForm(false) }} className="btn-secondary flex items-center gap-1.5">
+                    <Mail size={14} /> Invite by Email
+                  </button>
+                  <button onClick={() => { setShowSubaccountForm((v) => !v); setShowInviteForm(false) }} className="btn-primary flex items-center gap-1.5">
+                    <UserPlus size={14} /> Add Member
+                  </button>
+                </div>
               ) : null}
             </div>
+
+            {/* Email invite form */}
+            {showInviteForm && (
+              <form onSubmit={handleSendInvite} className="mt-4 p-4 rounded-xl bg-brand-500/5 border border-brand-500/20 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="text-sm font-semibold text-white">Invite by Email</span>
+                    <p className="text-xs text-slate-500 mt-0.5">The invitee will receive an email with accept/decline options.</p>
+                  </div>
+                  <button type="button" onClick={() => setShowInviteForm(false)} className="btn-ghost p-1"><X size={14} /></button>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="col-span-2">
+                    <label className="label">Email address *</label>
+                    <input
+                      type="email" required className="input" placeholder="partner@example.com"
+                      value={inviteForm.email}
+                      onChange={(e) => setInviteForm({ ...inviteForm, email: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <label className="label">Role *</label>
+                    <select className="input" value={inviteForm.role} onChange={(e) => setInviteForm({ ...inviteForm, role: e.target.value })}>
+                      <option value="admin">Admin</option>
+                      <option value="manager">Manager</option>
+                      <option value="accountant">Accountant</option>
+                      <option value="staff">Staff</option>
+                      <option value="viewer">Viewer (read-only)</option>
+                    </select>
+                  </div>
+                </div>
+                {/* Module permissions (optional override) */}
+                <details className="text-xs">
+                  <summary className="cursor-pointer text-slate-400 hover:text-slate-300 select-none py-1">
+                    Set per-module access (optional — defaults to full edit for all modules)
+                  </summary>
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    {ALL_MODULES.map(({ key, label }) => (
+                      <div key={key} className="flex items-center justify-between gap-2">
+                        <span className="text-slate-400 truncate">{label}</span>
+                        <select
+                          className="input py-1 text-xs w-28 shrink-0"
+                          value={invitePerms[key] ?? 'edit'}
+                          onChange={(e) => setInvitePerms((p) => ({ ...p, [key]: e.target.value as AccessLevel }))}
+                        >
+                          <option value="edit">Full Edit</option>
+                          <option value="write">Write</option>
+                          <option value="view">View Only</option>
+                          <option value="none">No Access</option>
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+                <div className="flex justify-end gap-2">
+                  <button type="button" onClick={() => setShowInviteForm(false)} className="btn-secondary text-sm">Cancel</button>
+                  <button type="submit" disabled={sendingInvite} className="btn-primary text-sm">
+                    {sendingInvite ? <Loader2 size={14} className="animate-spin" /> : <><Mail size={13} /> Send Invitation</>}
+                  </button>
+                </div>
+              </form>
+            )}
 
             {/* Sub-account creation form */}
             {showSubaccountForm && (
@@ -1155,6 +1277,35 @@ export default function SettingsPage() {
               </form>
             )}
           </div>
+
+          {/* Pending invitations */}
+          {pendingInvitations.length > 0 && (
+            <div className="card p-5 space-y-3">
+              <h4 className="text-sm font-semibold text-white flex items-center gap-2">
+                <Mail size={15} className="text-amber-400" />
+                Pending Invitations
+              </h4>
+              {pendingInvitations.map((inv) => (
+                <div key={inv.id} className="flex items-center justify-between gap-3 p-3 rounded-xl bg-surface-700/50 border border-amber-500/20">
+                  <div className="min-w-0">
+                    <p className="text-sm text-white font-medium truncate">{inv.email}</p>
+                    <p className="text-xs text-slate-500 capitalize">{inv.role} · Sent {new Date(inv.created_at).toLocaleDateString()}</p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="badge-orange">Pending</span>
+                    <button
+                      onClick={() => handleCancelInvite(inv.id)}
+                      disabled={cancellingInvite === inv.id}
+                      className="btn-ghost p-1.5 text-slate-400 hover:text-red-400"
+                      title="Cancel invitation"
+                    >
+                      {cancellingInvite === inv.id ? <Loader2 size={13} className="animate-spin" /> : <X size={13} />}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* Member list */}
           {loadingTeam ? (

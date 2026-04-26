@@ -294,10 +294,27 @@ class Invitation(TimeStampedModel):
         related_name="invitations_sent",
     )
     is_consumed = models.BooleanField(default=False)
+    is_rejected = models.BooleanField(default=False)
     expires_at = models.DateTimeField()
+    module_permissions = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text='Optional per-module access overrides: {"sales": "edit", "reports": "view", ...}',
+    )
 
     class Meta:
         verbose_name = "Invitation"
+
+    @property
+    def status(self):
+        if self.is_consumed:
+            return "accepted"
+        if self.is_rejected:
+            return "rejected"
+        from django.utils import timezone
+        if self.expires_at < timezone.now():
+            return "expired"
+        return "pending"
 
     def __str__(self):
         return f"Invite {self.email} → {self.organisation}"

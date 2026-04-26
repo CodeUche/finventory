@@ -293,22 +293,104 @@ class OrganisationService:
             logger.warning("Could not seed tax config for org %s: %s", org.id, exc)
 
     @staticmethod
-    def invite_member(organisation, email: str, role: str, invited_by) -> Invitation:
-        """Create a pending invitation. Expires in 7 days."""
+    def invite_member(organisation, email: str, role: str, invited_by, module_permissions: dict = None) -> Invitation:
+        """Create a pending invitation and send the invitee an email. Expires in 7 days."""
         invitation = Invitation.objects.create(
             organisation=organisation,
             email=email,
             role=role,
             invited_by=invited_by,
             expires_at=timezone.now() + timedelta(days=7),
+            module_permissions=module_permissions or {},
         )
-        # TODO: Send invitation email via Celery task
+        OrganisationService._send_invitation_email(invitation)
         logger.info("Invitation created for %s to org %s", email, organisation.id)
         return invitation
 
     @staticmethod
+    def _send_invitation_email(invitation: Invitation) -> None:
+        """Send the invitation email with accept / reject links."""
+        try:
+            from django.conf import settings as django_settings
+            from django.core.mail import send_mail
+            from django.utils.html import escape
+
+            inviter_name = (
+                f"{invitation.invited_by.first_name} {invitation.invited_by.last_name}".strip()
+                or invitation.invited_by.email
+            )
+            frontend_url = getattr(django_settings, "FRONTEND_URL", "http://localhost:5173")
+            # Token is a UUID — safe to embed directly in URLs
+            token = str(invitation.token)
+            accept_url = f"{frontend_url}/accept-invite/{token}"
+            reject_url = f"{frontend_url}/reject-invite/{token}"
+
+            # Escape all user-controlled strings before embedding in HTML
+            safe_inviter = escape(inviter_name)
+            safe_org = escape(invitation.organisation.name)
+            safe_role = escape(invitation.role)
+
+            subject = f"You've been invited to join {invitation.organisation.name} on Audity"
+            plain = (
+                f"Hi,\n\n"
+                f"{inviter_name} has invited you to join {invitation.organisation.name} "
+                f"as {invitation.role} on Audity.\n\n"
+                f"Accept: {accept_url}\n"
+                f"Decline: {reject_url}\n\n"
+                f"This invitation expires in 7 days.\n"
+                f"If you did not expect this email you can safely ignore it.\n"
+            )
+            html = f"""<!DOCTYPE html>
+<html>
+<body style="font-family:sans-serif;background:#f1f5f9;padding:24px;">
+  <div style="max-width:500px;margin:auto;background:#fff;border-radius:12px;padding:32px;">
+    <h2 style="color:#f97316;margin-top:0;">You&rsquo;re invited to Audity</h2>
+    <p><strong>{safe_inviter}</strong> has invited you to join
+       <strong>{safe_org}</strong> as <strong>{safe_role}</strong>.</p>
+    <div style="margin:28px 0;">
+      <a href="{accept_url}"
+         style="display:inline-block;background:#f97316;color:#fff;text-decoration:none;
+                padding:12px 24px;border-radius:8px;font-weight:600;margin-right:12px;">
+        Accept Invitation
+      </a>
+      <a href="{reject_url}"
+         style="display:inline-block;background:#e2e8f0;color:#64748b;text-decoration:none;
+                padding:12px 24px;border-radius:8px;font-weight:600;">
+        Decline
+      </a>
+    </div>
+    <p style="color:#94a3b8;font-size:12px;">
+      This invitation expires in 7 days.
+      If you did not expect this email, you can safely ignore it.
+    </p>
+  </div>
+</body>
+</html>"""
+            from_email = getattr(django_settings, "DEFAULT_FROM_EMAIL", None) or "noreply@audity.app"
+            send_mail(subject, plain, from_email, [invitation.email], html_message=html, fail_silently=True)
+        except Exception as exc:
+            logger.warning("Could not send invitation email to %s: %s", invitation.email, exc)
+
+    @staticmethod
+    def reject_invitation(token: str) -> None:
+        """Mark an invitation as rejected by the invitee."""
+        try:
+            invitation = Invitation.objects.get(
+                token=token,
+                is_consumed=False,
+                is_rejected=False,
+                expires_at__gte=timezone.now(),
+            )
+            invitation.is_rejected = True
+            invitation.save(update_fields=["is_rejected"])
+            logger.info("Invitation %s rejected", token)
+        except Invitation.DoesNotExist:
+            pass
+
+    @staticmethod
     def accept_invitation(invitation: Invitation, user) -> Membership:
-        """Accept an invitation, creating or reactivating membership."""
+        """Accept an invitation, creating or reactivating membership with optional per-module permissions."""
+        from .models import ModulePermission
         membership, created = Membership.objects.get_or_create(
             user=user,
             organisation=invitation.organisation,
@@ -324,6 +406,16 @@ class OrganisationService:
             membership.is_active = True
             membership.joined_at = timezone.now()
             membership.save()
+
+        # Apply granular module permissions if specified on the invitation
+        if invitation.module_permissions:
+            ModulePermission.objects.filter(membership=membership).delete()
+            for module, level in invitation.module_permissions.items():
+                ModulePermission.objects.create(
+                    membership=membership,
+                    module=module,
+                    access_level=level,
+                )
 
         invitation.is_consumed = True
         invitation.save(update_fields=["is_consumed"])

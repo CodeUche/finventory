@@ -18,6 +18,7 @@ interface DateInputProps {
   min?: string           // YYYY-MM-DD
   max?: string           // YYYY-MM-DD
   disabled?: boolean
+  required?: boolean
   id?: string
   name?: string
 }
@@ -60,6 +61,7 @@ export default function DateInput({
   min,
   max,
   disabled,
+  required,
   id,
   name,
 }: DateInputProps) {
@@ -114,6 +116,7 @@ export default function DateInput({
         onBlur={handleTextBlur}
         placeholder={placeholder}
         disabled={disabled}
+        required={required}
         maxLength={10}
         className="input pr-10"
         autoComplete="off"

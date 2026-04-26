@@ -231,56 +231,61 @@ export default function ProductsPage() {
         toast.success('Product updated')
       } else {
         const { data: newProduct } = await inventoryApi.createProduct(payload)
-        // Set opening stock if a quantity was provided
-        const qty = parseFloat(batchForm.quantity)
-        if (qty > 0 && batchForm.warehouse && form.product_type === 'physical') {
+        // Set opening stock if a warehouse was selected (always register product in warehouse)
+        const qty = parseFloat(batchForm.quantity) || 0
+        if (batchForm.warehouse && form.product_type === 'physical') {
           if (batchForm.batch_number) {
             // Create a tracked Batch record (appears in Batches & Lots module)
+            const batchPayload: Record<string, unknown> = {
+              product: newProduct.id,
+              warehouse: batchForm.warehouse,
+              batch_number: batchForm.batch_number,
+              quantity: qty,
+              unit_cost: stripCommas(batchForm.unit_cost) || stripCommas(form.cost_price) || '0',
+            }
+            // DateInput always emits ISO YYYY-MM-DD — pass through directly
+            if (batchForm.manufacture_date) batchPayload.manufacture_date = batchForm.manufacture_date
+            if (batchForm.expiry_date) batchPayload.expiry_date = batchForm.expiry_date
+            if (batchForm.min_quantity) batchPayload.min_quantity = batchForm.min_quantity
+            if (batchForm.max_quantity) batchPayload.max_quantity = batchForm.max_quantity
+            if (batchForm.qty_per_pack) batchPayload.qty_per_pack = batchForm.qty_per_pack
             try {
-              const batchPayload: Record<string, unknown> = {
-                product: newProduct.id,
-                warehouse: batchForm.warehouse,
-                batch_number: batchForm.batch_number,
-                quantity: qty,
-                unit_cost: stripCommas(batchForm.unit_cost) || stripCommas(form.cost_price) || '0',
-              }
-              if (batchForm.manufacture_date) {
-                const [d, m, y] = batchForm.manufacture_date.split('/')
-                batchPayload.manufacture_date = `${y}-${m}-${d}`
-              }
-              if (batchForm.expiry_date) {
-                const [d, m, y] = batchForm.expiry_date.split('/')
-                batchPayload.expiry_date = `${y}-${m}-${d}`
-              }
-              if (batchForm.min_quantity) batchPayload.min_quantity = batchForm.min_quantity
-              if (batchForm.max_quantity) batchPayload.max_quantity = batchForm.max_quantity
-              if (batchForm.qty_per_pack) batchPayload.qty_per_pack = batchForm.qty_per_pack
               await inventoryApi.createBatch(batchPayload)
-              // Also record stock movement so StockItem is updated
-              await inventoryApi.adjustStock({
-                product_id: newProduct.id,
-                warehouse_id: batchForm.warehouse,
-                quantity: qty,
-                reason: `Opening stock — batch ${batchForm.batch_number}`,
-              })
-              toast.success('Product created with batch/lot')
             } catch {
-              toast.success('Product created')
               toast.error('Batch could not be saved — add it from Batches & Lots page')
+            }
+            // Record stock movement regardless of batch creation result so warehouse always has stock
+            if (qty > 0) {
+              try {
+                await inventoryApi.adjustStock({
+                  product_id: newProduct.id,
+                  warehouse_id: batchForm.warehouse,
+                  quantity: qty,
+                  reason: `Opening stock — batch ${batchForm.batch_number}`,
+                })
+                toast.success('Product created with batch/lot')
+              } catch {
+                toast.error('Opening stock could not be saved — add it from the Stock page')
+              }
+            } else {
+              toast.success('Product created with batch/lot')
             }
           } else {
             // Simple opening stock (no batch tracking)
-            try {
-              await inventoryApi.adjustStock({
-                product_id: newProduct.id,
-                warehouse_id: batchForm.warehouse,
-                quantity: qty,
-                reason: 'Opening stock',
-              })
-              toast.success('Product created with opening stock')
-            } catch {
+            if (qty > 0) {
+              try {
+                await inventoryApi.adjustStock({
+                  product_id: newProduct.id,
+                  warehouse_id: batchForm.warehouse,
+                  quantity: qty,
+                  reason: 'Opening stock',
+                })
+                toast.success('Product created with opening stock')
+              } catch {
+                toast.error('Opening stock could not be saved — add it from the Stock page')
+              }
+            } else {
               toast.success('Product created')
-              toast.error('Opening stock could not be saved — add it from the Stock page')
             }
           }
         } else {

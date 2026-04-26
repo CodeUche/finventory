@@ -23,7 +23,7 @@ const navGroups: { label: string | null; items: { name: string; href: string; ic
     label: null,
     items: [
       { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-      { name: 'Partner Dashboard', href: '/partner', icon: GraduationCap, ownerOnly: true },
+      { name: 'Partner Dashboard', href: '/partner', icon: GraduationCap, ownerOnly: true, partnerOnly: true },
     ],
   },
   {
@@ -195,6 +195,22 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
           const isCollapsed = group.label ? (collapsed[group.label] ?? false) : false
           const visibleItems = group.items.filter((item) => canSeeItem(item.module, item.ownerOnly, item.partnerOnly))
           if (group.label && visibleItems.length === 0) return null
+
+          // Single-item labeled groups render as a plain NavLink (no collapsible toggle)
+          if (group.label && visibleItems.length === 1) {
+            const item = visibleItems[0]
+            return (
+              <div key={gi} className="pt-2">
+                <NavLink
+                  to={item.href}
+                  className={({ isActive }) => isActive ? 'sidebar-item-active' : 'sidebar-item'}
+                >
+                  <item.icon size={16} className="shrink-0" />
+                  <span className="truncate">{item.name}</span>
+                </NavLink>
+              </div>
+            )
+          }
 
           return (
             <div key={gi}>

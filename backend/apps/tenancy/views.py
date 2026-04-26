@@ -71,8 +71,8 @@ class OrganisationViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        # Set the DB-level user identity so the membership_select RLS policy
-        # allows reading this user's own membership rows even under SENTINEL.
+        # Set user identity FIRST so the membership_select RLS SENTINEL branch
+        # (user_id = app.current_user_id) can fire before any membership query.
         try:
             from apps.core.middleware import _set_user
             _set_user(str(self.request.user.pk))
@@ -82,16 +82,30 @@ class OrganisationViewSet(viewsets.ModelViewSet):
         if self.request.user.is_superuser:
             return Organisation.objects.filter(is_active=True)
 
-        # Two-step approach: read membership IDs first (RLS allows via user_id),
-        # then set org context, then read orgs.
-        user_org_ids = list(
-            self.request.user.memberships
-            .filter(is_active=True)
-            .values_list("organisation_id", flat=True)
-        )
+        # Use raw SQL to read membership IDs — this avoids Django ORM adding
+        # its own WHERE filters before RLS has been fully set up, which could
+        # cause an empty result when FORCE RLS + SENTINEL is active.
+        # The raw SQL still goes through RLS but the SENTINEL branch fires
+        # correctly because _set_user() was called above.
+        from django.db import connection as _conn
+        try:
+            with _conn.cursor() as cur:
+                cur.execute(
+                    "SELECT organisation_id FROM tenancy_membership"
+                    " WHERE user_id = %s AND is_active = TRUE",
+                    [str(self.request.user.pk)],
+                )
+                user_org_ids = [str(row[0]) for row in cur.fetchall()]
+        except Exception:
+            # Fallback to ORM if raw SQL fails (e.g. SQLite in tests)
+            user_org_ids = list(
+                self.request.user.memberships
+                .filter(is_active=True)
+                .values_list("organisation_id", flat=True)
+            )
+            user_org_ids = [str(i) for i in user_org_ids]
+
         if user_org_ids:
-            # Update RLS context to the first org so subsequent requests in the
-            # same session see the correct app.current_org_id.
             try:
                 from apps.core.middleware import _set_org
                 _set_org(str(user_org_ids[0]))
@@ -139,13 +153,77 @@ class OrganisationViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
+        email = (request.data.get("email") or "").strip().lower()
+        role = request.data.get("role", Membership.Role.STAFF)
+
+        # Validate role against known choices
+        valid_roles = {r[0] for r in Membership.Role.choices}
+        if role not in valid_roles:
+            return Response({"error": {"message": "Invalid role."}}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Sanitise module_permissions — only allow known module keys and access levels
+        _valid_modules = {m[0] for m in ModulePermission.MODULE_CHOICES}
+        _valid_levels = {a[0] for a in ModulePermission.ACCESS_CHOICES}
+        raw_perms = request.data.get("module_permissions") or {}
+        if not isinstance(raw_perms, dict):
+            raw_perms = {}
+        module_permissions = {
+            k: v for k, v in raw_perms.items()
+            if k in _valid_modules and v in _valid_levels
+        }
+
         invitation = OrganisationService.invite_member(
             organisation=org,
-            email=request.data.get("email"),
-            role=request.data.get("role", Membership.Role.STAFF),
+            email=email,
+            role=role,
             invited_by=request.user,
+            module_permissions=module_permissions,
         )
         return Response(InvitationSerializer(invitation).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["get"], permission_classes=[IsOwnerOrAdmin], url_path="invitations")
+    def list_invitations(self, request, pk=None):
+        """GET /organisations/{id}/invitations/ — list all invitations (pending, accepted, rejected)."""
+        org = self.get_object()
+        invitations = Invitation.objects.filter(organisation=org).select_related(
+            "invited_by"
+        ).order_by("-created_at")
+        return Response(InvitationSerializer(invitations, many=True).data)
+
+    @action(detail=True, methods=["post"], permission_classes=[IsOwnerOrAdmin], url_path="cancel_invitation")
+    def cancel_invitation(self, request, pk=None):
+        """POST /organisations/{id}/cancel_invitation/ — revoke a pending invitation. Body: { invitation_id }."""
+        org = self.get_object()
+        invitation_id = request.data.get("invitation_id")
+        if not invitation_id:
+            return Response({"error": "invitation_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            invitation = Invitation.objects.get(id=invitation_id, organisation=org, is_consumed=False, is_rejected=False)
+            invitation.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        except Invitation.DoesNotExist:
+            return Response({"error": "Invitation not found or already consumed."}, status=status.HTTP_404_NOT_FOUND)
+
+    @action(detail=False, methods=["post"], permission_classes=[], throttle_classes=[InvitationRateThrottle])
+    def reject_invitation(self, request):
+        """POST /organisations/reject_invitation/ — decline an invitation by token. Public — no auth required."""
+        token = request.data.get("token")
+        if not token:
+            return Response({"error": "Token is required."}, status=status.HTTP_400_BAD_REQUEST)
+        OrganisationService.reject_invitation(token)
+        # Always return 200 regardless of token validity — don't leak whether a token exists
+        return Response({"detail": "Invitation declined."})
+
+    @action(detail=False, methods=["get"])
+    def my_invitations(self, request):
+        """GET /organisations/my_invitations/ — list pending invitations sent to the current user's email."""
+        invitations = Invitation.objects.filter(
+            email=request.user.email,
+            is_consumed=False,
+            is_rejected=False,
+            expires_at__gte=timezone.now(),
+        ).select_related("organisation", "invited_by").order_by("-created_at")
+        return Response(InvitationSerializer(invitations, many=True).data)
 
     @action(detail=True, methods=["post"], permission_classes=[IsOwnerOrAdmin], url_path="remove_logo")
     def remove_logo(self, request, pk=None):
@@ -334,6 +412,7 @@ class OrganisationViewSet(viewsets.ModelViewSet):
             invitation = Invitation.objects.get(
                 token=token,
                 is_consumed=False,
+                is_rejected=False,
                 expires_at__gte=timezone.now(),
             )
         except Invitation.DoesNotExist:
@@ -343,6 +422,37 @@ class OrganisationViewSet(viewsets.ModelViewSet):
             )
         membership = OrganisationService.accept_invitation(invitation, request.user)
         return Response(MembershipSerializer(membership).data)
+
+    @action(detail=False, methods=["get"], permission_classes=[], throttle_classes=[InvitationRateThrottle])
+    def preview_invitation(self, request):
+        """GET /organisations/preview_invitation/?token=... — public endpoint to fetch invite details from an email link."""
+        token = request.query_params.get("token")
+        if not token:
+            return Response({"error": "Token is required."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            invitation = Invitation.objects.select_related("organisation", "invited_by").get(
+                token=token,
+            )
+        except (Invitation.DoesNotExist, Exception):
+            # Return the same 404 for invalid UUIDs and genuinely missing tokens
+            return Response(
+                {"error": "Invitation not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        # Return only safe public fields — never expose module_permissions or internal IDs
+        return Response({
+            "token": str(invitation.token),
+            "email": invitation.email,
+            "role": invitation.role,
+            "org_name": invitation.organisation.name,
+            "status": invitation.status,
+            "invited_by_name": (
+                f"{invitation.invited_by.first_name} {invitation.invited_by.last_name}".strip()
+                or invitation.invited_by.email
+            ),
+            "expires_at": invitation.expires_at,
+            "created_at": invitation.created_at,
+        })
 
     @action(detail=True, methods=["get"], url_path="my_membership")
     def my_membership(self, request, pk=None):

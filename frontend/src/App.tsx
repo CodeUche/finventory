@@ -43,6 +43,7 @@ import BillingPage from '@/pages/BillingPage'
 import LocationsPage from '@/pages/LocationsPage'
 import StockReportsPage from '@/pages/inventory/StockReportsPage'
 import PartnerDashboardPage from '@/pages/PartnerDashboardPage'
+import AcceptInvitePage from '@/pages/auth/AcceptInvitePage'
 
 // Inner class-based boundary — must be a class to use getDerivedStateFromError
 class ErrorBoundaryInner extends React.Component<
@@ -104,6 +105,15 @@ function SuperuserRoute({ children }: { children: React.ReactNode }) {
   const user = useAuthStore((s) => s.user)
   if (!user) return <Navigate to="/login" replace />
   if (!user.is_superuser) return <Navigate to="/dashboard" replace />
+  return <>{children}</>
+}
+
+function PartnerRoute({ children }: { children: React.ReactNode }) {
+  const { user, memberRole } = useAuthStore()
+  if (!user) return <Navigate to="/login" replace />
+  if (memberRole === null && !user.is_superuser) return <MembershipLoading />
+  if (user.is_superuser) return <>{children}</>
+  if (!user.has_partner_profile) return <Navigate to="/dashboard" replace />
   return <>{children}</>
 }
 
@@ -172,6 +182,8 @@ export default function App() {
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/verify-email" element={<VerifyEmailPage />} />
       <Route path="/staff-login" element={<SubAccountLoginPage />} />
+      <Route path="/accept-invite/:token" element={<AcceptInvitePage mode="accept" />} />
+      <Route path="/reject-invite/:token" element={<AcceptInvitePage mode="reject" />} />
 
       {/* Protected */}
       <Route
@@ -235,7 +247,7 @@ export default function App() {
         {/* Settings — always accessible for personal profile/security; org tabs filtered inside the page */}
         <Route path="settings" element={<SettingsPage />} />
         <Route path="billing"  element={<ModuleRoute module="settings"><BillingPage /></ModuleRoute>} />
-        <Route path="partner"  element={<PartnerDashboardPage />} />
+        <Route path="partner"  element={<PartnerRoute><PartnerDashboardPage /></PartnerRoute>} />
 
         {/* Platform Admin — superuser only */}
         <Route path="platform-admin" element={<SuperuserRoute><PlatformAdminPage /></SuperuserRoute>} />

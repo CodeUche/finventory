@@ -120,10 +120,23 @@ class MembershipSerializer(serializers.ModelSerializer):
 
 
 class InvitationSerializer(serializers.ModelSerializer):
+    status = serializers.CharField(read_only=True)
+    invited_by_name = serializers.SerializerMethodField()
+    org_name = serializers.CharField(source="organisation.name", read_only=True)
+
+    def get_invited_by_name(self, obj):
+        name = f"{obj.invited_by.first_name} {obj.invited_by.last_name}".strip()
+        return name or obj.invited_by.email
+
     class Meta:
         model = Invitation
-        fields = ["id", "email", "role", "is_consumed", "expires_at", "created_at"]
-        read_only_fields = ["id", "token", "is_consumed", "created_at"]
+        fields = [
+            "id", "token", "email", "role", "org_name",
+            "is_consumed", "is_rejected", "status",
+            "expires_at", "created_at", "invited_by_name",
+            "module_permissions",
+        ]
+        read_only_fields = ["id", "token", "is_consumed", "is_rejected", "status", "created_at"]
 
 
 class PartnerProfileSerializer(serializers.ModelSerializer):

@@ -390,8 +390,13 @@ async function _writeThroughCache(url: string, method: string, responseData: unk
     }
   }
 
-  // Patch offlineCache list
-  await _patchCacheList(orgId, url, method, responseData, undefined)
+  // Invalidate the list cache so the next GET always hits the network for fresh data.
+  // _patchCacheList cannot reliably find the cached list because cache keys include
+  // ?org=<uuid> query params that _patchCacheList doesn't know about.
+  // invalidatePrefix wipes all variants (with and without params) so the next request
+  // goes straight to the server and re-caches the authoritative server response.
+  const listUrl = buildListUrl(url)
+  await offlineCache.invalidatePrefix(listUrl)
   window.dispatchEvent(new CustomEvent('audity:data-changed'))
 }
 
@@ -693,7 +698,7 @@ api.interceptors.response.use(
     if (status === 500 && !isAuthUrl) {
       const msg = (typeof errData === 'string' ? errData : errData?.message) ?? 'Server error (500)'
       toast.error(`Server error: ${msg}`, { id: `500-${original.url}`, duration: 8000 })
-    } else if (status === 403 && !isAuthUrl) {
+    } else if (status === 403 && !isAuthUrl && !window.location.pathname.startsWith('/onboarding')) {
       const forbiddenMsg = (typeof errData === 'string' ? errData : errData?.message)
         ?? (error.response?.data as any)?.detail
         ?? 'Access denied (403)'
@@ -796,6 +801,12 @@ export const orgApi = {
   saveEmailConfig: (id: string, data: object) => api.patch(`/tenancy/organisations/${id}/email_config/`, data),
   myMembership: (orgId: string) => api.get(`/tenancy/organisations/${orgId}/my_membership/`),
   invite: (orgId: string, data: object) => api.post(`/tenancy/organisations/${orgId}/invite/`, data),
+  listInvitations: (orgId: string) => api.get(`/tenancy/organisations/${orgId}/invitations/`),
+  cancelInvitation: (orgId: string, invitationId: string) => api.post(`/tenancy/organisations/${orgId}/cancel_invitation/`, { invitation_id: invitationId }),
+  acceptInvitation: (token: string) => api.post('/tenancy/organisations/accept_invitation/', { token }),
+  rejectInvitation: (token: string) => api.post('/tenancy/organisations/reject_invitation/', { token }),
+  previewInvitation: (token: string) => api.get('/tenancy/organisations/preview_invitation/', { params: { token } }),
+  myInvitations: () => api.get('/tenancy/organisations/my_invitations/'),
   createSubaccount: (orgId: string, data: object) => api.post(`/tenancy/organisations/${orgId}/create_subaccount/`, data),
   resolveBankAccount: (accountNumber: string, bankCode: string) =>
     api.get('/tenancy/organisations/resolve_bank_account/', { params: { account_number: accountNumber, bank_code: bankCode } }),
