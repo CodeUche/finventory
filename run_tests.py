@@ -48,6 +48,7 @@ Each retry only re-runs the tests that failed in the previous pass
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import shutil
@@ -57,6 +58,13 @@ import textwrap
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
+
+# Force UTF-8 on Windows terminals that default to cp1252/cp850.
+# Must happen before any print() calls that use box-drawing or emoji chars.
+if sys.stdout and hasattr(sys.stdout, 'buffer'):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+if sys.stderr and hasattr(sys.stderr, 'buffer'):
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 from pathlib import Path
 from typing import Optional
 

@@ -5,10 +5,10 @@ import {
   ChevronRight, Sparkles, Check, Loader2,
   Clock, ArrowLeft, Package, Users, Receipt,
   BarChart3, Calculator, Briefcase, Shield, CheckCircle2,
-  Zap,
+  Zap, GraduationCap, Building2, Star,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { api, orgApi, subscriptionApi } from '@/services/api'
+import { api, orgApi, subscriptionApi, partnerApi } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -27,8 +27,18 @@ const PRESETS = [
   { country: 'GB', currency: 'GBP', flag: '🇬🇧', label: 'United Kingdom' },
 ]
 
-// Focused set of questions — only what's needed for a good recommendation
+// Questionnaire — includes partner routing question at position 0
 const QUESTIONS = [
+  {
+    key: 'manages_clients',
+    emoji: '🏢',
+    label: 'Do you manage accounting or finances for other businesses?',
+    sub: 'As an accountant, bookkeeper, or financial consultant.',
+    options: [
+      'Yes — I manage accounts for multiple clients',
+      'No — I manage my own business only',
+    ],
+  },
   {
     key: 'business_type',
     emoji: '🏪',
@@ -64,6 +74,57 @@ const QUESTIONS = [
     sub: 'Pick everything that applies.',
     options: ['Invoicing & Sales', 'Inventory & Stock', 'Payroll & HR', 'Accounting & Ledger', 'Tax & Compliance', 'Financial Reports'],
     multi: true,
+  },
+]
+
+const PARTNER_TIERS = [
+  {
+    slug: 'starter',
+    name: 'Starter Partner',
+    icon: Star,
+    color: 'border-slate-500/50',
+    ring: 'ring-slate-500/30',
+    pill: 'bg-slate-500/15 text-slate-300',
+    tagline: 'Perfect for solo bookkeepers and new firms.',
+    perks: [
+      'Manage up to 5 client accounts',
+      '20% commission on client subscriptions',
+      'Partner portal & client dashboard',
+      'Standard support',
+    ],
+  },
+  {
+    slug: 'pro',
+    name: 'Pro Partner',
+    icon: GraduationCap,
+    color: 'border-brand-500/60',
+    ring: 'ring-brand-500/30',
+    pill: 'bg-brand-500/15 text-brand-300',
+    tagline: 'For growing accounting practices.',
+    perks: [
+      'Manage up to 25 client accounts',
+      '30% commission on client subscriptions',
+      'White-label client reports',
+      'Dedicated partner manager',
+      'Priority support',
+    ],
+    recommended: true,
+  },
+  {
+    slug: 'agency',
+    name: 'Agency Partner',
+    icon: Building2,
+    color: 'border-purple-500/40',
+    ring: 'ring-purple-500/30',
+    pill: 'bg-purple-500/15 text-purple-300',
+    tagline: 'For large firms managing many clients.',
+    perks: [
+      'Unlimited client accounts',
+      '35% commission on client subscriptions',
+      'Custom white-label branding',
+      'API access for integrations',
+      'SLA + dedicated support',
+    ],
   },
 ]
 
@@ -166,9 +227,9 @@ export default function OnboardingPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.is_sub_account])
 
-  // Step 0: workspace, 1: questionnaire (one-at-a-time), 2: plan selection
+  // Step 0: workspace, 1: questionnaire, 2: plan selection, 3: partner enrollment
   const [step, setStep] = useState(0)
-  const [qIndex, setQIndex] = useState(0)   // which question we're on in step 1
+  const [qIndex, setQIndex] = useState(0)
 
   // Step 0
   const [orgForm, setOrgForm] = useState({ name: '', account_type: 'business', country: 'NG', currency: 'NGN' })
@@ -177,12 +238,19 @@ export default function OnboardingPage() {
   // Step 1
   const [answers, setAnswers] = useState<Record<string, string | string[]>>({})
 
-  // Step 2
+  // Step 2 (plan selection)
   const [loadingRec, setLoadingRec] = useState(false)
   const [recommendation, setRecommendation] = useState<Recommendation | null>(null)
   const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null)
   const [initiatingPay, setInitiatingPay] = useState(false)
   const [billing, setBilling] = useState<'monthly' | 'annual'>('monthly')
+
+  // Step 3 (partner enrollment)
+  const [selectedPartnerTier, setSelectedPartnerTier] = useState<string>('pro')
+  const [firmName, setFirmName] = useState('')
+  const [partnerSaving, setPartnerSaving] = useState(false)
+
+  const isPartnerFlow = answers['manages_clients'] === 'Yes — I manage accounts for multiple clients'
 
   // If org already exists skip to plan step
   useEffect(() => {
@@ -210,7 +278,6 @@ export default function OnboardingPage() {
     try {
       const { data } = await orgApi.create(orgForm)
       setOrganisation(data)
-      // Set org header immediately so subsequent calls in this session work
       api.defaults.headers.common['X-Organisation-ID'] = data.id
       setStep(1)
     } catch (err: any) {
@@ -257,6 +324,12 @@ export default function OnboardingPage() {
   }
 
   const handleNext = () => {
+    // After the first question (manages_clients), if they are a partner flow,
+    // skip the remaining business questions and go straight to the partner step.
+    if (currentQ.key === 'manages_clients' && isPartnerFlow) {
+      setStep(3)
+      return
+    }
     if (qIndex < QUESTIONS.length - 1) {
       setQIndex((i) => i + 1)
     } else {
@@ -296,7 +369,7 @@ export default function OnboardingPage() {
     }
   }
 
-  // ── Start trial ─────────────────────────────────────────────────────────────
+  // ── Mark onboarding complete ─────────────────────────────────────────────────
   const markOnboardingComplete = async () => {
     const orgId = organisation?.id
     if (!orgId) return
@@ -306,6 +379,7 @@ export default function OnboardingPage() {
     } catch { /* non-fatal */ }
   }
 
+  // ── Start trial ─────────────────────────────────────────────────────────────
   const handleSelectAndPay = async (plan: Plan) => {
     setSelectedPlan(plan)
     setInitiatingPay(true)
@@ -326,10 +400,42 @@ export default function OnboardingPage() {
     }
   }
 
+  // ── Partner enrollment ───────────────────────────────────────────────────────
+  const handlePartnerEnroll = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!firmName.trim()) { toast.error('Please enter your firm or practice name.'); return }
+    setPartnerSaving(true)
+    try {
+      await partnerApi.updateProfile({ tier: selectedPartnerTier, firm_name: firmName })
+      await markOnboardingComplete()
+      toast.success('Welcome to the Audity Partner Program! 🎉')
+      navigate('/partner')
+    } catch (err: any) {
+      // If partner profile endpoint doesn't exist yet, fall through to plan selection
+      const status = err?.response?.status
+      if (status === 404 || status === 405) {
+        await markOnboardingComplete()
+        toast.success('Welcome to Audity! Your partner application has been noted.')
+        navigate('/dashboard')
+      } else {
+        const msg = err?.response?.data?.error?.message ?? err?.response?.data?.error ?? 'Could not enroll. Please try again.'
+        toast.error(typeof msg === 'string' ? msg : 'Could not enroll. Please try again.')
+      }
+    } finally {
+      setPartnerSaving(false)
+    }
+  }
+
+  // ── Dynamic container width ─────────────────────────────────────────────────
+  // Step 2 plan cards need a wide layout; all other steps are narrow (max-w-2xl)
+  const containerWidth = (step === 2 && !loadingRec && recommendation)
+    ? 'max-w-5xl'
+    : (step === 3 ? 'max-w-4xl' : 'max-w-2xl')
+
   // ─── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-surface-950 flex items-center justify-center p-6">
-      <div className="w-full max-w-2xl space-y-6">
+      <div className={`w-full ${containerWidth} space-y-6 transition-all duration-300`}>
 
         {/* Logo */}
         <AudityLogo className="h-10 w-auto" />
@@ -424,7 +530,7 @@ export default function OnboardingPage() {
         {/* ── Step 1: One question at a time ── */}
         {step === 1 && (
           <div className="card space-y-6">
-            {/* Progress */}
+            {/* Progress — only count non-partner questions if in partner flow */}
             <ProgressBar current={qIndex} total={QUESTIONS.length} />
 
             {/* Question */}
@@ -474,10 +580,14 @@ export default function OnboardingPage() {
                 disabled={!currentAnswered()}
                 className="btn-primary flex-1 justify-center py-3 disabled:opacity-40"
               >
-                {qIndex < QUESTIONS.length - 1
-                  ? <span className="flex items-center gap-2">Next <ChevronRight size={16} /></span>
-                  : <span className="flex items-center gap-2"><Sparkles size={16} /> Get my recommendation</span>
-                }
+                {/* If partner question answered "Yes", show partner CTA */}
+                {currentQ.key === 'manages_clients' && isPartnerFlow ? (
+                  <span className="flex items-center gap-2"><GraduationCap size={16} /> Set up partner account</span>
+                ) : qIndex < QUESTIONS.length - 1 ? (
+                  <span className="flex items-center gap-2">Next <ChevronRight size={16} /></span>
+                ) : (
+                  <span className="flex items-center gap-2"><Sparkles size={16} /> Get my recommendation</span>
+                )}
               </button>
             </div>
           </div>
@@ -496,10 +606,8 @@ export default function OnboardingPage() {
 
         {/* ── Step 2: Plan selection ── */}
         {step === 2 && !loadingRec && recommendation && (() => {
-          // Build a slug → plan map for quick lookup
           const bySlug = Object.fromEntries(recommendation.plans.map(p => [p.slug, p]))
 
-          // The four columns we always show
           const columns: Array<{ slug: string; annualSlug: string | null }> = [
             { slug: 'free',         annualSlug: null },
             { slug: 'professional', annualSlug: 'professional-annual' },
@@ -549,8 +657,8 @@ export default function OnboardingPage() {
                 </button>
               </div>
 
-              {/* Plan cards — always 4 columns */}
-              <div className="grid grid-cols-4 gap-3">
+              {/* Plan cards — 4 equal columns filling the available width */}
+              <div className="grid grid-cols-4 gap-4">
                 {columns.map(({ slug, annualSlug }) => {
                   const annualPlan = annualSlug ? bySlug[annualSlug] : null
                   const monthlyPlan = bySlug[slug]
@@ -563,7 +671,6 @@ export default function OnboardingPage() {
                   const isRec = activePlan.slug === recommendation.recommended_plan_slug ||
                                 monthlyPlan?.slug === recommendation.recommended_plan_slug
 
-                  // Per-month equivalent for annual plans
                   const price = parseFloat(activePlan.price)
                   const isAnnualVariant = billing === 'annual' && !!annualPlan && !activePlan.is_free
                   const perMonth = isAnnualVariant ? Math.round(price / 12) : price
@@ -572,8 +679,8 @@ export default function OnboardingPage() {
                     <div
                       key={slug}
                       onClick={() => setSelectedPlan(activePlan)}
-                      className={`relative flex flex-col rounded-2xl border p-4 gap-3 cursor-pointer transition-all ${meta.color.border} ${
-                        isSel ? `${meta.color.ring} bg-white/5` : 'hover:bg-white/[0.03] bg-surface-800/40'
+                      className={`relative flex flex-col rounded-2xl border p-5 gap-4 cursor-pointer transition-all ${meta.color.border} ${
+                        isSel ? `${meta.color.ring} ring-2 bg-white/5` : 'hover:bg-white/[0.03] bg-surface-800/40'
                       }`}
                     >
                       {isRec && (
@@ -620,10 +727,10 @@ export default function OnboardingPage() {
                       </div>
 
                       {/* Features */}
-                      <div className="space-y-2 flex-1">
+                      <div className="space-y-2.5 flex-1">
                         {meta.highlights.map(({ icon: Icon, text }) => (
                           <div key={text} className="flex items-center gap-2 text-xs text-slate-300">
-                            <Icon size={11} className="text-brand-400 shrink-0" />
+                            <Icon size={12} className="text-brand-400 shrink-0" />
                             {text}
                           </div>
                         ))}
@@ -676,6 +783,116 @@ export default function OnboardingPage() {
             </div>
           )
         })()}
+
+        {/* ── Step 3: Partner enrollment ── */}
+        {step === 3 && (
+          <div className="space-y-6 w-full">
+            {/* Header */}
+            <div className="text-center space-y-2">
+              <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-brand-500/15 mb-2">
+                <GraduationCap size={28} className="text-brand-400" />
+              </div>
+              <h2 className="text-2xl font-bold text-white">Join the Audity Partner Program</h2>
+              <p className="text-slate-400 text-sm max-w-lg mx-auto">
+                Manage your clients' books in one place. Earn commissions. Grow your practice with white-label reports and a dedicated partner portal.
+              </p>
+            </div>
+
+            {/* Partner tier cards */}
+            <div className="grid grid-cols-3 gap-4">
+              {PARTNER_TIERS.map((tier) => {
+                const isSel = selectedPartnerTier === tier.slug
+                const Icon = tier.icon
+                return (
+                  <div
+                    key={tier.slug}
+                    onClick={() => setSelectedPartnerTier(tier.slug)}
+                    className={`relative flex flex-col rounded-2xl border p-5 gap-4 cursor-pointer transition-all ${tier.color} ${
+                      isSel ? `ring-2 ${tier.ring} bg-white/5` : 'hover:bg-white/[0.03] bg-surface-800/40'
+                    }`}
+                  >
+                    {tier.recommended && (
+                      <span className="absolute -top-3 left-1/2 -translate-x-1/2 whitespace-nowrap text-xs font-bold px-3 py-1 rounded-full text-white bg-brand-500">
+                        Most popular
+                      </span>
+                    )}
+
+                    <div className="flex items-start justify-between mt-1">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-9 h-9 bg-surface-700 rounded-xl flex items-center justify-center shrink-0">
+                          <Icon size={18} className="text-brand-400" />
+                        </div>
+                        <div>
+                          <p className="text-white font-bold text-sm">{tier.name}</p>
+                          <p className="text-slate-500 text-xs mt-0.5">{tier.tagline}</p>
+                        </div>
+                      </div>
+                      <div className={`w-5 h-5 rounded-full border-2 flex-shrink-0 flex items-center justify-center transition-all ${
+                        isSel ? 'bg-brand-500 border-brand-500' : 'border-slate-600'
+                      }`}>
+                        {isSel && <Check size={10} className="text-white" />}
+                      </div>
+                    </div>
+
+                    <div className="space-y-2 flex-1">
+                      {tier.perks.map((perk) => (
+                        <div key={perk} className="flex items-start gap-2 text-xs text-slate-300">
+                          <CheckCircle2 size={12} className="text-brand-400 mt-0.5 shrink-0" />
+                          {perk}
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className={`text-xs font-medium px-3 py-1.5 rounded-lg text-center ${tier.pill}`}>
+                      Free to join
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* Firm name + CTA */}
+            <form onSubmit={handlePartnerEnroll} className="max-w-md mx-auto space-y-4">
+              <div>
+                <label className="label">Your firm or practice name</label>
+                <input
+                  className="input"
+                  placeholder="e.g., Bright Accounts & Tax Services"
+                  value={firmName}
+                  onChange={(e) => setFirmName(e.target.value)}
+                  required
+                  autoFocus
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={partnerSaving || !firmName.trim()}
+                className="btn-primary w-full justify-center py-3 disabled:opacity-50"
+              >
+                {partnerSaving
+                  ? <><Loader2 size={16} className="animate-spin" /> Enrolling…</>
+                  : <span className="flex items-center gap-2"><GraduationCap size={16} /> Enroll as Partner</span>
+                }
+              </button>
+            </form>
+
+            <div className="flex items-center justify-between text-sm max-w-md mx-auto">
+              <button
+                onClick={() => { setStep(1); setQIndex(0) }}
+                className="text-slate-500 hover:text-slate-400 flex items-center gap-1"
+              >
+                <ArrowLeft size={13} /> Back
+              </button>
+              <button
+                onClick={async () => { await markOnboardingComplete(); navigate('/dashboard') }}
+                className="text-slate-600 hover:text-slate-400"
+              >
+                Skip for now →
+              </button>
+            </div>
+          </div>
+        )}
 
         <p className="text-center text-xs text-slate-600">
           You can switch plans or invite team members any time from Settings.

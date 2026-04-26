@@ -108,6 +108,25 @@ export const offlineCache = {
       await db.clear(STORE)
     } catch { /* non-fatal */ }
   },
+
+  /**
+   * Delete all cache entries for the current org whose URL starts with urlPrefix.
+   * Call this after successful mutations so the next GET hits the network for fresh data.
+   */
+  async invalidatePrefix(urlPrefix: string): Promise<void> {
+    try {
+      const db = await getDB()
+      const orgPrefix = `${currentOrgId()}||`
+      const all = (await db.getAll(STORE)) as CacheEntry[]
+      const tx = db.transaction(STORE, 'readwrite')
+      for (const entry of all) {
+        if (!entry.key.startsWith(orgPrefix)) continue
+        const entryUrl = entry.key.slice(orgPrefix.length)
+        if (entryUrl.startsWith(urlPrefix)) tx.store.delete(entry.key)
+      }
+      await tx.done
+    } catch { /* non-fatal */ }
+  },
 }
 
 /** Human-readable "X minutes ago" / "X hours ago" string from a Unix-ms timestamp. */

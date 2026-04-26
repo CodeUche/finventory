@@ -78,12 +78,15 @@ export default function AppLayout() {
       })
       setMembership(data.role as string, perms)
     }).catch((err) => {
-      // Only lock down to viewer on a real auth/permission error (HTTP response present).
-      // Network failures (no response) should preserve the last-known membership so
-      // the app remains usable offline — the persisted role/permissions from localStorage
-      // are already in the store and correct.
+      // Only lock down to viewer on a real auth/permission error (HTTP response present)
+      // AND only if no role has been loaded yet. Preserving an existing role (e.g. 'owner')
+      // prevents a transient API error from stripping a user's access mid-session.
+      // Network failures keep the last-known role so the app stays usable offline.
       const isNetworkErr = !err?.response
-      if (!user?.is_superuser && !isNetworkErr) setMembership('viewer', {})
+      const currentRole = useAuthStore.getState().memberRole
+      if (!user?.is_superuser && !isNetworkErr && currentRole === null) {
+        setMembership('viewer', {})
+      }
     })
   }, [organisation?.id, setMembership])
 

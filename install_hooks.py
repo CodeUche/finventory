@@ -30,27 +30,35 @@ Push is BLOCKED if smoke tests fail.
 
 Skip once:  git push --no-verify
 \"\"\"
-import subprocess, sys, os
+import subprocess, sys, os, io
 from pathlib import Path
+
+# Force UTF-8 on Windows terminals (cp1252 cannot encode box-drawing/emoji chars).
+if hasattr(sys.stdout, 'buffer'):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+if hasattr(sys.stderr, 'buffer'):
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 ROOT  = Path(__file__).resolve().parents[2]   # finventory/
 SCRIPT = ROOT / "run_tests.py"
 
 if not SCRIPT.exists():
-    print("[pre-push] run_tests.py not found — skipping pre-push checks")
+    print("[pre-push] run_tests.py not found -- skipping pre-push checks")
     sys.exit(0)
 
-print("\\n[pre-push] Running smoke tests before push …\\n")
+print("\\n[pre-push] Running smoke tests before push ...\\n")
+env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
 result = subprocess.run(
     [sys.executable, str(SCRIPT), "--smoke", "--fail-fast"],
     cwd=str(ROOT),
+    env=env,
 )
 if result.returncode != 0:
-    print("\\n[pre-push] ❌ Smoke tests FAILED — push blocked.")
+    print("\\n[pre-push] FAILED -- Smoke tests failed, push blocked.")
     print("           Fix the failures, or run `git push --no-verify` to bypass.")
     sys.exit(1)
 
-print("\\n[pre-push] ✅ Smoke tests passed — proceeding with push.")
+print("\\n[pre-push] PASSED -- Smoke tests passed, proceeding with push.")
 sys.exit(0)
 """
 
@@ -68,7 +76,7 @@ def install():
     current = os.stat(hook_path).st_mode
     os.chmod(hook_path, current | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
-    print(f"✓ pre-push hook installed → {hook_path}")
+    print(f"[OK] pre-push hook installed -> {hook_path}")
     print("  Every `git push` will now run the smoke test suite first.")
     print("  To bypass once: git push --no-verify")
 
@@ -77,7 +85,7 @@ def remove():
     hook_path = HOOKS / "pre-push"
     if hook_path.exists():
         hook_path.unlink()
-        print(f"✓ pre-push hook removed from {hook_path}")
+        print(f"[OK] pre-push hook removed from {hook_path}")
     else:
         print("No hooks to remove.")
 
