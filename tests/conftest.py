@@ -11,9 +11,6 @@ Organisation: root-level conftest  →  run from backend/ directory
 import pytest
 from decimal import Decimal
 from datetime import date, timedelta
-from django.contrib.auth import get_user_model
-
-User = get_user_model()
 
 
 # ─── Users ────────────────────────────────────────────────────────────────────
@@ -21,6 +18,8 @@ User = get_user_model()
 @pytest.fixture
 def user(db):
     """A basic verified user (will become org owner)."""
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
     return User.objects.create_user(
         email="testuser@audity.test",
         password="StrongPass123!",
@@ -33,6 +32,8 @@ def user(db):
 @pytest.fixture
 def admin_user(db):
     """A second verified user (used for cross-org / permission tests)."""
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
     return User.objects.create_user(
         email="admin@audity.test",
         password="AdminPass123!",
@@ -45,6 +46,8 @@ def admin_user(db):
 @pytest.fixture
 def superuser(db):
     """A Django superuser (platform admin)."""
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
     return User.objects.create_superuser(
         email="super@audity.test",
         password="SuperPass123!",
@@ -57,6 +60,8 @@ def superuser(db):
 @pytest.fixture
 def other_user(db):
     """A third user belonging to a *different* organisation (isolation tests)."""
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
     return User.objects.create_user(
         email="other@audity.test",
         password="OtherPass123!",
@@ -70,24 +75,38 @@ def other_user(db):
 
 @pytest.fixture
 def organisation(db, user):
-    """A test organisation with the user as OWNER."""
+    """A test organisation with the user as OWNER and unrestricted plan access."""
     from apps.tenancy.services import OrganisationService
-    return OrganisationService.create_organisation(
+    org = OrganisationService.create_organisation(
         name="Test Liquor Distributors Ltd",
         owner=user,
         extra={"country": "NG", "currency": "NGN"},
     )
+    # Ensure the subscription plan allows all modules so plan_requires() gates
+    # never block tests — test suites verify feature logic, not plan gating.
+    sub = getattr(org, "subscription", None)
+    if sub and sub.plan:
+        from apps.subscriptions.models import Plan
+        sub.plan.features.pop("modules", None)
+        Plan.objects.filter(pk=sub.plan.pk).update(features=sub.plan.features)
+    return org
 
 
 @pytest.fixture
 def other_organisation(db, other_user):
     """A second organisation owned by other_user (for isolation tests)."""
     from apps.tenancy.services import OrganisationService
-    return OrganisationService.create_organisation(
+    org = OrganisationService.create_organisation(
         name="Other Business Ltd",
         owner=other_user,
         extra={"country": "NG", "currency": "NGN"},
     )
+    sub = getattr(org, "subscription", None)
+    if sub and sub.plan:
+        from apps.subscriptions.models import Plan
+        sub.plan.features.pop("modules", None)
+        Plan.objects.filter(pk=sub.plan.pk).update(features=sub.plan.features)
+    return org
 
 
 @pytest.fixture

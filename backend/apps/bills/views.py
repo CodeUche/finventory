@@ -151,10 +151,13 @@ class BillViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
         ser = RecordBillPaymentSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         d = ser.validated_data
-        payment = BillService.record_payment(
-            bill, d['amount'], d['payment_date'], d['method'],
-            d.get('reference', ''), d.get('notes', ''), request.user
-        )
+        try:
+            BillService.record_payment(
+                bill, d['amount'], d['payment_date'], d['method'],
+                d.get('reference', ''), d.get('notes', ''), request.user
+            )
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(BillSerializer(bill).data)
 
     @action(detail=True, methods=['post'])

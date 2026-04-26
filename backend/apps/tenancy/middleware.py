@@ -139,15 +139,33 @@ def resolve_organisation(request):
                 request.organisation = org
                 _sync_rls(org)
                 return org
-            # Membership check via raw SQL (RLS is now set to org_id above).
-            from django.db import connection as _conn
-            with _conn.cursor() as cur:
-                cur.execute(
-                    "SELECT 1 FROM tenancy_membership"
-                    " WHERE user_id = %s AND organisation_id = %s AND is_active = TRUE LIMIT 1",
-                    [str(request.user.pk), str(org.id)],
-                )
-                is_member = cur.fetchone() is not None
+            # Membership check.
+            # On PostgreSQL: raw SQL bypasses RLS for the check itself so we
+            # can verify membership even before RLS is fully set for the session.
+            # On other backends (SQLite in tests): UUIDs are stored as 32-char
+            # hex without hyphens, so str(uuid) would not match; use ORM which
+            # handles the UUID format conversion automatically.
+            from apps.core.middleware import _is_postgres
+            if _is_postgres():
+                try:
+                    from django.db import connection as _conn
+                    with _conn.cursor() as cur:
+                        cur.execute(
+                            "SELECT 1 FROM tenancy_membership"
+                            " WHERE user_id = %s AND organisation_id = %s AND is_active = TRUE LIMIT 1",
+                            [str(request.user.pk), str(org.id)],
+                        )
+                        is_member = cur.fetchone() is not None
+                except Exception:
+                    from apps.tenancy.models import Membership
+                    is_member = Membership.objects.filter(
+                        user=request.user, organisation=org, is_active=True
+                    ).exists()
+            else:
+                from apps.tenancy.models import Membership
+                is_member = Membership.objects.filter(
+                    user=request.user, organisation=org, is_active=True
+                ).exists()
             if is_member:
                 request.organisation = org
                 _sync_rls(org)

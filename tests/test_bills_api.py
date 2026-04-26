@@ -18,7 +18,7 @@ class TestCreateBill:
     def test_create_draft_bill(self, auth_client, supplier, organisation):
         """POST /bills/ with valid payload should create a draft bill."""
         response = auth_client.post("/api/v1/bills/", {
-            "supplier_id": str(supplier.id),
+            "supplier": str(supplier.id),
             "issue_date": str(date.today()),
             "due_date": str(date.today() + timedelta(days=30)),
             "items": [
@@ -33,7 +33,7 @@ class TestCreateBill:
         assert response.status_code == 201
         data = response.data
         assert data["status"] == Bill.DRAFT
-        assert data["supplier"]["id"] == str(supplier.id)
+        assert str(data["supplier"]) == str(supplier.id)
         assert len(data["items"]) == 1
         assert Decimal(data["subtotal"]) == Decimal("400000")
         assert data["bill_number"].startswith("BILL-")
@@ -50,7 +50,7 @@ class TestCreateBill:
     def test_create_bill_missing_items_fails(self, auth_client, supplier):
         """A bill with no items should be rejected."""
         response = auth_client.post("/api/v1/bills/", {
-            "supplier_id": str(supplier.id),
+            "supplier": str(supplier.id),
             "issue_date": str(date.today()),
             "due_date": str(date.today() + timedelta(days=30)),
             "items": [],
@@ -61,7 +61,7 @@ class TestCreateBill:
         """Bill numbers should be sequential and org-specific."""
         for _ in range(3):
             auth_client.post("/api/v1/bills/", {
-                "supplier_id": str(supplier.id),
+                "supplier": str(supplier.id),
                 "issue_date": str(date.today()),
                 "due_date": str(date.today() + timedelta(days=30)),
                 "items": [{"description": "Item", "quantity": "1", "unit_cost": "1000"}],

@@ -83,7 +83,17 @@ def _looks_like_uuid(value: str) -> bool:
     ))
 
 
+def _is_postgres() -> bool:
+    return connection.vendor == "postgresql"
+
+
 def _set_org(org_id: str) -> None:
+    # set_config() is PostgreSQL-specific.  Calling it on SQLite (e.g. in
+    # tests) raises OperationalError which Django's CursorWrapper promotes to
+    # connection.needs_rollback=True inside an atomic() block, poisoning the
+    # entire test transaction.  Skip silently on non-Postgres backends.
+    if not _is_postgres():
+        return
     try:
         with connection.cursor() as cursor:
             # Use SET (session-level) so it survives across statements even
@@ -105,6 +115,8 @@ def _set_user(user_id: str) -> None:
     user PK ensures the DB-level user identity always matches the Django
     session identity.
     """
+    if not _is_postgres():
+        return
     try:
         with connection.cursor() as cursor:
             cursor.execute("SELECT set_config('app.current_user_id', %s, FALSE)", [str(user_id)])
