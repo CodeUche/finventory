@@ -88,6 +88,7 @@ class OrganisationViewSet(viewsets.ModelViewSet):
         # The raw SQL still goes through RLS but the SENTINEL branch fires
         # correctly because _set_user() was called above.
         from django.db import connection as _conn
+        user_org_ids = []
         try:
             with _conn.cursor() as cur:
                 cur.execute(
@@ -97,7 +98,13 @@ class OrganisationViewSet(viewsets.ModelViewSet):
                 )
                 user_org_ids = [str(row[0]) for row in cur.fetchall()]
         except Exception:
-            # Fallback to ORM if raw SQL fails (e.g. SQLite in tests)
+            pass
+
+        if not user_org_ids:
+            # Raw SQL returned empty — either an exception occurred, or RLS
+            # silently blocked the rows (app.current_org_id not set yet at
+            # query time). Fall back to the ORM which uses Django's own
+            # database connection and is not subject to the same RLS gate.
             user_org_ids = list(
                 self.request.user.memberships
                 .filter(is_active=True)
