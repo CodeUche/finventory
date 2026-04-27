@@ -107,7 +107,13 @@ export default function LoginPage() {
 
     const onboardingDone = user.is_superuser || (firstOrg?.onboarding_completed === true)
     toast.success(onboardingDone ? 'Welcome back!' : 'Signed in! Let\'s finish setting up your account.')
-    navigate(onboardingDone ? '/dashboard' : '/onboarding')
+    // Superusers with no org memberships land on the platform admin page — they have
+    // no personal org context and would get "organisation ID" errors on all tenant APIs.
+    if (user.is_superuser && !firstOrg) {
+      navigate('/platform-admin')
+    } else {
+      navigate(onboardingDone ? '/dashboard' : '/onboarding')
+    }
   }
 
   const handleMFASubmit = async (e: React.FormEvent) => {

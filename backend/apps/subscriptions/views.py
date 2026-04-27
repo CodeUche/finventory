@@ -282,18 +282,36 @@ class SubscriptionViewSet(viewsets.GenericViewSet):
         except ValueError:
             return Response({"status": "pending"})
 
-    @action(detail=False, methods=["post"], url_path="start-trial")
+    @action(detail=False, methods=["post"], url_path="start-trial",
+            permission_classes=[IsAuthenticated])
     def start_trial(self, request):
         """
         POST /api/v1/subscriptions/start-trial/
         Body: { "plan_id": "<uuid>" }
 
         Start a 14-day free trial on the chosen paid plan.
-        Only allowed once — if already trialing/active on a paid plan, returns 400.
+        Permission is relaxed to IsAuthenticated (not IsOwnerOrAdmin) because this
+        endpoint is called during onboarding when the Tauri client may drop the
+        X-Organisation-ID header. We fall back to the user's first active membership.
         """
         plan_id = request.data.get("plan_id")
         if not plan_id:
             return Response({"error": "plan_id is required."}, status=400)
+
+        # Resolve org: use request.organisation if the middleware set it,
+        # otherwise fall back to the user's first active membership org.
+        org = getattr(request, "organisation", None)
+        if org is None:
+            membership = (
+                request.user.memberships
+                .filter(is_active=True)
+                .select_related("organisation")
+                .first()
+            )
+            if membership:
+                org = membership.organisation
+        if org is None:
+            return Response({"error": "No organisation context found."}, status=400)
 
         try:
             plan = Plan.objects.get(id=plan_id, is_active=True)
@@ -302,10 +320,10 @@ class SubscriptionViewSet(viewsets.GenericViewSet):
 
         # Free plan (price=0): activate with no expiry instead of starting a trial
         if float(plan.price) == 0:
-            sub = SubscriptionService.activate_free_plan(request.organisation)
+            sub = SubscriptionService.activate_free_plan(org)
             return Response(SubscriptionSerializer(sub).data, status=status.HTTP_200_OK)
 
-        sub = SubscriptionService.start_trial_for_plan(request.organisation, plan)
+        sub = SubscriptionService.start_trial_for_plan(org, plan)
         return Response(SubscriptionSerializer(sub).data, status=status.HTTP_201_CREATED)
 
     @action(

@@ -62,15 +62,27 @@ export default function AppLayout() {
       // Re-select the previously active org if we still have access to it,
       // otherwise fall back to the first org in the list.
       const fresh = orgs.find((o: any) => o.id === organisation?.id) ?? orgs[0]
-      setOrganisation(fresh)
+      // Never downgrade onboarding_completed from true to false — the backend may
+      // not have persisted the flag yet (race with markOnboardingComplete), and
+      // overwriting with false would immediately kick the user back to /onboarding.
+      const merged = (organisation?.onboarding_completed && !fresh.onboarding_completed)
+        ? { ...fresh, onboarding_completed: true }
+        : fresh
+      setOrganisation(merged)
       api.defaults.headers.common['X-Organisation-ID'] = fresh.id
     }).catch(() => { /* non-fatal — use persisted org if available */ })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id])
 
-  // Load the current user's role + module permissions from the API
+  // Load the current user's role + module permissions from the API.
+  // Superusers get owner-level access without an API call — they may not have a
+  // membership in the currently selected org (which could belong to another user).
   useEffect(() => {
     if (!organisation?.id) return
+    if (user?.is_superuser) {
+      setMembership('owner', {})
+      return
+    }
     orgApi.myMembership(organisation.id).then(({ data }) => {
       const perms: Partial<Record<ModuleKey, AccessLevel>> = {}
       ;(data.module_permissions as ModulePermission[]).forEach((p) => {

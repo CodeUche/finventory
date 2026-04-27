@@ -383,21 +383,26 @@ export default function OnboardingPage() {
   const handleSelectAndPay = async (plan: Plan) => {
     setSelectedPlan(plan)
     setInitiatingPay(true)
+    let trialStarted = false
     try {
       await subscriptionApi.startTrial(plan.id)
-      await markOnboardingComplete()
-      if (plan.is_free) {
-        toast.success('Welcome to Audity! No card needed.')
-      } else {
-        toast.success(`${plan.name} trial started — 14 days free!`)
-      }
-      navigate('/dashboard')
+      trialStarted = true
     } catch (err: any) {
-      const msg = err?.response?.data?.error?.message ?? err?.response?.data?.error ?? 'Could not start. Please try again.'
-      toast.error(typeof msg === 'string' ? msg : 'Could not start. Please try again.')
-    } finally {
-      setInitiatingPay(false)
+      // Trial start failure is non-fatal — the user can select a plan from Settings later.
+      // We still mark onboarding complete so they aren't stuck in this loop forever.
+      const msg = err?.response?.data?.error?.message ?? err?.response?.data?.error ?? null
+      if (msg && typeof msg === 'string') toast.error(msg)
     }
+    // Always mark onboarding complete regardless of whether trial start succeeded.
+    // This is the only call that breaks the onboarding loop.
+    await markOnboardingComplete()
+    if (trialStarted) {
+      toast.success(plan.is_free ? 'Welcome to Audity! No card needed.' : `${plan.name} trial started — 14 days free!`)
+    } else if (!trialStarted) {
+      toast.success('Welcome to Audity! Set up your plan from Settings any time.')
+    }
+    navigate('/dashboard')
+    setInitiatingPay(false)
   }
 
   // ── Partner enrollment ───────────────────────────────────────────────────────
