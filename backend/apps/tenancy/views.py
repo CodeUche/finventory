@@ -79,38 +79,45 @@ class OrganisationViewSet(viewsets.ModelViewSet):
         except Exception:
             pass
 
+        # Pre-seed app.current_org_id from the raw request header/param BEFORE any
+        # membership or org query.  RLS policies on tenancy_membership and
+        # tenancy_organisation check this session variable; leaving it at the
+        # SENTINEL value blocks all reads even after _set_user() is called.
+        raw_org_id = getattr(self.request, '_raw_org_id', None)
+        if raw_org_id:
+            try:
+                from apps.core.middleware import _set_org
+                _set_org(str(raw_org_id))
+            except Exception:
+                pass
+
         if self.request.user.is_superuser:
             return Organisation.objects.filter(is_active=True)
 
-        # Use raw SQL to read membership IDs — this avoids Django ORM adding
-        # its own WHERE filters before RLS has been fully set up, which could
-        # cause an empty result when FORCE RLS + SENTINEL is active.
-        # The raw SQL still goes through RLS but the SENTINEL branch fires
-        # correctly because _set_user() was called above.
-        from django.db import connection as _conn
-        user_org_ids = []
-        try:
-            with _conn.cursor() as cur:
-                cur.execute(
-                    "SELECT organisation_id FROM tenancy_membership"
-                    " WHERE user_id = %s AND is_active = TRUE",
-                    [str(self.request.user.pk)],
-                )
-                user_org_ids = [str(row[0]) for row in cur.fetchall()]
-        except Exception:
-            pass
+        # Prefer ORM over raw SQL here — the ORM runs through Django's connection
+        # which respects the set_config() calls above, and avoids UUID hex-format
+        # mismatches that can cause raw SQL to return empty rows on some backends.
+        user_org_ids = list(
+            self.request.user.memberships
+            .filter(is_active=True)
+            .values_list("organisation_id", flat=True)
+        )
+        user_org_ids = [str(i) for i in user_org_ids]
 
+        # Raw SQL fallback only if ORM returned nothing (e.g. RLS shadow on ORM
+        # path).  Raw SQL with explicit user_id bypasses the RLS SENTINEL.
         if not user_org_ids:
-            # Raw SQL returned empty — either an exception occurred, or RLS
-            # silently blocked the rows (app.current_org_id not set yet at
-            # query time). Fall back to the ORM which uses Django's own
-            # database connection and is not subject to the same RLS gate.
-            user_org_ids = list(
-                self.request.user.memberships
-                .filter(is_active=True)
-                .values_list("organisation_id", flat=True)
-            )
-            user_org_ids = [str(i) for i in user_org_ids]
+            from django.db import connection as _conn
+            try:
+                with _conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT organisation_id FROM tenancy_membership"
+                        " WHERE user_id = %s AND is_active = TRUE",
+                        [str(self.request.user.pk)],
+                    )
+                    user_org_ids = [str(row[0]) for row in cur.fetchall()]
+            except Exception:
+                pass
 
         if user_org_ids:
             try:

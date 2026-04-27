@@ -698,15 +698,15 @@ api.interceptors.response.use(
     if (status === 500 && !isAuthUrl) {
       const msg = (typeof errData === 'string' ? errData : errData?.message) ?? 'Server error (500)'
       toast.error(`Server error: ${msg}`, { id: `500-${original.url}`, duration: 8000 })
-    } else if (status === 403 && !isAuthUrl && !window.location.pathname.startsWith('/onboarding')) {
+    } else if (
+      status === 403 && !isAuthUrl &&
+      !window.location.pathname.startsWith('/onboarding') &&
+      !window.location.pathname.startsWith('/platform-admin')
+    ) {
       const forbiddenMsg = (typeof errData === 'string' ? errData : errData?.message)
         ?? (error.response?.data as any)?.detail
-        ?? 'Access denied (403)'
-      const diagOrgId = getStoredOrgId()
-      const diagMsg = diagOrgId
-        ? `${forbiddenMsg} [org=${diagOrgId.slice(0, 8)}]`
-        : `${forbiddenMsg} [org=NULL — org not in store!]`
-      toast.error(diagMsg, { id: `403-${original.url}`, duration: 10000 })
+        ?? 'Access denied'
+      toast.error(forbiddenMsg, { id: `403-${original.url}`, duration: 6000 })
     } else if (errData?.message && status !== 401 && !isAuthUrl) {
       const toastId = `api-err-${status}-${original.url}`
       toast.error(errData.message, { id: toastId, duration: 4000 })
