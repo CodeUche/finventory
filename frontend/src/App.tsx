@@ -95,8 +95,11 @@ function ErrorBoundary({ children }: { children: React.ReactNode }) {
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, user, organisation } = useAuthStore()
   if (!isAuthenticated) return <Navigate to="/login" replace />
-  // Block access until onboarding is complete (superusers bypass)
-  const onboardingDone = user?.is_superuser || user?.is_sub_account || organisation?.onboarding_completed === true
+  // Block access until onboarding is complete (superusers and sub-accounts bypass).
+  // Use !!organisation?.id rather than onboarding_completed because existing orgs
+  // created before the onboarding flow was added have onboarding_completed=false
+  // by default, which would incorrectly redirect them to onboarding on every login.
+  const onboardingDone = user?.is_superuser || user?.is_sub_account || !!organisation?.id
   if (!onboardingDone) return <Navigate to="/onboarding" replace />
   return <>{children}</>
 }

@@ -130,7 +130,7 @@ class PlatformStatsView(APIView):
                 'owner_email': org.owner.email if org.owner else None,
                 'currency': org.currency,
                 'country': org.country,
-                'plan': org.subscription.plan.name if org.subscription else 'None',
+                'plan': (org.subscription.plan.name if org.subscription and org.subscription.plan else 'None'),
                 'sub_status': org.subscription.status if org.subscription else 'none',
                 'member_count': org.member_count or 0,
                 'invoice_count': org.invoice_count or 0,

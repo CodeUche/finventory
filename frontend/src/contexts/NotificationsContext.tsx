@@ -106,6 +106,7 @@ function saveDismissed(ids: Set<string>) {
 
 export function NotificationsProvider({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
+  const organisationId = useAuthStore((s) => s.organisation?.id)
   const [alerts, setAlerts] = useState<StockAlert[]>([])
   const [overdueAlerts, setOverdueAlerts] = useState<OverdueAlert[]>([])
   const [expiryAlerts, setExpiryAlerts] = useState<ExpiryAlert[]>([])
@@ -121,7 +122,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
   const in7Days = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0]
 
   const poll = useCallback(async () => {
-    if (!isAuthenticated) return
+    if (!isAuthenticated || !organisationId) return
     try {
       const [stockData, overdueData, batchData, billDueData, payrollData, customerDueData] = await Promise.allSettled([
         inventoryApi.lowStock({ page_size: 20 }),
@@ -266,7 +267,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
   }, [isAuthenticated])
 
   useEffect(() => {
-    if (!isAuthenticated) return
+    if (!isAuthenticated || !organisationId) return
     poll()
     // Poll every 5 minutes — notification data (low stock, overdue invoices,
     // expiring batches) changes slowly. 30s was 6 API calls/30s = 720/hour.
@@ -289,7 +290,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       if (intervalId) clearInterval(intervalId)
       document.removeEventListener('visibilitychange', onVisibilityChange)
     }
-  }, [isAuthenticated, poll])
+  }, [isAuthenticated, organisationId, poll])
 
   const addDismissed = useCallback((id: string) => {
     dismissedRef.current.add(id)
