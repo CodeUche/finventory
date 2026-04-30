@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
-import { Plus, Receipt, Search, X, Loader2, CheckCircle, Ban, FileDown, Mail, MessageCircle, RotateCcw, Truck, Pencil, Trash2, CalendarClock } from 'lucide-react'
+import { Plus, Receipt, Search, X, Loader2, CheckCircle, Ban, FileDown, Mail, MessageCircle, RotateCcw, Truck, Pencil, Trash2, CalendarClock, RefreshCw } from 'lucide-react'
 import SortSelect from '@/components/SortSelect'
 import YearFilter, { yearToDateParams } from '@/components/YearFilter'
 import ExportButton from '@/components/ExportButton'
@@ -822,9 +822,14 @@ export default function SalesPage() {
           <h1 className="text-2xl font-bold text-white">Sales & Invoices</h1>
           <p className="text-slate-400 text-sm">{invoices.length} invoices</p>
         </div>
-        <Link to="/sales/new" className="btn-primary sm:ml-auto">
-          <Plus size={16} /> New Sale
-        </Link>
+        <div className="flex items-center gap-2 sm:ml-auto">
+          <button onClick={load} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
+            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+          </button>
+          <Link to="/sales/new" className="btn-primary">
+            <Plus size={16} /> New Sale
+          </Link>
+        </div>
       </div>
 
       <div className="flex flex-col sm:flex-row gap-3">

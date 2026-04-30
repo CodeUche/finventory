@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import {
   Plus, X, UsersRound, Loader2, Search, Edit2, ChevronDown, CheckCircle2,
-  AlertTriangle, CreditCard, Trash2, Ban, FileText, Upload, Eye, Download, Mail,
+  AlertTriangle, CreditCard, Trash2, Ban, FileText, Upload, Eye, Download, Mail, RefreshCw,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { payrollApi } from '@/services/api'
@@ -439,9 +439,14 @@ export default function EmployeesPage() {
           <h1 className="text-2xl font-bold text-white">Employees</h1>
           <p className="text-slate-400 text-sm">{totalEmployees} total employees</p>
         </div>
-        <button className="btn-primary sm:ml-auto" onClick={openCreate}>
-          <Plus size={16} /> Add Employee
-        </button>
+        <div className="flex items-center gap-2 sm:ml-auto">
+          <button onClick={load} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
+            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+          </button>
+          <button className="btn-primary" onClick={openCreate}>
+            <Plus size={16} /> Add Employee
+          </button>
+        </div>
       </div>
 
       {/* Summary */}

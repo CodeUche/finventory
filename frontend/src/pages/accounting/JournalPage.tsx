@@ -1,5 +1,5 @@
 import { useEffect, useState, Fragment } from 'react'
-import { Plus, X, BookMarked, Loader2, ChevronDown, ChevronUp, Trash2, Edit2, RotateCcw } from 'lucide-react'
+import { Plus, X, BookMarked, Loader2, ChevronDown, ChevronUp, Trash2, Edit2, RotateCcw, RefreshCw } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { accountingApi } from '@/services/api'
 import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
@@ -169,9 +169,14 @@ export default function JournalPage() {
           <h1 className="text-2xl font-bold text-white">Journal Entries</h1>
           <p className="text-slate-400 text-sm">{entries.length} entries</p>
         </div>
-        <button className="btn-primary sm:ml-auto" onClick={openCreate}>
-          <Plus size={16} /> New Journal Entry
-        </button>
+        <div className="flex items-center gap-2 sm:ml-auto">
+          <button onClick={load} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
+            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+          </button>
+          <button className="btn-primary" onClick={openCreate}>
+            <Plus size={16} /> New Journal Entry
+          </button>
+        </div>
       </div>
 
       {/* Info banner */}

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
-import { Plus, Search, Package, AlertTriangle, X, Pencil, Loader2, TrendingUp, TrendingDown, History, Maximize2, Minimize2, ShieldCheck, FileDown, Table2, ArrowDownCircle } from 'lucide-react'
+import { useModuleAccess } from '@/hooks/useModuleAccess'
+import { Plus, Search, Package, AlertTriangle, X, Pencil, Loader2, TrendingUp, TrendingDown, History, Maximize2, Minimize2, ShieldCheck, FileDown, Table2, ArrowDownCircle, Trash2, RefreshCw } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { inventoryApi, taxApi, salesApi } from '@/services/api'
 import { formatCurrency, formatAmountInput, stripCommas, formatDate } from '@/lib/utils'
@@ -131,6 +132,7 @@ const UNITS_OF_MEASURE = [
 
 export default function ProductsPage() {
   const { user, memberRole, planModules, organisation } = useAuthStore()
+  const { canEdit } = useModuleAccess('inventory')
   const isOwner = memberRole === 'owner' || memberRole === 'admin' || user?.is_superuser === true
   // Owner-only features (cost price, owner column) hidden on Starter — single-user plan doesn't need them
   const showOwnerFeatures = isOwner && (planModules === null || planModules.includes('owner_analytics'))
@@ -151,6 +153,8 @@ export default function ProductsPage() {
   const [historyFullscreen, setHistoryFullscreen] = useState(false)
   const [batchForm, setBatchForm] = useState({ ...BLANK_BATCH })
   const [warehouses, setWarehouses] = useState<{ id: string; name: string }[]>([])
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
 
   const fetchProducts = async () => {
     try {
@@ -301,6 +305,26 @@ export default function ProductsPage() {
     }
   }
 
+  const handleRefresh = async () => {
+    setRefreshing(true)
+    await fetchProducts()
+    setRefreshing(false)
+  }
+
+  const handleDelete = async (p: Product) => {
+    if (!confirm(`Delete "${p.name}"? This cannot be undone.`)) return
+    setDeletingId(p.id)
+    try {
+      await inventoryApi.deleteProduct(p.id)
+      toast.success('Product deleted')
+      fetchProducts()
+    } catch {
+      toast.error('Failed to delete product')
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
   const openHistory = async (p: Product) => {
     setHistoryProduct(p)
     setHistoryItems([])
@@ -325,9 +349,14 @@ export default function ProductsPage() {
           <h1 className="text-2xl font-bold text-white">Products</h1>
           <p className="text-slate-400 text-sm">{products.length} SKUs in catalogue</p>
         </div>
-        <button onClick={openCreate} className="btn-primary sm:ml-auto">
-          <Plus size={16} /> Add Product
-        </button>
+        <div className="flex items-center gap-2 sm:ml-auto">
+          <button onClick={handleRefresh} disabled={refreshing} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
+            <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
+          </button>
+          <button onClick={openCreate} className="btn-primary">
+            <Plus size={16} /> Add Product
+          </button>
+        </div>
       </div>
 
       <div className="flex items-center gap-3 flex-wrap">
@@ -446,6 +475,16 @@ export default function ProductsPage() {
                         <button onClick={() => openHistory(p)} className="btn-ghost p-1.5 text-slate-400 hover:text-brand-400" title="Sales History">
                           <History size={14} />
                         </button>
+                        {canEdit && (
+                          <button
+                            onClick={() => handleDelete(p)}
+                            disabled={deletingId === p.id}
+                            className="btn-ghost p-1.5 text-slate-400 hover:text-red-400"
+                            title="Delete product"
+                          >
+                            {deletingId === p.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>

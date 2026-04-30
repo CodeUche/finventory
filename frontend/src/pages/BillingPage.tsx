@@ -231,7 +231,7 @@ export default function BillingPage() {
         <div className="card flex flex-col sm:flex-row sm:items-center gap-4">
           <div className="flex-1 space-y-1">
             <div className="flex items-center gap-2">
-              <span className="text-white font-semibold text-lg">{subscription.plan.name} Plan</span>
+              <span className="text-white font-semibold text-lg">{subscription.plan?.name ?? 'Current'} Plan</span>
               <span className={`text-xs font-medium px-2 py-0.5 rounded-full capitalize ${STATUS_COLORS[subscription.status] ?? 'text-slate-400 bg-slate-400/10'}`}>
                 {subscription.status.replace('_', ' ')}
               </span>
@@ -301,7 +301,7 @@ export default function BillingPage() {
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
           {plans.filter((p) => {
-            if (!FEATURES.PARTNER_CHANNEL && p.slug.startsWith('partner-')) return false
+            if (p.slug.startsWith('partner-')) return false
             const isFree = parseFloat(p.price) === 0
             if (isFree) return billingInterval === 'monthly'  // free only in monthly view
             return p.interval === billingInterval
@@ -544,6 +544,7 @@ function PartnerChannelSection({
   subscribing: string | null
 }) {
   const [open, setOpen] = useState(true)
+  const [partnerInterval, setPartnerInterval] = useState<'monthly' | 'annual'>('monthly')
 
   const partnerPlanBySlug = (slug: string) => plans.find((p) => p.slug === slug)
 
@@ -570,27 +571,25 @@ function PartnerChannelSection({
 
       {open && (
         <div className="space-y-6">
-          {/* 5-layer revenue model explainer */}
-          <div className="card bg-purple-500/5 border-purple-500/20 space-y-3">
-            <p className="text-sm font-semibold text-purple-300 flex items-center gap-2">
-              <Layers size={14} /> 5-Layer Revenue Model
-            </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs">
-              {[
-                { n: '1', label: 'Partner Licence Fee', desc: 'Your monthly plan price' },
-                { n: '2', label: 'Per-Client Seat', desc: 'Each SMB org has its own subscription' },
-                { n: '3', label: 'Volume Tiers', desc: 'More clients = higher tier = higher licence fee' },
-                { n: '4', label: 'Referral Commission', desc: 'Earn % of each client\'s subscription' },
-                { n: '5', label: 'Premium Tools Upsell', desc: 'White-label, consolidated reports, SLA support' },
-              ].map(({ n, label, desc }) => (
-                <div key={n} className="flex items-start gap-2 p-2 rounded-lg bg-surface-800/60">
-                  <span className="w-5 h-5 rounded-full bg-purple-500/20 text-purple-300 text-[10px] font-bold flex items-center justify-center shrink-0 mt-0.5">{n}</span>
-                  <div>
-                    <p className="text-white font-medium">{label}</p>
-                    <p className="text-slate-400">{desc}</p>
-                  </div>
-                </div>
-              ))}
+          {/* Monthly / Annual toggle */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className="text-xs text-slate-400">Billing interval:</span>
+            <div className="flex items-center gap-1 bg-surface-800 border border-surface-700 rounded-xl p-1">
+              <button
+                onClick={() => setPartnerInterval('monthly')}
+                className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-colors ${partnerInterval === 'monthly' ? 'bg-purple-500 text-white' : 'text-slate-400 hover:text-white'}`}
+              >
+                Monthly
+              </button>
+              <button
+                onClick={() => setPartnerInterval('annual')}
+                className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold transition-colors ${partnerInterval === 'annual' ? 'bg-purple-500 text-white' : 'text-slate-400 hover:text-white'}`}
+              >
+                Annual
+                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${partnerInterval === 'annual' ? 'bg-white/20 text-white' : 'bg-green-500/20 text-green-400'}`}>
+                  1 month free
+                </span>
+              </button>
             </div>
           </div>
 
@@ -601,6 +600,8 @@ function PartnerChannelSection({
               const isCurrent = tier.slug === currentPlanSlug
               const colors = PARTNER_COLOR[tier.slug]
               const isSubscribing = plan && subscribing === plan.id
+              const displayPrice = partnerInterval === 'annual' ? tier.price * 11 : tier.price
+              const isAnnual = partnerInterval === 'annual'
 
               return (
                 <div key={tier.slug} className={`card relative flex flex-col gap-4 ${colors.border}`}>
@@ -626,8 +627,13 @@ function PartnerChannelSection({
                   </div>
 
                   <div>
-                    <span className="text-3xl font-bold text-white">₦{tier.price.toLocaleString()}</span>
-                    <span className="text-slate-400 text-sm">/month</span>
+                    <span className="text-3xl font-bold text-white">₦{displayPrice.toLocaleString()}</span>
+                    <span className="text-slate-400 text-sm">/{isAnnual ? 'year' : 'month'}</span>
+                    {isAnnual && (
+                      <p className="text-xs text-green-400 mt-0.5">
+                        ₦{Math.round(displayPrice / 12).toLocaleString()}/mo · save ₦{tier.price.toLocaleString()}
+                      </p>
+                    )}
                   </div>
 
                   {/* Tiles row */}
@@ -670,7 +676,7 @@ function PartnerChannelSection({
                     ) : isCurrent ? (
                       <><CheckCircle size={14} /> Current plan</>
                     ) : (
-                      <><ExternalLink size={14} /> Subscribe — ₦{tier.price.toLocaleString()}/mo</>
+                      <><ExternalLink size={14} /> Subscribe — ₦{displayPrice.toLocaleString()}/{isAnnual ? 'yr' : 'mo'}</>
                     )}
                   </button>
                 </div>

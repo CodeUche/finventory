@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
-import { Plus, X, Receipt, Loader2, Search, Trash2, Edit2, Folder } from 'lucide-react'
+import { Plus, X, Receipt, Loader2, Search, Trash2, Edit2, Folder, RefreshCw } from 'lucide-react'
 import { Link, useSearchParams } from 'react-router-dom'
 import SortSelect from '@/components/SortSelect'
 import YearFilter, { yearToDateParams } from '@/components/YearFilter'
@@ -290,6 +290,9 @@ export default function BillsPage() {
           <p className="text-slate-400 text-sm">{bills.length} total bills</p>
         </div>
         <div className="flex items-center gap-2 sm:ml-auto">
+          <button onClick={load} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
+            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+          </button>
           <Link to="/bills/folders" className="btn-secondary flex items-center gap-2">
             <Folder size={15} /> Folders
           </Link>

@@ -511,6 +511,14 @@ export default function PayrollPage() {
           <h1 className="text-2xl font-bold text-white">Payroll</h1>
           <p className="text-slate-400 text-sm">Compute salaries, approve, and disburse — all in one flow</p>
         </div>
+        <button
+          onClick={() => { loadRuns(); loadEmployees(); }}
+          disabled={loadingRuns}
+          className="btn-ghost p-2 text-slate-400 hover:text-white"
+          title="Refresh"
+        >
+          <RefreshCw size={16} className={loadingRuns ? 'animate-spin' : ''} />
+        </button>
       </div>
 
       {/* Page tabs */}

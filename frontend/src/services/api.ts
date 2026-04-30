@@ -605,9 +605,8 @@ api.interceptors.response.use(
       }
 
       // Show a single diagnostic toast so the user can see the failure reason
-      const netUrl = original.url ?? ''
       toast.error(`Connection failed: ${error.message ?? 'Network error'}`, {
-        id: `net-err-${netUrl}`,
+        id: 'offline-network-err',
         duration: 6000,
       })
       _signalOffline()
@@ -835,6 +834,7 @@ export const inventoryApi = {
   product: (id: string) => api.get(`/inventory/products/${id}/`),
   createProduct: (data: object) => api.post('/inventory/products/', data),
   updateProduct: (id: string, data: object) => api.patch(`/inventory/products/${id}/`, data),
+  deleteProduct: (id: string) => api.delete(`/inventory/products/${id}/`),
   stock: (params?: object) => api.get('/inventory/stock/', { params }),
   lowStock: (params?: object) => api.get('/inventory/products/low-stock/', { params }),
   valuation: () => api.get('/inventory/products/valuation/'),

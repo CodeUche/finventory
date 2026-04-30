@@ -460,6 +460,9 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
           <p className="text-slate-400 text-sm">{customers.length} customer{customers.length !== 1 ? 's' : ''}</p>
         </div>
         <div className="sm:ml-auto flex items-center gap-2">
+          <button onClick={load} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
+            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+          </button>
           <ExportButton endpoint="/customers/" filename="customers" />
           <button className="btn-primary" onClick={() => setShowModal(true)}>
             <Plus size={16} /> New Customer

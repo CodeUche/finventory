@@ -3,7 +3,7 @@ import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { useSearchParams } from 'react-router-dom'
 import {
   ArrowDownCircle, ArrowUpCircle, Plus, Search, X, Pencil, Loader2, Layers,
-  Folder, FolderOpen, FolderPlus, ChevronRight, ChevronDown, Home, Trash2, Edit2,
+  Folder, FolderOpen, FolderPlus, ChevronRight, ChevronDown, Home, Trash2, Edit2, RefreshCw,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { expenseApi, budgetApi, salesApi } from '@/services/api'
@@ -357,6 +357,9 @@ export default function ExpensesPage() {
           <p className="text-slate-400 text-sm">{activeTab === 'entries' ? `${expenses.length} entries` : 'Organise by folder'}</p>
         </div>
         <div className="sm:ml-auto flex items-center gap-2">
+          <button onClick={loadExpenses} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
+            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+          </button>
           {activeTab === 'entries' && (
             <button className="btn-primary" onClick={() => setShowModal(true)}>
               <Plus size={16} /> Add Entry

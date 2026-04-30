@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Plus, X, PieChart, Loader2, ChevronDown, ChevronUp, HelpCircle } from 'lucide-react'
+import { Plus, X, PieChart, Loader2, ChevronDown, ChevronUp, HelpCircle, RefreshCw } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { budgetApi } from '@/services/api'
 import { formatCurrency, formatAmountInput, stripCommas } from '@/lib/utils'
@@ -129,9 +129,14 @@ export default function BudgetPage() {
           <h1 className="text-2xl font-bold text-white">Budgets</h1>
           <p className="text-slate-400 text-sm">{budgets.length} budgets</p>
         </div>
-        <button className="btn-primary sm:ml-auto" onClick={() => setShowBudgetModal(true)}>
-          <Plus size={16} /> New Budget
-        </button>
+        <div className="flex items-center gap-2 sm:ml-auto">
+          <button onClick={load} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
+            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+          </button>
+          <button className="btn-primary" onClick={() => setShowBudgetModal(true)}>
+            <Plus size={16} /> New Budget
+          </button>
+        </div>
       </div>
 
       {/* What is variance? help card */}
