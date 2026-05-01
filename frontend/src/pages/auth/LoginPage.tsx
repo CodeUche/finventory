@@ -65,13 +65,24 @@ export default function LoginPage() {
     }
 
     // Fetch orgs with org context already set (both header and ?org= param).
-    // Passing ?org= explicitly covers Tauri reqwest builds that can silently
-    // drop custom headers on some platforms.
+    // Pass Authorization + X-Organisation-ID explicitly on this request —
+    // setAuth() hasn't run yet so Zustand tokens are empty; relying on
+    // api.defaults alone risks AxiosHeaders.toJSON silently dropping them.
     const orgsRes = await api.get('/tenancy/organisations/', {
+      headers: {
+        Authorization: `Bearer ${tokens.access}`,
+        ...(bootstrapOrgId ? { 'X-Organisation-ID': bootstrapOrgId } : {}),
+      },
       params: bootstrapOrgId ? { org: bootstrapOrgId } : {},
     })
     const orgs = orgsRes.data.results ?? orgsRes.data
-    const firstOrg = orgs[0] ?? null
+    // Guard: if RLS returned empty but JWT confirmed membership, use the JWT org ID
+    // as a minimal placeholder so we don't wrongly redirect to /onboarding.
+    // AppLayout will reload the full org object on mount.
+    let firstOrg = orgs[0] ?? null
+    if (!firstOrg && bootstrapOrgId) {
+      firstOrg = { id: bootstrapOrgId } as any
+    }
 
     // NOW commit everything to the store in one synchronous batch.
     // React 18 batches these consecutive Zustand updates into a single render,
@@ -82,10 +93,8 @@ export default function LoginPage() {
       setOrganisation(firstOrg)
       api.defaults.headers.common['X-Organisation-ID'] = firstOrg.id
     } else {
-      // No orgs found — clear any stale org left over from a previous session.
-      // Without this, a stale localStorage org ID would be sent as
-      // X-Organisation-ID on every request, causing 403 if that org no longer
-      // exists in the current environment's database.
+      // No orgs found and no JWT membership — clear any stale org left over from
+      // a previous session to avoid sending a wrong X-Organisation-ID header.
       setOrganisation(null)
       delete api.defaults.headers.common['X-Organisation-ID']
     }
