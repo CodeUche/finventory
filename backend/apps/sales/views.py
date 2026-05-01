@@ -191,9 +191,9 @@ class InvoiceViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
             return Response({"error": f"Product not found: {e}"}, status=422)
         except ValueError as e:
             return Response({"error": str(e)}, status=422)
-        except Exception as e:
+        except Exception:
             logger.exception("Unexpected error creating sale")
-            return Response({"error": f"[{type(e).__name__}] {str(e)}"}, status=422)
+            return Response({"error": "An unexpected error occurred. Please try again."}, status=422)
 
     def _check_invoice_edit_permission(self, request):
         """
@@ -339,9 +339,9 @@ class InvoiceViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
             return Response(SaleReturnSerializer(sale_return).data, status=201)
         except ValueError as e:
             return Response({"error": str(e)}, status=422)
-        except Exception as e:
+        except Exception:
             logger.exception("Unexpected error processing return")
-            return Response({"error": f"[{type(e).__name__}] {str(e)}"}, status=422)
+            return Response({"error": "An unexpected error occurred. Please try again."}, status=422)
 
 
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsStaff])
@@ -375,9 +375,9 @@ class InvoiceViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
                 invoice.status = Invoice.Status.CONFIRMED
                 invoice.save(update_fields=["status"])
             return Response(InvoiceSerializer(invoice).data)
-        except Exception as e:
+        except Exception:
             logger.exception("Error confirming proforma")
-            return Response({"error": f"[{type(e).__name__}] {str(e)}"}, status=422)
+            return Response({"error": "An unexpected error occurred. Please try again."}, status=422)
 
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsStaff])
     def send_email(self, request, pk=None):
@@ -410,25 +410,27 @@ class InvoiceViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
             import smtplib
             from email.mime.multipart import MIMEMultipart
             from email.mime.text import MIMEText
+            from django.utils.html import escape as _esc
 
             from_name  = email_cfg.from_name or request.organisation.name
             from_email = email_cfg.from_email or email_cfg.smtp_username
 
             items_html = "".join(
-                f"<tr><td style='padding:6px 10px;border-bottom:1px solid #eee'>{i.product.name}</td>"
-                f"<td style='padding:6px 10px;border-bottom:1px solid #eee;text-align:right'>{i.quantity}</td>"
-                f"<td style='padding:6px 10px;border-bottom:1px solid #eee;text-align:right'>{i.unit_price}</td>"
-                f"<td style='padding:6px 10px;border-bottom:1px solid #eee;text-align:right;font-weight:bold'>{i.line_total}</td></tr>"
+                f"<tr><td style='padding:6px 10px;border-bottom:1px solid #eee'>{_esc(i.product.name)}</td>"
+                f"<td style='padding:6px 10px;border-bottom:1px solid #eee;text-align:right'>{_esc(str(i.quantity))}</td>"
+                f"<td style='padding:6px 10px;border-bottom:1px solid #eee;text-align:right'>{_esc(str(i.unit_price))}</td>"
+                f"<td style='padding:6px 10px;border-bottom:1px solid #eee;text-align:right;font-weight:bold'>{_esc(str(i.line_total))}</td></tr>"
                 for i in invoice.items.all()
             )
+            customer_name = _esc(invoice.customer.name) if invoice.customer else 'Customer'
             html = f"""
 <html><body style='font-family:Arial,sans-serif;color:#333;max-width:600px;margin:auto'>
   <div style='background:#f97316;padding:20px;text-align:center'>
     <h1 style='color:white;margin:0;font-size:24px'>INVOICE</h1>
-    <p style='color:white;margin:5px 0 0'>#{invoice.invoice_number}</p>
+    <p style='color:white;margin:5px 0 0'>#{_esc(invoice.invoice_number)}</p>
   </div>
   <div style='padding:24px'>
-    <p>Dear {invoice.customer.name if invoice.customer else 'Customer'},</p>
+    <p>Dear {customer_name},</p>
     <p>Please find your invoice details below.</p>
     <table style='width:100%;border-collapse:collapse;margin:16px 0'>
       <thead><tr style='background:#f97316;color:white'>
@@ -440,12 +442,12 @@ class InvoiceViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
       <tbody>{items_html}</tbody>
     </table>
     <div style='text-align:right;margin-top:12px'>
-      <p style='margin:4px 0'>Subtotal: <strong>{invoice.total_amount}</strong></p>
-      <p style='margin:4px 0'>Paid: <strong style='color:green'>{invoice.amount_paid}</strong></p>
-      <p style='margin:4px 0;font-size:18px'>Balance Due: <strong style='color:{"red" if float(invoice.amount_due) > 0 else "green"}'>{invoice.amount_due}</strong></p>
+      <p style='margin:4px 0'>Subtotal: <strong>{_esc(str(invoice.total_amount))}</strong></p>
+      <p style='margin:4px 0'>Paid: <strong style='color:green'>{_esc(str(invoice.amount_paid))}</strong></p>
+      <p style='margin:4px 0;font-size:18px'>Balance Due: <strong style='color:{"red" if float(invoice.amount_due) > 0 else "green"}'>{_esc(str(invoice.amount_due))}</strong></p>
     </div>
     <hr style='margin:24px 0'>
-    <p style='color:#888;font-size:12px'>Issued by {from_name}. Thank you for your business.</p>
+    <p style='color:#888;font-size:12px'>Issued by {_esc(from_name)}. Thank you for your business.</p>
   </div>
 </body></html>"""
 
@@ -513,9 +515,9 @@ class InvoiceViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
             if '10054' in err_str or 'forcibly closed' in err_str.lower():
                 return Response({"error": "SMTP connection was reset by the server. Try switching between STARTTLS (port 587) and SSL (port 465) in Settings → Email."}, status=422)
             return Response({"error": f"Network error sending email: {err_str}"}, status=422)
-        except Exception as e:
+        except Exception:
             logger.exception("Email send failed")
-            return Response({"error": f"Failed to send email: {str(e)}"}, status=422)
+            return Response({"error": "Failed to send email. Please check your SMTP settings."}, status=422)
 
 
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsStaff])
@@ -929,9 +931,9 @@ class RecurringInvoiceViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                 pass
 
             return Response({'message': 'Invoice generated', 'invoice_id': str(invoice.id), 'invoice_number': invoice.invoice_number})
-        except Exception as e:
+        except Exception:
             logger.exception("generate_now failed")
-            return Response({'error': f"[{type(e).__name__}] {str(e)}"}, status=400)
+            return Response({'error': "An unexpected error occurred. Please try again."}, status=400)
 
 
 

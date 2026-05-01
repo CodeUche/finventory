@@ -116,10 +116,10 @@ class QuoteViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             return Response({'message': 'Converted successfully', 'invoice_id': str(invoice.id)})
         except ValueError as e:
             return Response({'error': str(e)}, status=400)
-        except Exception as e:
+        except Exception:
             import logging as _log
             _log.getLogger(__name__).exception("Unexpected error converting quote")
-            return Response({'error': f"[{type(e).__name__}] {str(e)}"}, status=400)
+            return Response({'error': "An unexpected error occurred. Please try again."}, status=400)
 
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsStaff])
     def send_email(self, request, pk=None):
@@ -140,26 +140,28 @@ class QuoteViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             import smtplib
             from email.mime.multipart import MIMEMultipart
             from email.mime.text import MIMEText
+            from django.utils.html import escape as _esc
 
             from_name  = email_cfg.from_name or request.organisation.name
             from_email = email_cfg.from_email or email_cfg.smtp_username
 
             items_html = ''.join(
-                f"<tr><td style='padding:6px 10px;border-bottom:1px solid #eee'>{i.product.name}</td>"
-                f"<td style='padding:6px 10px;border-bottom:1px solid #eee;text-align:right'>{i.quantity}</td>"
-                f"<td style='padding:6px 10px;border-bottom:1px solid #eee;text-align:right'>{i.unit_price}</td>"
-                f"<td style='padding:6px 10px;border-bottom:1px solid #eee;text-align:right;font-weight:bold'>{i.line_total}</td></tr>"
+                f"<tr><td style='padding:6px 10px;border-bottom:1px solid #eee'>{_esc(i.product.name)}</td>"
+                f"<td style='padding:6px 10px;border-bottom:1px solid #eee;text-align:right'>{_esc(str(i.quantity))}</td>"
+                f"<td style='padding:6px 10px;border-bottom:1px solid #eee;text-align:right'>{_esc(str(i.unit_price))}</td>"
+                f"<td style='padding:6px 10px;border-bottom:1px solid #eee;text-align:right;font-weight:bold'>{_esc(str(i.line_total))}</td></tr>"
                 for i in quote.items.all()
             )
+            customer_name = _esc(quote.customer.name) if quote.customer else 'Customer'
             html = f"""
 <html><body style='font-family:Arial,sans-serif;color:#333;max-width:600px;margin:auto'>
   <div style='background:#f97316;padding:20px;text-align:center'>
     <h1 style='color:white;margin:0;font-size:24px'>QUOTE</h1>
-    <p style='color:white;margin:5px 0 0'>#{quote.quote_number}</p>
+    <p style='color:white;margin:5px 0 0'>#{_esc(quote.quote_number)}</p>
   </div>
   <div style='padding:24px'>
-    <p>Dear {quote.customer.name if quote.customer else 'Customer'},</p>
-    <p>Please find your quote details below. This quote is valid until {quote.valid_until}.</p>
+    <p>Dear {customer_name},</p>
+    <p>Please find your quote details below. This quote is valid until {_esc(str(quote.valid_until))}.</p>
     <table style='width:100%;border-collapse:collapse;margin:16px 0'>
       <thead><tr style='background:#f97316;color:white'>
         <th style='padding:8px 10px;text-align:left'>Item</th>
@@ -170,10 +172,10 @@ class QuoteViewSet(TenantFilterMixin, viewsets.ModelViewSet):
       <tbody>{items_html}</tbody>
     </table>
     <div style='text-align:right;margin-top:12px'>
-      <p style='margin:4px 0;font-size:18px'>Total: <strong>{quote.total_amount}</strong></p>
+      <p style='margin:4px 0;font-size:18px'>Total: <strong>{_esc(str(quote.total_amount))}</strong></p>
     </div>
     <hr style='margin:24px 0'>
-    <p style='color:#888;font-size:12px'>Issued by {from_name}. Thank you for your interest.</p>
+    <p style='color:#888;font-size:12px'>Issued by {_esc(from_name)}. Thank you for your interest.</p>
   </div>
 </body></html>"""
 
@@ -221,5 +223,7 @@ class QuoteViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             return Response({'message': f"Quote sent to {to_email}"})
         except smtplib.SMTPAuthenticationError:
             return Response({'error': 'SMTP authentication failed. Check your username and password in Settings → Email.'}, status=422)
-        except Exception as e:
-            return Response({'error': f"Failed to send email: {str(e)}"}, status=422)
+        except Exception:
+            import logging as _log
+            _log.getLogger(__name__).exception("Quote email send failed")
+            return Response({'error': "Failed to send email. Please check your SMTP settings."}, status=422)

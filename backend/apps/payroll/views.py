@@ -667,7 +667,7 @@ class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             return Response({'success': True, 'retried': len(transfers), 'results': results})
         except Exception as e:
             logger.warning('Retry bulk transfer error: %s', e)
-            return Response({'success': False, 'error': str(e), 'results': results}, status=503)
+            return Response({'success': False, 'error': 'Transfer retry failed. Please try again.', 'results': results}, status=503)
 
     @action(detail=True, methods=['get'])
     def export_bank_file(self, request, pk=None):

@@ -418,7 +418,7 @@ class OrganisationViewSet(viewsets.ModelViewSet):
             "accounts_added": after - before,
         })
 
-    @action(detail=False, methods=["post"])
+    @action(detail=False, methods=["post"], throttle_classes=[InvitationRateThrottle])
     def accept_invitation(self, request):
         """Accept a pending invitation using a token."""
         token = request.data.get("token")
@@ -684,6 +684,22 @@ class MembershipViewSet(viewsets.ModelViewSet):
         """
         membership = self.get_object()
 
+        # Role changes are an owner-only privilege — admins cannot escalate
+        # their own role or anyone else's.
+        if "role" in request.data:
+            from apps.core.permissions import has_minimum_role
+            if not request.user.is_superuser and not has_minimum_role(request.user, membership.organisation, "owner"):
+                return Response(
+                    {"error": {"message": "Only the organisation owner can change member roles."}},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            # Prevent creating a second owner — each org has exactly one.
+            if request.data.get("role") == Membership.Role.OWNER:
+                return Response(
+                    {"error": {"message": "An organisation can only have one owner. Use the ownership transfer flow instead."}},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         # Only enforce the limit when reactivating a currently inactive member.
         reactivating = (
             not membership.is_active
@@ -945,7 +961,21 @@ class PartnerViewSet(viewsets.ViewSet):
         import datetime
 
         profile = self._get_profile(request)
-        org_ids = list(profile.clients.filter(is_active=True).values_list("organisation_id", flat=True))
+
+        # Only include orgs where the partner's Membership is still active.
+        # PartnerClientLink.is_active controls the portfolio link but doesn't
+        # automatically revoke the Membership row — we re-check both here so
+        # a manually deactivated membership doesn't grant continued data access.
+        active_member_org_ids = set(
+            Membership.objects.filter(
+                user=request.user, is_active=True
+            ).values_list("organisation_id", flat=True)
+        )
+        org_ids = [
+            oid for oid in
+            profile.clients.filter(is_active=True).values_list("organisation_id", flat=True)
+            if oid in active_member_org_ids
+        ]
 
         if not org_ids:
             return Response({"clients": [], "totals": {}})
@@ -956,7 +986,7 @@ class PartnerViewSet(viewsets.ViewSet):
         clients_data = []
         totals = {"total_revenue": 0, "total_outstanding": 0, "total_customers": 0, "total_products": 0}
 
-        for link in profile.clients.filter(is_active=True).select_related("organisation"):
+        for link in profile.clients.filter(is_active=True, organisation_id__in=org_ids).select_related("organisation"):
             org = link.organisation
             oid = org.id
 

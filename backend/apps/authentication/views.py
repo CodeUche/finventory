@@ -525,7 +525,9 @@ def _generate_backup_codes():
 
 def _hash_code(code: str) -> str:
     from django.contrib.auth.hashers import make_password
-    return make_password(code, salt="audity-backup", hasher="pbkdf2_sha256")
+    # No salt arg — Django auto-generates a unique random salt per call,
+    # preventing precomputed rainbow-table attacks on backup codes.
+    return make_password(code, hasher="pbkdf2_sha256")
 
 
 def _check_code(plain: str, stored_hash: str) -> bool:
@@ -712,12 +714,15 @@ class OrgDebugView(APIView):
     Diagnostic endpoint — returns what org-related headers/params this request
     carried, so the desktop client can verify the X-Organisation-ID is arriving.
 
-    Requires JWT auth but NOT org context. Always returns 200.
-    Remove or gate behind settings.DEBUG once the header issue is diagnosed.
+    Only available in DEBUG mode. Returns 404 in production.
     """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        from django.conf import settings
+        if not settings.DEBUG:
+            from rest_framework.exceptions import NotFound
+            raise NotFound()
         from apps.tenancy.middleware import HEADER_NAME, QUERY_PARAM
         org_header = request.META.get(HEADER_NAME) or None
         org_param = request.GET.get(QUERY_PARAM) or None
