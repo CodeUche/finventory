@@ -140,16 +140,23 @@ function buildTauriAdapter(): AxiosAdapter {
     for (const [k, v] of Object.entries(rawHeaders)) {
       if (typeof v === 'string' && v) headers[k] = v
     }
-    // Belt-and-suspenders: AxiosHeaders.toJSON() can silently drop custom headers
-    // when the internal representation uses a case-normalized key that differs from
-    // what Object.entries() sees.  Re-inject auth + org from Zustand state so they
-    // are always present, regardless of serialization quirks.
+    // Zustand always wins for auth + org when it has values.
+    // Using !hasX as the gate (old behaviour) allowed a stale api.defaults value
+    // to silently persist once set, causing 403s mid-session when defaults drifted.
+    // Now: if Zustand has the value, OVERRIDE whatever toJSON() produced.
+    // Exception: during finishLogin() Zustand is empty (setAuth not called yet) —
+    // in that case we keep what was explicitly passed in config.headers (bootstrapped
+    // via api.defaults in finishLogin before setAuth runs).
     const _auth = getStoredAuth()
     const _orgId = getStoredOrgId()
     const hasAuth = Object.keys(headers).some((k) => k.toLowerCase() === 'authorization')
     const hasOrg  = Object.keys(headers).some((k) => k.toLowerCase() === 'x-organisation-id')
-    if (_auth.access && !hasAuth) headers['Authorization'] = `Bearer ${_auth.access}`
-    if (_orgId && !hasOrg)        headers['X-Organisation-ID'] = _orgId
+    if (_auth.access)        headers['Authorization']      = `Bearer ${_auth.access}`
+    else if (!hasAuth && api.defaults.headers.common?.Authorization)
+      headers['Authorization'] = String(api.defaults.headers.common.Authorization)
+    if (_orgId)              headers['X-Organisation-ID']  = _orgId
+    else if (!hasOrg && api.defaults.headers.common?.['X-Organisation-ID'])
+      headers['X-Organisation-ID'] = String(api.defaults.headers.common['X-Organisation-ID'])
     // Second fallback: also send org as ?org= query param.
     // Tauri's reqwest layer can silently drop custom request headers on some
     // platforms/OS versions.  RLSMiddleware checks the header first, then falls
@@ -714,9 +721,18 @@ api.interceptors.response.use(
       const forbiddenMsg = (typeof errData === 'string' ? errData : errData?.message)
         ?? (error.response?.data as any)?.detail
         ?? 'Access denied'
-      // Suppress org-header diagnostic — leaks during auth transitions when in-flight
-      // requests fire after logout() clears the org from state.
       const isOrgHeaderError = /organisation.*header|x-organisation/i.test(forbiddenMsg)
+      // Org-header 403: retry once with Zustand org injected directly into headers.
+      // This recovers mid-session org-header drift without user intervention.
+      if (isOrgHeaderError && !(original as any)._orgRetry) {
+        const orgId = getStoredOrgId()
+        if (orgId) {
+          ;(original as any)._orgRetry = true
+          original.headers['X-Organisation-ID'] = orgId
+          original.params = { ...(original.params ?? {}), org: orgId }
+          return api(original)
+        }
+      }
       if (!isOrgHeaderError) {
         toast.error(forbiddenMsg, { id: `403-${original.url}`, duration: 6000 })
       }
