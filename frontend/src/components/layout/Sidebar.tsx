@@ -112,7 +112,7 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ open, onClose }: SidebarProps) {
-  const { user, organisation, tokens, logout, memberRole, modulePermissions, planModules } = useAuthStore()
+  const { user, organisation, tokens, logout, memberRole, modulePermissions, planModules, planName } = useAuthStore()
   const navigate = useNavigate()
 
   // null = membership not yet loaded; treat as restricted (not full access) until confirmed
@@ -123,7 +123,10 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
   // Checks: ownerOnly → plan modules → sub-account RBAC permissions
   const canSeeItem = (mod?: ModuleKey, ownerOnly?: boolean, partnerOnly?: boolean) => {
     if (ownerOnly && !isOwnerOrAdmin) return false   // explicitly owner-only items
+    // Partner Dashboard: requires partner channel feature, partner user profile, AND partner plan.
+    // Superusers bypass the plan check for testing, but regular users need an explicit partner subscription.
     if (partnerOnly && (!FEATURES.PARTNER_CHANNEL || !user?.has_partner_profile)) return false
+    if (partnerOnly && !user?.is_superuser && planName !== 'partner') return false
     if (!mod) return true                             // no module restriction (dashboard, settings)
     if (user?.is_superuser) return true              // superusers always see everything
     // Plan-level gate: if the active plan restricts modules, only show allowed ones

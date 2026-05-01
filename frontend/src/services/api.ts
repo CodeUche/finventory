@@ -705,7 +705,12 @@ api.interceptors.response.use(
       const forbiddenMsg = (typeof errData === 'string' ? errData : errData?.message)
         ?? (error.response?.data as any)?.detail
         ?? 'Access denied'
-      toast.error(forbiddenMsg, { id: `403-${original.url}`, duration: 6000 })
+      // Suppress org-header diagnostic — leaks during auth transitions when in-flight
+      // requests fire after logout() clears the org from state.
+      const isOrgHeaderError = /organisation.*header|x-organisation/i.test(forbiddenMsg)
+      if (!isOrgHeaderError) {
+        toast.error(forbiddenMsg, { id: `403-${original.url}`, duration: 6000 })
+      }
     } else if (errData?.message && status !== 401 && !isAuthUrl) {
       const toastId = `api-err-${status}-${original.url}`
       toast.error(errData.message, { id: toastId, duration: 4000 })
