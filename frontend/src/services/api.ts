@@ -149,14 +149,9 @@ function buildTauriAdapter(): AxiosAdapter {
     // via api.defaults in finishLogin before setAuth runs).
     const _auth = getStoredAuth()
     const _orgId = getStoredOrgId()
-    const hasAuth = Object.keys(headers).some((k) => k.toLowerCase() === 'authorization')
-    const hasOrg  = Object.keys(headers).some((k) => k.toLowerCase() === 'x-organisation-id')
-    if (_auth.access)        headers['Authorization']      = `Bearer ${_auth.access}`
-    else if (!hasAuth && api.defaults.headers.common?.Authorization)
-      headers['Authorization'] = String(api.defaults.headers.common.Authorization)
-    if (_orgId)              headers['X-Organisation-ID']  = _orgId
-    else if (!hasOrg && api.defaults.headers.common?.['X-Organisation-ID'])
-      headers['X-Organisation-ID'] = String(api.defaults.headers.common['X-Organisation-ID'])
+    if (_auth.access)  headers['Authorization']     = `Bearer ${_auth.access}`
+    if (_orgId)        headers['X-Organisation-ID'] = _orgId
+    else               delete headers['X-Organisation-ID']
     // Second fallback: also send org as ?org= query param.
     // Tauri's reqwest layer can silently drop custom request headers on some
     // platforms/OS versions.  RLSMiddleware checks the header first, then falls
@@ -423,6 +418,14 @@ api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
     // reqwest. Send org ID as a query param too — the backend reads it from
     // either request.META['HTTP_X_ORGANISATION_ID'] or request.GET['org'].
     config.params = { ...config.params, org: orgId }
+  } else {
+    // Actively remove stale org context — do not let a previous session's
+    // X-Organisation-ID or ?org= param leak into requests when no org is set.
+    delete config.headers['X-Organisation-ID']
+    if (config.params && (config.params as Record<string, unknown>).org !== undefined) {
+      const { org: _removed, ...rest } = config.params as Record<string, unknown>
+      config.params = rest
+    }
   }
   // FormData must NOT have Content-Type set — the browser adds the correct
   // multipart/form-data boundary automatically. Remove the global JSON default.
@@ -726,7 +729,10 @@ api.interceptors.response.use(
       // This recovers mid-session org-header drift without user intervention.
       if (isOrgHeaderError && !(original as any)._orgRetry) {
         const orgId = getStoredOrgId()
-        if (orgId) {
+        const originalOrg = original.headers?.['X-Organisation-ID'] as string | undefined
+        // Only retry when we have a DIFFERENT (potentially valid) org ID — retrying
+        // with the same invalid value would just get another 403 in a tight loop.
+        if (orgId && orgId !== originalOrg) {
           ;(original as any)._orgRetry = true
           original.headers['X-Organisation-ID'] = orgId
           original.params = { ...(original.params ?? {}), org: orgId }
