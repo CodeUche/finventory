@@ -573,7 +573,7 @@ api.interceptors.response.use(
       const isMut = ['post', 'put', 'patch', 'delete'].includes(method)
 
       if (!isMut) {
-        // GET: try cache fallback
+        // GET: try cache fallback, then silent empty response when already offline
         const params = original.params
         const cacheUrl = url + (params ? '?' + new URLSearchParams(params as Record<string, string>).toString() : '')
         try {
@@ -585,6 +585,12 @@ api.interceptors.response.use(
             return { data: merged, status: 200, statusText: 'OK (cached)', headers: {}, config: original } as AxiosResponse
           }
         } catch { /* non-fatal */ }
+        // No cache — if already offline, return empty data silently instead of
+        // rejecting. This prevents every page from toasting "Failed to load X"
+        // when the amber offline banner is already showing.
+        if (_effectivelyOffline) {
+          return { data: { results: [] }, status: 200, statusText: 'OK (offline)', headers: {}, config: original } as AxiosResponse
+        }
       } else if (!isRetry) {
         // Mutation failed on the wire — treat optimistically (same as request interceptor)
         _signalOffline()
@@ -604,11 +610,14 @@ api.interceptors.response.use(
         _inflightGets.delete(original._dedupeKey)
       }
 
-      // Show a single diagnostic toast so the user can see the failure reason
-      toast.error(`Connection failed: ${error.message ?? 'Network error'}`, {
-        id: 'offline-network-err',
-        duration: 6000,
-      })
+      // Only show "Connection failed" on the first failure — once the amber
+      // offline banner is visible, further network error toasts are noise.
+      if (!_effectivelyOffline) {
+        toast.error(`Connection failed: ${error.message ?? 'Network error'}`, {
+          id: 'offline-network-err',
+          duration: 6000,
+        })
+      }
       _signalOffline()
       return Promise.reject(error)
     }
@@ -657,7 +666,7 @@ api.interceptors.response.use(
         return api(original)
       } catch (refreshError) {
         processQueue(refreshError as AxiosError, null)
-        // Call logout() to clear all tokens — ProtectedRoute will redirect to /login smoothly
+        toast.error('Your session expired — please sign in again.', { id: 'session-expired', duration: 5000 })
         useAuthStore.getState().logout()
         return Promise.reject(refreshError)
       } finally {

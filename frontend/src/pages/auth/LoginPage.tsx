@@ -76,12 +76,19 @@ export default function LoginPage() {
       params: bootstrapOrgId ? { org: bootstrapOrgId } : {},
     })
     const orgs = orgsRes.data.results ?? orgsRes.data
-    // Guard: if RLS returned empty but JWT confirmed membership, use the JWT org ID
-    // as a minimal placeholder so we don't wrongly redirect to /onboarding.
-    // AppLayout will reload the full org object on mount.
-    let firstOrg = orgs[0] ?? null
-    if (!firstOrg && bootstrapOrgId) {
-      firstOrg = { id: bootstrapOrgId } as any
+
+    // SECURITY: for superusers, orgApi.list() returns ALL orgs in the DB.
+    // orgs[0] could be any tenant's org — never auto-assign it as active.
+    // Use only the org the JWT explicitly identifies via bootstrapOrgId.
+    // For regular users: fall back to orgs[0] (their only org) if bootstrapOrgId is missing.
+    let firstOrg: any = null
+    if (user.is_superuser) {
+      firstOrg = bootstrapOrgId ? (orgs.find((o: any) => o.id === bootstrapOrgId) ?? { id: bootstrapOrgId }) : null
+    } else {
+      firstOrg = orgs[0] ?? null
+      // Guard: if RLS returned empty but JWT confirmed membership, use minimal placeholder.
+      // AppLayout will reload the full org on mount once tokens are in Zustand.
+      if (!firstOrg && bootstrapOrgId) firstOrg = { id: bootstrapOrgId } as any
     }
 
     // NOW commit everything to the store in one synchronous batch.

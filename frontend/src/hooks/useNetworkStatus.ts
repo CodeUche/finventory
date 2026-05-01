@@ -19,11 +19,8 @@ export function useNetworkStatus(): boolean {
 
     const handleOffline = () => {
       setOnline(false)
-      toast.error('You are offline — changes will be saved locally and synced when reconnected.', {
-        id: 'offline-status',
-        duration: Infinity,
-        icon: '📶',
-      })
+      // AppLayout already shows the amber offline banner — no separate toast needed.
+      toast.dismiss('offline-status')
     }
 
     const handleOnline = async () => {

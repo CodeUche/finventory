@@ -144,7 +144,7 @@ export default function NewSalePage() {
       const list = (data.results ?? data) as Array<{ id: string; user_full_name: string; user_email: string; role: string; is_active: boolean }>
       setTeamMembers(
         list
-          .filter((m) => m.is_active)
+          .filter((m) => m.is_active && m.user_email !== user?.email)
           .map((m) => ({
             id: m.id,
             name: m.user_full_name?.trim() || m.user_email,
@@ -152,7 +152,7 @@ export default function NewSalePage() {
           }))
       )
     }).catch(() => {})
-  }, [canOverrideSoldBy])
+  }, [canOverrideSoldBy, user?.email])
 
   // ── Payment ───────────────────────────────────────────────────────────────
   const [paymentMethod, setPaymentMethod] = useState('cash')
