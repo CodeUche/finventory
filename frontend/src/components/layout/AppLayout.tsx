@@ -99,6 +99,13 @@ export default function AppLayout() {
         perms[p.module] = p.access_level
       })
       setMembership(data.role as string, perms)
+      // Org + membership confirmed ready — tell every page to re-fetch its data.
+      // This covers two cases:
+      //   1. Cold-start recovery: `online` toggled true, this effect re-ran after a
+      //      previous failure.  Pages that loaded with empty data now get fresh data.
+      //   2. Normal first load: pages that mounted before membership resolved now
+      //      get their initial data (second fetch is served from fresh cache, so cheap).
+      window.dispatchEvent(new CustomEvent('audity:data-changed'))
     }).catch((err) => {
       // Only lock down to viewer on a real auth/permission error (HTTP response present)
       // AND only if no role has been loaded yet. Preserving an existing role (e.g. 'owner')
