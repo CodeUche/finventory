@@ -49,13 +49,21 @@ export default function AppLayout() {
     if (organisation?.currency) setActiveCurrency(organisation.currency)
   }, [organisation?.currency])
 
-  // Always refresh org data from the API on mount.
-  // IMPORTANT: also runs when organisation is null — this is the recovery path for
-  // fresh installs and sessions where the persisted org was cleared (e.g. after
-  // token rotation logout). Without this, no X-Organisation-ID header is ever sent
-  // and every tenant-scoped endpoint returns "No organisation context".
+  // Always refresh org data from the API on mount, and again when connectivity is
+  // restored after a cold-start failure.
+  //
+  // IMPORTANT: `online` is included in deps so that if the Railway backend was
+  // cold-starting when the app launched (causing orgApi.list() to time out and
+  // _signalOffline() to fire), this effect re-runs the moment the background
+  // connectivity probe signals recovery.  Without this, organisation stays null,
+  // the membership + subscription effects never fire, and the sidebar shows no
+  // modules even after the backend becomes reachable.
+  //
+  // The fresh-cache gate in api.ts makes subsequent re-runs cheap: if the response
+  // is < 5 min old it is served from IndexedDB without hitting the network.
   useEffect(() => {
     if (!user) return  // not authenticated yet
+    if (!online && organisation) return  // offline + already have org — skip, use persisted state
     orgApi.list().then(({ data }) => {
       const orgs: any[] = data.results ?? data
       if (!orgs.length) return
@@ -72,11 +80,13 @@ export default function AppLayout() {
       api.defaults.headers.common['X-Organisation-ID'] = fresh.id
     }).catch(() => { /* non-fatal — use persisted org if available */ })
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id])
+  }, [user?.id, online])
 
   // Load the current user's role + module permissions from the API.
   // Superusers get owner-level access without an API call — they may not have a
   // membership in the currently selected org (which could belong to another user).
+  // `online` is in deps so this retries when connectivity is restored after a
+  // cold-start timeout (same reasoning as the org-list effect above).
   useEffect(() => {
     if (!organisation?.id) return
     if (user?.is_superuser) {
@@ -100,11 +110,14 @@ export default function AppLayout() {
         setMembership('viewer', {})
       }
     })
-  }, [organisation?.id, setMembership])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [organisation?.id, setMembership, online])
 
   // Load the active subscription plan's module list for sidebar gating.
   // Superusers bypass all plan restrictions (planModules stays null).
   // Also detect expired subscriptions and show the paywall.
+  // `online` is in deps so this retries when connectivity is restored after a
+  // cold-start timeout (same reasoning as the org-list effect above).
   useEffect(() => {
     if (!organisation?.id || user?.is_superuser) return
     subscriptionApi.current().then(({ data }) => {
@@ -122,7 +135,8 @@ export default function AppLayout() {
       // Network error: keep existing plan state so plan-gated features stay accessible offline
       if (err?.response) { setPlanModules(null); setPlanTaxEngine(null); setPlanName(null) }
     })
-  }, [organisation?.id, user?.is_superuser, setPlanModules, setPlanTaxEngine, setPlanName, setSubscriptionExpired])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [organisation?.id, user?.is_superuser, setPlanModules, setPlanTaxEngine, setPlanName, setSubscriptionExpired, online])
 
   const handlePaywallDismiss = () => {
     setSubscriptionExpired(false)
