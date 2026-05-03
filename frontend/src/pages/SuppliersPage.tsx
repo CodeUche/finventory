@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, Search, Truck, X, Pencil, Loader2, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { supplierApi } from '@/services/api'
@@ -51,6 +52,7 @@ export default function SuppliersPage() {
   }
 
   useEffect(() => { load() }, [search])
+  useDataRefresh(load)
 
   const openCreate = () => {
     setEditId(null)

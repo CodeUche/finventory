@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { CreditCard, Search, Plus, X, Loader2, TrendingDown, TrendingUp, AlertCircle } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { creditApi, customerApi } from '@/services/api'
@@ -58,6 +59,7 @@ export default function CreditsPage() {
 
   useEffect(() => { load() }, [search, typeFilter])
   useEffect(() => { loadAging() }, [])
+  useDataRefresh(load)
 
   const openPayModal = async () => {
     setShowPayModal(true)

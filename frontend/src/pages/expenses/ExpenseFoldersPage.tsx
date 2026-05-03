@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { useSearchParams } from 'react-router-dom'
 import {
   Folder, FolderOpen, FolderPlus, Plus, ChevronRight, Home,
@@ -80,6 +81,7 @@ export default function ExpenseFoldersPage() {
   }, [currentGroupId])
 
   useEffect(() => { load() }, [load])
+  useDataRefresh(load)
 
   // Navigate into a folder
   const openFolder = (id: string) => setSearchParams({ group: id })

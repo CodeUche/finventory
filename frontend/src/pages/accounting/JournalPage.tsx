@@ -1,4 +1,5 @@
 import { useEffect, useState, Fragment } from 'react'
+import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, X, BookMarked, Loader2, ChevronDown, ChevronUp, Trash2, Edit2, RotateCcw, RefreshCw } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { accountingApi } from '@/services/api'
@@ -60,6 +61,7 @@ export default function JournalPage() {
   }
 
   useEffect(() => { load() }, [])
+  useDataRefresh(load)
 
   const totalDebits = lines.reduce((s, l) => s + (parseFloat(stripCommas(l.debit)) || 0), 0)
   const totalCredits = lines.reduce((s, l) => s + (parseFloat(stripCommas(l.credit)) || 0), 0)

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useDataRefresh } from '@/hooks/useDataRefresh'
 import {
   Building2, Calculator, ChevronDown, ChevronUp, Edit2, ExternalLink, Plus, Receipt, Trash2, X, Zap, AlertCircle, Lock, Star,
 } from 'lucide-react'
@@ -143,6 +144,7 @@ export default function TaxPage() {
   }
 
   useEffect(() => { loadClasses(); loadConfigs(); loadExcise(); loadWHT() }, [])
+  useDataRefresh(() => { loadClasses(); loadConfigs(); loadExcise(); loadWHT() })
 
   // ── VAT Class CRUD ────────────────────────────────────────────────────────────
 

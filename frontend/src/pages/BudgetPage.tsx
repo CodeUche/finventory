@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, X, PieChart, Loader2, ChevronDown, ChevronUp, HelpCircle, RefreshCw } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { budgetApi } from '@/services/api'
@@ -45,6 +46,7 @@ export default function BudgetPage() {
   }
 
   useEffect(() => { load() }, [])
+  useDataRefresh(load)
 
   const handleCreateBudget = async () => {
     if (!budgetForm.name.trim()) { toast.error('Budget name is required'); return }

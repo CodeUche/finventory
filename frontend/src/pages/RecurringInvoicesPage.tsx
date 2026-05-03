@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, X, RefreshCw, Loader2, Trash2, Play } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { recurringApi, customerApi, inventoryApi } from '@/services/api'
@@ -62,6 +63,7 @@ export default function RecurringInvoicesPage() {
   }
 
   useEffect(() => { load() }, [])
+  useDataRefresh(load)
 
   const handleCreate = async () => {
     if (!form.template_name.trim()) { toast.error('Template name is required'); return }

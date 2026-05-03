@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { useNavigate } from 'react-router-dom'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -97,6 +98,8 @@ export default function DashboardPage() {
   const [overdueTotal, setOverdueTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [showAI, setShowAI] = useState(false)
+  const [_refreshTick, setRefreshTick] = useState(0)
+  useDataRefresh(() => setRefreshTick((t) => t + 1))
 
   const { dateFrom, dateTo } = useMemo(() => getDateRange(period), [period])
   const periodLabel = PERIODS.find((p) => p.key === period)?.label ?? ''
@@ -157,7 +160,7 @@ export default function DashboardPage() {
     }, 60000)
 
     return () => clearInterval(interval)
-  }, [dateFrom, dateTo])
+  }, [dateFrom, dateTo, _refreshTick])
 
   const chartData = salesData.map((d) => ({
     date: format(new Date(d.period), period === 'today' ? 'HH:mm' : 'MMM d'),

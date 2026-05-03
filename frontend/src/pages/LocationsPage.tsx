@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { MapPin, Plus, Pencil, Trash2, Phone, Building2, CheckCircle, XCircle, BarChart3, TrendingUp, ChevronDown, ChevronUp, Loader2 } from 'lucide-react'
 import { locationApi } from '@/services/api'
 import { formatCurrency } from '@/lib/utils'
@@ -62,6 +63,7 @@ export default function LocationsPage() {
   }
 
   useEffect(() => { load() }, [])
+  useDataRefresh(load)
 
   const openCreate = () => {
     setEditing(null)

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, X, BookOpen, Edit2, Trash2, Loader2, Download, RefreshCw } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { accountingApi } from '@/services/api'
@@ -49,6 +50,7 @@ export default function ChartOfAccountsPage() {
   }
 
   useEffect(() => { load() }, [])
+  useDataRefresh(load)
 
   const handleSeed = async () => {
     if (!confirm('Seed default Chart of Accounts? This will add standard Nigerian accounting accounts.')) return

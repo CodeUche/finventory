@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import { useDataRefresh } from '@/hooks/useDataRefresh'
 import {
   ChevronDown, ChevronUp, Banknote, Loader2, ExternalLink, Send, CheckCircle,
   XCircle, AlertTriangle, Building2, CreditCard, RotateCcw, Download, Clock,
@@ -285,6 +286,7 @@ export default function PayrollPage() {
   }, [selectedYear, selectedMonth])
 
   useEffect(() => { loadRuns() }, [loadRuns])
+  useDataRefresh(loadRuns)
 
   useEffect(() => {
     if (pageTab === 'attendance') { loadEmployees(); loadAttendance() }

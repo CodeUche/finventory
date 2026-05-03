@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Scale, Loader2, RefreshCw, CheckCircle, AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { accountingApi } from '@/services/api'
@@ -98,6 +99,7 @@ export default function BalanceSheetPage() {
   }
 
   useEffect(() => { load() }, [selectedYear, selectedMonth])
+  useDataRefresh(load)
 
   const handleSeed = async () => {
     setSeeding(true)

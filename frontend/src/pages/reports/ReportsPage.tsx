@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useDataRefresh } from '@/hooks/useDataRefresh'
 import {
   AreaChart,
   Area,
@@ -236,6 +237,7 @@ export default function ReportsPage() {
   }
 
   useEffect(() => { load() }, [days])
+  useDataRefresh(load)
 
   const chartData = salesTrend.map((s) => ({
     period: s.period,

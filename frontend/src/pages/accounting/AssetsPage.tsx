@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, X, Landmark, Loader2, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { accountingApi } from '@/services/api'
@@ -51,6 +52,7 @@ export default function AssetsPage() {
   }
 
   useEffect(() => { load() }, [])
+  useDataRefresh(load)
 
   const handleRunDepreciation = async () => {
     const now = new Date()

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useDataRefresh } from '@/hooks/useDataRefresh'
 import {
   CheckSquare, Square, RefreshCw, CheckCircle2, Upload, FileText,
   Sparkles, ChevronDown, ChevronRight, AlertTriangle, XCircle, Check, X,
@@ -132,6 +133,7 @@ export default function BankReconciliationPage() {
   }
 
   useEffect(() => { load() }, [])
+  useDataRefresh(load)
 
   // ─── Create reconciliation ─────────────────────────────────────────────────
 

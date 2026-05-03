@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Shield, ChevronDown, ChevronRight, Search, X, Globe, RefreshCw } from 'lucide-react'
 import { auditLogApi } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
@@ -194,6 +195,7 @@ export default function AuditLogPage() {
   }, [userSearch, modelFilter, actionFilter, dateFrom, dateTo])
 
   useEffect(() => { load() }, [load])
+  useDataRefresh(load)
 
   // Group entries by calendar day
   const grouped: { day: string; items: AuditEntry[] }[] = []

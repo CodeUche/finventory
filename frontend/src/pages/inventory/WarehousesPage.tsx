@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Edit2, Plus, Trash2, Warehouse, ChevronDown, ChevronUp, Package, Loader2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { inventoryApi } from '@/services/api'
@@ -38,6 +39,7 @@ export default function WarehousesPage() {
   }
 
   useEffect(() => { load() }, [])
+  useDataRefresh(load)
 
   const toggleExpand = useCallback(async (warehouseId: string) => {
     if (expanded === warehouseId) {

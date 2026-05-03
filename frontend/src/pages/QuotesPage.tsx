@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, X, ClipboardList, Loader2, FileText, ChevronDown, ChevronUp, Trash2, FileDown, Mail, MessageCircle, CheckCircle, ExternalLink, RefreshCw } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { quoteApi, customerApi, inventoryApi, salesApi, tauriFetch } from '@/services/api'
@@ -328,6 +329,7 @@ export default function QuotesPage() {
     const interval = setInterval(load, 5 * 60 * 1000) // poll every 5 minutes for auto-expiry
     return () => clearInterval(interval)
   }, [statusFilter, archiveYear])
+  useDataRefresh(load)
 
   const handleCreate = async () => {
     if (!form.warehouse) { toast.error('Select a warehouse'); return }

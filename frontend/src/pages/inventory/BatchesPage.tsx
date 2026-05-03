@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Layers, Plus, Search, Trash2, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { inventoryApi } from '@/services/api'
@@ -77,6 +78,7 @@ export default function BatchesPage() {
   }
 
   useEffect(() => { load() }, [search, warehouseFilter, expiryFilter])
+  useDataRefresh(load)
 
   const openCreate = async () => {
     try {
