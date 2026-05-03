@@ -91,6 +91,10 @@ export default function AppLayout() {
     if (!organisation?.id) return
     if (user?.is_superuser) {
       setMembership('owner', {})
+      // Superusers skip the membership API call so dispatch manually here —
+      // useDataRefresh handlers on all pages need this event to re-fetch after
+      // a cold-start recovery (when `online` toggled and re-ran this effect).
+      window.dispatchEvent(new CustomEvent('audity:data-changed'))
       return
     }
     orgApi.myMembership(organisation.id).then(({ data }) => {

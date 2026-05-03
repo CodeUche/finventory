@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Minus, Plus, Search, ShoppingCart, Trash2, User, UserCheck, Warehouse, X } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { customerApi, inventoryApi, locationApi, salesApi, teamApi } from '@/services/api'
+import { customerApi, inventoryApi, locationApi, salesApi } from '@/services/api'
 import { formatCurrency, formatAmountInput, stripCommas } from '@/lib/utils'
 import { useNotifications } from '@/contexts/NotificationsContext'
 import { useAuthStore } from '@/store/authStore'
@@ -21,10 +21,8 @@ const PAYMENT_METHODS = ['cash', 'pos', 'bank_transfer', 'credit']
 export default function NewSalePage() {
   const navigate = useNavigate()
   const { refetch: refetchAlerts } = useNotifications()
-  const { user, memberRole } = useAuthStore()
+  const { user } = useAuthStore()
 
-  // Determine if user can override the sold_by field (manager+ can assign to others)
-  const canOverrideSoldBy = memberRole === null || ['owner', 'admin', 'manager'].includes(memberRole ?? '')
   const currentUserName = user ? `${user.first_name} ${user.last_name}`.trim() || user.email : ''
 
   // ── Product search ─────────────────────────────────────────────────────────
@@ -134,25 +132,6 @@ export default function NewSalePage() {
     }).catch(() => {})
   }, [])
 
-  // ── Sold By ───────────────────────────────────────────────────────────────
-  const [soldBy, setSoldBy] = useState('')
-  const [teamMembers, setTeamMembers] = useState<{ id: string; name: string; role: string }[]>([])
-
-  useEffect(() => {
-    if (!canOverrideSoldBy) return
-    teamApi.members().then(({ data }) => {
-      const list = (data.results ?? data) as Array<{ id: string; user_full_name: string; user_email: string; role: string; is_active: boolean }>
-      setTeamMembers(
-        list
-          .filter((m) => m.is_active && m.user_email !== user?.email)
-          .map((m) => ({
-            id: m.id,
-            name: m.user_full_name?.trim() || m.user_email,
-            role: m.role,
-          }))
-      )
-    }).catch(() => {})
-  }, [canOverrideSoldBy, user?.email])
 
   // ── Payment ───────────────────────────────────────────────────────────────
   const [paymentMethod, setPaymentMethod] = useState('cash')
@@ -189,7 +168,7 @@ export default function NewSalePage() {
       amount_tendered: !isCredit && !isProforma && rawTendered > 0 ? rawTendered.toFixed(2) : null,
       credit_applied: isProforma ? '0' : creditApplied.toFixed(2),
       notes,
-      sold_by: canOverrideSoldBy ? soldBy.trim() : '',
+      sold_by: currentUserName,
       is_proforma: isProforma,
       items: cart.map((c) => ({
         product_id: c.product.id,
@@ -627,24 +606,10 @@ export default function NewSalePage() {
             <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1">
               <UserCheck size={13} />
               Sold By
-              <FieldTooltip text={canOverrideSoldBy ? "Staff member who made this sale. Defaults to you if left blank. Managers and above can assign to any team member." : "Automatically recorded as your name. Only managers and above can assign a sale to another staff member."} />
             </label>
-            {canOverrideSoldBy ? (
-              <select
-                className="input"
-                value={soldBy}
-                onChange={(e) => setSoldBy(e.target.value)}
-              >
-                <option value="">— {currentUserName} (you) —</option>
-                {teamMembers.map((m) => (
-                  <option key={m.id} value={m.name}>{m.name} · {m.role}</option>
-                ))}
-              </select>
-            ) : (
-              <div className="input bg-surface-800 text-slate-400 cursor-not-allowed select-none">
-                {currentUserName}
-              </div>
-            )}
+            <div className="input bg-surface-800 text-slate-400 cursor-not-allowed select-none">
+              {currentUserName}
+            </div>
           </div>
 
           {/* Notes */}
