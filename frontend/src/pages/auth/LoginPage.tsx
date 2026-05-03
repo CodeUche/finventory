@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { Eye, EyeOff, Loader2, AlertCircle, ShieldCheck } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { api, authApi } from '@/services/api'
+import { offlineCache } from '@/lib/offlineCache'
 import { useAuthStore } from '@/store/authStore'
 import AudityLogo from '@/components/AudityLogo'
 
@@ -90,6 +91,14 @@ export default function LoginPage() {
       // AppLayout will reload the full org on mount once tokens are in Zustand.
       if (!firstOrg && bootstrapOrgId) firstOrg = { id: bootstrapOrgId } as any
     }
+
+    // Wipe any stale membership/org cache from a previous cold-start failure.
+    // If the empty-fallback was cached before the api.ts fix was deployed, it
+    // could linger and serve { results:[] } for up to 5 minutes. Clearing the
+    // relevant prefixes on every fresh login guarantees a clean slate.
+    offlineCache.invalidatePrefix('/tenancy/organisations/my_membership/').catch(() => {})
+    offlineCache.invalidatePrefix('/tenancy/memberships/').catch(() => {})
+    offlineCache.invalidatePrefix('/tenancy/organisations/').catch(() => {})
 
     // NOW commit everything to the store in one synchronous batch.
     // React 18 batches these consecutive Zustand updates into a single render,

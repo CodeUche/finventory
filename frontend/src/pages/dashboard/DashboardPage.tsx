@@ -6,9 +6,10 @@ import {
 } from 'recharts'
 import {
   TrendingUp, TrendingDown, Package,
-  AlertTriangle, DollarSign, Zap, ArrowUpRight, ShoppingCart, Clock, Sparkles,
+  AlertTriangle, DollarSign, Zap, ArrowUpRight, ShoppingCart, Clock, Sparkles, RefreshCw,
 } from 'lucide-react'
 import { reportApi, inventoryApi, salesApi } from '@/services/api'
+import { offlineCache } from '@/lib/offlineCache'
 import { formatCurrency, getCurrencySymbol } from '@/lib/utils'
 import { format, subDays, subMonths, subYears, startOfYear } from 'date-fns'
 import AIChatModal from '@/components/AIChatModal'
@@ -197,6 +198,28 @@ export default function DashboardPage() {
           >
             <Sparkles size={14} className="text-brand-400" />
             <span className="text-xs text-brand-400 font-medium hidden sm:inline">Explain My Money</span>
+          </button>
+          <button
+            onClick={async () => {
+              // Wipe stale membership/org cache so the retry hits the network
+              await Promise.allSettled([
+                offlineCache.invalidatePrefix('/tenancy/organisations/my_membership/'),
+                offlineCache.invalidatePrefix('/tenancy/memberships/'),
+                offlineCache.invalidatePrefix('/tenancy/organisations/'),
+                offlineCache.invalidatePrefix('/subscriptions/current/'),
+              ])
+              setRefreshTick((t) => t + 1)
+              // Tell AppLayout to re-run its org/membership/plan effects
+              window.dispatchEvent(new CustomEvent('audity:app-refresh'))
+              // Tell all pages to reload their data
+              window.dispatchEvent(new CustomEvent('audity:data-changed'))
+            }}
+            disabled={loading}
+            className="flex items-center gap-1.5 px-3 py-2 bg-surface-800 border border-surface-700 hover:border-slate-500 rounded-xl transition-colors"
+            title="Refresh all data"
+          >
+            <RefreshCw size={14} className={`text-slate-400 ${loading ? 'animate-spin' : ''}`} />
+            <span className="text-xs text-slate-400 font-medium hidden sm:inline">Refresh</span>
           </button>
           <div className="flex items-center gap-2 px-3 py-2 bg-green-500/10 border border-green-500/30 rounded-xl">
             <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />

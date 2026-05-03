@@ -122,15 +122,18 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
   // Returns true if the nav item should be visible.
   // Checks: ownerOnly → plan modules → sub-account RBAC permissions
   const canSeeItem = (mod?: ModuleKey, ownerOnly?: boolean, partnerOnly?: boolean) => {
-    if (ownerOnly && !isOwnerOrAdmin) return false   // explicitly owner-only items
-    // Partner Dashboard: requires partner channel feature, partner user profile, AND partner plan.
-    // Superusers bypass the plan check for testing, but regular users need an explicit partner subscription.
+    // While membership is still loading (memberRole===null), show all non-ownerOnly items
+    // optimistically so the sidebar doesn't appear blank during cold-start recovery.
+    // Route guards (ModuleRoute) enforce actual access — the sidebar is just navigation UI.
+    const membershipLoading = memberRole === null && !user?.is_superuser
     if (partnerOnly && (!FEATURES.PARTNER_CHANNEL || !user?.has_partner_profile)) return false
     if (partnerOnly && !user?.is_superuser && planName !== 'partner') return false
     if (!mod) return true                             // no module restriction (dashboard, settings)
     if (user?.is_superuser) return true              // superusers always see everything
     // Plan-level gate: if the active plan restricts modules, only show allowed ones
     if (planModules !== null && !planModules.includes(mod)) return false
+    if (membershipLoading) return !ownerOnly         // show all plan-allowed items while loading
+    if (ownerOnly && !isOwnerOrAdmin) return false   // explicitly owner-only items
     if (isOwnerOrAdmin) return true                   // owners/admins see all plan-allowed modules
     const level = modulePermissions?.[mod]
     return level === 'view' || level === 'write' || level === 'edit'

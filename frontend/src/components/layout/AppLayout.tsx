@@ -18,8 +18,17 @@ import { FEATURES } from '@/lib/featureFlags'
 export default function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [cacheAge, setCacheAge] = useState<string | null>(null)
+  // Incremented by the Refresh button (via audity:app-refresh) to force re-run of
+  // org/membership/plan effects without requiring an internet toggle.
+  const [_appRefreshTick, setAppRefreshTick] = useState(0)
   useInactivityTimeout()
   const online = useNetworkStatus()
+
+  useEffect(() => {
+    const handler = () => setAppRefreshTick((t) => t + 1)
+    window.addEventListener('audity:app-refresh', handler)
+    return () => window.removeEventListener('audity:app-refresh', handler)
+  }, [])
 
   // When going offline, resolve the cache age to show in the banner
   useEffect(() => {
@@ -80,7 +89,7 @@ export default function AppLayout() {
       api.defaults.headers.common['X-Organisation-ID'] = fresh.id
     }).catch(() => { /* non-fatal — use persisted org if available */ })
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id, online])
+  }, [user?.id, online, _appRefreshTick])
 
   // Load the current user's role + module permissions from the API.
   // Superusers get owner-level access without an API call — they may not have a
@@ -98,8 +107,11 @@ export default function AppLayout() {
       return
     }
     orgApi.myMembership(organisation.id).then(({ data }) => {
+      // Guard: offline empty fallback returns { results: [] } — ignore it so we
+      // don't overwrite a valid role or crash on undefined.module_permissions.
+      if (!data?.role) return
       const perms: Partial<Record<ModuleKey, AccessLevel>> = {}
-      ;(data.module_permissions as ModulePermission[]).forEach((p) => {
+      ;((data.module_permissions ?? []) as ModulePermission[]).forEach((p) => {
         perms[p.module] = p.access_level
       })
       setMembership(data.role as string, perms)
@@ -122,7 +134,7 @@ export default function AppLayout() {
       }
     })
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [organisation?.id, setMembership, online])
+  }, [organisation?.id, setMembership, online, _appRefreshTick])
 
   // Load the active subscription plan's module list for sidebar gating.
   // Superusers bypass all plan restrictions (planModules stays null).
@@ -147,7 +159,7 @@ export default function AppLayout() {
       if (err?.response) { setPlanModules(null); setPlanTaxEngine(null); setPlanName(null) }
     })
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [organisation?.id, user?.is_superuser, setPlanModules, setPlanTaxEngine, setPlanName, setSubscriptionExpired, online])
+  }, [organisation?.id, user?.is_superuser, setPlanModules, setPlanTaxEngine, setPlanName, setSubscriptionExpired, online, _appRefreshTick])
 
   const handlePaywallDismiss = () => {
     setSubscriptionExpired(false)

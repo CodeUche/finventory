@@ -598,7 +598,12 @@ api.interceptors.response.use(
         // No cache — if already offline, return empty data silently instead of
         // rejecting. This prevents every page from toasting "Failed to load X"
         // when the amber offline banner is already showing.
+        // Mark _fromCache=true so the success interceptor does NOT write this
+        // empty placeholder into IndexedDB — otherwise the 5-min fresh-cache gate
+        // would serve { results: [] } for 5 minutes after connectivity is restored,
+        // breaking membership parsing and keeping the sidebar blank.
         if (_effectivelyOffline) {
+          ;(original as ExtConfig)._fromCache = true
           return { data: { results: [] }, status: 200, statusText: 'OK (offline)', headers: {}, config: original } as AxiosResponse
         }
       } else if (!isRetry) {
