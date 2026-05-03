@@ -6,7 +6,7 @@ import {
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useNavigate } from 'react-router-dom'
-import { partnerApi, orgApi } from '@/services/api'
+import { partnerApi, orgApi, bypassNextGets } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
 
 interface PartnerProfile {
@@ -203,7 +203,7 @@ export default function PartnerDashboardPage() {
           </h1>
           <p className="text-slate-400 text-sm mt-0.5">Manage your SMB client portfolio and track commissions.</p>
         </div>
-        <button onClick={load} className="btn-ghost text-xs flex items-center gap-1.5 text-slate-400">
+        <button onClick={() => { bypassNextGets(); load() }} className="btn-ghost text-xs flex items-center gap-1.5 text-slate-400">
           <RefreshCw size={13} /> Refresh
         </button>
       </div>

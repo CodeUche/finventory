@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { CheckCircle, X as XIcon, Loader2, CreditCard, Zap, Building2, Star, ExternalLink, RefreshCw, Package, ShoppingCart, FileText, Receipt, Users, Truck, BarChart3, Calculator, Briefcase, Wallet, Clock, DollarSign, Shield, ChevronDown, ChevronUp, GraduationCap, LayoutDashboard, FileBarChart2, Layers } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { subscriptionApi } from '@/services/api'
+import { subscriptionApi, bypassNextGets } from '@/services/api'
 import type { Plan, Subscription, SubscriptionPayment } from '@/types'
 import { FEATURES } from '@/lib/featureFlags'
 
@@ -470,7 +470,7 @@ export default function BillingPage() {
         <div className="flex items-center gap-3">
           <RefreshCw size={16} className="text-slate-500" />
           <p className="text-sm text-slate-400 flex-1">Paid but plan not activated?</p>
-          <button onClick={load} className="btn-ghost text-xs text-brand-400">
+          <button onClick={() => { bypassNextGets(); load() }} className="btn-ghost text-xs text-brand-400">
             <RefreshCw size={13} /> Refresh status
           </button>
         </div>

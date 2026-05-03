@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, X, Landmark, Loader2, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { accountingApi } from '@/services/api'
+import { accountingApi, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
 import type { FixedAsset, Account } from '@/types'
 import DateInput from '@/components/DateInput'
@@ -114,7 +114,7 @@ export default function AssetsPage() {
           <p className="text-slate-400 text-sm">{assets.length} assets</p>
         </div>
         <div className="sm:ml-auto flex gap-2">
-          <button onClick={load} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
+          <button onClick={() => { bypassNextGets(); load() }} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
           </button>
           <button onClick={handleRunDepreciation} disabled={runningDep} className="btn-ghost flex items-center gap-2 text-sm">

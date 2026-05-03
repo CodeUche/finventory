@@ -17,7 +17,7 @@ import {
 } from 'recharts'
 import { BarChart2, RefreshCw, TrendingDown, TrendingUp, Clock, Receipt, Download, ArrowDownCircle, ArrowUpCircle, Landmark } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { reportApi, tauriFetch } from '@/services/api'
+import { reportApi, tauriFetch, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatNumber, formatDate, getCurrencySymbol } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
 import { saveBlobFile } from '@/lib/saveBlobFile'
@@ -288,7 +288,7 @@ export default function ReportsPage() {
             ))}
           </div>
           <button
-            onClick={load}
+            onClick={() => { bypassNextGets(); load() }}
             disabled={loading}
             className="p-2 rounded-xl border border-surface-600 text-slate-400 hover:text-white hover:border-surface-500 transition-colors"
           >

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, X, BookOpen, Edit2, Trash2, Loader2, Download, RefreshCw } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { accountingApi } from '@/services/api'
+import { accountingApi, bypassNextGets } from '@/services/api'
 import { formatCurrency } from '@/lib/utils'
 import type { Account } from '@/types'
 
@@ -116,7 +116,7 @@ export default function ChartOfAccountsPage() {
           </p>
         </div>
         <div className="sm:ml-auto flex gap-2 flex-wrap">
-          <button onClick={load} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
+          <button onClick={() => { bypassNextGets(); load() }} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
           </button>
           <button onClick={handleTrialBalance} disabled={loadingTB} className="btn-ghost flex items-center gap-2 text-sm">

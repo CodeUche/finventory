@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, Search, Users, X, Pencil, Loader2, FileText, RefreshCw, Download, Trash2, MinusCircle, ChevronRight, Maximize2, Minimize2 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { customerApi, tauriFetch } from '@/services/api'
+import { customerApi, tauriFetch, bypassNextGets } from '@/services/api'
 import ExportButton from '@/components/ExportButton'
 import { formatCurrency, formatDate, getStatusColor, getCurrencySymbol } from '@/lib/utils'
 import DateInput from '@/components/DateInput'
@@ -460,7 +460,7 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
           <p className="text-slate-400 text-sm">{customers.length} customer{customers.length !== 1 ? 's' : ''}</p>
         </div>
         <div className="sm:ml-auto flex items-center gap-2">
-          <button onClick={load} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
+          <button onClick={() => { bypassNextGets(); load() }} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
           </button>
           <ExportButton endpoint="/customers/" filename="customers" />

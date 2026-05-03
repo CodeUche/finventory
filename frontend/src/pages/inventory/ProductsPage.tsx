@@ -3,7 +3,7 @@ import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { useModuleAccess } from '@/hooks/useModuleAccess'
 import { Plus, Search, Package, AlertTriangle, X, Pencil, Loader2, TrendingUp, TrendingDown, History, Maximize2, Minimize2, ShieldCheck, FileDown, Table2, ArrowDownCircle, Trash2, RefreshCw } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { inventoryApi, taxApi, salesApi } from '@/services/api'
+import { inventoryApi, taxApi, salesApi, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatAmountInput, stripCommas, formatDate } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
 import type { Product, TaxClass, Organisation } from '@/types'
@@ -306,6 +306,7 @@ export default function ProductsPage() {
   }
 
   const handleRefresh = async () => {
+    bypassNextGets()
     setRefreshing(true)
     await fetchProducts()
     setRefreshing(false)

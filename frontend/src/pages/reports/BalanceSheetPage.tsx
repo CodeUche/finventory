@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Scale, Loader2, RefreshCw, CheckCircle, AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { accountingApi } from '@/services/api'
+import { accountingApi, bypassNextGets } from '@/services/api'
 import { formatCurrency } from '@/lib/utils'
 
 interface BSAccount { code: string; name: string; balance: string | number }
@@ -148,7 +148,7 @@ export default function BalanceSheetPage() {
               <option key={y} value={y}>{y}</option>
             ))}
           </select>
-          <button onClick={load} className="btn-ghost flex items-center gap-2 text-sm">
+          <button onClick={() => { bypassNextGets(); load() }} className="btn-ghost flex items-center gap-2 text-sm">
             <RefreshCw size={15} /> Refresh
           </button>
         </div>

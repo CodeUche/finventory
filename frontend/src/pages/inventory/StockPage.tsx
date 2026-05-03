@@ -3,7 +3,7 @@ import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { AlertTriangle, Boxes, Plus, RefreshCw, ArrowLeftRight } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { inventoryApi } from '@/services/api'
+import { inventoryApi, bypassNextGets } from '@/services/api'
 import { formatAmountInput, stripCommas } from '@/lib/utils'
 import type { Product, StockItem, Warehouse } from '@/types'
 
@@ -235,7 +235,7 @@ export default function StockPage() {
           <button onClick={() => setFilter('low')} className={filter === 'low' ? 'btn-danger py-2 px-4' : 'btn-secondary py-2 px-4'}>
             <AlertTriangle size={14} /> Low Stock {lowCount > 0 && `(${lowCount})`}
           </button>
-          <button onClick={load} className="btn-ghost p-2.5"><RefreshCw size={16} /></button>
+          <button onClick={() => { bypassNextGets(); load() }} className="btn-ghost p-2.5"><RefreshCw size={16} /></button>
           <button onClick={openTransfer} className="btn-secondary flex items-center gap-2 py-2 px-4" title="Transfer stock between locations">
             <ArrowLeftRight size={15} />
             Transfer

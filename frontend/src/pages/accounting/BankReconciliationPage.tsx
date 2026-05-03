@@ -5,7 +5,7 @@ import {
   Sparkles, ChevronDown, ChevronRight, AlertTriangle, XCircle, Check, X,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { accountingApi } from '@/services/api'
+import { accountingApi, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import DateInput from '@/components/DateInput'
 
@@ -714,7 +714,7 @@ export default function BankReconciliationPage() {
         <div className="card p-0 overflow-hidden">
           <div className="px-5 py-4 border-b border-surface-700 flex items-center justify-between">
             <h3 className="text-white font-semibold">Past Reconciliations</h3>
-            <button onClick={load} className="btn-ghost p-2"><RefreshCw size={15} /></button>
+            <button onClick={() => { bypassNextGets(); load() }} className="btn-ghost p-2"><RefreshCw size={15} /></button>
           </div>
           <table className="w-full text-sm">
             <thead>

@@ -6,7 +6,7 @@ import SortSelect from '@/components/SortSelect'
 import YearFilter, { yearToDateParams } from '@/components/YearFilter'
 import ExportButton from '@/components/ExportButton'
 import toast from 'react-hot-toast'
-import { billApi, supplierApi, taxApi, expenseApi } from '@/services/api'
+import { billApi, supplierApi, taxApi, expenseApi, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
 import type { Bill } from '@/types'
 import DateInput from '@/components/DateInput'
@@ -290,7 +290,7 @@ export default function BillsPage() {
           <p className="text-slate-400 text-sm">{bills.length} total bills</p>
         </div>
         <div className="flex items-center gap-2 sm:ml-auto">
-          <button onClick={load} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
+          <button onClick={() => { bypassNextGets(); load() }} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
           </button>
           <Link to="/bills/folders" className="btn-secondary flex items-center gap-2">

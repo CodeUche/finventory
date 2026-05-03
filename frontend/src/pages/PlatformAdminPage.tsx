@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Shield, Users, Building2, RefreshCw, Loader2, CheckCircle, XCircle, TrendingUp, BookOpen } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { platformAdminApi, orgApi } from '@/services/api'
+import { platformAdminApi, orgApi, bypassNextGets } from '@/services/api'
 import { formatCurrency } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
 import { useNavigate } from 'react-router-dom'
@@ -96,7 +96,7 @@ export default function PlatformAdminPage() {
           <div className="px-3 py-1.5 bg-red-500/10 border border-red-500/30 rounded-lg text-xs text-red-400 font-semibold">
             SUPERUSER ONLY
           </div>
-          <button onClick={load} disabled={loading} className="btn-ghost p-2.5">
+          <button onClick={() => { bypassNextGets(); load() }} disabled={loading} className="btn-ghost p-2.5">
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
           </button>
         </div>

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, X, PieChart, Loader2, ChevronDown, ChevronUp, HelpCircle, RefreshCw } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { budgetApi } from '@/services/api'
+import { budgetApi, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatAmountInput, stripCommas } from '@/lib/utils'
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from '@/lib/categories'
 import type { Budget, BudgetLine } from '@/types'
@@ -132,7 +132,7 @@ export default function BudgetPage() {
           <p className="text-slate-400 text-sm">{budgets.length} budgets</p>
         </div>
         <div className="flex items-center gap-2 sm:ml-auto">
-          <button onClick={load} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
+          <button onClick={() => { bypassNextGets(); load() }} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
           </button>
           <button className="btn-primary" onClick={() => setShowBudgetModal(true)}>

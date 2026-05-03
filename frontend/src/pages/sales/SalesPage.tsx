@@ -6,7 +6,7 @@ import YearFilter, { yearToDateParams } from '@/components/YearFilter'
 import ExportButton from '@/components/ExportButton'
 import { Link } from 'react-router-dom'
 import toast from 'react-hot-toast'
-import { salesApi, tauriFetch } from '@/services/api'
+import { salesApi, tauriFetch, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatDate, getStatusColor, formatAmountInput, stripCommas } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
 import { useModuleAccess } from '@/hooks/useModuleAccess'
@@ -823,7 +823,7 @@ export default function SalesPage() {
           <p className="text-slate-400 text-sm">{invoices.length} invoices</p>
         </div>
         <div className="flex items-center gap-2 sm:ml-auto">
-          <button onClick={load} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
+          <button onClick={() => { bypassNextGets(); load() }} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
           </button>
           <Link to="/sales/new" className="btn-primary">

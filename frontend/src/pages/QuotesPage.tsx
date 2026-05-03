@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, X, ClipboardList, Loader2, FileText, ChevronDown, ChevronUp, Trash2, FileDown, Mail, MessageCircle, CheckCircle, ExternalLink, RefreshCw } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { quoteApi, customerApi, inventoryApi, salesApi, tauriFetch } from '@/services/api'
+import { quoteApi, customerApi, inventoryApi, salesApi, tauriFetch, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
 import { saveBlobFile } from '@/lib/saveBlobFile'
@@ -506,7 +506,7 @@ export default function QuotesPage() {
           <p className="text-slate-400 text-sm">{quotes.length} total quotes</p>
         </div>
         <div className="flex items-center gap-2 sm:ml-auto">
-          <button onClick={load} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
+          <button onClick={() => { bypassNextGets(); load() }} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
           </button>
           <button className="btn-primary" onClick={() => setShowModal(true)}>

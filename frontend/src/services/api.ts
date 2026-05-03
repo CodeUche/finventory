@@ -93,6 +93,21 @@ function makeDeferred(): Deferred {
 }
 const _inflightGets = new Map<string, Deferred>()
 
+// ── Cache-bypass flags ────────────────────────────────────────────────────────
+// _pendingCacheBypass: URLs whose list cache was just invalidated by a mutation
+//   but the async invalidation hasn't completed yet.  Set synchronously before
+//   the first `await` in _writeThroughCache so the component's .then() callback
+//   always bypasses the fresh-cache gate even if it runs before invalidation done.
+// _bypassCacheUntil: epoch ms set by bypassNextGets(); all GETs skip fresh-cache
+//   for that window — used by manual Refresh buttons across every module page.
+const _pendingCacheBypass = new Set<string>()
+let _bypassCacheUntil = 0
+
+/** Call before triggering a manual reload — next 800 ms of GETs bypass the 5-min cache. */
+export function bypassNextGets(ms = 800) {
+  _bypassCacheUntil = Date.now() + ms
+}
+
 // ── Shared response converter (Response → AxiosResponse) ──────────────────
 async function responseToAxios(resp: Response, config: InternalAxiosRequestConfig): Promise<AxiosResponse> {
   const respHeaders: Record<string, string> = {}
@@ -398,7 +413,11 @@ async function _writeThroughCache(url: string, method: string, responseData: unk
   // invalidatePrefix wipes all variants (with and without params) so the next request
   // goes straight to the server and re-caches the authoritative server response.
   const listUrl = buildListUrl(url)
+  // Set bypass flag SYNCHRONOUSLY before any await — the component's .then() runs
+  // before async invalidation completes, so the flag must be present immediately.
+  _pendingCacheBypass.add(listUrl)
   await offlineCache.invalidatePrefix(listUrl)
+  _pendingCacheBypass.delete(listUrl)
   window.dispatchEvent(new CustomEvent('audity:data-changed'))
 }
 
@@ -453,9 +472,12 @@ api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
   type ExtConfig = InternalAxiosRequestConfig & { _fromCache?: boolean; _dedupeKey?: string }
   if (!isMutation && !isBypassCache) {
     const cacheUrl = (config.url ?? '') + (config.params ? '?' + new URLSearchParams(config.params as Record<string, string>).toString() : '')
+    // Check time-based bypass (manual Refresh buttons) and pending-invalidation bypass
+    const isBypassWindow = Date.now() < _bypassCacheUntil
+    const isPendingInvalidation = [..._pendingCacheBypass].some((prefix) => cacheUrl.startsWith(prefix))
 
     // 1. Fresh-cache: serve without hitting the network
-    if (navigator.onLine && !_effectivelyOffline) {
+    if (navigator.onLine && !_effectivelyOffline && !isBypassWindow && !isPendingInvalidation) {
       try {
         const entry = await offlineCache.get(cacheUrl)
         if (entry && Date.now() - entry.cachedAt < FRESH_MS) {

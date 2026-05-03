@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Shield, ChevronDown, ChevronRight, Search, X, Globe, RefreshCw } from 'lucide-react'
-import { auditLogApi } from '@/services/api'
+import { auditLogApi, bypassNextGets } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
 import DateInput from '@/components/DateInput'
 
@@ -220,7 +220,7 @@ export default function AuditLogPage() {
           {entries.length > 0 && (
             <span className="text-xs text-slate-500">{entries.length} event{entries.length !== 1 ? 's' : ''}</span>
           )}
-          <button onClick={load} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
+          <button onClick={() => { bypassNextGets(); load() }} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
           </button>
         </div>

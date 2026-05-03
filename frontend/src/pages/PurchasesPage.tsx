@@ -3,7 +3,7 @@ import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { useSearchParams } from 'react-router-dom'
 import { Plus, Search, Truck, X, Loader2, UploadCloud, FileText, Edit2, Trash2, ChevronDown, ChevronRight, Package, RefreshCw } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { purchaseApi, supplierApi, inventoryApi } from '@/services/api'
+import { purchaseApi, supplierApi, inventoryApi, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
 import type { Product, PurchaseOrder, PurchaseOrderItem } from '@/types'
 import DateInput from '@/components/DateInput'
@@ -306,7 +306,7 @@ export default function PurchasesPage() {
           <p className="text-slate-400 text-sm">{orders.length} purchase orders</p>
         </div>
         <div className="flex items-center gap-2 sm:ml-auto">
-          <button onClick={load} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
+          <button onClick={() => { bypassNextGets(); load() }} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
           </button>
           <button className="btn-primary" onClick={openModal}>

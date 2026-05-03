@@ -7,7 +7,7 @@ import {
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { openExternal } from '@/lib/openExternal'
-import { payrollApi } from '@/services/api'
+import { payrollApi, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { saveBlobFile } from '@/lib/saveBlobFile'
 import type { PayrollRun } from '@/types'
@@ -514,7 +514,7 @@ export default function PayrollPage() {
           <p className="text-slate-400 text-sm">Compute salaries, approve, and disburse — all in one flow</p>
         </div>
         <button
-          onClick={() => { loadRuns(); loadEmployees(); }}
+          onClick={() => { bypassNextGets(); loadRuns(); loadEmployees() }}
           disabled={loadingRuns}
           className="btn-ghost p-2 text-slate-400 hover:text-white"
           title="Refresh"

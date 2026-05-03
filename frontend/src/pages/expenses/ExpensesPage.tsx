@@ -6,7 +6,7 @@ import {
   Folder, FolderOpen, FolderPlus, ChevronRight, ChevronDown, Home, Trash2, Edit2, RefreshCw,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { expenseApi, budgetApi, salesApi } from '@/services/api'
+import { expenseApi, budgetApi, salesApi, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from '@/lib/categories'
 import { useAuthStore } from '@/store/authStore'
@@ -357,7 +357,7 @@ export default function ExpensesPage() {
           <p className="text-slate-400 text-sm">{activeTab === 'entries' ? `${expenses.length} entries` : 'Organise by folder'}</p>
         </div>
         <div className="sm:ml-auto flex items-center gap-2">
-          <button onClick={loadExpenses} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
+          <button onClick={() => { bypassNextGets(); loadExpenses() }} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
           </button>
           {activeTab === 'entries' && (
