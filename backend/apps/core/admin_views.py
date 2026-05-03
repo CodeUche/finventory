@@ -113,11 +113,11 @@ class PlatformStatsView(APIView):
             orgs
             .select_related('owner', 'subscription__plan')
             .annotate(
-                member_count=Count('memberships', filter=Q(memberships__is_active=True), distinct=True),
-                invoice_count=Count('invoices', distinct=True),
+                member_count=Count('tenancy_membership_set', filter=Q(tenancy_membership_set__is_active=True), distinct=True),
+                invoice_count=Count('sales_invoice_set', distinct=True),
                 total_revenue=Sum(
-                    'invoices__total_amount',
-                    filter=Q(invoices__status__in=['paid', 'partially_paid', 'confirmed']),
+                    'sales_invoice_set__total_amount',
+                    filter=Q(sales_invoice_set__status__in=['paid', 'partially_paid', 'confirmed']),
                 ),
             )
         )
