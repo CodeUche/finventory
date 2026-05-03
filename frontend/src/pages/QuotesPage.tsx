@@ -9,6 +9,7 @@ import { saveBlobFile } from '@/lib/saveBlobFile'
 import type { Quote, Customer, Warehouse, Product, Invoice } from '@/types'
 import DateInput from '@/components/DateInput'
 import YearFilter, { yearToDateParams } from '@/components/YearFilter'
+import MonthFilter, { monthToDateParams, type ArchiveMonth } from '@/components/MonthFilter'
 import { FieldTooltip } from '@/components/FieldTooltip'
 
 interface PdfPreview { url: string; filename: string; quoteId: string }
@@ -287,6 +288,10 @@ export default function QuotesPage() {
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [archiveYear, setArchiveYear] = useState<number | null>(null)
+  const [archiveMonth, setArchiveMonth] = useState<ArchiveMonth | null>(null)
+  const activeDateParams = archiveMonth ? monthToDateParams(archiveMonth) : yearToDateParams(archiveYear)
+  const handleYearChange = (y: number | null) => { setArchiveYear(y); if (y !== null) setArchiveMonth(null) }
+  const handleMonthChange = (m: ArchiveMonth | null) => { setArchiveMonth(m); if (m !== null) setArchiveYear(null) }
 
   const [showModal, setShowModal] = useState(false)
   const [form, setForm] = useState<QuoteForm>(BLANK_FORM)
@@ -308,7 +313,7 @@ export default function QuotesPage() {
   const load = async () => {
     setLoading(true)
     try {
-      const params: Record<string, string> = { ...yearToDateParams(archiveYear) }
+      const params: Record<string, string> = { ...activeDateParams }
       if (statusFilter !== 'all') params.status = statusFilter
       const [qRes, cRes, wRes, pRes] = await Promise.all([
         quoteApi.list(params),
@@ -328,7 +333,7 @@ export default function QuotesPage() {
     load()
     const interval = setInterval(load, 5 * 60 * 1000) // poll every 5 minutes for auto-expiry
     return () => clearInterval(interval)
-  }, [statusFilter, archiveYear])
+  }, [statusFilter, archiveYear, archiveMonth])
   useDataRefresh(load)
 
   const handleCreate = async () => {
@@ -575,7 +580,8 @@ export default function QuotesPage() {
       </div>
 
       <div className="flex items-center gap-3">
-        <YearFilter selectedYear={archiveYear} onChange={setArchiveYear} />
+        <YearFilter selectedYear={archiveYear} onChange={handleYearChange} />
+        <MonthFilter selectedMonth={archiveMonth} onChange={handleMonthChange} />
       </div>
 
       {/* Table */}

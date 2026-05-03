@@ -8,6 +8,7 @@ import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/li
 import type { Product, PurchaseOrder, PurchaseOrderItem } from '@/types'
 import DateInput from '@/components/DateInput'
 import YearFilter, { yearToDateParams } from '@/components/YearFilter'
+import MonthFilter, { monthToDateParams, type ArchiveMonth } from '@/components/MonthFilter'
 import ExportButton from '@/components/ExportButton'
 import { FieldTooltip } from '@/components/FieldTooltip'
 
@@ -60,6 +61,10 @@ export default function PurchasesPage() {
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [archiveYear, setArchiveYear] = useState<number | null>(null)
+  const [archiveMonth, setArchiveMonth] = useState<ArchiveMonth | null>(null)
+  const activeDateParams = archiveMonth ? monthToDateParams(archiveMonth) : yearToDateParams(archiveYear)
+  const handleYearChange = (y: number | null) => { setArchiveYear(y); if (y !== null) setArchiveMonth(null) }
+  const handleMonthChange = (m: ArchiveMonth | null) => { setArchiveMonth(m); if (m !== null) setArchiveYear(null) }
 
   const [showModal, setShowModal] = useState(false)
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
@@ -98,7 +103,7 @@ export default function PurchasesPage() {
   const load = async () => {
     setLoading(true)
     try {
-      const params: Record<string, unknown> = { ...yearToDateParams(archiveYear) }
+      const params: Record<string, unknown> = { ...activeDateParams }
       if (search) params.search = search
       if (statusFilter) params.status = statusFilter
       const { data } = await purchaseApi.list(params)
@@ -123,7 +128,7 @@ export default function PurchasesPage() {
     } catch { /* ignore */ }
   }
 
-  useEffect(() => { load() }, [search, statusFilter, archiveYear])
+  useEffect(() => { load() }, [search, statusFilter, archiveYear, archiveMonth])
   useDataRefresh(load)
 
   // Auto-open create modal when navigated from low-stock banner
@@ -327,8 +332,9 @@ export default function PurchasesPage() {
             <option key={s} value={s}>{s.replace('_', ' ')}</option>
           ))}
         </select>
-        <YearFilter selectedYear={archiveYear} onChange={setArchiveYear} />
-        <ExportButton endpoint="/purchases/" filename="purchase_orders" params={yearToDateParams(archiveYear)} />
+        <YearFilter selectedYear={archiveYear} onChange={handleYearChange} />
+        <MonthFilter selectedMonth={archiveMonth} onChange={handleMonthChange} />
+        <ExportButton endpoint="/purchases/" filename="purchase_orders" params={activeDateParams} />
       </div>
 
       {/* Table */}

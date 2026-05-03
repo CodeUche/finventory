@@ -3,6 +3,7 @@ import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, Receipt, Search, X, Loader2, CheckCircle, Ban, FileDown, Mail, MessageCircle, RotateCcw, Truck, Pencil, Trash2, CalendarClock, RefreshCw } from 'lucide-react'
 import SortSelect from '@/components/SortSelect'
 import YearFilter, { yearToDateParams } from '@/components/YearFilter'
+import MonthFilter, { monthToDateParams, type ArchiveMonth } from '@/components/MonthFilter'
 import ExportButton from '@/components/ExportButton'
 import { Link } from 'react-router-dom'
 import toast from 'react-hot-toast'
@@ -466,6 +467,10 @@ export default function SalesPage() {
   const [returnRestocked, setReturnRestocked] = useState(true)
   const [processingReturn, setProcessingReturn] = useState(false)
   const [archiveYear, setArchiveYear] = useState<number | null>(null)
+  const [archiveMonth, setArchiveMonth] = useState<ArchiveMonth | null>(null)
+  const activeDateParams = archiveMonth ? monthToDateParams(archiveMonth) : yearToDateParams(archiveYear)
+  const handleYearChange = (y: number | null) => { setArchiveYear(y); if (y !== null) setArchiveMonth(null) }
+  const handleMonthChange = (m: ArchiveMonth | null) => { setArchiveMonth(m); if (m !== null) setArchiveYear(null) }
   const [showExtendDue, setShowExtendDue] = useState(false)
   const [extendDueDate, setExtendDueDate] = useState('')
   const [extendReason, setExtendReason] = useState('')
@@ -474,13 +479,13 @@ export default function SalesPage() {
   const load = async () => {
     setLoading(true)
     try {
-      const { data } = await salesApi.invoices({ search, status: status || undefined, ordering: sortBy, ...yearToDateParams(archiveYear) })
+      const { data } = await salesApi.invoices({ search, status: status || undefined, ordering: sortBy, ...activeDateParams })
       setInvoices(data.results ?? data)
     } catch { toast.error('Failed to load invoices') }
     finally { setLoading(false) }
   }
 
-  useEffect(() => { load() }, [search, status, sortBy, archiveYear])
+  useEffect(() => { load() }, [search, status, sortBy, archiveYear, archiveMonth])
   useDataRefresh(load)
 
   const openDetail = async (inv: Invoice) => {
@@ -853,8 +858,9 @@ export default function SalesPage() {
             <option key={s} value={s}>{s.replace('_', ' ')}</option>
           ))}
         </select>
-        <YearFilter selectedYear={archiveYear} onChange={setArchiveYear} />
-        <ExportButton endpoint="/sales/invoices/" filename="invoices" params={yearToDateParams(archiveYear)} />
+        <YearFilter selectedYear={archiveYear} onChange={handleYearChange} />
+        <MonthFilter selectedMonth={archiveMonth} onChange={handleMonthChange} />
+        <ExportButton endpoint="/sales/invoices/" filename="invoices" params={activeDateParams} />
       </div>
 
       <div className="card p-0 overflow-hidden">

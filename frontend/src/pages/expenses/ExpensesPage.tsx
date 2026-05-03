@@ -13,6 +13,7 @@ import { useAuthStore } from '@/store/authStore'
 import type { Expense, ExpenseGroup, Invoice } from '@/types'
 import DateInput from '@/components/DateInput'
 import YearFilter, { yearToDateParams } from '@/components/YearFilter'
+import MonthFilter, { monthToDateParams, type ArchiveMonth } from '@/components/MonthFilter'
 import ExportButton from '@/components/ExportButton'
 import { FieldTooltip } from '@/components/FieldTooltip'
 
@@ -78,6 +79,9 @@ export default function ExpensesPage() {
   const [typeFilter, setTypeFilter] = useState<'expense' | 'income' | ''>('')
   const [periodFilter, setPeriodFilter] = useState<string>('30d')
   const [archiveYear, setArchiveYear] = useState<number | null>(null)
+  const [archiveMonth, setArchiveMonth] = useState<ArchiveMonth | null>(null)
+  const handleYearChange = (y: number | null) => { setArchiveYear(y); setArchiveMonth(null); if (!y) setPeriodFilter('30d') }
+  const handleMonthChange = (m: ArchiveMonth | null) => { setArchiveMonth(m); if (m !== null) { setArchiveYear(null) } else { setPeriodFilter('30d') } }
   const [groupByCategory, setGroupByCategory] = useState(false)
   const [salesRevenueCollapsed, setSalesRevenueCollapsed] = useState(false)
   const [cashflowCollapsed, setCashflowCollapsed] = useState(false)
@@ -89,6 +93,7 @@ export default function ExpensesPage() {
       const y = new Date().getFullYear()
       return { date_from: `${y}-01-01`, date_to: `${y}-12-31` }
     }
+    if (archiveMonth) return monthToDateParams(archiveMonth)
     if (archiveYear) return yearToDateParams(archiveYear)
     const days = parseInt(period)
     if (!isNaN(days)) {
@@ -116,7 +121,7 @@ export default function ExpensesPage() {
   const loadExpenses = async () => {
     setLoading(true)
     try {
-      const dateParams = archiveYear ? yearToDateParams(archiveYear) : periodToDateParams(periodFilter)
+      const dateParams = archiveMonth ? monthToDateParams(archiveMonth) : archiveYear ? yearToDateParams(archiveYear) : periodToDateParams(periodFilter)
       const params: Record<string, unknown> = { search: search || undefined, ...dateParams }
       if (typeFilter === 'income') params.is_income = true
       if (typeFilter === 'expense') params.is_income = false
@@ -139,7 +144,7 @@ export default function ExpensesPage() {
     finally { setLoading(false) }
   }
 
-  useEffect(() => { loadExpenses() }, [search, typeFilter, periodFilter, archiveYear])
+  useEffect(() => { loadExpenses() }, [search, typeFilter, periodFilter, archiveYear, archiveMonth])
   useDataRefresh(loadExpenses)
 
   useEffect(() => {
@@ -489,8 +494,8 @@ export default function ExpensesPage() {
                 <Layers size={14} />
                 Group by Category
               </button>
-              {/* Period filter */}
-              {!archiveYear && (
+              {/* Period filter — hidden when an archive (year or month) is active */}
+              {!archiveYear && !archiveMonth && (
                 <select
                   value={periodFilter}
                   onChange={(e) => setPeriodFilter(e.target.value)}
@@ -506,8 +511,9 @@ export default function ExpensesPage() {
                   <option value="all">All time</option>
                 </select>
               )}
-              <YearFilter selectedYear={archiveYear} onChange={(y) => { setArchiveYear(y); if (!y) setPeriodFilter('30d') }} />
-              <ExportButton endpoint="/expenses/" filename="expenses" params={archiveYear ? yearToDateParams(archiveYear) : periodToDateParams(periodFilter)} />
+              <YearFilter selectedYear={archiveYear} onChange={handleYearChange} />
+              <MonthFilter selectedMonth={archiveMonth} onChange={handleMonthChange} />
+              <ExportButton endpoint="/expenses/" filename="expenses" params={archiveMonth ? monthToDateParams(archiveMonth) : archiveYear ? yearToDateParams(archiveYear) : periodToDateParams(periodFilter)} />
             </div>
           </div>
 

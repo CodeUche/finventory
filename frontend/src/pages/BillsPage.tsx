@@ -4,6 +4,7 @@ import { Plus, X, Receipt, Loader2, Search, Trash2, Edit2, Folder, RefreshCw } f
 import { Link, useSearchParams } from 'react-router-dom'
 import SortSelect from '@/components/SortSelect'
 import YearFilter, { yearToDateParams } from '@/components/YearFilter'
+import MonthFilter, { monthToDateParams, type ArchiveMonth } from '@/components/MonthFilter'
 import ExportButton from '@/components/ExportButton'
 import toast from 'react-hot-toast'
 import { billApi, supplierApi, taxApi, expenseApi, bypassNextGets } from '@/services/api'
@@ -78,6 +79,10 @@ export default function BillsPage() {
   const [search, setSearch] = useState('')
   const [sortBy, setSortBy] = useState('-created_at')
   const [archiveYear, setArchiveYear] = useState<number | null>(null)
+  const [archiveMonth, setArchiveMonth] = useState<ArchiveMonth | null>(null)
+  const activeDateParams = archiveMonth ? monthToDateParams(archiveMonth) : yearToDateParams(archiveYear)
+  const handleYearChange = (y: number | null) => { setArchiveYear(y); if (y !== null) setArchiveMonth(null) }
+  const handleMonthChange = (m: ArchiveMonth | null) => { setArchiveMonth(m); if (m !== null) setArchiveYear(null) }
 
   const [showModal, setShowModal] = useState(false)
   const [editingBillId, setEditingBillId] = useState<string | null>(null)
@@ -92,7 +97,7 @@ export default function BillsPage() {
   const load = async () => {
     setLoading(true)
     try {
-      const params: Record<string, string> = { ...yearToDateParams(archiveYear) }
+      const params: Record<string, string> = { ...activeDateParams }
       if (statusFilter) params.status = statusFilter
       if (search) params.search = search
       if (sortBy) params.ordering = sortBy
@@ -112,7 +117,7 @@ export default function BillsPage() {
     finally { setLoading(false) }
   }
 
-  useEffect(() => { load() }, [statusFilter, search, sortBy, archiveYear])
+  useEffect(() => { load() }, [statusFilter, search, sortBy, archiveYear, archiveMonth])
   useDataRefresh(load)
 
   // Auto-open new bill modal when navigated from folder page with ?openNew=1&folder=<id>
@@ -345,8 +350,9 @@ export default function BillsPage() {
             <X size={14} /> Clear
           </button>
         )}
-        <YearFilter selectedYear={archiveYear} onChange={setArchiveYear} />
-        <ExportButton endpoint="/bills/" filename="bills" params={yearToDateParams(archiveYear)} />
+        <YearFilter selectedYear={archiveYear} onChange={handleYearChange} />
+        <MonthFilter selectedMonth={archiveMonth} onChange={handleMonthChange} />
+        <ExportButton endpoint="/bills/" filename="bills" params={activeDateParams} />
       </div>
 
       {/* Table */}
