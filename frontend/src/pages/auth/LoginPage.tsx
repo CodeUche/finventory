@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Eye, EyeOff, Loader2, AlertCircle, ShieldCheck } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { api, authApi } from '@/services/api'
+import { api, authApi, bypassNextGets } from '@/services/api'
 import { offlineCache } from '@/lib/offlineCache'
 import { useAuthStore } from '@/store/authStore'
 import AudityLogo from '@/components/AudityLogo'
@@ -36,6 +36,13 @@ export default function LoginPage() {
   }
 
   const finishLogin = async (user: any, tokens: { access: string; refresh: string }) => {
+    // Hard guard: if the server returned undefined tokens (e.g. offline synthetic
+    // response slipped through before the auth-URL exclusion was deployed), abort
+    // immediately with a clear error rather than silently falling through to /onboarding.
+    if (!tokens?.access || !tokens?.refresh || typeof tokens.access !== 'string' || !tokens.access.includes('.')) {
+      throw new Error('Authentication failed. Please check your connection and try again.')
+    }
+
     localStorage.setItem('finventory-session-start', String(Date.now()))
     localStorage.setItem('finventory-last-active', String(Date.now()))
 
@@ -65,6 +72,13 @@ export default function LoginPage() {
       api.defaults.headers.common['X-Organisation-ID'] = bootstrapOrgId
     }
 
+    // Invalidate any stale org cache BEFORE fetching so the fresh-cache gate
+    // never serves a previous session's empty or outdated org list.
+    // bypassNextGets ensures this specific request hits the network even if
+    // the 5-min window hasn't expired yet.
+    await offlineCache.invalidatePrefix('/tenancy/organisations/')
+    bypassNextGets(3000)
+
     // Fetch orgs with org context already set (both header and ?org= param).
     // Pass Authorization + X-Organisation-ID explicitly on this request —
     // setAuth() hasn't run yet so Zustand tokens are empty; relying on
@@ -92,13 +106,9 @@ export default function LoginPage() {
       if (!firstOrg && bootstrapOrgId) firstOrg = { id: bootstrapOrgId } as any
     }
 
-    // Wipe any stale membership/org cache from a previous cold-start failure.
-    // If the empty-fallback was cached before the api.ts fix was deployed, it
-    // could linger and serve { results:[] } for up to 5 minutes. Clearing the
-    // relevant prefixes on every fresh login guarantees a clean slate.
+    // Wipe any stale membership cache from a previous session.
     offlineCache.invalidatePrefix('/tenancy/organisations/my_membership/').catch(() => {})
     offlineCache.invalidatePrefix('/tenancy/memberships/').catch(() => {})
-    offlineCache.invalidatePrefix('/tenancy/organisations/').catch(() => {})
 
     // NOW commit everything to the store in one synchronous batch.
     // React 18 batches these consecutive Zustand updates into a single render,

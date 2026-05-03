@@ -456,9 +456,16 @@ api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
   // When device is offline (or effectively offline), mutations get an immediate
   // synthetic success response so the UI updates right away.  The real request
   // is queued in syncEngine and replayed when connectivity is restored.
+  //
+  // SECURITY: auth endpoints (/auth/*) are NEVER handled offline.  A login or
+  // token operation requires real server verification — a synthetic success
+  // response would return undefined tokens, silently break finishLogin, and
+  // redirect the user to /onboarding.  Auth failures must throw so the catch
+  // block in LoginPage shows the correct "cannot connect" error.
   const isRetry = (config.headers as Record<string, string>)?.['X-Offline-Retry'] === '1'
   const isMutation = ['post', 'put', 'patch', 'delete'].includes(config.method?.toLowerCase() ?? '')
-  if ((!navigator.onLine || _effectivelyOffline) && isMutation && !isRetry) {
+  const isAuthUrl = (config.url ?? '').includes('/auth/')
+  if ((!navigator.onLine || _effectivelyOffline) && isMutation && !isRetry && !isAuthUrl) {
     config.adapter = _buildOfflineMutationAdapter(config)
     return config
   }
@@ -628,8 +635,10 @@ api.interceptors.response.use(
           ;(original as ExtConfig)._fromCache = true
           return { data: { results: [] }, status: 200, statusText: 'OK (offline)', headers: {}, config: original } as AxiosResponse
         }
-      } else if (!isRetry) {
-        // Mutation failed on the wire — treat optimistically (same as request interceptor)
+      } else if (!isRetry && !url.includes('/auth/')) {
+        // Mutation failed on the wire — treat optimistically (same as request interceptor).
+        // Auth endpoints are excluded: a timed-out login must throw so LoginPage shows
+        // the correct "cannot connect" error rather than receiving undefined tokens.
         _signalOffline()
         const adapter = _buildOfflineMutationAdapter(original)
         // adapter is async — call it directly to get the response

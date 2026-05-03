@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import AudityLogo from '@/components/AudityLogo'
 import { Eye, EyeOff, Loader2, Users, KeyRound } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { api, authApi, orgApi } from '@/services/api'
+import { api, authApi, orgApi, bypassNextGets } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
 
 export default function SubAccountLoginPage() {
@@ -40,11 +40,18 @@ export default function SubAccountLoginPage() {
     try {
       const { data } = await authApi.staffLogin(form.username.trim().toLowerCase(), form.org_slug.trim().toLowerCase(), form.password)
 
+      // Guard: if tokens are missing (should never happen after auth-URL exclusion fix,
+      // but defence-in-depth catches any future regression before it reaches setAuth).
+      if (!data?.access || !data?.refresh || typeof data.access !== 'string' || !data.access.includes('.')) {
+        throw new Error('Authentication failed. Please check your connection and try again.')
+      }
+
       localStorage.setItem('finventory-session-start', String(Date.now()))
       localStorage.setItem('finventory-last-active', String(Date.now()))
       setAuth(data.user, { access: data.access, refresh: data.refresh })
       api.defaults.headers.common.Authorization = `Bearer ${data.access}`
 
+      bypassNextGets(3000)
       const orgsRes = await orgApi.list()
       const orgs = orgsRes.data.results ?? orgsRes.data
       setOrganisations(orgs)
