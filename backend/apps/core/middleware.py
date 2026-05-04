@@ -99,9 +99,9 @@ def _set_org(org_id: str) -> None:
             # Use SET (session-level) so it survives across statements even
             # when the request is not wrapped in an atomic block.
             cursor.execute("SELECT set_config('app.current_org_id', %s, FALSE)", [org_id])
-    except Exception:
-        # Never crash a request because of an RLS bookkeeping failure.
-        pass
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("RLS _set_org failed (org=%s): %s", org_id, exc)
 
 
 def _set_user(user_id: str) -> None:
@@ -120,5 +120,6 @@ def _set_user(user_id: str) -> None:
     try:
         with connection.cursor() as cursor:
             cursor.execute("SELECT set_config('app.current_user_id', %s, FALSE)", [str(user_id)])
-    except Exception:
-        pass
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("RLS _set_user failed (user=%s): %s", user_id, exc)
