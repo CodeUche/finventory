@@ -3,7 +3,7 @@ import AudityLogo from '@/components/AudityLogo'
 import { Link, useNavigate } from 'react-router-dom'
 import { Eye, EyeOff, Loader2, CheckCircle2, XCircle, Mail } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { authApi, orgApi } from '@/services/api'
+import { api, authApi, orgApi } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
 
 const PW_CRITERIA = [
@@ -16,7 +16,7 @@ const PW_CRITERIA = [
 
 export default function RegisterPage() {
   const navigate = useNavigate()
-  const { setAuth, setOrganisation, setOrganisations } = useAuthStore()
+  const { initSession, setOrganisation } = useAuthStore()
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const [form, setForm] = useState({
@@ -28,23 +28,38 @@ export default function RegisterPage() {
   const [pwFocused, setPwFocused] = useState(false)
   const [registered, setRegistered] = useState(false)
   const [resending, setResending] = useState(false)
+  const [pollingToken, setPollingToken] = useState<string | null>(null)
 
   // Poll every 5s once on "check your email" screen — auto-advance when verified
   useEffect(() => {
     if (!registered) return
     pollRef.current = setInterval(async () => {
       try {
-        const { data } = await authApi.checkVerification(form.email)
+        const { data } = await authApi.checkVerification(form.email, pollingToken ?? undefined)
         if (data.verified) {
           clearInterval(pollRef.current!)
-          setAuth(data.user, data.tokens)
+          // Set auth header so subsequent requests can authenticate
+          api.defaults.headers.common.Authorization = `Bearer ${data.tokens.access}`
+          // Bootstrap org from JWT memberships claim
+          let bootstrapOrgId: string | null = null
+          try {
+            const b64 = data.tokens.access.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
+            const payload = JSON.parse(atob(b64))
+            bootstrapOrgId = Object.keys(payload.memberships ?? {})[0] ?? null
+          } catch { /* non-fatal */ }
+          if (bootstrapOrgId) {
+            api.defaults.headers.common['X-Organisation-ID'] = bootstrapOrgId
+            setOrganisation({ id: bootstrapOrgId } as any)
+          }
           try {
             const orgsRes = await orgApi.list()
             const orgs = orgsRes.data.results ?? orgsRes.data
-            setOrganisations(orgs)
-            if (orgs.length > 0) setOrganisation(orgs[0])
-            navigate(orgs.length > 0 ? '/dashboard' : '/onboarding')
+            const firstOrg = orgs[0] ?? (bootstrapOrgId ? { id: bootstrapOrgId } as any : null)
+            initSession(data.user, data.tokens, firstOrg, orgs)
+            if (firstOrg) api.defaults.headers.common['X-Organisation-ID'] = firstOrg.id
+            navigate(firstOrg ? '/dashboard' : '/onboarding')
           } catch {
+            initSession(data.user, data.tokens, null, [])
             navigate('/onboarding')
           }
         }
@@ -71,7 +86,8 @@ export default function RegisterPage() {
     }
     setLoading(true)
     try {
-      await authApi.register(form)
+      const { data } = await authApi.register(form)
+      setPollingToken(data.polling_token ?? null)
       setRegistered(true)
     } catch (err: any) {
       if (!err.response) {

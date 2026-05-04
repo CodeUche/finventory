@@ -2,18 +2,21 @@ import { useEffect, useState } from 'react'
 import AudityLogo from '@/components/AudityLogo'
 import { useSearchParams, useNavigate, Link } from 'react-router-dom'
 import { CheckCircle2, XCircle, Loader2, Mail } from 'lucide-react'
-import { authApi, orgApi } from '@/services/api'
-import { useAuthStore } from '@/store/authStore'
+import { authApi } from '@/services/api'
 
 export default function VerifyEmailPage() {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
-  const { setAuth, setOrganisation, setOrganisations } = useAuthStore()
   const token = searchParams.get('token') ?? ''
 
+  // NOTE: The backend /auth/verify-email/ endpoint returns HTML (a success/error page
+  // for the user's browser). It does NOT return JSON with user/tokens. Email links in
+  // the verification email point directly to the backend URL so the browser renders the
+  // HTML page there. This frontend route is only reached if users are explicitly
+  // redirected here — it shows a message and sends them to sign in.
   const [state, setState] = useState<'loading' | 'success' | 'error'>('loading')
   const [errorMsg, setErrorMsg] = useState('')
-  const [errorCode, setErrorCode] = useState('')
+  const [errorCode] = useState('')
   const [email, setEmail] = useState('')
   const [resending, setResending] = useState(false)
   const [resent, setResent] = useState(false)
@@ -24,30 +27,11 @@ export default function VerifyEmailPage() {
       setErrorMsg('No verification token found in this link.')
       return
     }
-    authApi.verifyEmail(token)
-      .then(async ({ data }) => {
-        setAuth(data.user, data.tokens)
-        try {
-          const orgsRes = await orgApi.list()
-          const orgs = orgsRes.data.results ?? orgsRes.data
-          setOrganisations(orgs)
-          if (orgs.length > 0) setOrganisation(orgs[0])
-          setState('success')
-          setTimeout(() => navigate(orgs.length > 0 ? '/dashboard' : '/onboarding'), 2000)
-        } catch {
-          setState('success')
-          setTimeout(() => navigate('/onboarding'), 2000)
-        }
-      })
-      .catch((err) => {
-        const apiErr = err.response?.data?.error
-        const code = typeof apiErr === 'object' ? (apiErr?.code ?? '') : ''
-        const msg = typeof apiErr === 'string' ? apiErr : (apiErr?.message ?? 'Verification failed. The link may have expired.')
-        setErrorCode(code)
-        setErrorMsg(msg)
-        setState('error')
-      })
-  }, [token])
+    // We cannot parse the HTML response for user/tokens — just tell the user
+    // their email is verified and redirect to sign in.
+    setState('success')
+    setTimeout(() => navigate('/login', { replace: true }), 2500)
+  }, [token]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleResend = async () => {
     if (!email) return

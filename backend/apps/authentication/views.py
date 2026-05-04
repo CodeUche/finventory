@@ -54,9 +54,14 @@ MFA_CHALLENGE_MAX_AGE = 300        # 5 minutes
 
 
 def _issue_tokens(user):
-    """Return {access, refresh} JWT strings for a user."""
+    """Return {access, refresh} JWT strings for a user, with memberships claim."""
     refresh = RefreshToken.for_user(user)
     refresh["token_version"] = user.token_version
+    memberships = {
+        str(m.organisation_id): m.role
+        for m in user.memberships.filter(is_active=True).select_related("organisation")
+    }
+    refresh["memberships"] = memberships
     return {"access": str(refresh.access_token), "refresh": str(refresh)}
 
 

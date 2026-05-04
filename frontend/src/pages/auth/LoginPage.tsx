@@ -9,7 +9,7 @@ import AudityLogo from '@/components/AudityLogo'
 
 export default function LoginPage() {
   const navigate = useNavigate()
-  const { initSession, rememberMe, setRememberMe } = useAuthStore()
+  const { initSession, setOrganisation, rememberMe, setRememberMe } = useAuthStore()
   const [form, setForm] = useState({ email: '', password: '' })
   const [showPw, setShowPw] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -70,6 +70,10 @@ export default function LoginPage() {
 
     if (bootstrapOrgId) {
       api.defaults.headers.common['X-Organisation-ID'] = bootstrapOrgId
+      // Seed Zustand NOW so the request interceptor reads getStoredOrgId() = bootstrapOrgId
+      // and does NOT delete X-Organisation-ID from the org fetch request below.
+      // isAuthenticated is still false at this point so ProtectedRoute stays on the spinner.
+      setOrganisation({ id: bootstrapOrgId } as any)
     }
 
     // Invalidate any stale org cache BEFORE fetching so the fresh-cache gate

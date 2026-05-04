@@ -850,8 +850,8 @@ export const authApi = {
     api.post('/auth/password-reset/confirm/', data),
   verifyEmail: (token: string) =>
     api.get('/auth/verify-email/', { params: { token } }),
-  checkVerification: (email: string) =>
-    api.post('/auth/check-verification/', { email }),
+  checkVerification: (email: string, pollingToken?: string) =>
+    api.post('/auth/check-verification/', { email, ...(pollingToken ? { polling_token: pollingToken } : {}) }),
   resendVerification: (email: string) =>
     api.post('/auth/resend-verification/', { email }),
   mfaSetup: () => api.post('/auth/mfa/setup/'),
