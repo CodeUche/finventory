@@ -104,18 +104,25 @@ class OrganisationViewSet(viewsets.ModelViewSet):
         )
         user_org_ids = [str(i) for i in user_org_ids]
 
-        # Raw SQL fallback only if ORM returned nothing (e.g. RLS shadow on ORM
-        # path).  Raw SQL with explicit user_id bypasses the RLS SENTINEL.
+        # Raw SQL fallback — runs when ORM returned nothing (RLS blocked it).
+        # set_config and SELECT are in the same atomic() transaction so the
+        # transaction-local user identity (TRUE) is visible to the query even
+        # when _set_user() failed earlier and even under pgBouncer transaction mode.
         if not user_org_ids:
-            from django.db import connection as _conn
+            from django.db import connection as _conn, transaction as _tx
             try:
-                with _conn.cursor() as cur:
-                    cur.execute(
-                        "SELECT organisation_id FROM tenancy_membership"
-                        " WHERE user_id = %s AND is_active = TRUE",
-                        [str(self.request.user.pk)],
-                    )
-                    user_org_ids = [str(row[0]) for row in cur.fetchall()]
+                with _tx.atomic():
+                    with _conn.cursor() as cur:
+                        cur.execute(
+                            "SELECT set_config('app.current_user_id', %s, TRUE)",
+                            [str(self.request.user.pk)],
+                        )
+                        cur.execute(
+                            "SELECT organisation_id FROM tenancy_membership"
+                            " WHERE user_id = %s AND is_active = TRUE",
+                            [str(self.request.user.pk)],
+                        )
+                        user_org_ids = [str(row[0]) for row in cur.fetchall()]
             except Exception:
                 pass
 

@@ -33,21 +33,28 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         token["is_verified"] = user.is_verified
         token["is_sub_account"] = user.is_sub_account
 
-        # Set the DB-level user identity so the membership_select RLS policy
-        # allows reading this user's own membership rows even under SENTINEL.
-        # (membership_select: organisation_id = current_org_id  OR
-        #  current_org_id = SENTINEL AND user_id = current_user_id)
+        # Embed memberships (org_id → role) for fast client-side routing.
+        # Use raw SQL inside atomic() so set_config and SELECT are in the same
+        # PostgreSQL transaction — set_config(..., TRUE) (transaction-local) is
+        # then visible to the membership query under SENTINEL regardless of whether
+        # a separate _set_user() call worked and regardless of pgBouncer mode.
+        memberships = {}
         try:
-            from apps.core.middleware import _set_user
-            _set_user(str(user.pk))
+            from django.db import connection as _mc, transaction as _mt
+            with _mt.atomic():
+                with _mc.cursor() as _cur:
+                    _cur.execute(
+                        "SELECT set_config('app.current_user_id', %s, TRUE)",
+                        [str(user.pk)],
+                    )
+                    _cur.execute(
+                        "SELECT organisation_id, role FROM tenancy_membership"
+                        " WHERE user_id = %s AND is_active = TRUE",
+                        [str(user.pk)],
+                    )
+                    memberships = {str(r[0]): r[1] for r in _cur.fetchall()}
         except Exception:
             pass
-
-        # Embed memberships (org_id → role) for fast client-side routing
-        memberships = {
-            str(m.organisation_id): m.role
-            for m in user.memberships.filter(is_active=True).select_related("organisation")
-        }
         token["memberships"] = memberships
         token["token_version"] = user.token_version
         return token
