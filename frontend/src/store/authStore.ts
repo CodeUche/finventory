@@ -12,6 +12,10 @@ interface AuthState {
   organisation: Organisation | null
   organisations: Organisation[]
   isAuthenticated: boolean
+  // True once finishLogin has completed the org fetch and committed state.
+  // ProtectedRoute shows a spinner while false so it never redirects to
+  // /onboarding based on a transient null organisation during login.
+  orgInitialized: boolean
   rememberMe: boolean
   // Current user's role in the active organisation
   memberRole: string | null
@@ -26,6 +30,10 @@ interface AuthState {
   // Whether the current subscription is expired
   subscriptionExpired: boolean
 
+  // Atomic login commit — sets user, tokens, org, and isAuthenticated in a single
+  // Zustand set() call so ProtectedRoute never sees isAuthenticated=true with
+  // organisation=null (the race that caused the /onboarding redirect).
+  initSession: (user: User, tokens: AuthTokens, org: Organisation | null, orgs: Organisation[]) => void
   setAuth: (user: User, tokens: AuthTokens) => void
   setOrganisation: (org: Organisation | null) => void
   setOrganisations: (orgs: Organisation[]) => void
@@ -49,6 +57,7 @@ export const useAuthStore = create<AuthState>()(
       organisation: null,
       organisations: [],
       isAuthenticated: false,
+      orgInitialized: false,
       rememberMe: false,
       memberRole: null,
       modulePermissions: {},
@@ -61,6 +70,19 @@ export const useAuthStore = create<AuthState>()(
         if (val) localStorage.setItem(REMEMBER_FLAG_KEY, 'true')
         else localStorage.removeItem(REMEMBER_FLAG_KEY)
         set({ rememberMe: val })
+      },
+
+      // Atomic login commit: sets user, tokens, isAuthenticated, org, and
+      // orgInitialized all in one set() call.  Zustand notifies subscribers
+      // exactly once, so ProtectedRoute never sees the transient state where
+      // isAuthenticated=true but organisation=null that caused /onboarding redirects.
+      initSession: (user, tokens, org, orgs) => {
+        set({
+          user, tokens, isAuthenticated: true,
+          organisation: org, organisations: orgs,
+          orgInitialized: true,
+          memberRole: null, modulePermissions: {},
+        })
       },
 
       setAuth: (user, tokens) => {
@@ -106,6 +128,7 @@ export const useAuthStore = create<AuthState>()(
         import('@/lib/offlineCache').then(({ offlineCache }) => offlineCache.clearAll()).catch(() => {})
         set({
           user: null, tokens: null, organisation: null, isAuthenticated: false,
+          orgInitialized: false,
           rememberMe: false, memberRole: null, modulePermissions: {}, planModules: null,
           planTaxEngine: null, planName: null, subscriptionExpired: false,
         })

@@ -8,7 +8,7 @@ import { useAuthStore } from '@/store/authStore'
 
 export default function SubAccountLoginPage() {
   const navigate = useNavigate()
-  const { setAuth, setOrganisation, setOrganisations } = useAuthStore()
+  const { initSession } = useAuthStore()
   const [form, setForm] = useState({ username: '', org_slug: '', password: '' })
   const [showPw, setShowPw] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -48,14 +48,17 @@ export default function SubAccountLoginPage() {
 
       localStorage.setItem('finventory-session-start', String(Date.now()))
       localStorage.setItem('finventory-last-active', String(Date.now()))
-      setAuth(data.user, { access: data.access, refresh: data.refresh })
       api.defaults.headers.common.Authorization = `Bearer ${data.access}`
 
       bypassNextGets(3000)
       const orgsRes = await orgApi.list()
       const orgs = orgsRes.data.results ?? orgsRes.data
-      setOrganisations(orgs)
-      if (orgs.length > 0) setOrganisation(orgs[0])
+      const firstOrg = orgs[0] ?? null
+
+      // Atomic commit — single set() so ProtectedRoute never sees isAuthenticated=true
+      // with organisation=null (the race condition that caused /onboarding redirects).
+      initSession(data.user, { access: data.access, refresh: data.refresh }, firstOrg, orgs)
+      if (firstOrg) api.defaults.headers.common['X-Organisation-ID'] = firstOrg.id
 
       if (data.user.must_change_password) {
         setShowForceChange(true)

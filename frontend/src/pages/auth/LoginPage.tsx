@@ -9,7 +9,7 @@ import AudityLogo from '@/components/AudityLogo'
 
 export default function LoginPage() {
   const navigate = useNavigate()
-  const { setAuth, setOrganisation, setOrganisations, rememberMe, setRememberMe } = useAuthStore()
+  const { initSession, rememberMe, setRememberMe } = useAuthStore()
   const [form, setForm] = useState({ email: '', password: '' })
   const [showPw, setShowPw] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -110,18 +110,12 @@ export default function LoginPage() {
     offlineCache.invalidatePrefix('/tenancy/organisations/my_membership/').catch(() => {})
     offlineCache.invalidatePrefix('/tenancy/memberships/').catch(() => {})
 
-    // NOW commit everything to the store in one synchronous batch.
-    // React 18 batches these consecutive Zustand updates into a single render,
-    // so when the Dashboard first mounts, organisation is already set.
-    setAuth(user, tokens)
-    setOrganisations(orgs)
+    // Atomic commit: single set() call so ProtectedRoute never sees the transient
+    // state of isAuthenticated=true with organisation=null that caused /onboarding redirects.
+    initSession(user, tokens, firstOrg, orgs)
     if (firstOrg) {
-      setOrganisation(firstOrg)
       api.defaults.headers.common['X-Organisation-ID'] = firstOrg.id
     } else {
-      // No orgs found and no JWT membership — clear any stale org left over from
-      // a previous session to avoid sending a wrong X-Organisation-ID header.
-      setOrganisation(null)
       delete api.defaults.headers.common['X-Organisation-ID']
     }
 

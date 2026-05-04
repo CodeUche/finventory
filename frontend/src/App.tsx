@@ -93,22 +93,24 @@ function ErrorBoundary({ children }: { children: React.ReactNode }) {
 }
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, user, organisation } = useAuthStore()
+  const { isAuthenticated, user, organisation, orgInitialized } = useAuthStore()
   if (!isAuthenticated) return <Navigate to="/login" replace />
-  // If authenticated but org isn't loaded yet (AppLayout is still fetching it),
-  // show a spinner instead of redirecting to /onboarding. Org loads in <2s normally;
-  // this prevents a flash-redirect for users who DO have an org.
-  // Only redirect to /onboarding when we're confident there's no org: user exists,
-  // not a superuser or sub-account, and org is definitively null after initial load.
-  const onboardingDone = user?.is_superuser || user?.is_sub_account || !!organisation?.id
-  if (!onboardingDone && !user) return <Navigate to="/login" replace />
-  if (!onboardingDone) {
-    // Redirect to onboarding only for genuinely new users (no org in store at all).
-    // If there's no org yet it may be that AppLayout hasn't fetched it. Give it a
-    // moment — if 'organisation' is populated shortly after (by AppLayout's effect),
-    // this component will re-render and the redirect won't fire.
-    return <Navigate to="/onboarding" replace />
+
+  // orgInitialized is only set to true by initSession() after finishLogin() has
+  // fetched the org list and committed everything atomically.  While it is false
+  // the login is still in-flight — show a full-screen spinner so we never redirect
+  // to /onboarding based on the transient null organisation that exists between
+  // setAuth() and setOrganisation() in older non-atomic code paths.
+  if (!orgInitialized) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-surface-950">
+        <div className="w-8 h-8 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    )
   }
+
+  const onboardingDone = user?.is_superuser || user?.is_sub_account || !!organisation?.id
+  if (!onboardingDone) return <Navigate to="/onboarding" replace />
   return <>{children}</>
 }
 

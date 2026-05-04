@@ -219,13 +219,17 @@ function ProgressBar({ current, total }: { current: number; total: number }) {
 // ─── Main Component ────────────────────────────────────────────────────────────
 export default function OnboardingPage() {
   const navigate = useNavigate()
-  const { user, organisation, setOrganisation } = useAuthStore()
+  const { user, organisation, orgInitialized, setOrganisation } = useAuthStore()
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  // Hard guard: existing users with a completed org should never land here.
+  // This fires if ProtectedRoute somehow lets an authenticated user with a
+  // completed org through to /onboarding (e.g. after a race or a direct URL nav).
   useEffect(() => {
-    if (user?.is_sub_account) navigate('/dashboard', { replace: true })
+    if (user?.is_sub_account) { navigate('/dashboard', { replace: true }); return }
+    if (orgInitialized && organisation?.onboarding_completed) navigate('/dashboard', { replace: true })
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.is_sub_account])
+  }, [user?.is_sub_account, orgInitialized, organisation?.onboarding_completed])
 
   // Step 0: workspace, 1: questionnaire, 2: plan selection, 3: partner enrollment
   const [step, setStep] = useState(0)
