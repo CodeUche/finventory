@@ -123,19 +123,14 @@ export default function LoginPage() {
       delete api.defaults.headers.common['X-Organisation-ID']
     }
 
-    // Diagnostic: verify the backend receives the org ID (non-blocking).
-    if (firstOrg) {
-      api.get('/auth/org-debug/').then(({ data }) => {
-        const received = data.org_header ?? data.org_param ?? null
-        if (!received) {
-          toast.error(
-            `⚠ Org header not reaching server. org_header=${data.org_header} org_param=${data.org_param} raw=${data.raw_org_id}`,
-            { duration: 20000, id: 'org-debug' }
-          )
-        } else {
-          toast.success(`Org context OK: ${received.slice(0, 8)}…`, { duration: 4000, id: 'org-debug' })
-        }
-      }).catch(() => { /* non-fatal diagnostic */ })
+    // Diagnostic: always log when org detection fails so we can trace Tauri-specific issues.
+    // In normal operation firstOrg is always non-null for existing users, so this never shows.
+    if (!firstOrg && !user.is_superuser) {
+      toast.error(
+        `Workspace not found — JWT has ${bootstrapOrgId ? '1' : '0'} org(s), API returned ${Array.isArray(orgs) ? orgs.length : '?'} org(s). ` +
+        `If you already have an account please try again or contact support.`,
+        { duration: 60000, id: 'no-org-debug' },
+      )
     }
 
     const onboardingDone = user.is_superuser || !!firstOrg

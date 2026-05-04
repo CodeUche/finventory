@@ -222,14 +222,23 @@ export default function OnboardingPage() {
   const { user, organisation, orgInitialized, setOrganisation } = useAuthStore()
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  // Track whether the user actively started onboarding in this session (created an org
+  // at step 0). Without this flag, the org-id guard below would fire on every mount
+  // mid-onboarding (after step 0 sets the org) and bounce the user to dashboard too early.
+  const [onboardingStarted, setOnboardingStarted] = useState(false)
+
   // Hard guard: existing users with a completed org should never land here.
-  // This fires if ProtectedRoute somehow lets an authenticated user with a
-  // completed org through to /onboarding (e.g. after a race or a direct URL nav).
+  // Also catches authenticated users arriving with an org from a previous login
+  // session (e.g. old Tauri build race condition that set organisation but navigated
+  // to /onboarding anyway).
   useEffect(() => {
     if (user?.is_sub_account) { navigate('/dashboard', { replace: true }); return }
-    if (orgInitialized && organisation?.onboarding_completed) navigate('/dashboard', { replace: true })
+    if (orgInitialized && organisation?.onboarding_completed) { navigate('/dashboard', { replace: true }); return }
+    // If the user already has an org AND didn't just start onboarding in this session,
+    // they arrived here by mistake (login-time race) — send them to dashboard.
+    if (orgInitialized && organisation?.id && !onboardingStarted) navigate('/dashboard', { replace: true })
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.is_sub_account, orgInitialized, organisation?.onboarding_completed])
+  }, [user?.is_sub_account, orgInitialized, organisation?.onboarding_completed, organisation?.id, onboardingStarted])
 
   // Step 0: workspace, 1: questionnaire, 2: plan selection, 3: partner enrollment
   const [step, setStep] = useState(0)
@@ -283,6 +292,7 @@ export default function OnboardingPage() {
       const { data } = await orgApi.create(orgForm)
       setOrganisation(data)
       api.defaults.headers.common['X-Organisation-ID'] = data.id
+      setOnboardingStarted(true)
       setStep(1)
     } catch (err: any) {
       if (!err.response) { toast.error('Cannot connect to server. Check your connection.'); return }
