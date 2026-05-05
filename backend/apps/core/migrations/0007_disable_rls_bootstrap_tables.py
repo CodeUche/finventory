@@ -37,11 +37,24 @@ from django.db import migrations
 def disable_rls(apps, schema_editor):
     if schema_editor.connection.vendor != "postgresql":
         return
-    with schema_editor.connection.cursor() as cur:
-        cur.execute("ALTER TABLE tenancy_membership NO FORCE ROW LEVEL SECURITY")
-        cur.execute("ALTER TABLE tenancy_membership DISABLE ROW SECURITY")
-        cur.execute("ALTER TABLE tenancy_organisation NO FORCE ROW LEVEL SECURITY")
-        cur.execute("ALTER TABLE tenancy_organisation DISABLE ROW SECURITY")
+    import logging
+    _log = logging.getLogger(__name__)
+    try:
+        with schema_editor.connection.cursor() as cur:
+            cur.execute("ALTER TABLE tenancy_membership NO FORCE ROW LEVEL SECURITY")
+            cur.execute("ALTER TABLE tenancy_membership DISABLE ROW SECURITY")
+            cur.execute("ALTER TABLE tenancy_organisation NO FORCE ROW LEVEL SECURITY")
+            cur.execute("ALTER TABLE tenancy_organisation DISABLE ROW SECURITY")
+        _log.info("core.0007: RLS disabled on bootstrap tables.")
+    except Exception as exc:
+        # Railway managed-DB users are often not the table owner and cannot
+        # run ALTER TABLE RLS commands. Log clearly and continue — the app-layer
+        # fixes in serializers.py and views.py handle this case instead.
+        _log.warning(
+            "core.0007_disable_rls: ALTER TABLE not permitted (DB user is not "
+            "table owner). RLS remains active; app-layer set_config workaround "
+            "will handle bootstrap queries. Error: %s", exc
+        )
 
 
 def enable_rls(apps, schema_editor):

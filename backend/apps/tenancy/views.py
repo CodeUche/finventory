@@ -113,6 +113,11 @@ class OrganisationViewSet(viewsets.ModelViewSet):
             try:
                 with _tx.atomic():
                     with _conn.cursor() as cur:
+                        # Both GUCs must be set in the same transaction so the
+                        # RLS SENTINEL branch fires on fresh pgBouncer connections.
+                        cur.execute(
+                            "SELECT set_config('app.current_org_id', '00000000-0000-0000-0000-000000000000', TRUE)"
+                        )
                         cur.execute(
                             "SELECT set_config('app.current_user_id', %s, TRUE)",
                             [str(self.request.user.pk)],

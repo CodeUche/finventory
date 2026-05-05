@@ -43,6 +43,13 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             from django.db import connection as _mc, transaction as _mt
             with _mt.atomic():
                 with _mc.cursor() as _cur:
+                    # Set BOTH GUCs inside the same transaction so the RLS
+                    # SENTINEL branch (requires current_org_id=SENTINEL AND
+                    # current_user_id=user_pk) matches even on a fresh
+                    # pgBouncer connection where middleware set_config is gone.
+                    _cur.execute(
+                        "SELECT set_config('app.current_org_id', '00000000-0000-0000-0000-000000000000', TRUE)"
+                    )
                     _cur.execute(
                         "SELECT set_config('app.current_user_id', %s, TRUE)",
                         [str(user.pk)],
