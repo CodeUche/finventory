@@ -18,6 +18,51 @@ from .services import PaystackSubscriptionService, SubscriptionService
 
 logger = logging.getLogger(__name__)
 
+_SENTINEL = "00000000-0000-0000-0000-000000000000"
+
+
+def _resolve_org_for_user_raw(user, org_id_hint=None):
+    """Resolve an Organisation for a user, bypassing RLS via raw SQL with both GUCs."""
+    from django.db import connection as _conn, transaction as _tx
+    from apps.tenancy.models import Organisation
+
+    try:
+        with _tx.atomic():
+            with _conn.cursor() as cur:
+                cur.execute("SELECT set_config('app.current_org_id', %s, TRUE)", [_SENTINEL])
+                cur.execute("SELECT set_config('app.current_user_id', %s, TRUE)", [str(user.pk)])
+
+                if org_id_hint:
+                    cur.execute(
+                        "SELECT organisation_id FROM tenancy_membership"
+                        " WHERE user_id = %s AND organisation_id = %s AND is_active = TRUE",
+                        [str(user.pk), str(org_id_hint)],
+                    )
+                else:
+                    cur.execute(
+                        "SELECT organisation_id FROM tenancy_membership"
+                        " WHERE user_id = %s AND is_active = TRUE LIMIT 1",
+                        [str(user.pk)],
+                    )
+                row = cur.fetchone()
+                if not row:
+                    logger.warning(
+                        "_resolve_org_for_user_raw: no active membership for user=%s hint=%s",
+                        user.pk, org_id_hint,
+                    )
+                    return None
+                org_id = str(row[0])
+
+            # Set org GUC to the resolved org so the ORM query passes RLS
+            with _conn.cursor() as cur:
+                cur.execute("SELECT set_config('app.current_org_id', %s, TRUE)", [org_id])
+
+            return Organisation.objects.get(id=org_id)
+    except Exception as exc:
+        logger.warning("_resolve_org_for_user_raw: failed for user=%s: %s", user.pk, exc)
+        return None
+
+
 _GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 _GROQ_MODEL = "llama-3.1-8b-instant"
 
@@ -287,29 +332,26 @@ class SubscriptionViewSet(viewsets.GenericViewSet):
     def start_trial(self, request):
         """
         POST /api/v1/subscriptions/start-trial/
-        Body: { "plan_id": "<uuid>" }
+        Body: { "plan_id": "<uuid>", "org_id": "<uuid>" (optional) }
 
         Start a 14-day free trial on the chosen paid plan.
-        Permission is relaxed to IsAuthenticated (not IsOwnerOrAdmin) because this
-        endpoint is called during onboarding when the Tauri client may drop the
-        X-Organisation-ID header. We fall back to the user's first active membership.
+        Permission is relaxed to IsAuthenticated because this is called during
+        onboarding before the Tauri client has a reliable X-Organisation-ID header.
+        Org resolution falls back to raw SQL (bypassing RLS) using the SENTINEL GUC
+        pattern so pgBouncer transaction-mode connections work correctly.
         """
         plan_id = request.data.get("plan_id")
         if not plan_id:
             return Response({"error": "plan_id is required."}, status=400)
 
-        # Resolve org: use request.organisation if the middleware set it,
-        # otherwise fall back to the user's first active membership org.
         org = getattr(request, "organisation", None)
         if org is None:
-            membership = (
-                request.user.memberships
-                .filter(is_active=True)
-                .select_related("organisation")
-                .first()
+            org_id_hint = (
+                request.data.get("org_id")
+                or request.headers.get("X-Organisation-ID")
+                or request.query_params.get("org")
             )
-            if membership:
-                org = membership.organisation
+            org = _resolve_org_for_user_raw(request.user, org_id_hint)
         if org is None:
             return Response({"error": "No organisation context found."}, status=400)
 

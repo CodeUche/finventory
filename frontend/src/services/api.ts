@@ -1218,7 +1218,7 @@ export const subscriptionApi = {
   cancel: () => api.post('/subscriptions/cancel/'),
   recommendPlan: (answers: Record<string, string>) => api.post('/subscriptions/recommend-plan/', { answers }),
   checkPayment: (reference: string) => api.get('/subscriptions/check-payment/', { params: { reference } }),
-  startTrial: (planId: string) => api.post('/subscriptions/start-trial/', { plan_id: planId }),
+  startTrial: (planId: string, orgId?: string) => api.post('/subscriptions/start-trial/', { plan_id: planId, ...(orgId ? { org_id: orgId } : {}) }),
 }
 
 export const aiApi = {

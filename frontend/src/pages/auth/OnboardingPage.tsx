@@ -222,23 +222,14 @@ export default function OnboardingPage() {
   const { user, organisation, orgInitialized, setOrganisation } = useAuthStore()
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // Track whether the user actively started onboarding in this session (created an org
-  // at step 0). Without this flag, the org-id guard below would fire on every mount
-  // mid-onboarding (after step 0 sets the org) and bounce the user to dashboard too early.
-  const [onboardingStarted, setOnboardingStarted] = useState(false)
-
-  // Hard guard: existing users with a completed org should never land here.
-  // Also catches authenticated users arriving with an org from a previous login
-  // session (e.g. old Tauri build race condition that set organisation but navigated
-  // to /onboarding anyway).
+  // Hard guard: only redirect to dashboard when onboarding is genuinely complete.
+  // Users with an existing org but incomplete onboarding (e.g. resumed after a
+  // previous interrupted session) should stay here to finish the questionnaire.
   useEffect(() => {
     if (user?.is_sub_account) { navigate('/dashboard', { replace: true }); return }
     if (orgInitialized && organisation?.onboarding_completed) { navigate('/dashboard', { replace: true }); return }
-    // If the user already has an org AND didn't just start onboarding in this session,
-    // they arrived here by mistake (login-time race) — send them to dashboard.
-    if (orgInitialized && organisation?.id && !onboardingStarted) navigate('/dashboard', { replace: true })
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.is_sub_account, orgInitialized, organisation?.onboarding_completed, organisation?.id, onboardingStarted])
+  }, [user?.is_sub_account, orgInitialized, organisation?.onboarding_completed])
 
   // Step 0: workspace, 1: questionnaire, 2: plan selection, 3: partner enrollment
   const [step, setStep] = useState(0)
@@ -265,19 +256,12 @@ export default function OnboardingPage() {
 
   const isPartnerFlow = answers['manages_clients'] === 'Yes — I manage accounts for multiple clients'
 
-  // If org already exists skip to plan step
+  // If org already exists (resumed session), show questionnaire rather than
+  // jumping to plan selection — users should always go through the AI matching
+  // questions to get a meaningful recommendation.
   useEffect(() => {
     if (organisation?.id) {
-      setStep(2)
-      setLoadingRec(true)
-      subscriptionApi.plans()
-        .then(({ data }) => {
-          const plans = data.results ?? data
-          setRecommendation({ recommended_plan_slug: '', confidence: '', reasons: [], alternative_plan_slug: '', alternative_reasons: [], plans })
-          setSelectedPlan(plans.find((p: Plan) => p.slug === 'professional') ?? plans[0] ?? null)
-        })
-        .catch(() => toast.error('Could not load plans.'))
-        .finally(() => setLoadingRec(false))
+      setStep(1)
     }
     return () => { if (pollRef.current) clearInterval(pollRef.current) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -292,7 +276,6 @@ export default function OnboardingPage() {
       const { data } = await orgApi.create(orgForm)
       setOrganisation(data)
       api.defaults.headers.common['X-Organisation-ID'] = data.id
-      setOnboardingStarted(true)
       setStep(1)
     } catch (err: any) {
       if (!err.response) { toast.error('Cannot connect to server. Check your connection.'); return }
@@ -399,7 +382,7 @@ export default function OnboardingPage() {
     setInitiatingPay(true)
     let trialStarted = false
     try {
-      await subscriptionApi.startTrial(plan.id)
+      await subscriptionApi.startTrial(plan.id, organisation?.id)
       trialStarted = true
     } catch (err: any) {
       // Trial start failure is non-fatal — the user can select a plan from Settings later.
@@ -420,17 +403,38 @@ export default function OnboardingPage() {
   }
 
   // ── Partner enrollment ───────────────────────────────────────────────────────
+  // Maps partner tier slug → the plan the partner gets for their own workspace
+  const PARTNER_TIER_PLANS: Record<string, string> = {
+    starter: 'professional',
+    pro: 'business',
+    agency: 'enterprise',
+  }
+
   const handlePartnerEnroll = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!firmName.trim()) { toast.error('Please enter your firm or practice name.'); return }
     setPartnerSaving(true)
     try {
       await partnerApi.updateProfile({ tier: selectedPartnerTier, firm_name: firmName })
+
+      // Assign the plan that matches the selected partner tier
+      const targetSlug = PARTNER_TIER_PLANS[selectedPartnerTier] ?? 'professional'
+      try {
+        const { data } = await subscriptionApi.plans()
+        const plans: Plan[] = data.results ?? data
+        const targetPlan = plans.find((p) => p.slug === targetSlug)
+        if (targetPlan) {
+          await subscriptionApi.startTrial(targetPlan.id, organisation?.id)
+        }
+      } catch {
+        // Non-fatal — user can set plan from Settings
+      }
+
       await markOnboardingComplete()
       toast.success('Welcome to the Audity Partner Program! 🎉')
       navigate('/partner')
     } catch (err: any) {
-      // If partner profile endpoint doesn't exist yet, fall through to plan selection
+      // If partner profile endpoint doesn't exist yet, fall through gracefully
       const status = err?.response?.status
       if (status === 404 || status === 405) {
         await markOnboardingComplete()
