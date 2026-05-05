@@ -127,9 +127,17 @@ class OrganisationViewSet(viewsets.ModelViewSet):
                             " WHERE user_id = %s AND is_active = TRUE",
                             [str(self.request.user.pk)],
                         )
-                        user_org_ids = [str(row[0]) for row in cur.fetchall()]
-            except Exception:
-                pass
+                        rows = cur.fetchall()
+                        user_org_ids = [str(row[0]) for row in rows]
+                        logger.warning(
+                            "get_queryset raw-SQL fallback: user=%s found %d org(s): %s",
+                            self.request.user.pk, len(rows), user_org_ids,
+                        )
+            except Exception as exc:
+                logger.error(
+                    "get_queryset raw-SQL fallback FAILED for user=%s: %s: %s",
+                    self.request.user.pk, type(exc).__name__, exc,
+                )
 
         if user_org_ids:
             try:

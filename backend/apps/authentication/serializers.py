@@ -6,6 +6,8 @@ tenant + role information so downstream services don't need
 separate membership lookups for common operations.
 """
 
+import logging
+
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password as _validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -14,6 +16,7 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
 from apps.core.validators import validate_image_upload
 
+logger = logging.getLogger(__name__)
 User = get_user_model()
 
 
@@ -59,9 +62,17 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                         " WHERE user_id = %s AND is_active = TRUE",
                         [str(user.pk)],
                     )
-                    memberships = {str(r[0]): r[1] for r in _cur.fetchall()}
-        except Exception:
-            pass
+                    rows = _cur.fetchall()
+                    memberships = {str(r[0]): r[1] for r in rows}
+                    logger.warning(
+                        "get_token: user=%s found %d membership(s): %s",
+                        user.pk, len(rows), [str(r[0]) for r in rows],
+                    )
+        except Exception as exc:
+            logger.error(
+                "get_token: membership query FAILED for user=%s: %s: %s",
+                user.pk, type(exc).__name__, exc,
+            )
         token["memberships"] = memberships
         token["token_version"] = user.token_version
         return token
