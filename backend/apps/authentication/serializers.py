@@ -64,9 +64,18 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                     )
                     rows = _cur.fetchall()
                     memberships = {str(r[0]): r[1] for r in rows}
+                    # Also log total row count in the table + any inactive rows
+                    # so we can tell if the table is empty vs user-specific issue.
+                    _cur.execute("SELECT COUNT(*) FROM tenancy_membership")
+                    total = _cur.fetchone()[0]
+                    _cur.execute(
+                        "SELECT organisation_id, role, is_active FROM tenancy_membership WHERE user_id = %s",
+                        [str(user.pk)],
+                    )
+                    all_rows = _cur.fetchall()
                     logger.warning(
-                        "get_token: user=%s found %d membership(s): %s",
-                        user.pk, len(rows), [str(r[0]) for r in rows],
+                        "get_token: user=%s active_memberships=%d all_memberships=%s table_total=%s",
+                        user.pk, len(rows), all_rows, total,
                     )
         except Exception as exc:
             logger.error(

@@ -123,16 +123,6 @@ export default function LoginPage() {
       delete api.defaults.headers.common['X-Organisation-ID']
     }
 
-    // Diagnostic: always log when org detection fails so we can trace Tauri-specific issues.
-    // In normal operation firstOrg is always non-null for existing users, so this never shows.
-    if (!firstOrg && !user.is_superuser) {
-      toast.error(
-        `Workspace not found — JWT has ${bootstrapOrgId ? '1' : '0'} org(s), API returned ${Array.isArray(orgs) ? orgs.length : '?'} org(s). ` +
-        `If you already have an account please try again or contact support.`,
-        { duration: 60000, id: 'no-org-debug' },
-      )
-    }
-
     const onboardingDone = user.is_superuser || !!firstOrg
     toast.success(onboardingDone ? 'Welcome back!' : 'Signed in! Let\'s finish setting up your account.')
     // Superusers with no org memberships land on the platform admin page — they have
