@@ -11,6 +11,7 @@ import secrets
 import uuid
 from datetime import timedelta
 
+from django.db import IntegrityError, connection, transaction
 from django.utils import timezone
 from django.utils.text import slugify
 
@@ -42,41 +43,60 @@ class OrganisationService:
             extra: Additional fields (country, currency, etc.)
         """
         extra = extra or {}
-        slug = OrganisationService._unique_slug(name)
-
-        # Pre-generate the org UUID and set the RLS context variable BEFORE the
-        # INSERT so the tenant_isolation WITH CHECK (id = current_org_id) clause
-        # evaluates as (new_uuid = new_uuid) → true.  Without this, the INSERT
-        # runs under SENTINEL and the WITH CHECK rejects it with an RLS violation.
         org_id = uuid.uuid4()
-        try:
-            from apps.core.middleware import _set_org, _set_user
-            _set_org(str(org_id))
-            _set_user(str(owner.pk))
-        except Exception:
-            pass
+        base_slug = OrganisationService._base_slug(name)
 
-        org = Organisation.objects.create(
-            id=org_id,
-            name=name,
-            slug=slug,
-            owner=owner,
-            account_type=extra.get("account_type", Organisation.AccountType.BUSINESS),
-            country=extra.get("country", "NG"),
-            currency=extra.get("currency", "NGN"),
-            registration_number=extra.get("registration_number", ""),
-            tax_id=extra.get("tax_id", ""),
-            phone=extra.get("phone", ""),
-            email=extra.get("email", ""),
-        )
+        # Wrap org + membership in a single atomic block so a crash between the
+        # two INSERTs cannot leave an orphaned org with no membership.
+        # Set both RLS GUCs transaction-locally at the START so any active RLS
+        # policies on INSERT (membership_insert, org_insert) see the correct
+        # context on pgBouncer connections where session-level set_config is lost.
+        with transaction.atomic():
+            with connection.cursor() as _cur:
+                _cur.execute(
+                    "SELECT set_config('app.current_org_id', %s, TRUE)", [str(org_id)]
+                )
+                _cur.execute(
+                    "SELECT set_config('app.current_user_id', %s, TRUE)", [str(owner.pk)]
+                )
 
-        Membership.objects.create(
-            user=owner,
-            organisation=org,
-            role=Membership.Role.OWNER,
-            is_active=True,
-            joined_at=timezone.now(),
-        )
+            # Retry slug on IntegrityError — the ORM slug-existence check can be
+            # blocked by RLS (the existing org is invisible under a different context),
+            # so we let the DB's unique constraint be the authoritative collision
+            # detector and generate a random-hex suffix on conflict.
+            slug = base_slug
+            for _attempt in range(6):
+                try:
+                    org = Organisation.objects.create(
+                        id=org_id,
+                        name=name,
+                        slug=slug,
+                        owner=owner,
+                        account_type=extra.get("account_type", Organisation.AccountType.BUSINESS),
+                        country=extra.get("country", "NG"),
+                        currency=extra.get("currency", "NGN"),
+                        registration_number=extra.get("registration_number", ""),
+                        tax_id=extra.get("tax_id", ""),
+                        phone=extra.get("phone", ""),
+                        email=extra.get("email", ""),
+                    )
+                    break
+                except IntegrityError as exc:
+                    if "slug" not in str(exc) or _attempt >= 5:
+                        raise
+                    slug = f"{base_slug}-{secrets.token_hex(2)}"
+                    logger.warning(
+                        "create_organisation: slug '%s' conflict, retrying with '%s'",
+                        base_slug if _attempt == 0 else slug, slug,
+                    )
+
+            Membership.objects.create(
+                user=owner,
+                organisation=org,
+                role=Membership.Role.OWNER,
+                is_active=True,
+                joined_at=timezone.now(),
+            )
 
         # Auto-assign the Free plan so all features are available immediately
         OrganisationService._assign_free_plan(org)
@@ -424,31 +444,17 @@ class OrganisationService:
         return membership
 
     @staticmethod
-    def _unique_slug(name: str) -> str:
-        """Generate a unique, non-enumerable slug from the organisation name.
+    def _base_slug(name: str) -> str:
+        """Derive the base slug from an organisation name.
 
-        Steps:
-        1. Strip common business-type noise words (Ltd, Limited, PLC, Inc…)
-           so that "Acme Ltd" and "Acme Limited" produce the same base slug
-           and cannot silently occupy near-identical workspace IDs.
-        2. If the normalised base is already taken, append a cryptographically
-           random 4-char hex tag (e.g. "acme-3f9a") instead of a predictable
-           counter, making workspace IDs unguessable and clearly distinct.
+        Strips common business noise words (Ltd, PLC, Inc…) so that "Acme Ltd"
+        and "Acme Limited" share the same normalised base.  Collision resolution
+        (appending a random hex suffix) is handled at INSERT time in
+        create_organisation() rather than here, because an ORM existence-check
+        can be blocked by RLS and incorrectly report a taken slug as free.
         """
         cleaned = _BUSINESS_NOISE.sub("", name).strip()
-        base_slug = slugify(cleaned)[:80].strip("-")
-        # Fallback: if stripping left nothing (name was all noise words), use raw name
-        if not base_slug:
-            base_slug = slugify(name)[:80]
-
-        if not Organisation.objects.filter(slug=base_slug).exists():
-            return base_slug
-
-        # Collision resolution — random hex tag, never a predictable counter
-        for _ in range(20):
-            candidate = f"{base_slug}-{secrets.token_hex(2)}"
-            if not Organisation.objects.filter(slug=candidate).exists():
-                return candidate
-
-        # Ultra-rare fallback (astronomically unlikely after 20 tries)
-        return f"{base_slug}-{secrets.token_hex(4)}"
+        base = slugify(cleaned)[:80].strip("-")
+        if not base:
+            base = slugify(name)[:80]
+        return base or "org"
