@@ -222,14 +222,23 @@ export default function OnboardingPage() {
   const { user, organisation, orgInitialized, setOrganisation } = useAuthStore()
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // Hard guard: only redirect to dashboard when onboarding is genuinely complete.
-  // Users with an existing org but incomplete onboarding (e.g. resumed after a
-  // previous interrupted session) should stay here to finish the questionnaire.
+  // Snapshot whether the user already had an org when this page first mounted.
+  // Used to distinguish "existing user landed here erroneously" (had org at mount →
+  // redirect to dashboard) from "new user created org in step 0" (no org at mount →
+  // must not redirect mid-flow when the org is created in handleCreateOrg).
+  const hadOrgAtMount = useRef(!!organisation?.id)
+
+  // Escape hatch: redirect to dashboard if:
+  //   1. User is a sub-account (they never need onboarding), OR
+  //   2. Org was present at mount AND orgInitialized — covers both:
+  //      a) Normal: onboarding_completed=true after completing the flow
+  //      b) Pre-migration users stuck with onboarding_completed=false but a real org
+  // Does NOT fire when the org is freshly created in step 0 (hadOrgAtMount=false).
   useEffect(() => {
     if (user?.is_sub_account) { navigate('/dashboard', { replace: true }); return }
-    if (orgInitialized && organisation?.onboarding_completed) { navigate('/dashboard', { replace: true }); return }
+    if (orgInitialized && hadOrgAtMount.current) { navigate('/dashboard', { replace: true }); return }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.is_sub_account, orgInitialized, organisation?.onboarding_completed])
+  }, [user?.is_sub_account, orgInitialized])
 
   // Step 0: workspace, 1: questionnaire, 2: plan selection, 3: partner enrollment
   const [step, setStep] = useState(0)

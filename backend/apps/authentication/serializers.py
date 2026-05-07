@@ -79,8 +79,30 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                     )
         except Exception as exc:
             logger.error(
-                "get_token: membership query FAILED for user=%s: %s: %s",
+                "get_token: raw-SQL membership query FAILED for user=%s: %s: %s",
                 user.pk, type(exc).__name__, exc,
+            )
+            # ORM fallback — may be blocked by RLS in some configs, but try anyway.
+            try:
+                from apps.tenancy.models import Membership as _M
+                memberships = {
+                    str(m.organisation_id): m.role
+                    for m in _M.objects.filter(user=user, is_active=True)
+                }
+                logger.info(
+                    "get_token: ORM fallback found %d membership(s) for user=%s",
+                    len(memberships), user.pk,
+                )
+            except Exception as orm_exc:
+                logger.error(
+                    "get_token: ORM fallback also failed for user=%s: %s",
+                    user.pk, orm_exc,
+                )
+        if not memberships:
+            logger.warning(
+                "get_token: JWT will have EMPTY memberships for user=%s — "
+                "user will be routed to /onboarding if org fetch also fails",
+                user.pk,
             )
         token["memberships"] = memberships
         token["token_version"] = user.token_version

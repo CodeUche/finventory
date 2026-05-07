@@ -90,54 +90,90 @@ def _issue_tokens(user):
 
 def _get_user_organisations(user):
     """
-    Return serialised organisation list for the user.
+    Return a list of organisation dicts for the login response.
 
-    Uses raw SQL with set_config inside atomic() — same pattern as
-    CustomTokenObtainPairSerializer.get_token — so RLS SENTINEL policies
-    and pgBouncer transaction mode cannot block the membership query.
+    Two-step raw SQL inside ONE atomic() transaction so all set_config
+    (transaction-local, TRUE) values persist across both queries:
+
+      Step 1 — get org IDs from tenancy_membership using the SENTINEL +
+               current_user_id pattern, which the membership_select RLS
+               policy allows regardless of which migration variant is active.
+
+      Step 2 — for each org ID, set current_org_id = org_id (not SENTINEL)
+               then SELECT from tenancy_organisation. This matches ANY org_select
+               policy variant (tenant_isolation, org_select) because we set the
+               exact org ID before querying it.  If the org row is unexpectedly
+               blocked (edge-case RLS state), a stub {id: org_id} is returned
+               so the frontend can still authenticate.
+
+    Keeping both steps in one atomic() block avoids the bug where the org-level
+    query ran in a separate implicit transaction with current_org_id reset to
+    the session-level SENTINEL, which caused the org_select policy to block all
+    rows (SENTINEL != any real org UUID).
     """
+    SENTINEL = "00000000-0000-0000-0000-000000000000"
     try:
         from django.db import connection as _conn, transaction as _tx
-        from apps.tenancy.models import Organisation as _Org
-        from apps.tenancy.serializers import OrganisationSerializer as _OrgSer
+        with _tx.atomic():
+            with _conn.cursor() as _cur:
+                # Step 1: get org IDs — SENTINEL bootstrap allows this
+                _cur.execute(
+                    "SELECT set_config('app.current_org_id', %s, TRUE)", [SENTINEL]
+                )
+                _cur.execute(
+                    "SELECT set_config('app.current_user_id', %s, TRUE)", [str(user.pk)]
+                )
+                _cur.execute(
+                    "SELECT organisation_id FROM tenancy_membership"
+                    " WHERE user_id = %s AND is_active = TRUE",
+                    [str(user.pk)],
+                )
+                org_ids = [str(r[0]) for r in _cur.fetchall()]
 
-        # Use raw SQL inside atomic() so set_config (transaction-local, TRUE)
-        # is visible to the SELECT even on a fresh pgBouncer connection.
-        org_ids = []
-        try:
-            with _tx.atomic():
-                with _conn.cursor() as _cur:
+                logger.info(
+                    "_get_user_organisations: user=%s found %d org(s): %s",
+                    user.pk, len(org_ids), org_ids,
+                )
+
+                if not org_ids:
+                    return []
+
+                # Step 2: fetch each org's data — set current_org_id = org_id
+                # so org_select USING (id = current_org_id::uuid) matches.
+                orgs = []
+                for org_id in org_ids:
                     _cur.execute(
-                        "SELECT set_config('app.current_org_id', '00000000-0000-0000-0000-000000000000', TRUE)"
+                        "SELECT set_config('app.current_org_id', %s, TRUE)", [org_id]
                     )
                     _cur.execute(
-                        "SELECT set_config('app.current_user_id', %s, TRUE)",
-                        [str(user.pk)],
+                        "SELECT id, name, slug, account_type, currency, country,"
+                        " is_active, onboarding_completed"
+                        " FROM tenancy_organisation"
+                        " WHERE id = %s AND is_active = TRUE",
+                        [org_id],
                     )
-                    _cur.execute(
-                        "SELECT organisation_id FROM tenancy_membership"
-                        " WHERE user_id = %s AND is_active = TRUE",
-                        [str(user.pk)],
-                    )
-                    rows = _cur.fetchall()
-                    org_ids = [str(r[0]) for r in rows]
-        except Exception as sql_exc:
-            logger.warning(
-                "_get_user_organisations raw-SQL fallback for user=%s: %s",
-                user.pk, sql_exc,
-            )
-            # ORM fallback — may be blocked by RLS, but worth trying
-            org_ids = list(
-                user.memberships.filter(is_active=True)
-                .values_list("organisation_id", flat=True)
-            )
-            org_ids = [str(i) for i in org_ids]
-
-        if not org_ids:
-            return []
-
-        qs = _Org.objects.filter(id__in=org_ids, is_active=True)
-        return _OrgSer(qs, many=True).data
+                    row = _cur.fetchone()
+                    if row:
+                        orgs.append({
+                            "id": str(row[0]),
+                            "name": row[1] or "",
+                            "slug": row[2] or "",
+                            "account_type": row[3] or "",
+                            "currency": row[4] or "",
+                            "country": row[5] or "",
+                            "is_active": bool(row[6]),
+                            "onboarding_completed": bool(row[7]),
+                        })
+                    else:
+                        # org_select blocked the row (unexpected RLS state) —
+                        # return a stub so the frontend can still authenticate.
+                        logger.warning(
+                            "_get_user_organisations: org %s blocked by RLS for user=%s"
+                            " — returning id-only stub",
+                            org_id, user.pk,
+                        )
+                        orgs.append({"id": org_id, "onboarding_completed": True})
+                return orgs
     except Exception as exc:
         logger.error("_get_user_organisations failed for user=%s: %s", user.pk, exc)
         return []

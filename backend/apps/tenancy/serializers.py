@@ -19,18 +19,24 @@ class OrganisationSerializer(serializers.ModelSerializer):
 
     def get_managing_firm_name(self, obj):
         """Return the partner firm name if this org has an active partner managing it."""
-        link = obj.partner_managers.filter(is_active=True).select_related("partner").first()
-        if link:
-            return link.partner.firm_name or link.partner.user.email
+        try:
+            link = obj.partner_managers.filter(is_active=True).select_related("partner").first()
+            if link:
+                return link.partner.firm_name or link.partner.user.email
+        except Exception:
+            pass
         return None
 
     def get_managing_firm_logo(self, obj):
         """Return the partner firm logo URL if available."""
-        link = obj.partner_managers.filter(is_active=True).select_related("partner").first()
-        if link and link.partner.firm_logo:
-            request = self.context.get("request")
-            if request:
-                return request.build_absolute_uri(link.partner.firm_logo.url)
+        try:
+            link = obj.partner_managers.filter(is_active=True).select_related("partner").first()
+            if link and link.partner.firm_logo:
+                request = self.context.get("request")
+                if request:
+                    return request.build_absolute_uri(link.partner.firm_logo.url)
+        except Exception:
+            pass
         return None
 
     class Meta:
