@@ -577,7 +577,36 @@ class LoginView(TokenObtainPairView):
 
                 # Normal login — attach full user profile + organisations
                 response.data["user"] = UserProfileSerializer(user).data
-                response.data["organisations"] = _get_user_organisations(user)
+
+                # Prefer reading org IDs straight from the JWT that was just
+                # issued by super().post() — this entirely avoids a second DB
+                # round-trip and is immune to any RLS / pgBouncer issues.
+                # The JWT memberships were already written by get_token() which
+                # has its own raw-SQL + set_config pattern.  If the JWT has no
+                # memberships (get_token raw SQL also failed), we fall back to
+                # the two-step _get_user_organisations() which tries harder.
+                _jwt_orgs = []
+                try:
+                    import base64 as _b64, json as _json
+                    _access = response.data.get("access", "")
+                    _payload_b64 = _access.split(".")[1]
+                    _payload_b64 += "=" * (4 - len(_payload_b64) % 4)
+                    _payload = _json.loads(_b64.b64decode(_payload_b64).decode())
+                    _memberships = _payload.get("memberships") or {}
+                    _jwt_org_ids = list(_memberships.keys())
+                    if _jwt_org_ids:
+                        # Return lightweight stubs — the frontend only needs org.id
+                        # to set X-Organisation-ID; AppLayout fetches the full object.
+                        _jwt_orgs = [{"id": oid, "onboarding_completed": True}
+                                     for oid in _jwt_org_ids]
+                        logger.info(
+                            "LoginView: JWT shortcut returned %d org stub(s) for user=%s",
+                            len(_jwt_orgs), user.pk,
+                        )
+                except Exception as _je:
+                    logger.warning("LoginView: JWT decode failed (%s), using DB path", _je)
+
+                response.data["organisations"] = _jwt_orgs or _get_user_organisations(user)
                 try:
                     from apps.core.models import AuditLog as _AL
                     _AL.log(

@@ -1,5 +1,8 @@
 """Tests for authentication: register, login, lockout, password reset OTP."""
 
+import base64
+import json
+
 from django.core.cache import cache
 from django.test import TestCase
 from django.urls import reverse
@@ -7,6 +10,7 @@ from rest_framework.test import APIClient
 
 from apps.authentication.models import PasswordResetOTP, User
 from apps.tenancy.models import Membership, Organisation
+from apps.tenancy.services import OrganisationService
 
 
 class RegisterTests(TestCase):
@@ -226,3 +230,174 @@ class PasswordResetOTPTests(TestCase):
         self.user.refresh_from_db()
         self.assertFalse(self.user.is_locked)
         self.assertEqual(self.user.failed_login_attempts, 0)
+
+
+def _decode_jwt_payload(token: str) -> dict:
+    """Decode the payload segment of a JWT without verifying the signature."""
+    payload_b64 = token.split(".")[1]
+    payload_b64 += "=" * (4 - len(payload_b64) % 4)
+    return json.loads(base64.b64decode(payload_b64).decode())
+
+
+class LoginOrganisationsTests(TestCase):
+    """
+    Verify that LoginView always returns a non-empty `organisations` list for
+    existing users, preventing the onboarding-redirect regression.
+
+    Root cause of the bug: the org query ran outside atomic(), so set_config
+    (transaction-local) reverted to SENTINEL after the membership query committed,
+    causing org_select RLS to block all rows.  The JWT-decode shortcut bypasses
+    this by reading org IDs directly from the already-issued JWT token.
+
+    These tests run on SQLite (testing.py), so set_config calls raise
+    OperationalError — the ORM fallback in get_token() kicks in and populates
+    the JWT memberships claim.  The JWT-decode shortcut in LoginView.post then
+    reads those IDs, so organisations is populated regardless of DB backend.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.url = reverse("auth-login")
+        cache.clear()
+
+        self.user = User.objects.create_user(
+            email="existing@example.com",
+            password="ValidPass123!",
+            first_name="Existing",
+            last_name="User",
+            is_verified=True,
+        )
+        # Create an organisation — OrganisationService.create_organisation also
+        # creates the Membership row, which is what get_token ORM fallback reads.
+        self.org = OrganisationService.create_organisation(
+            name="Existing Corp",
+            owner=self.user,
+            extra={"currency": "NGN", "country": "NG"},
+        )
+
+    def _login(self):
+        return self.client.post(self.url, {
+            "email": "existing@example.com",
+            "password": "ValidPass123!",
+        })
+
+    # ── Core regression test ──────────────────────────────────────────────────
+
+    def test_login_returns_non_empty_organisations_for_member(self):
+        """Existing user with an org must NOT be routed to /onboarding."""
+        res = self._login()
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertIn("organisations", res.data)
+        orgs = res.data["organisations"]
+        self.assertIsInstance(orgs, list)
+        self.assertGreater(len(orgs), 0, "organisations must not be empty for a user with a membership")
+
+    def test_login_organisations_contain_correct_org_id(self):
+        res = self._login()
+        self.assertEqual(res.status_code, 200)
+        org_ids = [o["id"] for o in res.data["organisations"]]
+        self.assertIn(str(self.org.id), org_ids)
+
+    def test_login_organisations_have_onboarding_completed(self):
+        """Every org stub returned must have onboarding_completed=True so the
+        frontend ProtectedRoute sets onboardingDone=true and navigates to /dashboard."""
+        res = self._login()
+        self.assertEqual(res.status_code, 200)
+        for org in res.data["organisations"]:
+            self.assertTrue(
+                org.get("onboarding_completed"),
+                f"org {org.get('id')} missing onboarding_completed=True",
+            )
+
+    # ── JWT memberships claim ─────────────────────────────────────────────────
+
+    def test_jwt_access_token_contains_memberships_claim(self):
+        """JWT must embed memberships so the JWT-decode shortcut can read them."""
+        res = self._login()
+        self.assertEqual(res.status_code, 200)
+        payload = _decode_jwt_payload(res.data["access"])
+        self.assertIn("memberships", payload)
+        memberships = payload["memberships"]
+        self.assertIsInstance(memberships, dict)
+        self.assertGreater(len(memberships), 0, "memberships claim must not be empty")
+
+    def test_jwt_memberships_claim_contains_correct_org(self):
+        res = self._login()
+        payload = _decode_jwt_payload(res.data["access"])
+        self.assertIn(str(self.org.id), payload["memberships"])
+
+    def test_jwt_memberships_role_is_owner(self):
+        res = self._login()
+        payload = _decode_jwt_payload(res.data["access"])
+        self.assertEqual(payload["memberships"].get(str(self.org.id)), "owner")
+
+    # ── New user (no org) ─────────────────────────────────────────────────────
+
+    def test_login_returns_empty_organisations_for_new_user(self):
+        """A freshly registered user with no org should get an empty list (not crash)."""
+        no_org_user = User.objects.create_user(
+            email="noorg@example.com",
+            password="ValidPass123!",
+            is_verified=True,
+        )
+        res = self.client.post(self.url, {
+            "email": "noorg@example.com",
+            "password": "ValidPass123!",
+        })
+        self.assertEqual(res.status_code, 200)
+        self.assertIn("organisations", res.data)
+        self.assertEqual(res.data["organisations"], [])
+
+    # ── _get_user_organisations helper ───────────────────────────────────────
+
+    def test_get_user_organisations_returns_list_without_crashing(self):
+        """_get_user_organisations must never raise — on SQLite it returns []."""
+        from apps.authentication.views import _get_user_organisations
+        result = _get_user_organisations(self.user)
+        # On SQLite, set_config fails → exception caught → returns []
+        # On PostgreSQL with proper RLS setup it would return the org list.
+        self.assertIsInstance(result, list)
+
+    # ── Response shape ────────────────────────────────────────────────────────
+
+    def test_login_response_has_user_profile(self):
+        res = self._login()
+        self.assertEqual(res.status_code, 200)
+        self.assertIn("user", res.data)
+        user_data = res.data["user"]
+        self.assertEqual(user_data["email"], "existing@example.com")
+        self.assertIn("is_superuser", user_data)
+        self.assertIn("is_verified", user_data)
+
+    def test_login_response_has_both_tokens(self):
+        res = self._login()
+        self.assertEqual(res.status_code, 200)
+        self.assertIn("access", res.data)
+        self.assertIn("refresh", res.data)
+
+    # ── Multi-org user ────────────────────────────────────────────────────────
+
+    def test_login_returns_all_organisations_for_multi_org_user(self):
+        """A user who is a member of two orgs should get both in the response."""
+        second_user = User.objects.create_user(
+            email="second_owner@example.com",
+            password="ValidPass123!",
+            is_verified=True,
+        )
+        second_org = OrganisationService.create_organisation(
+            name="Second Org",
+            owner=second_user,
+            extra={"currency": "NGN", "country": "NG"},
+        )
+        # Add self.user as a member of the second org
+        Membership.objects.create(
+            user=self.user,
+            organisation=second_org,
+            role=Membership.Role.STAFF,
+            is_active=True,
+        )
+        res = self._login()
+        self.assertEqual(res.status_code, 200)
+        org_ids = {o["id"] for o in res.data["organisations"]}
+        self.assertIn(str(self.org.id), org_ids)
+        self.assertIn(str(second_org.id), org_ids)
