@@ -52,13 +52,15 @@ class OrganisationService:
         # policies on INSERT (membership_insert, org_insert) see the correct
         # context on pgBouncer connections where session-level set_config is lost.
         with transaction.atomic():
-            with connection.cursor() as _cur:
-                _cur.execute(
-                    "SELECT set_config('app.current_org_id', %s, TRUE)", [str(org_id)]
-                )
-                _cur.execute(
-                    "SELECT set_config('app.current_user_id', %s, TRUE)", [str(owner.pk)]
-                )
+            from apps.core.middleware import _is_postgres
+            if _is_postgres():
+                with connection.cursor() as _cur:
+                    _cur.execute(
+                        "SELECT set_config('app.current_org_id', %s, TRUE)", [str(org_id)]
+                    )
+                    _cur.execute(
+                        "SELECT set_config('app.current_user_id', %s, TRUE)", [str(owner.pk)]
+                    )
 
             # Retry slug on IntegrityError — the ORM slug-existence check can be
             # blocked by RLS (the existing org is invisible under a different context),
