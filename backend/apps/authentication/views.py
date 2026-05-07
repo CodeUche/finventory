@@ -57,10 +57,33 @@ def _issue_tokens(user):
     """Return {access, refresh} JWT strings for a user, with memberships claim."""
     refresh = RefreshToken.for_user(user)
     refresh["token_version"] = user.token_version
-    memberships = {
-        str(m.organisation_id): m.role
-        for m in user.memberships.filter(is_active=True).select_related("organisation")
-    }
+    # Use raw SQL with set_config inside atomic() to bypass RLS SENTINEL —
+    # same pattern as CustomTokenObtainPairSerializer.get_token.
+    memberships = {}
+    try:
+        from django.db import connection as _c, transaction as _t
+        with _t.atomic():
+            with _c.cursor() as _cur:
+                _cur.execute(
+                    "SELECT set_config('app.current_org_id', '00000000-0000-0000-0000-000000000000', TRUE)"
+                )
+                _cur.execute(
+                    "SELECT set_config('app.current_user_id', %s, TRUE)",
+                    [str(user.pk)],
+                )
+                _cur.execute(
+                    "SELECT organisation_id, role FROM tenancy_membership"
+                    " WHERE user_id = %s AND is_active = TRUE",
+                    [str(user.pk)],
+                )
+                memberships = {str(r[0]): r[1] for r in _cur.fetchall()}
+    except Exception as exc:
+        logger.error("_issue_tokens membership query failed for user=%s: %s", user.pk, exc)
+        # ORM fallback
+        memberships = {
+            str(m.organisation_id): m.role
+            for m in user.memberships.filter(is_active=True)
+        }
     refresh["memberships"] = memberships
     return {"access": str(refresh.access_token), "refresh": str(refresh)}
 
@@ -69,17 +92,50 @@ def _get_user_organisations(user):
     """
     Return serialised organisation list for the user.
 
-    Included directly in login/MFA responses so the frontend never needs a
-    separate /tenancy/organisations/ fetch during sign-in. This eliminates the
-    RLS session-variable dependency that caused existing users to be redirected
-    to /onboarding when the standalone fetch returned empty.
+    Uses raw SQL with set_config inside atomic() — same pattern as
+    CustomTokenObtainPairSerializer.get_token — so RLS SENTINEL policies
+    and pgBouncer transaction mode cannot block the membership query.
     """
     try:
+        from django.db import connection as _conn, transaction as _tx
         from apps.tenancy.models import Organisation as _Org
         from apps.tenancy.serializers import OrganisationSerializer as _OrgSer
-        org_ids = list(
-            user.memberships.filter(is_active=True).values_list("organisation_id", flat=True)
-        )
+
+        # Use raw SQL inside atomic() so set_config (transaction-local, TRUE)
+        # is visible to the SELECT even on a fresh pgBouncer connection.
+        org_ids = []
+        try:
+            with _tx.atomic():
+                with _conn.cursor() as _cur:
+                    _cur.execute(
+                        "SELECT set_config('app.current_org_id', '00000000-0000-0000-0000-000000000000', TRUE)"
+                    )
+                    _cur.execute(
+                        "SELECT set_config('app.current_user_id', %s, TRUE)",
+                        [str(user.pk)],
+                    )
+                    _cur.execute(
+                        "SELECT organisation_id FROM tenancy_membership"
+                        " WHERE user_id = %s AND is_active = TRUE",
+                        [str(user.pk)],
+                    )
+                    rows = _cur.fetchall()
+                    org_ids = [str(r[0]) for r in rows]
+        except Exception as sql_exc:
+            logger.warning(
+                "_get_user_organisations raw-SQL fallback for user=%s: %s",
+                user.pk, sql_exc,
+            )
+            # ORM fallback — may be blocked by RLS, but worth trying
+            org_ids = list(
+                user.memberships.filter(is_active=True)
+                .values_list("organisation_id", flat=True)
+            )
+            org_ids = [str(i) for i in org_ids]
+
+        if not org_ids:
+            return []
+
         qs = _Org.objects.filter(id__in=org_ids, is_active=True)
         return _OrgSer(qs, many=True).data
     except Exception as exc:
