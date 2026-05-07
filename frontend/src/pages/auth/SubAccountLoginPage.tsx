@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import AudityLogo from '@/components/AudityLogo'
 import { Eye, EyeOff, Loader2, Users, KeyRound } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { api, authApi, orgApi, bypassNextGets } from '@/services/api'
+import { api, authApi, bypassNextGets } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
 
 export default function SubAccountLoginPage() {
@@ -50,15 +50,15 @@ export default function SubAccountLoginPage() {
       localStorage.setItem('finventory-last-active', String(Date.now()))
       api.defaults.headers.common.Authorization = `Bearer ${data.access}`
 
-      bypassNextGets(3000)
-      const orgsRes = await orgApi.list()
-      const orgs = orgsRes.data.results ?? orgsRes.data
+      // Use organisations returned directly from the login response.
+      const orgs: any[] = data.organisations ?? []
       const firstOrg = orgs[0] ?? null
 
       // Atomic commit — single set() so ProtectedRoute never sees isAuthenticated=true
       // with organisation=null (the race condition that caused /onboarding redirects).
       initSession(data.user, { access: data.access, refresh: data.refresh }, firstOrg, orgs)
       if (firstOrg) api.defaults.headers.common['X-Organisation-ID'] = firstOrg.id
+      bypassNextGets(3000)
 
       if (data.user.must_change_password) {
         setShowForceChange(true)

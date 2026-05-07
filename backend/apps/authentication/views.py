@@ -65,6 +65,28 @@ def _issue_tokens(user):
     return {"access": str(refresh.access_token), "refresh": str(refresh)}
 
 
+def _get_user_organisations(user):
+    """
+    Return serialised organisation list for the user.
+
+    Included directly in login/MFA responses so the frontend never needs a
+    separate /tenancy/organisations/ fetch during sign-in. This eliminates the
+    RLS session-variable dependency that caused existing users to be redirected
+    to /onboarding when the standalone fetch returned empty.
+    """
+    try:
+        from apps.tenancy.models import Organisation as _Org
+        from apps.tenancy.serializers import OrganisationSerializer as _OrgSer
+        org_ids = list(
+            user.memberships.filter(is_active=True).values_list("organisation_id", flat=True)
+        )
+        qs = _Org.objects.filter(id__in=org_ids, is_active=True)
+        return _OrgSer(qs, many=True).data
+    except Exception as exc:
+        logger.error("_get_user_organisations failed for user=%s: %s", user.pk, exc)
+        return []
+
+
 def _send_verification_email(user, request=None):
     """Sign the user's PK and email a time-limited verification link.
 
@@ -461,8 +483,9 @@ class LoginView(TokenObtainPairView):
                     logger.info("MFA challenge issued for: %s", email)
                     return Response({"mfa_required": True, "mfa_token": mfa_token})
 
-                # Normal login — attach full user profile
+                # Normal login — attach full user profile + organisations
                 response.data["user"] = UserProfileSerializer(user).data
+                response.data["organisations"] = _get_user_organisations(user)
                 try:
                     from apps.core.models import AuditLog as _AL
                     _AL.log(
@@ -677,6 +700,7 @@ class MFAVerifyView(APIView):
             return Response({
                 "user": UserProfileSerializer(user).data,
                 "tokens": _issue_tokens(user),
+                "organisations": _get_user_organisations(user),
             })
 
         # Try backup codes — locked transaction prevents two simultaneous requests
@@ -694,6 +718,7 @@ class MFAVerifyView(APIView):
                     return Response({
                         "user": UserProfileSerializer(user).data,
                         "tokens": _issue_tokens(user),
+                        "organisations": _get_user_organisations(user),
                         "backup_code_used": True,
                         "backup_codes_remaining": len(backup_codes),
                     })
@@ -1157,4 +1182,5 @@ class SubAccountLoginView(APIView):
             "access": tokens["access"],
             "refresh": tokens["refresh"],
             "user": UserProfileSerializer(user).data,
+            "organisations": _get_user_organisations(user),
         })

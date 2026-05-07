@@ -35,10 +35,12 @@ export default function LoginPage() {
     }
   }
 
-  const finishLogin = async (user: any, tokens: { access: string; refresh: string }) => {
-    // Hard guard: if the server returned undefined tokens (e.g. offline synthetic
-    // response slipped through before the auth-URL exclusion was deployed), abort
-    // immediately with a clear error rather than silently falling through to /onboarding.
+  const finishLogin = async (
+    user: any,
+    tokens: { access: string; refresh: string },
+    loginOrgs?: any[],
+  ) => {
+    // Hard guard: abort immediately if tokens are malformed.
     if (!tokens?.access || !tokens?.refresh || typeof tokens.access !== 'string' || !tokens.access.includes('.')) {
       throw new Error('Authentication failed. Please check your connection and try again.')
     }
@@ -46,76 +48,74 @@ export default function LoginPage() {
     localStorage.setItem('finventory-session-start', String(Date.now()))
     localStorage.setItem('finventory-last-active', String(Date.now()))
 
-    // Set the Authorization header FIRST so orgApi.list() can authenticate,
-    // but do NOT call setAuth() yet — setAuth sets isAuthenticated:true which
-    // causes ProtectedRoute to pass through and React mounts the Dashboard,
-    // firing all its API calls before we have the org ID in the store.
+    // Set Authorization header so any fallback fetch below can authenticate.
     api.defaults.headers.common.Authorization = `Bearer ${tokens.access}`
 
-    // Bootstrap the org context from the JWT payload BEFORE calling orgApi.list().
-    // The RLS tenant_isolation policy requires app.current_org_id to match an
-    // existing org row — it blocks all reads under the SENTINEL value.  The JWT
-    // the server just issued already contains the user's memberships dict
-    // {org_id: role}, so we decode it (no signature verification needed — the
-    // server verified credentials before issuing it) to get the first org ID and
-    // pre-set it as X-Organisation-ID.  Without this, orgApi.list() runs under
-    // SENTINEL, the SELECT returns empty, and the app stays stuck on Onboarding.
-    let bootstrapOrgId: string | null = null
-    try {
-      const b64 = tokens.access.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
-      const payload = JSON.parse(atob(b64))
-      const memberships: Record<string, string> = payload.memberships ?? {}
-      bootstrapOrgId = Object.keys(memberships)[0] ?? null
-    } catch { /* non-fatal — proceed without pre-set header */ }
+    // --- Fast path: server included organisations in the login response ---
+    // This is the primary path. It requires no extra network round-trip and has
+    // no dependency on RLS session variables, pgBouncer mode, or JWT decoding.
+    let orgs: any[] = loginOrgs ?? []
 
-    if (bootstrapOrgId) {
-      api.defaults.headers.common['X-Organisation-ID'] = bootstrapOrgId
-      // Seed Zustand NOW so the request interceptor reads getStoredOrgId() = bootstrapOrgId
-      // and does NOT delete X-Organisation-ID from the org fetch request below.
-      // isAuthenticated is still false at this point so ProtectedRoute stays on the spinner.
-      setOrganisation({ id: bootstrapOrgId } as any)
+    // --- Fallback: fetch organisations separately (legacy / offline edge-case) ---
+    if (orgs.length === 0 && !user.is_superuser) {
+      // Decode JWT to get bootstrapOrgId for RLS context header.
+      let bootstrapOrgId: string | null = null
+      try {
+        const b64 = tokens.access.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
+        const payload = JSON.parse(atob(b64))
+        const memberships: Record<string, string> = payload.memberships ?? {}
+        bootstrapOrgId = Object.keys(memberships)[0] ?? null
+      } catch { /* non-fatal */ }
+
+      if (bootstrapOrgId) {
+        api.defaults.headers.common['X-Organisation-ID'] = bootstrapOrgId
+        setOrganisation({ id: bootstrapOrgId } as any)
+      }
+
+      await offlineCache.invalidatePrefix('/tenancy/organisations/')
+      bypassNextGets(3000)
+
+      try {
+        const orgsRes = await api.get('/tenancy/organisations/', {
+          headers: {
+            Authorization: `Bearer ${tokens.access}`,
+            ...(bootstrapOrgId ? { 'X-Organisation-ID': bootstrapOrgId } : {}),
+          },
+          params: bootstrapOrgId ? { org: bootstrapOrgId } : {},
+        })
+        orgs = orgsRes.data.results ?? orgsRes.data ?? []
+      } catch {
+        // Network failure on the fallback fetch — orgs stays empty.
+        // The guard below will use bootstrapOrgId as a minimal placeholder.
+      }
+
+      // Last-resort guard: JWT confirmed membership but fetch returned empty.
+      if (orgs.length === 0 && bootstrapOrgId) {
+        orgs = [{ id: bootstrapOrgId }]
+      }
     }
 
-    // Invalidate any stale org cache BEFORE fetching so the fresh-cache gate
-    // never serves a previous session's empty or outdated org list.
-    // bypassNextGets ensures this specific request hits the network even if
-    // the 5-min window hasn't expired yet.
-    await offlineCache.invalidatePrefix('/tenancy/organisations/')
-    bypassNextGets(3000)
-
-    // Fetch orgs with org context already set (both header and ?org= param).
-    // Pass Authorization + X-Organisation-ID explicitly on this request —
-    // setAuth() hasn't run yet so Zustand tokens are empty; relying on
-    // api.defaults alone risks AxiosHeaders.toJSON silently dropping them.
-    const orgsRes = await api.get('/tenancy/organisations/', {
-      headers: {
-        Authorization: `Bearer ${tokens.access}`,
-        ...(bootstrapOrgId ? { 'X-Organisation-ID': bootstrapOrgId } : {}),
-      },
-      params: bootstrapOrgId ? { org: bootstrapOrgId } : {},
-    })
-    const orgs = orgsRes.data.results ?? orgsRes.data
-
-    // SECURITY: for superusers, orgApi.list() returns ALL orgs in the DB.
-    // orgs[0] could be any tenant's org — never auto-assign it as active.
-    // Use only the org the JWT explicitly identifies via bootstrapOrgId.
-    // For regular users: fall back to orgs[0] (their only org) if bootstrapOrgId is missing.
+    // For superusers orgApi.list returns ALL orgs — pick only the JWT-identified one.
     let firstOrg: any = null
     if (user.is_superuser) {
+      let bootstrapOrgId: string | null = null
+      try {
+        const b64 = tokens.access.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
+        const payload = JSON.parse(atob(b64))
+        const memberships: Record<string, string> = payload.memberships ?? {}
+        bootstrapOrgId = Object.keys(memberships)[0] ?? null
+      } catch { /* non-fatal */ }
       firstOrg = bootstrapOrgId ? (orgs.find((o: any) => o.id === bootstrapOrgId) ?? { id: bootstrapOrgId }) : null
     } else {
       firstOrg = orgs[0] ?? null
-      // Guard: if RLS returned empty but JWT confirmed membership, use minimal placeholder.
-      // AppLayout will reload the full org on mount once tokens are in Zustand.
-      if (!firstOrg && bootstrapOrgId) firstOrg = { id: bootstrapOrgId } as any
     }
 
-    // Wipe any stale membership cache from a previous session.
+    // Wipe stale membership cache from a previous session.
     offlineCache.invalidatePrefix('/tenancy/organisations/my_membership/').catch(() => {})
     offlineCache.invalidatePrefix('/tenancy/memberships/').catch(() => {})
 
-    // Atomic commit: single set() call so ProtectedRoute never sees the transient
-    // state of isAuthenticated=true with organisation=null that caused /onboarding redirects.
+    // Atomic commit — single set() so ProtectedRoute never sees isAuthenticated=true
+    // with organisation=null (which caused /onboarding redirects in the past).
     initSession(user, tokens, firstOrg, orgs)
     if (firstOrg) {
       api.defaults.headers.common['X-Organisation-ID'] = firstOrg.id
@@ -125,8 +125,6 @@ export default function LoginPage() {
 
     const onboardingDone = user.is_superuser || !!firstOrg
     toast.success(onboardingDone ? 'Welcome back!' : 'Signed in! Let\'s finish setting up your account.')
-    // Superusers with no org memberships land on the platform admin page — they have
-    // no personal org context and would get "organisation ID" errors on all tenant APIs.
     if (user.is_superuser && !firstOrg) {
       navigate('/platform-admin')
     } else {
@@ -140,7 +138,7 @@ export default function LoginPage() {
     setMfaLoading(true)
     try {
       const { data } = await authApi.mfaVerify(mfaToken, mfaCode)
-      await finishLogin(data.user, data.tokens)
+      await finishLogin(data.user, data.tokens, data.organisations)
     } catch (err: any) {
       const data = err.response?.data
       // Handle envelope {error: {message}} format, plain {error: string}, or SimpleJWT {detail: string}
@@ -171,6 +169,7 @@ export default function LoginPage() {
       await finishLogin(
         data.user || { email: form.email, first_name: '', last_name: '', id: '', phone: '', is_verified: true },
         { access: data.access, refresh: data.refresh },
+        data.organisations,
       )
     } catch (err: any) {
       if (!err.response) {
