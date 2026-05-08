@@ -1,5 +1,5 @@
 import React from 'react'
-import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
 import type { ModuleKey } from '@/types'
 import AppLayout from '@/components/layout/AppLayout'
@@ -47,10 +47,10 @@ import AcceptInvitePage from '@/pages/auth/AcceptInvitePage'
 
 // Inner class-based boundary — must be a class to use getDerivedStateFromError
 class ErrorBoundaryInner extends React.Component<
-  { children: React.ReactNode; resetKey: string },
+  { children: React.ReactNode; resetKey: string; navigate: (path: string) => void },
   { hasError: boolean; message: string }
 > {
-  constructor(props: { children: React.ReactNode; resetKey: string }) {
+  constructor(props: { children: React.ReactNode; resetKey: string; navigate: (path: string) => void }) {
     super(props)
     this.state = { hasError: false, message: '' }
   }
@@ -74,7 +74,12 @@ class ErrorBoundaryInner extends React.Component<
             <p style={{ color: '#94a3b8', fontSize: '12px', fontFamily: 'monospace', wordBreak: 'break-all', marginBottom: '20px' }}>{this.state.message}</p>
             <button
               style={{ background: '#f97316', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 24px', cursor: 'pointer', fontWeight: 600, fontSize: '14px' }}
-              onClick={() => { this.setState({ hasError: false, message: '' }); window.location.replace('/') }}
+              onClick={() => {
+                this.setState({ hasError: false, message: '' })
+                // Use React Router navigate so Tauri never does a full-page reload
+                // (window.location.replace('/') triggers main.tsx logout() on restart)
+                this.props.navigate('/dashboard')
+              }}
             >
               Go to Dashboard
             </button>
@@ -86,10 +91,12 @@ class ErrorBoundaryInner extends React.Component<
   }
 }
 
-// Wrapper that supplies the current route path as a reset key
+// Wrapper that supplies the current route path and navigate fn as props.
+// navigate is passed explicitly because class components cannot use hooks.
 function ErrorBoundary({ children }: { children: React.ReactNode }) {
   const location = useLocation()
-  return <ErrorBoundaryInner resetKey={location.pathname}>{children}</ErrorBoundaryInner>
+  const navigate = useNavigate()
+  return <ErrorBoundaryInner resetKey={location.pathname} navigate={navigate}>{children}</ErrorBoundaryInner>
 }
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {

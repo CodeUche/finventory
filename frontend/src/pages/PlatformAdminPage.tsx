@@ -54,7 +54,9 @@ export default function PlatformAdminPage() {
       ])
       setStats(statsRes.data.summary)
       setOrgs(statsRes.data.organisations)
-      setUsers(usersRes.data)
+      // PlatformUsersView uses _AdminUserPagination so the response may be
+      // { count, next, previous, results: [...] } — unwrap the results array.
+      setUsers(usersRes.data.results ?? usersRes.data)
     } catch {
       toast.error('Failed to load platform data')
     } finally {
