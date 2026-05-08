@@ -18,6 +18,16 @@ import { FEATURES } from '@/lib/featureFlags'
 export default function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [cacheAge, setCacheAge] = useState<string | null>(null)
+  // True once the org-list fetch has completed (success or failure).
+  // Used to gate <Outlet /> so module pages never fire their initial fetch
+  // while organisation?.id is still null (which happens for superusers who
+  // have no personal orgs — orgApi.list() must resolve first so we can pick
+  // orgs[0] as the active org before child pages mount).
+  // Lazy-initialised to true when org is already set (regular users) so they
+  // see no spinner at all.
+  const [orgListLoaded, setOrgListLoaded] = useState(
+    () => !!useAuthStore.getState().organisation?.id,
+  )
   // Incremented by the Refresh button (via audity:app-refresh) to force re-run of
   // org/membership/plan effects without requiring an internet toggle.
   const [_appRefreshTick, setAppRefreshTick] = useState(0)
@@ -75,7 +85,13 @@ export default function AppLayout() {
     if (!online && organisation) return  // offline + already have org — skip, use persisted state
     orgApi.list().then(({ data }) => {
       const orgs: any[] = data.results ?? data
-      if (!orgs.length) return
+      if (!orgs.length) {
+        // No orgs returned (pure platform-admin superuser with no active orgs).
+        // Mark loaded so the <Outlet /> gate lifts — platform-admin and other
+        // superuser-only pages don't require an org context.
+        setOrgListLoaded(true)
+        return
+      }
       // Re-select the previously active org if we still have access to it,
       // otherwise fall back to the first org in the list.
       const fresh = orgs.find((o: any) => o.id === organisation?.id) ?? orgs[0]
@@ -87,7 +103,13 @@ export default function AppLayout() {
         : fresh
       setOrganisation(merged)
       api.defaults.headers.common['X-Organisation-ID'] = fresh.id
-    }).catch(() => { /* non-fatal — use persisted org if available */ })
+      setOrgListLoaded(true)
+    }).catch(() => {
+      // Non-fatal — use persisted org if available.
+      // Always lift the gate so modules aren't stuck on a spinner if the
+      // org-list request fails (e.g. cold-start timeout on Railway).
+      setOrgListLoaded(true)
+    })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, online, _appRefreshTick])
 
@@ -241,7 +263,20 @@ export default function AppLayout() {
           <Breadcrumb />
         </div>
         <main className="flex-1 overflow-y-auto p-4 lg:p-6 animate-fade-in">
-          <Outlet />
+          {/* Gate: hold child pages until org context is resolved so their
+              initial fetches never fire with a null X-Organisation-ID header.
+              This prevents the "Failed to load xyz" flash for superusers who
+              have no personal orgs and must wait for orgApi.list() to pick
+              orgs[0] as the active context.  Regular users always have
+              organisation?.id set at login so orgListLoaded is initialised
+              true and they see no spinner here. */}
+          {(orgListLoaded || organisation?.id) ? (
+            <Outlet />
+          ) : (
+            <div className="flex-1 flex items-center justify-center py-32">
+              <div className="w-7 h-7 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
+            </div>
+          )}
         </main>
       </div>
 
