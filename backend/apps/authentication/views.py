@@ -112,90 +112,170 @@ def _get_user_organisations(user):
     rows (SENTINEL != any real org UUID).
     """
     SENTINEL = "00000000-0000-0000-0000-000000000000"
+    from django.db import connection as _conn, transaction as _tx
+
+    org_ids = []
+    _rls_bypassed = False
+
+    # Attempt 1: bypass RLS (needs BYPASSRLS/superuser) — isolated atomic block.
+    # On Railway this raises ProgrammingError; that's caught here without
+    # poisoning the transaction state for Attempt 2.
     try:
-        from django.db import connection as _conn, transaction as _tx
         with _tx.atomic():
             with _conn.cursor() as _cur:
-                # Layer 1: attempt to disable RLS entirely for this transaction.
-                # Requires BYPASSRLS or superuser.  SAVEPOINT lets us recover if
-                # the DB user lacks that privilege (falls back to SENTINEL GUCs).
-                _rls_bypassed = False
-                try:
-                    _cur.execute("SAVEPOINT audity_orgs_rls")
-                    _cur.execute("SET LOCAL row_security = OFF")
-                    _cur.execute("RELEASE SAVEPOINT audity_orgs_rls")
-                    _rls_bypassed = True
-                except Exception as _rls_err:
-                    _cur.execute("ROLLBACK TO SAVEPOINT audity_orgs_rls")
-                    # Layer 2: SENTINEL GUC pattern
-                    _cur.execute(
-                        "SELECT set_config('app.current_org_id', %s, TRUE)", [SENTINEL]
-                    )
-                    _cur.execute(
-                        "SELECT set_config('app.current_user_id', %s, TRUE)", [str(user.pk)]
-                    )
-                    logger.debug(
-                        "_get_user_organisations: BYPASSRLS unavailable (%s), using SENTINEL",
-                        type(_rls_err).__name__,
-                    )
-
-                # Step 1: get org IDs from membership table
+                _cur.execute("SET LOCAL row_security = OFF")
                 _cur.execute(
                     "SELECT organisation_id FROM tenancy_membership"
                     " WHERE user_id = %s AND is_active = TRUE",
                     [str(user.pk)],
                 )
                 org_ids = [str(r[0]) for r in _cur.fetchall()]
-
+                _rls_bypassed = True
                 logger.info(
-                    "_get_user_organisations: user=%s found %d org(s) rls_bypassed=%s",
-                    user.pk, len(org_ids), _rls_bypassed,
+                    "_get_user_organisations: user=%s found %d org(s) (rls_bypassed)",
+                    user.pk, len(org_ids),
                 )
+    except Exception as _rls_err:
+        logger.debug(
+            "_get_user_organisations: rls bypass unavailable for user=%s (%s), trying SENTINEL",
+            user.pk, type(_rls_err).__name__,
+        )
 
-                if not org_ids:
-                    return []
+    # Attempt 2: SENTINEL GUC — fresh atomic block so Attempt 1 failure is gone.
+    if not org_ids:
+        try:
+            with _tx.atomic():
+                with _conn.cursor() as _cur:
+                    _cur.execute(
+                        "SELECT set_config('app.current_org_id', %s, TRUE)", [SENTINEL]
+                    )
+                    _cur.execute(
+                        "SELECT set_config('app.current_user_id', %s, TRUE)", [str(user.pk)]
+                    )
+                    _cur.execute(
+                        "SELECT organisation_id FROM tenancy_membership"
+                        " WHERE user_id = %s AND is_active = TRUE",
+                        [str(user.pk)],
+                    )
+                    org_ids = [str(r[0]) for r in _cur.fetchall()]
+                    logger.info(
+                        "_get_user_organisations: user=%s found %d org(s) (sentinel_guc)",
+                        user.pk, len(org_ids),
+                    )
+        except Exception as _sentinel_err:
+            logger.error(
+                "_get_user_organisations: SENTINEL failed for user=%s: %s",
+                user.pk, _sentinel_err,
+            )
 
-                # Step 2: fetch each org's detail row.
-                # When RLS is bypassed we can query directly; otherwise set
-                # current_org_id = org_id so org_select USING matches.
-                orgs = []
-                for org_id in org_ids:
-                    if not _rls_bypassed:
+    # Attempt 3: ORM fallback — works on SQLite and when raw SQL is blocked.
+    if not org_ids:
+        try:
+            from apps.tenancy.models import Membership as _M
+            org_ids = [
+                str(m.organisation_id)
+                for m in _M.objects.filter(user=user, is_active=True)
+            ]
+            logger.info(
+                "_get_user_organisations: ORM fallback found %d org(s) for user=%s",
+                len(org_ids), user.pk,
+            )
+        except Exception as _orm_err:
+            logger.error(
+                "_get_user_organisations: ORM fallback failed for user=%s: %s",
+                user.pk, _orm_err,
+            )
+
+    if not org_ids:
+        return []
+
+    # Step 2: fetch each org's detail row.
+    # Try with RLS bypass first; fall back to per-org set_config; fall back to stub.
+    orgs = []
+    for org_id in org_ids:
+        row = None
+        # Sub-attempt A: RLS already bypassed above, or try bypass again per org.
+        if _rls_bypassed:
+            try:
+                with _tx.atomic():
+                    with _conn.cursor() as _cur:
+                        _cur.execute("SET LOCAL row_security = OFF")
+                        _cur.execute(
+                            "SELECT id, name, slug, account_type, currency, country,"
+                            " is_active, onboarding_completed"
+                            " FROM tenancy_organisation"
+                            " WHERE id = %s AND is_active = TRUE",
+                            [org_id],
+                        )
+                        row = _cur.fetchone()
+            except Exception:
+                row = None
+
+        # Sub-attempt B: set current_org_id = org_id (matches org_select policy).
+        if row is None:
+            try:
+                with _tx.atomic():
+                    with _conn.cursor() as _cur:
                         _cur.execute(
                             "SELECT set_config('app.current_org_id', %s, TRUE)", [org_id]
                         )
-                    _cur.execute(
-                        "SELECT id, name, slug, account_type, currency, country,"
-                        " is_active, onboarding_completed"
-                        " FROM tenancy_organisation"
-                        " WHERE id = %s AND is_active = TRUE",
-                        [org_id],
-                    )
-                    row = _cur.fetchone()
-                    if row:
-                        orgs.append({
-                            "id": str(row[0]),
-                            "name": row[1] or "",
-                            "slug": row[2] or "",
-                            "account_type": row[3] or "",
-                            "currency": row[4] or "",
-                            "country": row[5] or "",
-                            "is_active": bool(row[6]),
-                            "onboarding_completed": bool(row[7]),
-                        })
-                    else:
-                        # Org row blocked or missing — return a stub so the
-                        # frontend can still authenticate.
-                        logger.warning(
-                            "_get_user_organisations: org %s not visible for user=%s"
-                            " — returning id-only stub",
-                            org_id, user.pk,
+                        _cur.execute(
+                            "SELECT set_config('app.current_user_id', %s, TRUE)",
+                            [str(user.pk)],
                         )
-                        orgs.append({"id": org_id, "onboarding_completed": True})
-                return orgs
-    except Exception as exc:
-        logger.error("_get_user_organisations failed for user=%s: %s", user.pk, exc)
-        return []
+                        _cur.execute(
+                            "SELECT id, name, slug, account_type, currency, country,"
+                            " is_active, onboarding_completed"
+                            " FROM tenancy_organisation"
+                            " WHERE id = %s AND is_active = TRUE",
+                            [org_id],
+                        )
+                        row = _cur.fetchone()
+            except Exception as _org_err:
+                logger.warning(
+                    "_get_user_organisations: org query failed for org=%s user=%s: %s",
+                    org_id, user.pk, _org_err,
+                )
+
+        # Sub-attempt C: ORM fallback per org.
+        if row is None:
+            try:
+                from apps.tenancy.models import Organisation as _Org
+                _org_obj = _Org.objects.filter(id=org_id, is_active=True).first()
+                if _org_obj:
+                    orgs.append({
+                        "id": str(_org_obj.id),
+                        "name": _org_obj.name or "",
+                        "slug": _org_obj.slug or "",
+                        "account_type": getattr(_org_obj, "account_type", "") or "",
+                        "currency": _org_obj.currency or "",
+                        "country": getattr(_org_obj, "country", "") or "",
+                        "is_active": bool(_org_obj.is_active),
+                        "onboarding_completed": bool(_org_obj.onboarding_completed),
+                    })
+                    continue
+            except Exception:
+                pass
+            # Final fallback: id-only stub so the frontend can still authenticate.
+            logger.warning(
+                "_get_user_organisations: org %s not visible for user=%s — returning stub",
+                org_id, user.pk,
+            )
+            orgs.append({"id": org_id, "onboarding_completed": True})
+            continue
+
+        orgs.append({
+            "id": str(row[0]),
+            "name": row[1] or "",
+            "slug": row[2] or "",
+            "account_type": row[3] or "",
+            "currency": row[4] or "",
+            "country": row[5] or "",
+            "is_active": bool(row[6]),
+            "onboarding_completed": bool(row[7]),
+        })
+
+    return orgs
 
 
 def _send_verification_email(user, request=None):

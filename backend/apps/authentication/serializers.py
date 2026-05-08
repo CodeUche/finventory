@@ -37,61 +37,72 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         token["is_sub_account"] = user.is_sub_account
 
         # Embed memberships (org_id → role) for fast client-side routing.
-        # Use raw SQL inside atomic() so set_config and SELECT are in the same
-        # PostgreSQL transaction — set_config(..., TRUE) (transaction-local) is
-        # then visible to the membership query under SENTINEL regardless of whether
-        # a separate _set_user() call worked and regardless of pgBouncer mode.
+        # Three independent attempts — each in its own atomic() block so a
+        # failure in one does NOT corrupt the transaction state for the next.
         memberships = {}
-        try:
-            from django.db import connection as _mc, transaction as _mt
-            with _mt.atomic():
-                with _mc.cursor() as _cur:
-                    # Layer 1: attempt to disable RLS entirely for this transaction.
-                    # Requires the BYPASSRLS attribute or superuser privilege.
-                    # We wrap it in a SAVEPOINT so a permission-denied error does
-                    # not abort the outer transaction — we fall back to the SENTINEL
-                    # GUC pattern instead.
-                    _rls_bypassed = False
-                    try:
-                        _cur.execute("SAVEPOINT audity_token_rls")
+        _SENTINEL = "00000000-0000-0000-0000-000000000000"
+
+        # Attempt 1: bypass RLS entirely (requires BYPASSRLS / superuser).
+        # Uses its own atomic() so a ProgrammingError here does not leave
+        # a broken transaction for Attempt 2.
+        if not memberships:
+            try:
+                from django.db import connection as _mc, transaction as _mt
+                with _mt.atomic():
+                    with _mc.cursor() as _cur:
                         _cur.execute("SET LOCAL row_security = OFF")
-                        _cur.execute("RELEASE SAVEPOINT audity_token_rls")
-                        _rls_bypassed = True
-                    except Exception as _rls_err:
-                        _cur.execute("ROLLBACK TO SAVEPOINT audity_token_rls")
-                        # Layer 2: SENTINEL GUC pattern — the membership_select
-                        # RLS policy allows reads when current_org_id = SENTINEL
-                        # AND current_user_id = user.pk (both transaction-local).
                         _cur.execute(
-                            "SELECT set_config('app.current_org_id', '00000000-0000-0000-0000-000000000000', TRUE)"
+                            "SELECT organisation_id, role FROM tenancy_membership"
+                            " WHERE user_id = %s AND is_active = TRUE",
+                            [str(user.pk)],
+                        )
+                        rows = _cur.fetchall()
+                        memberships = {str(r[0]): r[1] for r in rows}
+                        logger.info(
+                            "get_token: user=%s memberships=%d (rls_bypassed)",
+                            user.pk, len(rows),
+                        )
+            except Exception as _rls_err:
+                logger.debug(
+                    "get_token: rls bypass unavailable for user=%s (%s), trying SENTINEL",
+                    user.pk, type(_rls_err).__name__,
+                )
+
+        # Attempt 2: SENTINEL GUC pattern — the membership_select RLS policy
+        # allows reads when current_org_id = SENTINEL AND current_user_id = user.pk
+        # (both set transaction-local via TRUE).  Fresh atomic() = clean slate.
+        if not memberships:
+            try:
+                with _mt.atomic():
+                    with _mc.cursor() as _cur:
+                        _cur.execute(
+                            "SELECT set_config('app.current_org_id', %s, TRUE)",
+                            [_SENTINEL],
                         )
                         _cur.execute(
                             "SELECT set_config('app.current_user_id', %s, TRUE)",
                             [str(user.pk)],
                         )
-                        logger.debug(
-                            "get_token: BYPASSRLS unavailable (%s), using SENTINEL GUC",
-                            type(_rls_err).__name__,
+                        _cur.execute(
+                            "SELECT organisation_id, role FROM tenancy_membership"
+                            " WHERE user_id = %s AND is_active = TRUE",
+                            [str(user.pk)],
                         )
+                        rows = _cur.fetchall()
+                        memberships = {str(r[0]): r[1] for r in rows}
+                        logger.info(
+                            "get_token: user=%s memberships=%d (sentinel_guc)",
+                            user.pk, len(rows),
+                        )
+            except Exception as _sentinel_err:
+                logger.error(
+                    "get_token: SENTINEL GUC failed for user=%s: %s: %s",
+                    user.pk, type(_sentinel_err).__name__, _sentinel_err,
+                )
 
-                    _cur.execute(
-                        "SELECT organisation_id, role FROM tenancy_membership"
-                        " WHERE user_id = %s AND is_active = TRUE",
-                        [str(user.pk)],
-                    )
-                    rows = _cur.fetchall()
-                    memberships = {str(r[0]): r[1] for r in rows}
-                    logger.info(
-                        "get_token: user=%s memberships=%d rls_bypassed=%s",
-                        user.pk, len(rows), _rls_bypassed,
-                    )
-        except Exception as exc:
-            logger.error(
-                "get_token: raw-SQL membership query FAILED for user=%s: %s: %s",
-                user.pk, type(exc).__name__, exc,
-            )
-            # Layer 3: ORM fallback — works on SQLite (tests) and when the raw
-            # SQL path is unavailable for any reason.
+        # Attempt 3: ORM fallback — works on SQLite (tests) and any environment
+        # where raw SQL is unavailable.
+        if not memberships:
             try:
                 from apps.tenancy.models import Membership as _M
                 memberships = {
@@ -107,6 +118,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                     "get_token: ORM fallback also failed for user=%s: %s",
                     user.pk, orm_exc,
                 )
+
         if not memberships:
             logger.warning(
                 "get_token: JWT will have EMPTY memberships for user=%s — "
