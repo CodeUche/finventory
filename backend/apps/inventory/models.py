@@ -250,7 +250,9 @@ class StockMovement(TenantAwareModel):
         TRANSFER_OUT = "transfer_out", "Transfer Out"
         OPENING = "opening", "Opening Stock"
 
-    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="movements")
+    product = models.ForeignKey(
+        Product, null=True, blank=True, on_delete=models.SET_NULL, related_name="movements"
+    )
     warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, related_name="movements")
     batch = models.ForeignKey(
         Batch, null=True, blank=True, on_delete=models.SET_NULL, related_name="movements"
@@ -278,4 +280,5 @@ class StockMovement(TenantAwareModel):
         ]
 
     def __str__(self):
-        return f"{self.movement_type} {self.quantity} × {self.product.sku}"
+        sku = self.product.sku if self.product_id else "[deleted product]"
+        return f"{self.movement_type} {self.quantity} × {sku}"

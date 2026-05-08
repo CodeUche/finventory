@@ -89,6 +89,85 @@ class ProductViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                 return Response({"error": err, "upgrade_required": True}, status=402)
             return super().create(request, *args, **kwargs)
 
+    def destroy(self, request, *args, **kwargs):
+        """
+        Delete a product and its associated stock data.
+
+        Allowed only when the product has never appeared on a financial document
+        (invoice, purchase order, or return).  StockItems and Batches are removed
+        via CASCADE.  StockMovement ledger entries are preserved for audit purposes
+        but their product FK is nullified (SET_NULL) — they do NOT appear in any
+        user-facing document, so nullifying them is safe.
+
+        Returns 422 with a human-readable message if the product is referenced
+        by a financial document, so the frontend can display it directly.
+        """
+        from django.db import transaction
+        from apps.sales.models import SaleItem, SaleReturnItem
+        from apps.purchases.models import PurchaseOrderItem
+
+        instance = self.get_object()
+
+        # --- Guard: block deletion if product is on any financial document ---
+        # These are immutable records; removing the product FK would corrupt them.
+        # Operators should deactivate the product (is_active=False) instead.
+        if SaleItem.objects.filter(product=instance).exists():
+            return Response(
+                {
+                    'error': (
+                        f'"{instance.name}" appears on one or more sales invoices and '
+                        'cannot be deleted. Deactivate it instead.'
+                    )
+                },
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+        if PurchaseOrderItem.objects.filter(product=instance).exists():
+            return Response(
+                {
+                    'error': (
+                        f'"{instance.name}" appears on one or more purchase orders and '
+                        'cannot be deleted. Deactivate it instead.'
+                    )
+                },
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+        if SaleReturnItem.objects.filter(product=instance).exists():
+            return Response(
+                {
+                    'error': (
+                        f'"{instance.name}" appears on one or more return records and '
+                        'cannot be deleted. Deactivate it instead.'
+                    )
+                },
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+
+        # --- Safe to delete ---
+        # StockItem and Batch are removed via CASCADE on Product.
+        # StockMovement.product becomes NULL (SET_NULL) — ledger rows are kept
+        # for audit but are no longer tied to an active product.
+        product_id = str(instance.pk)
+        product_repr = str(instance)
+
+        with transaction.atomic():
+            instance.delete()
+
+        # Best-effort audit log (non-fatal if it fails)
+        try:
+            from apps.core.models import AuditLog
+            AuditLog.log(
+                action=AuditLog.DELETE,
+                user=request.user,
+                model_name='Product',
+                object_id=product_id,
+                object_repr=product_repr,
+                request=request,
+            )
+        except Exception:
+            pass
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
     @action(detail=False, methods=["get"])
     def low_stock(self, request):
         """GET /api/v1/inventory/products/low-stock/"""

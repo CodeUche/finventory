@@ -310,14 +310,16 @@ export default function ProductsPage() {
   }
 
   const handleDelete = async (p: Product) => {
-    if (!confirm(`Delete "${p.name}"? This cannot be undone.`)) return
+    if (!confirm(`Delete "${p.name}"? This cannot be undone.\n\nStock levels and batch records for this product will be removed. Products that appear on invoices or purchase orders cannot be deleted.`)) return
     setDeletingId(p.id)
     try {
       await inventoryApi.deleteProduct(p.id)
       toast.success('Product deleted')
       fetchProducts()
-    } catch {
-      toast.error('Failed to delete product')
+    } catch (err: any) {
+      const apiErr = err?.response?.data?.error
+      const msg = typeof apiErr === 'string' ? apiErr : (apiErr?.message ?? 'Failed to delete product')
+      toast.error(msg, { duration: 6000 })
     } finally {
       setDeletingId(null)
     }
