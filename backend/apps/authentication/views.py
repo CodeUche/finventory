@@ -116,13 +116,30 @@ def _get_user_organisations(user):
         from django.db import connection as _conn, transaction as _tx
         with _tx.atomic():
             with _conn.cursor() as _cur:
-                # Step 1: get org IDs — SENTINEL bootstrap allows this
-                _cur.execute(
-                    "SELECT set_config('app.current_org_id', %s, TRUE)", [SENTINEL]
-                )
-                _cur.execute(
-                    "SELECT set_config('app.current_user_id', %s, TRUE)", [str(user.pk)]
-                )
+                # Layer 1: attempt to disable RLS entirely for this transaction.
+                # Requires BYPASSRLS or superuser.  SAVEPOINT lets us recover if
+                # the DB user lacks that privilege (falls back to SENTINEL GUCs).
+                _rls_bypassed = False
+                try:
+                    _cur.execute("SAVEPOINT audity_orgs_rls")
+                    _cur.execute("SET LOCAL row_security = OFF")
+                    _cur.execute("RELEASE SAVEPOINT audity_orgs_rls")
+                    _rls_bypassed = True
+                except Exception as _rls_err:
+                    _cur.execute("ROLLBACK TO SAVEPOINT audity_orgs_rls")
+                    # Layer 2: SENTINEL GUC pattern
+                    _cur.execute(
+                        "SELECT set_config('app.current_org_id', %s, TRUE)", [SENTINEL]
+                    )
+                    _cur.execute(
+                        "SELECT set_config('app.current_user_id', %s, TRUE)", [str(user.pk)]
+                    )
+                    logger.debug(
+                        "_get_user_organisations: BYPASSRLS unavailable (%s), using SENTINEL",
+                        type(_rls_err).__name__,
+                    )
+
+                # Step 1: get org IDs from membership table
                 _cur.execute(
                     "SELECT organisation_id FROM tenancy_membership"
                     " WHERE user_id = %s AND is_active = TRUE",
@@ -131,20 +148,22 @@ def _get_user_organisations(user):
                 org_ids = [str(r[0]) for r in _cur.fetchall()]
 
                 logger.info(
-                    "_get_user_organisations: user=%s found %d org(s): %s",
-                    user.pk, len(org_ids), org_ids,
+                    "_get_user_organisations: user=%s found %d org(s) rls_bypassed=%s",
+                    user.pk, len(org_ids), _rls_bypassed,
                 )
 
                 if not org_ids:
                     return []
 
-                # Step 2: fetch each org's data — set current_org_id = org_id
-                # so org_select USING (id = current_org_id::uuid) matches.
+                # Step 2: fetch each org's detail row.
+                # When RLS is bypassed we can query directly; otherwise set
+                # current_org_id = org_id so org_select USING matches.
                 orgs = []
                 for org_id in org_ids:
-                    _cur.execute(
-                        "SELECT set_config('app.current_org_id', %s, TRUE)", [org_id]
-                    )
+                    if not _rls_bypassed:
+                        _cur.execute(
+                            "SELECT set_config('app.current_org_id', %s, TRUE)", [org_id]
+                        )
                     _cur.execute(
                         "SELECT id, name, slug, account_type, currency, country,"
                         " is_active, onboarding_completed"
@@ -165,10 +184,10 @@ def _get_user_organisations(user):
                             "onboarding_completed": bool(row[7]),
                         })
                     else:
-                        # org_select blocked the row (unexpected RLS state) —
-                        # return a stub so the frontend can still authenticate.
+                        # Org row blocked or missing — return a stub so the
+                        # frontend can still authenticate.
                         logger.warning(
-                            "_get_user_organisations: org %s blocked by RLS for user=%s"
+                            "_get_user_organisations: org %s not visible for user=%s"
                             " — returning id-only stub",
                             org_id, user.pk,
                         )

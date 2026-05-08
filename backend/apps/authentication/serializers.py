@@ -46,17 +46,34 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             from django.db import connection as _mc, transaction as _mt
             with _mt.atomic():
                 with _mc.cursor() as _cur:
-                    # Set BOTH GUCs inside the same transaction so the RLS
-                    # SENTINEL branch (requires current_org_id=SENTINEL AND
-                    # current_user_id=user_pk) matches even on a fresh
-                    # pgBouncer connection where middleware set_config is gone.
-                    _cur.execute(
-                        "SELECT set_config('app.current_org_id', '00000000-0000-0000-0000-000000000000', TRUE)"
-                    )
-                    _cur.execute(
-                        "SELECT set_config('app.current_user_id', %s, TRUE)",
-                        [str(user.pk)],
-                    )
+                    # Layer 1: attempt to disable RLS entirely for this transaction.
+                    # Requires the BYPASSRLS attribute or superuser privilege.
+                    # We wrap it in a SAVEPOINT so a permission-denied error does
+                    # not abort the outer transaction — we fall back to the SENTINEL
+                    # GUC pattern instead.
+                    _rls_bypassed = False
+                    try:
+                        _cur.execute("SAVEPOINT audity_token_rls")
+                        _cur.execute("SET LOCAL row_security = OFF")
+                        _cur.execute("RELEASE SAVEPOINT audity_token_rls")
+                        _rls_bypassed = True
+                    except Exception as _rls_err:
+                        _cur.execute("ROLLBACK TO SAVEPOINT audity_token_rls")
+                        # Layer 2: SENTINEL GUC pattern — the membership_select
+                        # RLS policy allows reads when current_org_id = SENTINEL
+                        # AND current_user_id = user.pk (both transaction-local).
+                        _cur.execute(
+                            "SELECT set_config('app.current_org_id', '00000000-0000-0000-0000-000000000000', TRUE)"
+                        )
+                        _cur.execute(
+                            "SELECT set_config('app.current_user_id', %s, TRUE)",
+                            [str(user.pk)],
+                        )
+                        logger.debug(
+                            "get_token: BYPASSRLS unavailable (%s), using SENTINEL GUC",
+                            type(_rls_err).__name__,
+                        )
+
                     _cur.execute(
                         "SELECT organisation_id, role FROM tenancy_membership"
                         " WHERE user_id = %s AND is_active = TRUE",
@@ -64,25 +81,17 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                     )
                     rows = _cur.fetchall()
                     memberships = {str(r[0]): r[1] for r in rows}
-                    # Also log total row count in the table + any inactive rows
-                    # so we can tell if the table is empty vs user-specific issue.
-                    _cur.execute("SELECT COUNT(*) FROM tenancy_membership")
-                    total = _cur.fetchone()[0]
-                    _cur.execute(
-                        "SELECT organisation_id, role, is_active FROM tenancy_membership WHERE user_id = %s",
-                        [str(user.pk)],
-                    )
-                    all_rows = _cur.fetchall()
-                    logger.warning(
-                        "get_token: user=%s active_memberships=%d all_memberships=%s table_total=%s",
-                        user.pk, len(rows), all_rows, total,
+                    logger.info(
+                        "get_token: user=%s memberships=%d rls_bypassed=%s",
+                        user.pk, len(rows), _rls_bypassed,
                     )
         except Exception as exc:
             logger.error(
                 "get_token: raw-SQL membership query FAILED for user=%s: %s: %s",
                 user.pk, type(exc).__name__, exc,
             )
-            # ORM fallback — may be blocked by RLS in some configs, but try anyway.
+            # Layer 3: ORM fallback — works on SQLite (tests) and when the raw
+            # SQL path is unavailable for any reason.
             try:
                 from apps.tenancy.models import Membership as _M
                 memberships = {
