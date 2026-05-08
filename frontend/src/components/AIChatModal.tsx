@@ -242,17 +242,17 @@ export default function AIChatModal({ open, onClose }: Props) {
             <div key={i} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
               <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
                 msg.role === 'user'
-                  ? 'bg-brand-500/20'
+                  ? 'bg-brand-500'
                   : 'bg-surface-700'
               }`}>
                 {msg.role === 'user'
-                  ? <MessageSquare size={13} className="text-brand-400" />
+                  ? <MessageSquare size={13} className="text-white" />
                   : <Bot size={13} className="text-slate-400" />
                 }
               </div>
               <div className={`max-w-[82%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
                 msg.role === 'user'
-                  ? 'bg-brand-500/20 text-brand-100 rounded-tr-sm'
+                  ? 'bg-brand-500 text-white rounded-tr-sm'
                   : 'bg-surface-700/50 text-slate-200 rounded-tl-sm'
               }`}>
                 {msg.loading
