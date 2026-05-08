@@ -112,12 +112,8 @@ const BLANK_BATCH = {
   quantity: '',
   warehouse: '',
   batch_number: '',
-  unit_cost: '',
   manufacture_date: '',
   expiry_date: '',
-  min_quantity: '',
-  max_quantity: '',
-  qty_per_pack: '',
 }
 
 const PRODUCT_TYPES = [
@@ -245,14 +241,15 @@ export default function ProductsPage() {
               warehouse: batchForm.warehouse,
               batch_number: batchForm.batch_number,
               quantity: qty,
-              unit_cost: stripCommas(batchForm.unit_cost) || stripCommas(form.cost_price) || '0',
+              // Pull from main form — no need to re-enter these in batch details
+              unit_cost: stripCommas(form.cost_price) || '0',
+              qty_per_pack: form.quantity_in_pack || '1',
             }
             // DateInput always emits ISO YYYY-MM-DD — pass through directly
             if (batchForm.manufacture_date) batchPayload.manufacture_date = batchForm.manufacture_date
             if (batchForm.expiry_date) batchPayload.expiry_date = batchForm.expiry_date
-            if (batchForm.min_quantity) batchPayload.min_quantity = batchForm.min_quantity
-            if (batchForm.max_quantity) batchPayload.max_quantity = batchForm.max_quantity
-            if (batchForm.qty_per_pack) batchPayload.qty_per_pack = batchForm.qty_per_pack
+            if (form.reorder_level) batchPayload.min_quantity = form.reorder_level
+            if (form.max_stock_level) batchPayload.max_quantity = form.max_stock_level
             try {
               await inventoryApi.createBatch(batchPayload)
             } catch {
@@ -679,51 +676,8 @@ export default function ProductsPage() {
                   </div>
                   {batchForm.batch_number && (
                     <div className="space-y-3 border border-surface-700/60 rounded-xl p-3">
-                      <p className="text-xs text-slate-400">Batch details</p>
+                      <p className="text-xs text-slate-400">Batch details — cost price, qty per pack and stock limits are taken from the fields above</p>
                       <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <label className="label">Unit Cost</label>
-                          <input
-                            type="text"
-                            className="input"
-                            placeholder={stripCommas(form.cost_price) || '0.00'}
-                            value={batchForm.unit_cost}
-                            onChange={(e) => setBatchForm((b) => ({ ...b, unit_cost: formatAmountInput(e.target.value) }))}
-                          />
-                        </div>
-                        <div>
-                          <label className="label">Qty per Pack</label>
-                          <input
-                            type="number"
-                            className="input"
-                            placeholder="1"
-                            min="0"
-                            value={batchForm.qty_per_pack}
-                            onChange={(e) => setBatchForm((b) => ({ ...b, qty_per_pack: e.target.value }))}
-                          />
-                        </div>
-                        <div>
-                          <label className="label">Min Quantity</label>
-                          <input
-                            type="number"
-                            className="input"
-                            placeholder="0"
-                            min="0"
-                            value={batchForm.min_quantity}
-                            onChange={(e) => setBatchForm((b) => ({ ...b, min_quantity: e.target.value }))}
-                          />
-                        </div>
-                        <div>
-                          <label className="label">Max Quantity</label>
-                          <input
-                            type="number"
-                            className="input"
-                            placeholder="0"
-                            min="0"
-                            value={batchForm.max_quantity}
-                            onChange={(e) => setBatchForm((b) => ({ ...b, max_quantity: e.target.value }))}
-                          />
-                        </div>
                         <div>
                           <label className="label">Manufacture Date</label>
                           <DateInput
