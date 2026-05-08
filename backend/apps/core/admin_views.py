@@ -103,17 +103,32 @@ class PlatformStatsView(APIView):
         from apps.authentication.models import User
         from apps.subscriptions.models import Plan
         from apps.sales.models import Invoice
+        from django.db import connection as _conn
+
+        # Bypass RLS for this superuser-only, cross-tenant stats endpoint.
+        # Without this, Invoice queries run as `audity_app` with the SENTINEL
+        # GUC (no X-Organisation-ID on the request), so RLS on sales_invoice
+        # silently returns 0 rows, making invoice counts and revenue wrong.
+        # SET LOCAL scopes the bypass to the current transaction only.
+        try:
+            with _conn.cursor() as cur:
+                cur.execute("SET LOCAL row_security = OFF")
+        except Exception:
+            pass  # Non-superuser DB role — fall through, queries return what RLS allows
 
         orgs = Organisation.objects.filter(is_deleted=False)
         users = User.objects.filter(is_active=True)
         invoices = Invoice.objects.all()
 
-        # Single annotated query — no per-org N+1
+        # Single annotated query — no per-org N+1.
+        # Membership.organisation FK has related_name="memberships" (defined
+        # directly on the model, not via TenantAwareModel's pattern).
+        # Invoice.organisation FK uses TenantAwareModel's pattern → "sales_invoice_set".
         org_qs = (
             orgs
             .select_related('owner', 'subscription__plan')
             .annotate(
-                member_count=Count('tenancy_membership_set', filter=Q(tenancy_membership_set__is_active=True), distinct=True),
+                member_count=Count('memberships', filter=Q(memberships__is_active=True), distinct=True),
                 invoice_count=Count('sales_invoice_set', distinct=True),
                 total_revenue=Sum(
                     'sales_invoice_set__total_amount',
