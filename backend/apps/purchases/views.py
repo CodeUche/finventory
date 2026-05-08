@@ -48,13 +48,20 @@ class PurchaseOrderViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet
         return qs
 
     def perform_create(self, serializer):
-        org = self.request.organisation
-        po_number = PurchaseOrder.generate_number(org)
-        serializer.save(
-            organisation=org,
-            po_number=po_number,
-            created_by=self.request.user,
-        )
+        import logging
+        logger = logging.getLogger(__name__)
+        try:
+            org = self._get_organisation()
+            po_number = PurchaseOrder.generate_number(org)
+            serializer.save(
+                organisation=org,
+                po_number=po_number,
+                created_by=self.request.user,
+            )
+        except Exception as exc:
+            logger.exception("PurchaseOrder create failed: %s", exc)
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({"error": f"[{type(exc).__name__}] {exc}"})
 
     @action(detail=True, methods=["post"], url_path="clear_receipt")
     def clear_receipt(self, request, pk=None):

@@ -28,7 +28,10 @@ class PurchaseOrderItemSerializer(serializers.ModelSerializer):
 
 class PurchaseOrderSerializer(serializers.ModelSerializer):
     items = PurchaseOrderItemSerializer(many=True, required=False)
-    supplier_name = serializers.CharField(source="supplier.name", read_only=True)
+    supplier_name = serializers.SerializerMethodField()
+
+    def get_supplier_name(self, obj):
+        return obj.supplier.name if obj.supplier_id else "Walk-in / No Supplier"
     warehouse_name = serializers.CharField(source="warehouse.name", read_only=True)
 
     class Meta:
@@ -42,6 +45,7 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "po_number", "subtotal", "tax_amount", "total_amount", "created_at"]
         extra_kwargs = {
             "notes": {"max_length": 2000, "required": False, "allow_blank": True},
+            "supplier": {"required": False, "allow_null": True},
             # Allow only PDF/image receipts; file size capped by validate_file_upload
             "receipt": {"validators": [validate_file_upload], "required": False},
         }

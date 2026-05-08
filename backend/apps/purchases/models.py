@@ -29,7 +29,8 @@ class PurchaseOrder(TenantAwareModel):
 
     po_number = models.CharField(max_length=50, unique=True, db_index=True)
     supplier = models.ForeignKey(
-        "suppliers.Supplier", on_delete=models.PROTECT, related_name="purchase_orders"
+        "suppliers.Supplier", null=True, blank=True,
+        on_delete=models.PROTECT, related_name="purchase_orders"
     )
     warehouse = models.ForeignKey(
         "inventory.Warehouse", on_delete=models.PROTECT, related_name="purchase_orders"
