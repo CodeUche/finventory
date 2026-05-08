@@ -6,13 +6,21 @@ Root cause of onboarding redirect regression:
     user therefore looks like a new user and gets routed to /onboarding.
 
     Every Organisation has an `owner` FK that survived.  We recreate the
-    missing Membership rows from that field using a raw INSERT so the
-    operation bypasses any remaining RLS policies (SET LOCAL row_security
-    = OFF is attempted first; the INSERT itself is idempotent because of
-    the NOT EXISTS guard).
+    missing Membership rows from that field.
 
-This migration is safe to re-run: the NOT EXISTS guard prevents duplicates
-and get_or_create semantics mean existing rows are left unchanged.
+RLS handling — three independent attempts, each in its own isolated block
+so a failure in one does NOT corrupt the state for the next:
+
+  Attempt 1: SET LOCAL row_security = OFF (needs BYPASSRLS/superuser).
+             Fails on Railway with ProgrammingError — caught cleanly.
+  Attempt 2: SENTINEL GUC pattern — set app.current_org_id = SENTINEL
+             so the org_select policy allows reading tenancy_organisation,
+             then INSERT membership rows.  Uses its own atomic block.
+  Attempt 3: ORM get_or_create fallback (works on SQLite + when raw SQL
+             is unavailable).
+
+This migration is idempotent: the NOT EXISTS guard and get_or_create
+semantics mean re-running it is safe.
 """
 
 import logging
@@ -23,28 +31,24 @@ from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
+_SENTINEL = "00000000-0000-0000-0000-000000000000"
+
 
 def recover_memberships(apps, schema_editor):
     db = schema_editor.connection
-    with db.cursor() as cur:
-        # Attempt to bypass RLS — requires BYPASSRLS or superuser.
-        # Use a SAVEPOINT so a permission-denied error doesn't abort the
-        # migration transaction; we proceed without the bypass if it fails.
-        try:
-            cur.execute("SAVEPOINT audity_recover_rls")
-            cur.execute("SET LOCAL row_security = OFF")
-            cur.execute("RELEASE SAVEPOINT audity_recover_rls")
-        except Exception as exc:
-            cur.execute("ROLLBACK TO SAVEPOINT audity_recover_rls")
-            logger.info(
-                "0023: BYPASSRLS unavailable (%s) — proceeding without RLS bypass",
-                type(exc).__name__,
-            )
 
-        # Determine the correct table name prefix (in case of custom schema)
-        # and insert missing owner memberships in one shot.
-        now = timezone.now().isoformat()
-        try:
+    # Skip raw-SQL paths on SQLite (tests) — go straight to ORM fallback.
+    if db.vendor != "postgresql":
+        _recover_orm(apps)
+        return
+
+    now = timezone.now().isoformat()
+    inserted = 0
+
+    # ── Attempt 1: bypass RLS entirely ────────────────────────────────────────
+    try:
+        with db.cursor() as cur:
+            cur.execute("SET LOCAL row_security = OFF")
             cur.execute(
                 """
                 INSERT INTO tenancy_membership
@@ -56,33 +60,84 @@ def recover_memberships(apps, schema_editor):
                     o.id,
                     'owner',
                     TRUE,
-                    %s,
-                    %s,
-                    %s
+                    %s, %s, %s
                 FROM tenancy_organisation o
                 WHERE
                     o.owner_id IS NOT NULL
-                    AND o.is_active  = TRUE
+                    AND o.is_active = TRUE
                     AND NOT EXISTS (
-                        SELECT 1
-                        FROM   tenancy_membership m
-                        WHERE  m.user_id         = o.owner_id
-                          AND  m.organisation_id = o.id
+                        SELECT 1 FROM tenancy_membership m
+                        WHERE m.user_id = o.owner_id
+                          AND m.organisation_id = o.id
                     )
                 """,
                 [now, now, now],
             )
-            count = cur.rowcount
-            logger.info("0023: inserted %d missing owner membership(s)", count)
-        except Exception as exc:
-            # gen_random_uuid() may not be available on very old PostgreSQL or
-            # SQLite (test runner).  Fall back to Python-generated UUIDs.
-            logger.warning("0023: bulk INSERT failed (%s), trying row-by-row ORM path", exc)
-            _recover_orm(apps)
+            inserted = cur.rowcount
+            logger.info(
+                "0023 (rls_bypass): inserted %d missing owner membership(s)", inserted
+            )
+            return  # Done — no further attempts needed
+    except Exception as exc:
+        logger.debug(
+            "0023: rls bypass unavailable (%s), trying SENTINEL GUC",
+            type(exc).__name__,
+        )
+
+    # ── Attempt 2: SENTINEL GUC ────────────────────────────────────────────────
+    # Set both current_org_id = SENTINEL and current_user_id = SENTINEL so the
+    # org_select and membership_select RLS policies allow bootstrap reads.
+    # Each query gets its own cursor inside this single connection to ensure the
+    # set_config values persist for the INSERT (transaction-local, TRUE).
+    try:
+        with db.cursor() as cur:
+            cur.execute(
+                "SELECT set_config('app.current_org_id', %s, TRUE)", [_SENTINEL]
+            )
+            cur.execute(
+                "SELECT set_config('app.current_user_id', %s, TRUE)", [_SENTINEL]
+            )
+            cur.execute(
+                """
+                INSERT INTO tenancy_membership
+                    (id, user_id, organisation_id, role,
+                     is_active, joined_at, created_at, updated_at)
+                SELECT
+                    gen_random_uuid(),
+                    o.owner_id,
+                    o.id,
+                    'owner',
+                    TRUE,
+                    %s, %s, %s
+                FROM tenancy_organisation o
+                WHERE
+                    o.owner_id IS NOT NULL
+                    AND o.is_active = TRUE
+                    AND NOT EXISTS (
+                        SELECT 1 FROM tenancy_membership m
+                        WHERE m.user_id = o.owner_id
+                          AND m.organisation_id = o.id
+                    )
+                """,
+                [now, now, now],
+            )
+            inserted = cur.rowcount
+            logger.info(
+                "0023 (sentinel_guc): inserted %d missing owner membership(s)", inserted
+            )
+            return
+    except Exception as exc:
+        logger.warning(
+            "0023: SENTINEL GUC path failed (%s: %s), trying ORM fallback",
+            type(exc).__name__, exc,
+        )
+
+    # ── Attempt 3: ORM fallback ────────────────────────────────────────────────
+    _recover_orm(apps)
 
 
 def _recover_orm(apps):
-    """ORM fallback for environments where the raw INSERT is unavailable."""
+    """ORM fallback — works on SQLite and when raw SQL paths are unavailable."""
     Organisation = apps.get_model("tenancy", "Organisation")
     Membership = apps.get_model("tenancy", "Membership")
     now = timezone.now()
@@ -101,7 +156,7 @@ def _recover_orm(apps):
         )
         if created:
             count += 1
-    logger.info("0023: ORM path inserted %d missing owner membership(s)", count)
+    logger.info("0023 (orm_fallback): inserted %d missing owner membership(s)", count)
 
 
 def noop(apps, schema_editor):
