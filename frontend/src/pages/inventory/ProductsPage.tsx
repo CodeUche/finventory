@@ -106,6 +106,7 @@ const BLANK = {
   reorder_level: '10', max_stock_level: '', quantity_in_pack: '1',
   alcohol_percentage: '', volume_ml: '',
   is_taxable: false, tax_class: '',
+  is_active: true,
 }
 
 const BLANK_BATCH = {
@@ -203,6 +204,7 @@ export default function ProductsPage() {
       volume_ml: String(p.volume_ml ?? ''),
       is_taxable: p.is_taxable,
       tax_class: p.tax_class ?? '',
+      is_active: p.is_active,
     })
     setShowModal(true)
   }
@@ -218,6 +220,7 @@ export default function ProductsPage() {
       selling_price: stripCommas(form.selling_price),
       wholesale_price: stripCommas(form.wholesale_price) || '0',
       quantity_in_pack: form.quantity_in_pack || '1',
+      is_active: form.is_active,
     }
     if (!payload.alcohol_percentage) delete payload.alcohol_percentage
     if (!payload.volume_ml) delete payload.volume_ml
@@ -514,8 +517,8 @@ export default function ProductsPage() {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="label">SKU * <FieldTooltip text="Stock Keeping Unit — a unique code you create for this product. E.g. 'COKE-50CL' or 'SHIRT-RED-L'. Makes searching and reporting easier. You can leave this blank to auto-generate." /></label>
-                  <input className="input" value={form.sku} onChange={upd('sku')} required disabled={!!editId} placeholder="SVC-001" />
+                  <label className="label">SKU * <FieldTooltip text="Stock Keeping Unit — a unique code you create for this product. E.g. 'COKE-50CL' or 'SHIRT-RED-L'. Makes searching and reporting easier." /></label>
+                  <input className="input" value={form.sku} onChange={upd('sku')} required placeholder="SVC-001" />
                 </div>
                 <div>
                   <label className="label">Unit <FieldTooltip text="How this product is counted or sold. Choose 'piece' for individual items, 'carton' for boxes, 'kg' for weight-based products, 'dozen' for groups of 12, etc." /></label>
@@ -598,8 +601,17 @@ export default function ProductsPage() {
                   </div>
                 </div>
               )}
-              {/* VAT / Tax */}
+              {/* Active status + VAT / Tax */}
               <div className="border-t border-surface-700 pt-4 space-y-3">
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.is_active}
+                    onChange={(e) => setForm((f) => ({ ...f, is_active: e.target.checked }))}
+                    className="w-4 h-4 accent-orange-500"
+                  />
+                  <span className="text-sm text-slate-300">Active <span className="text-slate-500">(uncheck to deactivate / hide from sales)</span></span>
+                </label>
                 <label className="flex items-center gap-3 cursor-pointer">
                   <input
                     type="checkbox"
