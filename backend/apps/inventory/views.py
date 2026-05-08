@@ -503,14 +503,59 @@ class BatchViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         return qs
 
 
-class StockItemViewSet(TenantFilterMixin, viewsets.ReadOnlyModelViewSet):
-    """Read-only view of current stock levels per product/warehouse."""
+class StockItemViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+    """
+    Stock levels per product/warehouse.
+
+    Read operations: all staff.
+    DELETE: managers only — zeroes out the stock via an ADJUSTMENT_OUT movement
+            (preserving ledger integrity) then removes the StockItem record.
+    Create / update are not exposed; all mutations go through the movements API.
+    """
 
     queryset = StockItem.objects.select_related("product", "warehouse")
     serializer_class = StockItemSerializer
     permission_classes = [IsAuthenticated, IsStaff]
     filterset_fields = ["product", "warehouse"]
     search_fields = ["product__name", "product__sku"]
+    http_method_names = ["get", "delete", "head", "options"]
+
+    def get_permissions(self):
+        if self.action == "destroy":
+            return [IsAuthenticated(), IsManager()]
+        return [IsAuthenticated(), IsStaff()]
+
+    def destroy(self, request, *args, **kwargs):
+        """
+        Remove a stock record for a product-warehouse pair.
+
+        If there is stock on hand, an ADJUSTMENT_OUT ledger entry is created
+        to zero it out before the StockItem row is deleted.  This keeps the
+        StockMovement ledger consistent: summing movements for this
+        product/warehouse pair will still equal zero after deletion.
+        """
+        from django.db import transaction
+        from decimal import Decimal
+
+        instance = self.get_object()
+        qty = instance.quantity_on_hand
+
+        with transaction.atomic():
+            if qty > Decimal("0"):
+                try:
+                    InventoryService.adjust_stock(
+                        organisation=instance.organisation,
+                        product=instance.product,
+                        warehouse=instance.warehouse,
+                        quantity=-qty,
+                        reason="Stock record removed by manager",
+                        created_by=request.user,
+                    )
+                except ValueError as e:
+                    return Response({"error": str(e)}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+            instance.delete()
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class StockMovementViewSet(TenantFilterMixin, viewsets.ModelViewSet):

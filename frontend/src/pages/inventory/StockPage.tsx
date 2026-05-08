@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { useSearchParams, useNavigate } from 'react-router-dom'
-import { AlertTriangle, Boxes, Plus, RefreshCw, ArrowLeftRight } from 'lucide-react'
+import { AlertTriangle, Boxes, Plus, RefreshCw, ArrowLeftRight, Pencil, Trash2, Loader2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { inventoryApi, bypassNextGets } from '@/services/api'
 import { formatAmountInput, stripCommas } from '@/lib/utils'
@@ -51,6 +51,11 @@ export default function StockPage() {
   const [newProduct, setNewProduct] = useState<NewProductMini>({ name: '', sku: '', cost_price: '', selling_price: '' })
   const [creatingProduct, setCreatingProduct] = useState(false)
 
+  // ── Row-level edit / delete ──────────────────────────────────────────────
+  const [adjustRowLocked, setAdjustRowLocked] = useState(false)
+  const [adjustRowLabel, setAdjustRowLabel] = useState('')
+  const [deletingStockId, setDeletingStockId] = useState<string | null>(null)
+
   // ── Stock transfer modal ─────────────────────────────────────────────────
   const [showTransfer, setShowTransfer] = useState(false)
   const [transferForm, setTransferForm] = useState<TransferForm>({
@@ -81,6 +86,7 @@ export default function StockPage() {
   useDataRefresh(load)
 
   const openAdjust = async () => {
+    setAdjustRowLocked(false)
     try {
       const pRes = await inventoryApi.products({ page_size: 200, is_active: true })
       const pList: Product[] = pRes.data.results ?? pRes.data
@@ -95,6 +101,32 @@ export default function StockPage() {
       setCreatingProduct(false)
       setShowAdjust(true)
     } catch { toast.error('Failed to load products') }
+  }
+
+  const openEditRow = async (s: StockItem) => {
+    setAdjustRowLocked(true)
+    setAdjustRowLabel(`${s.product_name} @ ${s.warehouse_name}`)
+    setAdjustForm({ product_id: s.product, warehouse_id: s.warehouse, quantity: '', reason: '' })
+    setNewProduct({ name: '', sku: '', cost_price: '', selling_price: '' })
+    setCreatingProduct(false)
+    setShowAdjust(true)
+  }
+
+  const handleDeleteStockItem = async (s: StockItem) => {
+    const qty = parseFloat(s.quantity_on_hand)
+    const qtyText = qty > 0 ? `\n\nCurrent quantity (${qty.toFixed(0)} units) will be zeroed out and the record removed.` : '\n\nThis record has 0 units on hand.'
+    if (!confirm(`Remove stock record for "${s.product_name}" at ${s.warehouse_name}?${qtyText}`)) return
+    setDeletingStockId(s.id)
+    try {
+      await inventoryApi.deleteStockItem(s.id)
+      toast.success(`Stock record for "${s.product_name}" removed`)
+      load()
+    } catch (err: any) {
+      const msg = err?.response?.data?.error
+      toast.error(typeof msg === 'string' ? msg : 'Failed to remove stock record')
+    } finally {
+      setDeletingStockId(null)
+    }
   }
 
   const handleAdjust = async () => {
@@ -267,7 +299,7 @@ export default function StockPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-surface-700">
-                {['Product', 'SKU', 'Warehouse', 'On Hand', 'Reserved', 'Available', 'Status'].map((h) => (
+                {['Product', 'SKU', 'Warehouse', 'On Hand', 'Reserved', 'Available', 'Status', ''].map((h) => (
                   <th key={h} className="px-5 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
                 ))}
               </tr>
@@ -276,13 +308,13 @@ export default function StockPage() {
               {loading ? (
                 Array.from({ length: 8 }).map((_, i) => (
                   <tr key={i} className="table-row">
-                    {Array.from({ length: 7 }).map((_, j) => (
+                    {Array.from({ length: 8 }).map((_, j) => (
                       <td key={j} className="px-5 py-3.5"><div className="h-4 bg-surface-700 rounded animate-pulse w-20" /></td>
                     ))}
                   </tr>
                 ))
               ) : displayed.length === 0 ? (
-                <tr><td colSpan={7} className="px-5 py-12 text-center">
+                <tr><td colSpan={8} className="px-5 py-12 text-center">
                   <Boxes size={32} className="mx-auto mb-2 text-slate-600" />
                   <p className="text-slate-500 mb-3">
                     {filter === 'low' ? 'No low stock items' : 'No stock data yet'}
@@ -310,6 +342,27 @@ export default function StockPage() {
                         <span className="badge-green">OK</span>
                       )}
                     </td>
+                    <td className="px-5 py-3.5">
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => openEditRow(s)}
+                          title="Adjust quantity"
+                          className="btn-ghost p-1.5 text-slate-400 hover:text-white"
+                        >
+                          <Pencil size={14} />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteStockItem(s)}
+                          disabled={deletingStockId === s.id}
+                          title="Remove stock record"
+                          className="btn-ghost p-1.5 text-slate-400 hover:text-red-400"
+                        >
+                          {deletingStockId === s.id
+                            ? <Loader2 size={14} className="animate-spin" />
+                            : <Trash2 size={14} />}
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 ))
               )}
@@ -322,27 +375,38 @@ export default function StockPage() {
       {showAdjust && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
           <div className="bg-surface-800 border border-surface-600 rounded-2xl p-6 w-full max-w-md shadow-2xl">
-            <h2 className="text-lg font-bold text-white mb-1">Add / Adjust Stock</h2>
+            <h2 className="text-lg font-bold text-white mb-1">
+              {adjustRowLocked ? 'Adjust Stock' : 'Add / Adjust Stock'}
+            </h2>
             <p className="text-xs text-slate-400 mb-5">
-              Use this to enter opening stock for new products or correct quantities.
-              Positive quantity adds stock; negative removes it.
+              {adjustRowLocked
+                ? `Adjusting: ${adjustRowLabel}. Enter a positive quantity to add stock or negative to remove.`
+                : 'Use this to enter opening stock for new products or correct quantities. Positive quantity adds stock; negative removes it.'}
             </p>
 
             <div className="space-y-4">
-              <div>
-                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Product *</label>
-                <select
-                  className="input"
-                  value={adjustForm.product_id}
-                  onChange={(e) => setAdjustForm({ ...adjustForm, product_id: e.target.value })}
-                >
-                  <option value="">Select product…</option>
-                  <option value="__new__">+ Create New Product…</option>
-                  {products.map((p) => (
-                    <option key={p.id} value={p.id}>{p.name} ({p.sku})</option>
-                  ))}
-                </select>
-              </div>
+              {adjustRowLocked ? (
+                /* Locked row-edit mode: show product + warehouse as read-only */
+                <div className="bg-surface-700/50 border border-surface-600 rounded-xl px-4 py-3 flex items-center gap-2">
+                  <Pencil size={13} className="text-brand-400 shrink-0" />
+                  <span className="text-sm text-white font-medium">{adjustRowLabel}</span>
+                </div>
+              ) : (
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Product *</label>
+                  <select
+                    className="input"
+                    value={adjustForm.product_id}
+                    onChange={(e) => setAdjustForm({ ...adjustForm, product_id: e.target.value })}
+                  >
+                    <option value="">Select product…</option>
+                    <option value="__new__">+ Create New Product…</option>
+                    {products.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name} ({p.sku})</option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               {/* Inline new product form */}
               {adjustForm.product_id === '__new__' && (
@@ -379,19 +443,21 @@ export default function StockPage() {
                 </div>
               )}
 
-              <div>
-                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Warehouse *</label>
-                <select
-                  className="input"
-                  value={adjustForm.warehouse_id}
-                  onChange={(e) => setAdjustForm({ ...adjustForm, warehouse_id: e.target.value })}
-                >
-                  <option value="">Select warehouse…</option>
-                  {warehouses.map((w) => (
-                    <option key={w.id} value={w.id}>{w.name}{w.is_default ? ' (default)' : ''}</option>
-                  ))}
-                </select>
-              </div>
+              {!adjustRowLocked && (
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Warehouse *</label>
+                  <select
+                    className="input"
+                    value={adjustForm.warehouse_id}
+                    onChange={(e) => setAdjustForm({ ...adjustForm, warehouse_id: e.target.value })}
+                  >
+                    <option value="">Select warehouse…</option>
+                    {warehouses.map((w) => (
+                      <option key={w.id} value={w.id}>{w.name}{w.is_default ? ' (default)' : ''}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               <div>
                 <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">

@@ -917,6 +917,7 @@ export const inventoryApi = {
   deleteWarehouse: (id: string) => api.delete(`/inventory/warehouses/${id}/`),
   adjustStock: (data: object) => api.post('/inventory/movements/adjust/', data),
   transferStock: (data: object) => api.post('/inventory/movements/transfer/', data),
+  deleteStockItem: (id: string) => api.delete(`/inventory/stock/${id}/`),
   batches: (params?: object) => api.get('/inventory/batches/', { params }),
   createBatch: (data: object) => api.post('/inventory/batches/', data),
   deleteBatch: (id: string) => api.delete(`/inventory/batches/${id}/`),
