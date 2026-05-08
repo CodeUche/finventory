@@ -3,6 +3,13 @@
 @tailwind utilities;
 
 @layer base {
+  /* Hide the native Edge/WebView2 password-reveal button so it doesn't
+     duplicate the custom Eye/EyeOff toggle we render ourselves. */
+  input::-ms-reveal,
+  input::-ms-clear {
+    display: none;
+  }
+
   * {
     @apply border-surface-700;
   }
