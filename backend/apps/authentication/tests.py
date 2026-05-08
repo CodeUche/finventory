@@ -401,3 +401,346 @@ class LoginOrganisationsTests(TestCase):
         org_ids = {o["id"] for o in res.data["organisations"]}
         self.assertIn(str(self.org.id), org_ids)
         self.assertIn(str(second_org.id), org_ids)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Deep login-flow unit tests
+# These cover each individual step of the login → /dashboard routing chain so
+# that any regression is caught before it reaches production.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class GetTokenMembershipsTests(TestCase):
+    """
+    Unit tests for CustomTokenObtainPairSerializer.get_token().
+
+    On SQLite the raw-SQL attempts raise OperationalError (no set_config
+    function).  The ORM fallback must still populate the memberships claim.
+    """
+
+    def _make_user_with_org(self, email="tkn@example.com"):
+        user = User.objects.create_user(
+            email=email, password="ValidPass123!", is_verified=True,
+        )
+        org = OrganisationService.create_organisation(
+            name="Token Test Org", owner=user,
+            extra={"currency": "NGN", "country": "NG"},
+        )
+        return user, org
+
+    def _get_token_payload(self, user):
+        from apps.authentication.serializers import CustomTokenObtainPairSerializer
+        token = CustomTokenObtainPairSerializer.get_token(user)
+        raw = str(token.access_token)
+        b64 = raw.split(".")[1]
+        b64 += "=" * (4 - len(b64) % 4)
+        return json.loads(base64.b64decode(b64).decode())
+
+    def test_get_token_embeds_memberships_for_member(self):
+        user, org = self._make_user_with_org()
+        payload = self._get_token_payload(user)
+        self.assertIn("memberships", payload)
+        self.assertIn(str(org.id), payload["memberships"])
+
+    def test_get_token_memberships_role_is_owner(self):
+        user, org = self._make_user_with_org("tkn2@example.com")
+        payload = self._get_token_payload(user)
+        self.assertEqual(payload["memberships"][str(org.id)], "owner")
+
+    def test_get_token_memberships_empty_for_user_without_org(self):
+        user = User.objects.create_user(
+            email="tkn_noorg@example.com", password="ValidPass123!", is_verified=True,
+        )
+        payload = self._get_token_payload(user)
+        self.assertIn("memberships", payload)
+        self.assertEqual(payload["memberships"], {})
+
+    def test_get_token_includes_email_claim(self):
+        user, _ = self._make_user_with_org("tkn3@example.com")
+        payload = self._get_token_payload(user)
+        self.assertEqual(payload["email"], "tkn3@example.com")
+
+    def test_get_token_includes_token_version_claim(self):
+        user, _ = self._make_user_with_org("tkn4@example.com")
+        payload = self._get_token_payload(user)
+        self.assertIn("token_version", payload)
+
+    def test_get_token_does_not_raise_on_sqlite(self):
+        """ORM fallback must not raise — raw SQL fails silently on SQLite."""
+        user, _ = self._make_user_with_org("tkn5@example.com")
+        from apps.authentication.serializers import CustomTokenObtainPairSerializer
+        # Should complete without exception
+        try:
+            CustomTokenObtainPairSerializer.get_token(user)
+        except Exception as exc:
+            self.fail(f"get_token raised {exc!r} on SQLite")
+
+
+class GetUserOrganisationsTests(TestCase):
+    """
+    Unit tests for _get_user_organisations() view helper.
+    """
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            email="guorg@example.com", password="ValidPass123!", is_verified=True,
+        )
+        self.org = OrganisationService.create_organisation(
+            name="GUOrg", owner=self.user,
+            extra={"currency": "NGN", "country": "NG"},
+        )
+
+    def test_returns_list(self):
+        from apps.authentication.views import _get_user_organisations
+        result = _get_user_organisations(self.user)
+        self.assertIsInstance(result, list)
+
+    def test_returns_org_for_member_via_orm_fallback(self):
+        """On SQLite the ORM fallback must return the org."""
+        from apps.authentication.views import _get_user_organisations
+        result = _get_user_organisations(self.user)
+        # SQLite: raw SQL fails → ORM fallback runs
+        # ORM fallback queries Membership → tenancy_organisation directly.
+        # On SQLite there's no RLS so it always works.
+        org_ids = [o["id"] for o in result]
+        self.assertIn(str(self.org.id), org_ids)
+
+    def test_returns_empty_list_for_user_without_org(self):
+        from apps.authentication.views import _get_user_organisations
+        no_org = User.objects.create_user(
+            email="guorg_noorg@example.com", password="ValidPass123!", is_verified=True,
+        )
+        result = _get_user_organisations(no_org)
+        self.assertEqual(result, [])
+
+    def test_never_raises(self):
+        from apps.authentication.views import _get_user_organisations
+        try:
+            _get_user_organisations(self.user)
+        except Exception as exc:
+            self.fail(f"_get_user_organisations raised {exc!r}")
+
+    def test_org_dict_has_required_fields(self):
+        from apps.authentication.views import _get_user_organisations
+        result = _get_user_organisations(self.user)
+        if not result:
+            self.skipTest("No orgs returned on this DB backend (raw SQL failed)")
+        org = result[0]
+        for field in ("id", "onboarding_completed"):
+            self.assertIn(field, org, f"Missing field: {field}")
+
+    def test_org_stubs_have_id_field(self):
+        """Each org dict returned must have a non-empty id.
+        ProtectedRoute uses !!organisation?.id for the onboardingDone check —
+        onboarding_completed is NOT used in the routing decision.
+        """
+        from apps.authentication.views import _get_user_organisations
+        result = _get_user_organisations(self.user)
+        for o in result:
+            self.assertTrue(
+                o.get("id"),
+                f"Org stub missing id field: {o}",
+            )
+
+
+class LoginViewOrgsEndToEndTests(TestCase):
+    """
+    End-to-end simulation of the login response → ProtectedRoute routing.
+
+    Each test asserts that the conditions the frontend uses to decide
+    onboardingDone are satisfied in the login response.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.url = reverse("auth-login")
+        cache.clear()
+
+        self.user = User.objects.create_user(
+            email="e2e@example.com",
+            password="ValidPass123!",
+            first_name="End",
+            last_name="ToEnd",
+            is_verified=True,
+        )
+        self.org = OrganisationService.create_organisation(
+            name="E2E Org",
+            owner=self.user,
+            extra={"currency": "NGN", "country": "NG"},
+        )
+
+    def _login(self):
+        return self.client.post(self.url, {
+            "email": "e2e@example.com",
+            "password": "ValidPass123!",
+        })
+
+    def test_response_status_is_200(self):
+        res = self._login()
+        self.assertEqual(res.status_code, 200, res.data)
+
+    def test_response_has_access_token(self):
+        res = self._login()
+        self.assertIn("access", res.data)
+        self.assertIsInstance(res.data["access"], str)
+        self.assertGreater(len(res.data["access"]), 20)
+
+    def test_response_has_refresh_token(self):
+        res = self._login()
+        self.assertIn("refresh", res.data)
+
+    def test_response_has_user_object(self):
+        res = self._login()
+        self.assertIn("user", res.data)
+        self.assertEqual(res.data["user"]["email"], "e2e@example.com")
+
+    def test_response_has_organisations_list(self):
+        res = self._login()
+        self.assertIn("organisations", res.data)
+        self.assertIsInstance(res.data["organisations"], list)
+
+    def test_organisations_non_empty_for_existing_member(self):
+        """THE CORE REGRESSION TEST: existing user must NOT see empty orgs."""
+        res = self._login()
+        orgs = res.data.get("organisations", [])
+        self.assertGreater(
+            len(orgs), 0,
+            "organisations is empty — user would be redirected to /onboarding",
+        )
+
+    def test_organisations_contain_correct_org_id(self):
+        res = self._login()
+        org_ids = [o["id"] for o in res.data["organisations"]]
+        self.assertIn(str(self.org.id), org_ids)
+
+    def test_jwt_shortcut_populates_organisations(self):
+        """JWT shortcut: decode access token → read memberships → build stubs."""
+        res = self._login()
+        self.assertEqual(res.status_code, 200)
+        access = res.data["access"]
+        payload = _decode_jwt_payload(access)
+        # JWT must have memberships so the shortcut can produce the stubs
+        self.assertGreater(
+            len(payload.get("memberships", {})), 0,
+            "JWT memberships claim is empty — JWT shortcut would fail",
+        )
+        # And the final organisations list must contain the org
+        org_ids = [o["id"] for o in res.data["organisations"]]
+        self.assertIn(str(self.org.id), org_ids)
+
+    def test_onboarding_done_condition_is_satisfied(self):
+        """
+        Simulate the frontend ProtectedRoute onboardingDone check:
+            onboardingDone = user.is_superuser || !!firstOrg
+        With a real org in the response, firstOrg must be truthy.
+        """
+        res = self._login()
+        user_data = res.data.get("user", {})
+        orgs = res.data.get("organisations", [])
+        first_org = orgs[0] if orgs else None
+        onboarding_done = user_data.get("is_superuser") or bool(first_org)
+        self.assertTrue(
+            onboarding_done,
+            "Frontend would redirect to /onboarding — "
+            f"is_superuser={user_data.get('is_superuser')}, first_org={first_org}",
+        )
+
+    def test_signout_then_signin_still_returns_org(self):
+        """Simulates sign-out / sign-in cycle: second login must still return org."""
+        # First login
+        res1 = self._login()
+        self.assertEqual(res1.status_code, 200)
+        # Second login (simulates sign-out then sign-in)
+        res2 = self._login()
+        self.assertEqual(res2.status_code, 200)
+        orgs = res2.data.get("organisations", [])
+        self.assertGreater(len(orgs), 0, "Second login returned empty organisations")
+        self.assertIn(str(self.org.id), [o["id"] for o in orgs])
+
+    def test_unverified_user_cannot_login(self):
+        """Unverified users must be blocked with 403."""
+        unverified = User.objects.create_user(
+            email="unverified@example.com",
+            password="ValidPass123!",
+            is_verified=False,
+        )
+        res = self.client.post(self.url, {
+            "email": "unverified@example.com",
+            "password": "ValidPass123!",
+        })
+        self.assertEqual(res.status_code, 403)
+        self.assertIn("email_not_verified", str(res.data))
+
+    def test_sub_account_cannot_use_main_login(self):
+        """Sub-accounts must be rejected with 403 at the main login endpoint."""
+        sub = User.objects.create_user(
+            email="sub@example.com",
+            password="ValidPass123!",
+            is_verified=True,
+            is_sub_account=True,
+        )
+        res = self.client.post(self.url, {
+            "email": "sub@example.com",
+            "password": "ValidPass123!",
+        })
+        self.assertEqual(res.status_code, 403)
+
+
+class ProtectedRouteConditionsTests(TestCase):
+    """
+    Verify the ProtectedRoute logic conditions from the backend's perspective.
+
+    ProtectedRoute uses:
+        onboardingDone = user.is_superuser || user.is_sub_account || !!organisation?.id
+
+    This test class confirms the login response supplies the data needed to
+    satisfy that condition for a regular owner user.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.url = reverse("auth-login")
+        cache.clear()
+
+    def _create_owner(self, email):
+        user = User.objects.create_user(
+            email=email, password="ValidPass123!", is_verified=True,
+        )
+        org = OrganisationService.create_organisation(
+            name=f"Org for {email}", owner=user,
+            extra={"currency": "NGN", "country": "NG"},
+        )
+        return user, org
+
+    def _login(self, email):
+        return self.client.post(self.url, {"email": email, "password": "ValidPass123!"})
+
+    def test_is_superuser_false_for_regular_user(self):
+        """Regular owner must not be flagged as superuser."""
+        self._create_owner("pr_owner@example.com")
+        res = self._login("pr_owner@example.com")
+        self.assertFalse(res.data["user"]["is_superuser"])
+
+    def test_is_sub_account_false_for_regular_user(self):
+        self._create_owner("pr_owner2@example.com")
+        res = self._login("pr_owner2@example.com")
+        self.assertFalse(res.data["user"]["is_sub_account"])
+
+    def test_first_org_is_present_for_owner(self):
+        """organisations[0] must exist → !!organisation?.id is truthy → /dashboard."""
+        user, org = self._create_owner("pr_owner3@example.com")
+        res = self._login("pr_owner3@example.com")
+        orgs = res.data.get("organisations", [])
+        self.assertTrue(len(orgs) > 0 and orgs[0].get("id"),
+                        f"No org in response — user would land on /onboarding. orgs={orgs}")
+
+    def test_protected_route_condition_met_for_owner(self):
+        """Full simulation: owner gets onboardingDone=True from response data."""
+        user, org = self._create_owner("pr_owner4@example.com")
+        res = self._login("pr_owner4@example.com")
+        u = res.data["user"]
+        orgs = res.data.get("organisations", [])
+        first_org = orgs[0] if orgs else None
+        onboarding_done = u["is_superuser"] or u["is_sub_account"] or bool(first_org and first_org.get("id"))
+        self.assertTrue(onboarding_done,
+                        f"ProtectedRoute would send to /onboarding. "
+                        f"is_superuser={u['is_superuser']}, first_org={first_org}")
