@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback } from 'react'
 import { CheckCircle, X as XIcon, Loader2, CreditCard, Zap, Building2, Star, ExternalLink, RefreshCw, Package, ShoppingCart, FileText, Receipt, Users, Truck, BarChart3, Calculator, Briefcase, Wallet, Clock, DollarSign, Shield, ChevronDown, ChevronUp, GraduationCap, LayoutDashboard, FileBarChart2, Layers } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { subscriptionApi, bypassNextGets } from '@/services/api'
+import { subscriptionApi, orgApi, bypassNextGets } from '@/services/api'
+import { useAuthStore } from '@/store/authStore'
 import type { Plan, Subscription, SubscriptionPayment } from '@/types'
 import { FEATURES } from '@/lib/featureFlags'
 
@@ -110,6 +111,7 @@ function basePlanSlug(slug: string): 'free' | 'professional' | 'business' | 'ent
 }
 
 export default function BillingPage() {
+  const { organisation, setOrganisation, setSubscriptionExpired } = useAuthStore()
   const [plans, setPlans] = useState<Plan[]>([])
   const [subscription, setSubscription] = useState<Subscription | null>(null)
   const [payments, setPayments] = useState<SubscriptionPayment[]>([])
@@ -142,12 +144,25 @@ export default function BillingPage() {
       const res = await subscriptionApi.verifyPayment(reference)
       setSubscription(res.data)
       toast.success('Payment confirmed! Your subscription is now active.', { id: 'pay-verify' })
+
+      // Immediately refresh the organisation in the auth store so the rest of the
+      // app reflects the new subscription without requiring a restart or re-login.
+      setSubscriptionExpired(false)
+      if (organisation?.id) {
+        try {
+          const orgRes = await orgApi.list()
+          const orgs: any[] = orgRes.data.results ?? orgRes.data
+          const fresh = orgs.find((o: any) => o.id === organisation.id) ?? null
+          if (fresh) setOrganisation(fresh)
+        } catch { /* non-fatal — billing page already shows updated plan */ }
+      }
+
       load()
     } catch (err: any) {
       const msg = err?.response?.data?.error ?? 'Payment verification failed'
       toast.error(typeof msg === 'string' ? msg : msg?.message ?? 'Verification failed', { id: 'pay-verify' })
     }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [organisation?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSubscribe = async (plan: Plan) => {
     if (plan.price === '0.00' || parseFloat(plan.price) === 0) return
