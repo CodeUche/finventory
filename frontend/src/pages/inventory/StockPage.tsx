@@ -299,7 +299,7 @@ export default function StockPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-surface-700">
-                {['Product', 'SKU', 'Warehouse', 'On Hand', 'Reserved', 'Available', 'Status', ''].map((h) => (
+                {['Product', 'SKU', 'Warehouse', 'On Hand', 'Incoming', 'ETA', 'Available', 'Status', ''].map((h) => (
                   <th key={h} className="px-5 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
                 ))}
               </tr>
@@ -308,13 +308,13 @@ export default function StockPage() {
               {loading ? (
                 Array.from({ length: 8 }).map((_, i) => (
                   <tr key={i} className="table-row">
-                    {Array.from({ length: 8 }).map((_, j) => (
+                    {Array.from({ length: 9 }).map((_, j) => (
                       <td key={j} className="px-5 py-3.5"><div className="h-4 bg-surface-700 rounded animate-pulse w-20" /></td>
                     ))}
                   </tr>
                 ))
               ) : displayed.length === 0 ? (
-                <tr><td colSpan={8} className="px-5 py-12 text-center">
+                <tr><td colSpan={9} className="px-5 py-12 text-center">
                   <Boxes size={32} className="mx-auto mb-2 text-slate-600" />
                   <p className="text-slate-500 mb-3">
                     {filter === 'low' ? 'No low stock items' : 'No stock data yet'}
@@ -333,7 +333,16 @@ export default function StockPage() {
                     <td className="px-5 py-3.5 font-mono text-xs text-brand-400">{s.product_sku}</td>
                     <td className="px-5 py-3.5 text-slate-400">{s.warehouse_name}</td>
                     <td className="px-5 py-3.5 font-semibold text-white">{parseFloat(s.quantity_on_hand).toFixed(0)}</td>
-                    <td className="px-5 py-3.5 text-slate-400">0</td>
+                    <td className="px-5 py-3.5">
+                      {s.quantity_incoming > 0
+                        ? <span className="text-blue-400 font-medium">+{s.quantity_incoming}</span>
+                        : <span className="text-slate-600">—</span>}
+                    </td>
+                    <td className="px-5 py-3.5 text-slate-400 text-xs">
+                      {s.incoming_eta
+                        ? new Date(s.incoming_eta + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+                        : <span className="text-slate-600">—</span>}
+                    </td>
                     <td className="px-5 py-3.5 text-white">{parseFloat(s.quantity_available).toFixed(0)}</td>
                     <td className="px-5 py-3.5">
                       {(s.stock_level === 'low' || s.is_low_stock) ? (

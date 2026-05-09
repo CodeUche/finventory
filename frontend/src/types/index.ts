@@ -88,6 +88,8 @@ export interface StockItem {
   warehouse_name: string
   quantity_on_hand: string
   quantity_available: string
+  quantity_incoming: number
+  incoming_eta: string | null
   is_low_stock: boolean
   stock_level?: 'low' | 'medium' | 'ok'
 }

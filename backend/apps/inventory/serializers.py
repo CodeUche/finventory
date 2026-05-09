@@ -118,16 +118,19 @@ class StockItemSerializer(serializers.ModelSerializer):
     )
     is_low_stock = serializers.BooleanField(read_only=True)
     stock_level = serializers.SerializerMethodField()
+    quantity_incoming = serializers.SerializerMethodField()
+    incoming_eta = serializers.SerializerMethodField()
 
     class Meta:
         model = StockItem
         fields = [
             "id", "product", "product_name", "product_sku",
             "warehouse", "warehouse_name",
-            "quantity_on_hand", "quantity_reserved",
-            "quantity_available", "is_low_stock", "stock_level",
+            "quantity_on_hand", "quantity_available",
+            "quantity_incoming", "incoming_eta",
+            "is_low_stock", "stock_level",
         ]
-        read_only_fields = ["id", "quantity_on_hand", "quantity_reserved"]
+        read_only_fields = ["id", "quantity_on_hand"]
 
     def get_stock_level(self, obj):
         reorder = obj.product.reorder_level or 0
@@ -137,6 +140,29 @@ class StockItemSerializer(serializers.ModelSerializer):
         elif qty <= reorder * 1.5:
             return 'medium'
         return 'ok'
+
+    def get_quantity_incoming(self, obj):
+        from apps.purchases.models import PurchaseOrderItem
+        from django.db.models import F, Sum
+        result = PurchaseOrderItem.objects.filter(
+            product=obj.product,
+            organisation=obj.organisation,
+            purchase_order__status__in=["draft", "sent", "partially_received"],
+        ).aggregate(total=Sum(F("quantity_ordered") - F("quantity_received")))
+        incoming = result["total"] or 0
+        return float(incoming) if incoming > 0 else 0
+
+    def get_incoming_eta(self, obj):
+        from apps.purchases.models import PurchaseOrder
+        from django.db.models import Min
+        result = PurchaseOrder.objects.filter(
+            items__product=obj.product,
+            organisation=obj.organisation,
+            status__in=["draft", "sent", "partially_received"],
+            expected_date__isnull=False,
+        ).aggregate(earliest=Min("expected_date"))
+        eta = result["earliest"]
+        return eta.isoformat() if eta else None
 
 
 class StockMovementSerializer(serializers.ModelSerializer):
