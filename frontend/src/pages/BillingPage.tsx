@@ -145,16 +145,19 @@ export default function BillingPage() {
       setSubscription(res.data)
       toast.success('Payment confirmed! Your subscription is now active.', { id: 'pay-verify' })
 
-      // Immediately refresh the organisation in the auth store so the rest of the
-      // app reflects the new subscription without requiring a restart or re-login.
+      // Clear paywall and force AppLayout to re-check subscription via the
+      // audity:app-refresh event (increments _appRefreshTick → re-runs the
+      // subscription useEffect → confirms active from fresh DB data).
       setSubscriptionExpired(false)
+      window.dispatchEvent(new CustomEvent('audity:app-refresh'))
+
       if (organisation?.id) {
         try {
           const orgRes = await orgApi.list()
           const orgs: any[] = orgRes.data.results ?? orgRes.data
           const fresh = orgs.find((o: any) => o.id === organisation.id) ?? null
           if (fresh) setOrganisation(fresh)
-        } catch { /* non-fatal — billing page already shows updated plan */ }
+        } catch { /* non-fatal */ }
       }
 
       load()

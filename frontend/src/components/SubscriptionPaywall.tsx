@@ -2,8 +2,37 @@ import { useState, useEffect, useRef } from 'react'
 import { Lock, RefreshCw, CheckCircle } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { subscriptionApi } from '@/services/api'
-import { openExternal } from '@/lib/openExternal'
-import { formatCurrency } from '@/lib/utils'
+
+// Paystack Inline JS type declaration (same as BillingPage)
+declare global {
+  interface Window {
+    PaystackPop: {
+      setup(opts: {
+        key: string
+        email: string
+        amount: number
+        ref: string
+        currency?: string
+        onClose: () => void
+        callback: (response: { reference: string }) => void
+      }): { openIframe(): void }
+    }
+  }
+}
+
+function loadPaystackScript(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (window.PaystackPop) { resolve(); return }
+    const existing = document.getElementById('paystack-inline-js')
+    if (existing) { existing.addEventListener('load', () => resolve()); return }
+    const script = document.createElement('script')
+    script.id = 'paystack-inline-js'
+    script.src = 'https://js.paystack.co/v1/inline.js'
+    script.onload = () => resolve()
+    script.onerror = () => reject(new Error('Failed to load Paystack script'))
+    document.head.appendChild(script)
+  })
+}
 
 interface SubscriptionData {
   is_trial: boolean
@@ -23,11 +52,11 @@ interface Props {
 
 export default function SubscriptionPaywall({ subscription, onDismiss }: Props) {
   const [loading, setLoading] = useState(false)
+  const [verifying, setVerifying] = useState(false)
   const [polling, setPolling] = useState(false)
   const [reference, setReference] = useState<string | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // Clear polling on unmount
   useEffect(() => {
     return () => { if (pollRef.current) clearInterval(pollRef.current) }
   }, [])
@@ -37,15 +66,35 @@ export default function SubscriptionPaywall({ subscription, onDismiss }: Props) 
     setPolling(false)
   }
 
-  const handleVerify = async (ref: string) => {
+  /** Called after any successful payment — verify with backend, then dismiss. */
+  const handlePaymentSuccess = async (ref: string) => {
+    setVerifying(true)
+    try {
+      await subscriptionApi.verifyPayment(ref)
+      stopPolling()
+      // Force AppLayout to re-check subscription immediately
+      window.dispatchEvent(new CustomEvent('audity:app-refresh'))
+      toast.success('Subscription activated! Access restored.')
+      onDismiss()
+    } catch (err: any) {
+      const msg = err?.response?.data?.error ?? 'Payment verification failed'
+      toast.error(typeof msg === 'string' ? msg : msg?.message ?? 'Verification failed')
+    } finally {
+      setVerifying(false)
+    }
+  }
+
+  /** Poll-based fallback: used after opening external URL (shouldn't normally happen). */
+  const handlePollVerify = async (ref: string) => {
     try {
       const { data } = await subscriptionApi.checkPayment(ref)
       if (data.status === 'success') {
         stopPolling()
+        window.dispatchEvent(new CustomEvent('audity:app-refresh'))
         toast.success('Subscription renewed! Access restored.')
         onDismiss()
       }
-    } catch { /* still polling */ }
+    } catch { /* keep polling */ }
   }
 
   const startPolling = (ref: string) => {
@@ -54,7 +103,7 @@ export default function SubscriptionPaywall({ subscription, onDismiss }: Props) 
     pollRef.current = setInterval(async () => {
       attempts++
       if (attempts > 100) { stopPolling(); return }
-      await handleVerify(ref)
+      await handlePollVerify(ref)
     }, 3000)
   }
 
@@ -63,19 +112,45 @@ export default function SubscriptionPaywall({ subscription, onDismiss }: Props) 
     setLoading(true)
     try {
       const { data } = await subscriptionApi.initiatePayment(subscription.plan.id)
-      setReference(data.reference)
-      await openExternal(data.authorization_url)
-      startPolling(data.reference)
+      const { access_code, reference: ref, public_key, amount_kobo, email } = data
+
+      if (!public_key) {
+        toast.error('Paystack public key is not configured. Contact support.')
+        return
+      }
+
+      // Use inline Paystack popup (same as BillingPage) so callback fires in-app
+      await loadPaystackScript()
+      setReference(ref)
+
+      const handler = window.PaystackPop.setup({
+        key: public_key,
+        email,
+        amount: amount_kobo,
+        ref,
+        ...(access_code ? { accessCode: access_code } as any : {}),
+        currency: 'NGN',
+        onClose: () => {
+          toast('Payment cancelled.', { icon: '🚫' })
+          startPolling(ref) // fall back to polling in case popup closed after payment
+        },
+        callback: (response) => {
+          handlePaymentSuccess(response.reference)
+        },
+      })
+      handler.openIframe()
     } catch (err: any) {
-      const msg = err?.response?.data?.error ?? 'Failed to initiate payment'
-      toast.error(typeof msg === 'string' ? msg : msg.message ?? 'Failed to initiate payment')
+      const errData = err?.response?.data?.error
+      if (!errData?.message) {
+        const msg = typeof errData === 'string' ? errData : err?.message ?? 'Failed to initiate payment'
+        toast.error(msg)
+      }
     } finally {
       setLoading(false)
     }
   }
 
   const planName = subscription?.plan?.name ?? 'your plan'
-  const planPrice = subscription?.plan?.price ? formatCurrency(subscription.plan.price) : ''
   const isTrial = subscription?.is_trial
 
   return (
@@ -99,15 +174,12 @@ export default function SubscriptionPaywall({ subscription, onDismiss }: Props) 
           </p>
         </div>
 
-        {planPrice && (
-          <div className="bg-brand-500/10 border border-brand-500/20 rounded-xl px-5 py-3">
-            <p className="text-xs text-slate-400 mb-0.5">Renewal price</p>
-            <p className="text-2xl font-bold text-brand-400">{planPrice}</p>
-            <p className="text-xs text-slate-500">per month · {planName} plan</p>
+        {verifying ? (
+          <div className="flex items-center justify-center gap-3 py-3 bg-surface-800 rounded-xl border border-surface-600">
+            <RefreshCw size={16} className="text-brand-400 animate-spin" />
+            <span className="text-sm text-slate-300">Confirming payment…</span>
           </div>
-        )}
-
-        {!polling ? (
+        ) : !polling ? (
           <button
             onClick={handleRenew}
             disabled={loading}
@@ -128,8 +200,9 @@ export default function SubscriptionPaywall({ subscription, onDismiss }: Props) 
               <span className="text-sm text-slate-300">Waiting for payment confirmation…</span>
             </div>
             <button
-              onClick={() => reference && handleVerify(reference)}
-              className="w-full py-2.5 text-sm text-brand-400 border border-brand-500/30 rounded-xl hover:bg-brand-500/10 transition-colors flex items-center justify-center gap-2"
+              onClick={() => reference && handlePaymentSuccess(reference)}
+              disabled={verifying}
+              className="w-full py-2.5 text-sm text-brand-400 border border-brand-500/30 rounded-xl hover:bg-brand-500/10 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
             >
               <CheckCircle size={15} />
               I&apos;ve completed payment

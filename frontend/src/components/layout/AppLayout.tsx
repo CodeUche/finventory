@@ -186,7 +186,7 @@ export default function AppLayout() {
   const handlePaywallDismiss = () => {
     setSubscriptionExpired(false)
     setSubscriptionData(null)
-    // Re-fetch subscription to refresh state
+    // Re-fetch subscription to confirm active state and refresh plan modules
     if (organisation?.id && !user?.is_superuser) {
       subscriptionApi.current().then(({ data }) => {
         const modules: string[] | null = data?.plan?.features?.modules ?? null
@@ -196,8 +196,11 @@ export default function AppLayout() {
         if (data?.is_expired) {
           setSubscriptionExpired(true)
           setSubscriptionData(data)
+        } else {
+          setSubscriptionExpired(false)
+          setSubscriptionData(null)
         }
-      }).catch(() => { /* non-fatal */ })
+      }).catch(() => { /* non-fatal — paywall already dismissed */ })
     }
   }
 
