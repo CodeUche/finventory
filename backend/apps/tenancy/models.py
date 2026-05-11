@@ -490,3 +490,170 @@ class PartnerAccessRequest(TimeStampedModel):
 
     def __str__(self):
         return f"{self.partner.user.email} → {self.organisation.name} ({self.status})"
+
+
+# ─── Commission Credit Wallet ────────────────────────────────────────────────
+
+class CommissionLedger(TimeStampedModel):
+    """
+    Append-only audit log for partner commission credits.
+
+    Rows are NEVER updated or deleted after insert.
+    Balance = SUM(commission_amount) for confirmed rows.
+    Negative rows (event_type=credit_applied) represent credits spent on subscriptions.
+    """
+
+    class EventType(models.TextChoices):
+        SUBSCRIPTION_PAYMENT = "subscription_payment", "Subscription Payment"
+        TRIAL_CONVERSION     = "trial_conversion",     "Trial Conversion"
+        REFERRAL_BONUS       = "referral_bonus",       "Referral Bonus"
+        CREDIT_APPLIED       = "credit_applied",       "Credit Applied to Subscription"
+        REVERSAL             = "reversal",             "Reversal (Chargeback)"
+
+    class Status(models.TextChoices):
+        PENDING   = "pending",   "Pending (within chargeback window)"
+        CONFIRMED = "confirmed", "Confirmed"
+
+    partner_profile  = models.ForeignKey(PartnerProfile, on_delete=models.CASCADE, related_name="commission_ledger")
+    client_org       = models.ForeignKey(Organisation, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    event_type       = models.CharField(max_length=30, choices=EventType.choices)
+    gross_amount     = models.DecimalField(max_digits=15, decimal_places=4, default=0)
+    commission_rate  = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    commission_amount = models.DecimalField(max_digits=15, decimal_places=4)
+    currency         = models.CharField(max_length=3, default="NGN")
+    reference        = models.CharField(max_length=255, blank=True, db_index=True)
+    period_start     = models.DateField(null=True, blank=True)
+    period_end       = models.DateField(null=True, blank=True)
+    status           = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING, db_index=True)
+    applied_to_sub   = models.ForeignKey(
+        "subscriptions.Subscription", on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="commission_credits",
+    )
+
+    class Meta(TimeStampedModel.Meta):
+        verbose_name = "Commission Ledger Entry"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["partner_profile", "status"]),
+            models.Index(fields=["reference"]),
+        ]
+
+    def __str__(self):
+        return f"{self.partner_profile} | {self.event_type} | {self.commission_amount} {self.currency}"
+
+
+# ─── Partner Invoices ────────────────────────────────────────────────────────
+
+class PartnerInvoice(TimeStampedModel):
+    """
+    Invoice issued BY a partner TO one of their managed client organisations
+    for professional services (retainer, bookkeeping fees, etc.).
+
+    Deliberately isolated from the main Invoice model to avoid cross-tenant
+    contamination. No stock, warehouse, or product dependencies.
+    """
+
+    class Status(models.TextChoices):
+        DRAFT    = "draft",    "Draft"
+        SENT     = "sent",     "Sent"
+        PAID     = "paid",     "Paid"
+        OVERDUE  = "overdue",  "Overdue"
+        VOID     = "void",     "Void"
+
+    class PaymentMethod(models.TextChoices):
+        BANK_TRANSFER = "bank_transfer", "Bank Transfer"
+        CASH          = "cash",          "Cash"
+        POS           = "pos",           "POS"
+
+    partner_profile  = models.ForeignKey(PartnerProfile, on_delete=models.CASCADE, related_name="partner_invoices")
+    client_org       = models.ForeignKey(Organisation, on_delete=models.PROTECT, related_name="received_partner_invoices")
+    invoice_number   = models.CharField(max_length=30, blank=True, db_index=True)
+    status           = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+    issue_date       = models.DateField()
+    due_date         = models.DateField()
+    currency         = models.CharField(max_length=3, default="NGN")
+    subtotal         = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    tax_rate         = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    tax_amount       = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    total            = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    paid_at          = models.DateTimeField(null=True, blank=True)
+    payment_method   = models.CharField(max_length=20, choices=PaymentMethod.choices, blank=True)
+    notes            = models.TextField(blank=True)
+
+    class Meta(TimeStampedModel.Meta):
+        verbose_name = "Partner Invoice"
+        ordering = ["-created_at"]
+
+    def save(self, *args, **kwargs):
+        if not self.invoice_number:
+            prefix = str(self.partner_profile_id).replace("-", "").upper()[:4]
+            last = PartnerInvoice.objects.filter(partner_profile=self.partner_profile).count()
+            self.invoice_number = f"PAR-{prefix}-{str(last + 1).zfill(6)}"
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.invoice_number} → {self.client_org.name}"
+
+
+class PartnerInvoiceItem(TimeStampedModel):
+    invoice     = models.ForeignKey(PartnerInvoice, on_delete=models.CASCADE, related_name="items")
+    description = models.CharField(max_length=255)
+    quantity    = models.DecimalField(max_digits=10, decimal_places=2, default=1)
+    unit_price  = models.DecimalField(max_digits=15, decimal_places=2)
+    total       = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    sort_order  = models.PositiveIntegerField(default=0)
+
+    class Meta(TimeStampedModel.Meta):
+        ordering = ["sort_order"]
+
+    def save(self, *args, **kwargs):
+        self.total = self.quantity * self.unit_price
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.invoice.invoice_number} | {self.description}"
+
+
+# ─── White-label Configuration ───────────────────────────────────────────────
+
+class WhiteLabelConfig(TimeStampedModel):
+    """
+    Custom domain + branding for Agency-tier partners.
+
+    Verification flow:
+      1. Partner saves custom_domain → verification_token is generated.
+      2. Partner adds DNS TXT: _audity-verify.<domain> = <token>
+      3. Partner calls /verify_domain/ → DNS lookup confirms ownership.
+      4. Platform admin flips ssl_active=True after infra is ready.
+    """
+
+    partner_profile     = models.OneToOneField(PartnerProfile, on_delete=models.CASCADE, related_name="white_label")
+    custom_domain       = models.CharField(max_length=253, unique=True, null=True, blank=True, db_index=True)
+    is_domain_verified  = models.BooleanField(default=False)
+    verification_token  = models.CharField(max_length=64, blank=True)
+    ssl_active          = models.BooleanField(default=False)
+    # Branding
+    brand_name          = models.CharField(max_length=100, blank=True)
+    logo_url            = models.URLField(blank=True)
+    favicon_url         = models.URLField(blank=True)
+    primary_color       = models.CharField(max_length=7, blank=True, help_text="#hex colour")
+    login_tagline       = models.CharField(max_length=200, blank=True)
+
+    class Meta(TimeStampedModel.Meta):
+        verbose_name = "White-label Config"
+
+    def save(self, *args, **kwargs):
+        import secrets
+        # Re-generate token whenever domain changes (reset verification)
+        try:
+            old = WhiteLabelConfig.objects.get(pk=self.pk)
+            if old.custom_domain != self.custom_domain:
+                self.verification_token = secrets.token_hex(32)
+                self.is_domain_verified = False
+        except WhiteLabelConfig.DoesNotExist:
+            if not self.verification_token:
+                self.verification_token = secrets.token_hex(32)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"WhiteLabel: {self.partner_profile} → {self.custom_domain or '(none)'}"

@@ -108,6 +108,8 @@ MIDDLEWARE = [
     "apps.core.middleware.RLSMiddleware",
     # Custom tenant resolution middleware
     "apps.tenancy.middleware.TenantMiddleware",
+    # White-label domain detection — attaches request.white_label for branded login
+    "apps.tenancy.white_label_middleware.WhiteLabelMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -401,6 +403,16 @@ CELERY_BEAT_SCHEDULE = {
     "expire-subscriptions-hourly": {
         "task": "subscriptions.expire_subscriptions",
         "schedule": crontab(hour="*", minute=0),
+    },
+    # Confirm pending commission entries after 48h chargeback window (every 6h)
+    "confirm-pending-commissions": {
+        "task": "subscriptions.confirm_pending_commissions",
+        "schedule": crontab(hour="*/6", minute=15),
+    },
+    # Flag commission entries stuck in pending for >7 days (daily)
+    "flag-stale-pending-commissions": {
+        "task": "subscriptions.flag_stale_pending_commissions",
+        "schedule": crontab(hour=2, minute=0),
     },
 }
 

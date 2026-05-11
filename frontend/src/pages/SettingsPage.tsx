@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { User, Building2, Shield, Loader2, Camera, CreditCard, CheckCircle, Mail, Lock, Unlock, LandmarkIcon, UsersRound, UserPlus, X, ChevronDown, ChevronUp, Bot, Layout, Copy, Trash2, ShieldCheck, Key, Clock, XCircle, Send } from 'lucide-react'
+import { User, Building2, Shield, Loader2, Camera, CreditCard, CheckCircle, Mail, Lock, Unlock, LandmarkIcon, UsersRound, UserPlus, X, ChevronDown, ChevronUp, Bot, Layout, Copy, Trash2, ShieldCheck, Key, Clock, XCircle, Send, Globe } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { authApi, orgApi, paymentGatewayApi, accountingApi, teamApi, tauriFetch } from '@/services/api'
+import { authApi, orgApi, paymentGatewayApi, accountingApi, teamApi, tauriFetch, partnerApi } from '@/services/api'
 import type { AxiosError } from 'axios'
 import { useAuthStore } from '@/store/authStore'
 import { FEATURES } from '@/lib/featureFlags'
@@ -109,7 +109,7 @@ const TIMEOUT_OPTIONS: { value: TimeoutOption; label: string }[] = [
   { value: '4h', label: '4 hours (recommended)' },
 ]
 
-type Tab = 'profile' | 'company' | 'security' | 'payments' | 'email' | 'periods' | 'team' | 'invoice_templates' | 'ai' | 'access'
+type Tab = 'profile' | 'company' | 'security' | 'payments' | 'email' | 'periods' | 'team' | 'invoice_templates' | 'ai' | 'access' | 'whitelabel'
 
 export default function SettingsPage() {
   const navigate = useNavigate()
@@ -382,6 +382,7 @@ export default function SettingsPage() {
         setPendingInvitations(invitations.filter((inv: { status: string }) => inv.status === 'pending'))
       }).catch(() => toast.error('Failed to load team data')).finally(() => setLoadingTeam(false))
     }
+    // whitelabel tab has its own internal useEffect — no load needed here
     if (activeTab === 'access' && organisation?.id) {
       setAccessLoading(true)
       Promise.allSettled([
@@ -817,6 +818,7 @@ export default function SettingsPage() {
     { id: 'invoice_templates', label: 'Templates',  icon: Layout,     ownerOnly: true },
     { id: 'ai',                label: 'AI',         icon: Bot,        ownerOnly: true },
     { id: 'access',            label: 'Accountant Access', icon: ShieldCheck, ownerOnly: true },
+    { id: 'whitelabel',        label: 'White-label',       icon: Globe,        ownerOnly: true },
   ]
   const tabs = allTabs.filter((t) => {
     if (t.ownerOnly && !isOwner) return false
@@ -2871,6 +2873,163 @@ export default function SettingsPage() {
         </div>
       </div>
     )}
+      {/* ── White-label Tab ──────────────────────────────────────────────── */}
+      {activeTab === 'whitelabel' && (
+        <WhiteLabelTab />
+      )}
     </>
+  )
+}
+
+// ── White-label Settings ──────────────────────────────────────────────────────
+
+function WhiteLabelTab() {
+  const { planName } = useAuthStore()
+  const isAgency = planName?.includes('agency') ?? false
+
+  const [config, setConfig] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [verifying, setVerifying] = useState(false)
+  const [form, setForm] = useState({
+    custom_domain: '', brand_name: '', logo_url: '', favicon_url: '',
+    primary_color: '#f97316', login_tagline: '',
+  })
+
+  useEffect(() => {
+    partnerApi.getWhiteLabel()
+      .then((r) => {
+        setConfig(r.data)
+        setForm({
+          custom_domain: r.data.custom_domain ?? '',
+          brand_name: r.data.brand_name ?? '',
+          logo_url: r.data.logo_url ?? '',
+          favicon_url: r.data.favicon_url ?? '',
+          primary_color: r.data.primary_color ?? '#f97316',
+          login_tagline: r.data.login_tagline ?? '',
+        })
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [])
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      const r = await partnerApi.saveWhiteLabel(form)
+      setConfig(r.data)
+      toast.success('White-label config saved')
+    } catch (err: any) {
+      const msg = err?.response?.data?.error ?? 'Failed to save'
+      toast.error(typeof msg === 'string' ? msg : msg?.message ?? 'Failed to save')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleVerify = async () => {
+    setVerifying(true)
+    try {
+      const r = await partnerApi.verifyDomain()
+      toast.success(r.data.message ?? 'Domain verified!')
+      setConfig((c: any) => ({ ...c, is_domain_verified: true }))
+    } catch (err: any) {
+      const msg = err?.response?.data?.error ?? 'Verification failed'
+      toast.error(typeof msg === 'string' ? msg : 'Verification failed — check DNS record and try again')
+    } finally {
+      setVerifying(false)
+    }
+  }
+
+  if (!isAgency) {
+    return (
+      <div className="card p-6 text-center space-y-3 max-w-md">
+        <Globe size={28} className="mx-auto text-slate-500" />
+        <p className="text-sm font-semibold text-white">Agency plan required</p>
+        <p className="text-xs text-slate-400">White-label domain configuration is available on the Partner Agency plan.</p>
+      </div>
+    )
+  }
+
+  if (loading) return <div className="flex justify-center py-12"><Loader2 size={20} className="animate-spin text-brand-400" /></div>
+
+  return (
+    <div className="space-y-6 max-w-2xl">
+      <div className="card p-6 space-y-5">
+        <h2 className="text-sm font-semibold text-white flex items-center gap-2"><Globe size={16} className="text-brand-400" /> White-label Configuration</h2>
+
+        {/* Domain */}
+        <div className="space-y-1">
+          <label className="text-xs text-slate-400">Custom Domain</label>
+          <div className="flex gap-2">
+            <input
+              className="input flex-1 text-sm"
+              placeholder="portal.yourfirm.com"
+              value={form.custom_domain}
+              onChange={(e) => setForm((f) => ({ ...f, custom_domain: e.target.value }))}
+            />
+            <button
+              onClick={handleVerify}
+              disabled={verifying || !config?.custom_domain}
+              className="btn-ghost text-xs flex items-center gap-1.5 px-3"
+            >
+              {verifying ? <Loader2 size={12} className="animate-spin" /> : null}
+              Verify
+            </button>
+          </div>
+          <div className="flex items-center gap-2 text-xs mt-1">
+            {config?.is_domain_verified
+              ? <span className="text-green-400 flex items-center gap-1"><CheckCircle size={12} /> Verified</span>
+              : <span className="text-amber-400">Not verified</span>}
+            {config?.ssl_active
+              ? <span className="text-green-400 flex items-center gap-1"><CheckCircle size={12} /> SSL active</span>
+              : <span className="text-slate-500">SSL pending (platform admin enables)</span>}
+          </div>
+        </div>
+
+        {/* DNS instructions */}
+        {config?.dns_instructions && (
+          <div className="bg-surface-700/40 rounded-xl p-4 space-y-2 text-xs font-mono text-slate-300">
+            <p className="text-slate-400 font-sans font-semibold text-xs not-italic">DNS Records to add:</p>
+            <p><span className="text-slate-500">TXT </span>{config.dns_instructions.txt_name}</p>
+            <p className="text-brand-400 pl-4 break-all">{config.dns_instructions.txt_value}</p>
+            <p className="mt-2"><span className="text-slate-500">CNAME </span>{config.dns_instructions.cname_name}</p>
+            <p className="text-brand-400 pl-4">{config.dns_instructions.cname_value}</p>
+          </div>
+        )}
+
+        {/* Branding */}
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="text-xs text-slate-400 block mb-1">Brand Name</label>
+            <input className="input w-full text-sm" placeholder="Smith Accounting" value={form.brand_name} onChange={(e) => setForm((f) => ({ ...f, brand_name: e.target.value }))} />
+          </div>
+          <div>
+            <label className="text-xs text-slate-400 block mb-1">Primary Colour</label>
+            <div className="flex gap-2 items-center">
+              <input type="color" value={form.primary_color} onChange={(e) => setForm((f) => ({ ...f, primary_color: e.target.value }))} className="w-10 h-9 rounded cursor-pointer border border-surface-600 bg-transparent" />
+              <input className="input flex-1 text-sm font-mono" value={form.primary_color} onChange={(e) => setForm((f) => ({ ...f, primary_color: e.target.value }))} />
+            </div>
+          </div>
+          <div>
+            <label className="text-xs text-slate-400 block mb-1">Logo URL</label>
+            <input className="input w-full text-sm" placeholder="https://…" value={form.logo_url} onChange={(e) => setForm((f) => ({ ...f, logo_url: e.target.value }))} />
+          </div>
+          <div>
+            <label className="text-xs text-slate-400 block mb-1">Favicon URL</label>
+            <input className="input w-full text-sm" placeholder="https://…" value={form.favicon_url} onChange={(e) => setForm((f) => ({ ...f, favicon_url: e.target.value }))} />
+          </div>
+          <div className="col-span-2">
+            <label className="text-xs text-slate-400 block mb-1">Login Tagline</label>
+            <input className="input w-full text-sm" placeholder="Your finances, handled." value={form.login_tagline} onChange={(e) => setForm((f) => ({ ...f, login_tagline: e.target.value }))} />
+          </div>
+        </div>
+
+        <button onClick={handleSave} disabled={saving} className="btn-primary flex items-center gap-1.5 text-sm">
+          {saving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle size={14} />}
+          Save Branding
+        </button>
+      </div>
+    </div>
   )
 }

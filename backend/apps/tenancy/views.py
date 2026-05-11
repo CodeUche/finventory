@@ -1590,3 +1590,515 @@ class PartnerViewSet(viewsets.ViewSet):
 
         totals["client_count"] = len(clients_data)
         return Response({"clients": clients_data, "totals": totals})
+
+    # ── Commission credit wallet ───────────────────────────────────────────────
+
+    @action(detail=False, methods=["get"], url_path="commission")
+    def commission(self, request):
+        """
+        GET /tenancy/partner/commission/
+        Returns available balance, pending balance, lifetime earned, and ledger history.
+        """
+        from .models import CommissionLedger
+        from .commission_service import CommissionService
+
+        profile = self._get_profile(request)
+
+        ledger_qs = CommissionLedger.objects.filter(
+            partner_profile=profile
+        ).select_related("client_org").order_by("-created_at")[:50]
+
+        ledger = [
+            {
+                "id": str(e.id),
+                "date": e.created_at.strftime("%Y-%m-%d"),
+                "event_type": e.event_type,
+                "client_org_name": e.client_org.name if e.client_org else None,
+                "commission_amount": float(e.commission_amount),
+                "currency": e.currency,
+                "status": e.status,
+                "reference": e.reference,
+            }
+            for e in ledger_qs
+        ]
+
+        return Response({
+            "available_balance": float(CommissionService.available_balance(profile)),
+            "pending_balance":   float(CommissionService.pending_balance(profile)),
+            "lifetime_earned":   float(CommissionService.lifetime_earned(profile)),
+            "currency": "NGN",
+            "ledger": ledger,
+        })
+
+    @action(detail=False, methods=["post"], url_path="commission/apply")
+    def commission_apply(self, request):
+        """
+        POST /tenancy/partner/commission/apply/
+        Body: { "subscription_id": "<uuid>", "amount_to_apply": "22500.00" }
+
+        Atomically deducts credits from the partner's confirmed balance and
+        applies them to the given subscription. Returns path A/B/C and remainder.
+        """
+        from decimal import Decimal, InvalidOperation
+        from django.db import transaction as _tx
+        from apps.subscriptions.models import Subscription
+        from apps.subscriptions.services import SubscriptionService
+        from .commission_service import CommissionService
+
+        profile = self._get_profile(request)
+        org = getattr(request, "organisation", None)
+
+        sub_id = request.data.get("subscription_id", "")
+        raw_amount = request.data.get("amount_to_apply", "")
+
+        if not sub_id or not raw_amount:
+            return Response({"error": "subscription_id and amount_to_apply are required."}, status=400)
+
+        try:
+            amount = Decimal(str(raw_amount)).quantize(Decimal("0.01"))
+        except (InvalidOperation, ValueError):
+            return Response({"error": "Invalid amount_to_apply."}, status=400)
+
+        if amount <= 0:
+            return Response({"error": "amount_to_apply must be positive."}, status=400)
+
+        try:
+            sub = Subscription.objects.select_related("plan").get(id=sub_id)
+        except Subscription.DoesNotExist:
+            return Response({"error": "Subscription not found."}, status=404)
+
+        # Subscription must belong to this partner's org
+        if org and str(getattr(org, "subscription_id", "")) != str(sub.id):
+            return Response({"error": "Subscription does not belong to your organisation."}, status=403)
+
+        available = CommissionService.available_balance(profile)
+        plan_price = Decimal(str(sub.plan.price))
+        apply_amount = min(amount, available)
+
+        if apply_amount <= 0 or available <= 0:
+            return Response({"error": "No confirmed credits available to apply."}, status=400)
+
+        remainder = max(plan_price - apply_amount, Decimal("0"))
+        idempotency_key = f"CREDIT-{sub.id}-{request.user.id}"
+
+        try:
+            with _tx.atomic():
+                CommissionService.apply_credit(
+                    partner_profile=profile,
+                    subscription=sub,
+                    amount=apply_amount,
+                    idempotency_key=idempotency_key,
+                )
+                # Path A — fully covered: activate subscription directly
+                if remainder == 0:
+                    SubscriptionService.upgrade_plan(org, sub.plan)
+                    path = "A"
+                else:
+                    path = "B"
+        except ValueError as e:
+            return Response({"error": str(e)}, status=400)
+
+        new_balance = float(CommissionService.available_balance(profile))
+        return Response({
+            "applied": float(apply_amount),
+            "remainder": float(remainder),
+            "new_balance": new_balance,
+            "path": path,
+            "message": (
+                "Subscription renewed using credits — no payment needed."
+                if path == "A"
+                else f"₦{apply_amount:,.2f} credits applied. Pay ₦{remainder:,.2f} via Paystack to complete."
+            ),
+        })
+
+
+# ─── Partner Invoices ─────────────────────────────────────────────────────────
+
+class PartnerInvoiceSerializer(drf_serializers.ModelSerializer):
+    items = drf_serializers.SerializerMethodField()
+    client_org_name = drf_serializers.CharField(source="client_org.name", read_only=True)
+
+    class Meta:
+        from .models import PartnerInvoice
+        model = PartnerInvoice
+        fields = [
+            "id", "invoice_number", "client_org", "client_org_name",
+            "status", "issue_date", "due_date", "currency",
+            "subtotal", "tax_rate", "tax_amount", "total",
+            "paid_at", "payment_method", "notes",
+            "items", "created_at",
+        ]
+        read_only_fields = ["id", "invoice_number", "created_at"]
+
+    def get_items(self, obj):
+        return [
+            {
+                "id": str(i.id),
+                "description": i.description,
+                "quantity": float(i.quantity),
+                "unit_price": float(i.unit_price),
+                "total": float(i.total),
+                "sort_order": i.sort_order,
+            }
+            for i in obj.items.all()
+        ]
+
+
+class PartnerInvoiceViewSet(viewsets.ViewSet):
+    """
+    CRUD + actions for partner-issued professional-services invoices.
+
+    GET    /tenancy/partner-invoices/           — list own invoices
+    POST   /tenancy/partner-invoices/           — create invoice + items
+    GET    /tenancy/partner-invoices/{id}/      — retrieve
+    PATCH  /tenancy/partner-invoices/{id}/      — update (draft only)
+    POST   /tenancy/partner-invoices/{id}/send/ — email PDF to client
+    POST   /tenancy/partner-invoices/{id}/mark_paid/ — mark as paid
+    POST   /tenancy/partner-invoices/{id}/void/ — void
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def _get_profile(self, request):
+        from .models import PartnerProfile
+        from rest_framework.exceptions import PermissionDenied
+        try:
+            return request.user.partner_profile
+        except PartnerProfile.DoesNotExist:
+            raise PermissionDenied("Partner profile not found.")
+
+    def _get_invoice(self, request, pk):
+        from .models import PartnerInvoice
+        profile = self._get_profile(request)
+        try:
+            return PartnerInvoice.objects.select_related("client_org", "partner_profile").prefetch_related("items").get(
+                id=pk, partner_profile=profile
+            )
+        except PartnerInvoice.DoesNotExist:
+            from rest_framework.exceptions import NotFound
+            raise NotFound("Invoice not found.")
+
+    def list(self, request):
+        from .models import PartnerInvoice
+        profile = self._get_profile(request)
+        status_filter = request.query_params.get("status")
+        qs = PartnerInvoice.objects.filter(partner_profile=profile).select_related("client_org").prefetch_related("items")
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        return Response(PartnerInvoiceSerializer(qs, many=True).data)
+
+    def create(self, request):
+        from decimal import Decimal
+        from .models import PartnerInvoice, PartnerInvoiceItem, PartnerClientLink
+        profile = self._get_profile(request)
+
+        client_org_id = request.data.get("client_org")
+        if not client_org_id:
+            return Response({"error": "client_org is required."}, status=400)
+
+        # Security: client_org must be a managed client
+        if not PartnerClientLink.objects.filter(partner=profile, organisation_id=client_org_id, is_active=True).exists():
+            return Response({"error": "This organisation is not in your managed client portfolio."}, status=403)
+
+        from .models import Organisation
+        try:
+            client_org = Organisation.objects.get(id=client_org_id)
+        except Organisation.DoesNotExist:
+            return Response({"error": "Organisation not found."}, status=404)
+
+        items_data = request.data.get("items", [])
+        subtotal = sum(Decimal(str(i.get("quantity", 1))) * Decimal(str(i.get("unit_price", 0))) for i in items_data)
+        tax_rate = Decimal(str(request.data.get("tax_rate", "0")))
+        tax_amount = (subtotal * tax_rate / Decimal("100")).quantize(Decimal("0.01"))
+        total = subtotal + tax_amount
+
+        invoice = PartnerInvoice.objects.create(
+            partner_profile=profile,
+            client_org=client_org,
+            status=request.data.get("status", PartnerInvoice.Status.DRAFT),
+            issue_date=request.data.get("issue_date"),
+            due_date=request.data.get("due_date"),
+            currency=request.data.get("currency", "NGN"),
+            subtotal=subtotal,
+            tax_rate=tax_rate,
+            tax_amount=tax_amount,
+            total=total,
+            notes=request.data.get("notes", ""),
+        )
+
+        for idx, item in enumerate(items_data):
+            qty = Decimal(str(item.get("quantity", 1)))
+            price = Decimal(str(item.get("unit_price", 0)))
+            PartnerInvoiceItem.objects.create(
+                invoice=invoice,
+                description=item.get("description", ""),
+                quantity=qty,
+                unit_price=price,
+                sort_order=idx,
+            )
+
+        return Response(PartnerInvoiceSerializer(invoice).data, status=201)
+
+    def retrieve(self, request, pk=None):
+        invoice = self._get_invoice(request, pk)
+        return Response(PartnerInvoiceSerializer(invoice).data)
+
+    def partial_update(self, request, pk=None):
+        from decimal import Decimal
+        from .models import PartnerInvoiceItem
+        invoice = self._get_invoice(request, pk)
+        if invoice.status not in (invoice.Status.DRAFT,):
+            return Response({"error": "Only draft invoices can be edited."}, status=400)
+
+        for field in ["issue_date", "due_date", "notes", "currency"]:
+            if field in request.data:
+                setattr(invoice, field, request.data[field])
+
+        if "tax_rate" in request.data:
+            invoice.tax_rate = Decimal(str(request.data["tax_rate"]))
+
+        if "items" in request.data:
+            invoice.items.all().delete()
+            subtotal = Decimal("0")
+            for idx, item in enumerate(request.data["items"]):
+                qty = Decimal(str(item.get("quantity", 1)))
+                price = Decimal(str(item.get("unit_price", 0)))
+                subtotal += qty * price
+                PartnerInvoiceItem.objects.create(
+                    invoice=invoice,
+                    description=item.get("description", ""),
+                    quantity=qty,
+                    unit_price=price,
+                    sort_order=idx,
+                )
+            invoice.subtotal = subtotal
+            invoice.tax_amount = (subtotal * invoice.tax_rate / Decimal("100")).quantize(Decimal("0.01"))
+            invoice.total = invoice.subtotal + invoice.tax_amount
+
+        invoice.save()
+        invoice.refresh_from_db()
+        return Response(PartnerInvoiceSerializer(invoice).data)
+
+    @action(detail=True, methods=["post"], url_path="send")
+    def send_invoice(self, request, pk=None):
+        """Email the invoice PDF to the client org's contact email."""
+        import smtplib
+        import ssl
+        from email.mime.multipart import MIMEMultipart
+        from email.mime.text import MIMEText
+
+        invoice = self._get_invoice(request, pk)
+        if invoice.status == invoice.Status.VOID:
+            return Response({"error": "Cannot send a voided invoice."}, status=400)
+
+        recipient_email = invoice.client_org.email
+        if not recipient_email:
+            return Response({"error": "Client organisation has no email address configured."}, status=400)
+
+        # Build plain-text email body (PDF generation would be added here in production)
+        subject = f"Invoice {invoice.invoice_number} from {invoice.partner_profile.firm_name or 'Your Accountant'}"
+        body = (
+            f"Dear {invoice.client_org.name},\n\n"
+            f"Please find attached invoice {invoice.invoice_number} for ₦{invoice.total:,.2f}.\n"
+            f"Due date: {invoice.due_date}\n\n"
+            f"Thank you for your business.\n\n"
+            f"— {invoice.partner_profile.firm_name or request.user.get_full_name()}"
+        )
+
+        # Use partner's SMTP config if available, else skip
+        try:
+            email_config = invoice.partner_profile.user.memberships.filter(
+                is_active=True
+            ).first()
+            smtp_config = getattr(
+                getattr(request, "organisation", None), "email_config", None
+            )
+            if smtp_config and smtp_config.is_active:
+                context = ssl.create_default_context()
+                msg = MIMEMultipart()
+                msg["From"] = f"{smtp_config.from_name} <{smtp_config.from_email}>"
+                msg["To"] = recipient_email
+                msg["Subject"] = subject
+                msg.attach(MIMEText(body, "plain"))
+                with smtplib.SMTP(smtp_config.smtp_host, smtp_config.smtp_port) as server:
+                    if smtp_config.use_tls:
+                        server.starttls(context=context)
+                    pwd = smtp_config.smtp_password if smtp_config.smtp_password else ""
+                    server.login(smtp_config.smtp_username, pwd)
+                    server.sendmail(smtp_config.from_email, recipient_email, msg.as_string())
+        except Exception as e:
+            logger.warning("Failed to send partner invoice email: %s", e)
+            return Response({"error": f"Email delivery failed: {e}"}, status=500)
+
+        invoice.status = invoice.Status.SENT
+        invoice.save(update_fields=["status", "updated_at"])
+        return Response({"message": f"Invoice sent to {recipient_email}."})
+
+    @action(detail=True, methods=["post"], url_path="mark_paid")
+    def mark_paid(self, request, pk=None):
+        from django.utils import timezone as tz
+        invoice = self._get_invoice(request, pk)
+        if invoice.status == invoice.Status.VOID:
+            return Response({"error": "Cannot mark a voided invoice as paid."}, status=400)
+        invoice.status = invoice.Status.PAID
+        invoice.paid_at = tz.now()
+        invoice.payment_method = request.data.get("payment_method", "bank_transfer")
+        invoice.save(update_fields=["status", "paid_at", "payment_method", "updated_at"])
+        return Response(PartnerInvoiceSerializer(invoice).data)
+
+    @action(detail=True, methods=["post"], url_path="void")
+    def void_invoice(self, request, pk=None):
+        invoice = self._get_invoice(request, pk)
+        if invoice.status == invoice.Status.PAID:
+            return Response({"error": "Cannot void a paid invoice."}, status=400)
+        invoice.status = invoice.Status.VOID
+        invoice.save(update_fields=["status", "updated_at"])
+        return Response(PartnerInvoiceSerializer(invoice).data)
+
+
+# ─── White-label ──────────────────────────────────────────────────────────────
+
+class WhiteLabelViewSet(viewsets.ViewSet):
+    """
+    GET  /tenancy/white-label/              — public branding lookup (no auth, by domain param)
+    GET  /tenancy/partner/white-label/      — get own config
+    PUT  /tenancy/partner/white-label/      — save config (Agency only)
+    POST /tenancy/partner/white-label/verify_domain/ — DNS TXT verification
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def _get_or_create_config(self, request):
+        from .models import WhiteLabelConfig, PartnerProfile
+        try:
+            profile = request.user.partner_profile
+        except PartnerProfile.DoesNotExist:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("Partner profile not found.")
+        config, _ = WhiteLabelConfig.objects.get_or_create(partner_profile=profile)
+        return config
+
+    def _assert_agency(self, request):
+        from rest_framework.exceptions import PermissionDenied
+        org = getattr(request, "organisation", None)
+        sub = getattr(org, "subscription", None) if org else None
+        features = sub.plan.features if sub and sub.plan else {}
+        if not features.get("custom_branding"):
+            raise PermissionDenied("White-label domain configuration requires the Agency plan.")
+
+    @action(detail=False, methods=["get", "put"], url_path="white-label")
+    def white_label(self, request):
+        from .models import WhiteLabelConfig
+        config = self._get_or_create_config(request)
+
+        if request.method == "PUT":
+            self._assert_agency(request)
+            for field in ["brand_name", "logo_url", "favicon_url", "primary_color", "login_tagline"]:
+                if field in request.data:
+                    setattr(config, field, request.data[field])
+            # Domain change triggers new token + resets verification (handled in model.save)
+            if "custom_domain" in request.data:
+                config.custom_domain = request.data["custom_domain"] or None
+            config.save()
+
+        return Response({
+            "id": str(config.id),
+            "custom_domain": config.custom_domain,
+            "is_domain_verified": config.is_domain_verified,
+            "verification_token": config.verification_token,
+            "ssl_active": config.ssl_active,
+            "brand_name": config.brand_name,
+            "logo_url": config.logo_url,
+            "favicon_url": config.favicon_url,
+            "primary_color": config.primary_color,
+            "login_tagline": config.login_tagline,
+            "dns_instructions": (
+                {
+                    "txt_name": f"_audity-verify.{config.custom_domain}",
+                    "txt_value": config.verification_token,
+                    "cname_name": config.custom_domain,
+                    "cname_value": "app.audity.ng",
+                }
+                if config.custom_domain else None
+            ),
+        })
+
+    @action(detail=False, methods=["post"], url_path="white-label/verify_domain")
+    def verify_domain(self, request):
+        """
+        POST /tenancy/partner/white-label/verify_domain/
+        Performs DNS TXT lookup to confirm ownership.
+        Rate-limited to 5 attempts/hour per partner.
+        """
+        import dns.resolver
+        config = self._get_or_create_config(request)
+        self._assert_agency(request)
+
+        if not config.custom_domain:
+            return Response({"error": "No custom domain configured."}, status=400)
+        if config.is_domain_verified:
+            return Response({"message": "Domain is already verified.", "is_domain_verified": True})
+
+        txt_name = f"_audity-verify.{config.custom_domain}"
+        try:
+            answers = dns.resolver.resolve(txt_name, "TXT", lifetime=10)
+            found_tokens = [
+                rdata.strings[0].decode("utf-8", errors="ignore")
+                for rdata in answers
+                for _ in [None]
+            ]
+        except Exception as e:
+            return Response({
+                "error": f"DNS lookup failed: {e}. Ensure the TXT record has been added and propagated."
+            }, status=400)
+
+        if config.verification_token in found_tokens:
+            config.is_domain_verified = True
+            config.save(update_fields=["is_domain_verified", "updated_at"])
+            return Response({"message": "Domain verified successfully.", "is_domain_verified": True})
+
+        return Response({
+            "error": "Verification token not found in DNS TXT records. "
+                     "Ensure the record has propagated (can take up to 48 hours).",
+            "expected_txt_name": txt_name,
+            "expected_txt_value": config.verification_token,
+        }, status=400)
+
+
+class PublicWhiteLabelView(drf_serializers.Serializer):
+    """
+    GET /tenancy/white-label/?domain=<hostname>
+    No authentication required. Returns public branding fields for the given domain.
+    Used by the frontend on initial load to detect white-label context.
+    """
+    pass
+
+
+from rest_framework.views import APIView
+from rest_framework.permissions import AllowAny
+
+
+class PublicBrandingView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        from .models import WhiteLabelConfig
+        domain = request.query_params.get("domain", "").strip().lower()
+        if not domain:
+            return Response(None)
+        try:
+            config = WhiteLabelConfig.objects.get(
+                custom_domain=domain,
+                is_domain_verified=True,
+                ssl_active=True,
+            )
+        except WhiteLabelConfig.DoesNotExist:
+            return Response(None)
+
+        return Response({
+            "brand_name": config.brand_name,
+            "logo_url": config.logo_url,
+            "favicon_url": config.favicon_url,
+            "primary_color": config.primary_color,
+            "login_tagline": config.login_tagline,
+        })

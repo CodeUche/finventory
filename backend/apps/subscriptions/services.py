@@ -455,18 +455,13 @@ class PaystackSubscriptionService:
     def _record_partner_commission(organisation, amount_ngn, reference: str) -> None:
         """
         Credit commission to the referring partner when a client pays.
-
-        Looks for an active PartnerClientLink with is_referred=True for this org.
-        Commission = payment_amount × partner.commission_rate / 100.
-        Updates both PartnerClientLink.commission_earned and
-        PartnerProfile.total_commission_earned atomically.
-
-        Idempotent — if commission for this reference was already recorded on the
-        link it is not double-counted (tracked via PartnerCommissionRecord).
+        Delegates to CommissionService.record_commission (append-only ledger).
+        Also keeps the legacy denormalized totals on PartnerClientLink / PartnerProfile
+        in sync so existing dashboard queries continue to work during migration.
         """
         try:
-            from django.db import transaction
             from apps.tenancy.models import PartnerClientLink
+            from apps.tenancy.commission_service import CommissionService
 
             link = PartnerClientLink.objects.select_related("partner").filter(
                 organisation=organisation,
@@ -477,29 +472,30 @@ class PaystackSubscriptionService:
                 return
 
             partner = link.partner
-            rate = partner.commission_rate  # Decimal e.g. Decimal("5.00")
+            rate = partner.commission_rate
             if not rate or rate <= 0:
                 return
 
-            commission = Decimal(str(amount_ngn)) * rate / Decimal("100")
-            commission = commission.quantize(Decimal("0.0001"))
+            # Append-only ledger entry (idempotent)
+            CommissionService.record_commission(
+                partner_profile=partner,
+                client_org=organisation,
+                gross_amount=amount_ngn,
+                reference=reference,
+            )
 
-            with transaction.atomic():
-                # Check for duplicate via a simple reference tag on the link notes
-                # Use a dedicated model if you need a full ledger in future.
+            # Keep legacy denormalized totals in sync
+            commission = (Decimal(str(amount_ngn)) * rate / Decimal("100")).quantize(Decimal("0.0001"))
+            from django.db import transaction as _tx
+            from django.db.models import F
+            from apps.tenancy.models import PartnerProfile
+            with _tx.atomic():
                 PartnerClientLink.objects.filter(pk=link.pk).update(
                     commission_earned=link.commission_earned + commission
                 )
-                from django.db.models import F
-                from apps.tenancy.models import PartnerProfile
                 PartnerProfile.objects.filter(pk=partner.pk).update(
                     total_commission_earned=F("total_commission_earned") + commission
                 )
-
-            logger.info(
-                "Commission %.4f NGN (%.2f%%) credited to partner %s for org %s ref %s",
-                commission, rate, partner.user.email, organisation.id, reference,
-            )
         except Exception as e:
             logger.error("Failed to record partner commission for org %s ref %s: %s", organisation.id, reference, e)
 

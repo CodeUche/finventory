@@ -82,6 +82,7 @@ export default function PartnerDashboardPage() {
   const [clients, setClients]               = useState<PartnerClientLink[]>([])
   const [accessRequests, setAccessRequests] = useState<PartnerAccessRequest[]>([])
   const [consolidated, setConsolidated]     = useState<ConsolidatedData | null>(null)
+  const [commission, setCommission]         = useState<{ available_balance: number; pending_balance: number } | null>(null)
 
   const [loading, setLoading]                     = useState(true)
   const [subscriptionExpired, setSubscriptionExpired] = useState(false)
@@ -111,11 +112,12 @@ export default function PartnerDashboardPage() {
     setLoading(true)
     setSubscriptionExpired(false)
     try {
-      const [profileRes, clientsRes, reqsRes, consolidatedRes] = await Promise.allSettled([
+      const [profileRes, clientsRes, reqsRes, consolidatedRes, commissionRes] = await Promise.allSettled([
         partnerApi.profile(),
         partnerApi.clients(),
         partnerApi.listAccessRequests(),
         partnerApi.consolidated(),
+        partnerApi.commission(),
       ])
       if (profileRes.status === 'fulfilled')
         setProfile(profileRes.value.data)
@@ -127,6 +129,8 @@ export default function PartnerDashboardPage() {
         setAccessRequests(reqsRes.value.data.results ?? reqsRes.value.data)
       if (consolidatedRes.status === 'fulfilled')
         setConsolidated(consolidatedRes.value.data)
+      if (commissionRes.status === 'fulfilled')
+        setCommission(commissionRes.value.data)
     } finally {
       setLoading(false)
     }
@@ -365,9 +369,11 @@ export default function PartnerDashboardPage() {
           accent={consolidated && consolidated.totals.total_outstanding > 0 ? 'text-red-400' : 'text-white'}
         />
         <KpiTile
-          label="Commission Earned"
-          value={fmtMoney(profile.total_commission_earned)}
-          sub={`${profile.commission_rate}% rate`}
+          label="Commission Credits"
+          value={commission ? fmtMoney(commission.available_balance) : fmtMoney(profile.total_commission_earned)}
+          sub={commission?.pending_balance && commission.pending_balance > 0
+            ? `+${fmtMoney(commission.pending_balance)} pending`
+            : `${profile.commission_rate}% rate`}
           icon={DollarSign}
           accent="text-green-400"
         />

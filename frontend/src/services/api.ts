@@ -1098,6 +1098,22 @@ export const partnerApi = {
   withdrawRequest: (id: string)                     => api.delete(`/tenancy/partner/${id}/access-requests/`),
   // Client-initiated invite flow
   acceptInvite: (token: string)                     => api.post('/tenancy/partner/accept-invite/', { token }),
+  // Commission credit wallet
+  commission: ()                                    => api.get('/tenancy/partner/commission/'),
+  applyCredit: (data: { subscription_id: string; amount_to_apply: string }) =>
+    api.post('/tenancy/partner/commission/apply/', data),
+  // Partner invoices
+  listInvoices: (params?: object)                   => api.get('/tenancy/partner-invoices/', { params }),
+  createInvoice: (data: object)                     => api.post('/tenancy/partner-invoices/', data),
+  getInvoice: (id: string)                          => api.get(`/tenancy/partner-invoices/${id}/`),
+  updateInvoice: (id: string, data: object)         => api.patch(`/tenancy/partner-invoices/${id}/`, data),
+  sendInvoice: (id: string)                         => api.post(`/tenancy/partner-invoices/${id}/send/`),
+  markInvoicePaid: (id: string, data: object)       => api.post(`/tenancy/partner-invoices/${id}/mark_paid/`, data),
+  voidInvoice: (id: string)                         => api.post(`/tenancy/partner-invoices/${id}/void/`),
+  // White-label config (Agency)
+  getWhiteLabel: ()                                 => api.get('/tenancy/partner/white-label-mgmt/white-label/'),
+  saveWhiteLabel: (data: object)                    => api.put('/tenancy/partner/white-label-mgmt/white-label/', data),
+  verifyDomain: ()                                  => api.post('/tenancy/partner/white-label-mgmt/white-label/verify_domain/'),
 }
 
 export const accountingApi = {

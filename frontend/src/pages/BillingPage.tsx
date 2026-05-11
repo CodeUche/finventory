@@ -1,8 +1,8 @@
 import { useEffect, useState, useCallback } from 'react'
-import { CheckCircle, X as XIcon, Loader2, CreditCard, Zap, Building2, Star, ExternalLink, RefreshCw, Package, ShoppingCart, FileText, Receipt, Users, Truck, BarChart3, Calculator, Briefcase, Wallet, Clock, DollarSign, Shield, ChevronDown, ChevronUp, GraduationCap, LayoutDashboard, FileBarChart2, Layers } from 'lucide-react'
+import { CheckCircle, X as XIcon, Loader2, CreditCard, Zap, Building2, Star, ExternalLink, RefreshCw, Package, ShoppingCart, FileText, Receipt, Users, Truck, BarChart3, Calculator, Briefcase, Wallet, Clock, DollarSign, Shield, ChevronDown, ChevronUp, GraduationCap, LayoutDashboard, FileBarChart2, Layers, Coins } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useNavigate } from 'react-router-dom'
-import { subscriptionApi, orgApi, bypassNextGets } from '@/services/api'
+import { subscriptionApi, orgApi, bypassNextGets, partnerApi } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
 import type { Plan, Subscription, SubscriptionPayment } from '@/types'
 import { FEATURES } from '@/lib/featureFlags'
@@ -121,6 +121,11 @@ export default function BillingPage() {
   const [subscribing, setSubscribing] = useState<string | null>(null)
   const [canceling, setCanceling] = useState(false)
   const [billingInterval, setBillingInterval] = useState<'monthly' | 'annual'>('monthly')
+  const [commissionBalance, setCommissionBalance] = useState<number>(0)
+  const [applyingCredit, setApplyingCredit] = useState(false)
+  const [useCredits, setUseCredits] = useState(true)
+
+  const isPartner = useAuthStore((s) => s.planName)?.startsWith('partner') ?? false
 
   const load = async () => {
     setLoading(true)
@@ -138,7 +143,15 @@ export default function BillingPage() {
     }
   }
 
-  useEffect(() => { load() }, [])
+  const loadCommission = async () => {
+    if (!isPartner) return
+    try {
+      const res = await partnerApi.commission()
+      setCommissionBalance(res.data.available_balance ?? 0)
+    } catch { /* non-fatal */ }
+  }
+
+  useEffect(() => { load(); loadCommission() }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handlePaymentSuccess = useCallback(async (reference: string) => {
     toast.loading('Confirming payment…', { id: 'pay-verify' })
@@ -218,6 +231,61 @@ export default function BillingPage() {
         const msg = typeof errData === 'string' ? errData : err?.message ?? 'Failed to initiate payment'
         toast.error(msg)
       }
+    } finally {
+      setSubscribing(null)
+    }
+  }
+
+  const handleRenewWithCredits = async (plan: Plan) => {
+    if (!subscription?.id) return
+    const price = parseFloat(plan.price)
+    const applyAmount = Math.min(commissionBalance, price)
+    setApplyingCredit(true)
+    try {
+      const res = await partnerApi.applyCredit({
+        subscription_id: subscription.id,
+        amount_to_apply: applyAmount.toFixed(2),
+      })
+      toast.success(res.data.message ?? 'Credits applied!')
+      setCommissionBalance(res.data.new_balance)
+      if (res.data.path === 'A') {
+        // Fully covered — refresh subscription state
+        window.dispatchEvent(new CustomEvent('audity:app-refresh'))
+        load()
+      } else {
+        // Partial — remaining goes to Paystack
+        await handleSubscribeWithRemainder(plan, res.data.remainder)
+      }
+    } catch (err: any) {
+      const msg = err?.response?.data?.error ?? 'Failed to apply credits'
+      toast.error(typeof msg === 'string' ? msg : msg?.message ?? 'Failed to apply credits')
+    } finally {
+      setApplyingCredit(false)
+    }
+  }
+
+  const handleSubscribeWithRemainder = async (plan: Plan, remainder: number) => {
+    if (remainder <= 0) return
+    setSubscribing(plan.id)
+    try {
+      const res = await subscriptionApi.initiatePayment(plan.id)
+      const { public_key, reference, amount_kobo: _orig, email, authorization_url } = res.data
+      const adjustedKobo = Math.round(remainder * 100)
+      if (!public_key) { toast.error('Paystack public key not configured.'); return }
+      if (plan.slug?.startsWith('partner-')) {
+        window.open(authorization_url, '_blank')
+        toast('Payment page opened in your browser.', { duration: 8000 })
+        return
+      }
+      await loadPaystackScript()
+      const handler = window.PaystackPop.setup({
+        key: public_key, email, amount: adjustedKobo, ref: reference, currency: 'NGN',
+        onClose: () => toast('Payment cancelled.', { icon: '🚫' }),
+        callback: (response) => handlePaymentSuccess(response.reference),
+      })
+      handler.openIframe()
+    } catch {
+      toast.error('Failed to initiate payment for remaining amount')
     } finally {
       setSubscribing(null)
     }
@@ -441,9 +509,42 @@ export default function BillingPage() {
                   <p className="text-xs text-brand-400 text-center">{plan.trial_days}-day free trial</p>
                 )}
 
+                {/* Commission credits banner — shown when partner has a balance */}
+                {isPartner && !isCurrent && !isFree && commissionBalance > 0 && useCredits && (
+                  <div className="rounded-lg bg-green-500/10 border border-green-500/20 px-3 py-2 text-xs text-green-400 space-y-0.5">
+                    <div className="flex items-center gap-1.5 font-medium">
+                      <Coins size={12} />
+                      ₦{commissionBalance.toLocaleString()} credits available
+                    </div>
+                    <p className="text-green-500/70">
+                      {commissionBalance >= price
+                        ? 'Renew free — fully covered by credits'
+                        : `Pay only ₦${(price - commissionBalance).toLocaleString()} after credits`}
+                    </p>
+                  </div>
+                )}
+
+                {isPartner && !isCurrent && !isFree && commissionBalance > 0 && (
+                  <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={useCredits}
+                      onChange={(e) => setUseCredits(e.target.checked)}
+                      className="accent-brand-500"
+                    />
+                    Apply commission credits
+                  </label>
+                )}
+
                 <button
-                  onClick={() => handleSubscribe(plan)}
-                  disabled={isCurrent || subscribing === plan.id || isFree}
+                  onClick={() => {
+                    if (isPartner && !isCurrent && !isFree && commissionBalance > 0 && useCredits) {
+                      handleRenewWithCredits(plan)
+                    } else {
+                      handleSubscribe(plan)
+                    }
+                  }}
+                  disabled={isCurrent || subscribing === plan.id || applyingCredit || isFree}
                   className={`w-full flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-semibold transition-colors ${
                     isCurrent
                       ? 'bg-green-500/10 text-green-400 cursor-default'
@@ -452,12 +553,14 @@ export default function BillingPage() {
                       : 'btn-primary'
                   }`}
                 >
-                  {subscribing === plan.id ? (
+                  {(subscribing === plan.id || applyingCredit) ? (
                     <Loader2 size={14} className="animate-spin" />
                   ) : isCurrent ? (
                     <><CheckCircle size={14} /> Current plan</>
                   ) : isFree ? (
                     'Always free'
+                  ) : isPartner && commissionBalance >= price && useCredits ? (
+                    <><Coins size={14} /> Renew Free with Credits</>
                   ) : (
                     <><ExternalLink size={14} /> Subscribe — {fmt(plan.price)}/{isAnnual ? 'yr' : 'mo'}</>
                   )}

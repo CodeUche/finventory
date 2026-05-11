@@ -7,6 +7,35 @@ from django.utils import timezone
 logger = logging.getLogger(__name__)
 
 
+@shared_task(name="subscriptions.confirm_pending_commissions")
+def confirm_pending_commissions():
+    """
+    Runs every 6 hours. Promotes CommissionLedger pending → confirmed
+    for entries older than 48 hours (chargeback window).
+    """
+    from apps.tenancy.commission_service import CommissionService
+    count = CommissionService.confirm_pending()
+    return count
+
+
+@shared_task(name="subscriptions.flag_stale_pending_commissions")
+def flag_stale_pending_commissions():
+    """
+    Runs daily. Logs a warning for any pending commission entries
+    older than 7 days — indicates a likely webhook delivery failure.
+    """
+    from apps.tenancy.models import CommissionLedger
+    from datetime import timedelta
+    cutoff = timezone.now() - timedelta(days=7)
+    stale = CommissionLedger.objects.filter(
+        status=CommissionLedger.Status.PENDING,
+        created_at__lt=cutoff,
+    ).count()
+    if stale:
+        logger.warning("flag_stale_pending: %d commission entries older than 7 days — check webhook delivery", stale)
+    return stale
+
+
 @shared_task(name="subscriptions.expire_subscriptions")
 def expire_subscriptions():
     """

@@ -44,6 +44,7 @@ import LocationsPage from '@/pages/LocationsPage'
 import StockReportsPage from '@/pages/inventory/StockReportsPage'
 import PartnerDashboardPage from '@/pages/PartnerDashboardPage'
 import PartnerReportPage from '@/pages/PartnerReportPage'
+import PartnerInvoicesPage from '@/pages/PartnerInvoicesPage'
 import AcceptInvitePage from '@/pages/auth/AcceptInvitePage'
 
 // Inner class-based boundary — must be a class to use getDerivedStateFromError
@@ -268,8 +269,9 @@ export default function App() {
         {/* Settings — always accessible for personal profile/security; org tabs filtered inside the page */}
         <Route path="settings" element={<SettingsPage />} />
         <Route path="billing"  element={<ModuleRoute module="settings"><BillingPage /></ModuleRoute>} />
-        <Route path="partner"         element={<PartnerRoute><PartnerDashboardPage /></PartnerRoute>} />
-        <Route path="partner/report"  element={<PartnerRoute><PartnerReportPage /></PartnerRoute>} />
+        <Route path="partner"           element={<PartnerRoute><PartnerDashboardPage /></PartnerRoute>} />
+        <Route path="partner/report"    element={<PartnerRoute><PartnerReportPage /></PartnerRoute>} />
+        <Route path="partner/invoices"  element={<PartnerRoute><PartnerInvoicesPage /></PartnerRoute>} />
 
         {/* Platform Admin — superuser only */}
         <Route path="platform-admin" element={<SuperuserRoute><PlatformAdminPage /></SuperuserRoute>} />

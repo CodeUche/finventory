@@ -6,7 +6,7 @@ import {
   CreditCard, Truck, Building2, Warehouse, Calculator, BookOpen,
   BookMarked, Landmark, UsersRound, Banknote, ArrowDownCircle,
   PieChart, Scale, Shield, ClipboardList, ChevronDown, ChevronRight, ShieldCheck,
-  MapPin, ClipboardCheck, GraduationCap,
+  MapPin, ClipboardCheck, GraduationCap, Briefcase,
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { authApi } from '@/services/api'
@@ -24,6 +24,7 @@ const navGroups: { label: string | null; items: { name: string; href: string; ic
     items: [
       { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
       { name: 'Partner Dashboard', href: '/partner', icon: GraduationCap, ownerOnly: true, partnerOnly: true },
+      { name: 'Partner Invoices', href: '/partner/invoices', icon: Briefcase, ownerOnly: true, partnerOnly: true },
     ],
   },
   {

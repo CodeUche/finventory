@@ -11,6 +11,28 @@ import './index.css'
 // Apply stored theme before first render to avoid flash
 initTheme()
 
+// ── White-label branding ──────────────────────────────────────────────────
+// Fetch branding for the current hostname. On the main Audity domain the
+// endpoint returns null and no changes are made. On a partner custom domain
+// branding is applied via CSS variables and stored for auth page rendering.
+;(async function applyWhiteLabel() {
+  try {
+    const host = window.location.hostname
+    // Skip on localhost / Tauri (no white-label for internal builds)
+    if (host === 'localhost' || host === 'tauri.localhost' || host === '127.0.0.1') return
+    const base = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/api\/v1\/?$/, '')
+    const res = await fetch(`${base}/api/v1/tenancy/white-label/?domain=${encodeURIComponent(host)}`)
+    if (!res.ok) return
+    const data = await res.json()
+    if (!data) return
+    // Apply CSS custom properties so all themed components pick them up
+    if (data.primary_color) document.documentElement.style.setProperty('--brand-color', data.primary_color)
+    if (data.brand_name) document.title = data.brand_name
+    // Store for login page logo / tagline rendering
+    ;(window as any).__WL__ = data
+  } catch { /* non-fatal — main Audity brand used as fallback */ }
+})()
+
 // Unregister any PWA service workers left from previous builds.
 // In the Tauri desktop app the service worker intercepts every fetch() call
 // and strips the Authorization header on cross-origin requests, causing 401
