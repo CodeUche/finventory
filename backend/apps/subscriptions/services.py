@@ -77,10 +77,13 @@ class SubscriptionService:
     @staticmethod
     def start_trial_for_plan(organisation, plan: Plan) -> "Subscription":
         """
-        Start a 14-day free trial on the chosen plan for a first-time user.
+        Start a free trial on the chosen plan.
+        Partner plans get 30 days; all other plans use plan.trial_days (default 14).
         Replaces any existing subscription. Marks onboarding as completed.
         """
-        trial_end = timezone.now() + timedelta(days=14)
+        is_partner = plan.slug.startswith("partner-")
+        days = 30 if is_partner else (plan.trial_days or 14)
+        trial_end = timezone.now() + timedelta(days=days)
         sub = _get_sub(organisation)
         if sub:
             sub.plan = plan
@@ -104,7 +107,14 @@ class SubscriptionService:
             organisation.onboarding_completed = True
             organisation.save(update_fields=["onboarding_completed"])
 
-        logger.info("Trial started for org %s on plan %s (14 days)", organisation.id, plan.name)
+        # Sync PartnerProfile tier/limits when starting a partner plan trial
+        if is_partner:
+            try:
+                PaystackSubscriptionService._provision_partner_profile(organisation, plan)
+            except Exception:
+                logger.warning("Could not provision partner profile for org %s on trial", organisation.id)
+
+        logger.info("Trial started for org %s on plan %s (%d days)", organisation.id, plan.name, days)
         return sub
 
     @staticmethod

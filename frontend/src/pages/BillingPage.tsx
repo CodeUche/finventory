@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { CheckCircle, X as XIcon, Loader2, CreditCard, Zap, Building2, Star, ExternalLink, RefreshCw, Package, ShoppingCart, FileText, Receipt, Users, Truck, BarChart3, Calculator, Briefcase, Wallet, Clock, DollarSign, Shield, ChevronDown, ChevronUp, GraduationCap, LayoutDashboard, FileBarChart2, Layers } from 'lucide-react'
 import toast from 'react-hot-toast'
+import { useNavigate } from 'react-router-dom'
 import { subscriptionApi, orgApi, bypassNextGets } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
 import type { Plan, Subscription, SubscriptionPayment } from '@/types'
@@ -111,6 +112,7 @@ function basePlanSlug(slug: string): 'free' | 'professional' | 'business' | 'ent
 }
 
 export default function BillingPage() {
+  const navigate = useNavigate()
   const { organisation, setOrganisation, setSubscriptionExpired } = useAuthStore()
   const [plans, setPlans] = useState<Plan[]>([])
   const [subscription, setSubscription] = useState<Subscription | null>(null)
@@ -224,6 +226,23 @@ export default function BillingPage() {
       toast.error('Failed to cancel subscription')
     } finally {
       setCanceling(false)
+    }
+  }
+
+  const handlePartnerTrial = async (plan: Plan) => {
+    setSubscribing(plan.id)
+    try {
+      await subscriptionApi.startTrial(plan.id, organisation?.id)
+      setSubscriptionExpired(false)
+      window.dispatchEvent(new CustomEvent('audity:app-refresh'))
+      toast.success(`${plan.name} trial started — 30 days free!`)
+      navigate('/partner')
+    } catch (err: any) {
+      const apiErr = err?.response?.data?.error
+      const msg = typeof apiErr === 'string' ? apiErr : (apiErr?.message ?? 'Failed to start trial')
+      toast.error(msg)
+    } finally {
+      setSubscribing(null)
     }
   }
 
@@ -443,7 +462,7 @@ export default function BillingPage() {
 
       {/* ── Partner / Accountant Channel — hidden until PARTNER_CHANNEL feature enabled ── */}
       {FEATURES.PARTNER_CHANNEL && (
-        <PartnerChannelSection plans={plans} currentPlanSlug={currentPlanSlug} onSubscribe={handleSubscribe} subscribing={subscribing} />
+        <PartnerChannelSection plans={plans} currentPlanSlug={currentPlanSlug} onSubscribe={handleSubscribe} onStartTrial={handlePartnerTrial} subscribing={subscribing} />
       )}
 
       {/* Payment history */}
@@ -554,11 +573,13 @@ function PartnerChannelSection({
   plans,
   currentPlanSlug,
   onSubscribe,
+  onStartTrial,
   subscribing,
 }: {
   plans: Plan[]
   currentPlanSlug: string | undefined
   onSubscribe: (plan: Plan) => void
+  onStartTrial: (plan: Plan) => void
   subscribing: string | null
 }) {
   const [open, setOpen] = useState(true)
@@ -620,6 +641,7 @@ function PartnerChannelSection({
               const isSubscribing = plan && subscribing === plan.id
               const displayPrice = partnerInterval === 'annual' ? tier.price * 11 : tier.price
               const isAnnual = partnerInterval === 'annual'
+              const hasTrial = plan && plan.trial_days > 0 && !isCurrent
 
               return (
                 <div key={tier.slug} className={`card relative flex flex-col gap-4 ${colors.border}`}>
@@ -679,8 +701,12 @@ function PartnerChannelSection({
                   </div>
 
                   <button
-                    onClick={() => plan && onSubscribe(plan)}
-                    disabled={isCurrent || isSubscribing || !plan}
+                    onClick={() => {
+                      if (!plan) return
+                      if (hasTrial) onStartTrial(plan)
+                      else onSubscribe(plan)
+                    }}
+                    disabled={isCurrent || !!isSubscribing || !plan}
                     className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold transition-colors ${
                       isCurrent
                         ? 'bg-green-500/10 text-green-400 cursor-default'
@@ -693,6 +719,8 @@ function PartnerChannelSection({
                       <Loader2 size={14} className="animate-spin" />
                     ) : isCurrent ? (
                       <><CheckCircle size={14} /> Current plan</>
+                    ) : hasTrial ? (
+                      <><Zap size={14} /> Start 30-day free trial</>
                     ) : (
                       <><ExternalLink size={14} /> Subscribe — ₦{displayPrice.toLocaleString()}/{isAnnual ? 'yr' : 'mo'}</>
                     )}

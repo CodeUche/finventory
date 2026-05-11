@@ -414,9 +414,9 @@ export default function OnboardingPage() {
   // ── Partner enrollment ───────────────────────────────────────────────────────
   // Maps partner tier slug → the plan the partner gets for their own workspace
   const PARTNER_TIER_PLANS: Record<string, string> = {
-    starter: 'professional',
-    pro: 'business',
-    agency: 'enterprise',
+    starter: 'partner-starter',
+    pro: 'partner-pro',
+    agency: 'partner-agency',
   }
 
   const handlePartnerEnroll = async (e: React.FormEvent) => {
