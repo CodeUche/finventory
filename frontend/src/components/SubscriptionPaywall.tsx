@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
-import { Lock, RefreshCw, CheckCircle } from 'lucide-react'
+import { Lock, RefreshCw, CheckCircle, LayoutGrid } from 'lucide-react'
 import toast from 'react-hot-toast'
+import { useNavigate } from 'react-router-dom'
 import { subscriptionApi, bypassNextGets } from '@/services/api'
 import { openExternal } from '@/lib/openExternal'
 
@@ -54,6 +55,7 @@ interface Props {
 }
 
 export default function SubscriptionPaywall({ subscription, onDismiss }: Props) {
+  const navigate = useNavigate()
   const [loading, setLoading] = useState(false)
   const [verifying, setVerifying] = useState(false)
   const [polling, setPolling] = useState(false)
@@ -184,7 +186,7 @@ export default function SubscriptionPaywall({ subscription, onDismiss }: Props) 
             {isTrial
               ? `Your 14-day free trial on the ${planName} plan has ended.`
               : `Your ${planName} subscription has expired.`}
-            {' '}Renew now to continue using all features.
+            {' '}Renew to continue using all features.
           </p>
         </div>
 
@@ -194,19 +196,32 @@ export default function SubscriptionPaywall({ subscription, onDismiss }: Props) 
             <span className="text-sm text-slate-300">Confirming payment…</span>
           </div>
         ) : !polling ? (
-          <button
-            onClick={handleRenew}
-            disabled={loading}
-            className="btn-primary w-full py-3 text-base disabled:opacity-50"
-          >
-            {loading ? (
-              <span className="flex items-center justify-center gap-2">
-                <RefreshCw size={16} className="animate-spin" /> Opening payment…
-              </span>
-            ) : (
-              'Renew Subscription'
-            )}
-          </button>
+          <div className="space-y-3">
+            {/* Primary: renew the same plan */}
+            <button
+              onClick={handleRenew}
+              disabled={loading}
+              className="btn-primary w-full py-3 text-base disabled:opacity-50"
+            >
+              {loading ? (
+                <span className="flex items-center justify-center gap-2">
+                  <RefreshCw size={16} className="animate-spin" /> Opening payment…
+                </span>
+              ) : (
+                `Renew ${planName} Plan`
+              )}
+            </button>
+
+            {/* Secondary: pick a different plan */}
+            <button
+              onClick={() => { onDismiss(); navigate('/billing') }}
+              disabled={loading}
+              className="w-full py-2.5 text-sm text-slate-300 border border-surface-600 rounded-xl hover:bg-surface-700/50 transition-colors flex items-center justify-center gap-2 disabled:opacity-40"
+            >
+              <LayoutGrid size={14} />
+              Choose a different plan
+            </button>
+          </div>
         ) : (
           <div className="space-y-3">
             <div className="flex items-center justify-center gap-3 py-3 bg-surface-800 rounded-xl border border-surface-600">

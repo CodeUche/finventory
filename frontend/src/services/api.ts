@@ -776,7 +776,10 @@ api.interceptors.response.use(
         }
       }
       if (!isOrgHeaderError) {
-        toast.error(forbiddenMsg, { id: `403-${original.url}`, duration: 6000 })
+        // Use message-based ID so multiple endpoints returning the same 403 message
+        // (e.g. all partner endpoints failing with "subscription expired") show ONE toast.
+        const toastId = `403-${forbiddenMsg.slice(0, 60)}`
+        toast.error(forbiddenMsg, { id: toastId, duration: 6000 })
       }
     } else if (errData?.message && status !== 401 && !isAuthUrl) {
       const toastId = `api-err-${status}-${original.url}`
