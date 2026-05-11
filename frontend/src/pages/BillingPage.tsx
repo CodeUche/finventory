@@ -175,10 +175,18 @@ export default function BillingPage() {
     try {
       // Step 1: initialise transaction on backend (creates pending PaymentHistory record)
       const res = await subscriptionApi.initiatePayment(plan.id)
-      const { access_code, reference, public_key, amount_kobo, email } = res.data
+      const { access_code, reference, public_key, amount_kobo, email, authorization_url } = res.data
 
       if (!public_key) {
         toast.error('Paystack public key is not configured. Contact support.')
+        return
+      }
+
+      // For partner plans the Paystack iframe doesn't load in the desktop WebView2.
+      // Open the hosted checkout page in the system browser instead.
+      if (plan.slug?.startsWith('partner-')) {
+        window.open(authorization_url, '_blank')
+        toast('Payment page opened in your browser. Return here and click "Refresh status" once done.', { duration: 8000 })
         return
       }
 

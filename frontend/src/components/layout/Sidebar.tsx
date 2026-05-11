@@ -127,7 +127,7 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
     // Route guards (ModuleRoute) enforce actual access — the sidebar is just navigation UI.
     const membershipLoading = memberRole === null && !user?.is_superuser
     if (partnerOnly && (!FEATURES.PARTNER_CHANNEL || !user?.has_partner_profile)) return false
-    if (partnerOnly && !user?.is_superuser && planName !== 'partner') return false
+    if (partnerOnly && !user?.is_superuser && !planName?.startsWith('partner')) return false
     if (!mod) return true                             // no module restriction (dashboard, settings)
     if (user?.is_superuser) return true              // superusers always see everything
     // Plan-level gate: if the active plan restricts modules, only show allowed ones
