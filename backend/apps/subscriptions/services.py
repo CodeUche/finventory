@@ -23,6 +23,14 @@ logger = logging.getLogger(__name__)
 _PAYSTACK_API = "https://api.paystack.co"
 
 
+def _get_sub(organisation):
+    """Safe accessor for org.subscription — returns None if FK points to deleted row."""
+    try:
+        return organisation.subscription
+    except Exception:
+        return None
+
+
 class SubscriptionService:
 
     @staticmethod
@@ -44,7 +52,7 @@ class SubscriptionService:
     @staticmethod
     def upgrade_plan(organisation, new_plan: Plan) -> Subscription:
         """Upgrade/downgrade to a different plan (mock — no payment)."""
-        sub = organisation.subscription
+        sub = _get_sub(organisation)
         if not sub:
             return SubscriptionService.create_trial(organisation, new_plan)
         sub.plan = new_plan
@@ -58,7 +66,7 @@ class SubscriptionService:
     @staticmethod
     def cancel(organisation) -> Subscription:
         """Cancel a subscription at period end."""
-        sub = organisation.subscription
+        sub = _get_sub(organisation)
         if sub:
             sub.status = Subscription.Status.CANCELED
             sub.canceled_at = timezone.now()
@@ -72,7 +80,7 @@ class SubscriptionService:
         Replaces any existing subscription. Marks onboarding as completed.
         """
         trial_end = timezone.now() + timedelta(days=14)
-        sub = organisation.subscription
+        sub = _get_sub(organisation)
         if sub:
             sub.plan = plan
             sub.status = Subscription.Status.TRIALING
@@ -109,7 +117,7 @@ class SubscriptionService:
         except Plan.DoesNotExist:
             raise ValueError("Free plan not found. Run migrations first.")
 
-        sub = organisation.subscription
+        sub = _get_sub(organisation)
         if sub:
             sub.plan = plan
             sub.status = Subscription.Status.ACTIVE
@@ -264,7 +272,7 @@ class PaystackSubscriptionService:
             raise ValueError(f"Paystack error: {msg}")
 
         # Record a pending payment so we can match the webhook/verify later
-        sub = organisation.subscription
+        sub = _get_sub(organisation)
         if sub:
             PaymentHistory.objects.create(
                 subscription=sub,
@@ -370,7 +378,10 @@ class PaystackSubscriptionService:
         Set subscription to ACTIVE for the given plan and record payment.
         Idempotent — safe to call multiple times for the same reference.
         """
-        sub = organisation.subscription
+        try:
+            sub = organisation.subscription
+        except Exception:
+            sub = None
         if not sub:
             sub = Subscription.objects.create(
                 plan=plan,

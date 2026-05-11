@@ -196,7 +196,13 @@ class SubscriptionViewSet(viewsets.GenericViewSet):
 
     def get_object(self):
         org = self.request.organisation
-        return org.subscription
+        if org is None:
+            return None
+        try:
+            return org.subscription
+        except Exception:
+            # subscription_id FK points to a deleted row — treat as no subscription
+            return None
 
     @action(detail=False, methods=["get"])
     def current(self, request):
