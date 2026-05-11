@@ -1,54 +1,44 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
-  GraduationCap, Users, TrendingUp, Trash2, Loader2,
-  Building2, DollarSign, CheckCircle, XCircle, RefreshCw,
-  BarChart3, FileBarChart2, ExternalLink, Send, Clock,
-  ShieldCheck, Key, ChevronRight, LockKeyhole,
+  GraduationCap, Users, TrendingUp, Trash2, Loader2, Building2,
+  DollarSign, CheckCircle, XCircle, RefreshCw, ExternalLink, Send,
+  Clock, ShieldCheck, Key, ChevronRight, ChevronDown, ChevronUp,
+  LockKeyhole, Search, UserPlus, BarChart3, X, Copy,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { useNavigate } from 'react-router-dom'
 import { partnerApi, orgApi, bypassNextGets } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
-import type { PartnerProfile, PartnerClientLink, PartnerAccessRequest, PartnerAccessRequestStatus } from '@/types'
+import type {
+  PartnerProfile, PartnerClientLink, PartnerAccessRequest, PartnerAccessRequestStatus,
+} from '@/types'
+
+// ── Types ────────────────────────────────────────────────────────────────────
 
 interface ConsolidatedClient {
   link_id: string
   org_id: string
   org_name: string
-  org_currency: string
   plan: string
   revenue_this_month: number
   outstanding_balance: number
   overdue_count: number
-  total_customers: number
-  total_products: number
-  linked_at: string
 }
 
 interface ConsolidatedData {
   clients: ConsolidatedClient[]
-  totals: {
-    total_revenue: number
-    total_outstanding: number
-    total_customers: number
-    total_products: number
-    client_count: number
-  }
+  totals: { total_revenue: number; total_outstanding: number; total_customers: number; client_count: number }
 }
 
-const TIER_LABELS: Record<string, string> = {
-  starter: 'Partner Starter',
-  pro: 'Partner Pro',
-  agency: 'Partner Agency',
+// ── Constants ────────────────────────────────────────────────────────────────
+
+const TIER_META: Record<string, { label: string; cls: string }> = {
+  starter: { label: 'Starter',  cls: 'bg-slate-500/15 text-slate-300' },
+  pro:     { label: 'Pro',      cls: 'bg-brand-500/15 text-brand-300' },
+  agency:  { label: 'Agency',   cls: 'bg-purple-500/15 text-purple-300' },
 }
 
-const TIER_COLORS: Record<string, string> = {
-  starter: 'text-slate-300 bg-slate-500/10',
-  pro: 'text-brand-300 bg-brand-500/10',
-  agency: 'text-purple-300 bg-purple-500/10',
-}
-
-const STATUS_STYLES: Record<PartnerAccessRequestStatus, { label: string; cls: string; Icon: React.ElementType }> = {
+const STATUS_META: Record<PartnerAccessRequestStatus, { label: string; cls: string; Icon: React.ElementType }> = {
   pending:   { label: 'Pending',   cls: 'bg-amber-500/10 text-amber-400',  Icon: Clock },
   approved:  { label: 'Approved',  cls: 'bg-green-500/10 text-green-400',  Icon: CheckCircle },
   rejected:  { label: 'Rejected',  cls: 'bg-red-500/10 text-red-400',      Icon: XCircle },
@@ -56,75 +46,114 @@ const STATUS_STYLES: Record<PartnerAccessRequestStatus, { label: string; cls: st
 }
 
 function fmtMoney(v: string | number) {
-  return '₦' + parseFloat(String(v)).toLocaleString('en-NG', { minimumFractionDigits: 2 })
+  const n = parseFloat(String(v))
+  if (isNaN(n)) return '₦—'
+  return '₦' + n.toLocaleString('en-NG', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
 }
 
 function fmtDate(dt: string) {
   return new Date(dt).toLocaleDateString('en-NG', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
-type Tab = 'clients' | 'requests' | 'consolidated'
+// ── KPI Tile ─────────────────────────────────────────────────────────────────
+
+function KpiTile({
+  label, value, sub, icon: Icon, accent,
+}: { label: string; value: string | number; sub?: string; icon: React.ElementType; accent?: string }) {
+  return (
+    <div className="card space-y-2 py-4">
+      <div className="flex items-center gap-1.5 text-xs text-slate-500">
+        <Icon size={12} />
+        <span>{label}</span>
+      </div>
+      <p className={`text-2xl font-bold leading-none ${accent ?? 'text-white'}`}>{value}</p>
+      {sub && <p className="text-xs text-slate-500">{sub}</p>}
+    </div>
+  )
+}
+
+// ── Main Component ────────────────────────────────────────────────────────────
 
 export default function PartnerDashboardPage() {
   const navigate = useNavigate()
   const { setOrganisation, setOrganisations } = useAuthStore()
-  const [profile, setProfile] = useState<PartnerProfile | null>(null)
-  const [clients, setClients] = useState<PartnerClientLink[]>([])
-  const [accessRequests, setAccessRequests] = useState<PartnerAccessRequest[]>([])
-  const [consolidated, setConsolidated] = useState<ConsolidatedData | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [subscriptionExpired, setSubscriptionExpired] = useState(false)
-  const [tab, setTab] = useState<Tab>('clients')
-  const [managingBooks, setManagingBooks] = useState<string | null>(null)
 
-  // Request access form
-  const [reqOrgId, setReqOrgId] = useState('')
+  const [profile, setProfile]               = useState<PartnerProfile | null>(null)
+  const [clients, setClients]               = useState<PartnerClientLink[]>([])
+  const [accessRequests, setAccessRequests] = useState<PartnerAccessRequest[]>([])
+  const [consolidated, setConsolidated]     = useState<ConsolidatedData | null>(null)
+
+  const [loading, setLoading]                     = useState(true)
+  const [subscriptionExpired, setSubscriptionExpired] = useState(false)
+
+  // UI state
+  const [search, setSearch]           = useState('')
+  const [reqPanelOpen, setReqPanelOpen] = useState(true)
+  const [showAllReqs, setShowAllReqs] = useState(false)
+  const [addClientOpen, setAddClientOpen] = useState(false)
+  const [addClientTab, setAddClientTab]   = useState<'request' | 'token'>('request')
+
+  // Form state
+  const [reqOrgId, setReqOrgId]     = useState('')
   const [reqMessage, setReqMessage] = useState('')
   const [requesting, setRequesting] = useState(false)
-
-  // Accept invite token form
-  const [inviteToken, setInviteToken] = useState('')
+  const [inviteToken, setInviteToken]   = useState('')
   const [acceptingToken, setAcceptingToken] = useState(false)
 
-  const [removing, setRemoving] = useState<string | null>(null)
+  // Row actions
+  const [removing, setRemoving]       = useState<string | null>(null)
   const [withdrawing, setWithdrawing] = useState<string | null>(null)
+  const [managingBooks, setManagingBooks] = useState<string | null>(null)
+
+  // ── Load ──────────────────────────────────────────────────────────────────
 
   const load = async () => {
     setLoading(true)
     setSubscriptionExpired(false)
     try {
-      const [profileRes, clientsRes, reqsRes] = await Promise.allSettled([
+      const [profileRes, clientsRes, reqsRes, consolidatedRes] = await Promise.allSettled([
         partnerApi.profile(),
         partnerApi.clients(),
         partnerApi.listAccessRequests(),
+        partnerApi.consolidated(),
       ])
-      if (profileRes.status === 'fulfilled') setProfile(profileRes.value.data)
-      if (clientsRes.status === 'fulfilled') {
+      if (profileRes.status === 'fulfilled')
+        setProfile(profileRes.value.data)
+      if (clientsRes.status === 'fulfilled')
         setClients(clientsRes.value.data.results ?? clientsRes.value.data)
-      } else if (clientsRes.reason?.response?.status === 403) {
+      else if (clientsRes.reason?.response?.status === 403)
         setSubscriptionExpired(true)
-      }
-      if (reqsRes.status === 'fulfilled') {
+      if (reqsRes.status === 'fulfilled')
         setAccessRequests(reqsRes.value.data.results ?? reqsRes.value.data)
-      }
+      if (consolidatedRes.status === 'fulfilled')
+        setConsolidated(consolidatedRes.value.data)
     } finally {
       setLoading(false)
     }
   }
 
-  const loadConsolidated = async () => {
-    try {
-      const res = await partnerApi.consolidated()
-      setConsolidated(res.data)
-    } catch {
-      toast.error('Failed to load consolidated report')
-    }
-  }
+  useEffect(() => { load() }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { load() }, [])
-  useEffect(() => {
-    if (tab === 'consolidated' && !consolidated) loadConsolidated()
-  }, [tab]) // eslint-disable-line react-hooks/exhaustive-deps
+  // ── Derived data ──────────────────────────────────────────────────────────
+
+  const activeClients = useMemo(() => clients.filter((c) => c.is_active), [clients])
+
+  const filteredClients = useMemo(() => {
+    if (!search.trim()) return activeClients
+    const q = search.toLowerCase()
+    return activeClients.filter((c) => (c.org_name || '').toLowerCase().includes(q))
+  }, [activeClients, search])
+
+  const consolidatedByOrgId = useMemo(() => {
+    const map: Record<string, ConsolidatedClient> = {}
+    consolidated?.clients.forEach((cc) => { map[cc.org_id] = cc })
+    return map
+  }, [consolidated])
+
+  const pendingRequests  = useMemo(() => accessRequests.filter((r) => r.status === 'pending'), [accessRequests])
+  const resolvedRequests = useMemo(() => accessRequests.filter((r) => r.status !== 'pending'), [accessRequests])
+
+  // ── Handlers ─────────────────────────────────────────────────────────────
 
   const handleRequestAccess = async () => {
     if (subscriptionExpired) { navigate('/billing'); return }
@@ -138,8 +167,8 @@ export default function PartnerDashboardPage() {
       setAccessRequests((prev) => [res.data, ...prev.filter((r) => r.id !== res.data.id)])
       setReqOrgId('')
       setReqMessage('')
+      setAddClientOpen(false)
       toast.success('Access request sent — the organisation owner will be notified.')
-      setTab('requests')
     } catch (err: any) {
       const msg = err?.response?.data?.error
       toast.error(typeof msg === 'string' ? msg : msg?.message ?? 'Failed to send request')
@@ -154,10 +183,10 @@ export default function PartnerDashboardPage() {
     setAcceptingToken(true)
     try {
       await partnerApi.acceptInvite(inviteToken.trim())
-      toast.success('Invite accepted — you now have access to this organisation.')
       setInviteToken('')
+      setAddClientOpen(false)
       await load()
-      setTab('clients')
+      toast.success('Invite accepted — you now have access to this organisation.')
     } catch (err: any) {
       const msg = err?.response?.data?.error
       toast.error(typeof msg === 'string' ? msg : msg?.message ?? 'Invalid or expired token')
@@ -173,7 +202,7 @@ export default function PartnerDashboardPage() {
       const orgs: any[] = data.results ?? data
       const clientOrg = orgs.find((o: any) => o.id === c.organisation)
       if (!clientOrg) {
-        toast.error('Organisation not found in your membership list — contact the client to check your access.')
+        toast.error('Organisation not found — ask your client to check your membership.')
         return
       }
       setOrganisations(orgs)
@@ -186,12 +215,12 @@ export default function PartnerDashboardPage() {
     }
   }
 
-  const handleRemove = async (clientId: string) => {
-    if (!confirm('Remove this client from your portfolio? This will also revoke your access to their organisation.')) return
-    setRemoving(clientId)
+  const handleRemove = async (c: PartnerClientLink) => {
+    if (!confirm(`Remove ${c.org_name || 'this client'}? Your access to their organisation will be revoked.`)) return
+    setRemoving(c.id)
     try {
-      await partnerApi.removeClient(clientId)
-      setClients((prev) => prev.filter((c) => c.id !== clientId))
+      await partnerApi.removeClient(c.id)
+      setClients((prev) => prev.filter((x) => x.id !== c.id))
       toast.success('Client removed and access revoked')
     } catch {
       toast.error('Failed to remove client')
@@ -200,22 +229,23 @@ export default function PartnerDashboardPage() {
     }
   }
 
-  const handleWithdraw = async (reqId: string) => {
-    if (!confirm('Withdraw this access request?')) return
-    setWithdrawing(reqId)
+  const handleWithdraw = async (req: PartnerAccessRequest) => {
+    if (!confirm(`Withdraw this access request to ${req.org_name}?`)) return
+    setWithdrawing(req.id)
     try {
-      await partnerApi.withdrawRequest(reqId)
-      setAccessRequests((prev) => prev.map((r) =>
-        r.id === reqId ? { ...r, status: 'withdrawn' as PartnerAccessRequestStatus } : r
-      ))
+      await partnerApi.withdrawRequest(req.id)
+      setAccessRequests((prev) =>
+        prev.map((r) => r.id === req.id ? { ...r, status: 'withdrawn' as PartnerAccessRequestStatus } : r)
+      )
       toast.success('Request withdrawn')
-    } catch (err: any) {
-      const msg = err?.response?.data?.error
-      toast.error(typeof msg === 'string' ? msg : 'Failed to withdraw request')
+    } catch {
+      toast.error('Failed to withdraw request')
     } finally {
       setWithdrawing(null)
     }
   }
+
+  // ── Loading state ─────────────────────────────────────────────────────────
 
   if (loading) {
     return (
@@ -227,184 +257,166 @@ export default function PartnerDashboardPage() {
 
   if (!profile) {
     return (
-      <div className="flex flex-col items-center justify-center h-64 gap-4">
+      <div className="flex flex-col items-center justify-center h-64 gap-3">
         <GraduationCap size={40} className="text-slate-600" />
-        <p className="text-slate-400 text-sm">No partner profile found. Subscribe to a Partner plan to get started.</p>
+        <p className="text-slate-400 text-sm">Partner profile not found.</p>
+        <button onClick={() => navigate('/billing')} className="btn-primary text-sm">
+          Set up Partner Account
+        </button>
       </div>
     )
   }
 
-  const activeClients = clients.filter((c) => c.is_active)
+  const tier = TIER_META[profile.tier] ?? TIER_META.starter
   const maxClients = profile.max_clients >= 999999 ? null : profile.max_clients
-  const pendingCount = accessRequests.filter((r) => r.status === 'pending').length
+
+  // ── Render ───────────────────────────────────────────────────────────────
 
   return (
-    <div className="space-y-6 max-w-5xl">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-            <GraduationCap size={22} className="text-purple-400" />
-            Partner Dashboard
-          </h1>
-          <p className="text-slate-400 text-sm mt-0.5">Manage your SMB client portfolio and track commissions.</p>
-        </div>
-        <button onClick={() => { bypassNextGets(); load() }} className="btn-ghost text-xs flex items-center gap-1.5 text-slate-400">
-          <RefreshCw size={13} /> Refresh
-        </button>
-      </div>
+    <div className="space-y-5 max-w-6xl">
 
-      {/* Profile summary tiles */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <div className="card space-y-1">
-          <p className="text-xs text-slate-500">Tier</p>
-          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${TIER_COLORS[profile.tier]}`}>
-            {TIER_LABELS[profile.tier]}
-          </span>
+      {/* ── Header ── */}
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-purple-500/15 flex items-center justify-center shrink-0">
+            <GraduationCap size={20} className="text-purple-400" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-bold text-white leading-none">Partner Dashboard</h1>
+              <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${tier.cls}`}>
+                {tier.label}
+              </span>
+            </div>
+            {profile.firm_name && (
+              <p className="text-xs text-slate-500 mt-0.5">{profile.firm_name}</p>
+            )}
+          </div>
         </div>
-        <div className="card space-y-1">
-          <p className="text-xs text-slate-500 flex items-center gap-1"><Users size={11} /> Clients</p>
-          <p className="text-xl font-bold text-white">
-            {activeClients.length}{maxClients ? <span className="text-slate-500 text-sm font-normal"> / {maxClients}</span> : null}
-          </p>
-        </div>
-        <div className="card space-y-1">
-          <p className="text-xs text-slate-500 flex items-center gap-1"><DollarSign size={11} /> Commission Rate</p>
-          <p className="text-xl font-bold text-white">{profile.commission_rate}%</p>
-        </div>
-        <div className="card space-y-1">
-          <p className="text-xs text-slate-500 flex items-center gap-1"><TrendingUp size={11} /> Total Earned</p>
-          <p className="text-xl font-bold text-white">{fmtMoney(profile.total_commission_earned)}</p>
-        </div>
-      </div>
 
-      {/* Feature flags + referral code */}
-      <div className="flex flex-wrap items-center gap-2">
-        <span className={`flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full ${profile.white_label_reports ? 'bg-green-500/10 text-green-400' : 'bg-slate-700/50 text-slate-500'}`}>
-          {profile.white_label_reports ? <CheckCircle size={11} /> : <XCircle size={11} />} White-label Reports
-        </span>
-        <span className={`flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full ${profile.consolidated_reporting ? 'bg-green-500/10 text-green-400' : 'bg-slate-700/50 text-slate-500'}`}>
-          {profile.consolidated_reporting ? <CheckCircle size={11} /> : <XCircle size={11} />} Consolidated Reporting
-        </span>
-        {profile.referral_code && (
+        <div className="flex items-center gap-2 flex-wrap">
+          {profile.referral_code && (
+            <button
+              onClick={() => { navigator.clipboard.writeText(profile.referral_code); toast.success('Referral code copied') }}
+              className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-purple-500/10 text-purple-400 hover:bg-purple-500/20 transition-colors"
+            >
+              <Copy size={11} />
+              {profile.referral_code}
+            </button>
+          )}
+          {profile.tier === 'starter' && !subscriptionExpired && (
+            <button onClick={() => navigate('/billing')} className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-brand-500/15 text-brand-400 hover:bg-brand-500/25 transition-colors">
+              Upgrade Plan
+            </button>
+          )}
           <button
-            onClick={() => { navigator.clipboard.writeText(profile.referral_code); toast.success('Referral code copied!') }}
-            className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-purple-500/10 text-purple-400 hover:bg-purple-500/20 transition-colors"
+            onClick={() => navigate('/partner/report')}
+            className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white px-3 py-1.5 rounded-lg hover:bg-surface-700/50 transition-colors"
           >
-            Referral Code: <span className="font-mono">{profile.referral_code}</span>
-            <ExternalLink size={10} />
+            <BarChart3 size={13} /> Report
           </button>
-        )}
+          <button
+            onClick={() => { bypassNextGets(); load() }}
+            className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white px-3 py-1.5 rounded-lg hover:bg-surface-700/50 transition-colors"
+          >
+            <RefreshCw size={13} /> Refresh
+          </button>
+        </div>
       </div>
 
-      {/* Subscription expired paywall */}
+      {/* ── Subscription expired paywall ── */}
       {subscriptionExpired && (
-        <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-6 flex flex-col sm:flex-row items-center gap-5">
-          <div className="shrink-0 w-12 h-12 rounded-full bg-red-500/10 flex items-center justify-center">
-            <LockKeyhole size={22} className="text-red-400" />
+        <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-5 flex flex-col sm:flex-row items-start sm:items-center gap-4">
+          <div className="w-10 h-10 rounded-full bg-red-500/10 flex items-center justify-center shrink-0">
+            <LockKeyhole size={18} className="text-red-400" />
           </div>
-          <div className="flex-1 text-center sm:text-left">
-            <p className="text-white font-semibold text-sm">Your partner subscription has expired</p>
-            <p className="text-slate-400 text-xs mt-1">
-              Your free trial has ended or your subscription is no longer active. Subscribe to a Partner plan to continue
-              managing client organisations and accessing the dashboard features.
-            </p>
+          <div className="flex-1 space-y-1">
+            <p className="text-white font-semibold text-sm">Partner subscription required</p>
+            <ul className="text-xs text-slate-400 space-y-0.5 list-disc list-inside">
+              <li>Manage and switch to client organisations</li>
+              <li>Track commission from client subscriptions</li>
+              <li>Consolidated financial reporting across your portfolio</li>
+            </ul>
           </div>
-          <button
-            onClick={() => navigate('/billing')}
-            className="btn-primary shrink-0 text-sm px-5"
-          >
+          <button onClick={() => navigate('/billing')} className="btn-primary shrink-0 text-sm">
             Subscribe to Partner Plan
           </button>
         </div>
       )}
 
-      {/* Tabs */}
-      <div className="flex gap-1 border-b border-surface-700">
-        {([
-          ['clients', 'My Clients', Users, 0],
-          ['requests', 'Access Requests', ShieldCheck, pendingCount],
-          ['consolidated', 'Consolidated Report', BarChart3, 0],
-        ] as const).map(([key, label, Icon, badge]) => (
-          <button
-            key={key}
-            onClick={() => setTab(key as Tab)}
-            className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-              tab === key ? 'border-brand-500 text-brand-400' : 'border-transparent text-slate-400 hover:text-white'
-            }`}
-          >
-            <Icon size={14} /> {label}
-            {badge > 0 && (
-              <span className="ml-1 bg-amber-500 text-black text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none">
-                {badge}
-              </span>
-            )}
-          </button>
-        ))}
+      {/* ── KPI strip ── */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <KpiTile
+          label="Active Clients"
+          value={activeClients.length}
+          sub={maxClients ? `of ${maxClients} max` : undefined}
+          icon={Users}
+        />
+        <KpiTile
+          label="Revenue This Month"
+          value={consolidated ? fmtMoney(consolidated.totals.total_revenue) : '—'}
+          sub={consolidated ? `across ${consolidated.totals.client_count} clients` : 'Upgrade for insights'}
+          icon={TrendingUp}
+        />
+        <KpiTile
+          label="Outstanding Balance"
+          value={consolidated ? fmtMoney(consolidated.totals.total_outstanding) : '—'}
+          icon={DollarSign}
+          accent={consolidated && consolidated.totals.total_outstanding > 0 ? 'text-red-400' : 'text-white'}
+        />
+        <KpiTile
+          label="Commission Earned"
+          value={fmtMoney(profile.total_commission_earned)}
+          sub={`${profile.commission_rate}% rate`}
+          icon={DollarSign}
+          accent="text-green-400"
+        />
       </div>
 
-      {/* ── My Clients tab ── */}
-      {tab === 'clients' && (
-        <div className="space-y-4">
-          {/* Request access form */}
-          <div className="card space-y-3">
-            <p className="text-sm font-semibold text-white flex items-center gap-2"><Send size={14} /> Request Access to a Client Organisation</p>
-            <p className="text-xs text-slate-400">
-              Enter the Organisation ID of a client you want to manage. The owner will receive a notification and can approve or reject your request.
-            </p>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="sm:col-span-2">
-                <label className="label">Organisation ID (UUID)</label>
-                <input
-                  className="input"
-                  placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                  value={reqOrgId}
-                  onChange={(e) => setReqOrgId(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="label">Message (optional)</label>
-                <input
-                  className="input"
-                  placeholder="e.g. Referred by Ahmed"
-                  value={reqMessage}
-                  onChange={(e) => setReqMessage(e.target.value)}
-                  maxLength={300}
-                />
-              </div>
-            </div>
-            <div className="flex items-center justify-between">
-              <div className="text-xs text-slate-500">The client org owner must approve your request before you gain access.</div>
-              <button onClick={handleRequestAccess} disabled={requesting} className="btn-primary text-sm flex items-center gap-1.5">
-                {requesting ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} Send Request
-              </button>
-            </div>
-          </div>
+      {/* ── Main content: clients + requests panel ── */}
+      <div className="flex flex-col lg:flex-row gap-5">
 
-          {/* Accept invite token */}
-          <div className="card space-y-3 border border-purple-500/20 bg-purple-500/5">
-            <p className="text-sm font-semibold text-purple-300 flex items-center gap-2"><Key size={14} /> Accept an Invite Token</p>
-            <p className="text-xs text-slate-400">
-              If a client sent you an invite token, paste it here to instantly gain access without waiting for approval.
-            </p>
-            <div className="flex gap-2">
+        {/* ── Clients section ── */}
+        <div className="flex-1 min-w-0 space-y-3">
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
               <input
-                className="input flex-1"
-                placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                value={inviteToken}
-                onChange={(e) => setInviteToken(e.target.value)}
+                className="input pl-8 text-sm"
+                placeholder="Search clients…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
               />
-              <button onClick={handleAcceptToken} disabled={acceptingToken} className="btn-primary text-sm flex items-center gap-1.5 shrink-0">
-                {acceptingToken ? <Loader2 size={13} className="animate-spin" /> : <ChevronRight size={13} />} Accept
-              </button>
             </div>
+            <button
+              onClick={() => { setAddClientOpen(true); setAddClientTab('request') }}
+              disabled={subscriptionExpired}
+              className="btn-primary text-sm flex items-center gap-1.5 shrink-0"
+            >
+              <UserPlus size={13} /> Add Client
+            </button>
           </div>
 
-          {/* Active client list */}
-          {activeClients.length === 0 ? (
-            <div className="card text-center py-10">
-              <Building2 size={32} className="text-slate-600 mx-auto mb-2" />
-              <p className="text-slate-400 text-sm">No approved clients yet.</p>
-              <p className="text-slate-500 text-xs mt-1">Send an access request above or ask a client to generate an invite token for you.</p>
+          {filteredClients.length === 0 ? (
+            <div className="card text-center py-12">
+              <Building2 size={32} className="text-slate-600 mx-auto mb-3" />
+              {search ? (
+                <p className="text-slate-400 text-sm">No clients match "{search}"</p>
+              ) : (
+                <>
+                  <p className="text-slate-300 font-medium text-sm">No clients yet</p>
+                  <p className="text-slate-500 text-xs mt-1 max-w-xs mx-auto">
+                    Request access to an organisation, or ask a client to generate an invite token for you.
+                  </p>
+                  <button
+                    onClick={() => { setAddClientOpen(true); setAddClientTab('request') }}
+                    className="btn-primary text-sm mt-4 mx-auto"
+                    disabled={subscriptionExpired}
+                  >
+                    <UserPlus size={13} /> Add your first client
+                  </button>
+                </>
+              )}
             </div>
           ) : (
             <div className="card overflow-hidden p-0">
@@ -412,97 +424,66 @@ export default function PartnerDashboardPage() {
                 <thead>
                   <tr className="border-b border-surface-700">
                     <th className="text-left text-xs text-slate-500 font-medium px-4 py-3">Organisation</th>
-                    <th className="text-left text-xs text-slate-500 font-medium px-4 py-3">Linked</th>
-                    <th className="text-left text-xs text-slate-500 font-medium px-4 py-3">Commission Earned</th>
-                    <th className="text-left text-xs text-slate-500 font-medium px-4 py-3">Notes</th>
-                    <th className="px-4 py-3" />
+                    <th className="text-left text-xs text-slate-500 font-medium px-4 py-3 hidden md:table-cell">Linked</th>
+                    <th className="text-right text-xs text-slate-500 font-medium px-4 py-3 hidden lg:table-cell">Revenue (mo)</th>
+                    <th className="text-right text-xs text-slate-500 font-medium px-4 py-3 hidden lg:table-cell">Outstanding</th>
+                    <th className="text-right text-xs text-slate-500 font-medium px-4 py-3">Commission</th>
+                    <th className="px-4 py-3 w-px" />
                   </tr>
                 </thead>
                 <tbody>
-                  {activeClients.map((c) => (
-                    <tr key={c.id} className="border-b border-surface-700/50 last:border-0 hover:bg-surface-700/20">
-                      <td className="px-4 py-3 text-white font-medium">{c.org_name || c.organisation}</td>
-                      <td className="px-4 py-3 text-slate-400">{fmtDate(c.linked_at)}</td>
-                      <td className="px-4 py-3 text-green-400 font-medium">{fmtMoney(c.commission_earned)}</td>
-                      <td className="px-4 py-3 text-slate-400 text-xs">{c.notes || '—'}</td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-1">
-                          <button
-                            onClick={() => handleManageBooks(c)}
-                            disabled={managingBooks === c.id}
-                            className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg text-purple-400 hover:bg-purple-400/10 transition-colors"
-                          >
-                            {managingBooks === c.id ? <Loader2 size={11} className="animate-spin" /> : <ExternalLink size={11} />}
-                            Manage Books
-                          </button>
-                          <button
-                            onClick={() => handleRemove(c.id)}
-                            disabled={removing === c.id}
-                            className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-400/10 transition-colors"
-                            title="Remove client and revoke access"
-                          >
-                            {removing === c.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ── Access Requests tab ── */}
-      {tab === 'requests' && (
-        <div className="space-y-4">
-          {accessRequests.length === 0 ? (
-            <div className="card text-center py-10">
-              <ShieldCheck size={32} className="text-slate-600 mx-auto mb-2" />
-              <p className="text-slate-400 text-sm">No access requests yet.</p>
-              <p className="text-slate-500 text-xs mt-1">Requests you send to client organisations will appear here.</p>
-            </div>
-          ) : (
-            <div className="card overflow-hidden p-0">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-surface-700">
-                    <th className="text-left text-xs text-slate-500 font-medium px-4 py-3">Organisation</th>
-                    <th className="text-left text-xs text-slate-500 font-medium px-4 py-3">Status</th>
-                    <th className="text-left text-xs text-slate-500 font-medium px-4 py-3">Message</th>
-                    <th className="text-left text-xs text-slate-500 font-medium px-4 py-3">Date</th>
-                    <th className="px-4 py-3" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {accessRequests.map((req) => {
-                    const s = STATUS_STYLES[req.status] || STATUS_STYLES.pending
+                  {filteredClients.map((c) => {
+                    const cc = consolidatedByOrgId[c.organisation]
                     return (
-                      <tr key={req.id} className="border-b border-surface-700/50 last:border-0 hover:bg-surface-700/20">
-                        <td className="px-4 py-3 text-white font-medium">{req.org_name}</td>
+                      <tr key={c.id} className="border-b border-surface-700/50 last:border-0 hover:bg-surface-700/20 transition-colors">
                         <td className="px-4 py-3">
-                          <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium ${s.cls}`}>
-                            <s.Icon size={10} /> {s.label}
-                          </span>
-                          {req.status === 'rejected' && req.rejection_reason && (
-                            <p className="text-xs text-red-400/70 mt-0.5 italic">{req.rejection_reason}</p>
-                          )}
+                          <p className="text-white font-medium leading-tight">{c.org_name || '—'}</p>
+                          {cc?.overdue_count ? (
+                            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-red-500/15 text-red-400 mt-0.5 inline-block">
+                              {cc.overdue_count} overdue
+                            </span>
+                          ) : null}
                         </td>
-                        <td className="px-4 py-3 text-slate-400 text-xs max-w-[180px] truncate">
-                          {req.request_message || '—'}
+                        <td className="px-4 py-3 text-slate-400 text-xs hidden md:table-cell">
+                          {fmtDate(c.linked_at)}
                         </td>
-                        <td className="px-4 py-3 text-slate-400 text-xs">{fmtDate(req.created_at)}</td>
+                        <td className="px-4 py-3 text-right text-slate-300 text-xs hidden lg:table-cell">
+                          {cc ? fmtMoney(cc.revenue_this_month) : '—'}
+                        </td>
+                        <td className="px-4 py-3 text-right hidden lg:table-cell">
+                          {cc ? (
+                            <span className={cc.outstanding_balance > 0 ? 'text-red-400 text-xs font-medium' : 'text-slate-500 text-xs'}>
+                              {fmtMoney(cc.outstanding_balance)}
+                            </span>
+                          ) : <span className="text-slate-600 text-xs">—</span>}
+                        </td>
+                        <td className="px-4 py-3 text-right text-green-400 text-xs font-medium">
+                          {fmtMoney(c.commission_earned)}
+                        </td>
                         <td className="px-4 py-3">
-                          {(req.status === 'pending' || req.status === 'approved') && (
+                          <div className="flex items-center justify-end gap-1">
                             <button
-                              onClick={() => handleWithdraw(req.id)}
-                              disabled={withdrawing === req.id}
-                              className="text-xs px-2 py-1 rounded-lg text-slate-400 hover:text-red-400 hover:bg-red-400/10 transition-colors"
+                              onClick={() => handleManageBooks(c)}
+                              disabled={!!managingBooks}
+                              title="Switch to client's workspace"
+                              className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg text-purple-400 hover:bg-purple-400/10 font-medium transition-colors"
                             >
-                              {withdrawing === req.id ? <Loader2 size={12} className="animate-spin" /> : 'Withdraw'}
+                              {managingBooks === c.id
+                                ? <Loader2 size={11} className="animate-spin" />
+                                : <ExternalLink size={11} />}
+                              Manage
                             </button>
-                          )}
+                            <button
+                              onClick={() => handleRemove(c)}
+                              disabled={removing === c.id}
+                              title="Remove client and revoke access"
+                              className="p-1.5 rounded-lg text-slate-600 hover:text-red-400 hover:bg-red-400/10 transition-colors"
+                            >
+                              {removing === c.id
+                                ? <Loader2 size={13} className="animate-spin" />
+                                : <Trash2 size={13} />}
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     )
@@ -512,83 +493,208 @@ export default function PartnerDashboardPage() {
             </div>
           )}
         </div>
-      )}
 
-      {/* ── Consolidated Report tab ── */}
-      {tab === 'consolidated' && (
-        <div className="space-y-4">
-          {!profile.consolidated_reporting ? (
-            <div className="card text-center py-10">
-              <FileBarChart2 size={32} className="text-slate-600 mx-auto mb-2" />
-              <p className="text-slate-400 text-sm">Consolidated reporting is available on Partner Pro and Agency plans.</p>
-            </div>
-          ) : !consolidated ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 size={22} className="animate-spin text-brand-400" />
-            </div>
-          ) : (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div className="card space-y-1">
-                  <p className="text-xs text-slate-500">Total Clients</p>
-                  <p className="text-2xl font-bold text-white">{consolidated.totals.client_count}</p>
-                </div>
-                <div className="card space-y-1">
-                  <p className="text-xs text-slate-500">Revenue This Month</p>
-                  <p className="text-2xl font-bold text-white">{fmtMoney(consolidated.totals.total_revenue)}</p>
-                </div>
-                <div className="card space-y-1">
-                  <p className="text-xs text-slate-500">Outstanding Balance</p>
-                  <p className="text-2xl font-bold text-red-400">{fmtMoney(consolidated.totals.total_outstanding)}</p>
-                </div>
-                <div className="card space-y-1">
-                  <p className="text-xs text-slate-500">Total Customers</p>
-                  <p className="text-2xl font-bold text-white">{consolidated.totals.total_customers}</p>
-                </div>
-              </div>
+        {/* ── Access Requests panel ── */}
+        <div className={`lg:w-72 shrink-0 ${subscriptionExpired ? 'opacity-50 pointer-events-none' : ''}`}>
+          <div className="card space-y-3">
+            <button
+              onClick={() => setReqPanelOpen((v) => !v)}
+              className="w-full flex items-center justify-between text-sm font-semibold text-white"
+            >
+              <span className="flex items-center gap-2">
+                <ShieldCheck size={14} className="text-slate-400" />
+                Access Requests
+                {pendingRequests.length > 0 && (
+                  <span className="bg-amber-500 text-black text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none">
+                    {pendingRequests.length}
+                  </span>
+                )}
+              </span>
+              {reqPanelOpen ? <ChevronUp size={14} className="text-slate-500" /> : <ChevronDown size={14} className="text-slate-500" />}
+            </button>
 
-              <div className="card overflow-hidden p-0">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-surface-700">
-                      <th className="text-left text-xs text-slate-500 font-medium px-4 py-3">Organisation</th>
-                      <th className="text-left text-xs text-slate-500 font-medium px-4 py-3">Plan</th>
-                      <th className="text-right text-xs text-slate-500 font-medium px-4 py-3">Revenue (Month)</th>
-                      <th className="text-right text-xs text-slate-500 font-medium px-4 py-3">Outstanding</th>
-                      <th className="text-right text-xs text-slate-500 font-medium px-4 py-3">Overdue</th>
-                      <th className="text-right text-xs text-slate-500 font-medium px-4 py-3">Customers</th>
-                      <th className="text-right text-xs text-slate-500 font-medium px-4 py-3">Products</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {consolidated.clients.map((c) => (
-                      <tr key={c.link_id} className="border-b border-surface-700/50 last:border-0 hover:bg-surface-700/20">
-                        <td className="px-4 py-3">
-                          <p className="text-white font-medium">{c.org_name}</p>
-                          <p className="text-xs text-slate-500">{fmtDate(c.linked_at)}</p>
-                        </td>
-                        <td className="px-4 py-3 text-slate-300 text-xs">{c.plan || '—'}</td>
-                        <td className="px-4 py-3 text-right text-green-400 font-medium">{fmtMoney(c.revenue_this_month)}</td>
-                        <td className="px-4 py-3 text-right">
-                          <span className={c.outstanding_balance > 0 ? 'text-red-400 font-medium' : 'text-slate-500'}>
-                            {fmtMoney(c.outstanding_balance)}
+            {reqPanelOpen && (
+              <div className="space-y-2">
+                {accessRequests.length === 0 ? (
+                  <p className="text-xs text-slate-500 text-center py-4">No requests yet. Use "Add Client" to request access.</p>
+                ) : (
+                  <>
+                    {/* Pending first */}
+                    {pendingRequests.map((req) => (
+                      <div key={req.id} className="rounded-lg bg-amber-500/5 border border-amber-500/20 px-3 py-2.5 space-y-1.5">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="text-white text-xs font-medium truncate">{req.org_name}</p>
+                            <p className="text-[10px] text-slate-500">{fmtDate(req.created_at)}</p>
+                          </div>
+                          <span className="flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 shrink-0">
+                            <Clock size={9} /> Pending
                           </span>
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          {c.overdue_count > 0
-                            ? <span className="text-xs px-2 py-0.5 rounded-full bg-red-500/10 text-red-400 font-medium">{c.overdue_count}</span>
-                            : <span className="text-slate-600">—</span>
-                          }
-                        </td>
-                        <td className="px-4 py-3 text-right text-slate-300">{c.total_customers}</td>
-                        <td className="px-4 py-3 text-right text-slate-300">{c.total_products}</td>
-                      </tr>
+                        </div>
+                        {req.request_message && (
+                          <p className="text-[10px] text-slate-500 italic truncate">"{req.request_message}"</p>
+                        )}
+                        <button
+                          onClick={() => handleWithdraw(req)}
+                          disabled={withdrawing === req.id}
+                          className="text-[10px] text-slate-500 hover:text-red-400 transition-colors"
+                        >
+                          {withdrawing === req.id ? <Loader2 size={10} className="animate-spin" /> : 'Withdraw'}
+                        </button>
+                      </div>
                     ))}
-                  </tbody>
-                </table>
+
+                    {/* Resolved (collapsed toggle) */}
+                    {resolvedRequests.length > 0 && (
+                      <div>
+                        <button
+                          onClick={() => setShowAllReqs((v) => !v)}
+                          className="w-full text-[11px] text-slate-500 hover:text-slate-300 py-1 flex items-center justify-center gap-1 transition-colors"
+                        >
+                          {showAllReqs ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+                          {showAllReqs ? 'Hide history' : `${resolvedRequests.length} historical request${resolvedRequests.length > 1 ? 's' : ''}`}
+                        </button>
+                        {showAllReqs && resolvedRequests.slice(0, 10).map((req) => {
+                          const meta = STATUS_META[req.status] ?? STATUS_META.withdrawn
+                          return (
+                            <div key={req.id} className="rounded-lg border border-surface-600/50 px-3 py-2 flex items-center justify-between gap-2 mt-1.5">
+                              <div className="min-w-0">
+                                <p className="text-white text-xs truncate">{req.org_name}</p>
+                                <p className="text-[10px] text-slate-500">{fmtDate(req.updated_at || req.created_at)}</p>
+                              </div>
+                              <span className={`flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full shrink-0 ${meta.cls}`}>
+                                <meta.Icon size={9} /> {meta.label}
+                              </span>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+
+                    {/* Quick add link */}
+                    <button
+                      onClick={() => { setAddClientOpen(true); setAddClientTab('request') }}
+                      className="w-full text-xs text-brand-400 hover:text-brand-300 py-1.5 border border-dashed border-surface-600 rounded-lg hover:border-brand-500/40 transition-colors flex items-center justify-center gap-1"
+                    >
+                      <Send size={11} /> New request
+                    </button>
+                  </>
+                )}
               </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Add Client Modal ── */}
+      {addClientOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setAddClientOpen(false)} />
+          <div className="relative card w-full max-w-lg p-6 space-y-5">
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-bold text-white flex items-center gap-2">
+                <UserPlus size={16} className="text-brand-400" /> Add a Client Organisation
+              </h2>
+              <button onClick={() => setAddClientOpen(false)} className="text-slate-400 hover:text-white">
+                <X size={18} />
+              </button>
             </div>
-          )}
+
+            {/* Tab switcher */}
+            <div className="flex rounded-xl bg-surface-800 border border-surface-700 p-1 gap-1">
+              <button
+                onClick={() => setAddClientTab('request')}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition-colors ${
+                  addClientTab === 'request'
+                    ? 'bg-brand-500 text-white'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Send size={11} /> Request Access
+              </button>
+              <button
+                onClick={() => setAddClientTab('token')}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition-colors ${
+                  addClientTab === 'token'
+                    ? 'bg-purple-500 text-white'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Key size={11} /> Accept Invite Token
+              </button>
+            </div>
+
+            {addClientTab === 'request' && (
+              <div className="space-y-4">
+                <p className="text-xs text-slate-400">
+                  Enter the Organisation ID of the client. The account owner will receive a notification and must approve your request before you gain access.
+                </p>
+                <div>
+                  <label className="label">Client's Organisation ID</label>
+                  <input
+                    className="input font-mono text-sm"
+                    placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                    value={reqOrgId}
+                    onChange={(e) => setReqOrgId(e.target.value)}
+                    autoFocus
+                  />
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    Ask your client to copy their Organisation ID from Settings → General.
+                  </p>
+                </div>
+                <div>
+                  <label className="label">Message to owner <span className="text-slate-600">(optional)</span></label>
+                  <input
+                    className="input text-sm"
+                    placeholder="e.g. Hi, I'm your accountant from BrightTax Ltd."
+                    value={reqMessage}
+                    onChange={(e) => setReqMessage(e.target.value)}
+                    maxLength={300}
+                  />
+                </div>
+                <div className="flex items-center justify-end gap-2 pt-1">
+                  <button onClick={() => setAddClientOpen(false)} className="btn-ghost text-sm">Cancel</button>
+                  <button
+                    onClick={handleRequestAccess}
+                    disabled={requesting || !reqOrgId.trim()}
+                    className="btn-primary text-sm flex items-center gap-1.5"
+                  >
+                    {requesting ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
+                    Send Request
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {addClientTab === 'token' && (
+              <div className="space-y-4">
+                <p className="text-xs text-slate-400">
+                  If a client generated an invite token and sent it to you, paste it here for immediate access — no approval needed.
+                </p>
+                <div>
+                  <label className="label">Invite Token</label>
+                  <input
+                    className="input font-mono text-sm"
+                    placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                    value={inviteToken}
+                    onChange={(e) => setInviteToken(e.target.value)}
+                    autoFocus
+                  />
+                </div>
+                <div className="flex items-center justify-end gap-2 pt-1">
+                  <button onClick={() => setAddClientOpen(false)} className="btn-ghost text-sm">Cancel</button>
+                  <button
+                    onClick={handleAcceptToken}
+                    disabled={acceptingToken || !inviteToken.trim()}
+                    className="btn-primary text-sm flex items-center gap-1.5 bg-purple-500 hover:bg-purple-400"
+                  >
+                    {acceptingToken ? <Loader2 size={13} className="animate-spin" /> : <ChevronRight size={13} />}
+                    Accept Token
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
