@@ -20,7 +20,7 @@ from apps.core.throttles import BankResolveRateThrottle, InvitationRateThrottle
 _ACCOUNT_NUMBER_RE = re.compile(r"^\d{10}$")
 _BANK_CODE_RE = re.compile(r"^\d{3,6}$")
 
-from .models import EmailConfig, Invitation, Membership, ModulePermission, Organisation
+from .models import EmailConfig, Invitation, Membership, ModulePermission, Organisation, PartnerAccessRequest
 from .serializers import InvitationSerializer, MembershipSerializer, ModulePermissionSerializer, OrganisationSerializer
 from .services import OrganisationService
 
@@ -669,6 +669,352 @@ class OrganisationViewSet(viewsets.ModelViewSet):
             return Response({"error": {"message": "Bank account lookup failed. Please try again."}}, status=502)
 
 
+    # ── Partner Consent: Org-Owner Side ────────────────────────────────────────
+
+    @action(detail=True, methods=["get"], permission_classes=[IsOwnerOrAdmin],
+            url_path="partner-requests")
+    def partner_requests(self, request, pk=None):
+        """
+        GET /tenancy/organisations/{id}/partner-requests/
+        List all partner access requests for this organisation (any status).
+        """
+        from .serializers import PartnerAccessRequestSerializer
+        org = self.get_object()
+        reqs = PartnerAccessRequest.objects.filter(
+            organisation=org
+        ).select_related("partner__user", "reviewed_by").order_by("-created_at")
+        return Response(PartnerAccessRequestSerializer(reqs, many=True).data)
+
+    @action(detail=True, methods=["post"], permission_classes=[IsOwnerOrAdmin],
+            url_path=r"partner-requests/(?P<req_id>[^/.]+)/approve")
+    def approve_partner_request(self, request, pk=None, req_id=None):
+        """
+        POST /tenancy/organisations/{id}/partner-requests/{req_id}/approve/
+        Approve a pending partner access request.
+        """
+        import uuid as _uuid
+        from django.utils import timezone as tz
+        from .models import PartnerClientLink
+        from .serializers import PartnerAccessRequestSerializer
+
+        org = self.get_object()
+        try:
+            req = PartnerAccessRequest.objects.select_related("partner__user").get(
+                id=req_id, organisation=org
+            )
+        except (PartnerAccessRequest.DoesNotExist, Exception):
+            return Response({"error": "Request not found."}, status=404)
+
+        if req.status != PartnerAccessRequest.Status.PENDING:
+            return Response({"error": f"Request is already {req.status}."}, status=400)
+
+        req.status = PartnerAccessRequest.Status.APPROVED
+        req.reviewed_by = request.user
+        req.reviewed_at = tz.now()
+        req.save(update_fields=["status", "reviewed_by", "reviewed_at", "updated_at"])
+
+        # Activate PartnerClientLink
+        partner_profile = req.partner
+        link, created = PartnerClientLink.objects.get_or_create(
+            partner=partner_profile,
+            organisation=org,
+            defaults={"is_active": True, "is_referred": False},
+        )
+        if not created and not link.is_active:
+            link.is_active = True
+            link.save(update_fields=["is_active"])
+
+        # Provision accountant membership for the partner user
+        _provision_partner_membership(partner_profile.user, org)
+
+        _audit_partner_event(request, org, "partner_access_approved",
+                             f"Owner {request.user.email} approved access for {partner_profile.user.email}")
+        _notify_partner_of_decision(partner_profile.user, org, approved=True)
+        return Response(PartnerAccessRequestSerializer(req).data)
+
+    @action(detail=True, methods=["post"], permission_classes=[IsOwnerOrAdmin],
+            url_path=r"partner-requests/(?P<req_id>[^/.]+)/reject")
+    def reject_partner_request(self, request, pk=None, req_id=None):
+        """
+        POST /tenancy/organisations/{id}/partner-requests/{req_id}/reject/
+        Body: { "reason": "..." (optional) }
+        Reject a pending partner access request.
+        """
+        from django.utils import timezone as tz
+        from .serializers import PartnerAccessRequestSerializer
+
+        org = self.get_object()
+        try:
+            req = PartnerAccessRequest.objects.select_related("partner__user").get(
+                id=req_id, organisation=org
+            )
+        except (PartnerAccessRequest.DoesNotExist, Exception):
+            return Response({"error": "Request not found."}, status=404)
+
+        if req.status != PartnerAccessRequest.Status.PENDING:
+            return Response({"error": f"Request is already {req.status}."}, status=400)
+
+        reason = (request.data.get("reason") or "").strip()[:200]
+        req.status = PartnerAccessRequest.Status.REJECTED
+        req.rejection_reason = reason
+        req.reviewed_by = request.user
+        req.reviewed_at = tz.now()
+        req.save(update_fields=["status", "rejection_reason", "reviewed_by", "reviewed_at", "updated_at"])
+
+        _audit_partner_event(request, org, "partner_access_rejected",
+                             f"Owner {request.user.email} rejected access for {req.partner.user.email}")
+        _notify_partner_of_decision(req.partner.user, org, approved=False, reason=reason)
+        return Response(PartnerAccessRequestSerializer(req).data)
+
+    @action(detail=True, methods=["get"], permission_classes=[IsOwnerOrAdmin],
+            url_path="partner-access")
+    def partner_access(self, request, pk=None):
+        """
+        GET /tenancy/organisations/{id}/partner-access/
+        List all active partner links for this organisation.
+        """
+        from .models import PartnerClientLink
+        from .serializers import PartnerClientLinkSerializer
+        org = self.get_object()
+        links = PartnerClientLink.objects.filter(
+            organisation=org, is_active=True
+        ).select_related("partner__user")
+        return Response(PartnerClientLinkSerializer(links, many=True).data)
+
+    @action(detail=True, methods=["delete"], permission_classes=[IsOwnerOrAdmin],
+            url_path=r"partner-access/(?P<link_id>[^/.]+)")
+    def revoke_partner_access(self, request, pk=None, link_id=None):
+        """
+        DELETE /tenancy/organisations/{id}/partner-access/{link_id}/
+        Revoke an active partner's access to this organisation.
+        """
+        from django.utils import timezone as tz
+        from .models import PartnerClientLink
+
+        org = self.get_object()
+        try:
+            link = PartnerClientLink.objects.select_related("partner__user").get(
+                id=link_id, organisation=org, is_active=True
+            )
+        except PartnerClientLink.DoesNotExist:
+            return Response({"error": "Partner link not found."}, status=404)
+
+        link.is_active = False
+        link.save(update_fields=["is_active"])
+
+        # Deactivate partner's membership in this org
+        Membership.objects.filter(
+            user=link.partner.user, organisation=org
+        ).update(is_active=False)
+
+        # Mark the consent record as withdrawn
+        PartnerAccessRequest.objects.filter(
+            partner=link.partner, organisation=org, status=PartnerAccessRequest.Status.APPROVED
+        ).update(status=PartnerAccessRequest.Status.WITHDRAWN, reviewed_at=tz.now())
+
+        _audit_partner_event(request, org, "partner_access_revoked",
+                             f"Owner {request.user.email} revoked access for {link.partner.user.email}")
+        return Response(status=204)
+
+    @action(detail=True, methods=["post"], permission_classes=[IsOwnerOrAdmin],
+            url_path="generate-partner-invite")
+    def generate_partner_invite(self, request, pk=None):
+        """
+        POST /tenancy/organisations/{id}/generate-partner-invite/
+        Body: { "partner_email": "accountant@firm.com" (optional) }
+
+        Client-initiated flow: generate a one-time invite token.
+        Share this token with the accountant who calls POST /partner/accept-invite/.
+        """
+        import uuid as _uuid
+        from .models import PartnerProfile
+        from .serializers import PartnerAccessRequestSerializer
+
+        org = self.get_object()
+        partner_email = (request.data.get("partner_email") or "").strip().lower()
+
+        partner_profile = None
+        if partner_email:
+            from django.contrib.auth import get_user_model
+            User = get_user_model()
+            try:
+                partner_user = User.objects.get(email=partner_email)
+                partner_profile = getattr(partner_user, "partner_profile", None)
+            except User.DoesNotExist:
+                return Response({"error": f"No user found with email {partner_email}."}, status=404)
+            if not partner_profile:
+                return Response({"error": f"{partner_email} does not have an active partner profile."}, status=400)
+
+        # If no partner specified, create a generic invite (any partner can claim it)
+        if partner_profile is None:
+            # Create a placeholder — will be claimed when accept-invite is called
+            # We store org+token but leave partner field blank via a sentinel approach:
+            # We need a PartnerProfile FK — use a generic "unclaimed" token pattern.
+            # For safety, we require the caller to specify the partner email.
+            return Response(
+                {"error": "partner_email is required. Specify the accountant's registered email address."},
+                status=400,
+            )
+
+        token = _uuid.uuid4()
+
+        # Upsert — invalidate previous unused token for this (partner, org) pair
+        req, created = PartnerAccessRequest.objects.get_or_create(
+            partner=partner_profile,
+            organisation=org,
+            defaults={
+                "status": PartnerAccessRequest.Status.PENDING,
+                "invite_token": token,
+                "invite_token_used": False,
+                "requested_by": request.user,
+            },
+        )
+        if not created:
+            if req.status == PartnerAccessRequest.Status.APPROVED:
+                return Response({"error": "This partner already has access to your organisation."}, status=400)
+            # Refresh the token for rejected/withdrawn/pending
+            req.status = PartnerAccessRequest.Status.PENDING
+            req.invite_token = token
+            req.invite_token_used = False
+            req.rejection_reason = ""
+            req.reviewed_by = None
+            req.reviewed_at = None
+            req.save(update_fields=[
+                "status", "invite_token", "invite_token_used",
+                "rejection_reason", "reviewed_by", "reviewed_at", "updated_at",
+            ])
+
+        _audit_partner_event(request, org, "partner_invite_generated",
+                             f"Owner {request.user.email} generated invite token for {partner_email}")
+        return Response({
+            "token": str(token),
+            "partner_email": partner_email,
+            "org_name": org.name,
+            "expires": "Single-use — does not expire. Invalidated once accepted.",
+        }, status=201)
+
+
+# ── Partner helper utilities ────────────────────────────────────────────────────
+
+def _provision_partner_membership(partner_user, org):
+    """
+    Create or reactivate an ACCOUNTANT membership for partner_user in org,
+    with the standard partner module permission matrix.
+    Extracted as a module-level function so OrganisationViewSet can call it.
+    """
+    from django.utils import timezone as tz
+    EDIT_MODULES = {"reports", "accounting", "tax", "budget"}
+    VIEW_MODULES = {
+        "sales", "purchases", "bills", "expenses", "customers",
+        "suppliers", "inventory", "quotes", "recurring", "payroll",
+    }
+    NO_ACCESS_MODULES = {"settings"}
+
+    membership, _ = Membership.objects.get_or_create(
+        user=partner_user,
+        organisation=org,
+        defaults={
+            "role": Membership.Role.ACCOUNTANT,
+            "is_active": True,
+            "joined_at": tz.now(),
+        },
+    )
+    if not membership.is_active:
+        membership.is_active = True
+        membership.role = Membership.Role.ACCOUNTANT
+        membership.save(update_fields=["is_active", "role"])
+
+    module_map = (
+        [(m, "edit") for m in EDIT_MODULES]
+        + [(m, "view") for m in VIEW_MODULES]
+        + [(m, "none") for m in NO_ACCESS_MODULES]
+    )
+    for module, level in module_map:
+        ModulePermission.objects.update_or_create(
+            membership=membership,
+            module=module,
+            defaults={"access_level": level},
+        )
+    return membership
+
+
+def _audit_partner_event(request, org, action_label, description):
+    """Log a partner consent event to the audit trail."""
+    try:
+        from apps.core.models import AuditLog
+        AuditLog.log(
+            action=AuditLog.UPDATE,
+            user=request.user,
+            organisation=org,
+            model_name="PartnerAccess",
+            object_id=str(org.id),
+            object_repr=description,
+            request=request,
+        )
+    except Exception:
+        pass
+
+
+def _notify_org_owner_of_request(org, partner_user):
+    """Email the org owner when a partner requests access."""
+    try:
+        from django.core.mail import send_mail
+        from django.conf import settings as _s
+        from_email = getattr(_s, "DEFAULT_FROM_EMAIL", "noreply@auditytechnologies.com")
+        owner = org.owner
+        if not owner or not owner.email:
+            return
+        send_mail(
+            subject=f"[Audity] Partner access request from {partner_user.email}",
+            message=(
+                f"Hi {owner.get_full_name() or owner.email},\n\n"
+                f"{partner_user.email} has requested access to manage '{org.name}' on Audity.\n\n"
+                f"Log in to your Audity account → Settings → Accountant Access to approve or reject this request.\n\n"
+                f"If you did not expect this request, you can safely ignore or reject it.\n\n"
+                f"— The Audity Team"
+            ),
+            from_email=from_email,
+            recipient_list=[owner.email],
+            fail_silently=True,
+        )
+    except Exception:
+        pass
+
+
+def _notify_partner_of_decision(partner_user, org, approved: bool, reason: str = ""):
+    """Email the partner when their access request is approved or rejected."""
+    try:
+        from django.core.mail import send_mail
+        from django.conf import settings as _s
+        from_email = getattr(_s, "DEFAULT_FROM_EMAIL", "noreply@auditytechnologies.com")
+        if approved:
+            subject = f"[Audity] Access approved — {org.name}"
+            body = (
+                f"Hi {partner_user.get_full_name() or partner_user.email},\n\n"
+                f"Your request to access '{org.name}' on Audity has been approved.\n\n"
+                f"You can now view and manage this organisation from your Partner Dashboard.\n\n"
+                f"— The Audity Team"
+            )
+        else:
+            subject = f"[Audity] Access request declined — {org.name}"
+            body = (
+                f"Hi {partner_user.get_full_name() or partner_user.email},\n\n"
+                f"Your request to access '{org.name}' on Audity has been declined.\n"
+                + (f"Reason: {reason}\n\n" if reason else "\n")
+                + f"If you believe this is an error, please contact the organisation directly.\n\n"
+                f"— The Audity Team"
+            )
+        send_mail(
+            subject=subject,
+            message=body,
+            from_email=from_email,
+            recipient_list=[partner_user.email],
+            fail_silently=True,
+        )
+    except Exception:
+        pass
+
+
 class MembershipViewSet(viewsets.ModelViewSet):
     """Manage members of the current organisation."""
 
@@ -810,7 +1156,28 @@ class PartnerViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
 
     def _get_profile(self, request):
+        from rest_framework.exceptions import PermissionDenied
         from .models import PartnerProfile
+
+        # Return existing profile (backward-compatible for provisioned partners)
+        try:
+            return request.user.partner_profile
+        except PartnerProfile.DoesNotExist:
+            pass
+
+        # No profile yet — only create one if the user holds an active partner subscription
+        try:
+            org = getattr(request, "organisation", None)
+            if org is None:
+                raise PermissionDenied("A partner subscription is required to access this feature.")
+            sub = getattr(org, "subscription", None)
+            if sub is None or not (sub.plan.slug.startswith("partner-") and sub.status in ("active", "trialing")):
+                raise PermissionDenied("A partner subscription is required to access this feature.")
+        except PermissionDenied:
+            raise
+        except Exception:
+            raise PermissionDenied("A partner subscription is required to access this feature.")
+
         profile, _ = PartnerProfile.objects.get_or_create(
             user=request.user,
             defaults={"tier": "starter", "max_clients": 10},
@@ -830,54 +1197,8 @@ class PartnerViewSet(viewsets.ViewSet):
         return Response(PartnerProfileSerializer(profile).data)
 
     def _provision_membership(self, partner_user, org):
-        """
-        Auto-create or reactivate a Membership for the partner in the client org
-        with accountant role + appropriate ModulePermissions.
-
-        Access matrix (matches senior accountant recommendation):
-          - reports, accounting, tax, budget : edit  (core advisory work)
-          - sales, purchases, bills, expenses, customers, suppliers, inventory,
-            quotes, recurring, payroll         : view  (read all, write nothing)
-          - settings                           : none  (no access to billing/config)
-        """
-        from django.utils import timezone
-        from .models import Membership, ModulePermission
-
-        membership, _ = Membership.objects.get_or_create(
-            user=partner_user,
-            organisation=org,
-            defaults={
-                "role": Membership.Role.ACCOUNTANT,
-                "is_active": True,
-                "joined_at": timezone.now(),
-            },
-        )
-        # Reactivate if previously deactivated
-        if not membership.is_active:
-            membership.is_active = True
-            membership.role = Membership.Role.ACCOUNTANT
-            membership.save(update_fields=["is_active", "role"])
-
-        # Build permission map
-        EDIT_MODULES = {"reports", "accounting", "tax", "budget"}
-        VIEW_MODULES = {
-            "sales", "purchases", "bills", "expenses", "customers",
-            "suppliers", "inventory", "quotes", "recurring", "payroll",
-        }
-        NO_ACCESS_MODULES = {"settings"}
-
-        module_map = (
-            [(m, "edit") for m in EDIT_MODULES]
-            + [(m, "view") for m in VIEW_MODULES]
-            + [(m, "none") for m in NO_ACCESS_MODULES]
-        )
-        for module, level in module_map:
-            ModulePermission.objects.update_or_create(
-                membership=membership,
-                module=module,
-                defaults={"access_level": level},
-            )
-        return membership
+        """Delegate to module-level helper (defined after OrganisationViewSet)."""
+        return _provision_partner_membership(partner_user, org)
 
     def _revoke_membership(self, partner_user, org):
         """Deactivate the partner's membership in the client org."""
@@ -968,6 +1289,203 @@ class PartnerViewSet(viewsets.ViewSet):
         self._revoke_membership(request.user, link.organisation)
         return Response(status=204)
 
+    @action(detail=False, methods=["post"], url_path="request-access")
+    def request_access(self, request):
+        """
+        POST /tenancy/partner/request-access/
+        Body: { "organisation_id": "<uuid>", "message": "..." (optional) }
+
+        Partner-initiated flow: send an access request to a client org owner.
+        The org owner will see it in their Settings → Accountant Access tab.
+        """
+        from .models import PartnerAccessRequest, Organisation
+        from .serializers import PartnerAccessRequestSerializer
+
+        profile = self._get_profile(request)
+
+        org_id = (request.data.get("organisation_id") or "").strip()
+        if not org_id:
+            return Response({"error": "organisation_id is required."}, status=400)
+
+        try:
+            org = Organisation.objects.get(id=org_id, is_active=True)
+        except (Organisation.DoesNotExist, Exception):
+            return Response({"error": "Organisation not found."}, status=404)
+
+        # Prevent requesting access to own org
+        if org.owner_id == request.user.id:
+            return Response({"error": "You cannot request access to your own organisation."}, status=400)
+
+        if not profile.can_add_client:
+            return Response(
+                {"error": f"Client limit reached ({profile.max_clients}). Upgrade your partner plan."},
+                status=403,
+            )
+
+        message = (request.data.get("message") or "").strip()[:300]
+
+        # Upsert — if a rejected/withdrawn request exists, allow re-requesting
+        existing = PartnerAccessRequest.objects.filter(partner=profile, organisation=org).first()
+        if existing:
+            if existing.status == PartnerAccessRequest.Status.PENDING:
+                return Response({"error": "A pending request already exists for this organisation."}, status=400)
+            if existing.status == PartnerAccessRequest.Status.APPROVED:
+                return Response({"error": "Access to this organisation is already approved."}, status=400)
+            # Re-open a rejected/withdrawn request
+            existing.status = PartnerAccessRequest.Status.PENDING
+            existing.request_message = message
+            existing.rejection_reason = ""
+            existing.reviewed_by = None
+            existing.reviewed_at = None
+            existing.save(update_fields=[
+                "status", "request_message", "rejection_reason",
+                "reviewed_by", "reviewed_at", "updated_at",
+            ])
+            _audit_partner_event(request, org, "partner_access_requested",
+                                 f"Partner {request.user.email} re-requested access to {org.name}")
+            return Response(PartnerAccessRequestSerializer(existing).data, status=201)
+
+        req = PartnerAccessRequest.objects.create(
+            partner=profile,
+            organisation=org,
+            status=PartnerAccessRequest.Status.PENDING,
+            request_message=message,
+            requested_by=request.user,
+        )
+        _audit_partner_event(request, org, "partner_access_requested",
+                             f"Partner {request.user.email} requested access to {org.name}")
+        _notify_org_owner_of_request(org, request.user)
+        return Response(PartnerAccessRequestSerializer(req).data, status=201)
+
+    @action(detail=False, methods=["get"], url_path="access-requests")
+    def list_access_requests(self, request):
+        """
+        GET /tenancy/partner/access-requests/
+        List all access requests made by this partner (any status).
+        """
+        from .models import PartnerAccessRequest
+        from .serializers import PartnerAccessRequestSerializer
+
+        profile = self._get_profile(request)
+        reqs = PartnerAccessRequest.objects.filter(
+            partner=profile
+        ).select_related("organisation", "reviewed_by").order_by("-created_at")
+        return Response(PartnerAccessRequestSerializer(reqs, many=True).data)
+
+    @action(detail=True, methods=["delete"], url_path="access-requests")
+    def withdraw_access_request(self, request, pk=None):
+        """
+        DELETE /tenancy/partner/access-requests/{id}/
+        Withdraw a pending request OR leave an approved access (deactivates link + membership).
+        """
+        from django.utils import timezone as tz
+        from .models import PartnerAccessRequest, PartnerClientLink
+        from .serializers import PartnerAccessRequestSerializer
+
+        profile = self._get_profile(request)
+        try:
+            req = PartnerAccessRequest.objects.get(id=pk, partner=profile)
+        except PartnerAccessRequest.DoesNotExist:
+            return Response({"error": "Request not found."}, status=404)
+
+        if req.status == PartnerAccessRequest.Status.WITHDRAWN:
+            return Response({"error": "Request is already withdrawn."}, status=400)
+
+        was_approved = (req.status == PartnerAccessRequest.Status.APPROVED)
+        req.status = PartnerAccessRequest.Status.WITHDRAWN
+        req.reviewed_at = tz.now()
+        req.save(update_fields=["status", "reviewed_at", "updated_at"])
+
+        # Always clean up any active link/membership when withdrawing
+        if was_approved or PartnerClientLink.objects.filter(
+            partner=profile, organisation=req.organisation, is_active=True
+        ).exists():
+            PartnerClientLink.objects.filter(
+                partner=profile, organisation=req.organisation
+            ).update(is_active=False)
+            self._revoke_membership(request.user, req.organisation)
+
+        _audit_partner_event(request, req.organisation, "partner_access_withdrawn",
+                             f"Partner {request.user.email} withdrew access from {req.organisation.name}")
+        return Response(status=204)
+
+    @action(detail=False, methods=["post"], url_path="accept-invite")
+    def accept_invite(self, request):
+        """
+        POST /tenancy/partner/accept-invite/
+        Body: { "token": "<uuid>" }
+
+        Client-initiated flow: partner accepts an invite token generated by the org owner.
+        Immediately creates PartnerClientLink + Membership without needing approval.
+        """
+        import uuid as _uuid
+        from django.utils import timezone as tz
+        from .models import PartnerAccessRequest, PartnerClientLink
+        from .serializers import PartnerAccessRequestSerializer
+
+        profile = self._get_profile(request)
+
+        raw_token = (request.data.get("token") or "").strip()
+        if not raw_token:
+            return Response({"error": "token is required."}, status=400)
+
+        try:
+            token = _uuid.UUID(raw_token)
+        except ValueError:
+            return Response({"error": "Invalid token format."}, status=400)
+
+        try:
+            req = PartnerAccessRequest.objects.select_related("organisation").get(
+                invite_token=token,
+                invite_token_used=False,
+                status=PartnerAccessRequest.Status.PENDING,
+            )
+        except PartnerAccessRequest.DoesNotExist:
+            # Return a generic message to avoid leaking token validity
+            return Response({"error": "Token not found, already used, or expired."}, status=400)
+
+        # Prevent self-linking
+        if req.organisation.owner_id == request.user.id:
+            return Response({"error": "Cannot accept an invite to your own organisation."}, status=400)
+
+        if not profile.can_add_client:
+            return Response(
+                {"error": f"Client limit reached ({profile.max_clients}). Upgrade your partner plan."},
+                status=403,
+            )
+
+        # If there's an existing PartnerAccessRequest for this (partner, org), update it
+        existing_for_partner = PartnerAccessRequest.objects.filter(
+            partner=profile, organisation=req.organisation
+        ).exclude(id=req.id).first()
+        if existing_for_partner and existing_for_partner.status == PartnerAccessRequest.Status.APPROVED:
+            return Response({"error": "You already have access to this organisation."}, status=400)
+
+        # Mark token used and approve
+        req.invite_token_used = True
+        req.status = PartnerAccessRequest.Status.APPROVED
+        req.reviewed_at = tz.now()
+        req.requested_by = request.user
+        req.save(update_fields=[
+            "invite_token_used", "status", "reviewed_at", "requested_by", "updated_at",
+        ])
+
+        # Activate link + membership
+        link, created = PartnerClientLink.objects.get_or_create(
+            partner=profile,
+            organisation=req.organisation,
+            defaults={"is_active": True, "is_referred": False},
+        )
+        if not created and not link.is_active:
+            link.is_active = True
+            link.save(update_fields=["is_active"])
+
+        self._provision_membership(request.user, req.organisation)
+
+        _audit_partner_event(request, req.organisation, "partner_access_approved_via_token",
+                             f"Partner {request.user.email} accepted invite to {req.organisation.name}")
+        return Response(PartnerAccessRequestSerializer(req).data, status=200)
+
     @action(detail=False, methods=["get"], url_path="consolidated")
     def consolidated(self, request):
         """
@@ -1033,7 +1551,7 @@ class PartnerViewSet(viewsets.ViewSet):
                 "org_id": str(oid),
                 "org_name": org.name,
                 "org_currency": org.currency,
-                "plan": org.subscription.plan.name if hasattr(org, "subscription") else "Unknown",
+                "plan": (lambda s: s.plan.name if s and s.plan else "Unknown")(getattr(org, "subscription", None)),
                 "revenue_this_month": float(revenue),
                 "outstanding_balance": float(outstanding),
                 "overdue_count": overdue_count,

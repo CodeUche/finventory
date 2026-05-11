@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { Bell, X, Package, AlertCircle, CalendarClock, Receipt, Users, Clock } from 'lucide-react'
+import { Bell, X, Package, AlertCircle, CalendarClock, Receipt, Users, Clock, ShieldCheck } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useNotifications } from '@/contexts/NotificationsContext'
 import { formatCurrency, formatDate } from '@/lib/utils'
@@ -8,7 +8,9 @@ import { cn } from '@/lib/utils'
 export default function NotificationBell() {
   const {
     alerts, overdueAlerts, expiryAlerts, billDueAlerts, payrollPendingAlerts, customerDueAlerts,
-    count, dismiss, dismissAll, dismissOverdue, dismissExpiry, dismissBillDue, dismissPayrollPending, dismissCustomerDue,
+    partnerRequestAlerts,
+    count, dismiss, dismissAll, dismissOverdue, dismissExpiry, dismissBillDue, dismissPayrollPending,
+    dismissCustomerDue, dismissPartnerRequest,
   } = useNotifications()
   const [open, setOpen] = useState(false)
   const navigate = useNavigate()
@@ -54,6 +56,37 @@ export default function NotificationBell() {
                 </div>
               ) : (
                 <>
+                  {/* Partner access requests */}
+                  {partnerRequestAlerts.length > 0 && (
+                    <>
+                      {partnerRequestAlerts.map((req) => (
+                        <div
+                          key={req.id}
+                          className="flex items-start gap-3 px-4 py-3 border-b border-surface-700/60 hover:bg-surface-700/30 transition-colors cursor-pointer"
+                          onClick={() => go('/settings?tab=access')}
+                        >
+                          <div className="w-7 h-7 rounded-lg bg-amber-500/10 flex items-center justify-center shrink-0 mt-0.5">
+                            <ShieldCheck size={13} className="text-amber-400" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-medium text-white truncate">
+                              Accountant access request
+                            </p>
+                            <p className="text-xs text-slate-500 truncate">
+                              {req.partner_firm_name || req.partner_email} wants access to your books
+                            </p>
+                          </div>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); dismissPartnerRequest(req.id) }}
+                            className="shrink-0 p-0.5 text-slate-600 hover:text-slate-400 transition-colors"
+                          >
+                            <X size={12} />
+                          </button>
+                        </div>
+                      ))}
+                    </>
+                  )}
+
                   {/* Customer payments due within 7 days */}
                   {customerDueAlerts.length > 0 && (
                     <>

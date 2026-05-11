@@ -891,6 +891,19 @@ export const orgApi = {
     api.post(`/tenancy/organisations/${orgId}/create_entity/`, data),
   reseedCoa: (orgId: string) =>
     api.post(`/tenancy/organisations/${orgId}/reseed_coa/`),
+  // Partner consent — org-owner side
+  listPartnerRequests: (orgId: string) =>
+    api.get(`/tenancy/organisations/${orgId}/partner-requests/`),
+  approvePartnerRequest: (orgId: string, reqId: string) =>
+    api.post(`/tenancy/organisations/${orgId}/partner-requests/${reqId}/approve/`),
+  rejectPartnerRequest: (orgId: string, reqId: string, reason?: string) =>
+    api.post(`/tenancy/organisations/${orgId}/partner-requests/${reqId}/reject/`, { reason: reason ?? '' }),
+  listPartnerAccess: (orgId: string) =>
+    api.get(`/tenancy/organisations/${orgId}/partner-access/`),
+  revokePartnerAccess: (orgId: string, linkId: string) =>
+    api.delete(`/tenancy/organisations/${orgId}/partner-access/${linkId}/`),
+  generatePartnerInvite: (orgId: string, partnerEmail: string) =>
+    api.post(`/tenancy/organisations/${orgId}/generate-partner-invite/`, { partner_email: partnerEmail }),
 }
 
 export const teamApi = {
@@ -1072,12 +1085,19 @@ export const stockReportApi = {
 }
 
 export const partnerApi = {
-  profile: ()                          => api.get('/tenancy/partner/profile/'),
-  updateProfile: (data: object)        => api.put('/tenancy/partner/profile/', data),
-  clients: ()                          => api.get('/tenancy/partner/clients/'),
-  addClient: (data: object)            => api.post('/tenancy/partner/clients/', data),
-  removeClient: (id: string)           => api.delete(`/tenancy/partner/${id}/clients/`),
-  consolidated: ()                     => api.get('/tenancy/partner/consolidated/'),
+  profile: ()                                       => api.get('/tenancy/partner/profile/'),
+  updateProfile: (data: object)                     => api.put('/tenancy/partner/profile/', data),
+  clients: ()                                       => api.get('/tenancy/partner/clients/'),
+  addClient: (data: object)                         => api.post('/tenancy/partner/clients/', data),
+  removeClient: (id: string)                        => api.delete(`/tenancy/partner/${id}/clients/`),
+  consolidated: ()                                  => api.get('/tenancy/partner/consolidated/'),
+  // Consent flow — partner-initiated
+  requestAccess: (data: { organisation_id: string; message?: string }) =>
+    api.post('/tenancy/partner/request-access/', data),
+  listAccessRequests: ()                            => api.get('/tenancy/partner/access-requests/'),
+  withdrawRequest: (id: string)                     => api.delete(`/tenancy/partner/${id}/access-requests/`),
+  // Client-initiated invite flow
+  acceptInvite: (token: string)                     => api.post('/tenancy/partner/accept-invite/', { token }),
 }
 
 export const accountingApi = {

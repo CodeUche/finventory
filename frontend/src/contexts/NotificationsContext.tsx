@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react'
 import toast from 'react-hot-toast'
-import { billApi, inventoryApi, payrollApi, salesApi } from '@/services/api'
+import { billApi, inventoryApi, orgApi, payrollApi, salesApi } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
 
 export interface StockAlert {
@@ -56,6 +56,14 @@ export interface CustomerDueAlert {
   days_until_due: number
 }
 
+export interface PartnerRequestAlert {
+  id: string
+  partner_email: string
+  partner_firm_name: string
+  org_name: string
+  created_at: string
+}
+
 interface NotificationsCtx {
   alerts: StockAlert[]
   overdueAlerts: OverdueAlert[]
@@ -63,6 +71,7 @@ interface NotificationsCtx {
   billDueAlerts: BillDueAlert[]
   payrollPendingAlerts: PayrollPendingAlert[]
   customerDueAlerts: CustomerDueAlert[]
+  partnerRequestAlerts: PartnerRequestAlert[]
   count: number
   dismiss: (id: string) => void
   dismissAll: () => void
@@ -71,6 +80,7 @@ interface NotificationsCtx {
   dismissBillDue: (id: string) => void
   dismissPayrollPending: (id: string) => void
   dismissCustomerDue: (id: string) => void
+  dismissPartnerRequest: (id: string) => void
   refetch: () => void
 }
 
@@ -81,6 +91,7 @@ const Ctx = createContext<NotificationsCtx>({
   billDueAlerts: [],
   payrollPendingAlerts: [],
   customerDueAlerts: [],
+  partnerRequestAlerts: [],
   count: 0,
   dismiss: () => {},
   dismissAll: () => {},
@@ -89,6 +100,7 @@ const Ctx = createContext<NotificationsCtx>({
   dismissBillDue: () => {},
   dismissPayrollPending: () => {},
   dismissCustomerDue: () => {},
+  dismissPartnerRequest: () => {},
   refetch: () => {},
 })
 
@@ -107,12 +119,14 @@ function saveDismissed(ids: Set<string>) {
 export function NotificationsProvider({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
   const organisationId = useAuthStore((s) => s.organisation?.id)
+  const memberRole = useAuthStore((s) => s.memberRole)
   const [alerts, setAlerts] = useState<StockAlert[]>([])
   const [overdueAlerts, setOverdueAlerts] = useState<OverdueAlert[]>([])
   const [expiryAlerts, setExpiryAlerts] = useState<ExpiryAlert[]>([])
   const [billDueAlerts, setBillDueAlerts] = useState<BillDueAlert[]>([])
   const [payrollPendingAlerts, setPayrollPendingAlerts] = useState<PayrollPendingAlert[]>([])
   const [customerDueAlerts, setCustomerDueAlerts] = useState<CustomerDueAlert[]>([])
+  const [partnerRequestAlerts, setPartnerRequestAlerts] = useState<PartnerRequestAlert[]>([])
   const prevIdsRef    = useRef<Set<string>>(new Set())
   const dismissedRef  = useRef<Set<string>>(loadDismissed())
   const firstPollRef  = useRef(true)
@@ -237,6 +251,26 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
         setPayrollPendingAlerts(pending)
       }
 
+      // Partner access requests — only poll for owners/admins
+      if (organisationId && (memberRole === 'owner' || memberRole === 'admin')) {
+        try {
+          const prRes = await orgApi.listPartnerRequests(organisationId)
+          const reqs: any[] = prRes.data.results ?? prRes.data
+          const pending: PartnerRequestAlert[] = reqs
+            .filter((r: any) => r.status === 'pending' && !dismissedRef.current.has(`pr-${r.id}`))
+            .map((r: any) => ({
+              id: `pr-${r.id}`,
+              partner_email: r.partner_email,
+              partner_firm_name: r.partner_firm_name || '',
+              org_name: r.org_name,
+              created_at: r.created_at,
+            }))
+          setPartnerRequestAlerts(pending)
+        } catch {
+          // Silently ignore — not critical
+        }
+      }
+
       // Customer invoices due within 7 days (credit / partially_paid)
       if (customerDueData.status === 'fulfilled') {
         const invoices = customerDueData.value.data.results ?? customerDueData.value.data
@@ -311,6 +345,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     setBillDueAlerts((prev) => { prev.forEach((a) => addDismissed(a.id)); return [] })
     setPayrollPendingAlerts((prev) => { prev.forEach((a) => addDismissed(a.id)); return [] })
     setCustomerDueAlerts((prev) => { prev.forEach((a) => addDismissed(a.id)); return [] })
+    setPartnerRequestAlerts((prev) => { prev.forEach((a) => addDismissed(a.id)); return [] })
     prevIdsRef.current = new Set()
   }, [addDismissed])
 
@@ -339,17 +374,24 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     setCustomerDueAlerts((prev) => prev.filter((a) => a.id !== id))
   }, [addDismissed])
 
+  const dismissPartnerRequest = useCallback((id: string) => {
+    addDismissed(id)
+    setPartnerRequestAlerts((prev) => prev.filter((a) => a.id !== id))
+  }, [addDismissed])
+
   const refetch = useCallback(() => { poll() }, [poll])
 
   const count =
     alerts.length + overdueAlerts.length + expiryAlerts.length +
-    billDueAlerts.length + payrollPendingAlerts.length + customerDueAlerts.length
+    billDueAlerts.length + payrollPendingAlerts.length + customerDueAlerts.length +
+    partnerRequestAlerts.length
 
   return (
     <Ctx.Provider value={{
-      alerts, overdueAlerts, expiryAlerts, billDueAlerts, payrollPendingAlerts, customerDueAlerts,
+      alerts, overdueAlerts, expiryAlerts, billDueAlerts, payrollPendingAlerts,
+      customerDueAlerts, partnerRequestAlerts,
       count, dismiss, dismissAll, dismissOverdue, dismissExpiry,
-      dismissBillDue, dismissPayrollPending, dismissCustomerDue, refetch,
+      dismissBillDue, dismissPayrollPending, dismissCustomerDue, dismissPartnerRequest, refetch,
     }}>
       {children}
     </Ctx.Provider>

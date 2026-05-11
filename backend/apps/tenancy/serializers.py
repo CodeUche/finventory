@@ -177,3 +177,31 @@ class PartnerClientLinkSerializer(serializers.ModelSerializer):
             "is_referred", "commission_earned", "notes", "is_active", "linked_at",
         ]
         read_only_fields = ["id", "org_name", "org_currency", "commission_earned", "linked_at"]
+
+
+class PartnerAccessRequestSerializer(serializers.ModelSerializer):
+    partner_email = serializers.EmailField(source="partner.user.email", read_only=True)
+    partner_firm_name = serializers.CharField(source="partner.firm_name", read_only=True)
+    partner_tier = serializers.CharField(source="partner.tier", read_only=True)
+    org_name = serializers.CharField(source="organisation.name", read_only=True)
+    reviewed_by_email = serializers.SerializerMethodField()
+
+    def get_reviewed_by_email(self, obj):
+        return obj.reviewed_by.email if obj.reviewed_by else None
+
+    class Meta:
+        from apps.tenancy.models import PartnerAccessRequest
+        model = PartnerAccessRequest
+        fields = [
+            "id", "status", "request_message", "rejection_reason",
+            "partner_email", "partner_firm_name", "partner_tier",
+            "org_name", "organisation",
+            "invite_token", "invite_token_used",
+            "reviewed_by_email", "reviewed_at",
+            "created_at", "updated_at",
+        ]
+        read_only_fields = [
+            "id", "status", "partner_email", "partner_firm_name", "partner_tier",
+            "org_name", "invite_token_used", "reviewed_by_email", "reviewed_at",
+            "created_at", "updated_at",
+        ]

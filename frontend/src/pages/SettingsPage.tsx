@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { User, Building2, Shield, Loader2, Camera, CreditCard, CheckCircle, Mail, Lock, Unlock, LandmarkIcon, UsersRound, UserPlus, X, ChevronDown, ChevronUp, Bot, Layout, Copy, Trash2 } from 'lucide-react'
+import { User, Building2, Shield, Loader2, Camera, CreditCard, CheckCircle, Mail, Lock, Unlock, LandmarkIcon, UsersRound, UserPlus, X, ChevronDown, ChevronUp, Bot, Layout, Copy, Trash2, ShieldCheck, Key, Clock, XCircle, Send } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { authApi, orgApi, paymentGatewayApi, accountingApi, teamApi, tauriFetch } from '@/services/api'
 import type { AxiosError } from 'axios'
@@ -11,7 +11,7 @@ import {
   setTimeoutPreference,
   type TimeoutOption,
 } from '@/hooks/useInactivityTimeout'
-import type { PaymentGatewayConfig, FinancialPeriod, TeamMember, ModuleKey, AccessLevel } from '@/types'
+import type { PaymentGatewayConfig, FinancialPeriod, TeamMember, ModuleKey, AccessLevel, PartnerAccessRequest, PartnerClientLink } from '@/types'
 
 const ALL_MODULES: { key: ModuleKey; label: string }[] = [
   { key: 'sales', label: 'Sales / Invoices' },
@@ -109,7 +109,7 @@ const TIMEOUT_OPTIONS: { value: TimeoutOption; label: string }[] = [
   { value: '4h', label: '4 hours (recommended)' },
 ]
 
-type Tab = 'profile' | 'company' | 'security' | 'payments' | 'email' | 'periods' | 'team' | 'invoice_templates' | 'ai'
+type Tab = 'profile' | 'company' | 'security' | 'payments' | 'email' | 'periods' | 'team' | 'invoice_templates' | 'ai' | 'access'
 
 export default function SettingsPage() {
   const navigate = useNavigate()
@@ -319,6 +319,17 @@ export default function SettingsPage() {
   const [pendingInvitations, setPendingInvitations] = useState<{ id: string; email: string; role: string; status: string; created_at: string; expires_at: string }[]>([])
   const [cancellingInvite, setCancellingInvite] = useState<string | null>(null)
 
+  // Accountant Access tab state
+  const [partnerRequests, setPartnerRequests] = useState<PartnerAccessRequest[]>([])
+  const [partnerLinks, setPartnerLinks] = useState<PartnerClientLink[]>([])
+  const [accessLoading, setAccessLoading] = useState(false)
+  const [approvingReq, setApprovingReq] = useState<string | null>(null)
+  const [rejectingReq, setRejectingReq] = useState<string | null>(null)
+  const [revokingLink, setRevokingLink] = useState<string | null>(null)
+  const [inviteEmail, setInviteEmail] = useState('')
+  const [generatingInvite, setGeneratingInvite] = useState(false)
+  const [generatedToken, setGeneratedToken] = useState<{ token: string; partner_email: string } | null>(null)
+
   useEffect(() => {
     if (activeTab === 'payments') {
       paymentGatewayApi.configs().then(({ data }) => {
@@ -370,6 +381,22 @@ export default function SettingsPage() {
         const invitations = Array.isArray(inviteRes.data) ? inviteRes.data : inviteRes.data.results ?? []
         setPendingInvitations(invitations.filter((inv: { status: string }) => inv.status === 'pending'))
       }).catch(() => toast.error('Failed to load team data')).finally(() => setLoadingTeam(false))
+    }
+    if (activeTab === 'access' && organisation?.id) {
+      setAccessLoading(true)
+      Promise.allSettled([
+        orgApi.listPartnerRequests(organisation.id),
+        orgApi.listPartnerAccess(organisation.id),
+      ]).then(([reqRes, linkRes]) => {
+        if (reqRes.status === 'fulfilled') {
+          const d = reqRes.value.data
+          setPartnerRequests(Array.isArray(d) ? d : d.results ?? [])
+        }
+        if (linkRes.status === 'fulfilled') {
+          const d = linkRes.value.data
+          setPartnerLinks(Array.isArray(d) ? d : d.results ?? [])
+        }
+      }).finally(() => setAccessLoading(false))
     }
   }, [tab])
 
@@ -712,6 +739,70 @@ export default function SettingsPage() {
     }
   }
 
+  // ── Partner Access Handlers ─────────────────────────────────────────────────
+  const handleApprovePartner = async (reqId: string) => {
+    if (!organisation?.id) return
+    setApprovingReq(reqId)
+    try {
+      const { data } = await orgApi.approvePartnerRequest(organisation.id, reqId)
+      setPartnerRequests((prev) => prev.map((r) => r.id === reqId ? data : r))
+      const linkRes = await orgApi.listPartnerAccess(organisation.id)
+      setPartnerLinks(Array.isArray(linkRes.data) ? linkRes.data : linkRes.data.results ?? [])
+      toast.success('Partner access approved')
+    } catch (err: any) {
+      const msg = err?.response?.data?.error
+      toast.error(typeof msg === 'string' ? msg : msg?.message ?? 'Failed to approve')
+    } finally {
+      setApprovingReq(null)
+    }
+  }
+
+  const handleRejectPartner = async (reqId: string) => {
+    const reason = window.prompt('Reason for rejection (optional):') ?? ''
+    if (!organisation?.id) return
+    setRejectingReq(reqId)
+    try {
+      const { data } = await orgApi.rejectPartnerRequest(organisation.id, reqId, reason)
+      setPartnerRequests((prev) => prev.map((r) => r.id === reqId ? data : r))
+      toast.success('Request rejected')
+    } catch (err: any) {
+      const msg = err?.response?.data?.error
+      toast.error(typeof msg === 'string' ? msg : msg?.message ?? 'Failed to reject')
+    } finally {
+      setRejectingReq(null)
+    }
+  }
+
+  const handleRevokePartnerAccess = async (linkId: string) => {
+    if (!organisation?.id) return
+    if (!confirm('Revoke this accountant\'s access? They will lose access to this organisation immediately.')) return
+    setRevokingLink(linkId)
+    try {
+      await orgApi.revokePartnerAccess(organisation.id, linkId)
+      setPartnerLinks((prev) => prev.filter((l) => l.id !== linkId))
+      toast.success('Partner access revoked')
+    } catch {
+      toast.error('Failed to revoke access')
+    } finally {
+      setRevokingLink(null)
+    }
+  }
+
+  const handleGenerateInvite = async () => {
+    if (!organisation?.id || !inviteEmail.trim()) { toast.error('Enter the accountant\'s email address'); return }
+    setGeneratingInvite(true)
+    try {
+      const { data } = await orgApi.generatePartnerInvite(organisation.id, inviteEmail.trim())
+      setGeneratedToken({ token: data.token, partner_email: data.partner_email })
+      setInviteEmail('')
+    } catch (err: any) {
+      const msg = err?.response?.data?.error
+      toast.error(typeof msg === 'string' ? msg : msg?.message ?? 'Failed to generate invite')
+    } finally {
+      setGeneratingInvite(false)
+    }
+  }
+
   const activeNonOwners = teamMembers.filter((m) => m.is_active && m.role !== 'owner')
   const MAX_MEMBERS = getPlanMaxMembers(planName)
 
@@ -725,6 +816,7 @@ export default function SettingsPage() {
     { id: 'periods',           label: 'Periods',    icon: Lock,       requiresSettings: true, requiresPlan: 'accounting' },
     { id: 'invoice_templates', label: 'Templates',  icon: Layout,     ownerOnly: true },
     { id: 'ai',                label: 'AI',         icon: Bot,        ownerOnly: true },
+    { id: 'access',            label: 'Accountant Access', icon: ShieldCheck, ownerOnly: true },
   ]
   const tabs = allTabs.filter((t) => {
     if (t.ownerOnly && !isOwner) return false
@@ -2582,6 +2674,153 @@ export default function SettingsPage() {
               Ask things like: "Am I making profit?", "Where am I losing money?", "How is my cash flow?"
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── Accountant Access Tab ─────────────────────────────────────────── */}
+      {activeTab === 'access' && (
+        <div className="space-y-6 max-w-3xl">
+          <div>
+            <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+              <ShieldCheck size={18} className="text-brand-400" /> Accountant Access
+            </h2>
+            <p className="text-sm text-slate-400 mt-1">
+              Control which accounting firms or accountants can view and manage your books. All access requires your explicit approval.
+            </p>
+          </div>
+
+          {accessLoading ? (
+            <div className="flex items-center justify-center py-12"><Loader2 size={22} className="animate-spin text-brand-400" /></div>
+          ) : (
+            <>
+              {/* Generate invite token */}
+              <div className="card p-5 space-y-3 border border-purple-500/20 bg-purple-500/5">
+                <h3 className="text-sm font-semibold text-purple-300 flex items-center gap-2"><Key size={14} /> Invite an Accountant</h3>
+                <p className="text-xs text-slate-400">
+                  Generate a one-time token and share it with your accountant. They paste it in their Partner Dashboard to gain instant access — no approval step needed.
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    className="input flex-1"
+                    type="email"
+                    placeholder="accountant@firm.com"
+                    value={inviteEmail}
+                    onChange={(e) => setInviteEmail(e.target.value)}
+                  />
+                  <button onClick={handleGenerateInvite} disabled={generatingInvite} className="btn-primary text-sm flex items-center gap-1.5 shrink-0">
+                    {generatingInvite ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} Generate Token
+                  </button>
+                </div>
+                {generatedToken && (
+                  <div className="p-3 rounded-lg bg-surface-800 border border-surface-600 space-y-2">
+                    <p className="text-xs text-slate-400">Share this token with <strong className="text-white">{generatedToken.partner_email}</strong>:</p>
+                    <div className="flex items-center gap-2">
+                      <code className="flex-1 text-xs font-mono text-brand-300 bg-surface-700 px-3 py-2 rounded-lg break-all">{generatedToken.token}</code>
+                      <button
+                        onClick={() => { navigator.clipboard.writeText(generatedToken.token); toast.success('Token copied!') }}
+                        className="p-2 rounded-lg hover:bg-surface-600 text-slate-400 hover:text-white transition-colors shrink-0"
+                        title="Copy token"
+                      >
+                        <Copy size={14} />
+                      </button>
+                    </div>
+                    <p className="text-xs text-amber-400/70">Single-use · Does not expire · Keep it confidential</p>
+                    <button onClick={() => setGeneratedToken(null)} className="text-xs text-slate-500 hover:text-slate-300">Dismiss</button>
+                  </div>
+                )}
+              </div>
+
+              {/* Pending access requests */}
+              {partnerRequests.filter((r) => r.status === 'pending').length > 0 && (
+                <div className="card p-5 space-y-3">
+                  <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                    <Clock size={14} className="text-amber-400" />
+                    Pending Requests
+                    <span className="bg-amber-500 text-black text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none">
+                      {partnerRequests.filter((r) => r.status === 'pending').length}
+                    </span>
+                  </h3>
+                  <div className="space-y-2">
+                    {partnerRequests.filter((r) => r.status === 'pending').map((req) => (
+                      <div key={req.id} className="flex items-start justify-between gap-3 p-3 rounded-lg bg-surface-800 border border-amber-500/20">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-white">{req.partner_firm_name || req.partner_email}</p>
+                          <p className="text-xs text-slate-400">{req.partner_email} · {req.partner_tier} tier</p>
+                          {req.request_message && <p className="text-xs text-slate-400 italic mt-1">"{req.request_message}"</p>}
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            onClick={() => handleApprovePartner(req.id)}
+                            disabled={approvingReq === req.id}
+                            className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg bg-green-500/10 text-green-400 hover:bg-green-500/20 transition-colors font-medium"
+                          >
+                            {approvingReq === req.id ? <Loader2 size={11} className="animate-spin" /> : <CheckCircle size={11} />} Approve
+                          </button>
+                          <button
+                            onClick={() => handleRejectPartner(req.id)}
+                            disabled={rejectingReq === req.id}
+                            className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors font-medium"
+                          >
+                            {rejectingReq === req.id ? <Loader2 size={11} className="animate-spin" /> : <XCircle size={11} />} Reject
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Active partner links */}
+              <div className="card p-5 space-y-3">
+                <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                  <CheckCircle size={14} className="text-green-400" /> Active Accountant Access
+                </h3>
+                {partnerLinks.length === 0 ? (
+                  <p className="text-sm text-slate-500">No accountants currently have access to this organisation.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {partnerLinks.map((link) => (
+                      <div key={link.id} className="flex items-center justify-between gap-3 p-3 rounded-lg bg-surface-800 border border-surface-600">
+                        <div>
+                          <p className="text-sm font-medium text-white">{link.org_name}</p>
+                          <p className="text-xs text-slate-400">Linked {new Date(link.linked_at).toLocaleDateString('en-NG', { day: '2-digit', month: 'short', year: 'numeric' })}</p>
+                        </div>
+                        <button
+                          onClick={() => handleRevokePartnerAccess(link.id)}
+                          disabled={revokingLink === link.id}
+                          className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg text-red-400 hover:bg-red-400/10 transition-colors font-medium"
+                        >
+                          {revokingLink === link.id ? <Loader2 size={11} className="animate-spin" /> : <XCircle size={11} />} Revoke Access
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Request history */}
+              {partnerRequests.filter((r) => r.status !== 'pending').length > 0 && (
+                <div className="card p-5 space-y-3">
+                  <h3 className="text-sm font-semibold text-white text-slate-400">Request History</h3>
+                  <div className="space-y-1.5">
+                    {partnerRequests.filter((r) => r.status !== 'pending').map((req) => (
+                      <div key={req.id} className="flex items-center justify-between gap-3 p-3 rounded-lg bg-surface-800/50">
+                        <div>
+                          <p className="text-sm text-slate-300">{req.partner_firm_name || req.partner_email}</p>
+                          {req.rejection_reason && <p className="text-xs text-red-400/70 italic">"{req.rejection_reason}"</p>}
+                        </div>
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                          req.status === 'approved' ? 'bg-green-500/10 text-green-400' :
+                          req.status === 'rejected' ? 'bg-red-500/10 text-red-400' :
+                          'bg-slate-500/10 text-slate-400'
+                        }`}>{req.status}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
         </div>
       )}
     </div>

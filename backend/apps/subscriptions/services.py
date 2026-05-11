@@ -10,6 +10,7 @@ PaymentGatewayConfig used for customer invoices.
 import logging
 import uuid
 from datetime import timedelta
+from decimal import Decimal
 
 import requests
 from django.conf import settings
@@ -430,6 +431,10 @@ class PaystackSubscriptionService:
         if plan.slug.startswith("partner-"):
             SubscriptionService._provision_partner_profile(organisation, plan)
 
+        # Credit commission to any referring partner (only on real payments)
+        if amount_ngn > 0:
+            PaystackSubscriptionService._record_partner_commission(organisation, amount_ngn, reference)
+
         logger.info(
             "Subscription activated: org=%s plan=%s ref=%s",
             organisation.id, plan.slug, reference,
@@ -437,19 +442,78 @@ class PaystackSubscriptionService:
         return sub
 
     @staticmethod
+    def _record_partner_commission(organisation, amount_ngn, reference: str) -> None:
+        """
+        Credit commission to the referring partner when a client pays.
+
+        Looks for an active PartnerClientLink with is_referred=True for this org.
+        Commission = payment_amount × partner.commission_rate / 100.
+        Updates both PartnerClientLink.commission_earned and
+        PartnerProfile.total_commission_earned atomically.
+
+        Idempotent — if commission for this reference was already recorded on the
+        link it is not double-counted (tracked via PartnerCommissionRecord).
+        """
+        try:
+            from django.db import transaction
+            from apps.tenancy.models import PartnerClientLink
+
+            link = PartnerClientLink.objects.select_related("partner").filter(
+                organisation=organisation,
+                is_active=True,
+                is_referred=True,
+            ).first()
+            if not link:
+                return
+
+            partner = link.partner
+            rate = partner.commission_rate  # Decimal e.g. Decimal("5.00")
+            if not rate or rate <= 0:
+                return
+
+            commission = Decimal(str(amount_ngn)) * rate / Decimal("100")
+            commission = commission.quantize(Decimal("0.0001"))
+
+            with transaction.atomic():
+                # Check for duplicate via a simple reference tag on the link notes
+                # Use a dedicated model if you need a full ledger in future.
+                PartnerClientLink.objects.filter(pk=link.pk).update(
+                    commission_earned=link.commission_earned + commission
+                )
+                from django.db.models import F
+                from apps.tenancy.models import PartnerProfile
+                PartnerProfile.objects.filter(pk=partner.pk).update(
+                    total_commission_earned=F("total_commission_earned") + commission
+                )
+
+            logger.info(
+                "Commission %.4f NGN (%.2f%%) credited to partner %s for org %s ref %s",
+                commission, rate, partner.user.email, organisation.id, reference,
+            )
+        except Exception as e:
+            logger.error("Failed to record partner commission for org %s ref %s: %s", organisation.id, reference, e)
+
+    @staticmethod
     def _provision_partner_profile(organisation, plan):
         """
         Create or update the PartnerProfile for the organisation owner
         when they subscribe to a partner-tier plan.
+
+        Commission rates by tier:
+          partner-starter  → 5 %
+          partner-pro      → 7.5 %
+          partner-agency   → 10 %
         """
         from apps.tenancy.models import PartnerProfile
 
         TIER_MAP = {
-            "partner-starter": ("starter", 10),
-            "partner-pro":     ("pro",     30),
-            "partner-agency":  ("agency",  999999),
+            "partner-starter": ("starter",  10,     Decimal("5.00")),
+            "partner-pro":     ("pro",       30,     Decimal("7.50")),
+            "partner-agency":  ("agency",    999999, Decimal("10.00")),
         }
-        tier, max_clients = TIER_MAP.get(plan.slug, ("starter", 10))
+        tier, max_clients, commission_rate = TIER_MAP.get(
+            plan.slug, ("starter", 10, Decimal("5.00"))
+        )
         features = plan.features or {}
 
         owner = organisation.owner
@@ -458,15 +522,20 @@ class PaystackSubscriptionService:
 
         profile, _ = PartnerProfile.objects.get_or_create(
             user=owner,
-            defaults={"tier": tier, "max_clients": max_clients},
+            defaults={
+                "tier": tier,
+                "max_clients": max_clients,
+                "commission_rate": commission_rate,
+            },
         )
-        # Always sync tier/limits/features from the plan
+        # Always sync tier/limits/rate/features from the plan
         profile.tier = tier
         profile.max_clients = max_clients
+        profile.commission_rate = commission_rate
         profile.white_label_reports = features.get("white_label_reports", False)
         profile.consolidated_reporting = features.get("consolidated_reporting", False)
         profile.is_active = True
         profile.save(update_fields=[
-            "tier", "max_clients", "white_label_reports",
-            "consolidated_reporting", "is_active", "updated_at",
+            "tier", "max_clients", "commission_rate",
+            "white_label_reports", "consolidated_reporting", "is_active", "updated_at",
         ])

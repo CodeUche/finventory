@@ -1,38 +1,15 @@
 import { useEffect, useState } from 'react'
 import {
-  GraduationCap, Users, TrendingUp, Plus, Trash2, Loader2,
+  GraduationCap, Users, TrendingUp, Trash2, Loader2,
   Building2, DollarSign, CheckCircle, XCircle, RefreshCw,
-  BarChart3, FileBarChart2, ExternalLink,
+  BarChart3, FileBarChart2, ExternalLink, Send, Clock,
+  ShieldCheck, Key, ChevronRight,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useNavigate } from 'react-router-dom'
 import { partnerApi, orgApi, bypassNextGets } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
-
-interface PartnerProfile {
-  id: string
-  tier: 'starter' | 'pro' | 'agency'
-  firm_name: string
-  max_clients: number
-  commission_rate: string
-  total_commission_earned: string
-  white_label_reports: boolean
-  consolidated_reporting: boolean
-  is_active: boolean
-  referral_code: string
-}
-
-interface ClientLink {
-  id: string
-  organisation: string
-  org_name: string
-  org_currency: string
-  is_referred: boolean
-  commission_earned: string
-  notes: string
-  is_active: boolean
-  linked_at: string
-}
+import type { PartnerProfile, PartnerClientLink, PartnerAccessRequest, PartnerAccessRequestStatus } from '@/types'
 
 interface ConsolidatedClient {
   link_id: string
@@ -71,6 +48,13 @@ const TIER_COLORS: Record<string, string> = {
   agency: 'text-purple-300 bg-purple-500/10',
 }
 
+const STATUS_STYLES: Record<PartnerAccessRequestStatus, { label: string; cls: string; Icon: React.ElementType }> = {
+  pending:   { label: 'Pending',   cls: 'bg-amber-500/10 text-amber-400',  Icon: Clock },
+  approved:  { label: 'Approved',  cls: 'bg-green-500/10 text-green-400',  Icon: CheckCircle },
+  rejected:  { label: 'Rejected',  cls: 'bg-red-500/10 text-red-400',      Icon: XCircle },
+  withdrawn: { label: 'Withdrawn', cls: 'bg-slate-500/10 text-slate-400',  Icon: XCircle },
+}
+
 function fmtMoney(v: string | number) {
   return '₦' + parseFloat(String(v)).toLocaleString('en-NG', { minimumFractionDigits: 2 })
 }
@@ -79,32 +63,42 @@ function fmtDate(dt: string) {
   return new Date(dt).toLocaleDateString('en-NG', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
+type Tab = 'clients' | 'requests' | 'consolidated'
+
 export default function PartnerDashboardPage() {
   const navigate = useNavigate()
   const { setOrganisation, setOrganisations } = useAuthStore()
   const [profile, setProfile] = useState<PartnerProfile | null>(null)
-  const [clients, setClients] = useState<ClientLink[]>([])
+  const [clients, setClients] = useState<PartnerClientLink[]>([])
+  const [accessRequests, setAccessRequests] = useState<PartnerAccessRequest[]>([])
   const [consolidated, setConsolidated] = useState<ConsolidatedData | null>(null)
   const [loading, setLoading] = useState(true)
-  const [tab, setTab] = useState<'clients' | 'consolidated'>('clients')
+  const [tab, setTab] = useState<Tab>('clients')
   const [managingBooks, setManagingBooks] = useState<string | null>(null)
 
-  // Add client form
-  const [orgId, setOrgId] = useState('')
-  const [notes, setNotes] = useState('')
-  const [isReferred, setIsReferred] = useState(true)
-  const [adding, setAdding] = useState(false)
+  // Request access form
+  const [reqOrgId, setReqOrgId] = useState('')
+  const [reqMessage, setReqMessage] = useState('')
+  const [requesting, setRequesting] = useState(false)
+
+  // Accept invite token form
+  const [inviteToken, setInviteToken] = useState('')
+  const [acceptingToken, setAcceptingToken] = useState(false)
+
   const [removing, setRemoving] = useState<string | null>(null)
+  const [withdrawing, setWithdrawing] = useState<string | null>(null)
 
   const load = async () => {
     setLoading(true)
     try {
-      const [profileRes, clientsRes] = await Promise.allSettled([
+      const [profileRes, clientsRes, reqsRes] = await Promise.allSettled([
         partnerApi.profile(),
         partnerApi.clients(),
+        partnerApi.listAccessRequests(),
       ])
       if (profileRes.status === 'fulfilled') setProfile(profileRes.value.data)
       if (clientsRes.status === 'fulfilled') setClients(clientsRes.value.data.results ?? clientsRes.value.data)
+      if (reqsRes.status === 'fulfilled') setAccessRequests(reqsRes.value.data.results ?? reqsRes.value.data)
     } finally {
       setLoading(false)
     }
@@ -120,36 +114,59 @@ export default function PartnerDashboardPage() {
   }
 
   useEffect(() => { load() }, [])
-
   useEffect(() => {
     if (tab === 'consolidated' && !consolidated) loadConsolidated()
   }, [tab]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleAddClient = async () => {
-    if (!orgId.trim()) { toast.error('Enter an Organisation ID'); return }
-    setAdding(true)
+  const handleRequestAccess = async () => {
+    if (!reqOrgId.trim()) { toast.error('Enter an Organisation ID'); return }
+    setRequesting(true)
     try {
-      const res = await partnerApi.addClient({ organisation_id: orgId.trim(), notes, is_referred: isReferred })
-      setClients((prev) => [res.data, ...prev])
-      setOrgId('')
-      setNotes('')
-      toast.success('Client linked successfully')
+      const res = await partnerApi.requestAccess({
+        organisation_id: reqOrgId.trim(),
+        message: reqMessage.trim() || undefined,
+      })
+      setAccessRequests((prev) => [res.data, ...prev.filter((r) => r.id !== res.data.id)])
+      setReqOrgId('')
+      setReqMessage('')
+      toast.success('Access request sent — the organisation owner will be notified.')
+      setTab('requests')
     } catch (err: any) {
       const msg = err?.response?.data?.error
-      toast.error(typeof msg === 'string' ? msg : msg?.message ?? 'Failed to add client')
+      toast.error(typeof msg === 'string' ? msg : msg?.message ?? 'Failed to send request')
     } finally {
-      setAdding(false)
+      setRequesting(false)
     }
   }
 
-  const handleManageBooks = async (c: ClientLink) => {
+  const handleAcceptToken = async () => {
+    if (!inviteToken.trim()) { toast.error('Paste the invite token'); return }
+    setAcceptingToken(true)
+    try {
+      await partnerApi.acceptInvite(inviteToken.trim())
+      toast.success('Invite accepted — you now have access to this organisation.')
+      setInviteToken('')
+      await load()
+      setTab('clients')
+    } catch (err: any) {
+      const msg = err?.response?.data?.error
+      toast.error(typeof msg === 'string' ? msg : msg?.message ?? 'Invalid or expired token')
+    } finally {
+      setAcceptingToken(false)
+    }
+  }
+
+  const handleManageBooks = async (c: PartnerClientLink) => {
     setManagingBooks(c.id)
     try {
       const { data } = await orgApi.list()
       const orgs: any[] = data.results ?? data
       const clientOrg = orgs.find((o: any) => o.id === c.organisation)
-      if (!clientOrg) { toast.error('Client organisation not found — ensure you have been provisioned as a member'); return }
-      setOrganisations(orgs)   // keep store fresh so "Exit Client View" can find partner's own org
+      if (!clientOrg) {
+        toast.error('Organisation not found in your membership list — contact the client to check your access.')
+        return
+      }
+      setOrganisations(orgs)
       setOrganisation(clientOrg)
       navigate('/dashboard')
     } catch {
@@ -160,16 +177,33 @@ export default function PartnerDashboardPage() {
   }
 
   const handleRemove = async (clientId: string) => {
-    if (!confirm('Remove this client from your portfolio?')) return
+    if (!confirm('Remove this client from your portfolio? This will also revoke your access to their organisation.')) return
     setRemoving(clientId)
     try {
       await partnerApi.removeClient(clientId)
       setClients((prev) => prev.filter((c) => c.id !== clientId))
-      toast.success('Client removed')
+      toast.success('Client removed and access revoked')
     } catch {
       toast.error('Failed to remove client')
     } finally {
       setRemoving(null)
+    }
+  }
+
+  const handleWithdraw = async (reqId: string) => {
+    if (!confirm('Withdraw this access request?')) return
+    setWithdrawing(reqId)
+    try {
+      await partnerApi.withdrawRequest(reqId)
+      setAccessRequests((prev) => prev.map((r) =>
+        r.id === reqId ? { ...r, status: 'withdrawn' as PartnerAccessRequestStatus } : r
+      ))
+      toast.success('Request withdrawn')
+    } catch (err: any) {
+      const msg = err?.response?.data?.error
+      toast.error(typeof msg === 'string' ? msg : 'Failed to withdraw request')
+    } finally {
+      setWithdrawing(null)
     }
   }
 
@@ -190,8 +224,9 @@ export default function PartnerDashboardPage() {
     )
   }
 
-  const usedClients = clients.filter((c) => c.is_active).length
+  const activeClients = clients.filter((c) => c.is_active)
   const maxClients = profile.max_clients >= 999999 ? null : profile.max_clients
+  const pendingCount = accessRequests.filter((r) => r.status === 'pending').length
 
   return (
     <div className="space-y-6 max-w-5xl">
@@ -219,7 +254,7 @@ export default function PartnerDashboardPage() {
         <div className="card space-y-1">
           <p className="text-xs text-slate-500 flex items-center gap-1"><Users size={11} /> Clients</p>
           <p className="text-xl font-bold text-white">
-            {usedClients}{maxClients ? <span className="text-slate-500 text-sm font-normal"> / {maxClients}</span> : null}
+            {activeClients.length}{maxClients ? <span className="text-slate-500 text-sm font-normal"> / {maxClients}</span> : null}
           </p>
         </div>
         <div className="card space-y-1">
@@ -244,7 +279,6 @@ export default function PartnerDashboardPage() {
           <button
             onClick={() => { navigator.clipboard.writeText(profile.referral_code); toast.success('Referral code copied!') }}
             className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-purple-500/10 text-purple-400 hover:bg-purple-500/20 transition-colors"
-            title="Share this code with clients when they register — proves they were referred by you"
           >
             Referral Code: <span className="font-mono">{profile.referral_code}</span>
             <ExternalLink size={10} />
@@ -254,65 +288,91 @@ export default function PartnerDashboardPage() {
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-surface-700">
-        {([['clients', 'My Clients', Users], ['consolidated', 'Consolidated Report', BarChart3]] as const).map(([key, label, Icon]) => (
+        {([
+          ['clients', 'My Clients', Users, 0],
+          ['requests', 'Access Requests', ShieldCheck, pendingCount],
+          ['consolidated', 'Consolidated Report', BarChart3, 0],
+        ] as const).map(([key, label, Icon, badge]) => (
           <button
             key={key}
-            onClick={() => setTab(key as 'clients' | 'consolidated')}
+            onClick={() => setTab(key as Tab)}
             className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
               tab === key ? 'border-brand-500 text-brand-400' : 'border-transparent text-slate-400 hover:text-white'
             }`}
           >
             <Icon size={14} /> {label}
+            {badge > 0 && (
+              <span className="ml-1 bg-amber-500 text-black text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none">
+                {badge}
+              </span>
+            )}
           </button>
         ))}
       </div>
 
+      {/* ── My Clients tab ── */}
       {tab === 'clients' && (
         <div className="space-y-4">
-          {/* Add client form */}
+          {/* Request access form */}
           <div className="card space-y-3">
-            <p className="text-sm font-semibold text-white flex items-center gap-2"><Plus size={14} /> Link a Client Organisation</p>
+            <p className="text-sm font-semibold text-white flex items-center gap-2"><Send size={14} /> Request Access to a Client Organisation</p>
+            <p className="text-xs text-slate-400">
+              Enter the Organisation ID of a client you want to manage. The owner will receive a notification and can approve or reject your request.
+            </p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div className="sm:col-span-2">
                 <label className="label">Organisation ID (UUID)</label>
                 <input
                   className="input"
                   placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                  value={orgId}
-                  onChange={(e) => setOrgId(e.target.value)}
+                  value={reqOrgId}
+                  onChange={(e) => setReqOrgId(e.target.value)}
                 />
               </div>
               <div>
-                <label className="label">Notes (optional)</label>
+                <label className="label">Message (optional)</label>
                 <input
                   className="input"
-                  placeholder="e.g. Lagos retail client"
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
+                  placeholder="e.g. Referred by Ahmed"
+                  value={reqMessage}
+                  onChange={(e) => setReqMessage(e.target.value)}
+                  maxLength={300}
                 />
               </div>
             </div>
             <div className="flex items-center justify-between">
-              <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={isReferred}
-                  onChange={(e) => setIsReferred(e.target.checked)}
-                  className="rounded border-surface-600 bg-surface-800 text-brand-500 focus:ring-brand-500"
-                />
-                Mark as referred (earn commission)
-              </label>
-              <button onClick={handleAddClient} disabled={adding} className="btn-primary text-sm flex items-center gap-1.5">
-                {adding ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />} Add Client
+              <div className="text-xs text-slate-500">The client org owner must approve your request before you gain access.</div>
+              <button onClick={handleRequestAccess} disabled={requesting} className="btn-primary text-sm flex items-center gap-1.5">
+                {requesting ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} Send Request
               </button>
             </div>
           </div>
 
-          {/* Client list */}
-          {clients.length === 0 ? (
+          {/* Accept invite token */}
+          <div className="card space-y-3 border border-purple-500/20 bg-purple-500/5">
+            <p className="text-sm font-semibold text-purple-300 flex items-center gap-2"><Key size={14} /> Accept an Invite Token</p>
+            <p className="text-xs text-slate-400">
+              If a client sent you an invite token, paste it here to instantly gain access without waiting for approval.
+            </p>
+            <div className="flex gap-2">
+              <input
+                className="input flex-1"
+                placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                value={inviteToken}
+                onChange={(e) => setInviteToken(e.target.value)}
+              />
+              <button onClick={handleAcceptToken} disabled={acceptingToken} className="btn-primary text-sm flex items-center gap-1.5 shrink-0">
+                {acceptingToken ? <Loader2 size={13} className="animate-spin" /> : <ChevronRight size={13} />} Accept
+              </button>
+            </div>
+          </div>
+
+          {/* Active client list */}
+          {activeClients.length === 0 ? (
             <div className="card text-center py-10">
               <Building2 size={32} className="text-slate-600 mx-auto mb-2" />
-              <p className="text-slate-400 text-sm">No clients linked yet. Add your first client above.</p>
+              <p className="text-slate-400 text-sm">No approved clients yet.</p>
+              <p className="text-slate-500 text-xs mt-1">Send an access request above or ask a client to generate an invite token for you.</p>
             </div>
           ) : (
             <div className="card overflow-hidden p-0">
@@ -322,43 +382,32 @@ export default function PartnerDashboardPage() {
                     <th className="text-left text-xs text-slate-500 font-medium px-4 py-3">Organisation</th>
                     <th className="text-left text-xs text-slate-500 font-medium px-4 py-3">Linked</th>
                     <th className="text-left text-xs text-slate-500 font-medium px-4 py-3">Commission Earned</th>
-                    <th className="text-left text-xs text-slate-500 font-medium px-4 py-3">Status</th>
                     <th className="text-left text-xs text-slate-500 font-medium px-4 py-3">Notes</th>
                     <th className="px-4 py-3" />
                   </tr>
                 </thead>
                 <tbody>
-                  {clients.map((c) => (
+                  {activeClients.map((c) => (
                     <tr key={c.id} className="border-b border-surface-700/50 last:border-0 hover:bg-surface-700/20">
                       <td className="px-4 py-3 text-white font-medium">{c.org_name || c.organisation}</td>
                       <td className="px-4 py-3 text-slate-400">{fmtDate(c.linked_at)}</td>
                       <td className="px-4 py-3 text-green-400 font-medium">{fmtMoney(c.commission_earned)}</td>
-                      <td className="px-4 py-3">
-                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${c.is_active ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
-                          {c.is_active ? 'Active' : 'Inactive'}
-                        </span>
-                        {c.is_referred && (
-                          <span className="ml-1.5 text-xs px-2 py-0.5 rounded-full bg-brand-500/10 text-brand-400">Referred</span>
-                        )}
-                      </td>
                       <td className="px-4 py-3 text-slate-400 text-xs">{c.notes || '—'}</td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-1">
-                          {c.is_active && (
-                            <button
-                              onClick={() => handleManageBooks(c)}
-                              disabled={managingBooks === c.id}
-                              className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg text-purple-400 hover:bg-purple-400/10 transition-colors"
-                              title="Switch to this client's books"
-                            >
-                              {managingBooks === c.id ? <Loader2 size={11} className="animate-spin" /> : <ExternalLink size={11} />}
-                              Manage Books
-                            </button>
-                          )}
+                          <button
+                            onClick={() => handleManageBooks(c)}
+                            disabled={managingBooks === c.id}
+                            className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg text-purple-400 hover:bg-purple-400/10 transition-colors"
+                          >
+                            {managingBooks === c.id ? <Loader2 size={11} className="animate-spin" /> : <ExternalLink size={11} />}
+                            Manage Books
+                          </button>
                           <button
                             onClick={() => handleRemove(c.id)}
                             disabled={removing === c.id}
                             className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-400/10 transition-colors"
+                            title="Remove client and revoke access"
                           >
                             {removing === c.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
                           </button>
@@ -373,6 +422,67 @@ export default function PartnerDashboardPage() {
         </div>
       )}
 
+      {/* ── Access Requests tab ── */}
+      {tab === 'requests' && (
+        <div className="space-y-4">
+          {accessRequests.length === 0 ? (
+            <div className="card text-center py-10">
+              <ShieldCheck size={32} className="text-slate-600 mx-auto mb-2" />
+              <p className="text-slate-400 text-sm">No access requests yet.</p>
+              <p className="text-slate-500 text-xs mt-1">Requests you send to client organisations will appear here.</p>
+            </div>
+          ) : (
+            <div className="card overflow-hidden p-0">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-surface-700">
+                    <th className="text-left text-xs text-slate-500 font-medium px-4 py-3">Organisation</th>
+                    <th className="text-left text-xs text-slate-500 font-medium px-4 py-3">Status</th>
+                    <th className="text-left text-xs text-slate-500 font-medium px-4 py-3">Message</th>
+                    <th className="text-left text-xs text-slate-500 font-medium px-4 py-3">Date</th>
+                    <th className="px-4 py-3" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {accessRequests.map((req) => {
+                    const s = STATUS_STYLES[req.status] || STATUS_STYLES.pending
+                    return (
+                      <tr key={req.id} className="border-b border-surface-700/50 last:border-0 hover:bg-surface-700/20">
+                        <td className="px-4 py-3 text-white font-medium">{req.org_name}</td>
+                        <td className="px-4 py-3">
+                          <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium ${s.cls}`}>
+                            <s.Icon size={10} /> {s.label}
+                          </span>
+                          {req.status === 'rejected' && req.rejection_reason && (
+                            <p className="text-xs text-red-400/70 mt-0.5 italic">{req.rejection_reason}</p>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-slate-400 text-xs max-w-[180px] truncate">
+                          {req.request_message || '—'}
+                        </td>
+                        <td className="px-4 py-3 text-slate-400 text-xs">{fmtDate(req.created_at)}</td>
+                        <td className="px-4 py-3">
+                          {(req.status === 'pending' || req.status === 'approved') && (
+                            <button
+                              onClick={() => handleWithdraw(req.id)}
+                              disabled={withdrawing === req.id}
+                              className="text-xs px-2 py-1 rounded-lg text-slate-400 hover:text-red-400 hover:bg-red-400/10 transition-colors"
+                            >
+                              {withdrawing === req.id ? <Loader2 size={12} className="animate-spin" /> : 'Withdraw'}
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Consolidated Report tab ── */}
       {tab === 'consolidated' && (
         <div className="space-y-4">
           {!profile.consolidated_reporting ? (
@@ -386,7 +496,6 @@ export default function PartnerDashboardPage() {
             </div>
           ) : (
             <div className="space-y-4">
-              {/* Summary tiles */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <div className="card space-y-1">
                   <p className="text-xs text-slate-500">Total Clients</p>
@@ -406,7 +515,6 @@ export default function PartnerDashboardPage() {
                 </div>
               </div>
 
-              {/* Per-client breakdown */}
               <div className="card overflow-hidden p-0">
                 <table className="w-full text-sm">
                   <thead>

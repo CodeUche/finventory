@@ -828,6 +828,57 @@ export interface InitiatePaymentResult {
   access_code: string
 }
 
+// ─── Partner Program ──────────────────────────────────────────────────────────
+export interface PartnerProfile {
+  id: string
+  user_email: string
+  tier: 'starter' | 'pro' | 'agency'
+  firm_name: string
+  firm_logo?: string | null
+  max_clients: number
+  commission_rate: string
+  total_commission_earned: string
+  white_label_reports: boolean
+  consolidated_reporting: boolean
+  is_active: boolean
+  referral_code: string
+  active_client_count: number
+  can_add_client: boolean
+  created_at: string
+}
+
+export interface PartnerClientLink {
+  id: string
+  organisation: string
+  org_name: string
+  org_currency: string
+  is_referred: boolean
+  commission_earned: string
+  notes: string
+  is_active: boolean
+  linked_at: string
+}
+
+export type PartnerAccessRequestStatus = 'pending' | 'approved' | 'rejected' | 'withdrawn'
+
+export interface PartnerAccessRequest {
+  id: string
+  status: PartnerAccessRequestStatus
+  request_message: string
+  rejection_reason: string
+  partner_email: string
+  partner_firm_name: string
+  partner_tier: string
+  org_name: string
+  organisation: string
+  invite_token?: string | null
+  invite_token_used: boolean
+  reviewed_by_email?: string | null
+  reviewed_at?: string | null
+  created_at: string
+  updated_at: string
+}
+
 // ─── Overdue Invoice Alert ────────────────────────────────────────────────────
 export interface OverdueInvoiceAlert {
   id: string
