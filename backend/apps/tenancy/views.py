@@ -1155,40 +1155,64 @@ class PartnerViewSet(viewsets.ViewSet):
 
     permission_classes = [IsAuthenticated]
 
-    def _get_profile(self, request):
-        from rest_framework.exceptions import PermissionDenied
+    def _get_or_create_profile(self, request):
+        """
+        Return the user's PartnerProfile, creating it on first call.
+        No subscription check — used only by the enrollment/profile endpoint.
+        """
         from .models import PartnerProfile
-
-        # Return existing profile (backward-compatible for provisioned partners)
-        try:
-            return request.user.partner_profile
-        except PartnerProfile.DoesNotExist:
-            pass
-
-        # No profile yet — only create one if the user holds an active partner subscription
-        try:
-            org = getattr(request, "organisation", None)
-            if org is None:
-                raise PermissionDenied("A partner subscription is required to access this feature.")
-            sub = getattr(org, "subscription", None)
-            if sub is None or not (sub.plan.slug.startswith("partner-") and sub.status in ("active", "trialing")):
-                raise PermissionDenied("A partner subscription is required to access this feature.")
-        except PermissionDenied:
-            raise
-        except Exception:
-            raise PermissionDenied("A partner subscription is required to access this feature.")
-
         profile, _ = PartnerProfile.objects.get_or_create(
             user=request.user,
             defaults={"tier": "starter", "max_clients": 10},
         )
         return profile
 
+    def _get_profile(self, request):
+        """
+        Return the user's PartnerProfile and enforce an active partner subscription.
+        Raises HTTP 403 with a payment-prompt message if the trial has expired or
+        no partner plan is active.  Used by all dashboard actions (clients,
+        consolidated, access requests, etc.) — not by the enrollment endpoint.
+        """
+        from rest_framework.exceptions import PermissionDenied
+        from .models import PartnerProfile
+
+        # Must have a profile first
+        try:
+            profile = request.user.partner_profile
+        except PartnerProfile.DoesNotExist:
+            raise PermissionDenied(
+                "No partner profile found. Complete enrollment to get started."
+            )
+
+        # Check subscription status
+        try:
+            org = getattr(request, "organisation", None)
+            sub = getattr(org, "subscription", None) if org else None
+            plan_slug = sub.plan.slug if sub and sub.plan else ""
+            sub_status = sub.status if sub else ""
+            is_partner_plan = plan_slug.startswith("partner-")
+            is_active = sub_status in ("active", "trialing")
+        except Exception:
+            is_partner_plan = False
+            is_active = False
+
+        if not (is_partner_plan and is_active):
+            raise PermissionDenied(
+                "Your partner subscription has expired or is not active. "
+                "Please subscribe to a partner plan to continue using the Partner Dashboard."
+            )
+
+        return profile
+
     @action(detail=False, methods=["get", "put"], url_path="profile")
     def profile(self, request):
         from .models import PartnerProfile
         from .serializers import PartnerProfileSerializer
-        profile = self._get_profile(request)
+        # Enrollment uses _get_or_create_profile — no subscription gate.
+        # Any user can create/update their profile; the trial is started
+        # separately by the frontend's subscriptionApi.startTrial() call.
+        profile = self._get_or_create_profile(request)
         if request.method == "PUT":
             serializer = PartnerProfileSerializer(profile, data=request.data, partial=True)
             serializer.is_valid(raise_exception=True)

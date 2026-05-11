@@ -3,7 +3,7 @@ import {
   GraduationCap, Users, TrendingUp, Trash2, Loader2,
   Building2, DollarSign, CheckCircle, XCircle, RefreshCw,
   BarChart3, FileBarChart2, ExternalLink, Send, Clock,
-  ShieldCheck, Key, ChevronRight,
+  ShieldCheck, Key, ChevronRight, LockKeyhole,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useNavigate } from 'react-router-dom'
@@ -73,6 +73,7 @@ export default function PartnerDashboardPage() {
   const [accessRequests, setAccessRequests] = useState<PartnerAccessRequest[]>([])
   const [consolidated, setConsolidated] = useState<ConsolidatedData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [subscriptionExpired, setSubscriptionExpired] = useState(false)
   const [tab, setTab] = useState<Tab>('clients')
   const [managingBooks, setManagingBooks] = useState<string | null>(null)
 
@@ -90,6 +91,7 @@ export default function PartnerDashboardPage() {
 
   const load = async () => {
     setLoading(true)
+    setSubscriptionExpired(false)
     try {
       const [profileRes, clientsRes, reqsRes] = await Promise.allSettled([
         partnerApi.profile(),
@@ -97,8 +99,14 @@ export default function PartnerDashboardPage() {
         partnerApi.listAccessRequests(),
       ])
       if (profileRes.status === 'fulfilled') setProfile(profileRes.value.data)
-      if (clientsRes.status === 'fulfilled') setClients(clientsRes.value.data.results ?? clientsRes.value.data)
-      if (reqsRes.status === 'fulfilled') setAccessRequests(reqsRes.value.data.results ?? reqsRes.value.data)
+      if (clientsRes.status === 'fulfilled') {
+        setClients(clientsRes.value.data.results ?? clientsRes.value.data)
+      } else if (clientsRes.reason?.response?.status === 403) {
+        setSubscriptionExpired(true)
+      }
+      if (reqsRes.status === 'fulfilled') {
+        setAccessRequests(reqsRes.value.data.results ?? reqsRes.value.data)
+      }
     } finally {
       setLoading(false)
     }
@@ -119,6 +127,7 @@ export default function PartnerDashboardPage() {
   }, [tab]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleRequestAccess = async () => {
+    if (subscriptionExpired) { navigate('/billing'); return }
     if (!reqOrgId.trim()) { toast.error('Enter an Organisation ID'); return }
     setRequesting(true)
     try {
@@ -140,6 +149,7 @@ export default function PartnerDashboardPage() {
   }
 
   const handleAcceptToken = async () => {
+    if (subscriptionExpired) { navigate('/billing'); return }
     if (!inviteToken.trim()) { toast.error('Paste the invite token'); return }
     setAcceptingToken(true)
     try {
@@ -285,6 +295,28 @@ export default function PartnerDashboardPage() {
           </button>
         )}
       </div>
+
+      {/* Subscription expired paywall */}
+      {subscriptionExpired && (
+        <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-6 flex flex-col sm:flex-row items-center gap-5">
+          <div className="shrink-0 w-12 h-12 rounded-full bg-red-500/10 flex items-center justify-center">
+            <LockKeyhole size={22} className="text-red-400" />
+          </div>
+          <div className="flex-1 text-center sm:text-left">
+            <p className="text-white font-semibold text-sm">Your partner subscription has expired</p>
+            <p className="text-slate-400 text-xs mt-1">
+              Your free trial has ended or your subscription is no longer active. Subscribe to a Partner plan to continue
+              managing client organisations and accessing the dashboard features.
+            </p>
+          </div>
+          <button
+            onClick={() => navigate('/billing')}
+            className="btn-primary shrink-0 text-sm px-5"
+          >
+            Subscribe to Partner Plan
+          </button>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-surface-700">
