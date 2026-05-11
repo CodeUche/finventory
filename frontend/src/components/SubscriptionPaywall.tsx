@@ -2,6 +2,9 @@ import { useState, useEffect, useRef } from 'react'
 import { Lock, RefreshCw, CheckCircle } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { subscriptionApi, bypassNextGets } from '@/services/api'
+import { openExternal } from '@/lib/openExternal'
+
+const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 
 // Paystack Inline JS type declaration (same as BillingPage)
 declare global {
@@ -114,17 +117,26 @@ export default function SubscriptionPaywall({ subscription, onDismiss }: Props) 
     setLoading(true)
     try {
       const { data } = await subscriptionApi.initiatePayment(subscription.plan.id)
-      const { access_code, reference: ref, public_key, amount_kobo, email } = data
+      const { access_code, reference: ref, public_key, amount_kobo, email, authorization_url } = data
 
       if (!public_key) {
         toast.error('Paystack public key is not configured. Contact support.')
         return
       }
 
-      // Use inline Paystack popup (same as BillingPage) so callback fires in-app
-      await loadPaystackScript()
       setReference(ref)
 
+      // Tauri WebView2 cannot render the Paystack inline iframe — open the hosted
+      // checkout page in the system browser and poll for completion instead.
+      if (isTauri) {
+        await openExternal(authorization_url)
+        toast('Payment page opened in your browser. Return here once done.', { duration: 8000 })
+        startPolling(ref)
+        return
+      }
+
+      // Web/browser: use inline Paystack popup so the callback fires in-app
+      await loadPaystackScript()
       const handler = window.PaystackPop.setup({
         key: public_key,
         email,

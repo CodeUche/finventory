@@ -3,6 +3,9 @@ import { CheckCircle, X as XIcon, Loader2, CreditCard, Zap, Building2, Star, Ext
 import toast from 'react-hot-toast'
 import { useNavigate } from 'react-router-dom'
 import { subscriptionApi, orgApi, bypassNextGets, partnerApi } from '@/services/api'
+import { openExternal } from '@/lib/openExternal'
+
+const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 import { useAuthStore } from '@/store/authStore'
 import type { Plan, Subscription, SubscriptionPayment } from '@/types'
 import { FEATURES } from '@/lib/featureFlags'
@@ -195,10 +198,10 @@ export default function BillingPage() {
         return
       }
 
-      // For partner plans the Paystack iframe doesn't load in the desktop WebView2.
+      // Tauri WebView2 cannot render the Paystack inline iframe for any plan.
       // Open the hosted checkout page in the system browser instead.
-      if (plan.slug?.startsWith('partner-')) {
-        window.open(authorization_url, '_blank')
+      if (isTauri || plan.slug?.startsWith('partner-')) {
+        await openExternal(authorization_url)
         toast('Payment page opened in your browser. Return here and click "Refresh status" once done.', { duration: 8000 })
         return
       }
@@ -273,8 +276,8 @@ export default function BillingPage() {
       const { public_key, reference, amount_kobo: _orig, email, authorization_url } = res.data
       const adjustedKobo = Math.round(remainder * 100)
       if (!public_key) { toast.error('Paystack public key not configured.'); return }
-      if (plan.slug?.startsWith('partner-')) {
-        window.open(authorization_url, '_blank')
+      if (isTauri || plan.slug?.startsWith('partner-')) {
+        await openExternal(authorization_url)
         toast('Payment page opened in your browser.', { duration: 8000 })
         return
       }
