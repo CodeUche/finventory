@@ -186,22 +186,9 @@ export default function AppLayout() {
   const handlePaywallDismiss = () => {
     setSubscriptionExpired(false)
     setSubscriptionData(null)
-    // Re-fetch subscription to confirm active state and refresh plan modules
-    if (organisation?.id && !user?.is_superuser) {
-      subscriptionApi.current().then(({ data }) => {
-        const modules: string[] | null = data?.plan?.features?.modules ?? null
-        setPlanModules(modules)
-        setPlanTaxEngine(data?.plan?.features?.tax_engine ?? null)
-        setPlanName(data?.plan?.name?.toLowerCase() ?? null)
-        if (data?.is_expired) {
-          setSubscriptionExpired(true)
-          setSubscriptionData(data)
-        } else {
-          setSubscriptionExpired(false)
-          setSubscriptionData(null)
-        }
-      }).catch(() => { /* non-fatal — paywall already dismissed */ })
-    }
+    // The audity:app-refresh event (dispatched by SubscriptionPaywall before calling
+    // onDismiss) already incremented _appRefreshTick, which re-runs the subscription
+    // useEffect with bypassNextGets() — no second fetch needed here.
   }
 
   return (

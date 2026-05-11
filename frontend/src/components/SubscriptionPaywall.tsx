@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { Lock, RefreshCw, CheckCircle } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { subscriptionApi } from '@/services/api'
+import { subscriptionApi, bypassNextGets } from '@/services/api'
 
 // Paystack Inline JS type declaration (same as BillingPage)
 declare global {
@@ -72,7 +72,8 @@ export default function SubscriptionPaywall({ subscription, onDismiss }: Props) 
     try {
       await subscriptionApi.verifyPayment(ref)
       stopPolling()
-      // Force AppLayout to re-check subscription immediately
+      // Bypass the 5-min GET cache so AppLayout re-fetches fresh subscription state
+      bypassNextGets()
       window.dispatchEvent(new CustomEvent('audity:app-refresh'))
       toast.success('Subscription activated! Access restored.')
       onDismiss()
@@ -90,6 +91,7 @@ export default function SubscriptionPaywall({ subscription, onDismiss }: Props) 
       const { data } = await subscriptionApi.checkPayment(ref)
       if (data.status === 'success') {
         stopPolling()
+        bypassNextGets()
         window.dispatchEvent(new CustomEvent('audity:app-refresh'))
         toast.success('Subscription renewed! Access restored.')
         onDismiss()

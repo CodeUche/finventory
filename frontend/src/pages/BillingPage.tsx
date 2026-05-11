@@ -160,9 +160,9 @@ export default function BillingPage() {
       setSubscription(res.data)
       toast.success('Payment confirmed! Your subscription is now active.', { id: 'pay-verify' })
 
-      // Clear paywall and force AppLayout to re-check subscription via the
-      // audity:app-refresh event (increments _appRefreshTick → re-runs the
-      // subscription useEffect → confirms active from fresh DB data).
+      // Bypass the 5-min GET cache then fire app-refresh so AppLayout's
+      // subscription useEffect fetches fresh (non-cached) data from the server.
+      bypassNextGets()
       setSubscriptionExpired(false)
       window.dispatchEvent(new CustomEvent('audity:app-refresh'))
 
@@ -249,7 +249,8 @@ export default function BillingPage() {
       toast.success(res.data.message ?? 'Credits applied!')
       setCommissionBalance(res.data.new_balance)
       if (res.data.path === 'A') {
-        // Fully covered — refresh subscription state
+        // Fully covered — bypass cache and refresh subscription state
+        bypassNextGets()
         window.dispatchEvent(new CustomEvent('audity:app-refresh'))
         load()
       } else {
@@ -309,6 +310,7 @@ export default function BillingPage() {
     setSubscribing(plan.id)
     try {
       await subscriptionApi.startTrial(plan.id, organisation?.id)
+      bypassNextGets()
       setSubscriptionExpired(false)
       window.dispatchEvent(new CustomEvent('audity:app-refresh'))
       toast.success(`${plan.name} trial started — 30 days free!`)
