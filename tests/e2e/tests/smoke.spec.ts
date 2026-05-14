@@ -9,8 +9,12 @@
 
 import { test, expect, Page } from "@playwright/test";
 
+// BASE_URL  = the web frontend (Vite dev server or deployed web build)
+// API_URL   = the Django backend (Railway or localhost:8000)
+// When running against Railway API only (no web frontend deployed), set both to the same
+// Railway URL — frontend tests will be skipped automatically if they get non-HTML responses.
 const BASE = process.env.BASE_URL || "http://localhost:3000";
-const API  = process.env.API_URL  || "http://localhost:8000";
+const API  = process.env.API_URL  || (process.env.BASE_URL ? process.env.BASE_URL.replace(/\/api\/v1\/?$/, "") : "http://localhost:8000");
 
 // ─── API health ───────────────────────────────────────────────────────────────
 

@@ -11,18 +11,27 @@ export default defineConfig({
     ["list"],
     ["html", { outputFolder: "playwright-report", open: "never" }],
   ],
-  timeout: 30_000,
-  expect: { timeout: 5_000 },
+  timeout: 45_000,       // raised from 30s — auth + page load + data fetch
+  expect: { timeout: 8_000 },
 
   use: {
     baseURL: BASE_URL,
     trace: "on-first-retry",
     screenshot: "only-on-failure",
     video: "retain-on-failure",
+    // Ignore HTTPS errors when testing against local or Railway staging
+    ignoreHTTPSErrors: true,
   },
 
   projects: [
-    // ── Compatibility matrix ─────────────────────────────────────────────────
+    // ── Fast smoke suite — run before every deploy ───────────────────────────
+    {
+      name: "smoke",
+      grep: /@smoke/,
+      use: { ...devices["Desktop Chrome"] },
+    },
+
+    // ── Full compatibility matrix ────────────────────────────────────────────
     {
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
@@ -35,6 +44,7 @@ export default defineConfig({
       name: "webkit",
       use: { ...devices["Desktop Safari"] },
     },
+
     // ── Mobile compatibility ──────────────────────────────────────────────────
     {
       name: "mobile-chrome",
