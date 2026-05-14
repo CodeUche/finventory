@@ -382,6 +382,54 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+# ─── E2E — Playwright smoke suite ────────────────────────────────────────────
+# Runs after deploy-backend so it tests the live production stack.
+# Requires these GitHub secrets:
+#   TEST_EMAIL      — email of a real account on Railway production
+#   TEST_PASSWORD   — password for that account
+# BASE_URL is hardcoded to the Vercel frontend URL (no secret needed).
+  e2e-smoke:
+    name: E2E — Playwright Smoke
+    runs-on: ubuntu-latest
+    needs: [deploy-backend]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    defaults:
+      run:
+        working-directory: tests/e2e
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: tests/e2e/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run smoke tests
+        run: npm run test:smoke
+        env:
+          BASE_URL: https://audity-git-main-auditytechnologies.vercel.app
+          API_URL: https://audity-backend-production-30f9.up.railway.app
+          TEST_EMAIL: ${{ secrets.TEST_EMAIL }}
+          TEST_PASSWORD: ${{ secrets.TEST_PASSWORD }}
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: tests/e2e/playwright-report/
+          retention-days: 14
+
 # ─── Release — GitHub (version tags only) ─────────────────────────────────────
 # Push a tag like `v1.0.0` to trigger a GitHub Release with both installers.
 # Pre-release tags: v1.0.0-beta, v1.0.0-rc1, v1.0.0-alpha
