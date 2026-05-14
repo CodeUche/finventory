@@ -92,7 +92,8 @@ test.describe("@smoke Login Flow", () => {
 
 test.describe("@smoke Sanity Checks", () => {
   test("no 404 on static assets (favicon)", async ({ request }) => {
-    const resp = await request.get(`${BASE}/favicon.ico`);
+    // App uses favicon.svg (not .ico)
+    const resp = await request.get(`${BASE}/favicon.svg`);
     expect(resp.status()).not.toBe(404);
   });
 
