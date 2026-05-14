@@ -1185,9 +1185,15 @@ class PartnerViewSet(viewsets.ViewSet):
                 "No partner profile found. Complete enrollment to get started."
             )
 
-        # Check subscription status
+        # Check subscription status.
+        # PartnerViewSet uses IsAuthenticated (not IsStaff), so the permission layer
+        # never calls resolve_organisation() and request.organisation stays None.
+        # Resolve it explicitly here so the subscription check has an org to read from.
         try:
             org = getattr(request, "organisation", None)
+            if org is None:
+                from .middleware import resolve_organisation
+                org = resolve_organisation(request)
             sub = getattr(org, "subscription", None) if org else None
             plan_slug = sub.plan.slug if sub and sub.plan else ""
             sub_status = sub.status if sub else ""

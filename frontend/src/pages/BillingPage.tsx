@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { CheckCircle, X as XIcon, Loader2, CreditCard, Zap, Building2, Star, ExternalLink, RefreshCw, Package, ShoppingCart, FileText, Receipt, Users, Truck, BarChart3, Calculator, Briefcase, Wallet, Clock, DollarSign, Shield, ChevronDown, ChevronUp, GraduationCap, LayoutDashboard, FileBarChart2, Layers, Coins } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useNavigate } from 'react-router-dom'
-import { subscriptionApi, orgApi, bypassNextGets, partnerApi } from '@/services/api'
+import { subscriptionApi, orgApi, bypassNextGets, partnerApi, authApi } from '@/services/api'
 import { openExternal } from '@/lib/openExternal'
 
 const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
@@ -116,7 +116,7 @@ function basePlanSlug(slug: string): 'free' | 'professional' | 'business' | 'ent
 
 export default function BillingPage() {
   const navigate = useNavigate()
-  const { organisation, setOrganisation, setSubscriptionExpired } = useAuthStore()
+  const { organisation, setOrganisation, setSubscriptionExpired, updateUser } = useAuthStore()
   const [plans, setPlans] = useState<Plan[]>([])
   const [subscription, setSubscription] = useState<Subscription | null>(null)
   const [payments, setPayments] = useState<SubscriptionPayment[]>([])
@@ -124,6 +124,7 @@ export default function BillingPage() {
   const [subscribing, setSubscribing] = useState<string | null>(null)
   const [canceling, setCanceling] = useState(false)
   const [billingInterval, setBillingInterval] = useState<'monthly' | 'annual'>('monthly')
+  const [historyOpen, setHistoryOpen] = useState(false)
   const [commissionBalance, setCommissionBalance] = useState<number>(0)
   const [applyingCredit, setApplyingCredit] = useState(false)
   const [useCredits, setUseCredits] = useState(true)
@@ -315,6 +316,12 @@ export default function BillingPage() {
       await subscriptionApi.startTrial(plan.id, organisation?.id)
       bypassNextGets()
       setSubscriptionExpired(false)
+      // Refresh user profile so has_partner_profile is up-to-date in Zustand —
+      // PartnerRoute and sidebar visibility both depend on this flag.
+      try {
+        const profileRes = await authApi.profile()
+        updateUser(profileRes.data)
+      } catch { /* non-fatal — partner features will work on next login */ }
       window.dispatchEvent(new CustomEvent('audity:app-refresh'))
       toast.success(`${plan.name} trial started — 30 days free!`)
       navigate('/partner')
@@ -581,40 +588,53 @@ export default function BillingPage() {
         <PartnerChannelSection plans={plans} currentPlanSlug={currentPlanSlug} onSubscribe={handleSubscribe} onStartTrial={handlePartnerTrial} subscribing={subscribing} />
       )}
 
-      {/* Payment history */}
+      {/* Payment history — collapsible */}
       {payments.length > 0 && (
         <div>
-          <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wide mb-4">Payment History</h2>
-          <div className="card overflow-hidden p-0">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-surface-700">
-                  <th className="text-left text-xs text-slate-500 font-medium px-4 py-3">Date</th>
-                  <th className="text-left text-xs text-slate-500 font-medium px-4 py-3">Description</th>
-                  <th className="text-left text-xs text-slate-500 font-medium px-4 py-3">Amount</th>
-                  <th className="text-left text-xs text-slate-500 font-medium px-4 py-3">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {payments.map((p) => (
-                  <tr key={p.id} className="border-b border-surface-700/50 last:border-0 hover:bg-surface-700/20">
-                    <td className="px-4 py-3 text-slate-400">{fmtDate(p.created_at)}</td>
-                    <td className="px-4 py-3 text-white">{p.description}</td>
-                    <td className="px-4 py-3 text-white font-medium">{fmt(p.amount)}</td>
-                    <td className="px-4 py-3">
-                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize ${
-                        p.status === 'succeeded' ? 'bg-green-500/10 text-green-400' :
-                        p.status === 'failed' ? 'bg-red-500/10 text-red-400' :
-                        'bg-slate-500/10 text-slate-400'
-                      }`}>
-                        {p.status}
-                      </span>
-                    </td>
+          <button
+            onClick={() => setHistoryOpen((v) => !v)}
+            className="w-full flex items-center justify-between group"
+          >
+            <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wide group-hover:text-slate-300 transition-colors">
+              Payment History
+            </h2>
+            <div className="flex items-center gap-2 text-slate-500 group-hover:text-slate-300 transition-colors">
+              <span className="text-xs">{payments.length} record{payments.length !== 1 ? 's' : ''}</span>
+              {historyOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            </div>
+          </button>
+          {historyOpen && (
+            <div className="card overflow-hidden p-0 mt-3">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-surface-700">
+                    <th className="text-left text-xs text-slate-500 font-medium px-4 py-3">Date</th>
+                    <th className="text-left text-xs text-slate-500 font-medium px-4 py-3">Description</th>
+                    <th className="text-left text-xs text-slate-500 font-medium px-4 py-3">Amount</th>
+                    <th className="text-left text-xs text-slate-500 font-medium px-4 py-3">Status</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {payments.map((p) => (
+                    <tr key={p.id} className="border-b border-surface-700/50 last:border-0 hover:bg-surface-700/20">
+                      <td className="px-4 py-3 text-slate-400">{fmtDate(p.created_at)}</td>
+                      <td className="px-4 py-3 text-white">{p.description}</td>
+                      <td className="px-4 py-3 text-white font-medium">{fmt(p.amount)}</td>
+                      <td className="px-4 py-3">
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize ${
+                          p.status === 'succeeded' ? 'bg-green-500/10 text-green-400' :
+                          p.status === 'failed' ? 'bg-red-500/10 text-red-400' :
+                          'bg-slate-500/10 text-slate-400'
+                        }`}>
+                          {p.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 
