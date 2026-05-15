@@ -9,11 +9,9 @@ django-cors-headers==4.6.0
 
 # Authentication
 djangorestframework-simplejwt==5.5.1
-django-allauth==65.14.1
 
 # Database
 psycopg2-binary==2.9.10
-django-db-geventpool==4.0.8
 
 # Caching & Async
 redis==5.2.1
