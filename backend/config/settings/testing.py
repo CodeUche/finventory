@@ -2,6 +2,11 @@
 
 from .base import *  # noqa: F401, F403
 
+# Paystack — fake key so service.initiate_payment() passes the key-presence
+# check before hitting the mocked requests.post. Never makes real API calls.
+PAYSTACK_SECRET_KEY = "sk_test_fake_key_for_ci_only_not_real"
+PAYSTACK_PUBLIC_KEY = "pk_test_fake_key_for_ci_only_not_real"
+
 # Use fast SQLite for unit tests; integration tests should use Postgres
 DATABASES = {
     "default": {
