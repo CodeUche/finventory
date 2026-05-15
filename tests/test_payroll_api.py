@@ -91,7 +91,7 @@ class TestEmployeeCRUD:
 class TestPayrollRun:
 
     def test_create_payroll_run(self, auth_client, employee, second_employee):
-        """POST /payroll/runs/ should create a draft run for a period."""
+        """POST /payroll/runs/ creates and immediately processes a run (status=PROCESSING)."""
         response = auth_client.post("/api/v1/payroll/runs/", {
             "period_year": 2024,
             "period_month": 3,
@@ -99,7 +99,9 @@ class TestPayrollRun:
 
         assert response.status_code == 201
         data = response.data
-        assert data["status"] == PayrollRun.DRAFT
+        # The view calls PayrollService.run_payroll() before responding, so the
+        # run transitions from DRAFT → PROCESSING in the same request.
+        assert data["status"] == PayrollRun.PROCESSING
         assert data["period_year"] == 2024
         assert data["period_month"] == 3
         assert data["run_number"].startswith("PR-") or len(data["run_number"]) > 0
@@ -133,13 +135,11 @@ class TestPayrollRun:
         assert len(response.data["results"]) >= 1
 
     def test_payslips_generated_for_run(self, auth_client, employee, second_employee):
-        """After creating a run, payslips should exist for each active employee."""
+        """After creating a run, payslips are embedded in the POST response."""
         run_resp = auth_client.post("/api/v1/payroll/runs/", {
             "period_year": 2024,
             "period_month": 7,
         }, format="json")
-        run_id = run_resp.data["id"]
-
-        response = auth_client.get(f"/api/v1/payroll/runs/{run_id}/payslips/")
-        assert response.status_code == 200
-        assert len(response.data) >= 1   # at least one payslip
+        assert run_resp.status_code == 201
+        # PayrollRunSerializer embeds payslips[] directly in the response
+        assert len(run_resp.data["payslips"]) >= 1
