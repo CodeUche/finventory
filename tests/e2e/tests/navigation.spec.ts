@@ -10,7 +10,11 @@
  */
 
 import { test, expect } from "@playwright/test";
-import { loginAndGo } from "./helpers";
+import { loginAndGo, hasCredentials } from "./helpers";
+
+test.beforeEach(({}, testInfo) => {
+  if (!hasCredentials) testInfo.skip();
+});
 
 // ─── Sidebar Navigation ────────────────────────────────────────────────────────
 

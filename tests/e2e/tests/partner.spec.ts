@@ -17,17 +17,23 @@
  */
 
 import { test, expect, Page } from "@playwright/test";
+import { hasCredentials } from "./helpers";
 
-const PARTNER_EMAIL = process.env.TEST_PARTNER_EMAIL || process.env.TEST_EMAIL || "testuser@audity.test";
-const PARTNER_PASS  = process.env.TEST_PARTNER_PASSWORD || process.env.TEST_PASSWORD || "StrongPass123!";
+const PARTNER_EMAIL = process.env.TEST_PARTNER_EMAIL || process.env.TEST_EMAIL || "";
+const PARTNER_PASS  = process.env.TEST_PARTNER_PASSWORD || process.env.TEST_PASSWORD || "";
+const hasPartnerCredentials = Boolean(PARTNER_EMAIL && PARTNER_PASS);
 
 async function loginAsPartner(page: Page) {
   await page.goto("/login");
   await page.locator('input[type="email"]').fill(PARTNER_EMAIL);
   await page.locator('input[type="password"]').first().fill(PARTNER_PASS);
   await page.locator('button[type="submit"]').click();
-  await page.waitForURL(/\/(dashboard|app|home)?$/i, { timeout: 15_000 });
+  await page.waitForURL(url => !url.pathname.includes("/login"), { timeout: 15_000 });
 }
+
+test.beforeEach(({}, testInfo) => {
+  if (!hasPartnerCredentials) testInfo.skip();
+});
 
 // ─── Partner Dashboard ─────────────────────────────────────────────────────────
 

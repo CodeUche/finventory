@@ -10,13 +10,11 @@
  */
 
 import { test, expect, Page } from "@playwright/test";
-
-const TEST_EMAIL = process.env.TEST_EMAIL || "testuser@audity.test";
-const TEST_PASSWORD = process.env.TEST_PASSWORD || "StrongPass123!";
+import { EMAIL, PASS, hasCredentials } from "./helpers";
 
 // ─── Helper ─────────────────────────────────────────────────────────────────
 
-async function login(page: Page, email = TEST_EMAIL, password = TEST_PASSWORD) {
+async function login(page: Page, email = EMAIL, password = PASS) {
   await page.goto("/login");
   await page.locator('input[type="email"]').fill(email);
   await page.locator('input[type="password"]').first().fill(password);
@@ -35,6 +33,7 @@ test.describe("@smoke Authentication", () => {
   });
 
   test("valid credentials redirect to dashboard @smoke", async ({ page }) => {
+    if (!hasCredentials) test.skip();
     await login(page);
     // Must NOT land on /onboarding — must reach /dashboard
     await expect(page).not.toHaveURL(/\/onboarding/i, { timeout: 12_000 });
@@ -58,6 +57,7 @@ test.describe("@smoke Authentication", () => {
 
 test.describe("Full authentication journey", () => {
   test("login → view dashboard → log out → redirected to login", async ({ page }) => {
+    if (!hasCredentials) test.skip();
     await login(page);
     await page.waitForURL(/\/(dashboard|app|home)?$/i, { timeout: 12_000 });
 

@@ -7,7 +7,8 @@
  * Test types: Smoke, Sanity, System
  */
 
-import { test, expect, Page } from "@playwright/test";
+import { test, expect } from "@playwright/test";
+import { EMAIL, PASS, hasCredentials } from "./helpers";
 
 // BASE_URL  = the web frontend (Vite dev server or deployed web build)
 // API_URL   = the Django backend (Railway or localhost:8000)
@@ -72,8 +73,7 @@ test.describe("@smoke Frontend Critical Pages", () => {
 // ─── Critical user flow — login ───────────────────────────────────────────────
 
 test.describe("@smoke Login Flow", () => {
-  const EMAIL = process.env.TEST_EMAIL    || "testuser@audity.test";
-  const PASS  = process.env.TEST_PASSWORD || "StrongPass123!";
+  test.beforeEach(({}, testInfo) => { if (!hasCredentials) testInfo.skip(); });
 
   test("can log in and see navigation", async ({ page }) => {
     await page.goto("/login");
