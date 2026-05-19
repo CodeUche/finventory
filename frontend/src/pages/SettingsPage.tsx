@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { User, Building2, Shield, Loader2, Camera, CreditCard, CheckCircle, Mail, Lock, Unlock, LandmarkIcon, UsersRound, UserPlus, X, ChevronDown, ChevronUp, Bot, Layout, Copy, Trash2, ShieldCheck, Key, Clock, XCircle, Send, Globe } from 'lucide-react'
+import { User, Building2, Shield, Loader2, Camera, CreditCard, CheckCircle, Mail, Lock, Unlock, LandmarkIcon, UsersRound, UserPlus, X, ChevronDown, ChevronUp, Bot, Layout, Copy, Trash2, ShieldCheck, Key, Clock, XCircle, Send, Globe, AlertTriangle, Wifi, WifiOff, RefreshCw, Activity, FileText } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { authApi, orgApi, paymentGatewayApi, accountingApi, teamApi, tauriFetch, partnerApi } from '@/services/api'
+import { authApi, orgApi, paymentGatewayApi, accountingApi, teamApi, tauriFetch, partnerApi, einvoicingApi } from '@/services/api'
+import type { FirsConfig, FirsStats, FirsSubmission, SandboxProgress, GoLiveChecklist } from '@/types'
 import type { AxiosError } from 'axios'
 import { useAuthStore } from '@/store/authStore'
 import { FEATURES } from '@/lib/featureFlags'
@@ -109,7 +110,7 @@ const TIMEOUT_OPTIONS: { value: TimeoutOption; label: string }[] = [
   { value: '4h', label: '4 hours (recommended)' },
 ]
 
-type Tab = 'profile' | 'company' | 'security' | 'payments' | 'email' | 'periods' | 'team' | 'invoice_templates' | 'ai' | 'access' | 'whitelabel'
+type Tab = 'profile' | 'company' | 'security' | 'payments' | 'email' | 'periods' | 'team' | 'invoice_templates' | 'ai' | 'access' | 'whitelabel' | 'firs'
 
 export default function SettingsPage() {
   const navigate = useNavigate()
@@ -323,6 +324,8 @@ export default function SettingsPage() {
   const [partnerRequests, setPartnerRequests] = useState<PartnerAccessRequest[]>([])
   const [partnerLinks, setPartnerLinks] = useState<PartnerClientLink[]>([])
   const [accessLoading, setAccessLoading] = useState(false)
+
+  // FIRS state lives in the FirsTab sub-component (see bottom of this file)
   const [approvingReq, setApprovingReq] = useState<string | null>(null)
   const [rejectingReq, setRejectingReq] = useState<string | null>(null)
   const [revokingLink, setRevokingLink] = useState<string | null>(null)
@@ -382,7 +385,7 @@ export default function SettingsPage() {
         setPendingInvitations(invitations.filter((inv: { status: string }) => inv.status === 'pending'))
       }).catch(() => toast.error('Failed to load team data')).finally(() => setLoadingTeam(false))
     }
-    // whitelabel tab has its own internal useEffect — no load needed here
+    // whitelabel and firs tabs have their own internal useEffect — no load needed here
     if (activeTab === 'access' && organisation?.id) {
       setAccessLoading(true)
       Promise.allSettled([
@@ -819,6 +822,7 @@ export default function SettingsPage() {
     { id: 'ai',                label: 'AI',         icon: Bot,        ownerOnly: true },
     { id: 'access',            label: 'Accountant Access', icon: ShieldCheck, ownerOnly: true },
     { id: 'whitelabel',        label: 'White-label',       icon: Globe,        ownerOnly: true },
+    { id: 'firs',              label: 'FIRS',              icon: Shield,       ownerOnly: true },
   ]
   const tabs = allTabs.filter((t) => {
     if (t.ownerOnly && !isOwner) return false
@@ -2877,6 +2881,11 @@ export default function SettingsPage() {
       {activeTab === 'whitelabel' && (
         <WhiteLabelTab />
       )}
+
+      {/* ── FIRS e-invoicing Tab ─────────────────────────────────────────── */}
+      {activeTab === 'firs' && (
+        <FirsTab />
+      )}
     </>
   )
 }
@@ -3031,5 +3040,601 @@ function WhiteLabelTab() {
         </button>
       </div>
     </div>
+  )
+}
+
+// ── FIRS E-Invoicing Settings Tab ─────────────────────────────────────────────
+// Rendered inside SettingsPage's {activeTab === 'firs' && <FirsTab />}.
+// Kept as a separate component so it has its own isolated state and avoids
+// re-rendering the rest of SettingsPage when FIRS state changes.
+function FirsTab() {
+  const { organisation } = useAuthStore()
+  const [firsConfig, setFirsConfig] = useState<FirsConfig | null>(null)
+  const [firsStats, setFirsStats] = useState<FirsStats | null>(null)
+  const [firsSubmissions, setFirsSubmissions] = useState<FirsSubmission[]>([])
+  const [firsLoading, setFirsLoading] = useState(true)
+  const [firsSaving, setFirsSaving] = useState(false)
+  const [firsTesting, setFirsTesting] = useState(false)
+  const [firsTestResult, setFirsTestResult] = useState<{ ok: boolean; message: string } | null>(null)
+  const [firsForm, setFirsForm] = useState({
+    tin: '',
+    business_name: '',
+    app_api_key: '',
+    use_sandbox: true,
+    app_base_url: 'https://api.digitax.tech/ng/v1',
+    is_enrolled: false,
+  })
+  // Phase 7: sandbox certification + go-live checklist state
+  const [sandboxProgress, setSandboxProgress] = useState<SandboxProgress | null>(null)
+  const [goLiveChecklist, setGoLiveChecklist] = useState<GoLiveChecklist | null>(null)
+  const [sandboxRunning, setSandboxRunning] = useState<'pass' | 'fail' | null>(null)
+
+  const refreshSandboxData = () => {
+    Promise.allSettled([
+      einvoicingApi.sandboxProgress(),
+      einvoicingApi.goLiveChecklist(),
+    ]).then(([progRes, checkRes]) => {
+      if (progRes.status === 'fulfilled') setSandboxProgress(progRes.value.data)
+      if (checkRes.status === 'fulfilled') setGoLiveChecklist(checkRes.value.data)
+    }).catch(() => null)
+  }
+
+  useEffect(() => {
+    setFirsLoading(true)
+    Promise.allSettled([
+      einvoicingApi.getConfig(),
+      einvoicingApi.stats(),
+      einvoicingApi.submissions({ page_size: 10 }),
+      einvoicingApi.sandboxProgress(),
+      einvoicingApi.goLiveChecklist(),
+    ]).then(([cfgRes, statsRes, subsRes, progRes, checkRes]) => {
+      if (cfgRes.status === 'fulfilled') {
+        const cfg: FirsConfig = cfgRes.value.data
+        setFirsConfig(cfg)
+        setFirsForm({
+          tin:           cfg.tin ?? '',
+          business_name: cfg.business_name ?? '',
+          app_api_key:   '',
+          use_sandbox:   cfg.use_sandbox,
+          app_base_url:  cfg.app_base_url ?? 'https://api.digitax.tech/ng/v1',
+          is_enrolled:   cfg.is_enrolled,
+        })
+      }
+      if (statsRes.status === 'fulfilled') setFirsStats(statsRes.value.data)
+      if (subsRes.status === 'fulfilled') {
+        const d = subsRes.value.data
+        setFirsSubmissions(Array.isArray(d) ? d : d.results ?? [])
+      }
+      if (progRes.status === 'fulfilled') setSandboxProgress(progRes.value.data)
+      if (checkRes.status === 'fulfilled') setGoLiveChecklist(checkRes.value.data)
+    }).finally(() => setFirsLoading(false))
+  }, [organisation?.id])
+
+  return (
+    <div className="space-y-6 max-w-3xl">
+
+          {/* Header + enrollment badge */}
+          <div className="card p-6">
+            <div className="flex items-center justify-between flex-wrap gap-3">
+              <div>
+                <h2 className="font-bold text-white text-base">FIRS E-Invoicing Compliance</h2>
+                <p className="text-slate-400 text-xs mt-0.5">
+                  Connect Audity to DigiTax (Namiri Technology Ltd) as your NITDA-accredited
+                  System Integrator for FIRS mandatory e-invoicing.
+                </p>
+              </div>
+              {firsLoading ? (
+                <Loader2 size={16} className="animate-spin text-slate-400" />
+              ) : firsConfig?.is_enrolled ? (
+                <span className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full ${
+                  firsConfig.use_sandbox
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                    : 'bg-green-500/20 text-green-300 border border-green-500/30'
+                }`}>
+                  <CheckCircle size={12} />
+                  {firsConfig.use_sandbox ? 'ENROLLED — SANDBOX' : 'ENROLLED — LIVE'}
+                </span>
+              ) : (
+                <span className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full bg-slate-700 text-slate-400 border border-slate-600">
+                  <AlertTriangle size={12} />
+                  Not Enrolled
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Credentials form */}
+          <div className="card p-6 space-y-5">
+            <h3 className="text-sm font-semibold text-white">DigiTax Credentials</h3>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs text-slate-400 block mb-1">TIN (Tax ID)</label>
+                <input
+                  className="input w-full text-sm"
+                  placeholder="12345678-0001"
+                  value={firsForm.tin}
+                  onChange={(e) => setFirsForm((f) => ({ ...f, tin: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 block mb-1">Registered Business Name</label>
+                <input
+                  className="input w-full text-sm"
+                  placeholder="Acme Enterprises Ltd"
+                  value={firsForm.business_name}
+                  onChange={(e) => setFirsForm((f) => ({ ...f, business_name: e.target.value }))}
+                />
+              </div>
+              <div className="col-span-2">
+                <label className="text-xs text-slate-400 block mb-1">
+                  DigiTax API Key
+                  {firsConfig?.has_api_key && (
+                    <span className="ml-2 text-green-400 font-normal">● key is stored</span>
+                  )}
+                </label>
+                <input
+                  className="input w-full text-sm font-mono"
+                  type="password"
+                  placeholder={firsConfig?.has_api_key ? '••••••••••••••••••••••• (leave blank to keep existing)' : 'api_key_…'}
+                  value={firsForm.app_api_key}
+                  onChange={(e) => setFirsForm((f) => ({ ...f, app_api_key: e.target.value }))}
+                  autoComplete="new-password"
+                />
+                <p className="text-xs text-slate-500 mt-1">
+                  Your DigiTax x-api-key. Stored encrypted at rest and never returned in API responses.
+                </p>
+              </div>
+              <div className="col-span-2">
+                <label className="text-xs text-slate-400 block mb-1">Base URL</label>
+                <input
+                  className="input w-full text-sm font-mono"
+                  value={firsForm.app_base_url}
+                  onChange={(e) => setFirsForm((f) => ({ ...f, app_base_url: e.target.value }))}
+                />
+              </div>
+            </div>
+
+            {/* Sandbox toggle */}
+            <div className="flex items-center gap-3 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg">
+              <button
+                onClick={() => setFirsForm((f) => ({ ...f, use_sandbox: !f.use_sandbox }))}
+                className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 transition-colors focus:outline-none ${
+                  firsForm.use_sandbox ? 'bg-amber-500 border-amber-500' : 'bg-slate-600 border-slate-600'
+                }`}
+              >
+                <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                  firsForm.use_sandbox ? 'translate-x-4' : 'translate-x-0'
+                }`} />
+              </button>
+              <div>
+                <p className="text-sm font-medium text-white">
+                  {firsForm.use_sandbox ? 'Sandbox mode (safe for testing)' : 'Production mode (live submissions)'}
+                </p>
+                <p className="text-xs text-slate-400">
+                  {firsForm.use_sandbox
+                    ? 'Submissions go to DigiTax sandbox — no real FIRS records created.'
+                    : 'All submissions are sent to FIRS production. Cannot be undone.'}
+                </p>
+              </div>
+            </div>
+
+            {/* Enrollment toggle */}
+            <div className="flex items-center gap-3 p-3 bg-surface-700/40 border border-surface-600 rounded-lg">
+              <button
+                onClick={() => setFirsForm((f) => ({ ...f, is_enrolled: !f.is_enrolled }))}
+                className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 transition-colors focus:outline-none ${
+                  firsForm.is_enrolled ? 'bg-green-500 border-green-500' : 'bg-slate-600 border-slate-600'
+                }`}
+              >
+                <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                  firsForm.is_enrolled ? 'translate-x-4' : 'translate-x-0'
+                }`} />
+              </button>
+              <div>
+                <p className="text-sm font-medium text-white">
+                  {firsForm.is_enrolled ? 'FIRS submission enabled' : 'FIRS submission disabled'}
+                </p>
+                <p className="text-xs text-slate-400">
+                  When enabled, confirmed invoices are automatically submitted to FIRS via DigiTax.
+                </p>
+              </div>
+            </div>
+
+            {/* Action buttons */}
+            <div className="flex items-center gap-3 flex-wrap">
+              <button
+                onClick={async () => {
+                  setFirsSaving(true)
+                  try {
+                    const payload: Record<string, unknown> = {
+                      tin:          firsForm.tin,
+                      business_name: firsForm.business_name,
+                      use_sandbox:  firsForm.use_sandbox,
+                      app_base_url: firsForm.app_base_url,
+                      is_enrolled:  firsForm.is_enrolled,
+                    }
+                    // Only send the key if the field has a value (blank = keep existing)
+                    if (firsForm.app_api_key.trim()) payload.app_api_key = firsForm.app_api_key.trim()
+                    const { data } = await einvoicingApi.updateConfig(payload)
+                    setFirsConfig(data)
+                    setFirsForm((f) => ({ ...f, app_api_key: '' }))
+                    toast.success('FIRS settings saved')
+                  } catch {
+                    toast.error('Failed to save FIRS settings')
+                  } finally {
+                    setFirsSaving(false)
+                  }
+                }}
+                disabled={firsSaving}
+                className="btn-primary flex items-center gap-1.5 text-sm"
+              >
+                {firsSaving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle size={14} />}
+                Save Settings
+              </button>
+
+              <button
+                onClick={async () => {
+                  setFirsTesting(true)
+                  setFirsTestResult(null)
+                  try {
+                    const { data } = await einvoicingApi.testConnection()
+                    setFirsTestResult({ ok: data.ok, message: data.message ?? 'Connection successful' })
+                    if (data.ok) toast.success('DigiTax connection successful')
+                    else toast.error('DigiTax connection failed')
+                    // Refresh config to show updated last_test_at
+                    einvoicingApi.getConfig().then(({ data: cfg }) => setFirsConfig(cfg)).catch(() => null)
+                  } catch (err: unknown) {
+                    const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Test failed'
+                    setFirsTestResult({ ok: false, message: msg })
+                    toast.error('DigiTax connection failed')
+                  } finally {
+                    setFirsTesting(false)
+                  }
+                }}
+                disabled={firsTesting || !firsConfig?.has_api_key}
+                className="btn-secondary flex items-center gap-1.5 text-sm"
+                title={!firsConfig?.has_api_key ? 'Save an API key first' : undefined}
+              >
+                {firsTesting
+                  ? <Loader2 size={14} className="animate-spin" />
+                  : firsTestResult?.ok
+                  ? <Wifi size={14} className="text-green-400" />
+                  : firsTestResult?.ok === false
+                  ? <WifiOff size={14} className="text-red-400" />
+                  : <RefreshCw size={14} />
+                }
+                Test Connection
+              </button>
+            </div>
+
+            {/* Test result feedback */}
+            {firsTestResult && (
+              <div className={`flex items-start gap-2 p-3 rounded-lg text-sm ${
+                firsTestResult.ok
+                  ? 'bg-green-500/10 border border-green-500/20 text-green-300'
+                  : 'bg-red-500/10 border border-red-500/20 text-red-300'
+              }`}>
+                {firsTestResult.ok
+                  ? <CheckCircle size={14} className="mt-0.5 flex-shrink-0" />
+                  : <XCircle size={14} className="mt-0.5 flex-shrink-0" />
+                }
+                {firsTestResult.message}
+              </div>
+            )}
+
+            {firsConfig?.last_test_at && (
+              <p className="text-xs text-slate-500 flex items-center gap-1">
+                <Clock size={10} />
+                Last tested: {new Date(firsConfig.last_test_at).toLocaleString()}
+                {' — '}
+                {firsConfig.last_test_ok
+                  ? <span className="text-green-400">OK</span>
+                  : <span className="text-red-400">Failed</span>
+                }
+              </p>
+            )}
+          </div>
+
+          {/* Submission stats */}
+          {firsStats && (
+            <div className="card p-6 space-y-4">
+              <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                <Activity size={14} />
+                Submission Statistics
+              </h3>
+              <div className="grid grid-cols-3 sm:grid-cols-6 gap-3">
+                {[
+                  { label: 'Total',     value: firsStats.total,     color: 'text-white' },
+                  { label: 'Cleared',   value: firsStats.cleared,   color: 'text-green-400' },
+                  { label: 'Submitted', value: firsStats.submitted, color: 'text-blue-400' },
+                  { label: 'Pending',   value: firsStats.pending,   color: 'text-amber-400' },
+                  { label: 'Failed',    value: firsStats.failed,    color: 'text-red-400' },
+                  { label: 'Bypassed',  value: firsStats.bypassed,  color: 'text-slate-400' },
+                ].map(({ label, value, color }) => (
+                  <div key={label} className="bg-surface-700/40 rounded-lg p-3 text-center">
+                    <p className={`text-xl font-bold ${color}`}>{value}</p>
+                    <p className="text-xs text-slate-500 mt-0.5">{label}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Phase 7: Sandbox Certification — shown only while in sandbox mode */}
+          {firsConfig?.use_sandbox && firsConfig?.is_enrolled && (
+            <div className="card p-6 space-y-5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                    <Shield size={14} className="text-amber-400" />
+                    Sandbox Certification (FIRS Requirement)
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    FIRS requires 50 successful (pass) and 50 failed submissions before granting
+                    production access. Run both batches here to complete sandbox certification.
+                  </p>
+                </div>
+                {sandboxProgress?.certification_ready && (
+                  <span className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full bg-green-500/20 text-green-300 border border-green-500/30 shrink-0">
+                    <CheckCircle size={12} />
+                    Certified
+                  </span>
+                )}
+              </div>
+
+              {/* Progress bars */}
+              <div className="space-y-3">
+                {/* Pass progress */}
+                <div>
+                  <div className="flex items-center justify-between text-xs mb-1">
+                    <span className="text-slate-400">Pass Tests</span>
+                    <span className={`font-semibold ${sandboxProgress?.passes_complete ? 'text-green-400' : 'text-white'}`}>
+                      {sandboxProgress?.pass_count ?? 0} / {sandboxProgress?.required_passes ?? 50}
+                      {sandboxProgress?.passes_complete && ' ✓'}
+                    </span>
+                  </div>
+                  <div className="h-2 bg-surface-700 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-green-500 rounded-full transition-all duration-500"
+                      style={{ width: `${Math.min(100, ((sandboxProgress?.pass_count ?? 0) / (sandboxProgress?.required_passes ?? 50)) * 100)}%` }}
+                    />
+                  </div>
+                </div>
+                {/* Fail progress */}
+                <div>
+                  <div className="flex items-center justify-between text-xs mb-1">
+                    <span className="text-slate-400">Fail Tests</span>
+                    <span className={`font-semibold ${sandboxProgress?.fails_complete ? 'text-green-400' : 'text-white'}`}>
+                      {sandboxProgress?.fail_count ?? 0} / {sandboxProgress?.required_fails ?? 50}
+                      {sandboxProgress?.fails_complete && ' ✓'}
+                    </span>
+                  </div>
+                  <div className="h-2 bg-surface-700 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-red-500 rounded-full transition-all duration-500"
+                      style={{ width: `${Math.min(100, ((sandboxProgress?.fail_count ?? 0) / (sandboxProgress?.required_fails ?? 50)) * 100)}%` }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Run buttons */}
+              <div className="flex items-center gap-3 flex-wrap">
+                <button
+                  disabled={sandboxRunning !== null || !firsConfig?.has_api_key}
+                  onClick={async () => {
+                    setSandboxRunning('pass')
+                    try {
+                      await einvoicingApi.sandboxRun('pass', 50)
+                      toast.success('Pass batch queued — submissions running in the background')
+                      // Poll for progress update after a short delay
+                      setTimeout(() => { refreshSandboxData() }, 3000)
+                    } catch {
+                      toast.error('Failed to start pass batch')
+                    } finally {
+                      setSandboxRunning(null)
+                    }
+                  }}
+                  className="btn-secondary flex items-center gap-1.5 text-sm"
+                  title={!firsConfig?.has_api_key ? 'Save an API key first' : undefined}
+                >
+                  {sandboxRunning === 'pass'
+                    ? <Loader2 size={13} className="animate-spin" />
+                    : <CheckCircle size={13} className="text-green-400" />
+                  }
+                  Run 50 Pass Tests
+                </button>
+                <button
+                  disabled={sandboxRunning !== null || !firsConfig?.has_api_key}
+                  onClick={async () => {
+                    setSandboxRunning('fail')
+                    try {
+                      await einvoicingApi.sandboxRun('fail', 50)
+                      toast.success('Fail batch queued — submissions running in the background')
+                      setTimeout(() => { refreshSandboxData() }, 3000)
+                    } catch {
+                      toast.error('Failed to start fail batch')
+                    } finally {
+                      setSandboxRunning(null)
+                    }
+                  }}
+                  className="btn-secondary flex items-center gap-1.5 text-sm"
+                >
+                  {sandboxRunning === 'fail'
+                    ? <Loader2 size={13} className="animate-spin" />
+                    : <XCircle size={13} className="text-red-400" />
+                  }
+                  Run 50 Fail Tests
+                </button>
+                <button
+                  onClick={refreshSandboxData}
+                  className="p-2 rounded hover:bg-surface-700 text-slate-400 hover:text-white"
+                  title="Refresh progress"
+                >
+                  <RefreshCw size={13} />
+                </button>
+              </div>
+
+              {/* Recent test runs */}
+              {sandboxProgress?.recent_runs && sandboxProgress.recent_runs.length > 0 && (
+                <div className="pt-2 border-t border-surface-700">
+                  <p className="text-xs text-slate-500 mb-2">Recent test runs</p>
+                  <div className="space-y-1">
+                    {sandboxProgress.recent_runs.map((run) => (
+                      <div key={run.id} className="flex items-center justify-between text-xs py-1">
+                        <span className="text-slate-400 capitalize">{run.mode} batch</span>
+                        <span className={`px-1.5 py-0.5 rounded font-medium ${
+                          run.outcome === 'complete' ? 'bg-green-500/20 text-green-300' :
+                          run.outcome === 'error'    ? 'bg-red-500/20 text-red-300' :
+                          'bg-amber-500/20 text-amber-300'
+                        }`}>{run.outcome}</span>
+                        <span className="text-slate-500">{run.completed_count}/{run.target_count}</span>
+                        <span className="text-slate-600">
+                          {run.started_at ? new Date(run.started_at).toLocaleDateString() : '—'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Phase 7: Go-Live Checklist */}
+          <div className="card p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                <Shield size={14} />
+                Production Go-Live Checklist
+              </h3>
+              <button
+                onClick={refreshSandboxData}
+                className="p-1.5 rounded hover:bg-surface-700 text-slate-400 hover:text-white"
+                title="Refresh checklist"
+              >
+                <RefreshCw size={12} />
+              </button>
+            </div>
+
+            {firsLoading ? (
+              <div className="space-y-2">
+                {[...Array(4)].map((_, i) => (
+                  <div key={i} className="h-8 bg-surface-700 rounded animate-pulse" />
+                ))}
+              </div>
+            ) : goLiveChecklist ? (
+              <>
+                {goLiveChecklist.production_ready && (
+                  <div className="flex items-center gap-2 p-3 bg-green-500/10 border border-green-500/20 rounded-lg text-green-300 text-sm font-medium">
+                    <CheckCircle size={16} />
+                    All requirements met — ready to switch to production!
+                    <span className="text-xs font-normal text-green-400/70 ml-1">
+                      (Disable sandbox mode in credentials to go live)
+                    </span>
+                  </div>
+                )}
+                <div className="space-y-2">
+                  {Object.entries(goLiveChecklist.checks).map(([key, item]) => (
+                    <div key={key} className="flex items-start gap-2.5 py-1.5">
+                      {item.pass
+                        ? <CheckCircle size={14} className="text-green-400 mt-0.5 shrink-0" />
+                        : <XCircle    size={14} className="text-red-400 mt-0.5 shrink-0" />
+                      }
+                      <div>
+                        <p className="text-xs font-medium text-white">
+                          {key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())}
+                        </p>
+                        <p className={`text-xs ${item.pass ? 'text-slate-500' : 'text-amber-400'}`}>
+                          {item.detail}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <p className="text-slate-500 text-sm">Could not load checklist</p>
+            )}
+          </div>
+
+          {/* Recent submissions */}
+          <div className="card p-6 space-y-4">
+            <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+              <FileText size={14} />
+              Recent Submissions
+              <button
+                onClick={() => {
+                  einvoicingApi.submissions({ page_size: 10 }).then(({ data }) => {
+                    setFirsSubmissions(Array.isArray(data) ? data : data.results ?? [])
+                  }).catch(() => null)
+                }}
+                className="ml-auto text-slate-500 hover:text-white p-1 rounded"
+                title="Refresh"
+              >
+                <RefreshCw size={12} />
+              </button>
+            </h3>
+            {firsLoading ? (
+              <div className="space-y-2">
+                {[...Array(3)].map((_, i) => (
+                  <div key={i} className="h-10 bg-surface-700 rounded animate-pulse" />
+                ))}
+              </div>
+            ) : firsSubmissions.length === 0 ? (
+              <p className="text-slate-500 text-sm py-4 text-center">No submissions yet</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-slate-500 border-b border-surface-700">
+                      <th className="text-left py-2 font-medium">Invoice</th>
+                      <th className="text-left py-2 font-medium">Customer</th>
+                      <th className="text-left py-2 font-medium">Type</th>
+                      <th className="text-left py-2 font-medium">Status</th>
+                      <th className="text-left py-2 font-medium">IRN</th>
+                      <th className="text-left py-2 font-medium">Attempts</th>
+                      <th className="text-left py-2 font-medium">Date</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-surface-700/40">
+                    {firsSubmissions.map((sub) => (
+                      <tr key={sub.id} className="hover:bg-surface-700/20">
+                        <td className="py-2 font-mono text-brand-400">
+                          {sub.invoice_number || '—'}
+                          {sub.is_sandbox_test && (
+                            <span className="ml-1 text-[9px] font-bold px-1 py-0.5 bg-amber-500/20 text-amber-400 rounded">
+                              TEST
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2 text-slate-300">{sub.customer_name || '—'}</td>
+                        <td className="py-2 text-slate-400">{sub.transaction_type}</td>
+                        <td className="py-2">
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                            sub.status === 'cleared'   ? 'bg-green-500/20 text-green-300' :
+                            sub.status === 'submitted' ? 'bg-blue-500/20 text-blue-300' :
+                            sub.status === 'failed'    ? 'bg-red-500/20 text-red-300' :
+                            sub.status === 'bypassed'  ? 'bg-slate-500/20 text-slate-400' :
+                            'bg-amber-500/20 text-amber-300'
+                          }`}>
+                            {sub.status}
+                          </span>
+                        </td>
+                        <td className="py-2 font-mono text-slate-400 max-w-[120px] truncate" title={sub.irn}>
+                          {sub.irn || '—'}
+                        </td>
+                        <td className="py-2 text-slate-500 text-center">{sub.attempt_count}</td>
+                        <td className="py-2 text-slate-500">
+                          {sub.created_at ? new Date(sub.created_at).toLocaleDateString() : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
   )
 }

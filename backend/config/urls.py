@@ -59,6 +59,8 @@ api_v1_urlpatterns = [
     path("budgets/", include("apps.budgets.urls")),
     # AI Financial Assistant
     path("ai/", include("apps.ai.urls")),
+    # FIRS E-Invoicing (DigiTax) — config, submission log, webhook receiver
+    path("einvoicing/", include("apps.einvoicing.urls")),
 ]
 
 _admin_only = [IsAdminUser]

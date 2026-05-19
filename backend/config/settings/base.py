@@ -46,6 +46,26 @@ GROQ_API_KEY = config("GROQ_API_KEY", default="")
 
 # NOTE: AI bank reconciliation reuses GROQ_API_KEY defined below
 
+# ─── PostHog Analytics ────────────────────────────────────────────────────────
+POSTHOG_API_KEY = config("POSTHOG_API_KEY", default="")
+POSTHOG_HOST = config("POSTHOG_HOST", default="https://us.i.posthog.com")
+
+# ─── FIRS E-Invoicing (DigiTax) ───────────────────────────────────────────────
+# DigiTax (Namiri Technology Ltd) is the NITDA-accredited System Integrator + APP
+# that mediates between Audity and the FIRS FIRSMBS e-invoicing system.
+#
+# These are platform-level defaults. Per-org credentials are stored encrypted in
+# FirsConfig.app_api_key (EncryptedCharField) and take precedence over these vars.
+# Set DIGITAX_APP_API_KEY here as a fallback for single-tenant deployments.
+#
+# Sandbox vs production is controlled per-org via FirsConfig.use_sandbox.
+DIGITAX_APP_API_KEY    = config("DIGITAX_APP_API_KEY", default="")
+DIGITAX_BASE_URL       = config("DIGITAX_BASE_URL", default="https://api.digitax.tech/ng/v1")
+DIGITAX_SANDBOX_URL    = config("DIGITAX_SANDBOX_URL", default="https://api-dev.digitax.tech/ng/v1")
+# HMAC-SHA256 secret used to verify authenticity of DigiTax webhook callbacks.
+# Set this to a long random string and register the same value on your DigiTax dashboard.
+DIGITAX_WEBHOOK_SECRET = config("DIGITAX_WEBHOOK_SECRET", default="")
+
 # ─── Application Definition ───────────────────────────────────────────────────
 DJANGO_APPS = [
     "django.contrib.admin",
@@ -88,6 +108,7 @@ LOCAL_APPS = [
     "apps.payments",
     "apps.budgets",
     "apps.ai",
+    "apps.einvoicing",   # FIRS e-invoicing via DigiTax — gated by FirsConfig.is_enrolled
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -110,6 +131,8 @@ MIDDLEWARE = [
     "apps.tenancy.middleware.TenantMiddleware",
     # White-label domain detection — attaches request.white_label for branded login
     "apps.tenancy.white_label_middleware.WhiteLabelMiddleware",
+    # PostHog server-side analytics — must be last so request.user is populated
+    "apps.core.posthog_middleware.PostHogMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -413,6 +436,19 @@ CELERY_BEAT_SCHEDULE = {
     "flag-stale-pending-commissions": {
         "task": "subscriptions.flag_stale_pending_commissions",
         "schedule": crontab(hour=2, minute=0),
+    },
+    # ── FIRS e-invoicing (DigiTax) ────────────────────────────────────────────
+    # Retry FAILED / SUBMITTED-but-stale submissions every 30 minutes.
+    # Only runs for organisations with FirsConfig.is_enrolled = True.
+    "firs-retry-failed-submissions": {
+        "task": "einvoicing.retry_failed_submissions",
+        "schedule": crontab(minute="*/30"),
+    },
+    # Daily 23:00 — batch-report all today's B2C invoices to DigiTax.
+    # B2C invoices are not cleared individually; they go through this daily batch.
+    "firs-report-b2c-invoices": {
+        "task": "einvoicing.report_b2c_invoices",
+        "schedule": crontab(hour=23, minute=0),
     },
 }
 

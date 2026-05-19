@@ -1266,3 +1266,60 @@ export const aiApi = {
   chat: (message: string) => api.post('/ai/chat/', { message }),
   support: (message: string) => api.post('/ai/support/', { message }),
 }
+
+// ── FIRS e-invoicing API ───────────────────────────────────────────────────────
+// All routes live under /einvoicing/.
+// Credentials (app_api_key) are write-only — the server never returns them;
+// use has_api_key to check whether a key has been stored.
+export const einvoicingApi = {
+  /** GET /einvoicing/config/ — returns (or auto-creates) the org's FirsConfig. */
+  getConfig: () => api.get('/einvoicing/config/'),
+
+  /** PATCH /einvoicing/config/ — partial update; owner/admin only. */
+  updateConfig: (data: Record<string, unknown>) => api.patch('/einvoicing/config/', data),
+
+  /**
+   * POST /einvoicing/config/test_connection/
+   * Calls the DigiTax /resources endpoint and updates last_test_at/ok.
+   * Returns { ok, tested_at, message }.
+   */
+  testConnection: () => api.post('/einvoicing/config/test_connection/'),
+
+  /** GET /einvoicing/submissions/ — paginated audit log. Supports ?status ?invoice ?kind filters. */
+  submissions: (params?: Record<string, unknown>) =>
+    api.get('/einvoicing/submissions/', { params }),
+
+  /** GET /einvoicing/submissions/<id>/ — full detail including payload_json. */
+  submissionDetail: (id: string) => api.get(`/einvoicing/submissions/${id}/`),
+
+  /** GET /einvoicing/stats/ — enrollment flag + counts by status. */
+  stats: () => api.get('/einvoicing/stats/'),
+
+  /**
+   * POST /einvoicing/submit/<invoice_id>/
+   * Owner/admin manual re-submit for a failed or skipped invoice.
+   */
+  manualSubmit: (invoiceId: string) => api.post(`/einvoicing/submit/${invoiceId}/`),
+
+  // ── Phase 7: Sandbox certification ────────────────────────────────────────
+
+  /**
+   * GET /einvoicing/sandbox/progress/
+   * Returns pass_count, fail_count and recent SandboxTestRun records.
+   */
+  sandboxProgress: () => api.get('/einvoicing/sandbox/progress/'),
+
+  /**
+   * POST /einvoicing/sandbox/run/
+   * Triggers an async certification batch. Owner/admin only.
+   * Body: { mode: 'pass' | 'fail', count?: number }
+   */
+  sandboxRun: (mode: 'pass' | 'fail', count = 50) =>
+    api.post('/einvoicing/sandbox/run/', { mode, count }),
+
+  /**
+   * GET /einvoicing/go_live_checklist/
+   * Returns the structured pre-production readiness checklist.
+   */
+  goLiveChecklist: () => api.get('/einvoicing/go_live_checklist/'),
+}

@@ -122,6 +122,18 @@ export interface SalePayment {
   received_at: string
 }
 
+// FIRS e-invoicing status values — mirrors Invoice.firs_status on the backend.
+// "not_enrolled" means the org has no active FirsConfig; all other values are
+// set by EInvoicingService after submission or DigiTax webhook callbacks.
+export type FirsStatus =
+  | 'not_enrolled'
+  | 'pending'
+  | 'submitted'
+  | 'cleared'
+  | 'failed'
+  | 'bypassed'
+  | 'reported'
+
 export interface Invoice {
   id: string
   invoice_number: string
@@ -143,6 +155,16 @@ export interface Invoice {
   items: SaleItem[]
   payments: SalePayment[]
   created_at: string
+  // ── FIRS e-invoicing fields (read-only; populated by backend after clearance) ──
+  firs_status?: FirsStatus
+  /** FIRS Invoice Reference Number — assigned after clearance. */
+  firs_irn?: string
+  /** FIRS-assigned invoice number (separate from internal invoice_number). */
+  firs_invoice_number?: string
+  /** Cryptographic Stamp Identifier from DigiTax. */
+  firs_csid?: string
+  /** Base64-encoded QR code PNG for embedding in the invoice PDF. */
+  firs_qr_code?: string
 }
 
 export interface SaleItem {
@@ -888,3 +910,118 @@ export interface OverdueInvoiceAlert {
   due_date: string
   days_overdue: number
 }
+
+// ─── FIRS e-invoicing ────────────────────────────────────────────────────────
+
+/**
+ * FirsConfig — per-organisation DigiTax credentials and enrollment state.
+ * app_api_key is write-only (never returned); use has_api_key to check.
+ */
+export interface FirsConfig {
+  id: string
+  organisation: string
+  is_enrolled: boolean
+  tin: string
+  business_name: string
+  /** Write-only on PATCH; never returned in GET responses. */
+  app_api_key?: string
+  /** True if an encrypted API key has been saved (key itself is never exposed). */
+  has_api_key: boolean
+  app_base_url: string
+  use_sandbox: boolean
+  digitax_party_id: string
+  enrolled_at: string | null
+  last_test_at: string | null
+  last_test_ok: boolean | null
+  created_at: string
+  updated_at: string
+}
+
+/** Submission kind discriminator: regular invoice vs. credit note. */
+export type SubmissionKind = 'invoice' | 'credit_note'
+
+/** FirsSubmission — one row per DigiTax submission attempt (append-only). */
+export interface FirsSubmission {
+  id: string
+  invoice: string | null       // null for sandbox test rows (is_sandbox_test=true)
+  invoice_number: string
+  customer_name: string
+  submission_ref: string
+  transaction_type: 'B2B' | 'B2G' | 'B2C'
+  submission_kind: SubmissionKind
+  is_sandbox_test: boolean
+  status: 'pending' | 'submitted' | 'cleared' | 'reported' | 'failed' | 'bypassed'
+  irn: string
+  csid: string
+  attempt_count: number
+  error_detail: string
+  submitted_at: string | null
+  cleared_at: string | null
+  last_attempted_at: string
+  created_at: string
+}
+
+/** Aggregated FIRS stats returned by GET /einvoicing/stats/. */
+export interface FirsStats {
+  is_enrolled: boolean
+  has_api_key: boolean
+  use_sandbox: boolean
+  last_test_ok: boolean | null
+  last_test_at: string | null
+  total: number
+  cleared: number
+  submitted: number
+  pending: number
+  failed: number
+  bypassed: number
+  reported: number
+}
+
+/** Phase 7: One sandbox certification test batch run. */
+export interface SandboxTestRun {
+  id: string
+  mode: 'pass' | 'fail'
+  outcome: 'running' | 'complete' | 'error'
+  target_count: number
+  completed_count: number
+  error_detail: string
+  started_at: string
+  finished_at: string | null
+  created_at: string
+}
+
+/** Phase 7: Cumulative sandbox progress toward 50+50 FIRS requirement. */
+export interface SandboxProgress {
+  pass_count: number
+  fail_count: number
+  pending_count: number
+  required_passes: number
+  required_fails: number
+  passes_complete: boolean
+  fails_complete: boolean
+  certification_ready: boolean
+  recent_runs: SandboxTestRun[]
+}
+
+/** Phase 7: Single item in the go-live checklist. */
+export interface ChecklistItem {
+  pass: boolean
+  detail: string
+}
+
+/** Phase 7: Pre-production readiness checklist returned by go_live_checklist. */
+export interface GoLiveChecklist {
+  checks: {
+    is_enrolled: ChecklistItem
+    tin_configured: ChecklistItem
+    business_name_configured: ChecklistItem
+    api_key_configured: ChecklistItem
+    sandbox_passes_complete: ChecklistItem
+    sandbox_fails_complete: ChecklistItem
+    no_recent_failures: ChecklistItem
+    currently_sandbox: ChecklistItem
+  }
+  all_passed: boolean
+  production_ready: boolean
+}
+

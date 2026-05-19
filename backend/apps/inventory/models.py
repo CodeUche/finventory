@@ -137,6 +137,16 @@ class Product(TenantAwareModel):
     barcode = models.CharField(max_length=100, blank=True)
     image = models.ImageField(upload_to="products/", null=True, blank=True)
     is_active = models.BooleanField(default=True, db_index=True)
+
+    # ── FIRS e-invoicing fields ───────────────────────────────────────────────
+    hsn_code = models.CharField(
+        max_length=20, blank=True,
+        help_text="Harmonized System Nomenclature code — required for FIRS e-invoicing line items.",
+    )
+    digitax_item_id = models.CharField(
+        max_length=100, blank=True,
+        help_text="DigiTax-assigned item ID after POST /items. Cached to avoid re-registration.",
+    )
     is_taxable = models.BooleanField(default=True)
     tax_class = models.ForeignKey(
         "tax.TaxClass", null=True, blank=True, on_delete=models.SET_NULL, related_name="products"

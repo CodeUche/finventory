@@ -274,6 +274,67 @@ async function buildInvoicePDF(
   doc.setFontSize(9); doc.setFont('helvetica', 'italic'); doc.setTextColor(...MUTED)
   doc.text('Thank you for your business!', 14, afterTotalsY + 8)
 
+  // ── FIRS Compliance block (IRN + QR code) ─────────────────────────────────
+  // Rendered only after DigiTax clears the invoice (firs_irn is populated).
+  // The QR code image (base64 PNG) is decoded from firs_qr_code and placed on
+  // the right; structured fields (IRN, FIRS invoice no., CSID) are on the left.
+  const firsIrn   = (inv as any).firs_irn  as string | undefined
+  const firsQr    = (inv as any).firs_qr_code as string | undefined
+  const firsInvNo = (inv as any).firs_invoice_number as string | undefined
+  const firsCsid  = (inv as any).firs_csid as string | undefined
+
+  if (firsIrn) {
+    const FIRS_TOP    = afterTotalsY + 15   // y start of the compliance box
+    const FIRS_QR_SZ  = 24                  // QR image size in mm
+    const FIRS_H      = 30                  // box height in mm
+    const FIRS_GREEN: [number, number, number] = [22, 101, 52]  // #166534
+    const FIRS_LIGHT: [number, number, number] = [220, 252, 231] // #dcfce7
+
+    // Background box
+    doc.setFillColor(...FIRS_LIGHT)
+    doc.setDrawColor(...FIRS_GREEN)
+    doc.setLineWidth(0.4)
+    doc.roundedRect(14, FIRS_TOP, pageW - 28, FIRS_H, 2, 2, 'FD')
+
+    // "FIRS VERIFIED" stamp label (top-left)
+    doc.setFontSize(7); doc.setFont('helvetica', 'bold'); doc.setTextColor(...FIRS_GREEN)
+    doc.text('FIRS VERIFIED — e-Invoice', 19, FIRS_TOP + 6)
+
+    // IRN row
+    doc.setFontSize(6.5); doc.setFont('helvetica', 'bold'); doc.setTextColor(...DARK)
+    doc.text('IRN:', 19, FIRS_TOP + 12)
+    doc.setFont('helvetica', 'normal')
+    // Truncate long IRN to prevent overflow; full value is in the QR code
+    const irnDisplay = firsIrn.length > 55 ? firsIrn.slice(0, 55) + '…' : firsIrn
+    doc.text(irnDisplay, 30, FIRS_TOP + 12)
+
+    // FIRS Invoice Number row (if different from internal invoice number)
+    if (firsInvNo && firsInvNo !== inv.invoice_number) {
+      doc.setFont('helvetica', 'bold'); doc.text('FIRS No.:', 19, FIRS_TOP + 18)
+      doc.setFont('helvetica', 'normal')
+      const fnoDisplay = firsInvNo.length > 50 ? firsInvNo.slice(0, 50) + '…' : firsInvNo
+      doc.text(fnoDisplay, 40, FIRS_TOP + 18)
+    }
+
+    // CSID row (truncated — full value is in the QR code)
+    if (firsCsid) {
+      doc.setFont('helvetica', 'bold'); doc.text('CSID:', 19, FIRS_TOP + 24)
+      doc.setFont('helvetica', 'normal'); doc.setTextColor(...MUTED)
+      const csidDisplay = firsCsid.length > 52 ? firsCsid.slice(0, 52) + '…' : firsCsid
+      doc.text(csidDisplay, 30, FIRS_TOP + 24)
+    }
+
+    // QR code image (right side) — firs_qr_code is a raw base64 PNG string
+    if (firsQr) {
+      try {
+        const qrDataUrl = firsQr.startsWith('data:') ? firsQr : `data:image/png;base64,${firsQr}`
+        const qrX = pageW - 14 - FIRS_QR_SZ - 4
+        const qrY = FIRS_TOP + (FIRS_H - FIRS_QR_SZ) / 2
+        doc.addImage(qrDataUrl, 'PNG', qrX, qrY, FIRS_QR_SZ, FIRS_QR_SZ)
+      } catch { /* skip QR image if malformed; text fields still present */ }
+    }
+  }
+
   // ── Footer (varies by template) ───────────────────────────────────────────
   if (tmpl === 'minimal') {
     doc.setDrawColor(...DARK); doc.setLineWidth(0.5)
@@ -898,6 +959,18 @@ export default function SalesPage() {
                     <td className="px-5 py-3.5 text-red-400">{formatCurrency(inv.amount_due)}</td>
                     <td className="px-5 py-3.5">
                       <span className={getStatusColor(inv.status)}>{inv.status.replace('_', ' ')}</span>
+                      {/* FIRS compliance badge — only shown when the org is enrolled and the invoice has a FIRS status */}
+                      {inv.firs_status && inv.firs_status !== 'not_enrolled' && (
+                        <span className={`ml-1.5 px-1 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide ${
+                          inv.firs_status === 'cleared'   ? 'bg-green-500/20 text-green-300' :
+                          inv.firs_status === 'submitted' ? 'bg-blue-500/20 text-blue-300' :
+                          inv.firs_status === 'failed'    ? 'bg-red-500/20 text-red-300' :
+                          inv.firs_status === 'bypassed'  ? 'bg-slate-600/50 text-slate-400' :
+                          'bg-amber-500/20 text-amber-300'
+                        }`} title={`FIRS: ${inv.firs_status}`}>
+                          FIRS {inv.firs_status === 'cleared' ? '✓' : inv.firs_status}
+                        </span>
+                      )}
                     </td>
                     <td className="px-5 py-3.5">
                       <div className="flex items-center gap-1">

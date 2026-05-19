@@ -80,10 +80,15 @@ class InvoiceSerializer(serializers.ModelSerializer):
             "subtotal", "discount_amount", "tax_amount", "total_amount",
             "credit_applied", "amount_paid", "amount_due", "notes", "sold_by",
             "items", "payments", "created_at",
+            # ── FIRS e-invoicing fields ───────────────────────────────────────────
+            # All fields are read-only from the API consumer's perspective;
+            # they are written only by EInvoicingService / webhook callbacks.
+            "firs_status", "firs_irn", "firs_invoice_number", "firs_csid", "firs_qr_code",
         ]
         read_only_fields = [
             "id", "invoice_number", "subtotal", "discount_amount",
             "tax_amount", "total_amount", "credit_applied", "amount_paid", "amount_due", "created_at",
+            "firs_status", "firs_irn", "firs_invoice_number", "firs_csid", "firs_qr_code",
         ]
 
 

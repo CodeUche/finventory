@@ -138,6 +138,45 @@ class Invoice(TenantAwareModel):
 
     notes = models.TextField(blank=True)
     sold_by = models.CharField(max_length=200, blank=True, db_index=True)
+
+    # ── FIRS e-invoicing fields ───────────────────────────────────────────────
+    # All fields are nullable / blank so existing invoices are unaffected.
+    # Populated only when the organisation has an active FirsConfig (is_enrolled=True).
+    firs_status = models.CharField(
+        max_length=30, default="not_enrolled", db_index=True,
+        help_text="not_enrolled | pending | submitted | cleared | failed | bypassed",
+    )
+    firs_irn = models.CharField(
+        max_length=200, blank=True,
+        help_text="FIRS Invoice Reference Number — assigned after clearance.",
+    )
+    firs_invoice_number = models.CharField(
+        max_length=200, blank=True,
+        help_text="FIRS-assigned invoice number (different from internal invoice_number).",
+    )
+    firs_csid = models.CharField(
+        max_length=500, blank=True,
+        help_text="Cryptographic Stamp Identifier from DigiTax.",
+    )
+    firs_transaction_type = models.CharField(
+        max_length=3, blank=True,
+        help_text="B2B | B2G | B2C — resolved at submission time.",
+    )
+    firs_qr_code = models.TextField(
+        blank=True,
+        help_text="Base64-encoded QR code PNG for embedding in invoice PDF.",
+    )
+    tax_point_date = models.DateField(
+        null=True, blank=True,
+        help_text="Date VAT becomes legally due. Defaults to issue_date if not set.",
+    )
+    delivery_start = models.DateField(null=True, blank=True)
+    delivery_end = models.DateField(null=True, blank=True)
+    payment_terms_text = models.CharField(
+        max_length=500, blank=True,
+        help_text="Free-text payment terms sent to FIRS (e.g. 'Net 30').",
+    )
+
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.PROTECT,

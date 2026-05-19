@@ -58,3 +58,6 @@ groq>=0.8.0
 
 # DNS verification for white-label domain ownership checks
 dnspython==2.7.0
+
+# Analytics
+posthog>=3.0.0

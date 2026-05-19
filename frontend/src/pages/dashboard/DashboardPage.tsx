@@ -8,7 +8,8 @@ import {
   TrendingUp, TrendingDown, Package,
   AlertTriangle, DollarSign, Zap, ArrowUpRight, ShoppingCart, Clock, Sparkles, RefreshCw,
 } from 'lucide-react'
-import { reportApi, inventoryApi, salesApi } from '@/services/api'
+import { reportApi, inventoryApi, salesApi, einvoicingApi } from '@/services/api'
+import type { FirsStats } from '@/types'
 import { offlineCache } from '@/lib/offlineCache'
 import { formatCurrency, getCurrencySymbol } from '@/lib/utils'
 import { format, subDays, subMonths, subYears, startOfYear } from 'date-fns'
@@ -100,6 +101,8 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
   const [showAI, setShowAI] = useState(false)
   const [_refreshTick, setRefreshTick] = useState(0)
+  // FIRS compliance banner state — fetched once on mount, non-blocking
+  const [firsStats, setFirsStats] = useState<FirsStats | null>(null)
   useDataRefresh(() => setRefreshTick((t) => t + 1))
 
   const { dateFrom, dateTo } = useMemo(() => getDateRange(period), [period])
@@ -162,6 +165,11 @@ export default function DashboardPage() {
 
     return () => clearInterval(interval)
   }, [dateFrom, dateTo, _refreshTick])
+
+  // Fetch FIRS stats once on mount (independent of period changes)
+  useEffect(() => {
+    einvoicingApi.stats().then(({ data }) => setFirsStats(data)).catch(() => null)
+  }, [])
 
   const chartData = salesData.map((d) => ({
     date: format(new Date(d.period), period === 'today' ? 'HH:mm' : 'MMM d'),
@@ -229,6 +237,45 @@ export default function DashboardPage() {
       </div>
 
       <AIChatModal open={showAI} onClose={() => setShowAI(false)} />
+
+      {/* ── FIRS compliance banner ───────────────────────────────────────────
+          Shown only to enrolled orgs. Three states:
+            • failed > 0  → red warning (submissions need attention)
+            • sandbox mode → amber nudge (remind to switch to production)
+            • all clear    → subtle green confirmation (collapsed after first view)
+      */}
+      {firsStats?.is_enrolled && firsStats.failed > 0 && (
+        <div
+          onClick={() => navigate('/settings?tab=firs')}
+          className="flex items-center gap-3 p-4 bg-red-500/10 border border-red-500/30 rounded-xl cursor-pointer hover:bg-red-500/15 transition-colors"
+        >
+          <AlertTriangle size={16} className="text-red-400 flex-shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-white">
+              {firsStats.failed} FIRS submission{firsStats.failed !== 1 ? 's' : ''} failed
+            </p>
+            <p className="text-xs text-slate-400">
+              Click to open the FIRS settings and retry failed submissions.
+            </p>
+          </div>
+          <span className="text-xs text-red-400 font-medium whitespace-nowrap">Fix now →</span>
+        </div>
+      )}
+      {firsStats?.is_enrolled && firsStats.failed === 0 && firsStats.use_sandbox && (
+        <div
+          onClick={() => navigate('/settings?tab=firs')}
+          className="flex items-center gap-3 p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl cursor-pointer hover:bg-amber-500/15 transition-colors"
+        >
+          <AlertTriangle size={16} className="text-amber-400 flex-shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-white">FIRS e-invoicing is in sandbox mode</p>
+            <p className="text-xs text-slate-400">
+              Submissions are going to DigiTax sandbox. Switch to production when ready to go live.
+            </p>
+          </div>
+          <span className="text-xs text-amber-400 font-medium whitespace-nowrap">Configure →</span>
+        </div>
+      )}
 
       {/* KPI Row 1 — Financial */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

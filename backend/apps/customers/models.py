@@ -49,6 +49,16 @@ class Customer(TenantAwareModel):
     notes = models.TextField(blank=True)
     is_active = models.BooleanField(default=True, db_index=True)
 
+    # ── FIRS e-invoicing fields ───────────────────────────────────────────────
+    tin = models.CharField(
+        max_length=20, blank=True,
+        help_text="Customer Tax Identification Number — triggers B2B flow when set.",
+    )
+    digitax_party_id = models.CharField(
+        max_length=100, blank=True,
+        help_text="DigiTax-assigned party ID for this customer. Cached after POST /parties.",
+    )
+
     class Meta(TenantAwareModel.Meta):
         unique_together = [["organisation", "code"]]
         indexes = [models.Index(fields=["organisation", "name"])]
