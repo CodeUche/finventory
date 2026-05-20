@@ -77,7 +77,11 @@ def disable_rls(apps, schema_editor):
     if schema_editor.connection.vendor != "postgresql":
         return
 
-    with schema_editor.connection.cursor() as cur:
+    conn = schema_editor.connection
+    conn.ensure_connection()
+    conn.connection.set_session(autocommit=False)
+    try:
+      with conn.cursor() as cur:
         results = {}
 
         for table in ("tenancy_membership", "tenancy_organisation"):
@@ -146,6 +150,12 @@ def disable_rls(apps, schema_editor):
                     AND m.organisation_id = o.id
               )
         """)
+      conn.connection.commit()
+    except Exception:
+        conn.connection.rollback()
+        raise
+    finally:
+        conn.connection.set_session(autocommit=True)
 
 
 def restore_rls(apps, schema_editor):
