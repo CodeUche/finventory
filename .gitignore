@@ -22,7 +22,9 @@ backend/.env
 backend/.env.*
 !backend/.env.example
 frontend/.env
-frontend/.env.*
+frontend/.env.desktop
+frontend/.env.android
+!frontend/.env.cloud
 !frontend/.env.example
 
 # Django
