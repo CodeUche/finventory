@@ -957,8 +957,8 @@ export const salesApi = {
     api.post(`/sales/invoices/${invoiceId}/confirm_proforma/`),
   extendDueDate: (invoiceId: string, data: { new_due_date: string; reason?: string }) =>
     api.post(`/sales/invoices/${invoiceId}/extend_due_date/`, data),
-  productHistory: (productId: string) =>
-    api.get('/sales/invoices/product_history/', { params: { product_id: productId } }),
+  productHistory: (productId: string, params?: { date_from?: string; date_to?: string }) =>
+    api.get('/sales/invoices/product_history/', { params: { product_id: productId, ...params } }),
   warehouseSales: (period?: string) =>
     api.get('/sales/invoices/warehouse_sales/', { params: { period } }),
   ownerAnalytics: (period?: string) =>

@@ -530,9 +530,15 @@ export default function SalesPage() {
   const [processingReturn, setProcessingReturn] = useState(false)
   const [archiveYear, setArchiveYear] = useState<number | null>(null)
   const [archiveMonth, setArchiveMonth] = useState<ArchiveMonth | null>(null)
-  const activeDateParams = archiveMonth ? monthToDateParams(archiveMonth) : yearToDateParams(archiveYear)
-  const handleYearChange = (y: number | null) => { setArchiveYear(y); if (y !== null) setArchiveMonth(null) }
-  const handleMonthChange = (m: ArchiveMonth | null) => { setArchiveMonth(m); if (m !== null) setArchiveYear(null) }
+  const [customDateFrom, setCustomDateFrom] = useState('')
+  const [customDateTo, setCustomDateTo] = useState('')
+  const activeDateParams = customDateFrom || customDateTo
+    ? { date_from: customDateFrom || undefined, date_to: customDateTo || undefined }
+    : archiveMonth ? monthToDateParams(archiveMonth) : yearToDateParams(archiveYear)
+  const handleYearChange = (y: number | null) => { setArchiveYear(y); if (y !== null) { setArchiveMonth(null); setCustomDateFrom(''); setCustomDateTo('') } }
+  const handleMonthChange = (m: ArchiveMonth | null) => { setArchiveMonth(m); if (m !== null) { setArchiveYear(null); setCustomDateFrom(''); setCustomDateTo('') } }
+  const handleCustomDateFrom = (v: string) => { setCustomDateFrom(v); setArchiveYear(null); setArchiveMonth(null) }
+  const handleCustomDateTo = (v: string) => { setCustomDateTo(v); setArchiveYear(null); setArchiveMonth(null) }
   const [showExtendDue, setShowExtendDue] = useState(false)
   const [extendDueDate, setExtendDueDate] = useState('')
   const [extendReason, setExtendReason] = useState('')
@@ -547,7 +553,7 @@ export default function SalesPage() {
     finally { setLoading(false) }
   }
 
-  useEffect(() => { load() }, [search, status, sortBy, archiveYear, archiveMonth])
+  useEffect(() => { load() }, [search, status, sortBy, archiveYear, archiveMonth, customDateFrom, customDateTo])
   useDataRefresh(load)
 
   const openDetail = async (inv: Invoice) => {
@@ -911,6 +917,11 @@ export default function SalesPage() {
         </select>
         <YearFilter selectedYear={archiveYear} onChange={handleYearChange} />
         <MonthFilter selectedMonth={archiveMonth} onChange={handleMonthChange} />
+        <DateInput value={customDateFrom} onChange={handleCustomDateFrom} placeholder="From" className="input py-1.5 text-sm w-32" />
+        <DateInput value={customDateTo} onChange={handleCustomDateTo} placeholder="To" className="input py-1.5 text-sm w-32" />
+        {(customDateFrom || customDateTo) && (
+          <button onClick={() => { setCustomDateFrom(''); setCustomDateTo('') }} className="btn-ghost p-1.5 text-slate-400 hover:text-white" title="Clear custom date filter"><X size={14} /></button>
+        )}
         <ExportButton endpoint="/sales/invoices/" filename="invoices" params={activeDateParams} />
       </div>
 

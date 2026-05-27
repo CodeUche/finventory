@@ -833,15 +833,21 @@ class InvoiceViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
         except Product.DoesNotExist:
             return Response({"error": "Product not found"}, status=404)
 
+        qs = SaleItem.objects.filter(invoice__organisation=org, product=product)
+        date_from = request.query_params.get("date_from")
+        date_to = request.query_params.get("date_to")
+        if date_from:
+            qs = qs.filter(invoice__issue_date__gte=date_from)
+        if date_to:
+            qs = qs.filter(invoice__issue_date__lte=date_to)
         items = (
-            SaleItem.objects.filter(invoice__organisation=org, product=product)
-            .select_related(
+            qs.select_related(
                 "invoice",
                 "invoice__customer",
                 "invoice__warehouse",
                 "invoice__created_by",
             )
-            .order_by("-invoice__issue_date")[:200]
+            .order_by("-invoice__issue_date")[:500]
         )
 
         results = []

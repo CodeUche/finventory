@@ -148,6 +148,8 @@ export default function ProductsPage() {
   const [historyLoading, setHistoryLoading] = useState(false)
   const [historySearch, setHistorySearch] = useState('')
   const [historyFullscreen, setHistoryFullscreen] = useState(false)
+  const [historyDateFrom, setHistoryDateFrom] = useState('')
+  const [historyDateTo, setHistoryDateTo] = useState('')
   const [batchForm, setBatchForm] = useState({ ...BLANK_BATCH })
   const [warehouses, setWarehouses] = useState<{ id: string; name: string }[]>([])
   const [deletingId, setDeletingId] = useState<string | null>(null)
@@ -331,9 +333,27 @@ export default function ProductsPage() {
   const openHistory = async (p: Product) => {
     setHistoryProduct(p)
     setHistoryItems([])
+    setHistoryDateFrom('')
+    setHistoryDateTo('')
     setHistoryLoading(true)
     try {
       const { data } = await salesApi.productHistory(p.id)
+      setHistoryItems(data.results ?? [])
+    } catch {
+      toast.error('Failed to load sales history')
+    } finally {
+      setHistoryLoading(false)
+    }
+  }
+
+  const applyHistoryDateFilter = async () => {
+    if (!historyProduct) return
+    setHistoryLoading(true)
+    try {
+      const params: { date_from?: string; date_to?: string } = {}
+      if (historyDateFrom) params.date_from = historyDateFrom
+      if (historyDateTo) params.date_to = historyDateTo
+      const { data } = await salesApi.productHistory(historyProduct.id, params)
       setHistoryItems(data.results ?? [])
     } catch {
       toast.error('Failed to load sales history')
@@ -771,12 +791,12 @@ export default function ProductsPage() {
                 <button onClick={() => setHistoryFullscreen(f => !f)} className="btn-ghost p-1.5" title={historyFullscreen ? 'Exit fullscreen' : 'Fullscreen'}>
                   {historyFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
                 </button>
-                <button onClick={() => { setHistoryProduct(null); setHistorySearch(''); setHistoryFullscreen(false) }} className="btn-ghost p-1.5"><X size={18} /></button>
+                <button onClick={() => { setHistoryProduct(null); setHistorySearch(''); setHistoryFullscreen(false); setHistoryDateFrom(''); setHistoryDateTo('') }} className="btn-ghost p-1.5"><X size={18} /></button>
               </div>
             </div>
-            {/* Search bar */}
-            <div className="px-5 py-3 border-b border-surface-700 shrink-0">
-              <div className="relative">
+            {/* Search + date filter bar */}
+            <div className="px-5 py-3 border-b border-surface-700 shrink-0 flex flex-col sm:flex-row gap-2">
+              <div className="relative flex-1">
                 <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
                 <input
                   type="text"
@@ -785,6 +805,26 @@ export default function ProductsPage() {
                   onChange={e => setHistorySearch(e.target.value)}
                   className="input pl-8 py-1.5 text-sm w-full"
                 />
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <DateInput value={historyDateFrom} onChange={setHistoryDateFrom} placeholder="From" className="input py-1.5 text-sm w-32" />
+                <DateInput value={historyDateTo} onChange={setHistoryDateTo} placeholder="To" className="input py-1.5 text-sm w-32" />
+                <button
+                  onClick={applyHistoryDateFilter}
+                  disabled={historyLoading}
+                  className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-colors disabled:opacity-50"
+                >
+                  Filter
+                </button>
+                {(historyDateFrom || historyDateTo) && (
+                  <button
+                    onClick={() => { setHistoryDateFrom(''); setHistoryDateTo(''); openHistory(historyProduct!) }}
+                    className="px-2 py-1.5 rounded-lg text-slate-400 hover:text-white text-xs transition-colors"
+                    title="Clear date filter"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
               </div>
             </div>
             <div className="overflow-auto flex-1">
