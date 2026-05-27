@@ -260,6 +260,85 @@ class InvoiceViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
         serializer.save()
         return Response(serializer.data)
 
+    @action(detail=True, methods=["patch"], url_path="edit_lines")
+    def edit_lines(self, request, pk=None):
+        """
+        PATCH /sales/invoices/{id}/edit_lines/
+
+        Full invoice edit: line items, customer, dates, notes.
+        Requires the same permission as update().
+        Allowed on all statuses except paid and voided.
+
+        Body:
+          {
+            "items": [{"product_id": ..., "quantity": ..., "unit_price": ..., "discount_percent": ...}],
+            "customer_id": "...",      (optional)
+            "warehouse_id": "...",     (optional)
+            "notes": "...",            (optional)
+            "issue_date": "YYYY-MM-DD",
+            "due_date": "YYYY-MM-DD",
+            "payment_method": "..."
+          }
+        """
+        if not self._check_invoice_edit_permission(request):
+            return Response(
+                {"error": "You need edit-level sales permission to update invoices."},
+                status=403,
+            )
+
+        invoice = self.get_object()
+
+        items = request.data.get("items")
+        if not items or not isinstance(items, list) or len(items) == 0:
+            return Response({"error": "At least one line item is required."}, status=422)
+
+        # Resolve optional foreign keys
+        customer = None
+        customer_id = request.data.get("customer_id")
+        if customer_id:
+            from apps.customers.models import Customer
+            try:
+                customer = Customer.objects.get(id=customer_id, organisation=request.organisation)
+            except Customer.DoesNotExist:
+                return Response({"error": "Customer not found."}, status=404)
+
+        warehouse = None
+        warehouse_id = request.data.get("warehouse_id")
+        if warehouse_id:
+            from apps.inventory.models import Warehouse
+            try:
+                warehouse = Warehouse.objects.get(id=warehouse_id, organisation=request.organisation)
+            except Warehouse.DoesNotExist:
+                return Response({"error": "Warehouse not found."}, status=404)
+
+        from datetime import date as _date, datetime as _dt
+        def parse_date(s):
+            if not s:
+                return None
+            try:
+                return _dt.strptime(s, "%Y-%m-%d").date()
+            except (ValueError, TypeError):
+                return None
+
+        try:
+            updated = SaleService.update_sale(
+                invoice=invoice,
+                updated_by=request.user,
+                customer=customer,
+                warehouse=warehouse,
+                items=items,
+                notes=request.data.get("notes", invoice.notes),
+                issue_date=parse_date(request.data.get("issue_date")),
+                due_date=parse_date(request.data.get("due_date")),
+                payment_method=request.data.get("payment_method"),
+            )
+        except (ValueError, Exception) as exc:
+            logger.error("[edit_lines] %s – %s", type(exc).__name__, exc)
+            return Response({"error": f"[{type(exc).__name__}] {exc}"}, status=422)
+
+        serializer = self.get_serializer(updated)
+        return Response(serializer.data)
+
     def destroy(self, request, *args, **kwargs):
         """
         DELETE /sales/invoices/{id}/ — Soft-delete an invoice.

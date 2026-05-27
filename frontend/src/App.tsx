@@ -16,6 +16,7 @@ import WarehousesPage from '@/pages/inventory/WarehousesPage'
 import BatchesPage from '@/pages/inventory/BatchesPage'
 import SalesPage from '@/pages/sales/SalesPage'
 import NewSalePage from '@/pages/sales/NewSalePage'
+import EditInvoicePage from '@/pages/sales/EditInvoicePage'
 import QuotesPage from '@/pages/QuotesPage'
 import RecurringInvoicesPage from '@/pages/RecurringInvoicesPage'
 import CustomersPage from '@/pages/customers/CustomersPage'
@@ -232,6 +233,7 @@ export default function App() {
         {/* Sales */}
         <Route path="sales"     element={<ModuleRoute module="sales"><SalesPage /></ModuleRoute>} />
         <Route path="sales/new" element={<WriteModuleRoute module="sales"><NewSalePage /></WriteModuleRoute>} />
+        <Route path="sales/invoices/:id/edit" element={<WriteModuleRoute module="sales"><EditInvoicePage /></WriteModuleRoute>} />
         <Route path="locations" element={<ModuleRoute module="sales"><LocationsPage /></ModuleRoute>} />
         <Route path="quotes"    element={<ModuleRoute module="quotes"><QuotesPage /></ModuleRoute>} />
         <Route path="recurring" element={<ModuleRoute module="recurring"><RecurringInvoicesPage /></ModuleRoute>} />

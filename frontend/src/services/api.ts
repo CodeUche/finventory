@@ -944,6 +944,7 @@ export const salesApi = {
   invoice: (id: string) => api.get(`/sales/invoices/${id}/`),
   create: (data: object) => api.post('/sales/invoices/', data),
   updateInvoice: (id: string, data: object) => api.patch(`/sales/invoices/${id}/`, data),
+  editLines: (id: string, data: object) => api.patch(`/sales/invoices/${id}/edit_lines/`, data),
   deleteInvoice: (id: string) => api.delete(`/sales/invoices/${id}/`),
   pay: (id: string, data: object) => api.post(`/sales/invoices/${id}/pay/`, data),
   void: (id: string) => api.post(`/sales/invoices/${id}/void/`),

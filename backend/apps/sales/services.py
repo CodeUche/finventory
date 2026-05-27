@@ -254,6 +254,115 @@ class SaleService:
         }
 
     @staticmethod
+    @transaction.atomic
+    def update_sale(
+        invoice: Invoice,
+        updated_by,
+        *,
+        customer=None,
+        warehouse=None,
+        items: list[dict],
+        notes: str = "",
+        issue_date=None,
+        due_date=None,
+        payment_method: str = None,
+    ) -> Invoice:
+        """
+        Full update of invoice line items and metadata.
+
+        Allowed statuses: draft, proforma, confirmed, credit, partially_paid, overdue.
+        Paid and voided invoices cannot be edited.
+
+        For non-draft/proforma invoices, old physical-product sale_out stock movements
+        are reversed via adjustment_in before new items are applied.
+
+        Note: GL journal entries are NOT automatically reversed/re-posted here to avoid
+        complex accounting state; owners should create a manual correcting entry if needed.
+        """
+        from apps.accounting.services import AccountingService
+
+        EDITABLE_STATUSES = {
+            Invoice.Status.DRAFT, Invoice.Status.PROFORMA,
+            Invoice.Status.CONFIRMED, Invoice.Status.CREDIT,
+            Invoice.Status.PARTIALLY_PAID, Invoice.Status.OVERDUE,
+        }
+        if invoice.status not in EDITABLE_STATUSES:
+            raise ValueError(
+                f"Invoices with status '{invoice.status}' cannot be edited."
+            )
+
+        effective_warehouse = warehouse or invoice.warehouse
+
+        # Reverse old stock movements for physical products (not for draft/proforma)
+        skip_stock_was = invoice.status in {Invoice.Status.DRAFT, Invoice.Status.PROFORMA}
+        if not skip_stock_was:
+            for old_item in invoice.items.select_related("product").all():
+                if old_item.product.product_type != "service":
+                    InventoryService.record_movement(
+                        organisation=invoice.organisation,
+                        product=old_item.product,
+                        warehouse=invoice.warehouse,
+                        quantity=old_item.quantity,   # positive = restore
+                        movement_type="adjustment_in",
+                        unit_cost=old_item.product.cost_price,
+                        reference=f"EDIT:{invoice.invoice_number}",
+                        created_by=updated_by,
+                    )
+
+        # Delete old line items
+        invoice.items.all().delete()
+
+        # Apply metadata updates
+        if customer is not None:
+            invoice.customer = customer
+        if warehouse is not None:
+            invoice.warehouse = warehouse
+        if notes is not None:
+            invoice.notes = notes
+        if issue_date is not None:
+            invoice.issue_date = issue_date
+        if due_date is not None:
+            invoice.due_date = due_date
+        if payment_method is not None:
+            invoice.payment_method = payment_method
+
+        # Create new line items
+        skip_stock_new = invoice.status in {Invoice.Status.DRAFT, Invoice.Status.PROFORMA}
+        subtotal = Decimal("0")
+        total_discount = Decimal("0")
+        total_tax = Decimal("0")
+
+        for item_data in items:
+            line = SaleService._process_line_item(
+                organisation=invoice.organisation,
+                invoice=invoice,
+                warehouse=effective_warehouse,
+                item_data=item_data,
+                created_by=updated_by,
+                skip_stock=skip_stock_new,
+            )
+            subtotal += line["subtotal"]
+            total_discount += line["discount_amount"]
+            total_tax += line["tax_amount"]
+
+        total = subtotal - total_discount + total_tax
+
+        # Recalculate financials; preserve existing payments
+        invoice.subtotal = subtotal
+        invoice.discount_amount = total_discount
+        invoice.tax_amount = total_tax
+        invoice.total_amount = total
+        amount_paid = invoice.amount_paid or Decimal("0")
+        invoice.amount_due = max(total - amount_paid, Decimal("0"))
+
+        invoice.save()
+        logger.info(
+            "Invoice %s updated by %s for org %s",
+            invoice.invoice_number, updated_by, invoice.organisation.id,
+        )
+        return invoice
+
+    @staticmethod
     def _handle_credit_sale(invoice: Invoice, customer, total: Decimal, recorded_by=None):
         """Mark as credit sale, create credit ledger entry, and update customer balance."""
         if customer is None:

@@ -5,7 +5,7 @@ import SortSelect from '@/components/SortSelect'
 import YearFilter, { yearToDateParams } from '@/components/YearFilter'
 import MonthFilter, { monthToDateParams, type ArchiveMonth } from '@/components/MonthFilter'
 import ExportButton from '@/components/ExportButton'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { salesApi, tauriFetch, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatDate, getStatusColor, formatAmountInput, stripCommas } from '@/lib/utils'
@@ -494,6 +494,7 @@ async function buildDeliveryNotePDF(
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function SalesPage() {
+  const navigate = useNavigate()
   const { organisation, memberRole, user } = useAuthStore()
   const { canEdit: canEditSales } = useModuleAccess('sales')
   const isOwnerOrAdmin = memberRole === 'owner' || memberRole === 'admin' || user?.is_superuser === true
@@ -607,17 +608,6 @@ export default function SalesPage() {
       const msg = err?.response?.data?.error
       toast.error(typeof msg === 'string' ? msg : 'Failed to extend due date')
     } finally { setExtendingDue(false) }
-  }
-
-  const openEditModal = () => {
-    if (!inv) return
-    setEditInvoiceForm({
-      notes: inv.notes ?? '',
-      due_date: inv.due_date ?? '',
-      issue_date: inv.issue_date ?? '',
-      payment_method: inv.payment_method ?? '',
-    })
-    setShowEditInvoice(true)
   }
 
   const handleSaveEdit = async () => {
@@ -1038,9 +1028,9 @@ export default function SalesPage() {
                 <h2 className="font-bold text-white text-lg">{inv?.invoice_number}</h2>
               </div>
               <div className="flex items-center gap-2">
-                {(isOwnerOrAdmin || canEditSales) && inv?.status !== 'voided' && (
+                {(isOwnerOrAdmin || canEditSales) && inv?.status !== 'voided' && inv && (
                   <button
-                    onClick={openEditModal}
+                    onClick={() => navigate(`/sales/invoices/${inv.id}/edit`)}
                     title="Edit Invoice"
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-600 text-slate-300 hover:bg-surface-700 text-xs font-medium transition-colors"
                   >
