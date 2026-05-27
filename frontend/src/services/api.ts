@@ -1136,6 +1136,7 @@ export const accountingApi = {
   trialBalance: () => api.get('/accounting/accounts/trial_balance/'),
   balanceSheet: (params?: object) => api.get('/accounting/accounts/balance_sheet/', { params }),
   seedCoa: () => api.post('/accounting/accounts/seed/'),
+  accountLedger: (id: string, params?: object) => api.get(`/accounting/accounts/${id}/ledger/`, { params }),
   journal: (params?: object) => api.get('/accounting/journal/', { params }),
   createJournalEntry: (data: object) => api.post('/accounting/journal/', data),
   updateJournalEntry: (id: string, data: object) => api.patch(`/accounting/journal/${id}/`, data),

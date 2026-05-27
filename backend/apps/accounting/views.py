@@ -59,6 +59,99 @@ class AccountViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         AccountingService.seed_chart_of_accounts(org)
         return Response({'message': 'Chart of accounts seeded successfully'})
 
+    @action(detail=True, methods=['get'])
+    def ledger(self, request, pk=None):
+        """
+        GET /accounting/accounts/{id}/ledger/?date_from=YYYY-MM-DD&date_to=YYYY-MM-DD
+
+        Returns posted journal lines for this account with a running balance.
+        If date_from is provided, also computes an opening balance for lines before that date.
+        For the inventory account (code 1200), includes the actual stock valuation.
+        """
+        from django.db.models import Sum
+        from datetime import datetime
+
+        account = self.get_object()
+        org = self._get_organisation()
+        is_debit_normal = account.account_type in ['asset', 'expense', 'cogs']
+
+        date_from_str = request.query_params.get('date_from')
+        date_to_str   = request.query_params.get('date_to')
+        date_from = None
+        date_to   = None
+        if date_from_str:
+            try:
+                date_from = datetime.strptime(date_from_str, '%Y-%m-%d').date()
+            except ValueError:
+                pass
+        if date_to_str:
+            try:
+                date_to = datetime.strptime(date_to_str, '%Y-%m-%d').date()
+            except ValueError:
+                pass
+
+        # Opening balance: all posted lines before date_from
+        if date_from:
+            pre_qs = JournalLine.objects.filter(
+                journal_entry__organisation=org,
+                journal_entry__status='posted',
+                account=account,
+                journal_entry__entry_date__lt=date_from,
+            )
+            pre_d = pre_qs.aggregate(t=Sum('debit'))['t']  or Decimal('0')
+            pre_c = pre_qs.aggregate(t=Sum('credit'))['t'] or Decimal('0')
+            opening = (pre_d - pre_c) if is_debit_normal else (pre_c - pre_d)
+        else:
+            opening = Decimal('0')
+
+        # Lines in range
+        qs = JournalLine.objects.filter(
+            journal_entry__organisation=org,
+            journal_entry__status='posted',
+            account=account,
+        ).select_related('journal_entry', 'journal_entry__created_by').order_by(
+            'journal_entry__entry_date', 'journal_entry__created_at'
+        )
+        if date_from:
+            qs = qs.filter(journal_entry__entry_date__gte=date_from)
+        if date_to:
+            qs = qs.filter(journal_entry__entry_date__lte=date_to)
+
+        running = opening
+        lines = []
+        for line in qs:
+            delta = (line.debit - line.credit) if is_debit_normal else (line.credit - line.debit)
+            running += delta
+            lines.append({
+                'id': str(line.id),
+                'date': line.journal_entry.entry_date,
+                'reference': line.journal_entry.reference,
+                'description': line.description or line.journal_entry.description,
+                'debit': line.debit,
+                'credit': line.credit,
+                'balance': running,
+            })
+
+        # Inventory account: include actual stock valuation as comparison
+        inventory_value = None
+        if account.code == '1200':
+            from apps.reports.services import ReportService
+            inv = ReportService.inventory_valuation(org)
+            inventory_value = inv['total_inventory_value']
+
+        return Response({
+            'account': {
+                'id': str(account.id),
+                'code': account.code,
+                'name': account.name,
+                'account_type': account.account_type,
+            },
+            'opening_balance': opening,
+            'closing_balance': running,
+            'inventory_value': inventory_value,
+            'lines': lines,
+        })
+
 
 class JournalEntryViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     serializer_class = JournalEntrySerializer

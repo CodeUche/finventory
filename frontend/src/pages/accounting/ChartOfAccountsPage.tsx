@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
-import { Plus, X, BookOpen, Edit2, Trash2, Loader2, Download, RefreshCw } from 'lucide-react'
+import { Plus, X, BookOpen, Edit2, Trash2, Loader2, Download, RefreshCw, ChevronRight, AlertTriangle } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { accountingApi, bypassNextGets } from '@/services/api'
-import { formatCurrency } from '@/lib/utils'
-import type { Account } from '@/types'
+import { formatCurrency, formatDate } from '@/lib/utils'
+import DateInput from '@/components/DateInput'
+import type { Account, AccountLedger } from '@/types'
 
 const TYPE_BADGE: Record<string, string> = {
   asset: 'badge-green',
@@ -39,6 +40,13 @@ export default function ChartOfAccountsPage() {
   const [trialBalance, setTrialBalance] = useState<Record<string, unknown> | null>(null)
   const [loadingTB, setLoadingTB] = useState(false)
   const [typeFilter, setTypeFilter] = useState<string>('all')
+
+  // Ledger drill-down
+  const [ledgerAccount, setLedgerAccount] = useState<Account | null>(null)
+  const [ledger, setLedger] = useState<AccountLedger | null>(null)
+  const [ledgerLoading, setLedgerLoading] = useState(false)
+  const [ledgerFrom, setLedgerFrom] = useState('')
+  const [ledgerTo, setLedgerTo] = useState('')
 
   const load = async () => {
     setLoading(true)
@@ -99,6 +107,42 @@ export default function ChartOfAccountsPage() {
       setShowTrialBalance(true)
     } catch { toast.error('Failed to load trial balance') }
     finally { setLoadingTB(false) }
+  }
+
+  const toISO = (dd: string) => {
+    if (!dd) return undefined
+    const [d, m, y] = dd.split('/')
+    if (!d || !m || !y) return dd
+    return `${y}-${m}-${d}`
+  }
+
+  const openLedger = async (account: Account) => {
+    setLedgerAccount(account)
+    setLedger(null)
+    setLedgerLoading(true)
+    try {
+      const params: Record<string, string> = {}
+      const f = toISO(ledgerFrom); const t = toISO(ledgerTo)
+      if (f) params.date_from = f
+      if (t) params.date_to = t
+      const { data } = await accountingApi.accountLedger(account.id, params)
+      setLedger(data as AccountLedger)
+    } catch { toast.error('Failed to load ledger') }
+    finally { setLedgerLoading(false) }
+  }
+
+  const refreshLedger = async () => {
+    if (!ledgerAccount) return
+    setLedgerLoading(true)
+    try {
+      const params: Record<string, string> = {}
+      const f = toISO(ledgerFrom); const t = toISO(ledgerTo)
+      if (f) params.date_from = f
+      if (t) params.date_to = t
+      const { data } = await accountingApi.accountLedger(ledgerAccount.id, params)
+      setLedger(data as AccountLedger)
+    } catch { toast.error('Failed to load ledger') }
+    finally { setLedgerLoading(false) }
   }
 
   const TYPES = ['asset', 'liability', 'equity', 'revenue', 'expense', 'cogs'] as const
@@ -168,7 +212,7 @@ export default function ChartOfAccountsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-surface-700">
-                {['Code', 'Account Name', 'Type', 'Balance', 'System', 'Actions'].map((h) => (
+                {['Code', 'Account Name', 'Type', 'Balance', 'System', 'Actions', ''].map((h) => (
                   <th key={h} className="px-5 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
                 ))}
               </tr>
@@ -193,13 +237,17 @@ export default function ChartOfAccountsPage() {
                   </td>
                 </tr>
               ) : filteredAccounts.map((a) => (
-                <tr key={a.id} className="table-row">
+                <tr
+                  key={a.id}
+                  className="table-row cursor-pointer"
+                  onClick={() => openLedger(a)}
+                >
                   <td className="px-5 py-3.5 font-mono text-slate-400">{a.code}</td>
                   <td className="px-5 py-3.5 text-white font-medium">{a.name}</td>
                   <td className="px-5 py-3.5"><span className={TYPE_BADGE[a.account_type]}>{a.account_type}</span></td>
                   <td className="px-5 py-3.5 text-right font-mono text-white">{formatCurrency(a.balance)}</td>
                   <td className="px-5 py-3.5">{a.is_system ? <span className="badge-blue">System</span> : <span className="text-slate-600">—</span>}</td>
-                  <td className="px-5 py-3.5">
+                  <td className="px-5 py-3.5" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center gap-2">
                       <button onClick={() => openEdit(a)} className="p-1.5 text-slate-500 hover:text-white hover:bg-surface-600 rounded-lg transition-colors"><Edit2 size={14} /></button>
                       <button
@@ -211,6 +259,9 @@ export default function ChartOfAccountsPage() {
                         <Trash2 size={14} />
                       </button>
                     </div>
+                  </td>
+                  <td className="px-3 py-3.5 text-slate-600">
+                    <ChevronRight size={14} />
                   </td>
                 </tr>
               ))}
@@ -262,6 +313,128 @@ export default function ChartOfAccountsPage() {
               <button className="btn-primary flex-1 py-2.5 justify-center disabled:opacity-50" onClick={handleSave} disabled={saving}>
                 {saving ? <Loader2 size={16} className="animate-spin" /> : editId ? 'Save Changes' : 'Add Account'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Ledger Drill-Down Panel */}
+      {ledgerAccount && (
+        <div className="fixed inset-0 z-50 flex">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setLedgerAccount(null)} />
+          <div className="relative ml-auto w-full max-w-3xl bg-surface-900 border-l border-surface-700 flex flex-col h-full shadow-2xl">
+            {/* Header */}
+            <div className="flex items-start justify-between p-5 border-b border-surface-700">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-slate-400 text-sm">{ledgerAccount.code}</span>
+                  <span className={`${TYPE_BADGE[ledgerAccount.account_type]} text-xs`}>{ledgerAccount.account_type}</span>
+                </div>
+                <h2 className="text-lg font-bold text-white mt-0.5">{ledgerAccount.name}</h2>
+                {ledger && (
+                  <div className="flex gap-4 mt-1.5">
+                    <div>
+                      <span className="text-xs text-slate-500">GL Balance </span>
+                      <span className="font-semibold text-white text-sm">{formatCurrency(ledger.closing_balance)}</span>
+                    </div>
+                    {ledger.inventory_value != null && (
+                      <div className="flex items-center gap-1">
+                        <span className="text-xs text-slate-500">Actual Inventory </span>
+                        <span className="font-semibold text-emerald-400 text-sm">{formatCurrency(ledger.inventory_value)}</span>
+                        {Math.abs(parseFloat(ledger.closing_balance) - parseFloat(ledger.inventory_value)) > 0.01 && (
+                          <span title="GL balance differs from actual inventory value"><AlertTriangle size={12} className="text-amber-400 ml-1" /></span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+              <button onClick={() => setLedgerAccount(null)} className="text-slate-400 hover:text-white mt-1"><X size={20} /></button>
+            </div>
+
+            {/* Date range filter */}
+            <div className="flex items-end gap-3 px-5 py-3 border-b border-surface-700 bg-surface-800/50">
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">From</label>
+                <DateInput value={ledgerFrom} onChange={setLedgerFrom} placeholder="DD/MM/YYYY" className="w-32 text-sm" />
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">To</label>
+                <DateInput value={ledgerTo} onChange={setLedgerTo} placeholder="DD/MM/YYYY" className="w-32 text-sm" />
+              </div>
+              <button
+                onClick={refreshLedger}
+                disabled={ledgerLoading}
+                className="btn-primary py-1.5 px-4 text-sm flex items-center gap-2"
+              >
+                {ledgerLoading ? <Loader2 size={14} className="animate-spin" /> : null}
+                Apply
+              </button>
+            </div>
+
+            {/* Lines */}
+            <div className="flex-1 overflow-y-auto">
+              {ledgerLoading ? (
+                <div className="flex items-center justify-center py-16">
+                  <Loader2 size={24} className="animate-spin text-slate-500" />
+                </div>
+              ) : !ledger ? null : (
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-surface-800 z-10">
+                    <tr className="border-b border-surface-700">
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Date</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Ref</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Description</th>
+                      <th className="px-4 py-3 text-right text-xs font-semibold text-emerald-400 uppercase">Debit</th>
+                      <th className="px-4 py-3 text-right text-xs font-semibold text-red-400 uppercase">Credit</th>
+                      <th className="px-4 py-3 text-right text-xs font-semibold text-slate-400 uppercase">Balance</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {/* Opening balance row */}
+                    {parseFloat(ledger.opening_balance) !== 0 && (
+                      <tr className="border-b border-surface-700/50 bg-surface-800/30">
+                        <td className="px-4 py-2.5 text-xs text-slate-500 italic" colSpan={5}>Opening Balance</td>
+                        <td className="px-4 py-2.5 text-right font-semibold text-slate-300 tabular-nums">
+                          {formatCurrency(ledger.opening_balance)}
+                        </td>
+                      </tr>
+                    )}
+                    {ledger.lines.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="px-4 py-10 text-center text-slate-500 text-sm">
+                          No posted journal entries for this account{ledgerFrom || ledgerTo ? ' in the selected period' : ''}.
+                        </td>
+                      </tr>
+                    ) : (
+                      ledger.lines.map((line, i) => (
+                        <tr key={line.id} className={`border-b border-surface-700/40 transition-colors hover:bg-surface-700/30 ${i % 2 === 1 ? 'bg-surface-900/30' : ''}`}>
+                          <td className="px-4 py-2.5 text-xs text-slate-400 whitespace-nowrap">{formatDate(line.date)}</td>
+                          <td className="px-4 py-2.5 text-xs font-mono text-brand-400 whitespace-nowrap">{line.reference}</td>
+                          <td className="px-4 py-2.5 text-xs text-slate-300 max-w-xs truncate" title={line.description}>{line.description || '—'}</td>
+                          <td className="px-4 py-2.5 text-right tabular-nums text-emerald-400 text-xs">
+                            {parseFloat(line.debit) > 0 ? formatCurrency(line.debit) : ''}
+                          </td>
+                          <td className="px-4 py-2.5 text-right tabular-nums text-red-400 text-xs">
+                            {parseFloat(line.credit) > 0 ? formatCurrency(line.credit) : ''}
+                          </td>
+                          <td className="px-4 py-2.5 text-right tabular-nums font-medium text-white text-xs whitespace-nowrap">
+                            {formatCurrency(line.balance)}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                  {ledger.lines.length > 0 && (
+                    <tfoot>
+                      <tr className="border-t-2 border-surface-600 bg-surface-800">
+                        <td colSpan={5} className="px-4 py-3 text-sm font-semibold text-slate-300 text-right">Closing Balance</td>
+                        <td className="px-4 py-3 text-right font-bold text-white tabular-nums">{formatCurrency(ledger.closing_balance)}</td>
+                      </tr>
+                    </tfoot>
+                  )}
+                </table>
+              )}
             </div>
           </div>
         </div>

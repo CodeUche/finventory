@@ -469,6 +469,24 @@ export interface Account {
   balance: string
 }
 
+export interface LedgerLine {
+  id: string
+  date: string
+  reference: string
+  description: string
+  debit: string
+  credit: string
+  balance: string
+}
+
+export interface AccountLedger {
+  account: Pick<Account, 'id' | 'code' | 'name' | 'account_type'>
+  opening_balance: string
+  closing_balance: string
+  inventory_value: string | null
+  lines: LedgerLine[]
+}
+
 export interface JournalLine {
   id: string
   account: string
