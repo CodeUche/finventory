@@ -145,7 +145,7 @@ export default function BillFoldersPage() {
             <button
               onClick={() => {
                 const parentId = currentFolder?.ancestors?.slice(-1)[0]?.id
-                parentId ? setSearchParams({ folder: parentId }) : goHome()
+                if (parentId) { setSearchParams({ folder: parentId }) } else { goHome() }
               }}
               className="btn-ghost p-2 text-slate-400 hover:text-white"
               title="Go back"

@@ -61,8 +61,8 @@ function MarkdownMessage({ text }: { text: string }) {
     const line = raw.trim()
 
     // Bullet lines: * item or - item
-    if (/^[*\-]\s+/.test(line)) {
-      listItems.push(line.replace(/^[*\-]\s+/, ''))
+    if (/^[*-]\s+/.test(line)) {
+      listItems.push(line.replace(/^[*-]\s+/, ''))
       continue
     }
 

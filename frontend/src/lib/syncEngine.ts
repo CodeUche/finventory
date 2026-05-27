@@ -174,7 +174,7 @@ export const syncEngine = {
       const orgId = useAuthStore.getState().organisation?.id ?? 'unknown'
 
       // Process pending items in order
-      let all = await _load()
+      const all = await _load()
       const pending = all.filter((i) => i.status === 'pending').sort((a, b) => a.timestamp - b.timestamp)
 
       for (const item of pending) {
