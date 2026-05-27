@@ -52,7 +52,7 @@ class OrganisationSerializer(serializers.ModelSerializer):
             "company_name_font_bold", "company_name_font_italic", "company_name_font_underline",
             "show_company_name_on_pdf",
             "invoice_template", "pension_provider", "ai_custom_context",
-            "onboarding_completed",
+            "onboarding_completed", "trial_used",
             "managing_firm_name", "managing_firm_logo",
             "parent_org", "entity_group_name", "child_entity_count",
         ]

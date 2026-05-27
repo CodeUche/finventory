@@ -518,7 +518,9 @@ export default function BillingPage() {
                 <PlanModuleList slug={plan.slug} />
 
                 {plan.trial_days > 0 && !isCurrent && (
-                  <p className="text-xs text-brand-400 text-center">{plan.trial_days}-day free trial</p>
+                  <p className="text-xs text-brand-400 text-center">
+                    {organisation?.trial_used ? 'No free trial — subscribe directly' : `${plan.trial_days}-day free trial`}
+                  </p>
                 )}
 
                 {/* Commission credits banner — shown when partner has a balance */}
@@ -585,7 +587,7 @@ export default function BillingPage() {
 
       {/* ── Partner / Accountant Channel — hidden until PARTNER_CHANNEL feature enabled ── */}
       {FEATURES.PARTNER_CHANNEL && (
-        <PartnerChannelSection plans={plans} currentPlanSlug={currentPlanSlug} onSubscribe={handleSubscribe} onStartTrial={handlePartnerTrial} subscribing={subscribing} />
+        <PartnerChannelSection plans={plans} currentPlanSlug={currentPlanSlug} onSubscribe={handleSubscribe} onStartTrial={handlePartnerTrial} subscribing={subscribing} trialUsed={organisation?.trial_used ?? false} />
       )}
 
       {/* Payment history — collapsible */}
@@ -711,12 +713,14 @@ function PartnerChannelSection({
   onSubscribe,
   onStartTrial,
   subscribing,
+  trialUsed,
 }: {
   plans: Plan[]
   currentPlanSlug: string | undefined
   onSubscribe: (plan: Plan) => void
   onStartTrial: (plan: Plan) => void
   subscribing: string | null
+  trialUsed: boolean
 }) {
   const [open, setOpen] = useState(true)
   const [partnerInterval, setPartnerInterval] = useState<'monthly' | 'annual'>('monthly')
@@ -777,7 +781,7 @@ function PartnerChannelSection({
               const isSubscribing = plan && subscribing === plan.id
               const displayPrice = partnerInterval === 'annual' ? tier.price * 11 : tier.price
               const isAnnual = partnerInterval === 'annual'
-              const hasTrial = plan && plan.trial_days > 0 && !isCurrent
+              const hasTrial = plan && plan.trial_days > 0 && !isCurrent && !trialUsed
 
               return (
                 <div key={tier.slug} className={`card relative flex flex-col gap-4 ${colors.border}`}>

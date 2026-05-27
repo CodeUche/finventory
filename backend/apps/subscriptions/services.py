@@ -81,6 +81,9 @@ class SubscriptionService:
         Partner plans get 30 days; all other plans use plan.trial_days (default 14).
         Replaces any existing subscription. Marks onboarding as completed.
         """
+        if organisation.trial_used:
+            raise ValueError("This organisation has already used its free trial. Please subscribe directly.")
+
         is_partner = plan.slug.startswith("partner-")
         days = 30 if is_partner else (plan.trial_days or 14)
         trial_end = timezone.now() + timedelta(days=days)
@@ -103,9 +106,15 @@ class SubscriptionService:
             organisation.subscription = sub
             organisation.save(update_fields=["subscription"])
 
+        org_fields = []
         if not organisation.onboarding_completed:
             organisation.onboarding_completed = True
-            organisation.save(update_fields=["onboarding_completed"])
+            org_fields.append("onboarding_completed")
+        if not organisation.trial_used:
+            organisation.trial_used = True
+            org_fields.append("trial_used")
+        if org_fields:
+            organisation.save(update_fields=org_fields)
 
         # Sync PartnerProfile tier/limits when starting a partner plan trial
         if is_partner:

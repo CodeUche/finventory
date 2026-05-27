@@ -5,7 +5,7 @@ import {
   ChevronRight, Sparkles, Check, Loader2,
   Clock, ArrowLeft, Package, Users, Receipt,
   BarChart3, Calculator, Briefcase, Shield, CheckCircle2,
-  Zap, GraduationCap, Building2, Star,
+  Zap, GraduationCap, Building2, Star, ExternalLink,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { api, orgApi, subscriptionApi, partnerApi } from '@/services/api'
@@ -770,7 +770,7 @@ export default function OnboardingPage() {
 
                       {/* Plan badge */}
                       <div className={`text-xs font-medium px-3 py-1.5 rounded-lg text-center ${meta.color.pill}`}>
-                        {activePlan.is_free ? 'No card needed' : '14-day free trial'}
+                        {activePlan.is_free ? 'No card needed' : organisation?.trial_used ? 'Subscribe directly' : '14-day free trial'}
                       </div>
                     </div>
                   )
@@ -787,6 +787,8 @@ export default function OnboardingPage() {
                   <><Loader2 size={16} className="animate-spin" /> Setting things up…</>
                 ) : selectedPlan?.is_free ? (
                   <span className="flex items-center gap-2"><Zap size={17} /> Start for free — no card needed</span>
+                ) : organisation?.trial_used ? (
+                  <span className="flex items-center gap-2"><ExternalLink size={17} /> Subscribe to {selectedPlan?.name ?? 'plan'}</span>
                 ) : (
                   <span className="flex items-center gap-2"><Clock size={17} /> Start my 14-day free trial</span>
                 )}
@@ -794,7 +796,9 @@ export default function OnboardingPage() {
 
               {!selectedPlan?.is_free && (
                 <p className="text-center text-xs text-slate-500">
-                  Full access for 14 days. No card required upfront. Cancel anytime.
+                  {organisation?.trial_used
+                    ? 'You have already used your free trial. Subscribe to continue.'
+                    : 'Full access for 14 days. No card required upfront. Cancel anytime.'}
                 </p>
               )}
 

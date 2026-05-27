@@ -371,7 +371,10 @@ class SubscriptionViewSet(viewsets.GenericViewSet):
             sub = SubscriptionService.activate_free_plan(org)
             return Response(SubscriptionSerializer(sub).data, status=status.HTTP_200_OK)
 
-        sub = SubscriptionService.start_trial_for_plan(org, plan)
+        try:
+            sub = SubscriptionService.start_trial_for_plan(org, plan)
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(SubscriptionSerializer(sub).data, status=status.HTTP_201_CREATED)
 
     @action(

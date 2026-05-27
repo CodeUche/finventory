@@ -140,6 +140,9 @@ class Organisation(SoftDeleteModel):
     # (selects a plan and pays, or deliberately chooses the free plan).
     # Until this is True, the user is redirected to /onboarding on every login.
     onboarding_completed = models.BooleanField(default=False)
+    # Permanently True once the org has ever started a free trial.
+    # Prevents starting a second trial on a different plan.
+    trial_used = models.BooleanField(default=False)
 
     class Meta(SoftDeleteModel.Meta):
         verbose_name = "Organisation"
