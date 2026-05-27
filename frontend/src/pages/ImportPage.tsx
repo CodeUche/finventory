@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import { api } from '@/services/api'
 import { Upload, Download, CheckCircle, XCircle, AlertTriangle, FileText, Users, BookOpen, Loader2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { importApi } from '@/services/api'
@@ -85,14 +86,18 @@ export default function ImportPage() {
     }
   }
 
-  function downloadTemplate() {
-    const url = importApi.templateUrl(entity)
-    // Build full API URL using the same base as the api client
-    const base = (window as any).__TAURI__ ? 'https://audity-backend-production-30f9.up.railway.app/api/v1' : (import.meta.env.VITE_API_BASE_URL ?? '/api/v1')
-    const a = document.createElement('a')
-    a.href = base + url
-    a.download = `${entity}_import_template.csv`
-    a.click()
+  async function downloadTemplate() {
+    try {
+      const resp = await api.get(importApi.templateUrl(entity), { responseType: 'blob' })
+      const objectUrl = URL.createObjectURL(new Blob([resp.data], { type: 'text/csv' }))
+      const a = document.createElement('a')
+      a.href = objectUrl
+      a.download = `${entity}_import_template.csv`
+      a.click()
+      URL.revokeObjectURL(objectUrl)
+    } catch {
+      toast.error('Failed to download template')
+    }
   }
 
   return (
