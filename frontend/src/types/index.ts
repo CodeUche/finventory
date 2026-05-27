@@ -37,7 +37,6 @@ export interface Organisation {
   registration_number?: string
   is_active: boolean
   onboarding_completed: boolean
-  trial_used: boolean
   bank_name?: string
   bank_account_number?: string
   bank_account_name?: string

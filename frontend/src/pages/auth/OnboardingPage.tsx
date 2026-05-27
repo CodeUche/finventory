@@ -220,6 +220,7 @@ function ProgressBar({ current, total }: { current: number; total: number }) {
 export default function OnboardingPage() {
   const navigate = useNavigate()
   const { user, organisation, orgInitialized, setOrganisation } = useAuthStore()
+  const [trialUsed, setTrialUsed] = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // Snapshot whether the user already had an org when this page first mounted.
@@ -271,6 +272,10 @@ export default function OnboardingPage() {
   useEffect(() => {
     if (organisation?.id) {
       setStep(1)
+      // Check if org already used a trial (trial_end set on existing subscription)
+      subscriptionApi.current().then(({ data }) => {
+        if (data?.trial_end) setTrialUsed(true)
+      }).catch(() => {})
     }
     return () => { if (pollRef.current) clearInterval(pollRef.current) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -770,7 +775,7 @@ export default function OnboardingPage() {
 
                       {/* Plan badge */}
                       <div className={`text-xs font-medium px-3 py-1.5 rounded-lg text-center ${meta.color.pill}`}>
-                        {activePlan.is_free ? 'No card needed' : organisation?.trial_used ? 'Subscribe directly' : '14-day free trial'}
+                        {activePlan.is_free ? 'No card needed' : trialUsed ? 'Subscribe directly' : '14-day free trial'}
                       </div>
                     </div>
                   )
@@ -787,7 +792,7 @@ export default function OnboardingPage() {
                   <><Loader2 size={16} className="animate-spin" /> Setting things up…</>
                 ) : selectedPlan?.is_free ? (
                   <span className="flex items-center gap-2"><Zap size={17} /> Start for free — no card needed</span>
-                ) : organisation?.trial_used ? (
+                ) : trialUsed ? (
                   <span className="flex items-center gap-2"><ExternalLink size={17} /> Subscribe to {selectedPlan?.name ?? 'plan'}</span>
                 ) : (
                   <span className="flex items-center gap-2"><Clock size={17} /> Start my 14-day free trial</span>
@@ -796,7 +801,7 @@ export default function OnboardingPage() {
 
               {!selectedPlan?.is_free && (
                 <p className="text-center text-xs text-slate-500">
-                  {organisation?.trial_used
+                  {trialUsed
                     ? 'You have already used your free trial. Subscribe to continue.'
                     : 'Full access for 14 days. No card required upfront. Cancel anytime.'}
                 </p>

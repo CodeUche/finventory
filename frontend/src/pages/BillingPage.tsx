@@ -130,6 +130,8 @@ export default function BillingPage() {
   const [useCredits, setUseCredits] = useState(true)
 
   const isPartner = useAuthStore((s) => s.planName)?.startsWith('partner') ?? false
+  // trial_end being set means a trial has already been used for this org
+  const trialUsed = !!(subscription?.trial_end)
 
   const load = async () => {
     setLoading(true)
@@ -519,7 +521,7 @@ export default function BillingPage() {
 
                 {plan.trial_days > 0 && !isCurrent && (
                   <p className="text-xs text-brand-400 text-center">
-                    {organisation?.trial_used ? 'No free trial — subscribe directly' : `${plan.trial_days}-day free trial`}
+                    {trialUsed ? 'No free trial — subscribe directly' : `${plan.trial_days}-day free trial`}
                   </p>
                 )}
 
@@ -587,7 +589,7 @@ export default function BillingPage() {
 
       {/* ── Partner / Accountant Channel — hidden until PARTNER_CHANNEL feature enabled ── */}
       {FEATURES.PARTNER_CHANNEL && (
-        <PartnerChannelSection plans={plans} currentPlanSlug={currentPlanSlug} onSubscribe={handleSubscribe} onStartTrial={handlePartnerTrial} subscribing={subscribing} trialUsed={organisation?.trial_used ?? false} />
+        <PartnerChannelSection plans={plans} currentPlanSlug={currentPlanSlug} onSubscribe={handleSubscribe} onStartTrial={handlePartnerTrial} subscribing={subscribing} trialUsed={trialUsed} />
       )}
 
       {/* Payment history — collapsible */}

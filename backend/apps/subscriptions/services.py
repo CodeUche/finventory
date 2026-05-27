@@ -81,7 +81,10 @@ class SubscriptionService:
         Partner plans get 30 days; all other plans use plan.trial_days (default 14).
         Replaces any existing subscription. Marks onboarding as completed.
         """
-        if organisation.trial_used:
+        # Block a second trial: if the org already has a subscription with trial_end set,
+        # they have already used their one free trial (across all plans).
+        existing = _get_sub(organisation)
+        if existing and existing.trial_end is not None:
             raise ValueError("This organisation has already used its free trial. Please subscribe directly.")
 
         is_partner = plan.slug.startswith("partner-")
@@ -106,15 +109,9 @@ class SubscriptionService:
             organisation.subscription = sub
             organisation.save(update_fields=["subscription"])
 
-        org_fields = []
         if not organisation.onboarding_completed:
             organisation.onboarding_completed = True
-            org_fields.append("onboarding_completed")
-        if not organisation.trial_used:
-            organisation.trial_used = True
-            org_fields.append("trial_used")
-        if org_fields:
-            organisation.save(update_fields=org_fields)
+            organisation.save(update_fields=["onboarding_completed"])
 
         # Sync PartnerProfile tier/limits when starting a partner plan trial
         if is_partner:
