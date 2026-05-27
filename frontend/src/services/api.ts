@@ -1014,12 +1014,19 @@ export const reportApi = {
   sales: (params: object) => api.get('/reports/sales/', { params }),
   topProducts: (params: object) => api.get('/reports/top-products/', { params }),
   topCustomers: (params: object) => api.get('/reports/top-customers/', { params }),
-  inventory: () => api.get('/reports/inventory/'),
+  inventory: (params?: object) => api.get('/reports/inventory/', { params }),
   cashFlow: (params: object) => api.get('/reports/cash-flow/', { params }),
   expenses: (params: object) => api.get('/reports/expenses/', { params }),
   arAging: (params?: object) => api.get('/reports/ar-aging/', { params }),
   apAging: (params?: object) => api.get('/reports/ap-aging/', { params }),
   vatSummary: (params: object) => api.get('/reports/vat-summary/', { params }),
+
+  /**
+   * Download a report as Excel or PDF.
+   * Returns a Blob — callers should pass it to saveBlobFile().
+   */
+  download: (endpoint: string, params: object) =>
+    api.get(endpoint, { params, responseType: 'blob' }),
 }
 
 export const taxApi = {

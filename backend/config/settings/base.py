@@ -229,6 +229,10 @@ REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": [
         "rest_framework.renderers.JSONRenderer",
     ],
+    # Disable DRF's ?format= query param interception — report views handle
+    # ?format=excel/pdf internally via dispatch_export; DRF has no Excel/PDF
+    # renderers and would return 406 NotAcceptable before the view runs.
+    "URL_FORMAT_OVERRIDE": None,
     "DEFAULT_PARSER_CLASSES": [
         "rest_framework.parsers.JSONParser",
         "rest_framework.parsers.MultiPartParser",
