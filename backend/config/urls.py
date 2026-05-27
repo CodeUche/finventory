@@ -85,9 +85,15 @@ if settings.DEBUG:
 
 # Platform admin API (superusers only) + Audit log (owner/admin/superuser)
 from apps.core.admin_views import AuditLogView, PlatformStatsView, PlatformUsersView, PlatformUserDetailView
+from apps.core.import_views import ImportProductsView, ImportCustomersView, ImportAccountsView, ImportTemplateView
 urlpatterns += [
     path('api/v1/audit-log/', AuditLogView.as_view(), name='audit-log'),
     path('api/v1/platform/stats/', PlatformStatsView.as_view(), name='platform-stats'),
     path('api/v1/platform/users/', PlatformUsersView.as_view(), name='platform-users'),
     path('api/v1/platform/users/<uuid:pk>/', PlatformUserDetailView.as_view(), name='platform-user-detail'),
+    # CSV bulk import
+    path('api/v1/import/products/', ImportProductsView.as_view(), name='import-products'),
+    path('api/v1/import/customers/', ImportCustomersView.as_view(), name='import-customers'),
+    path('api/v1/import/accounts/', ImportAccountsView.as_view(), name='import-accounts'),
+    path('api/v1/import/template/<str:entity>/', ImportTemplateView.as_view(), name='import-template'),
 ]

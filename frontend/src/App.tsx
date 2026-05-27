@@ -17,6 +17,7 @@ import BatchesPage from '@/pages/inventory/BatchesPage'
 import SalesPage from '@/pages/sales/SalesPage'
 import NewSalePage from '@/pages/sales/NewSalePage'
 import EditInvoicePage from '@/pages/sales/EditInvoicePage'
+import ImportPage from '@/pages/ImportPage'
 import QuotesPage from '@/pages/QuotesPage'
 import RecurringInvoicesPage from '@/pages/RecurringInvoicesPage'
 import CustomersPage from '@/pages/customers/CustomersPage'
@@ -275,6 +276,7 @@ export default function App() {
         {/* Settings — always accessible for personal profile/security; org tabs filtered inside the page */}
         <Route path="settings" element={<SettingsPage />} />
         <Route path="billing"  element={<ModuleRoute module="settings"><BillingPage /></ModuleRoute>} />
+        <Route path="import"   element={<WriteModuleRoute module="settings"><ImportPage /></WriteModuleRoute>} />
         <Route path="partner"           element={<PartnerRoute><PartnerDashboardPage /></PartnerRoute>} />
         <Route path="partner/report"    element={<PartnerRoute><PartnerReportPage /></PartnerRoute>} />
         <Route path="partner/invoices"  element={<PartnerRoute><PartnerInvoicesPage /></PartnerRoute>} />
