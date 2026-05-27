@@ -290,6 +290,7 @@ export interface PnL {
   gross_profit: string
   gross_margin_pct: string
   operating_expenses: string
+  miscellaneous_income: string
   net_profit: string
   net_margin_pct: string
 }
