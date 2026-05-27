@@ -30,17 +30,37 @@ export default function NewSalePage() {
   const [products, setProducts] = useState<Product[]>([])
   const [showProductDrop, setShowProductDrop] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
+  const searchWrapRef = useRef<HTMLDivElement>(null)
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (searchWrapRef.current && !searchWrapRef.current.contains(e.target as Node)) {
+        setShowProductDrop(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
 
   useEffect(() => {
-    if (!productQuery.trim()) { setProducts([]); return }
+    if (!productQuery.trim()) { setProducts([]); setShowProductDrop(false); return }
+    let cancelled = false
     const t = setTimeout(async () => {
       try {
         const { data } = await inventoryApi.products({ search: productQuery, is_active: true })
-        setProducts(data.results ?? data)
-        setShowProductDrop(true)
-      } catch { /* silent */ }
-    }, 280)
-    return () => clearTimeout(t)
+        if (!cancelled) {
+          setProducts(data.results ?? data)
+          setShowProductDrop(true)
+        }
+      } catch (err: any) {
+        if (!cancelled) {
+          const msg = err?.response?.data?.error?.message ?? err?.response?.data?.error ?? null
+          if (msg) toast.error(msg)
+        }
+      }
+    }, 200)
+    return () => { cancelled = true; clearTimeout(t) }
   }, [productQuery])
 
   // ── Customer search ────────────────────────────────────────────────────────
@@ -239,7 +259,7 @@ export default function NewSalePage() {
             <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">
               Search Products
             </p>
-            <div className="relative">
+            <div className="relative" ref={searchWrapRef}>
               <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
               <input
                 ref={searchRef}
