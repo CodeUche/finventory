@@ -295,6 +295,47 @@ export interface PnL {
   net_margin_pct: string
 }
 
+export interface SalesByCustomerRow {
+  customer_id: string | null
+  customer_name: string
+  customer_code: string | null
+  customer_email: string | null
+  invoice_count: number
+  revenue: string
+  amount_paid: string
+  amount_outstanding: string
+}
+
+export interface CustomerInvoiceDetail {
+  id: string
+  invoice_number: string
+  issue_date: string
+  status: string
+  total_amount: string
+  amount_paid: string
+  amount_due: string
+}
+
+export interface SalesByProductRow {
+  product_id: string | null
+  product_name: string
+  product_sku: string | null
+  units_sold: string | number
+  revenue: string
+  cogs: string
+  gross_profit: string
+}
+
+export interface ProductSaleLine {
+  invoice_id: string
+  invoice_number: string
+  issue_date: string
+  customer_name: string
+  quantity: string | number
+  unit_price: string
+  line_total: string
+}
+
 export interface SalesSummaryPoint {
   period: string
   total_revenue: string

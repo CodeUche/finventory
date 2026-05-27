@@ -6,7 +6,7 @@ import {
   CreditCard, Truck, Building2, Warehouse, Calculator, BookOpen,
   BookMarked, Landmark, UsersRound, Banknote, ArrowDownCircle,
   PieChart, Scale, Shield, ClipboardList, ChevronDown, ChevronRight, ShieldCheck,
-  MapPin, ClipboardCheck, GraduationCap, Briefcase,
+  MapPin, ClipboardCheck, GraduationCap, Briefcase, ShoppingCart,
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { authApi } from '@/services/api'
@@ -90,6 +90,8 @@ const navGroups: { label: string | null; items: { name: string; href: string; ic
       { name: 'P&L / Cash Flow', href: '/reports', icon: BarChart3, module: 'reports' },
       { name: 'Balance Sheet', href: '/reports/balance-sheet', icon: Scale, module: 'accounting' },
       { name: 'Stock Reports', href: '/reports/stock', icon: ClipboardCheck, module: 'inventory' },
+      { name: 'Sales by Customer', href: '/reports/sales-by-customer', icon: Users, module: 'reports' },
+      { name: 'Sales by Product', href: '/reports/sales-by-product', icon: ShoppingCart, module: 'reports' },
     ],
   },
   {

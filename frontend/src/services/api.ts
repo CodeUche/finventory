@@ -1020,6 +1020,8 @@ export const reportApi = {
   arAging: (params?: object) => api.get('/reports/ar-aging/', { params }),
   apAging: (params?: object) => api.get('/reports/ap-aging/', { params }),
   vatSummary: (params: object) => api.get('/reports/vat-summary/', { params }),
+  salesByCustomer: (params?: object) => api.get('/reports/sales-by-customer/', { params }),
+  salesByProduct: (params?: object) => api.get('/reports/sales-by-product/', { params }),
 
   /**
    * Download a report as Excel or PDF.

@@ -231,6 +231,148 @@ class ReportService:
             ),
         }
 
+    # ─── Sales by Customer ───────────────────────────────────────────────────
+
+    @staticmethod
+    def sales_by_customer(
+        organisation,
+        date_from: Optional[date],
+        date_to: Optional[date],
+    ) -> list[dict]:
+        """All customers with revenue totals for the period (NULL customer = walk-in)."""
+        from apps.sales.models import Invoice
+
+        qs = Invoice.objects.filter(
+            organisation=organisation,
+            status__in=["paid", "confirmed", "partially_paid"],
+        )
+        qs = _date_filter(qs, "issue_date", date_from, date_to)
+        qs = (
+            qs.values(
+                "customer__id", "customer__name",
+                "customer__code", "customer__email",
+            )
+            .annotate(
+                total_revenue=Sum("total_amount"),
+                invoice_count=Count("id"),
+                total_paid=Sum("amount_paid"),
+                total_outstanding=Sum("amount_due"),
+            )
+            .order_by("-total_revenue")
+        )
+        return [
+            {
+                "customer_id": str(r["customer__id"]) if r["customer__id"] else None,
+                "customer_name": r["customer__name"] or "Walk-in",
+                "customer_code": r["customer__code"],
+                "customer_email": r["customer__email"],
+                "invoice_count": r["invoice_count"],
+                "revenue": r["total_revenue"],
+                "amount_paid": r["total_paid"],
+                "amount_outstanding": r["total_outstanding"],
+            }
+            for r in qs
+        ]
+
+    @staticmethod
+    def customer_invoices(
+        organisation,
+        customer_id,           # str UUID or None (= walk-in)
+        date_from: Optional[date],
+        date_to: Optional[date],
+    ) -> list[dict]:
+        """Individual invoices for one customer (or all walk-in invoices) in the period."""
+        from apps.sales.models import Invoice
+
+        qs = Invoice.objects.filter(
+            organisation=organisation,
+            status__in=["paid", "confirmed", "partially_paid"],
+        )
+        if customer_id is None:
+            qs = qs.filter(customer__isnull=True)
+        else:
+            qs = qs.filter(customer__id=customer_id)
+        qs = _date_filter(qs, "issue_date", date_from, date_to)
+        return list(
+            qs.values(
+                "id", "invoice_number", "issue_date",
+                "status", "total_amount", "amount_paid", "amount_due",
+            ).order_by("-issue_date")
+        )
+
+    # ─── Sales by Product ────────────────────────────────────────────────────
+
+    @staticmethod
+    def sales_by_product(
+        organisation,
+        date_from: Optional[date],
+        date_to: Optional[date],
+    ) -> list[dict]:
+        """All products with revenue / quantity totals for the period."""
+        from apps.sales.models import SaleItem
+
+        qs = SaleItem.objects.filter(
+            organisation=organisation,
+            invoice__status__in=["paid", "confirmed", "partially_paid"],
+        )
+        qs = _date_filter(qs, "invoice__issue_date", date_from, date_to)
+        qs = (
+            qs.values("product__id", "product__name", "product__sku")
+            .annotate(
+                total_quantity=Sum("quantity"),
+                total_revenue=Sum("line_total"),
+                total_cogs=Sum("cost_of_goods"),
+                gross_profit=Sum("line_total") - Sum("cost_of_goods"),
+            )
+            .order_by("-total_revenue")
+        )
+        return [
+            {
+                "product_id": str(r["product__id"]) if r["product__id"] else None,
+                "product_name": r["product__name"] or "Unknown",
+                "product_sku": r["product__sku"],
+                "units_sold": r["total_quantity"],
+                "revenue": r["total_revenue"],
+                "cogs": r["total_cogs"],
+                "gross_profit": r["gross_profit"],
+            }
+            for r in qs
+        ]
+
+    @staticmethod
+    def product_sale_lines(
+        organisation,
+        product_id: str,
+        date_from: Optional[date],
+        date_to: Optional[date],
+    ) -> list[dict]:
+        """Individual sale-item lines for one product across all invoices in the period."""
+        from apps.sales.models import SaleItem
+
+        qs = SaleItem.objects.filter(
+            organisation=organisation,
+            product__id=product_id,
+            invoice__status__in=["paid", "confirmed", "partially_paid"],
+        )
+        qs = _date_filter(qs, "invoice__issue_date", date_from, date_to)
+        qs = qs.select_related("invoice", "invoice__customer").order_by(
+            "-invoice__issue_date"
+        )
+        return [
+            {
+                "invoice_id": str(item.invoice.id),
+                "invoice_number": item.invoice.invoice_number,
+                "issue_date": item.invoice.issue_date,
+                "customer_name": (
+                    item.invoice.customer.name if item.invoice.customer else "Walk-in"
+                ),
+                "quantity": item.quantity,
+                "unit_price": item.unit_price,
+                "line_total": item.line_total,
+            }
+            for item in qs
+        ]
+
     # ─── Expense Breakdown ────────────────────────────────────────────────────
 
     @staticmethod

@@ -20,7 +20,6 @@ from .exporters import dispatch_export
 from .period_utils import period_label, resolve_period
 from .services import ReportService
 
-
 # ─── Base ─────────────────────────────────────────────────────────────────────
 
 
@@ -374,4 +373,113 @@ class VATSummaryView(BaseDateRangeView):
             row_fn=_rows,
             title="VAT Summary",
             filename_base="vat_summary",
+        )
+
+
+# ─── Sales by Customer ────────────────────────────────────────────────────────
+
+
+class SalesByCustomerView(BaseDateRangeView):
+    """
+    GET /api/v1/reports/sales-by-customer/           — all customers with totals
+    GET /api/v1/reports/sales-by-customer/?customer_id=<uuid>   — invoices for one customer
+    GET /api/v1/reports/sales-by-customer/?customer_id=walk-in  — walk-in invoices
+    """
+
+    _SUMMARY_HEADERS = ["Customer", "Code", "Invoices", "Revenue (₦)", "Paid (₦)", "Outstanding (₦)"]
+    _DETAIL_HEADERS  = ["Invoice #", "Date", "Status", "Total (₦)", "Paid (₦)", "Due (₦)"]
+
+    def get(self, request):
+        date_from, date_to = self.get_date_range(request)
+        customer_id = request.query_params.get("customer_id")
+
+        if customer_id:
+            # Detail mode: invoices for one customer
+            cid = None if customer_id == "walk-in" else customer_id
+            data = ReportService.customer_invoices(request.organisation, cid, date_from, date_to)
+
+            def _rows(d):
+                return [
+                    [r["invoice_number"], str(r["issue_date"]), r["status"],
+                     r["total_amount"], r["amount_paid"], r["amount_due"]]
+                    for r in d
+                ]
+
+            return self._export_or_json(
+                request, data,
+                headers=self._DETAIL_HEADERS,
+                row_fn=_rows,
+                title="Customer Invoices",
+                filename_base="customer_invoices",
+            )
+
+        # Summary mode
+        data = ReportService.sales_by_customer(request.organisation, date_from, date_to)
+
+        def _rows(d):
+            return [
+                [r["customer_name"], r["customer_code"] or "",
+                 r["invoice_count"], r["revenue"],
+                 r["amount_paid"], r["amount_outstanding"]]
+                for r in d
+            ]
+
+        return self._export_or_json(
+            request, data,
+            headers=self._SUMMARY_HEADERS,
+            row_fn=_rows,
+            title="Sales by Customer",
+            filename_base="sales_by_customer",
+        )
+
+
+# ─── Sales by Product ─────────────────────────────────────────────────────────
+
+
+class SalesByProductView(BaseDateRangeView):
+    """
+    GET /api/v1/reports/sales-by-product/            — all products with totals
+    GET /api/v1/reports/sales-by-product/?product_id=<uuid>   — sale lines for one product
+    """
+
+    _SUMMARY_HEADERS = ["Product", "SKU", "Units Sold", "Revenue (₦)", "COGS (₦)", "Gross Profit (₦)"]
+    _DETAIL_HEADERS  = ["Invoice #", "Date", "Customer", "Qty", "Unit Price (₦)", "Line Total (₦)"]
+
+    def get(self, request):
+        date_from, date_to = self.get_date_range(request)
+        product_id = request.query_params.get("product_id")
+
+        if product_id:
+            data = ReportService.product_sale_lines(request.organisation, product_id, date_from, date_to)
+
+            def _rows(d):
+                return [
+                    [r["invoice_number"], str(r["issue_date"]), r["customer_name"],
+                     r["quantity"], r["unit_price"], r["line_total"]]
+                    for r in d
+                ]
+
+            return self._export_or_json(
+                request, data,
+                headers=self._DETAIL_HEADERS,
+                row_fn=_rows,
+                title="Product Sale Lines",
+                filename_base="product_sale_lines",
+            )
+
+        data = ReportService.sales_by_product(request.organisation, date_from, date_to)
+
+        def _rows(d):
+            return [
+                [r["product_name"], r["product_sku"] or "",
+                 r["units_sold"], r["revenue"], r["cogs"], r["gross_profit"]]
+                for r in d
+            ]
+
+        return self._export_or_json(
+            request, data,
+            headers=self._SUMMARY_HEADERS,
+            row_fn=_rows,
+            title="Sales by Product",
+            filename_base="sales_by_product",
         )

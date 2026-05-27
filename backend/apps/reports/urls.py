@@ -6,6 +6,8 @@ from .views import (
     ExpenseBreakdownView,
     InventoryValuationView,
     ProfitAndLossView,
+    SalesByCustomerView,
+    SalesByProductView,
     SalesSummaryView,
     TopCustomersView,
     TopProductsView,
@@ -23,4 +25,6 @@ urlpatterns = [
     path("ar-aging/", ARAgingView.as_view(), name="report-ar-aging"),
     path("ap-aging/", APAgingView.as_view(), name="report-ap-aging"),
     path("vat-summary/", VATSummaryView.as_view(), name="report-vat-summary"),
+    path("sales-by-customer/", SalesByCustomerView.as_view(), name="report-sales-by-customer"),
+    path("sales-by-product/", SalesByProductView.as_view(), name="report-sales-by-product"),
 ]

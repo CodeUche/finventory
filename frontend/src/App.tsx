@@ -34,6 +34,8 @@ import PayrollPage from '@/pages/payroll/PayrollPage'
 import BudgetPage from '@/pages/BudgetPage'
 import ReportsPage from '@/pages/reports/ReportsPage'
 import BalanceSheetPage from '@/pages/reports/BalanceSheetPage'
+import SalesByCustomerPage from '@/pages/reports/SalesByCustomerPage'
+import SalesByProductPage from '@/pages/reports/SalesByProductPage'
 import OwnerAnalyticsPage from '@/pages/dashboard/OwnerAnalyticsPage'
 import TaxPage from '@/pages/TaxPage'
 import AuditLogPage from '@/pages/AuditLogPage'
@@ -257,9 +259,11 @@ export default function App() {
         {/* Finance */}
         <Route path="expenses"              element={<ModuleRoute module="expenses"><ExpensesPage /></ModuleRoute>} />
         <Route path="budgets"               element={<ModuleRoute module="budget"><BudgetPage /></ModuleRoute>} />
-        <Route path="reports"               element={<ModuleRoute module="reports"><ReportsPage /></ModuleRoute>} />
-        <Route path="reports/balance-sheet" element={<ModuleRoute module="accounting"><BalanceSheetPage /></ModuleRoute>} />
-        <Route path="reports/stock"         element={<ModuleRoute module="inventory"><StockReportsPage /></ModuleRoute>} />
+        <Route path="reports"                       element={<ModuleRoute module="reports"><ReportsPage /></ModuleRoute>} />
+        <Route path="reports/balance-sheet"         element={<ModuleRoute module="accounting"><BalanceSheetPage /></ModuleRoute>} />
+        <Route path="reports/stock"                 element={<ModuleRoute module="inventory"><StockReportsPage /></ModuleRoute>} />
+        <Route path="reports/sales-by-customer"     element={<ModuleRoute module="reports"><SalesByCustomerPage /></ModuleRoute>} />
+        <Route path="reports/sales-by-product"      element={<ModuleRoute module="reports"><SalesByProductPage /></ModuleRoute>} />
         <Route path="owner-analytics"       element={<OwnerOnlyRoute><OwnerAnalyticsPage /></OwnerOnlyRoute>} />
 
         {/* Compliance */}
