@@ -79,3 +79,76 @@ class PurchaseOrderViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet
 
         po = PurchaseService.receive_purchase_order(po, serializer.validated_data, request.user)
         return Response(PurchaseOrderSerializer(po).data)
+
+    @action(detail=True, methods=["post"], url_path="quick-receive")
+    def quick_receive(self, request, pk=None):
+        """
+        POST /api/v1/purchases/orders/{id}/quick-receive/
+        Receive all unreceived items at their ordered quantities in one click.
+        Called from the notification bell "Mark as Received" button.
+        """
+        po = self.get_object()
+        closed = {PurchaseOrder.Status.RECEIVED, PurchaseOrder.Status.CLOSED, PurchaseOrder.Status.CANCELED}
+        if po.status in closed:
+            return Response({"error": "This PO has already been fully received or closed."}, status=status.HTTP_400_BAD_REQUEST)
+
+        items = []
+        for item in po.items.all():
+            remaining = item.quantity_ordered - item.quantity_received
+            if remaining > 0:
+                items.append({"item_id": str(item.id), "quantity_received": float(remaining)})
+
+        if not items:
+            return Response({"error": "All items on this PO have already been received."}, status=status.HTTP_400_BAD_REQUEST)
+
+        po = PurchaseService.receive_purchase_order(po, items, request.user)
+        return Response(PurchaseOrderSerializer(po).data)
+
+    @action(detail=False, methods=["get"], url_path="eta-alerts")
+    def eta_alerts(self, request):
+        """
+        GET /api/v1/purchases/orders/eta-alerts/
+        Returns POs grouped by delivery urgency:
+          - arriving_tomorrow: expected_date = tomorrow, still pending
+          - due_today:         expected_date = today, still pending
+          - overdue:           expected_date < today, still pending (up to 20, oldest first)
+        Only returns POs with an expected_date set; draft/sent/partially_received statuses only.
+        """
+        from datetime import date, timedelta
+        from decimal import Decimal
+
+        org = self._get_organisation()
+        today = date.today()
+        tomorrow = today + timedelta(days=1)
+        pending = [
+            PurchaseOrder.Status.DRAFT,
+            PurchaseOrder.Status.SENT,
+            PurchaseOrder.Status.PARTIALLY_RECEIVED,
+        ]
+
+        base_qs = PurchaseOrder.objects.filter(
+            organisation=org,
+            status__in=pending,
+            expected_date__isnull=False,
+        ).select_related("supplier").prefetch_related("items")
+
+        def _fmt(po, as_of=today):
+            return {
+                "id": str(po.id),
+                "po_number": po.po_number,
+                "supplier_name": po.supplier.name if po.supplier else "Walk-in",
+                "expected_date": str(po.expected_date),
+                "days_overdue": max(0, (as_of - po.expected_date).days),
+                "item_count": po.items.count(),
+                "total_amount": str(po.total_amount),
+            }
+
+        arriving_tomorrow = [_fmt(p) for p in base_qs.filter(expected_date=tomorrow)]
+        due_today = [_fmt(p) for p in base_qs.filter(expected_date=today)]
+        overdue = [_fmt(p) for p in base_qs.filter(expected_date__lt=today).order_by("expected_date")[:20]]
+
+        return Response({
+            "arriving_tomorrow": arriving_tomorrow,
+            "due_today": due_today,
+            "overdue": overdue,
+        })

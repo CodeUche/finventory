@@ -1,20 +1,27 @@
 import { useRef, useState } from 'react'
-import { Bell, X, Package, AlertCircle, CalendarClock, Receipt, Users, Clock, ShieldCheck } from 'lucide-react'
+import { Bell, X, Package, AlertCircle, CalendarClock, Receipt, Users, Clock, ShieldCheck, Truck, CheckCircle2 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import { useNotifications } from '@/contexts/NotificationsContext'
+import { useNotifications, EtaAlert } from '@/contexts/NotificationsContext'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { cn } from '@/lib/utils'
 
 export default function NotificationBell() {
   const {
     alerts, overdueAlerts, expiryAlerts, billDueAlerts, payrollPendingAlerts, customerDueAlerts,
-    partnerRequestAlerts,
+    partnerRequestAlerts, etaAlerts,
     count, dismiss, dismissAll, dismissOverdue, dismissExpiry, dismissBillDue, dismissPayrollPending,
-    dismissCustomerDue, dismissPartnerRequest,
+    dismissCustomerDue, dismissPartnerRequest, dismissEta, quickReceive,
   } = useNotifications()
   const [open, setOpen] = useState(false)
+  const [receivingId, setReceivingId] = useState<string | null>(null)
   const navigate = useNavigate()
   const ref = useRef<HTMLDivElement>(null)
+
+  const handleQuickReceive = async (id: string) => {
+    setReceivingId(id)
+    await quickReceive(id)
+    setReceivingId(null)
+  }
 
   const go = (path: string) => { setOpen(false); navigate(path) }
 
@@ -232,6 +239,64 @@ export default function NotificationBell() {
                       ))}
                     </>
                   )}
+
+                  {/* PO ETA / Delivery Alerts */}
+                  {etaAlerts.length > 0 && etaAlerts.map((eta: EtaAlert) => {
+                    const isActionable = eta.tier === 'due_today' || eta.tier === 'overdue'
+                    const tierColor = eta.tier === 'arriving_tomorrow'
+                      ? { bg: 'bg-blue-500/10', icon: 'text-blue-400' }
+                      : eta.tier === 'due_today'
+                      ? { bg: 'bg-amber-500/10', icon: 'text-amber-400' }
+                      : { bg: 'bg-red-500/10', icon: 'text-red-400' }
+                    const tierLabel = eta.tier === 'arriving_tomorrow'
+                      ? 'Expected tomorrow'
+                      : eta.tier === 'due_today'
+                      ? 'Due today'
+                      : `Overdue by ${eta.days_overdue}d`
+                    return (
+                      <div
+                        key={eta.id}
+                        className="flex items-start gap-3 px-4 py-3 border-b border-surface-700/60 hover:bg-surface-700/30 transition-colors cursor-pointer"
+                        onClick={() => go('/purchases')}
+                      >
+                        <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${tierColor.bg}`}>
+                          <Truck size={13} className={tierColor.icon} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-medium text-white truncate">
+                            {eta.po_number} · {eta.supplier_name}
+                          </p>
+                          <p className="text-xs text-slate-500">
+                            {tierLabel} · {eta.item_count} item{eta.item_count !== 1 ? 's' : ''} · {formatCurrency(eta.total_amount)}
+                          </p>
+                          {isActionable && (
+                            <div className="flex gap-2 mt-1.5" onClick={(e) => e.stopPropagation()}>
+                              <button
+                                disabled={receivingId === eta.id}
+                                onClick={() => handleQuickReceive(eta.id)}
+                                className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 disabled:opacity-50 transition-colors"
+                              >
+                                <CheckCircle2 size={10} />
+                                {receivingId === eta.id ? 'Receiving…' : 'Received'}
+                              </button>
+                              <button
+                                onClick={() => dismissEta(eta.id)}
+                                className="text-[11px] px-2 py-0.5 rounded-md bg-surface-600/50 text-slate-400 hover:bg-surface-600 transition-colors"
+                              >
+                                Not yet
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); dismissEta(eta.id) }}
+                          className="shrink-0 p-0.5 text-slate-600 hover:text-slate-400 transition-colors"
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
+                    )
+                  })}
 
                   {/* Batch Expiry Section */}
                   {expiryAlerts.length > 0 && (

@@ -488,7 +488,7 @@ api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
       try {
         const entry = await offlineCache.get(cacheUrl)
         if (entry && Date.now() - entry.cachedAt < FRESH_MS) {
-          ;(config as ExtConfig)._fromCache = true
+          (config as ExtConfig)._fromCache = true
           config.adapter = async (): Promise<AxiosResponse> => ({
             data: entry.data, status: 200, statusText: 'OK (fresh cache)', headers: {}, config,
           } as AxiosResponse)
@@ -500,7 +500,7 @@ api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
     // 2. In-flight deduplication: join an existing request instead of firing a new one
     const inflight = _inflightGets.get(cacheUrl)
     if (inflight) {
-      ;(config as ExtConfig)._fromCache = true   // skip re-caching the shared response
+      (config as ExtConfig)._fromCache = true   // skip re-caching the shared response
       config.adapter = () => inflight.promise
       return config
     }
@@ -632,7 +632,7 @@ api.interceptors.response.use(
         // would serve { results: [] } for 5 minutes after connectivity is restored,
         // breaking membership parsing and keeping the sidebar blank.
         if (_effectivelyOffline) {
-          ;(original as ExtConfig)._fromCache = true
+          (original as ExtConfig)._fromCache = true
           return { data: { results: [] }, status: 200, statusText: 'OK (offline)', headers: {}, config: original } as AxiosResponse
         }
       } else if (!isRetry && !url.includes('/auth/')) {
@@ -769,7 +769,7 @@ api.interceptors.response.use(
         // Only retry when we have a DIFFERENT (potentially valid) org ID — retrying
         // with the same invalid value would just get another 403 in a tight loop.
         if (orgId && orgId !== originalOrg) {
-          ;(original as any)._orgRetry = true
+          (original as any)._orgRetry = true
           original.headers['X-Organisation-ID'] = orgId
           original.params = { ...(original.params ?? {}), org: orgId }
           return api(original)
@@ -1001,6 +1001,9 @@ export const purchaseApi = {
   patch: (id: string, data: FormData | object) => api.patch(`/purchases/orders/${id}/`, data),
   delete: (id: string) => api.delete(`/purchases/orders/${id}/`),
   removeReceipt: (id: string) => api.post(`/purchases/orders/${id}/clear_receipt/`),
+  receive: (id: string, items: object[]) => api.post(`/purchases/orders/${id}/receive/`, { items }),
+  quickReceive: (id: string) => api.post(`/purchases/orders/${id}/quick-receive/`),
+  etaAlerts: () => api.get('/purchases/orders/eta-alerts/'),
 }
 
 export const supplierApi = {

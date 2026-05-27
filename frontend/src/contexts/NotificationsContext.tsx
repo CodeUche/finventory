@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react'
 import toast from 'react-hot-toast'
-import { billApi, inventoryApi, orgApi, payrollApi, salesApi } from '@/services/api'
+import { billApi, inventoryApi, orgApi, payrollApi, purchaseApi, salesApi } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
 
 export interface StockAlert {
@@ -64,6 +64,17 @@ export interface PartnerRequestAlert {
   created_at: string
 }
 
+export interface EtaAlert {
+  id: string
+  po_number: string
+  supplier_name: string
+  expected_date: string
+  days_overdue: number
+  item_count: number
+  total_amount: string
+  tier: 'arriving_tomorrow' | 'due_today' | 'overdue'
+}
+
 interface NotificationsCtx {
   alerts: StockAlert[]
   overdueAlerts: OverdueAlert[]
@@ -72,6 +83,7 @@ interface NotificationsCtx {
   payrollPendingAlerts: PayrollPendingAlert[]
   customerDueAlerts: CustomerDueAlert[]
   partnerRequestAlerts: PartnerRequestAlert[]
+  etaAlerts: EtaAlert[]
   count: number
   dismiss: (id: string) => void
   dismissAll: () => void
@@ -81,6 +93,8 @@ interface NotificationsCtx {
   dismissPayrollPending: (id: string) => void
   dismissCustomerDue: (id: string) => void
   dismissPartnerRequest: (id: string) => void
+  dismissEta: (id: string) => void
+  quickReceive: (id: string) => Promise<void>
   refetch: () => void
 }
 
@@ -92,6 +106,7 @@ const Ctx = createContext<NotificationsCtx>({
   payrollPendingAlerts: [],
   customerDueAlerts: [],
   partnerRequestAlerts: [],
+  etaAlerts: [],
   count: 0,
   dismiss: () => {},
   dismissAll: () => {},
@@ -101,6 +116,8 @@ const Ctx = createContext<NotificationsCtx>({
   dismissPayrollPending: () => {},
   dismissCustomerDue: () => {},
   dismissPartnerRequest: () => {},
+  dismissEta: () => {},
+  quickReceive: async () => {},
   refetch: () => {},
 })
 
@@ -127,6 +144,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
   const [payrollPendingAlerts, setPayrollPendingAlerts] = useState<PayrollPendingAlert[]>([])
   const [customerDueAlerts, setCustomerDueAlerts] = useState<CustomerDueAlert[]>([])
   const [partnerRequestAlerts, setPartnerRequestAlerts] = useState<PartnerRequestAlert[]>([])
+  const [etaAlerts, setEtaAlerts] = useState<EtaAlert[]>([])
   const prevIdsRef    = useRef<Set<string>>(new Set())
   const dismissedRef  = useRef<Set<string>>(loadDismissed())
   const firstPollRef  = useRef(true)
@@ -138,7 +156,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
   const poll = useCallback(async () => {
     if (!isAuthenticated || !organisationId) return
     try {
-      const [stockData, overdueData, batchData, billDueData, payrollData, customerDueData] = await Promise.allSettled([
+      const [stockData, overdueData, batchData, billDueData, payrollData, customerDueData, etaData] = await Promise.allSettled([
         inventoryApi.lowStock({ page_size: 20 }),
         salesApi.invoices({ status: 'overdue', page_size: 10 }),
         inventoryApi.batches({ page_size: 30 }),
@@ -146,6 +164,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
         payrollApi.runs({ page_size: 5 }),
         // Invoices on credit / partially paid due within the next 7 days
         salesApi.invoices({ due_date_from: today, due_date_to: in7Days, page_size: 10 }),
+        purchaseApi.etaAlerts(),
       ])
 
       if (stockData.status === 'fulfilled') {
@@ -295,6 +314,27 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
           })
         setCustomerDueAlerts(due)
       }
+
+      // PO ETA alerts — arriving tomorrow, due today, overdue
+      if (etaData.status === 'fulfilled') {
+        const raw = etaData.value.data
+        const mapPo = (tier: EtaAlert['tier']) => (po: any): EtaAlert => ({
+          id: `eta-${po.id}`,
+          po_number: po.po_number,
+          supplier_name: po.supplier_name,
+          expected_date: po.expected_date,
+          days_overdue: po.days_overdue,
+          item_count: po.item_count,
+          total_amount: po.total_amount,
+          tier,
+        })
+        const allEta: EtaAlert[] = [
+          ...(raw.arriving_tomorrow ?? []).map(mapPo('arriving_tomorrow')),
+          ...(raw.due_today ?? []).map(mapPo('due_today')),
+          ...(raw.overdue ?? []).map(mapPo('overdue')),
+        ].filter((a) => !dismissedRef.current.has(a.id))
+        setEtaAlerts(allEta)
+      }
     } catch {
       // Silently ignore poll failures
     }
@@ -346,6 +386,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     setPayrollPendingAlerts((prev) => { prev.forEach((a) => addDismissed(a.id)); return [] })
     setCustomerDueAlerts((prev) => { prev.forEach((a) => addDismissed(a.id)); return [] })
     setPartnerRequestAlerts((prev) => { prev.forEach((a) => addDismissed(a.id)); return [] })
+    setEtaAlerts((prev) => { prev.forEach((a) => addDismissed(a.id)); return [] })
     prevIdsRef.current = new Set()
   }, [addDismissed])
 
@@ -379,19 +420,39 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     setPartnerRequestAlerts((prev) => prev.filter((a) => a.id !== id))
   }, [addDismissed])
 
+  const dismissEta = useCallback((id: string) => {
+    addDismissed(id)
+    setEtaAlerts((prev) => prev.filter((a) => a.id !== id))
+  }, [addDismissed])
+
+  const quickReceive = useCallback(async (id: string) => {
+    // id is `eta-<uuid>` — strip prefix to get the real PO UUID
+    const poId = id.replace(/^eta-/, '')
+    try {
+      await purchaseApi.quickReceive(poId)
+      toast.success('Goods marked as received!')
+      dismissEta(id)
+      poll()
+    } catch (err: any) {
+      const msg = err?.response?.data?.error ?? 'Failed to receive goods'
+      toast.error(typeof msg === 'string' ? msg : 'Failed to receive goods')
+    }
+  }, [dismissEta, poll])
+
   const refetch = useCallback(() => { poll() }, [poll])
 
   const count =
     alerts.length + overdueAlerts.length + expiryAlerts.length +
     billDueAlerts.length + payrollPendingAlerts.length + customerDueAlerts.length +
-    partnerRequestAlerts.length
+    partnerRequestAlerts.length + etaAlerts.length
 
   return (
     <Ctx.Provider value={{
       alerts, overdueAlerts, expiryAlerts, billDueAlerts, payrollPendingAlerts,
-      customerDueAlerts, partnerRequestAlerts,
+      customerDueAlerts, partnerRequestAlerts, etaAlerts,
       count, dismiss, dismissAll, dismissOverdue, dismissExpiry,
-      dismissBillDue, dismissPayrollPending, dismissCustomerDue, dismissPartnerRequest, refetch,
+      dismissBillDue, dismissPayrollPending, dismissCustomerDue, dismissPartnerRequest,
+      dismissEta, quickReceive, refetch,
     }}>
       {children}
     </Ctx.Provider>
