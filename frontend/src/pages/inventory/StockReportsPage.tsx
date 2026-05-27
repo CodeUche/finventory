@@ -2,9 +2,9 @@ import { useState, useEffect } from 'react'
 import {
   ClipboardCheck, BarChart2, ArrowLeftRight, AlertTriangle,
   CheckCircle, XCircle, TrendingDown, FileText, FileDown, Table2,
-  Pencil, Check, X as XIcon, Loader2,
+  Pencil, Check, X as XIcon, Loader2, Wallet,
 } from 'lucide-react'
-import { stockReportApi, inventoryApi } from '@/services/api'
+import { stockReportApi, inventoryApi, reportApi } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
 import type { Organisation } from '@/types'
 import toast from 'react-hot-toast'
@@ -14,7 +14,7 @@ import autoTable from 'jspdf-autotable'
 import jsPDF from 'jspdf'
 import { saveBlobFile } from '@/lib/saveBlobFile'
 
-type ReportTab = 'availability' | 'usage' | 'transfers' | 'stock_card'
+type ReportTab = 'availability' | 'usage' | 'transfers' | 'stock_card' | 'valuation'
 
 interface AvailabilityRow {
   id: string
@@ -84,6 +84,20 @@ interface StockCardRow {
   batch_number: string
   remark: string
   created_by: string
+}
+
+interface ValuationItem {
+  product: string
+  sku: string
+  warehouse: string
+  quantity: number
+  unit_cost: number
+  total_value: number
+}
+
+interface ValuationReport {
+  total_inventory_value: number
+  items: ValuationItem[]
 }
 
 const STATUS_BADGE: Record<string, string> = {
@@ -265,6 +279,46 @@ async function exportStockCardCSV(rows: StockCardRow[], productSku: string) {
   )
 }
 
+function formatMoney(v: number | string) {
+  const n = typeof v === 'number' ? v : parseFloat(String(v))
+  return isNaN(n) ? '—' : `₦${n.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+async function exportValuationPDF(report: ValuationReport, org?: Organisation | null) {
+  const { applyDocHeader, templateHeadFill } = await import('@/lib/pdfUtils')
+  const { BRAND, DARK, MUTED, tmpl, displayName, orgAddress, orgEmail, orgPhone, pdfFont } = buildDocBase(org)
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+  const pageW = doc.internal.pageSize.getWidth()
+  const y = applyDocHeader(doc, {
+    tmpl, pageW, BRAND, DARK, MUTED, displayName, orgAddress, orgEmail, orgPhone, pdfFont,
+    docTitle: 'INVENTORY VALUATION',
+    metaRows: [
+      ['As of', new Date().toLocaleDateString()],
+      ['Total Value', formatMoney(report.total_inventory_value)],
+    ],
+  })
+  autoTable(doc, {
+    startY: y,
+    head: [['Product', 'SKU', 'Warehouse', 'Qty', 'Unit Cost (₦)', 'Total Value (₦)']],
+    body: report.items.map((r) => [
+      r.product, r.sku, r.warehouse, r.quantity,
+      Number(r.unit_cost).toFixed(2), Number(r.total_value).toFixed(2),
+    ]),
+    styles: { fontSize: 8 },
+    headStyles: { fillColor: templateHeadFill(tmpl, BRAND), textColor: [255, 255, 255], fontStyle: 'bold' },
+    showHead: 'everyPage',
+  })
+  await saveBlobFile(doc.output('blob'), 'inventory-valuation.pdf')
+}
+
+async function exportValuationCSV(report: ValuationReport) {
+  await exportCSV(
+    ['Product', 'SKU', 'Warehouse', 'Qty On Hand', 'Unit Cost', 'Total Value'],
+    report.items.map((r) => [r.product, r.sku, r.warehouse, r.quantity, r.unit_cost, r.total_value]),
+    'inventory-valuation.csv',
+  )
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 
 export default function StockReportsPage() {
@@ -285,6 +339,10 @@ export default function StockReportsPage() {
   const [editVals, setEditVals] = useState<{ min: string; max: string; qty_per_pack: string }>({ min: '', max: '', qty_per_pack: '' })
   const [saving, setSaving] = useState(false)
 
+  // Valuation state (auto-loaded, no date range)
+  const [valuation, setValuation] = useState<ValuationReport | null>(null)
+  const [valuationLoading, setValuationLoading] = useState(false)
+
   // Stock card state
   const [cardProduct, setCardProduct] = useState('')
   const [cardRows, setCardRows] = useState<StockCardRow[]>([])
@@ -304,6 +362,16 @@ export default function StockReportsPage() {
     window.addEventListener('online', fetchProds)
     return () => window.removeEventListener('online', fetchProds)
   }, [])
+
+  useEffect(() => {
+    if (tab !== 'valuation') return
+    if (valuation) return   // already loaded
+    setValuationLoading(true)
+    reportApi.inventory()
+      .then(({ data }) => setValuation(data as ValuationReport))
+      .catch(() => toast.error('Failed to load inventory valuation'))
+      .finally(() => setValuationLoading(false))
+  }, [tab]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const toISO = (dd: string) => {
     if (!dd) return ''
@@ -398,6 +466,7 @@ export default function StockReportsPage() {
     { id: 'usage', label: 'Usage Report', icon: BarChart2 },
     { id: 'transfers', label: 'Transfer Report', icon: ArrowLeftRight },
     { id: 'stock_card', label: 'Stock Card', icon: FileText },
+    { id: 'valuation', label: 'Inventory Value', icon: Wallet },
   ]
 
   const ExportBar = ({ onPDF, onCSV }: { onPDF: () => void; onCSV: () => void }) => (
@@ -443,8 +512,8 @@ export default function StockReportsPage() {
         ))}
       </div>
 
-      {/* Date controls */}
-      <div className="card flex flex-wrap items-end gap-4">
+      {/* Date controls — hidden for valuation tab (point-in-time snapshot) */}
+      {tab !== 'valuation' && <div className="card flex flex-wrap items-end gap-4">
         {tab === 'stock_card' && (
           <div className="w-full sm:w-64">
             <label className="label">Product</label>
@@ -476,16 +545,16 @@ export default function StockReportsPage() {
             {availability.length} products
           </p>
         )}
-      </div>
+      </div>}
 
       {/* Results */}
-      {!loaded && !loading && (
+      {tab !== 'valuation' && !loaded && !loading && (
         <div className="card text-center py-12 text-slate-500 text-sm">
           {tab === 'stock_card' ? 'Select a product and click Run Report.' : 'Select a date range (optional) and click Run Report.'}
         </div>
       )}
 
-      {loading && (
+      {tab !== 'valuation' && loading && (
         <div className="card text-center py-12 text-slate-400 text-sm">Loading…</div>
       )}
 
@@ -821,6 +890,93 @@ export default function StockReportsPage() {
               <span className="text-sm text-slate-400">Closing Balance</span>
               <span className="text-lg font-bold text-white">{cardRows[cardRows.length - 1].balance}</span>
             </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Inventory Valuation ── */}
+      {tab === 'valuation' && (
+        <div className="space-y-4">
+          {valuationLoading ? (
+            <div className="card text-center py-12">
+              <Loader2 size={22} className="animate-spin mx-auto text-slate-500" />
+            </div>
+          ) : !valuation ? null : (
+            <>
+              {/* Summary strip */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                <div className="card py-3">
+                  <p className="text-xs text-slate-500 mb-0.5">Total Inventory Value</p>
+                  <p className="text-xl font-bold text-emerald-400">{formatMoney(valuation.total_inventory_value)}</p>
+                </div>
+                <div className="card py-3">
+                  <p className="text-xs text-slate-500 mb-0.5">Product Lines</p>
+                  <p className="text-xl font-bold text-white">
+                    {new Set(valuation.items.map((i) => i.sku)).size}
+                  </p>
+                </div>
+                <div className="card py-3">
+                  <p className="text-xs text-slate-500 mb-0.5">Stock Records</p>
+                  <p className="text-xl font-bold text-white">{valuation.items.length}</p>
+                </div>
+              </div>
+
+              {/* Export buttons */}
+              <div className="flex justify-end">
+                <ExportBar
+                  onPDF={() => exportValuationPDF(valuation, organisation)}
+                  onCSV={() => exportValuationCSV(valuation)}
+                />
+              </div>
+
+              {/* Table */}
+              <div className="card overflow-x-auto p-0">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-surface-700 text-xs text-slate-400 uppercase tracking-wider">
+                      <th className="px-4 py-3 text-left">Product</th>
+                      <th className="px-4 py-3 text-left">SKU</th>
+                      <th className="px-4 py-3 text-left">Warehouse</th>
+                      <th className="px-4 py-3 text-right">Qty On Hand</th>
+                      <th className="px-4 py-3 text-right">Unit Cost</th>
+                      <th className="px-4 py-3 text-right">Total Value</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-surface-700/50">
+                    {valuation.items.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
+                          No stock on hand.
+                        </td>
+                      </tr>
+                    ) : (
+                      valuation.items.map((row, i) => (
+                        <tr key={i} className="hover:bg-surface-700/30 transition-colors">
+                          <td className="px-4 py-3 font-medium text-white">{row.product}</td>
+                          <td className="px-4 py-3 text-slate-400 font-mono text-xs">{row.sku}</td>
+                          <td className="px-4 py-3 text-slate-400 text-xs">{row.warehouse}</td>
+                          <td className="px-4 py-3 text-right font-semibold text-white tabular-nums">{row.quantity}</td>
+                          <td className="px-4 py-3 text-right text-slate-300 tabular-nums">{formatMoney(row.unit_cost)}</td>
+                          <td className="px-4 py-3 text-right font-semibold text-emerald-400 tabular-nums">{formatMoney(row.total_value)}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                  {valuation.items.length > 0 && (
+                    <tfoot>
+                      <tr className="border-t-2 border-surface-600 bg-surface-800">
+                        <td colSpan={5} className="px-4 py-3 text-sm font-semibold text-slate-300 text-right">
+                          Grand Total
+                        </td>
+                        <td className="px-4 py-3 text-right text-lg font-bold text-emerald-400 tabular-nums">
+                          {formatMoney(valuation.total_inventory_value)}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  )}
+                </table>
+              </div>
+            </>
           )}
         </div>
       )}
