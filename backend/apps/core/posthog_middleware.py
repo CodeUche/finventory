@@ -6,6 +6,7 @@ Skips health checks, static files, media files, and token refresh endpoints
 to avoid noise in the analytics data.
 """
 
+import hashlib
 import logging
 
 from django.conf import settings
@@ -87,7 +88,10 @@ class PostHogMiddleware:
             return response
 
         try:
-            org_id = request.headers.get("X-Organisation-ID", "") or request.GET.get("org", "")
+            org_id_raw = request.headers.get("X-Organisation-ID", "") or request.GET.get("org", "")
+            # Pseudonymize org_id before sending to analytics — avoids transmitting
+            # a raw tenant identifier to a third-party service without user consent.
+            org_hash = hashlib.sha256(org_id_raw.encode()).hexdigest()[:16] if org_id_raw else None
             ph.capture(
                 event="api_request",
                 distinct_id=str(user.id),
@@ -95,7 +99,7 @@ class PostHogMiddleware:
                     "method": request.method,
                     "path": path,
                     "status_code": response.status_code,
-                    "org_id": org_id or None,
+                    "org_hash": org_hash,
                 },
             )
         except Exception:

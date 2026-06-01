@@ -9,8 +9,10 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.core.idempotency import IdempotencyMixin
 from apps.core.mixins import ExportMixin, TenantFilterMixin
 from apps.core.permissions import IsStaff, IsOwnerOrAdmin, has_minimum_role, plan_requires
+from apps.core.throttles import FinancialWriteThrottle
 
 _PlanRecurring = plan_requires('recurring')
 from apps.customers.models import Customer
@@ -46,7 +48,7 @@ class InvoiceFilter(django_filters.FilterSet):
         fields = ["status", "customer", "payment_method"]
 
 
-class InvoiceViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
+class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
     export_filename = 'invoices'
     export_fields = [
         ('Invoice #', 'invoice_number'),
@@ -70,6 +72,7 @@ class InvoiceViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
 
     serializer_class = InvoiceSerializer
     permission_classes = [IsAuthenticated, IsStaff]
+    throttle_classes = [FinancialWriteThrottle]
     filterset_class = InvoiceFilter
     search_fields = ["invoice_number", "customer__name"]
     ordering_fields = ["issue_date", "total_amount", "status"]
@@ -93,6 +96,10 @@ class InvoiceViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
 
     def create(self, request, *args, **kwargs):
         """Create a confirmed sale invoice."""
+        cached, idem_key = self.check_idempotency(request, 'invoice:create')
+        if cached is not None:
+            return cached
+
         # ── Plan limit check (atomic to prevent race-condition bypass) ────────
         from django.db import transaction as _tx
         from django.utils import timezone as _tz
@@ -183,7 +190,9 @@ class InvoiceViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
                 )
             except Exception:
                 pass
-            return Response(InvoiceSerializer(invoice).data, status=status.HTTP_201_CREATED)
+            resp = Response(InvoiceSerializer(invoice).data, status=status.HTTP_201_CREATED)
+            self.save_idempotency(idem_key, request.user.id, resp)
+            return resp
 
         except (Warehouse.DoesNotExist, Customer.DoesNotExist) as e:
             return Response({"error": str(e)}, status=404)
@@ -368,6 +377,10 @@ class InvoiceViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
     @action(detail=True, methods=["post"])
     def pay(self, request, pk=None):
         """POST /api/v1/sales/invoices/{id}/pay/ — Record a payment."""
+        cached, idem_key = self.check_idempotency(request, f'invoice:pay:{pk}')
+        if cached is not None:
+            return cached
+
         invoice = self.get_object()
         serializer = RecordPaymentSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -381,7 +394,9 @@ class InvoiceViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
                 reference=d.get("reference", ""),
                 received_by=request.user,
             )
-            return Response(SalePaymentSerializer(payment).data, status=201)
+            resp = Response(SalePaymentSerializer(payment).data, status=201)
+            self.save_idempotency(idem_key, request.user.id, resp)
+            return resp
         except ValueError as e:
             return Response({"error": str(e)}, status=422)
 

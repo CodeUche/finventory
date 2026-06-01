@@ -274,6 +274,7 @@ REST_FRAMEWORK = {
         "public_read": "30/minute",    # PublicReadRateThrottle — plan listing etc.
         "ping": "120/minute",          # PingRateThrottle — Tauri offline probe (15s interval)
         "ai_support": "20/minute",     # AISupportRateThrottle — public support chat widget
+        "financial_write": "60/minute", # FinancialWriteThrottle — invoice/payment/expense writes
     },
 }
 

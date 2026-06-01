@@ -108,3 +108,14 @@ class PingRateThrottle(AnonRateThrottle):
 class AISupportRateThrottle(AnonRateThrottle):
     """20 support chat messages per minute per IP — public support widget abuse guard."""
     scope = "ai_support"
+
+
+class FinancialWriteThrottle(UserRateThrottle):
+    """
+    60 financial write operations per minute per authenticated user.
+
+    Applied to invoice creation, payment recording, expense creation, and bill
+    payment. Prevents automated double-submit attacks while allowing normal
+    business throughput (1 transaction/second is well within limits).
+    """
+    scope = "financial_write"

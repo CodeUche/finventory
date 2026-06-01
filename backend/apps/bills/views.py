@@ -5,6 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from apps.core.mixins import ExportMixin, TenantFilterMixin
 from apps.core.permissions import IsStaff, IsManager, plan_requires
+from apps.core.throttles import FinancialWriteThrottle
 
 _PlanBills = plan_requires('bills')
 from apps.suppliers.models import Supplier
@@ -63,6 +64,7 @@ class BillViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
     ]
     serializer_class = BillSerializer
     permission_classes = [IsAuthenticated, IsStaff, _PlanBills]
+    throttle_classes = [FinancialWriteThrottle]
 
     def get_queryset(self):
         org = self._get_organisation()

@@ -155,12 +155,8 @@ def _verify_signature(sig_header: str, raw_body: bytes) -> tuple[bool, str]:
     """
     secret = getattr(settings, "DIGITAX_WEBHOOK_SECRET", "")
 
-    # If no secret is configured, skip HMAC validation in development mode
     if not secret:
-        if getattr(settings, "DEBUG", False):
-            logger.debug("DIGITAX_WEBHOOK_SECRET not set — skipping HMAC (DEBUG mode)")
-            return True, ""
-        # In production, a missing secret is a configuration error
+        # Missing secret is always a configuration error — never skip HMAC validation
         return False, "DIGITAX_WEBHOOK_SECRET not configured"
 
     if not sig_header:

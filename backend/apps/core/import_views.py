@@ -55,16 +55,23 @@ CUSTOMER_TYPES = [
     "client", "passenger", "vip", "government", "ngo",
 ]
 
+CSV_ROW_LIMIT = 10_000
+
 
 # ---------------------------------------------------------------------------
 # Helper utilities
 # ---------------------------------------------------------------------------
 
 def _parse_csv(file_obj):
-    """Return (headers, rows) where rows is a list of dicts."""
+    """Return (headers, rows) where rows is a list of dicts. Raises ValueError if over limit."""
     text = file_obj.read().decode("utf-8-sig")
     reader = csv.DictReader(io.StringIO(text))
     rows = list(reader)
+    if len(rows) > CSV_ROW_LIMIT:
+        raise ValueError(
+            f"CSV exceeds the {CSV_ROW_LIMIT:,}-row limit ({len(rows):,} rows found). "
+            "Split the file into smaller batches and re-import."
+        )
     headers = reader.fieldnames or []
     return [h.strip().lower() for h in headers], [
         {k.strip().lower(): (v or "").strip() for k, v in row.items()} for row in rows
@@ -111,7 +118,10 @@ class ImportProductsView(APIView):
         if not file_obj:
             return Response({"error": "No file uploaded"}, status=400)
 
-        headers, rows = _parse_csv(file_obj)
+        try:
+            headers, rows = _parse_csv(file_obj)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=400)
         missing_cols = [c for c in PRODUCT_REQUIRED if c not in headers]
         if missing_cols:
             return Response(
@@ -200,7 +210,10 @@ class ImportCustomersView(APIView):
         if not file_obj:
             return Response({"error": "No file uploaded"}, status=400)
 
-        headers, rows = _parse_csv(file_obj)
+        try:
+            headers, rows = _parse_csv(file_obj)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=400)
         missing_cols = [c for c in CUSTOMER_REQUIRED if c not in headers]
         if missing_cols:
             return Response(
@@ -278,7 +291,10 @@ class ImportAccountsView(APIView):
         if not file_obj:
             return Response({"error": "No file uploaded"}, status=400)
 
-        headers, rows = _parse_csv(file_obj)
+        try:
+            headers, rows = _parse_csv(file_obj)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=400)
         missing_cols = [c for c in ACCOUNT_REQUIRED if c not in headers]
         if missing_cols:
             return Response(

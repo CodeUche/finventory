@@ -6,6 +6,7 @@ from rest_framework.response import Response
 
 from apps.core.mixins import ExportMixin, TenantFilterMixin
 from apps.core.permissions import IsAccountant, IsStaff
+from apps.core.throttles import FinancialWriteThrottle
 
 from .models import Expense, ExpenseCategory, ExpenseGroup
 from .serializers import ExpenseCategorySerializer, ExpenseSerializer, ExpenseGroupSerializer
@@ -79,6 +80,7 @@ class ExpenseViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
     queryset = Expense.objects.select_related("category", "recorded_by")
     serializer_class = ExpenseSerializer
     permission_classes = [IsAuthenticated, IsStaff]
+    throttle_classes = [FinancialWriteThrottle]
     filterset_class = ExpenseFilter
     search_fields = ["description", "reference"]
     ordering_fields = ["expense_date", "amount"]

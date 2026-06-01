@@ -116,6 +116,32 @@ class MoneyField(models.DecimalField):
         super().__init__(*args, **kwargs)
 
 
+class IdempotencyRecord(models.Model):
+    """
+    Stores the result of a financial write operation keyed by user + Idempotency-Key header.
+
+    When a client sends the same Idempotency-Key on a retry, the server returns
+    the cached response body and status code rather than re-processing the request.
+    Records expire after 24 hours and are cleaned up by the clean_idempotency_records
+    management command or a periodic Celery task.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user_id = models.UUIDField(db_index=True)
+    key = models.CharField(max_length=256)
+    response_body = models.TextField()
+    response_status = models.PositiveSmallIntegerField()
+    expires_at = models.DateTimeField(db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [('user_id', 'key')]
+        app_label = 'core'
+
+    def __str__(self):
+        return f"IdempotencyRecord(user={self.user_id}, key={self.key[:20]}…)"
+
+
 class AuditLog(models.Model):
     """Immutable audit trail. Not a TenantAwareModel - uses raw FKs."""
 
