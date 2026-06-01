@@ -1,2 +1,2 @@
-release: APP_DATABASE_URL= python manage.py migrate --noinput
+release: python migrate.py
 web: gunicorn config.wsgi:application -c gunicorn.conf.py
