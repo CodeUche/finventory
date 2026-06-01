@@ -43,7 +43,7 @@ async function exportHistoryPDF(items: SalesHistoryItem[], product: Product, org
     : org?.company_name_font?.toLowerCase().includes('courier') ? 'courier' : 'helvetica'
   const doc = new jsPDF({ unit: 'mm', format: 'a4' })
   const pageW = doc.internal.pageSize.getWidth()
-  let y = applyDocHeader(doc, {
+  const y = applyDocHeader(doc, {
     tmpl, pageW, BRAND, DARK, MUTED,
     displayName: org?.invoice_company_name?.trim() || org?.name || 'Audity',
     orgAddress: org?.address,
@@ -107,6 +107,7 @@ const BLANK = {
   alcohol_percentage: '', volume_ml: '',
   is_taxable: false, tax_class: '',
   is_active: true,
+  description: '', barcode: '', category: '',
 }
 
 const BLANK_BATCH = {
@@ -154,6 +155,7 @@ export default function ProductsPage() {
   const [warehouses, setWarehouses] = useState<{ id: string; name: string }[]>([])
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
+  const [categories, setCategories] = useState<{ id: string; name: string }[]>([])
 
   const fetchProducts = async () => {
     try {
@@ -173,41 +175,53 @@ export default function ProductsPage() {
     taxApi.classes().then(({ data }) => setTaxClasses(data.results ?? data)).catch(() => {})
   }, [])
 
+  const loadModalDeps = () => {
+    inventoryApi.warehouses().then(({ data }) => {
+      const list: { id: string; name: string; is_default?: boolean }[] = data.results ?? data
+      setWarehouses(list)
+      const def = list.find((w) => w.is_default) ?? list[0]
+      if (def) setBatchForm((b) => ({ ...b, warehouse: def.id }))
+    }).catch(() => {})
+    inventoryApi.categories().then(({ data }) => {
+      setCategories(data.results ?? data)
+    }).catch(() => {})
+  }
+
   const openCreate = () => {
     setEditId(null)
     setForm({ ...BLANK })
     setBatchForm({ ...BLANK_BATCH })
-    inventoryApi.warehouses().then(({ data }) => {
-      const list: { id: string; name: string; is_default?: boolean }[] = data.results ?? data
-      setWarehouses(list)
-      // Auto-select the default warehouse
-      const def = list.find((w) => w.is_default) ?? list[0]
-      if (def) setBatchForm((b) => ({ ...b, warehouse: def.id }))
-    }).catch(() => {})
+    loadModalDeps()
     setShowModal(true)
   }
+
+  const safeAmt = (v: string | null | undefined) => formatAmountInput(v ?? '0')
 
   const openEdit = (p: Product) => {
     setEditId(p.id)
     setForm({
-      sku: p.sku,
-      name: p.name,
-      brand: p.brand ?? '',
-      unit_of_measure: p.unit_of_measure,
+      sku: p.sku ?? '',
+      name: p.name ?? '',
+      brand: (p.brand as string | null) ?? '',
+      unit_of_measure: p.unit_of_measure ?? 'unit',
       product_type: (p as any).product_type ?? 'physical',
-      cost_price: formatAmountInput(p.cost_price),
-      owner_cost_price: formatAmountInput(p.owner_cost_price ?? '0'),
-      selling_price: formatAmountInput(p.selling_price),
-      wholesale_price: formatAmountInput((p as any).wholesale_price ?? '0'),
-      reorder_level: String(p.reorder_level),
+      cost_price: safeAmt(p.cost_price),
+      owner_cost_price: safeAmt(p.owner_cost_price),
+      selling_price: safeAmt(p.selling_price),
+      wholesale_price: safeAmt((p as any).wholesale_price),
+      reorder_level: String(p.reorder_level ?? 10),
       max_stock_level: String((p as any).max_stock_level ?? ''),
       quantity_in_pack: String((p as any).quantity_in_pack ?? '1'),
       alcohol_percentage: String(p.alcohol_percentage ?? ''),
       volume_ml: String(p.volume_ml ?? ''),
-      is_taxable: p.is_taxable,
+      is_taxable: p.is_taxable ?? false,
       tax_class: p.tax_class ?? '',
-      is_active: p.is_active,
+      is_active: p.is_active ?? true,
+      description: (p as any).description ?? '',
+      barcode: (p as any).barcode ?? '',
+      category: (p as any).category ?? '',
     })
+    loadModalDeps()
     setShowModal(true)
   }
 
@@ -223,7 +237,12 @@ export default function ProductsPage() {
       wholesale_price: stripCommas(form.wholesale_price) || '0',
       quantity_in_pack: form.quantity_in_pack || '1',
       is_active: form.is_active,
+      description: form.description || '',
+      barcode: form.barcode || '',
     }
+    // Send category FK id (empty string → null so Django treats it as "no category")
+    if (form.category) payload.category = form.category
+    else payload.category = null
     if (!payload.alcohol_percentage) delete payload.alcohol_percentage
     if (!payload.volume_ml) delete payload.volume_ml
     if (!payload.max_stock_level) delete payload.max_stock_level
@@ -300,8 +319,10 @@ export default function ProductsPage() {
       }
       setShowModal(false)
       fetchProducts()
-    } catch {
-      toast.error(editId ? 'Failed to update product' : 'Failed to create product')
+    } catch (err: any) {
+      const apiErr = err?.response?.data?.error
+      const msg = typeof apiErr === 'string' ? apiErr : (apiErr?.message ?? (editId ? 'Failed to update product' : 'Failed to create product'))
+      toast.error(msg)
     } finally {
       setSaving(false)
     }
@@ -550,6 +571,25 @@ export default function ProductsPage() {
               <div>
                 <label className="label">Product / Service Name * <FieldTooltip text="The name that will appear on invoices, receipts, and reports. Use a clear, descriptive name your customers will recognise." /></label>
                 <input className="input" value={form.name} onChange={upd('name')} required placeholder="e.g. Consulting, Delivery, Software License" />
+              </div>
+              <div>
+                <label className="label">Description</label>
+                <input className="input" value={(form as any).description ?? ''} onChange={upd('description')} placeholder="Optional short description" />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="label">Category</label>
+                  <select className="input" value={(form as any).category ?? ''} onChange={upd('category')}>
+                    <option value="">— No category —</option>
+                    {categories.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="label">Barcode</label>
+                  <input className="input" value={(form as any).barcode ?? ''} onChange={upd('barcode')} placeholder="Optional" />
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>

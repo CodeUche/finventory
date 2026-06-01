@@ -927,6 +927,7 @@ export const inventoryApi = {
   lowStock: (params?: object) => api.get('/inventory/products/low-stock/', { params }),
   valuation: () => api.get('/inventory/products/valuation/'),
   movements: (params?: object) => api.get('/inventory/movements/', { params }),
+  categories: () => api.get('/inventory/categories/'),
   warehouses: () => api.get('/inventory/warehouses/'),
   createWarehouse: (data: object) => api.post('/inventory/warehouses/', data),
   updateWarehouse: (id: string, data: object) => api.patch(`/inventory/warehouses/${id}/`, data),
