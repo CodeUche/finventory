@@ -368,11 +368,11 @@ class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         run.save()
 
         # Auto-post payroll journal entry (non-blocking)
-        try:
-            from apps.accounting.services import AccountingService
-            AccountingService.post_payroll_journal(run.organisation, run, request.user)
-        except Exception as exc:
-            _log.getLogger(__name__).warning("post_payroll_journal failed: %s", exc)
+        from apps.accounting.services import AccountingService, safe_post_gl
+        safe_post_gl(
+            AccountingService.post_payroll_journal, run.organisation, run, request.user,
+            model_instance=run,
+        )
 
         return Response(PayrollRunSerializer(run).data)
 

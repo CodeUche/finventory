@@ -189,10 +189,11 @@ class SaleService:
                 invoice.save(update_fields=["amount_paid", "amount_due", "status"])
 
         # Auto-post journal entry (non-blocking)
-        try:
-            AccountingService.post_sale_journal(organisation, invoice, created_by)
-        except Exception as exc:
-            logger.warning("post_sale_journal failed for %s: %s", invoice.invoice_number, exc)
+        from apps.accounting.services import safe_post_gl
+        safe_post_gl(
+            AccountingService.post_sale_journal, organisation, invoice, created_by,
+            model_instance=invoice,
+        )
 
         return invoice
 
@@ -431,6 +432,17 @@ class SaleService:
                 invoice.status = Invoice.Status.PARTIALLY_PAID
 
             invoice.save(update_fields=["amount_paid", "amount_due", "status", "updated_at"])
+
+        # Auto-post credit payment journal (non-blocking)
+        if invoice.payment_method == Invoice.PaymentMethod.CREDIT:
+            from apps.accounting.services import AccountingService, safe_post_gl
+            safe_post_gl(
+                AccountingService.post_credit_payment_journal,
+                invoice.organisation, invoice.customer, amount, received_by,
+                description=f"Credit payment – {invoice.invoice_number}",
+                invoice=invoice,
+                model_instance=invoice,
+            )
         return payment
 
     @staticmethod

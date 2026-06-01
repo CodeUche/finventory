@@ -789,3 +789,106 @@ class AutoPostingIntegrationTests(TestCase):
         suggestion = AccountMappingService.suggest(self.org, "revenue_account")
         self.assertIsNotNone(suggestion)
         self.assertEqual(suggestion.account_type, "revenue")
+
+
+class Phase1WiringTests(TestCase):
+    """Phase 1: Verify safe_post_gl is called automatically from business events."""
+
+    def setUp(self):
+        self.user = _make_user("wire_owner@example.com")
+        self.org = _make_org(self.user, "Wire Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+
+    def _make_product(self, name="Wire Product"):
+        from apps.inventory.models import Product
+        return Product.objects.create(
+            organisation=self.org, name=name,
+            selling_price=Decimal("200"), cost_price=Decimal("100"),
+            product_type="service",
+        )
+
+    def _make_customer(self, name="Wire Customer"):
+        from apps.customers.models import Customer
+        return Customer.objects.create(
+            organisation=self.org, name=name,
+            email=f"{name.lower().replace(' ', '').replace('-', '')}@example.com",
+        )
+
+    def _make_warehouse(self, name="Wire Warehouse"):
+        from apps.inventory.models import Warehouse
+        return Warehouse.objects.create(organisation=self.org, name=name)
+
+    def test_sale_creation_sets_gl_post_status(self):
+        """Creating a sale (non-credit) should set invoice.gl_post_status."""
+        from apps.sales.services import SaleService
+
+        product = self._make_product("Sale Wire Product")
+        customer = self._make_customer("Sale Wire Customer")
+        warehouse = self._make_warehouse("Sale Wire WH")
+        invoice = SaleService.create_sale(
+            organisation=self.org,
+            customer=customer,
+            warehouse=warehouse,
+            items=[{"product_id": product.id, "quantity": 1, "unit_price": Decimal("200")}],
+            payment_method="cash",
+            created_by=self.user,
+        )
+        invoice.refresh_from_db()
+        self.assertIn(invoice.gl_post_status, ["posted", "failed", "not_configured"])
+
+    def test_expense_creation_sets_gl_post_status(self):
+        """Creating an expense via API should set expense.gl_post_status."""
+        res = self.client.post("/api/v1/expenses/", {
+            "description": "Wire Expense",
+            "amount": "150.00",
+            "expense_date": "2026-01-10",
+            "category_label": "Office Supplies",
+            "payment_method": "cash",
+        }, format="json")
+        self.assertIn(res.status_code, [200, 201], msg=str(res.data))
+        from apps.expenses.models import Expense
+        exp = Expense.objects.get(id=res.data["id"])
+        self.assertIn(exp.gl_post_status, ["posted", "failed", "not_configured"])
+
+    def test_bill_approval_sets_gl_post_status(self):
+        """Approving a bill should set bill.gl_post_status."""
+        from apps.bills.models import Bill
+        from apps.bills.services import BillService
+        from apps.suppliers.models import Supplier
+
+        supplier = Supplier.objects.create(organisation=self.org, name="Wire Supplier")
+        bill = Bill.objects.create(
+            organisation=self.org,
+            supplier=supplier,
+            issue_date=timezone.now().date(),
+            due_date=timezone.now().date(),
+            total_amount=Decimal("300"),
+            created_by=self.user,
+        )
+        approver = _make_user("wire_approver@example.com")
+        from apps.tenancy.models import Membership
+        Membership.objects.create(organisation=self.org, user=approver, role="manager")
+        BillService.approve_bill(bill, approver)
+        bill.refresh_from_db()
+        self.assertIn(bill.gl_post_status, ["posted", "failed", "not_configured"])
+
+    def test_gl_health_endpoint_reflects_wired_status(self):
+        """After a sale, GL health endpoint should show at least one non-pending entry."""
+        from apps.sales.services import SaleService
+        product = self._make_product("Health Wire Product")
+        customer = self._make_customer("Health Wire Customer")
+        warehouse = self._make_warehouse("Health Wire WH")
+        SaleService.create_sale(
+            organisation=self.org,
+            customer=customer,
+            warehouse=warehouse,
+            items=[{"product_id": product.id, "quantity": 1, "unit_price": Decimal("200")}],
+            payment_method="cash",
+            created_by=self.user,
+        )
+        res = self.client.get("/api/v1/accounting/gl-health/")
+        self.assertEqual(res.status_code, 200)
+        summary = res.data.get("summary", {})
+        total = sum(summary.values())
+        self.assertGreater(total, 0, "GL health should reflect at least one auto-posted entry")

@@ -64,11 +64,11 @@ class BillService:
         bill.save()
 
         # Auto-post journal entry (non-blocking)
-        try:
-            from apps.accounting.services import AccountingService
-            AccountingService.post_bill_payment_journal(bill.organisation, bill, payment, user)
-        except Exception as exc:
-            logger.warning("post_bill_payment_journal failed: %s", exc)
+        from apps.accounting.services import AccountingService, safe_post_gl
+        safe_post_gl(
+            AccountingService.post_bill_payment_journal, bill.organisation, bill, payment, user,
+            model_instance=bill,
+        )
 
         return payment
 
@@ -82,10 +82,10 @@ class BillService:
         bill.save()
 
         # Auto-post journal entry (non-blocking)
-        try:
-            from apps.accounting.services import AccountingService
-            AccountingService.post_bill_approved_journal(bill.organisation, bill, approver)
-        except Exception as exc:
-            logger.warning("post_bill_approved_journal failed: %s", exc)
+        from apps.accounting.services import AccountingService, safe_post_gl
+        safe_post_gl(
+            AccountingService.post_bill_approved_journal, bill.organisation, bill, approver,
+            model_instance=bill,
+        )
 
         return bill

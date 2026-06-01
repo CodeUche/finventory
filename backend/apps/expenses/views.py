@@ -111,10 +111,11 @@ class ExpenseViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
         self._write_audit('create', expense, {k: {'old': None, 'new': str(v)} for k, v in serializer.validated_data.items()})
 
         # Auto-post journal entry (non-blocking)
-        try:
-            AccountingService.post_expense_journal(org, expense, self.request.user)
-        except Exception as exc:
-            _log.getLogger(__name__).warning("post_expense_journal failed: %s", exc)
+        from apps.accounting.services import safe_post_gl
+        safe_post_gl(
+            AccountingService.post_expense_journal, org, expense, self.request.user,
+            model_instance=expense,
+        )
 
     def perform_update(self, serializer):
         org = self.request.organisation
