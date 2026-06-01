@@ -125,9 +125,23 @@ export default function JournalPage() {
   const handlePost = async (id: string) => {
     if (!confirm('Post this journal entry? It will be locked and cannot be edited.')) return
     setActionLoading(id + '-post')
-    try { await accountingApi.postJournalEntry(id); toast.success('Entry posted'); load() }
-    catch { toast.error('Failed to post entry') }
-    finally { setActionLoading(null) }
+    try {
+      await accountingApi.postJournalEntry(id)
+      toast.success('Entry posted')
+    } catch (err: any) {
+      const msg: unknown = err?.response?.data?.error
+      // 400 "Already posted" means a concurrent request (sync replay, double-click)
+      // already succeeded — treat it as success so the user isn't misled.
+      if (typeof msg === 'string' && msg.toLowerCase().includes('already posted')) {
+        toast.success('Entry posted')
+      } else {
+        const detail = typeof msg === 'string' ? msg : (msg as any)?.message
+        toast.error(detail ?? 'Failed to post entry')
+      }
+    } finally {
+      setActionLoading(null)
+      load()
+    }
   }
 
   const handleDelete = async (e: JournalEntry) => {
