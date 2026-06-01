@@ -172,22 +172,27 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
     if (!statementData || !selected) return
     const { jsPDF } = await import('jspdf')
     const { default: autoTable } = await import('jspdf-autotable')
+    const { applyDocHeader, buildTableStyle, addDocFooter, COLORS, TYPE } = await import('@/lib/pdfUtils')
+
     const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' })
-    const sym = getCurrencySymbol()
+    doc.setLineHeightFactor(1.15)
+    const sym  = getCurrencySymbol()
     const pageW = doc.internal.pageSize.getWidth() // 297mm in landscape
 
-    // Resolve brand color
-    const brandRgb = (hex?: string): [number, number, number] => {
+    // ── Brand / font helpers ───────────────────────────────────────────────────
+    const toRgb = (hex?: string): [number,number,number] => {
       const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex ?? '')
       if (!m) return [249, 115, 22]
       return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)]
     }
-    const BRAND = brandRgb(organisation?.brand_color)
-    const DARK: [number, number, number] = [30, 30, 30]
-    const MUTED: [number, number, number] = [100, 100, 100]
-    const tmpl = organisation?.invoice_template ?? 'classic'
+    const BRAND = toRgb(organisation?.brand_color) as [number,number,number]
+    const DARK   = COLORS.DARK
+    const MUTED  = COLORS.MUTED
+    const LIGHT  = COLORS.LIGHT
+    const RULE   = COLORS.RULE
+    const tmpl   = organisation?.invoice_template ?? 'classic'
 
-    // Helper to fetch URL → base64 data URL (uses tauriFetch for Tauri compatibility)
+    // Pre-load logo
     const fetchDataUrl = async (url: string): Promise<string | null> => {
       try {
         const res = await tauriFetch(url)
@@ -200,17 +205,9 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
         })
       } catch { return null }
     }
-
-    // Pre-load logo
     let logoData: string | null = null
     if (organisation?.logo) logoData = await fetchDataUrl(organisation.logo)
 
-    // ── Font / style settings ──────────────────────────────────────────────────
-    const hexToRgb = (hex?: string): [number, number, number] => {
-      const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex ?? '')
-      if (!m) return [30, 30, 30]
-      return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)]
-    }
     const pdfFont = organisation?.company_name_font?.toLowerCase().includes('times') ||
       ['Georgia','Playfair Display','Merriweather','Lora','Libre Baskerville','EB Garamond',
        'Crimson Text','Cinzel','Cormorant Garamond','Spectral'].includes(organisation?.company_name_font ?? '')
@@ -220,22 +217,23 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
     const isBold   = organisation?.company_name_font_bold !== false
     const isItalic = organisation?.company_name_font_italic === true
     const pdfStyle = isBold && isItalic ? 'bolditalic' : isBold ? 'bold' : isItalic ? 'italic' : 'normal'
-    const fontSize = Math.max(8, Math.min(36, organisation?.company_name_font_size ?? 14))
-    const nameColor: [number, number, number] = (() => {
+    const fontSize = Math.max(8, Math.min(36, organisation?.company_name_font_size ?? 12))
+    const nameColor: [number,number,number] = (() => {
       const c = organisation?.company_name_font_color
-      if (!c || c === '#ffffff') return (tmpl === 'modern' || tmpl === 'minimal') ? DARK : [255, 255, 255]
-      return hexToRgb(c)
+      if (!c || c === '#ffffff') return (tmpl === 'modern' || tmpl === 'minimal') ? DARK : COLORS.WHITE
+      return toRgb(c)
     })()
-    const { applyDocHeader, templateHeadFill } = await import('@/lib/pdfUtils')
     const displayName = organisation?.show_company_name_on_pdf === false
       ? '' : (organisation?.invoice_company_name?.trim() || organisation?.name || 'Audity')
+
     let y = applyDocHeader(doc, {
       tmpl, pageW, BRAND, DARK, MUTED,
+      landscape: true,
       logoData,
       displayName,
       orgAddress: organisation?.address,
-      orgEmail: organisation?.email,
-      orgPhone: organisation?.phone,
+      orgEmail:   organisation?.email,
+      orgPhone:   organisation?.phone,
       pdfFont,
       fontSize,
       pdfStyle,
@@ -244,56 +242,50 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
       showCompanyName: organisation?.show_company_name_on_pdf !== false,
       docTitle: 'CUSTOMER STATEMENT',
       metaRows: [
-        ['Customer',   selected.name],
-        ['Ref',        selected.code],
-        ['Period',     `${formatDate(stmtFrom)} – ${formatDate(stmtTo)}`],
-        ['Generated',  formatDate(new Date().toISOString().split('T')[0])],
+        ['Customer',  selected.name],
+        ['Ref',       selected.code],
+        ['Period',    `${formatDate(stmtFrom)} – ${formatDate(stmtTo)}`],
+        ['Generated', formatDate(new Date().toISOString().split('T')[0])],
       ],
     })
 
-    // Summary KPIs
+    // ── KPI summary cards — 3 equal-width cards side by side ──────────────────
+    const fmtMoney = (v: number) =>
+      `${sym}${v.toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
     const kpis = [
-      { label: 'Total Invoiced', value: `${sym}${parseFloat(statementData.summary.total_invoiced).toLocaleString('en', { minimumFractionDigits: 2 })}` },
-      { label: 'Total Paid', value: `${sym}${parseFloat(statementData.summary.total_paid).toLocaleString('en', { minimumFractionDigits: 2 })}` },
-      { label: 'Balance Due', value: `${sym}${parseFloat(statementData.summary.balance_due).toLocaleString('en', { minimumFractionDigits: 2 })}` },
-    ]
-    const kpiW = (pageW - 28) / 3
+      { label: 'Total Invoiced', value: fmtMoney(parseFloat(statementData.summary.total_invoiced)), color: DARK },
+      { label: 'Total Paid',     value: fmtMoney(parseFloat(statementData.summary.total_paid)),     color: COLORS.GREEN },
+      { label: 'Balance Due',    value: fmtMoney(parseFloat(statementData.summary.balance_due)),
+        color: parseFloat(statementData.summary.balance_due) > 0 ? COLORS.RED : COLORS.GREEN },
+    ] as const
+    const kpiW = (pageW - 20) / 3
     kpis.forEach((k, i) => {
-      const kx = 14 + i * kpiW
-      doc.setFillColor(241, 245, 249)
-      doc.roundedRect(kx, y, kpiW - 3, 22, 2, 2, 'F')
-      doc.setFontSize(7)
-      doc.setTextColor(100, 116, 139)
-      doc.setFont('helvetica', 'normal')
-      doc.text(k.label.toUpperCase(), kx + (kpiW - 3) / 2, y + 7, { align: 'center' })
-      doc.setFontSize(11)
-      doc.setFont('helvetica', 'bold')
-      doc.setTextColor(i === 2 && parseFloat(statementData.summary.balance_due) > 0 ? 220 : 15, i === 2 && parseFloat(statementData.summary.balance_due) > 0 ? 38 : 40, i === 2 && parseFloat(statementData.summary.balance_due) > 0 ? 38 : 80)
-      doc.text(k.value, kx + (kpiW - 3) / 2, y + 16, { align: 'center' })
+      const kx = 10 + i * kpiW
+      doc.setFillColor(...LIGHT); doc.setDrawColor(...RULE); doc.setLineWidth(0.25)
+      doc.roundedRect(kx, y, kpiW - 2, 22, 2, 2, 'FD')
+      doc.setFontSize(TYPE.SMALL.size); doc.setFont(pdfFont, 'normal'); doc.setTextColor(...MUTED)
+      doc.text(k.label.toUpperCase(), kx + (kpiW - 2) / 2, y + 7, { align: 'center' })
+      doc.setFontSize(TYPE.H2.size); doc.setFont(pdfFont, 'bold'); doc.setTextColor(...k.color)
+      doc.text(k.value, kx + (kpiW - 2) / 2, y + 16, { align: 'center' })
     })
-    y += 28
+    y += 26
 
-    // Build combined chronological ledger (with product line items expanded)
-    const fmtMoney = (v: number) => `${sym}${v.toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-    // Columns: Trans Date | Trans Ref | Description | Product | Qty | Unit Cost | Sold By | Debit | Credit | Balance
+    // ── Build combined chronological ledger ────────────────────────────────────
     type LedgerRow = [string, string, string, string, string, string, string, string, string, string]
     const ledger: LedgerRow[] = []
-    const itemRowIndices: number[] = []
     const debitRowIndices: number[] = []
+    const creditRowIndices: number[] = []
+    const grandTotalRowIndex: number[] = []
     let runBalance = 0
 
-    // Merge invoices (expanded to items), debits, payments — sorted by date
-    type Event = { date: string; type: 'invoice' | 'payment' | 'debit'; data: any }
-    const events: Event[] = []
-    for (const inv of statementData.invoices) {
+    type Evt = { date: string; type: 'invoice' | 'payment' | 'debit'; data: any }
+    const events: Evt[] = []
+    for (const inv of statementData.invoices)
       events.push({ date: inv.issue_date, type: 'invoice', data: inv })
-    }
-    for (const p of statementData.payments) {
+    for (const p of statementData.payments)
       events.push({ date: p.received_at ? String(p.received_at).split('T')[0] : '', type: 'payment', data: p })
-    }
-    for (const d of (statementData.debits ?? [])) {
+    for (const d of (statementData.debits ?? []))
       events.push({ date: d.debit_date, type: 'debit', data: d })
-    }
     events.sort((a, b) => a.date.localeCompare(b.date))
 
     for (const e of events) {
@@ -303,118 +295,100 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
         if (inv.items && inv.items.length > 0) {
           for (const item of inv.items) {
             runBalance += parseFloat(item.line_total)
-            itemRowIndices.push(ledger.length)
+            debitRowIndices.push(ledger.length)
             ledger.push([
-              formatDate(e.date),
-              inv.invoice_number,
+              formatDate(e.date), inv.invoice_number,
               `Invoice · ${inv.status.replace('_', ' ')}`,
-              item.product,
-              item.qty,
+              item.product, item.qty,
               fmtMoney(parseFloat(item.unit_cost)),
               inv.sold_by || '—',
-              fmtMoney(parseFloat(item.line_total)),
-              '',
+              fmtMoney(parseFloat(item.line_total)), '',
               fmtMoney(runBalance),
             ])
           }
         } else {
           runBalance += invTotal
+          debitRowIndices.push(ledger.length)
           ledger.push([
-            formatDate(e.date),
-            inv.invoice_number,
+            formatDate(e.date), inv.invoice_number,
             `Invoice · ${inv.status.replace('_', ' ')}`,
-            '', '', '',
-            inv.sold_by || '—',
-            fmtMoney(invTotal),
-            '',
-            fmtMoney(runBalance),
+            '', '', '', inv.sold_by || '—',
+            fmtMoney(invTotal), '', fmtMoney(runBalance),
           ])
         }
       } else if (e.type === 'payment') {
         const p = e.data
         runBalance -= parseFloat(p.amount)
+        creditRowIndices.push(ledger.length)
         ledger.push([
           formatDate(e.date),
           p.invoice_number || p.reference || '—',
           `Payment · ${p.method.replace('_', ' ')}`,
           '', '', '', '',
-          '',
-          fmtMoney(parseFloat(p.amount)),
-          fmtMoney(runBalance),
+          '', fmtMoney(parseFloat(p.amount)), fmtMoney(runBalance),
         ])
       } else {
         const d = e.data
         runBalance += parseFloat(d.amount)
         debitRowIndices.push(ledger.length)
         ledger.push([
-          formatDate(e.date),
-          d.reference || '—',
+          formatDate(e.date), d.reference || '—',
           d.description || 'Manual Debit',
           '', '', '', '',
-          fmtMoney(parseFloat(d.amount)),
-          '',
-          fmtMoney(runBalance),
+          fmtMoney(parseFloat(d.amount)), '', fmtMoney(runBalance),
         ])
       }
     }
 
     // Grand Total row
     const totalCharged = parseFloat(statementData.summary.total_charged)
-    const totalCredit = parseFloat(statementData.summary.total_paid)
-    ledger.push(['', '', 'GRAND TOTAL', '', '', '', '', fmtMoney(totalCharged), fmtMoney(totalCredit), fmtMoney(totalCharged - totalCredit)])
+    const totalCredit  = parseFloat(statementData.summary.total_paid)
+    grandTotalRowIndex.push(ledger.length)
+    ledger.push(['', '', 'GRAND TOTAL', '', '', '', '',
+      fmtMoney(totalCharged), fmtMoney(totalCredit),
+      fmtMoney(totalCharged - totalCredit)])
 
-    // Landscape A4: 297mm − 28mm margins = 269mm usable
-    // Col widths: 20+32+32+44+10+28+28+26+28+28+28 wait — 10 cols, 269mm
-    // 20+32+32+38+10+26+26+27+28+30 = 269mm
+    const ts = buildTableStyle(BRAND, pdfFont, { landscape: true })
     autoTable(doc, {
+      ...ts,
       startY: y,
       head: [['Trans Date', 'Trans Ref', 'Description', 'Product', 'Qty', 'Unit Cost', 'Sold By', 'Debit', 'Credit', 'Balance']],
       body: ledger,
-      styles: { fontSize: 7, cellPadding: 2.5, overflow: 'ellipsize' },
-      headStyles: { fillColor: templateHeadFill(tmpl, BRAND), textColor: 255, fontStyle: 'bold', fontSize: 6.5 },
       columnStyles: {
         0: { cellWidth: 20 },
-        1: { cellWidth: 32, fontStyle: 'bold', overflow: 'ellipsize' },
-        2: { cellWidth: 32 },
-        3: { cellWidth: 38 },
-        4: { halign: 'right', cellWidth: 10 },
-        5: { halign: 'right', cellWidth: 26 },
-        6: { cellWidth: 27 },
-        7: { halign: 'right', cellWidth: 28 },
-        8: { halign: 'right', cellWidth: 28 },
-        9: { halign: 'right', cellWidth: 28, fontStyle: 'bold' },
+        1: { cellWidth: 30, fontStyle: 'bold' as const, overflow: 'ellipsize' as const },
+        2: { cellWidth: 32, overflow: 'ellipsize' as const },
+        3: { cellWidth: 36, overflow: 'ellipsize' as const },
+        4: { halign: 'right' as const, cellWidth: 10 },
+        5: { halign: 'right' as const, cellWidth: 26 },
+        6: { cellWidth: 26, overflow: 'ellipsize' as const },
+        7: { halign: 'right' as const, cellWidth: 28 },
+        8: { halign: 'right' as const, cellWidth: 28 },
+        9: { halign: 'right' as const, cellWidth: 31, fontStyle: 'bold' as const },
       },
       didParseCell: (data: any) => {
-        if (data.row.index === ledger.length - 1) {
+        if (grandTotalRowIndex.includes(data.row.index)) {
           data.cell.styles.fontStyle = 'bold'
-          data.cell.styles.fillColor = [241, 245, 249]
+          data.cell.styles.fillColor = LIGHT
         }
-        if (itemRowIndices.includes(data.row.index)) {
-          data.cell.styles.fillColor = [248, 252, 255]
+        if (data.section === 'body' && debitRowIndices.includes(data.row.index) && data.column.index === 7) {
+          data.cell.styles.textColor = COLORS.RED
         }
-        if (debitRowIndices.includes(data.row.index)) {
-          data.cell.styles.textColor = [185, 28, 28]
+        if (data.section === 'body' && creditRowIndices.includes(data.row.index) && data.column.index === 8) {
+          data.cell.styles.textColor = COLORS.GREEN
         }
       },
-      alternateRowStyles: { fillColor: [248, 250, 252] },
-      showHead: 'everyPage',
-      margin: { left: 14, right: 14 },
     })
-    y = (doc as any).lastAutoTable.finalY + 6
 
-    // Footer on every page
-    const pageCount = (doc.internal as any).getNumberOfPages()
-    for (let i = 1; i <= pageCount; i++) {
-      doc.setPage(i)
-      const ph = doc.internal.pageSize.getHeight()
-      doc.setFillColor(...BRAND)
-      doc.rect(0, ph - 12, pageW, 12, 'F')
-      doc.setFontSize(7)
-      doc.setTextColor(255, 255, 255)
-      doc.text(`Page ${i} of ${pageCount}`, pageW / 2, ph - 5, { align: 'center' })
-      doc.text(organisation?.name ?? 'Company', 10, ph - 5)
-      doc.text(`Statement: ${formatDate(stmtFrom)} — ${formatDate(stmtTo)}`, pageW - 10, ph - 5, { align: 'right' })
-    }
+    // ── Footer (every page, with brand accent bar on last page) ────────────────
+    addDocFooter(doc, {
+      orgName: organisation?.name ?? 'Company',
+      docTitle: 'CUSTOMER STATEMENT',
+      docRef: `${formatDate(stmtFrom)} – ${formatDate(stmtTo)}`,
+      BRAND,
+      pdfFont,
+      landscape: true,
+    })
 
     await saveBlobFile(doc.output('blob'), `statement-${selected.code}-${stmtFrom}-${stmtTo}.pdf`)
   }

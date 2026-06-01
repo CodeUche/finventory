@@ -2,21 +2,22 @@ import re
 from decimal import Decimal
 from datetime import date
 from rest_framework import viewsets, status
-from rest_framework.decorators import action
+from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.views import APIView
 from apps.core.mixins import TenantFilterMixin
 from apps.core.permissions import IsAccountant, IsOwnerOrAdmin, plan_requires
 
 _PlanAccounting = plan_requires('accounting')
-from .models import Account, JournalEntry, JournalLine, FixedAsset, FinancialPeriod, BankReconciliation, BankReconciliationLine, AIReconMatch
+from .models import Account, JournalEntry, JournalLine, FixedAsset, FinancialPeriod, BankReconciliation, BankReconciliationLine, AIReconMatch, AccountMapping
 from django.db import transaction
 from .serializers import (
     AccountSerializer, JournalEntrySerializer, CreateJournalEntrySerializer, UpdateJournalEntrySerializer,
     FixedAssetSerializer, FinancialPeriodSerializer, BankReconciliationSerializer, BankReconciliationLineSerializer,
-    AIReconMatchSerializer,
+    AIReconMatchSerializer, AccountMappingSerializer, MAPPING_ROLES,
 )
-from .services import AccountingService
+from .services import AccountingService, AccountMappingService, safe_post_gl
 
 
 class AccountViewSet(TenantFilterMixin, viewsets.ModelViewSet):
@@ -715,3 +716,125 @@ RESPONSE FORMAT — Return ONLY valid JSON, nothing else:
         return Response(AIReconMatchSerializer(
             AIReconMatch.objects.select_related('bank_line', 'book_line', 'book_line__journal_entry').get(id=match.id)
         ).data)
+
+
+class AccountMappingView(APIView):
+    """
+    GET  /accounting/account-mapping/   — get org's mapping (with suggestions for nulls)
+    PUT  /accounting/account-mapping/   — update mapping
+    """
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
+
+    def _get_org(self, request):
+        from apps.core.mixins import TenantFilterMixin
+        org_id = request.META.get('HTTP_X_ORGANISATION_ID')
+        if not org_id:
+            return None
+        from apps.tenancy.models import Organisation
+        try:
+            return Organisation.objects.get(id=org_id)
+        except Exception:
+            return None
+
+    def get(self, request):
+        org = self._get_org(request)
+        if not org:
+            return Response({'error': 'Organisation not found'}, status=400)
+        mapping = AccountMappingService.get_or_create_mapping(org)
+        return Response(AccountMappingSerializer(mapping).data)
+
+    def put(self, request):
+        org = self._get_org(request)
+        if not org:
+            return Response({'error': 'Organisation not found'}, status=400)
+        mapping = AccountMappingService.get_or_create_mapping(org)
+
+        # Validate that all provided account IDs belong to this org
+        for role in MAPPING_ROLES:
+            acct_id = request.data.get(f'{role}_id') or request.data.get(role)
+            if acct_id:
+                try:
+                    acct = Account.objects.get(id=acct_id)
+                    if str(acct.organisation_id) != str(org.id):
+                        return Response(
+                            {'error': f'Account for {role} does not belong to this organisation'},
+                            status=400
+                        )
+                    setattr(mapping, role, acct)
+                except Account.DoesNotExist:
+                    return Response({'error': f'Account not found for role: {role}'}, status=400)
+            elif f'{role}_id' in request.data and request.data[f'{role}_id'] is None:
+                setattr(mapping, role, None)
+
+        mapping.save()
+        return Response(AccountMappingSerializer(mapping).data)
+
+
+class AccountMappingSuggestionsView(APIView):
+    """GET /accounting/account-mapping/suggestions/ — get best-guess suggestions for all roles."""
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
+
+    def get(self, request):
+        org_id = request.META.get('HTTP_X_ORGANISATION_ID')
+        if not org_id:
+            return Response({'error': 'Organisation not found'}, status=400)
+        from apps.tenancy.models import Organisation
+        try:
+            org = Organisation.objects.get(id=org_id)
+        except Exception:
+            return Response({'error': 'Organisation not found'}, status=400)
+
+        suggestions = {}
+        for role in MAPPING_ROLES:
+            suggestion = AccountMappingService.suggest(org, role)
+            suggestions[role] = {
+                'id': str(suggestion.id) if suggestion else None,
+                'code': suggestion.code if suggestion else None,
+                'name': suggestion.name if suggestion else None,
+            }
+        return Response(suggestions)
+
+
+class GLHealthView(APIView):
+    """GET /accounting/gl-health/ — list recent GL failures with retry info."""
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
+
+    def _get_org(self, request):
+        org_id = request.META.get('HTTP_X_ORGANISATION_ID')
+        if not org_id:
+            return None
+        from apps.tenancy.models import Organisation
+        try:
+            return Organisation.objects.get(id=org_id)
+        except Exception:
+            return None
+
+    def get(self, request):
+        org = self._get_org(request)
+        if not org:
+            return Response({'error': 'Organisation not found'}, status=400)
+        data = AccountingService.get_gl_health(org)
+        return Response(data)
+
+
+class GLHealthRetryView(APIView):
+    """POST /accounting/gl-health/{type}/{id}/retry/ — retry a failed GL post."""
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
+
+    def post(self, request, model_type, object_id):
+        org_id = request.META.get('HTTP_X_ORGANISATION_ID')
+        if not org_id:
+            return Response({'error': 'Organisation not found'}, status=400)
+        from apps.tenancy.models import Organisation
+        try:
+            org = Organisation.objects.get(id=org_id)
+        except Exception:
+            return Response({'error': 'Organisation not found'}, status=400)
+
+        try:
+            success, err = AccountingService.retry_gl_post(org, model_type, object_id, request.user)
+        except Exception as e:
+            return Response({'error': str(e)}, status=404)
+        if success:
+            return Response({'status': 'posted', 'message': 'GL entry posted successfully'})
+        return Response({'status': 'failed', 'error': err}, status=422)

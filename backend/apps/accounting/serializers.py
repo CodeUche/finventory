@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Account, JournalEntry, JournalLine, FixedAsset, DepreciationEntry, FinancialPeriod, BankReconciliation, BankReconciliationLine, AIReconMatch
+from .models import Account, JournalEntry, JournalLine, FixedAsset, DepreciationEntry, FinancialPeriod, BankReconciliation, BankReconciliationLine, AIReconMatch, AccountMapping
 
 
 class AccountSerializer(serializers.ModelSerializer):
@@ -119,3 +119,70 @@ class FixedAssetSerializer(serializers.ModelSerializer):
             'accumulated_depreciation', 'net_book_value', 'depreciation_entries'
         ]
         read_only_fields = ['id']
+
+
+# Helper to build account summary dict
+def _account_summary(account):
+    if account is None:
+        return None
+    return {'id': str(account.id), 'code': account.code, 'name': account.name}
+
+
+MAPPING_ROLES = [
+    'revenue_account', 'cogs_account', 'inventory_account', 'accounts_receivable',
+    'cash_account', 'bank_account', 'accounts_payable', 'vat_output_account',
+    'vat_input_account', 'paye_account', 'pension_account', 'wht_account',
+    'salary_expense_account', 'general_expense_account', 'bank_charges_account',
+]
+
+
+class AccountMappingSerializer(serializers.ModelSerializer):
+    """
+    Serializer for AccountMapping. Exposes for each role:
+    - {role}_id   — UUID of mapped account
+    - {role}_code — account code (read-only)
+    - {role}_name — account name (read-only)
+    - {role}_suggestion — best-guess account if null (read-only, computed)
+    """
+
+    class Meta:
+        model = AccountMapping
+        fields = ['id'] + [r + '_id' for r in MAPPING_ROLES]
+        read_only_fields = ['id']
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def _get_role_account(self, obj, role):
+        return getattr(obj, role, None)
+
+    def _get_suggestion(self, obj, role):
+        from .services import AccountMappingService
+        acct = getattr(obj, role, None)
+        if acct is not None:
+            return None  # Already mapped
+        suggestion = AccountMappingService.suggest(obj.organisation, role)
+        return _account_summary(suggestion)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        for role in MAPPING_ROLES:
+            acct = getattr(instance, role, None)
+            data[f'{role}_code'] = acct.code if acct else None
+            data[f'{role}_name'] = acct.name if acct else None
+            # Suggestion
+            if acct is None:
+                from .services import AccountMappingService
+                suggestion = AccountMappingService.suggest(instance.organisation, role)
+                data[f'{role}_suggestion'] = _account_summary(suggestion)
+            else:
+                data[f'{role}_suggestion'] = None
+        return data
+
+    def update(self, instance, validated_data):
+        for role in MAPPING_ROLES:
+            field_name = f'{role}_id'
+            if field_name in validated_data:
+                setattr(instance, role + '_id', validated_data[field_name])
+        instance.save()
+        return instance

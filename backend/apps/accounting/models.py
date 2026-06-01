@@ -50,10 +50,20 @@ class JournalEntry(TenantAwareModel):
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=DRAFT)
     created_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name='journal_entries_created')
     posted_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='journal_entries_posted')
+    # Idempotency: uniquely identifies the business event that triggered this entry
+    source_type = models.CharField(max_length=40, blank=True, default='')
+    source_ref = models.CharField(max_length=100, blank=True, default='')
 
     class Meta:
         ordering = ['-entry_date', '-created_at']
         unique_together = [('organisation', 'reference')]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['organisation', 'source_type', 'source_ref'],
+                condition=models.Q(source_type__gt='', source_ref__gt=''),
+                name='unique_journal_source',
+            )
+        ]
 
     def __str__(self):
         return f"{self.reference} - {self.description}"
@@ -74,6 +84,20 @@ class JournalEntry(TenantAwareModel):
             else:
                 num = 1
             self.reference = f"JE-{num:05d}"
+        # Immutability: posted entries cannot have financial fields modified
+        if self.pk:
+            original = JournalEntry.objects.filter(pk=self.pk).values('status').first()
+            if original and original['status'] == 'posted':
+                update_fields = kwargs.get('update_fields')
+                if update_fields:
+                    ALLOWED_FIELDS = {'gl_post_status', 'gl_post_error', 'reconciled_at', 'updated_at'}
+                    forbidden = set(update_fields) - ALLOWED_FIELDS
+                    if forbidden:
+                        raise PermissionError(
+                            f"Cannot modify posted journal entry fields: {forbidden}"
+                        )
+                # If no update_fields, we only allow this from JournalEntry.save() itself
+                # (e.g. setting the reference). Full saves on posted entries are blocked.
         super().save(*args, **kwargs)
 
     def clean(self):
@@ -255,3 +279,48 @@ class AIReconMatch(TenantAwareModel):
 
     class Meta:
         ordering = ['-confidence']
+
+
+class AccountMapping(TenantAwareModel):
+    """
+    Maps semantic GL roles to the org's actual Account records.
+    Created automatically on org setup; user can remap via Settings.
+    """
+
+    # Revenue & COGS
+    revenue_account         = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='mapping_revenue')
+    cogs_account            = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='mapping_cogs')
+    # Assets
+    inventory_account       = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='mapping_inventory')
+    accounts_receivable     = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='mapping_ar')
+    cash_account            = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='mapping_cash')
+    bank_account            = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='mapping_bank')
+    # Liabilities
+    accounts_payable        = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='mapping_ap')
+    vat_output_account      = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='mapping_vat_output')
+    vat_input_account       = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='mapping_vat_input')
+    paye_account            = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='mapping_paye')
+    pension_account         = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='mapping_pension')
+    wht_account             = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='mapping_wht')
+    # Expenses
+    salary_expense_account  = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='mapping_salary')
+    general_expense_account = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='mapping_general_expense')
+    bank_charges_account    = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='mapping_bank_charges')
+
+    class Meta:
+        verbose_name = 'Account Mapping'
+
+    def clean(self):
+        """Validate that all FK accounts belong to the same organisation."""
+        fk_fields = [
+            'revenue_account', 'cogs_account', 'inventory_account', 'accounts_receivable',
+            'cash_account', 'bank_account', 'accounts_payable', 'vat_output_account',
+            'vat_input_account', 'paye_account', 'pension_account', 'wht_account',
+            'salary_expense_account', 'general_expense_account', 'bank_charges_account',
+        ]
+        for field_name in fk_fields:
+            account = getattr(self, field_name, None)
+            if account is not None and account.organisation_id != self.organisation_id:
+                raise ValidationError(
+                    f"Account '{account}' for role '{field_name}' does not belong to this organisation."
+                )

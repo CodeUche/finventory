@@ -106,6 +106,9 @@ class OrganisationService:
         # Seed chart of accounts so accounting module is ready from day 1 (non-fatal)
         OrganisationService._seed_chart_of_accounts(org)
 
+        # Auto-create GL account mapping based on seeded COA (non-fatal)
+        OrganisationService._seed_account_mapping(org)
+
         # Seed country-specific default tax configuration (non-fatal)
         OrganisationService._seed_tax_config(org)
 
@@ -147,6 +150,16 @@ class OrganisationService:
             logger.info("Chart of accounts seeded for org %s", org.id)
         except Exception as exc:
             logger.warning("Could not seed chart of accounts for org %s: %s", org.id, exc)
+
+    @staticmethod
+    def _seed_account_mapping(org: Organisation) -> None:
+        """Auto-create and fill GL account mapping based on seeded COA."""
+        try:
+            from apps.accounting.services import AccountMappingService
+            AccountMappingService.get_or_create_mapping(org)
+            logger.info("Account mapping seeded for org %s", org.id)
+        except Exception as exc:
+            logger.warning("Could not seed account mapping for org %s: %s", org.id, exc)
 
     # ─── Tax seed data ────────────────────────────────────────────────────────
     # Each entry: { name, tax_type, is_progressive, flat_rate, personal_allowance, brackets }

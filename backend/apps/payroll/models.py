@@ -86,6 +86,14 @@ class PayrollRun(TenantAwareModel):
     transfer_reference = models.CharField(max_length=200, blank=True,
         help_text="Paystack bulk transfer batch_transfer_code or reference")
 
+    # GL auto-post tracking
+    GL_STATUS = [
+        ('pending', 'Pending'), ('posted', 'Posted'),
+        ('failed', 'Failed'), ('not_configured', 'Not Configured'),
+    ]
+    gl_post_status = models.CharField(max_length=20, choices=GL_STATUS, default='pending')
+    gl_post_error  = models.TextField(blank=True, default='')
+
     class Meta:
         ordering = ['-period_year', '-period_month']
         unique_together = [('organisation', 'period_year', 'period_month')]

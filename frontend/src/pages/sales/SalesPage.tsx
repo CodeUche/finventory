@@ -76,19 +76,21 @@ async function buildInvoicePDF(
 ): Promise<PdfPreview> {
   const { jsPDF } = await import('jspdf')
   const { default: autoTable } = await import('jspdf-autotable')
+  const { applyDocHeader, buildTableStyle, addDocFooter, COLORS, TYPE } = await import('@/lib/pdfUtils')
 
   const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+  doc.setLineHeightFactor(1.15)
   const pageW = doc.internal.pageSize.getWidth()
-  const pageH = doc.internal.pageSize.getHeight()
   const tmpl  = invoiceTemplate ?? 'classic'
 
-  const BRAND:  [number, number, number] = hexToRgb(brandColorHex)
-  const DARK:   [number, number, number] = [30,  30,  30]
-  const MUTED:  [number, number, number] = [100, 100, 100]
-  const LIGHT:  [number, number, number] = [250, 250, 248]
+  const BRAND: [number, number, number] = hexToRgb(brandColorHex)
+  const DARK   = COLORS.DARK
+  const MUTED  = COLORS.MUTED
+  const LIGHT  = COLORS.LIGHT
+  const RULE   = COLORS.RULE
 
   const displayName = showCompanyName === false ? '' : (companyNameOverride?.trim() || orgName)
-  const pdfFontFamily = companyFont?.toLowerCase().includes('times') || companyFont === 'Georgia'
+  const pdfFont = companyFont?.toLowerCase().includes('times') || companyFont === 'Georgia'
     || companyFont === 'Playfair Display' || companyFont === 'Merriweather' || companyFont === 'Lora'
     || companyFont === 'Libre Baskerville' || companyFont === 'EB Garamond' || companyFont === 'Crimson Text'
     || companyFont === 'Cinzel' || companyFont === 'Cormorant Garamond' || companyFont === 'Spectral'
@@ -98,10 +100,10 @@ async function buildInvoicePDF(
   const isBold   = companyFontBold !== false
   const isItalic = companyFontItalic === true
   const pdfStyle = isBold && isItalic ? 'bolditalic' : isBold ? 'bold' : isItalic ? 'italic' : 'normal'
-  const fontSize = Math.max(8, Math.min(36, companyFontSize ?? 14))
+  const fontSize = Math.max(8, Math.min(36, companyFontSize ?? 12))
   const nameColor: [number, number, number] = (() => {
     if (!companyFontColor || companyFontColor === '#ffffff') {
-      return (tmpl === 'modern' || tmpl === 'minimal') ? DARK : [255, 255, 255]
+      return (tmpl === 'modern' || tmpl === 'minimal') ? DARK : COLORS.WHITE
     }
     return hexToRgb(companyFontColor)
   })()
@@ -110,8 +112,6 @@ async function buildInvoicePDF(
   let logoData: string | null = null
   if (orgLogo) { try { logoData = await urlToDataUrl(orgLogo) } catch { /* skip */ } }
 
-  const { applyDocHeader, templateHeadFill, templateAltRowFill, templateTableLine } = await import('@/lib/pdfUtils')
-
   let y = applyDocHeader(doc, {
     tmpl, pageW, BRAND, DARK, MUTED,
     logoData,
@@ -119,7 +119,7 @@ async function buildInvoicePDF(
     orgAddress,
     orgPhone,
     orgEmail,
-    pdfFont: pdfFontFamily,
+    pdfFont,
     fontSize,
     pdfStyle,
     nameColor,
@@ -135,36 +135,59 @@ async function buildInvoicePDF(
     ],
   })
 
-  // ── Bill To block (shared, slight colour variation by template) ────────────
-  const billLabelColor: [number, number, number] = tmpl === 'minimal' ? DARK : BRAND
-  const billW = (pageW - 28) * 0.48
-  if (tmpl !== 'minimal') {
-    doc.setFillColor(...LIGHT)
-    doc.roundedRect(14, y, billW, 22, 2, 2, 'F')
-  }
-  doc.setFontSize(7); doc.setFont('helvetica', 'bold'); doc.setTextColor(...billLabelColor)
-  doc.text('BILL TO', 19, y + 6)
-  doc.setFontSize(10); doc.setFont('helvetica', 'bold'); doc.setTextColor(...DARK)
-  doc.text(inv.customer_name ?? 'Walk-in Customer', 19, y + 13)
-  doc.setFontSize(7.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(...MUTED)
-  doc.text(inv.payment_method.replace(/_/g, ' ') + ' payment', 19, y + 19)
-  y += 28
+  // ── Bill To + Invoice Details side-by-side boxes ───────────────────────────
+  const boxW = 85
+  const boxH = 32
+  const lBoxX = 14
+  const rBoxX = lBoxX + boxW + 4
 
-  // ── Items table (headStyle varies by template) ─────────────────────────────
-  const headFill = templateHeadFill(tmpl, BRAND)
+  // Left: Bill To
+  doc.setFillColor(...LIGHT); doc.setDrawColor(...RULE); doc.setLineWidth(0.25)
+  doc.roundedRect(lBoxX, y, boxW, boxH, 2, 2, 'FD')
+  doc.setFontSize(TYPE.H3.size); doc.setFont(pdfFont, 'bold'); doc.setTextColor(...BRAND)
+  doc.text('BILL TO', lBoxX + 3, y + 5)
+  doc.setFontSize(TYPE.H2.size); doc.setFont(pdfFont, 'bold'); doc.setTextColor(...DARK)
+  doc.text(inv.customer_name ?? 'Walk-in Customer', lBoxX + 3, y + 11)
+  doc.setFontSize(TYPE.BODY.size); doc.setFont(pdfFont, 'normal'); doc.setTextColor(...MUTED)
+  doc.text(inv.payment_method.replace(/_/g, ' ') + ' payment', lBoxX + 3, y + 16.5)
 
-  // Dynamically size the Unit Price and Amount columns so large numbers
-  // (e.g. ₦250,000,000.00) always fit, and Product / Description takes whatever
-  // space remains (cellWidth: 'auto').
+  // Right: Invoice Details
+  doc.setFillColor(...LIGHT); doc.setDrawColor(...RULE); doc.setLineWidth(0.25)
+  doc.roundedRect(rBoxX, y, boxW, boxH, 2, 2, 'FD')
+  doc.setFontSize(TYPE.H3.size); doc.setFont(pdfFont, 'bold'); doc.setTextColor(...BRAND)
+  doc.text('INVOICE DETAILS', rBoxX + 3, y + 5)
+  const detailRows: [string, string][] = [
+    ['Invoice No.', inv.invoice_number],
+    ['Date', formatDate(inv.issue_date)],
+    ...(inv.due_date ? [['Due Date', formatDate(inv.due_date)] as [string, string]] : []),
+    ['Payment', inv.payment_method.replace(/_/g, ' ')],
+    ...(inv.sold_by ? [['Sold By', inv.sold_by] as [string, string]] : []),
+  ]
+  let dY = y + 11
+  detailRows.slice(0, 4).forEach(([lbl, val]) => {
+    doc.setFontSize(TYPE.SMALL.size); doc.setFont(pdfFont, 'normal'); doc.setTextColor(...MUTED)
+    doc.text(lbl + ':', rBoxX + 3, dY)
+    doc.setFont(pdfFont, 'bold'); doc.setTextColor(...DARK)
+    doc.text(val, rBoxX + boxW - 3, dY, { align: 'right' })
+    dY += 4.5
+  })
+
+  y += boxH + 6
+
+  // ── Items table ────────────────────────────────────────────────────────────
+  const ts = buildTableStyle(BRAND, pdfFont)
+
+  // Dynamically size monetary columns so large numbers always fit
   const itemAmounts = [...(inv.items ?? []).map(it => formatCurrency(it.line_total)), 'Amount']
   const itemPrices  = [...(inv.items ?? []).map(it => formatCurrency(it.unit_price)), 'Unit Price']
   const itemQtys    = [...(inv.items ?? []).map(it => String(Number(it.quantity))), 'Qty']
   doc.setFontSize(9)
-  const amtColW   = Math.min(58, Math.max(30, Math.max(...itemAmounts.map(s => doc.getTextWidth(s))) + 10))
-  const priceColW = Math.min(52, Math.max(28, Math.max(...itemPrices.map(s => doc.getTextWidth(s)))  + 10))
-  const qtyColW   = Math.min(30, Math.max(14, Math.max(...itemQtys.map(s => doc.getTextWidth(s)))    + 8))
+  const amtColW   = Math.min(58, Math.max(26, Math.max(...itemAmounts.map(s => doc.getTextWidth(s))) + 8))
+  const priceColW = Math.min(52, Math.max(24, Math.max(...itemPrices.map(s => doc.getTextWidth(s))) + 8))
+  const qtyColW   = Math.min(20, Math.max(14, Math.max(...itemQtys.map(s => doc.getTextWidth(s))) + 6))
 
   autoTable(doc, {
+    ...ts,
     startY: y,
     head: [['#', 'Product / Description', 'SKU', 'Qty', 'Unit Price', 'Amount']],
     body: (inv.items ?? []).map((item, i) => [
@@ -175,35 +198,20 @@ async function buildInvoicePDF(
       formatCurrency(item.unit_price),
       formatCurrency(item.line_total),
     ]),
-    styles: {
-      fontSize: 9,
-      cellPadding: { top: 4, bottom: 4, left: 5, right: 5 },
-      textColor: DARK,
-    },
-    headStyles: {
-      fillColor: headFill,
-      textColor: [255, 255, 255],
-      fontStyle: 'bold',
-      fontSize: 8,
-    },
-    alternateRowStyles: { fillColor: templateAltRowFill(tmpl) },
     columnStyles: {
-      0: { cellWidth: 10,        halign: 'center' },
-      1: { cellWidth: 'auto' },
-      2: { cellWidth: 26,        halign: 'center' },
-      3: { cellWidth: qtyColW,   halign: 'center' },
-      4: { cellWidth: priceColW, halign: 'right' },
-      5: { cellWidth: amtColW,   halign: 'right', fontStyle: 'bold' },
+      0: { cellWidth: 8,        halign: 'center' as const },
+      1: { cellWidth: 'auto' as const },
+      2: { cellWidth: 22,       halign: 'center' as const },
+      3: { cellWidth: qtyColW,  halign: 'center' as const },
+      4: { cellWidth: priceColW,halign: 'right' as const },
+      5: { cellWidth: amtColW,  halign: 'right' as const, fontStyle: 'bold' as const, textColor: DARK },
     },
-    margin: { left: 14, right: 14 },
-    tableLineColor: templateTableLine(tmpl, DARK).color,
-    tableLineWidth: templateTableLine(tmpl, DARK).width,
   })
 
-  // ── Totals block ──────────────────────────────────────────────────────────
-  const tY = (doc as any).lastAutoTable.finalY + 8
-  const tX = pageW - 100
-  const tW = 86
+  // ── Totals block — right-aligned 72mm box ─────────────────────────────────
+  const tY = (doc as any).lastAutoTable.finalY + 6
+  const tW = 72
+  const tX = pageW - 14 - tW
 
   const subtotalNum    = parseFloat(inv.subtotal ?? inv.total_amount ?? '0')
   const discountNum    = parseFloat(inv.discount_amount ?? '0')
@@ -219,157 +227,135 @@ async function buildInvoicePDF(
   const changeNum   = tenderedNum > amtPaidNum ? tenderedNum - amtPaidNum : 0
 
   const totalRows: Array<{ label: string; value: string; bold?: boolean; color?: [number,number,number] }> = []
-  totalRows.push({ label: 'Subtotal:', value: formatCurrency(subtotalNum) })
-  if (discountNum > 0) totalRows.push({ label: 'Discount:', value: `- ${formatCurrency(discountNum)}`, color: [180, 80, 0] })
-  if (taxNum > 0)      totalRows.push({ label: 'Tax / VAT:', value: formatCurrency(taxNum) })
+  totalRows.push({ label: 'Subtotal', value: formatCurrency(subtotalNum) })
+  if (discountNum > 0) totalRows.push({ label: 'Discount', value: `- ${formatCurrency(discountNum)}`, color: COLORS.AMBER })
+  if (taxNum > 0)      totalRows.push({ label: 'Tax / VAT', value: formatCurrency(taxNum) })
   if (discountNum > 0 || taxNum > 0 || creditApplied > 0)
-    totalRows.push({ label: 'Invoice Total:', value: formatCurrency(totalNum), bold: true })
+    totalRows.push({ label: 'Invoice Total', value: formatCurrency(totalNum), bold: true })
   if (creditApplied > 0)
-    totalRows.push({ label: 'Store Credit Applied:', value: `- ${formatCurrency(creditApplied)}`, color: [22, 163, 74] })
+    totalRows.push({ label: 'Store Credit Applied', value: `- ${formatCurrency(creditApplied)}`, color: COLORS.GREEN })
   if (amtPaidNum > 0) {
-    totalRows.push({ label: 'Amount Tendered:', value: formatCurrency(tenderedNum), color: [22, 163, 74] })
-    if (changeNum > 0) totalRows.push({ label: 'Change Given:', value: formatCurrency(changeNum), color: [22, 163, 74] })
+    totalRows.push({ label: 'Amount Tendered', value: formatCurrency(tenderedNum), color: COLORS.GREEN })
+    if (changeNum > 0) totalRows.push({ label: 'Change Given', value: formatCurrency(changeNum), color: COLORS.GREEN })
   }
 
-  const ROW_H = 9; const PADDING_TOP = 9; const DIVIDER_GAP = 4
-  const boxH = PADDING_TOP + totalRows.length * ROW_H + DIVIDER_GAP + ROW_H + 6
+  const ROW_H = 5.5
+  const PAD   = 4
+  const boxContentH = totalRows.length * ROW_H + 2 + ROW_H + PAD * 2 + 3
+  const totalsBoxH  = boxContentH
 
-  doc.setFillColor(...LIGHT)
-  doc.roundedRect(tX, tY, tW, boxH, 2, 2, 'F')
+  doc.setFillColor(...LIGHT); doc.setDrawColor(...RULE); doc.setLineWidth(0.25)
+  doc.roundedRect(tX, tY, tW, totalsBoxH, 2, 2, 'FD')
 
-  let rowY = tY + PADDING_TOP
-  totalRows.forEach(({ label, value, bold = false, color = DARK }) => {
-    doc.setFontSize(9); doc.setFont('helvetica', bold ? 'bold' : 'normal')
-    doc.setTextColor(...MUTED); doc.text(label, tX + 5, rowY)
-    doc.setTextColor(...color); doc.text(value, pageW - 19, rowY, { align: 'right' })
+  let rowY = tY + PAD + ROW_H * 0.5
+  totalRows.forEach(({ label, value, bold = false, color }) => {
+    const valColor = color ?? DARK
+    doc.setFontSize(TYPE.SMALL.size); doc.setFont(pdfFont, 'normal'); doc.setTextColor(...MUTED)
+    doc.text(label, tX + PAD, rowY)
+    doc.setFontSize(TYPE.BODY.size); doc.setFont(pdfFont, bold ? 'bold' : 'normal'); doc.setTextColor(...valColor)
+    doc.text(value, tX + tW - PAD, rowY, { align: 'right' })
     rowY += ROW_H
   })
-  doc.setDrawColor(210, 210, 210); doc.setLineWidth(0.3)
-  doc.line(tX + 5, rowY + 2, pageW - 19, rowY + 2)
-  rowY += DIVIDER_GAP + 2
+  // Divider
+  doc.setDrawColor(...RULE); doc.setLineWidth(0.25)
+  doc.line(tX + PAD, rowY + 1, tX + tW - PAD, rowY + 1)
+  rowY += 3
 
-  doc.setFontSize(10); doc.setFont('helvetica', 'bold'); doc.setTextColor(...MUTED)
-  doc.text('BALANCE DUE:', tX + 5, rowY)
-  const dueColor: [number,number,number] = amtDue > 0 ? [220, 38, 38] : [22, 163, 74]
-  doc.setTextColor(...dueColor)
-  doc.text(formatCurrency(amtDue), pageW - 19, rowY, { align: 'right' })
-  const afterTotalsY = tY + boxH
+  // Grand total row
+  const dueColor: [number,number,number] = amtDue > 0 ? COLORS.RED : COLORS.GREEN
+  doc.setFontSize(TYPE.H3.size); doc.setFont(pdfFont, 'bold'); doc.setTextColor(...DARK)
+  doc.text('BALANCE DUE', tX + PAD, rowY)
+  doc.setFontSize(TYPE.H2.size); doc.setFont(pdfFont, 'bold'); doc.setTextColor(...dueColor)
+  doc.text(formatCurrency(amtDue), tX + tW - PAD, rowY, { align: 'right' })
 
-  // ── Payment note + bank details (left of totals) ──────────────────────────
-  doc.setFontSize(7.5); doc.setFont('helvetica', 'italic'); doc.setTextColor(...MUTED)
-  doc.text(`Payment method: ${inv.payment_method.replace(/_/g, ' ')}`, 14, tY + 9)
+  const afterTotalsY = tY + totalsBoxH
+
+  // ── Payment details (left of totals, 85mm wide) ────────────────────────────
   if (bankName || bankAccountNumber) {
-    const bY = afterTotalsY - boxH + 20
-    doc.setFontSize(7); doc.setFont('helvetica', 'bold'); doc.setTextColor(...BRAND)
-    doc.text('PAYMENT DETAILS', 14, bY)
-    doc.setFont('helvetica', 'normal'); doc.setTextColor(...DARK)
-    let bRow = bY + 5
-    if (bankName)          { doc.text(`Bank: ${bankName}`, 14, bRow); bRow += 4.5 }
-    if (bankAccountName)   { doc.text(`Account Name: ${bankAccountName}`, 14, bRow); bRow += 4.5 }
-    if (bankAccountNumber) { doc.text(`Account No.: ${bankAccountNumber}`, 14, bRow); bRow += 4.5 }
-    if (bankSortCode)      { doc.text(`Sort Code: ${bankSortCode}`, 14, bRow) }
+    const bX  = 14
+    const bW  = 85
+    doc.setFillColor(...LIGHT); doc.setDrawColor(...RULE); doc.setLineWidth(0.25)
+    doc.roundedRect(bX, tY, bW, totalsBoxH, 2, 2, 'FD')
+    doc.setFontSize(TYPE.H3.size); doc.setFont(pdfFont, 'bold'); doc.setTextColor(...BRAND)
+    doc.text('PAYMENT DETAILS', bX + 3, tY + 5)
+    doc.setFontSize(TYPE.BODY.size); doc.setFont(pdfFont, 'normal'); doc.setTextColor(...DARK)
+    let bRow = tY + 11
+    if (bankName)          { doc.text(`Bank: ${bankName}`,                   bX + 3, bRow); bRow += 4.5 }
+    if (bankAccountName)   { doc.text(`Account Name: ${bankAccountName}`,    bX + 3, bRow); bRow += 4.5 }
+    if (bankAccountNumber) { doc.text(`Account No.: ${bankAccountNumber}`,   bX + 3, bRow); bRow += 4.5 }
+    if (bankSortCode)      { doc.text(`Sort Code: ${bankSortCode}`,          bX + 3, bRow) }
+  } else {
+    doc.setFontSize(TYPE.SMALL.size); doc.setFont(pdfFont, 'italic'); doc.setTextColor(...MUTED)
+    doc.text(`Payment: ${inv.payment_method.replace(/_/g, ' ')}`, 14, tY + 5.5)
   }
 
-  // ── Thank you ─────────────────────────────────────────────────────────────
-  doc.setFontSize(9); doc.setFont('helvetica', 'italic'); doc.setTextColor(...MUTED)
-  doc.text('Thank you for your business!', 14, afterTotalsY + 8)
+  // ── Thank you note ─────────────────────────────────────────────────────────
+  doc.setFontSize(TYPE.BODY.size); doc.setFont(pdfFont, 'italic'); doc.setTextColor(...MUTED)
+  doc.text('Thank you for your business!', 14, afterTotalsY + 6)
 
   // ── FIRS Compliance block (IRN + QR code) ─────────────────────────────────
-  // Rendered only after DigiTax clears the invoice (firs_irn is populated).
-  // The QR code image (base64 PNG) is decoded from firs_qr_code and placed on
-  // the right; structured fields (IRN, FIRS invoice no., CSID) are on the left.
   const firsIrn   = (inv as any).firs_irn  as string | undefined
   const firsQr    = (inv as any).firs_qr_code as string | undefined
   const firsInvNo = (inv as any).firs_invoice_number as string | undefined
   const firsCsid  = (inv as any).firs_csid as string | undefined
 
   if (firsIrn) {
-    const FIRS_TOP    = afterTotalsY + 15   // y start of the compliance box
-    const FIRS_QR_SZ  = 24                  // QR image size in mm
-    const FIRS_H      = 30                  // box height in mm
-    const FIRS_GREEN: [number, number, number] = [22, 101, 52]  // #166534
-    const FIRS_LIGHT: [number, number, number] = [220, 252, 231] // #dcfce7
+    const FIRS_TOP   = afterTotalsY + 14
+    const FIRS_QR_SZ = 24
+    const FIRS_H     = 30
+    const FIRS_GREEN: [number,number,number] = [21, 128, 61]
+    const FIRS_LIGHT: [number,number,number] = [220, 252, 231]
 
-    // Background box
-    doc.setFillColor(...FIRS_LIGHT)
-    doc.setDrawColor(...FIRS_GREEN)
-    doc.setLineWidth(0.4)
+    doc.setFillColor(...FIRS_LIGHT); doc.setDrawColor(...FIRS_GREEN); doc.setLineWidth(0.3)
     doc.roundedRect(14, FIRS_TOP, pageW - 28, FIRS_H, 2, 2, 'FD')
 
-    // "FIRS VERIFIED" stamp label (top-left)
-    doc.setFontSize(7); doc.setFont('helvetica', 'bold'); doc.setTextColor(...FIRS_GREEN)
+    doc.setFontSize(TYPE.H3.size); doc.setFont(pdfFont, 'bold'); doc.setTextColor(...FIRS_GREEN)
     doc.text('FIRS VERIFIED — e-Invoice', 19, FIRS_TOP + 6)
 
-    // IRN row
-    doc.setFontSize(6.5); doc.setFont('helvetica', 'bold'); doc.setTextColor(...DARK)
+    doc.setFontSize(TYPE.TINY.size); doc.setFont(pdfFont, 'bold'); doc.setTextColor(...DARK)
     doc.text('IRN:', 19, FIRS_TOP + 12)
-    doc.setFont('helvetica', 'normal')
-    // Truncate long IRN to prevent overflow; full value is in the QR code
+    doc.setFont(pdfFont, 'normal')
     const irnDisplay = firsIrn.length > 55 ? firsIrn.slice(0, 55) + '…' : firsIrn
-    doc.text(irnDisplay, 30, FIRS_TOP + 12)
+    doc.text(irnDisplay, 28, FIRS_TOP + 12)
 
-    // FIRS Invoice Number row (if different from internal invoice number)
     if (firsInvNo && firsInvNo !== inv.invoice_number) {
-      doc.setFont('helvetica', 'bold'); doc.text('FIRS No.:', 19, FIRS_TOP + 18)
-      doc.setFont('helvetica', 'normal')
-      const fnoDisplay = firsInvNo.length > 50 ? firsInvNo.slice(0, 50) + '…' : firsInvNo
-      doc.text(fnoDisplay, 40, FIRS_TOP + 18)
+      doc.setFont(pdfFont, 'bold'); doc.text('FIRS No.:', 19, FIRS_TOP + 18)
+      doc.setFont(pdfFont, 'normal')
+      doc.text(firsInvNo.length > 50 ? firsInvNo.slice(0, 50) + '…' : firsInvNo, 38, FIRS_TOP + 18)
     }
-
-    // CSID row (truncated — full value is in the QR code)
     if (firsCsid) {
-      doc.setFont('helvetica', 'bold'); doc.text('CSID:', 19, FIRS_TOP + 24)
-      doc.setFont('helvetica', 'normal'); doc.setTextColor(...MUTED)
-      const csidDisplay = firsCsid.length > 52 ? firsCsid.slice(0, 52) + '…' : firsCsid
-      doc.text(csidDisplay, 30, FIRS_TOP + 24)
+      doc.setFont(pdfFont, 'bold'); doc.text('CSID:', 19, FIRS_TOP + 24)
+      doc.setFont(pdfFont, 'normal'); doc.setTextColor(...MUTED)
+      doc.text(firsCsid.length > 52 ? firsCsid.slice(0, 52) + '…' : firsCsid, 28, FIRS_TOP + 24)
     }
-
-    // QR code image (right side) — firs_qr_code is a raw base64 PNG string
     if (firsQr) {
       try {
         const qrDataUrl = firsQr.startsWith('data:') ? firsQr : `data:image/png;base64,${firsQr}`
-        const qrX = pageW - 14 - FIRS_QR_SZ - 4
-        const qrY = FIRS_TOP + (FIRS_H - FIRS_QR_SZ) / 2
-        doc.addImage(qrDataUrl, 'PNG', qrX, qrY, FIRS_QR_SZ, FIRS_QR_SZ)
-      } catch { /* skip QR image if malformed; text fields still present */ }
+        doc.addImage(qrDataUrl, 'PNG', pageW - 14 - FIRS_QR_SZ - 4, FIRS_TOP + (FIRS_H - FIRS_QR_SZ) / 2, FIRS_QR_SZ, FIRS_QR_SZ)
+      } catch { /* skip QR if malformed */ }
     }
   }
 
-  // ── Footer (varies by template) ───────────────────────────────────────────
-  if (tmpl === 'minimal') {
-    doc.setDrawColor(...DARK); doc.setLineWidth(0.5)
-    doc.line(14, pageH - 14, pageW - 14, pageH - 14)
-    doc.setFontSize(7); doc.setFont('helvetica', 'normal'); doc.setTextColor(...MUTED)
-    doc.text(orgName, 14, pageH - 6)
-    doc.text(`Generated by Audity  ·  ${new Date().toLocaleDateString()}`, pageW / 2, pageH - 6, { align: 'center' })
-    if (orgEmail) doc.text(orgEmail, pageW - 14, pageH - 6, { align: 'right' })
-  } else {
-    doc.setFillColor(...BRAND); doc.rect(0, pageH - 12, pageW, 12, 'F')
-    doc.setFontSize(7); doc.setFont('helvetica', 'normal'); doc.setTextColor(255, 255, 255)
-    doc.text(orgName, 14, pageH - 4.5)
-    doc.text(`Generated by Audity  ·  ${new Date().toLocaleDateString()}`, pageW / 2, pageH - 4.5, { align: 'center' })
-    if (orgEmail) doc.text(orgEmail, pageW - 14, pageH - 4.5, { align: 'right' })
-  }
-
-  // ── Company stamp (bottom-right, semi-transparent) ────────────────────────
+  // ── Company stamp (bottom-right of last page, semi-transparent) ───────────
   if (companyStamp) {
     try {
       const stampData = await urlToDataUrl(companyStamp)
       if (stampData) {
-        const STAMP_SIZE = 36
+        const pageH = doc.internal.pageSize.getHeight()
+        const SZ = 34
         doc.saveGraphicsState()
-        doc.setGState(new (doc as any).GState({ opacity: 0.55 }))
-        doc.addImage(stampData, 'PNG', pageW - 14 - STAMP_SIZE, pageH - 20 - STAMP_SIZE, STAMP_SIZE, STAMP_SIZE)
+        doc.setGState(new (doc as any).GState({ opacity: 0.50 }))
+        doc.addImage(stampData, 'PNG', pageW - 16 - SZ, pageH - 18 - SZ, SZ, SZ)
         doc.restoreGraphicsState()
       }
     } catch { /* skip stamp on error */ }
   }
 
-  // ── Return blob URL ────────────────────────────────────────────────────────
+  // ── Footer (every page) ────────────────────────────────────────────────────
+  addDocFooter(doc, { orgName, docTitle: 'INVOICE', docRef: inv.invoice_number, BRAND, pdfFont })
+
   const blob = doc.output('blob')
-  const url  = URL.createObjectURL(blob)
-  const filename = `Invoice-${inv.invoice_number}.pdf`
-  return { url, filename }
+  return { url: URL.createObjectURL(blob), filename: `Invoice-${inv.invoice_number}.pdf` }
 }
 
 // ── Delivery Note PDF builder ─────────────────────────────────────────────────
@@ -394,13 +380,19 @@ async function buildDeliveryNotePDF(
 ): Promise<PdfPreview> {
   const { jsPDF } = await import('jspdf')
   const { default: autoTable } = await import('jspdf-autotable')
-  const { applyDocHeader, templateHeadFill } = await import('@/lib/pdfUtils')
+  const { applyDocHeader, buildTableStyle, addDocFooter, COLORS, TYPE } = await import('@/lib/pdfUtils')
+
   const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+  doc.setLineHeightFactor(1.15)
   const pageW = doc.internal.pageSize.getWidth()
-  const BRAND: [number, number, number] = hexToRgb(brandColorHex)
-  const DARK: [number, number, number] = [30, 30, 30]
-  const MUTED: [number, number, number] = [100, 100, 100]
-  const tmpl = invoiceTemplate ?? 'classic'
+
+  const BRAND: [number,number,number] = hexToRgb(brandColorHex)
+  const DARK   = COLORS.DARK
+  const MUTED  = COLORS.MUTED
+  const LIGHT  = COLORS.LIGHT
+  const RULE   = COLORS.RULE
+  const tmpl   = invoiceTemplate ?? 'classic'
+
   const displayName = showCompanyName === false ? '' : (companyNameOverride?.trim() || orgName)
   const pdfFont = companyFont?.toLowerCase().includes('times') || companyFont === 'Georgia'
     || companyFont === 'Playfair Display' || companyFont === 'Merriweather' || companyFont === 'Lora'
@@ -412,19 +404,17 @@ async function buildDeliveryNotePDF(
   const isBold   = companyFontBold !== false
   const isItalic = companyFontItalic === true
   const pdfStyle = isBold && isItalic ? 'bolditalic' : isBold ? 'bold' : isItalic ? 'italic' : 'normal'
-  const fontSize = Math.max(8, Math.min(36, companyFontSize ?? 14))
-  const nameColor: [number, number, number] = (() => {
+  const fontSize = Math.max(8, Math.min(36, companyFontSize ?? 12))
+  const nameColor: [number,number,number] = (() => {
     if (!companyFontColor || companyFontColor === '#ffffff') {
-      return (tmpl === 'modern' || tmpl === 'minimal') ? DARK : [255, 255, 255]
+      return (tmpl === 'modern' || tmpl === 'minimal') ? DARK : COLORS.WHITE
     }
     return hexToRgb(companyFontColor)
   })()
 
-  // Pre-load logo
   let logoData: string | null = null
   if (orgLogo) { try { logoData = await urlToDataUrl(orgLogo) } catch { /* skip */ } }
 
-  // Render template-aware header
   let y = applyDocHeader(doc, {
     tmpl, pageW, BRAND, DARK, MUTED,
     logoData,
@@ -445,32 +435,38 @@ async function buildDeliveryNotePDF(
     ],
   })
 
-  // "Deliver To" block
-  doc.setFontSize(10); doc.setFont(pdfFont, 'bold'); doc.setTextColor(...DARK)
-  doc.text('Deliver To:', 14, y)
-  doc.setFont(pdfFont, 'normal')
-  doc.text(inv.customer_name ?? 'Walk-in Customer', 14, y + 5)
-  y += 14
+  // "Deliver To" info block
+  doc.setFillColor(...LIGHT); doc.setDrawColor(...RULE); doc.setLineWidth(0.25)
+  doc.roundedRect(14, y, 85, 20, 2, 2, 'FD')
+  doc.setFontSize(TYPE.H3.size); doc.setFont(pdfFont, 'bold'); doc.setTextColor(...BRAND)
+  doc.text('DELIVER TO', 17, y + 5)
+  doc.setFontSize(TYPE.H2.size); doc.setFont(pdfFont, 'bold'); doc.setTextColor(...DARK)
+  doc.text(inv.customer_name ?? 'Walk-in Customer', 17, y + 11)
+  doc.setFontSize(TYPE.BODY.size); doc.setFont(pdfFont, 'normal'); doc.setTextColor(...MUTED)
+  doc.text(`Date: ${formatDate(inv.issue_date)}`, 17, y + 16.5)
+  y += 26
 
-  const headFill = templateHeadFill(tmpl, BRAND)
+  const ts = buildTableStyle(BRAND, pdfFont)
   autoTable(doc, {
+    ...ts,
     startY: y,
-    head: [['#', 'Product', 'SKU', 'Qty', '☐ Received']],
+    head: [['#', 'Product', 'SKU', 'Qty Ordered', '☐ Received']],
     body: (inv.items ?? []).map((item, i) => [
       i + 1, item.product_name, item.product_sku ?? '—', Number(item.quantity), '',
     ]),
-    styles: { fontSize: 9, cellPadding: { top: 5, bottom: 5, left: 5, right: 5 }, font: pdfFont },
-    headStyles: { fillColor: headFill, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
-    columnStyles: { 0: { cellWidth: 10, halign: 'center' }, 4: { cellWidth: 30, halign: 'center' } },
-    margin: { left: 14, right: 14 },
+    columnStyles: {
+      0: { cellWidth: 8,  halign: 'center' as const },
+      2: { cellWidth: 22, halign: 'center' as const },
+      3: { cellWidth: 22, halign: 'center' as const },
+      4: { cellWidth: 28, halign: 'center' as const },
+    },
   })
 
-  const finalY = (doc as any).lastAutoTable.finalY + 20
-  doc.setFontSize(8)
-  doc.setTextColor(...MUTED)
+  const finalY = (doc as any).lastAutoTable.finalY + 18
+  doc.setFontSize(TYPE.BODY.size); doc.setFont(pdfFont, 'normal'); doc.setTextColor(...MUTED)
   doc.text('Received by: ___________________________', 14, finalY)
-  doc.text('Signature: ___________________________', 14, finalY + 10)
-  doc.text(`From: ${displayName}${orgAddress ? ' · ' + orgAddress : ''}`, 14, finalY + 20)
+  doc.text('Signature:  ___________________________', 14, finalY + 9)
+  doc.text(`Dispatched by: ${displayName}${orgAddress ? '  ·  ' + orgAddress : ''}`, 14, finalY + 18)
 
   // ── Company stamp ──────────────────────────────────────────────────────────
   if (companyStamp) {
@@ -478,17 +474,19 @@ async function buildDeliveryNotePDF(
       const stampData = await urlToDataUrl(companyStamp)
       if (stampData) {
         const pageH = doc.internal.pageSize.getHeight()
-        const STAMP_SIZE = 36
+        const SZ = 34
         doc.saveGraphicsState()
-        doc.setGState(new (doc as any).GState({ opacity: 0.55 }))
-        doc.addImage(stampData, 'PNG', doc.internal.pageSize.getWidth() - 14 - STAMP_SIZE, pageH - 20 - STAMP_SIZE, STAMP_SIZE, STAMP_SIZE)
+        doc.setGState(new (doc as any).GState({ opacity: 0.50 }))
+        doc.addImage(stampData, 'PNG', pageW - 16 - SZ, pageH - 18 - SZ, SZ, SZ)
         doc.restoreGraphicsState()
       }
     } catch { /* skip stamp on error */ }
   }
 
-  const blob = doc.output('blob')
-  return { url: URL.createObjectURL(blob), filename: `DeliveryNote-${inv.invoice_number}.pdf` }
+  // ── Footer (every page) ────────────────────────────────────────────────────
+  addDocFooter(doc, { orgName, docTitle: 'DELIVERY NOTE', docRef: inv.invoice_number, BRAND, pdfFont })
+
+  return { url: URL.createObjectURL(doc.output('blob')), filename: `DeliveryNote-${inv.invoice_number}.pdf` }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

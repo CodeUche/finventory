@@ -85,23 +85,29 @@ export default function ReportsPage() {
   const [cashFlow, setCashFlow]              = useState<CashFlow | null>(null)
   const [vatSummary, setVatSummary]          = useState<VATSummary | null>(null)
 
-  // ── VAT PDF export (kept from original) ────────────────────────────────────
+  // ── VAT PDF export ────────────────────────────────────────────────────────────
   const downloadVATReport = async () => {
     if (!vatSummary) return
     try {
       const { jsPDF } = await import('jspdf')
       const { default: autoTable } = await import('jspdf-autotable')
+      const { applyDocHeader, buildTableStyle, addDocFooter, COLORS, TYPE } = await import('@/lib/pdfUtils')
+
       const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+      doc.setLineHeightFactor(1.15)
       const pageW = doc.internal.pageSize.getWidth()
-      const toRgb = (hex?: string): [number, number, number] => {
+
+      const toRgb = (hex?: string): [number,number,number] => {
         const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex ?? '')
         if (!m) return [249, 115, 22]
         return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)]
       }
-      const BRAND: [number, number, number] = toRgb(organisation?.brand_color)
-      const DARK:  [number, number, number] = [30, 30, 30]
-      const MUTED: [number, number, number] = [100, 100, 100]
-      const tmpl = organisation?.invoice_template ?? 'classic'
+      const BRAND = toRgb(organisation?.brand_color) as [number,number,number]
+      const DARK   = COLORS.DARK
+      const MUTED  = COLORS.MUTED
+      const LIGHT  = COLORS.LIGHT
+      const RULE   = COLORS.RULE
+      const tmpl   = organisation?.invoice_template ?? 'classic'
 
       let vatLogoData: string | null = null
       if (organisation?.logo) {
@@ -126,24 +132,23 @@ export default function ReportsPage() {
       const pBold   = organisation?.company_name_font_bold !== false
       const pItalic = organisation?.company_name_font_italic === true
       const pStyle  = pBold && pItalic ? 'bolditalic' : pBold ? 'bold' : pItalic ? 'italic' : 'normal'
-      const pSize   = Math.max(8, Math.min(36, organisation?.company_name_font_size ?? 14))
-      const nameColor: [number, number, number] = (() => {
+      const pSize   = Math.max(8, Math.min(36, organisation?.company_name_font_size ?? 12))
+      const nameColor: [number,number,number] = (() => {
         const c = organisation?.company_name_font_color
-        if (!c || c === '#ffffff') return (tmpl === 'modern' || tmpl === 'minimal') ? DARK : [255, 255, 255]
+        if (!c || c === '#ffffff') return (tmpl === 'modern' || tmpl === 'minimal') ? DARK : COLORS.WHITE
         return toRgb(c)
       })()
       const showName    = organisation?.show_company_name_on_pdf ?? true
       const displayName = showName ? (organisation?.invoice_company_name?.trim() || organisation?.name || 'Company') : ''
+      const dateRange   = `${period.date_from ?? ''} – ${period.date_to ?? ''}`
 
-      const dateRange = `${period.date_from ?? ''} – ${period.date_to ?? ''}`
-      const { applyDocHeader, templateHeadFill } = await import('@/lib/pdfUtils')
       const vatY = applyDocHeader(doc, {
         tmpl, pageW, BRAND, DARK, MUTED,
         logoData: vatLogoData,
         displayName,
         orgAddress: organisation?.address,
-        orgEmail: organisation?.email,
-        orgPhone: organisation?.phone,
+        orgEmail:   organisation?.email,
+        orgPhone:   organisation?.phone,
         pdfFont: pFont,
         fontSize: pSize,
         pdfStyle: pStyle,
@@ -153,48 +158,78 @@ export default function ReportsPage() {
         docTitle: 'VAT RETURN REPORT',
         metaRows: [
           ['Organisation', organisation?.name ?? ''],
-          ['Period', dateRange],
-          ['Generated', new Date().toLocaleDateString()],
+          ['Period',       dateRange],
+          ['Generated',    new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })],
         ],
       })
 
       const netPayable = parseFloat(vatSummary.net_vat_payable)
+
+      // ── VAT summary table ──────────────────────────────────────────────────
+      const ts = buildTableStyle(BRAND, pFont)
+      doc.setFontSize(9)
       const vatAmounts = [
         formatCurrency(vatSummary.output_vat),
         `(${formatCurrency(vatSummary.input_vat)})`,
         formatCurrency(vatSummary.net_vat_payable),
         'Amount',
       ]
-      doc.setFontSize(10)
       const colW = Math.min(70, Math.max(36, Math.max(...vatAmounts.map(s => doc.getTextWidth(s))) + 16))
+
       autoTable(doc, {
+        ...ts,
         startY: vatY,
         head: [['Description', 'Amount']],
         body: [
-          ['Output VAT (collected on sales)',   formatCurrency(vatSummary.output_vat)],
+          ['Output VAT (collected on sales)',    formatCurrency(vatSummary.output_vat)],
           ['Input VAT (paid on approved bills)', `(${formatCurrency(vatSummary.input_vat)})`],
-          ['Net VAT Payable to FIRS',           formatCurrency(vatSummary.net_vat_payable)],
+          ['Net VAT Payable to FIRS',            formatCurrency(vatSummary.net_vat_payable)],
         ],
-        styles: { fontSize: 10, cellPadding: { top: 5, bottom: 5, left: 8, right: 8 } },
-        headStyles: { fillColor: templateHeadFill(tmpl, BRAND), textColor: [255, 255, 255], fontStyle: 'bold' },
-        bodyStyles: { textColor: DARK },
-        columnStyles: { 0: { cellWidth: 'auto' }, 1: { halign: 'right', fontStyle: 'bold', cellWidth: colW } },
-        didParseCell: (data) => {
+        styles: { ...ts.styles, fontSize: 9, cellPadding: { top: 4, bottom: 4, left: 6, right: 6 } },
+        columnStyles: {
+          0: { cellWidth: 'auto' as const },
+          1: { halign: 'right' as const, fontStyle: 'bold' as const, cellWidth: colW },
+        },
+        didParseCell: (data: any) => {
           if (data.row.index === 2) {
-            data.cell.styles.textColor = netPayable >= 0 ? [220, 38, 38] : [22, 163, 74]
+            data.cell.styles.textColor = netPayable >= 0 ? COLORS.RED : COLORS.GREEN
             data.cell.styles.fillColor = netPayable >= 0 ? [255, 240, 240] : [240, 255, 245]
+            data.cell.styles.fontStyle = 'bold'
           }
         },
-        margin: { left: 14, right: 14 },
       })
-      const afterY = (doc as any).lastAutoTable.finalY + 8
-      doc.setFontSize(8); doc.setFont('helvetica', 'italic'); doc.setTextColor(...MUTED)
-      doc.text(`Formula: Output VAT − Input VAT = Net VAT Payable (${netPayable >= 0 ? 'Owed to FIRS' : 'VAT Credit'})`, 14, afterY)
-      const pageH = doc.internal.pageSize.getHeight()
-      doc.setFillColor(...BRAND)
-      doc.rect(0, pageH - 10, pageW, 10, 'F')
-      doc.setFontSize(7); doc.setFont('helvetica', 'normal'); doc.setTextColor(255, 255, 255)
-      doc.text('Generated by Audity', pageW / 2, pageH - 3.5, { align: 'center' })
+
+      const afterY = (doc as any).lastAutoTable.finalY + 6
+
+      // ── Formula note ───────────────────────────────────────────────────────
+      doc.setFontSize(TYPE.BODY.size); doc.setFont(pFont, 'italic'); doc.setTextColor(...MUTED)
+      doc.text(
+        `Formula: Output VAT − Input VAT = Net VAT Payable  (${netPayable >= 0 ? 'Owed to FIRS' : 'VAT Credit / Refund'})`,
+        14, afterY
+      )
+
+      // ── Disclaimer ─────────────────────────────────────────────────────────
+      const disclaimerY = afterY + 10
+      doc.setFillColor(...LIGHT); doc.setDrawColor(...RULE); doc.setLineWidth(0.25)
+      doc.roundedRect(14, disclaimerY, pageW - 28, 22, 2, 2, 'FD')
+      doc.setFontSize(TYPE.SMALL.size); doc.setFont(pFont, 'bold'); doc.setTextColor(...MUTED)
+      doc.text('DISCLAIMER', 17, disclaimerY + 5)
+      doc.setFont(pFont, 'italic')
+      const disclaimerText = 'This VAT Return Report is generated for informational purposes only. ' +
+        'Figures are based on transactions recorded in Audity during the selected period. ' +
+        'You are solely responsible for verifying accuracy and filing returns with FIRS via TaxPro-Max. ' +
+        'Consult a qualified tax professional before submitting your official VAT return.'
+      const disclaimerLines = doc.splitTextToSize(disclaimerText, pageW - 28 - 6)
+      doc.text(disclaimerLines, 17, disclaimerY + 10)
+
+      // ── Footer (every page, brand accent bar on last page) ─────────────────
+      addDocFooter(doc, {
+        orgName: organisation?.name ?? 'Company',
+        docTitle: 'VAT RETURN REPORT',
+        docRef: dateRange,
+        BRAND,
+        pdfFont: pFont,
+      })
 
       const dateTag = (period.date_from && period.date_to)
         ? `${period.date_from}-to-${period.date_to}`

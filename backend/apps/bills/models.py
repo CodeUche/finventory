@@ -56,6 +56,14 @@ class Bill(TenantAwareModel):
     created_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name='bills_created')
     approved_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='bills_approved')
 
+    # GL auto-post tracking
+    GL_STATUS = [
+        ('pending', 'Pending'), ('posted', 'Posted'),
+        ('failed', 'Failed'), ('not_configured', 'Not Configured'),
+    ]
+    gl_post_status = models.CharField(max_length=20, choices=GL_STATUS, default='pending')
+    gl_post_error  = models.TextField(blank=True, default='')
+
     class Meta:
         ordering = ['-created_at']
         unique_together = [('organisation', 'bill_number')]

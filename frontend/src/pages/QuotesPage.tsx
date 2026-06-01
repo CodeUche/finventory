@@ -53,19 +53,21 @@ async function buildQuotePDF(
 ): Promise<PdfPreview> {
   const { jsPDF } = await import('jspdf')
   const { default: autoTable } = await import('jspdf-autotable')
+  const { applyDocHeader, buildTableStyle, addDocFooter, COLORS, TYPE } = await import('@/lib/pdfUtils')
 
   const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+  doc.setLineHeightFactor(1.15)
   const pageW = doc.internal.pageSize.getWidth()
-  const pageH = doc.internal.pageSize.getHeight()
   const tmpl  = invoiceTemplate ?? 'classic'
 
-  const BRAND:  [number, number, number] = hexToRgb(brandColorHex)
-  const DARK:   [number, number, number] = [30,  30,  30]
-  const MUTED:  [number, number, number] = [100, 100, 100]
-  const LIGHT:  [number, number, number] = [250, 250, 248]
+  const BRAND: [number,number,number] = hexToRgb(brandColorHex)
+  const DARK   = COLORS.DARK
+  const MUTED  = COLORS.MUTED
+  const LIGHT  = COLORS.LIGHT
+  const RULE   = COLORS.RULE
 
   const displayName = companyNameOverride?.trim() || orgName
-  const pdfFontFamily = companyFont?.toLowerCase().includes('times') || companyFont === 'Georgia'
+  const pdfFont = companyFont?.toLowerCase().includes('times') || companyFont === 'Georgia'
     || companyFont === 'Playfair Display' || companyFont === 'Merriweather' || companyFont === 'Lora'
     || companyFont === 'Libre Baskerville' || companyFont === 'EB Garamond' || companyFont === 'Crimson Text'
     || companyFont === 'Cinzel' || companyFont === 'Cormorant Garamond' || companyFont === 'Spectral'
@@ -75,23 +77,15 @@ async function buildQuotePDF(
   const isBold   = companyFontBold !== false
   const isItalic = companyFontItalic === true
   const pdfStyle = isBold && isItalic ? 'bolditalic' : isBold ? 'bold' : isItalic ? 'italic' : 'normal'
-  const fontSize = Math.max(8, Math.min(36, companyFontSize ?? 14))
-  const nameColor: [number, number, number] = (() => {
+  const fontSize = Math.max(8, Math.min(36, companyFontSize ?? 12))
+  const nameColor: [number,number,number] = (() => {
     const c = companyFontColor
-    if (!c || c === '#ffffff') return (tmpl === 'modern' || tmpl === 'minimal') ? DARK : [255, 255, 255]
+    if (!c || c === '#ffffff') return (tmpl === 'modern' || tmpl === 'minimal') ? DARK : COLORS.WHITE
     return hexToRgb(c)
   })()
 
   let logoData: string | null = null
   if (orgLogo) { try { logoData = await urlToDataUrl(orgLogo) } catch { /* skip */ } }
-
-  const { applyDocHeader, templateHeadFill, templateAltRowFill, templateTableLine } = await import('@/lib/pdfUtils')
-
-  const metaRows: [string, string][] = [
-    ['No.', q.quote_number],
-    ['Date', formatDate(q.issue_date)],
-    ['Valid Until', formatDate(q.valid_until)],
-  ]
 
   let y = applyDocHeader(doc, {
     tmpl, pageW, BRAND, DARK, MUTED,
@@ -100,41 +94,71 @@ async function buildQuotePDF(
     orgAddress,
     orgPhone,
     orgEmail,
-    pdfFont: pdfFontFamily,
+    pdfFont,
     fontSize,
     pdfStyle,
     nameColor,
     companyFontUnderline,
     docTitle: 'QUOTE',
-    metaRows,
+    metaRows: [
+      ['No.',         q.quote_number],
+      ['Date',        formatDate(q.issue_date)],
+      ['Valid Until', formatDate(q.valid_until)],
+      ['Status',      q.status?.replace(/_/g, ' ').toUpperCase() ?? ''],
+    ],
   })
 
-  // Bill To block
-  const billLabelColor: [number, number, number] = tmpl === 'minimal' ? DARK : BRAND
-  const billW = (pageW - 28) * 0.48
-  if (tmpl !== 'minimal') { doc.setFillColor(...LIGHT); doc.roundedRect(14, y, billW, 22, 2, 2, 'F') }
-  doc.setFontSize(7); doc.setFont('helvetica', 'bold'); doc.setTextColor(...billLabelColor)
-  doc.text('QUOTE FOR', 19, y + 6)
-  doc.setFontSize(10); doc.setFont('helvetica', 'bold'); doc.setTextColor(...DARK)
-  doc.text(q.customer_name ?? 'Walk-in Customer', 19, y + 13)
-  doc.setFontSize(7.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(...MUTED)
-  doc.text(`Valid until: ${formatDate(q.valid_until)}`, 19, y + 19)
-  y += 28
+  // ── Quote For + Quote Details side-by-side boxes ───────────────────────────
+  const boxW = 85
+  const boxH = 32
+  const lBoxX = 14
+  const rBoxX = lBoxX + boxW + 4
 
-  // Items table
-  const headFill = templateHeadFill(tmpl, BRAND)
+  // Left: Quote For
+  doc.setFillColor(...LIGHT); doc.setDrawColor(...RULE); doc.setLineWidth(0.25)
+  doc.roundedRect(lBoxX, y, boxW, boxH, 2, 2, 'FD')
+  doc.setFontSize(TYPE.H3.size); doc.setFont(pdfFont, 'bold'); doc.setTextColor(...BRAND)
+  doc.text('QUOTE FOR', lBoxX + 3, y + 5)
+  doc.setFontSize(TYPE.H2.size); doc.setFont(pdfFont, 'bold'); doc.setTextColor(...DARK)
+  doc.text(q.customer_name ?? 'Walk-in Customer', lBoxX + 3, y + 11)
+  doc.setFontSize(TYPE.BODY.size); doc.setFont(pdfFont, 'normal'); doc.setTextColor(...MUTED)
+  doc.text(`Valid until: ${formatDate(q.valid_until)}`, lBoxX + 3, y + 16.5)
 
-  // Dynamic column widths so large amounts (e.g. ₦250,000,000.00) always fit;
-  // Product / Description column absorbs the remaining space via cellWidth: 'auto'.
+  // Right: Quote Details
+  doc.setFillColor(...LIGHT); doc.setDrawColor(...RULE); doc.setLineWidth(0.25)
+  doc.roundedRect(rBoxX, y, boxW, boxH, 2, 2, 'FD')
+  doc.setFontSize(TYPE.H3.size); doc.setFont(pdfFont, 'bold'); doc.setTextColor(...BRAND)
+  doc.text('QUOTE DETAILS', rBoxX + 3, y + 5)
+  const detailRows: [string, string][] = [
+    ['Quote No.',    q.quote_number],
+    ['Date',         formatDate(q.issue_date)],
+    ['Valid Until',  formatDate(q.valid_until)],
+    ['Status',       q.status?.replace(/_/g, ' ').toUpperCase() ?? ''],
+  ]
+  let dY = y + 11
+  detailRows.slice(0, 4).forEach(([lbl, val]) => {
+    doc.setFontSize(TYPE.SMALL.size); doc.setFont(pdfFont, 'normal'); doc.setTextColor(...MUTED)
+    doc.text(lbl + ':', rBoxX + 3, dY)
+    doc.setFont(pdfFont, 'bold'); doc.setTextColor(...DARK)
+    doc.text(val, rBoxX + boxW - 3, dY, { align: 'right' })
+    dY += 4.5
+  })
+
+  y += boxH + 6
+
+  // ── Items table ────────────────────────────────────────────────────────────
+  const ts = buildTableStyle(BRAND, pdfFont)
+
   const qAmounts = [...(q.items ?? []).map(it => formatCurrency(it.line_total)), 'Amount']
   const qPrices  = [...(q.items ?? []).map(it => formatCurrency(it.unit_price)), 'Unit Price']
   const qQtys    = [...(q.items ?? []).map(it => String(Number(it.quantity))), 'Qty']
   doc.setFontSize(9)
-  const amtColW   = Math.min(58, Math.max(30, Math.max(...qAmounts.map(s => doc.getTextWidth(s))) + 10))
-  const priceColW = Math.min(52, Math.max(28, Math.max(...qPrices.map(s => doc.getTextWidth(s)))  + 10))
-  const qtyColW   = Math.min(30, Math.max(14, Math.max(...qQtys.map(s => doc.getTextWidth(s)))    + 8))
+  const amtColW   = Math.min(58, Math.max(26, Math.max(...qAmounts.map(s => doc.getTextWidth(s))) + 8))
+  const priceColW = Math.min(52, Math.max(24, Math.max(...qPrices.map(s => doc.getTextWidth(s))) + 8))
+  const qtyColW   = Math.min(20, Math.max(14, Math.max(...qQtys.map(s => doc.getTextWidth(s))) + 6))
 
   autoTable(doc, {
+    ...ts,
     startY: y,
     head: [['#', 'Product / Description', 'Qty', 'Unit Price', 'Disc%', 'Amount']],
     body: (q.items ?? []).map((item, i) => [
@@ -145,100 +169,101 @@ async function buildQuotePDF(
       parseFloat(item.discount_percent) > 0 ? `${item.discount_percent}%` : '—',
       formatCurrency(item.line_total),
     ]),
-    styles: { fontSize: 9, cellPadding: { top: 4, bottom: 4, left: 5, right: 5 }, textColor: DARK },
-    headStyles: { fillColor: headFill, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
-    alternateRowStyles: { fillColor: templateAltRowFill(tmpl) },
     columnStyles: {
-      0: { cellWidth: 10,        halign: 'center' },
-      1: { cellWidth: 'auto' },
-      2: { cellWidth: qtyColW,   halign: 'center' },
-      3: { cellWidth: priceColW, halign: 'right' },
-      4: { cellWidth: 14,        halign: 'center' },
-      5: { cellWidth: amtColW,   halign: 'right', fontStyle: 'bold' },
+      0: { cellWidth: 8,         halign: 'center' as const },
+      1: { cellWidth: 'auto' as const },
+      2: { cellWidth: qtyColW,   halign: 'center' as const },
+      3: { cellWidth: priceColW, halign: 'right' as const },
+      4: { cellWidth: 16,        halign: 'center' as const },
+      5: { cellWidth: amtColW,   halign: 'right' as const, fontStyle: 'bold' as const, textColor: DARK },
     },
-    margin: { left: 14, right: 14 },
-    tableLineColor: templateTableLine(tmpl, DARK).color,
-    tableLineWidth: templateTableLine(tmpl, DARK).width,
   })
 
-  // Totals block
-  const tY = (doc as any).lastAutoTable.finalY + 8
-  const tX = pageW - 100; const tW = 86
+  // ── Totals block — right-aligned 72mm box ──────────────────────────────────
+  const tY = (doc as any).lastAutoTable.finalY + 6
+  const tW = 72
+  const tX = pageW - 14 - tW
+
   const subtotalNum = parseFloat(q.subtotal ?? q.total_amount ?? '0')
   const discountNum = parseFloat(q.discount_amount ?? '0')
   const taxNum      = parseFloat(q.tax_amount ?? '0')
   const totalNum    = parseFloat(q.total_amount ?? '0')
 
-  const totalRows: Array<{ label: string; value: string; bold?: boolean }> = []
-  totalRows.push({ label: 'Subtotal:', value: formatCurrency(subtotalNum) })
-  if (discountNum > 0) totalRows.push({ label: 'Discount:', value: `- ${formatCurrency(discountNum)}` })
-  if (taxNum > 0) totalRows.push({ label: 'Tax / VAT:', value: formatCurrency(taxNum) })
+  const totalRows: Array<{ label: string; value: string; color?: [number,number,number] }> = []
+  totalRows.push({ label: 'Subtotal', value: formatCurrency(subtotalNum) })
+  if (discountNum > 0) totalRows.push({ label: 'Discount', value: `- ${formatCurrency(discountNum)}`, color: COLORS.AMBER })
+  if (taxNum > 0) totalRows.push({ label: 'Tax / VAT', value: formatCurrency(taxNum) })
 
-  const ROW_H = 9; const PADDING_TOP = 9; const DIVIDER_GAP = 4
-  const boxH = PADDING_TOP + totalRows.length * ROW_H + DIVIDER_GAP + ROW_H + 6
-  doc.setFillColor(...LIGHT); doc.roundedRect(tX, tY, tW, boxH, 2, 2, 'F')
-  let rowY = tY + PADDING_TOP
-  totalRows.forEach(({ label, value }) => {
-    doc.setFontSize(9); doc.setFont('helvetica', 'normal')
-    doc.setTextColor(...MUTED); doc.text(label, tX + 5, rowY)
-    doc.setTextColor(...DARK); doc.text(value, pageW - 19, rowY, { align: 'right' })
+  const ROW_H = 5.5
+  const PAD   = 4
+  const boxContentH = totalRows.length * ROW_H + 2 + ROW_H + PAD * 2 + 3
+  doc.setFillColor(...LIGHT); doc.setDrawColor(...RULE); doc.setLineWidth(0.25)
+  doc.roundedRect(tX, tY, tW, boxContentH, 2, 2, 'FD')
+
+  let rowY = tY + PAD + ROW_H * 0.5
+  totalRows.forEach(({ label, value, color }) => {
+    doc.setFontSize(TYPE.SMALL.size); doc.setFont(pdfFont, 'normal'); doc.setTextColor(...MUTED)
+    doc.text(label, tX + PAD, rowY)
+    doc.setFontSize(TYPE.BODY.size); doc.setFont(pdfFont, 'normal'); doc.setTextColor(...(color ?? DARK))
+    doc.text(value, tX + tW - PAD, rowY, { align: 'right' })
     rowY += ROW_H
   })
-  doc.setDrawColor(210, 210, 210); doc.setLineWidth(0.3); doc.line(tX + 5, rowY + 2, pageW - 19, rowY + 2); rowY += DIVIDER_GAP + 2
-  doc.setFontSize(10); doc.setFont('helvetica', 'bold'); doc.setTextColor(...MUTED); doc.text('QUOTE TOTAL:', tX + 5, rowY)
-  doc.setTextColor(...BRAND); doc.text(formatCurrency(totalNum), pageW - 19, rowY, { align: 'right' })
+  doc.setDrawColor(...RULE); doc.setLineWidth(0.25)
+  doc.line(tX + PAD, rowY + 1, tX + tW - PAD, rowY + 1)
+  rowY += 3
 
-  // Notes & Terms
-  const afterTotalsY = tY + boxH
+  // Grand total row
+  doc.setFontSize(TYPE.H3.size); doc.setFont(pdfFont, 'bold'); doc.setTextColor(...DARK)
+  doc.text('QUOTE TOTAL', tX + PAD, rowY)
+  doc.setFontSize(TYPE.H2.size); doc.setFont(pdfFont, 'bold'); doc.setTextColor(...BRAND)
+  doc.text(formatCurrency(totalNum), tX + tW - PAD, rowY, { align: 'right' })
+
+  const afterTotalsY = tY + boxContentH + 6
+
+  // ── Notes box ─────────────────────────────────────────────────────────────
   if (q.notes) {
-    doc.setFontSize(8); doc.setFont('helvetica', 'bold'); doc.setTextColor(...BRAND)
-    doc.text('NOTES', 14, afterTotalsY + 8)
-    doc.setFont('helvetica', 'normal'); doc.setTextColor(...MUTED)
-    const noteLines = doc.splitTextToSize(q.notes, 90)
-    doc.text(noteLines, 14, afterTotalsY + 14)
+    doc.setFillColor(...LIGHT); doc.setDrawColor(...RULE); doc.setLineWidth(0.25)
+    const noteLines = doc.splitTextToSize(q.notes, pageW - 28 - 6)
+    const noteBoxH = noteLines.length * 4.5 + 10
+    doc.roundedRect(14, afterTotalsY, pageW - 28, noteBoxH, 2, 2, 'FD')
+    doc.setFontSize(TYPE.H3.size); doc.setFont(pdfFont, 'bold'); doc.setTextColor(...BRAND)
+    doc.text('NOTES', 17, afterTotalsY + 5)
+    doc.setFontSize(TYPE.BODY.size); doc.setFont(pdfFont, 'normal'); doc.setTextColor(...MUTED)
+    doc.text(noteLines, 17, afterTotalsY + 10)
   }
+
+  // ── Terms box ─────────────────────────────────────────────────────────────
   if (q.terms) {
-    const termsY = afterTotalsY + (q.notes ? 20 + 4 : 8)
-    doc.setFontSize(8); doc.setFont('helvetica', 'bold'); doc.setTextColor(...BRAND)
-    doc.text('TERMS & CONDITIONS', 14, termsY)
-    doc.setFont('helvetica', 'normal'); doc.setTextColor(...MUTED)
-    const termLines = doc.splitTextToSize(q.terms, 90)
-    doc.text(termLines, 14, termsY + 6)
+    const termsTopY = afterTotalsY + (q.notes ? doc.splitTextToSize(q.notes, pageW - 28 - 6).length * 4.5 + 10 + 4 : 0)
+    doc.setFillColor(...LIGHT); doc.setDrawColor(...RULE); doc.setLineWidth(0.25)
+    const termLines = doc.splitTextToSize(q.terms, pageW - 28 - 6)
+    const termBoxH = termLines.length * 4.5 + 10
+    doc.roundedRect(14, termsTopY, pageW - 28, termBoxH, 2, 2, 'FD')
+    doc.setFontSize(TYPE.H3.size); doc.setFont(pdfFont, 'bold'); doc.setTextColor(...BRAND)
+    doc.text('TERMS & CONDITIONS', 17, termsTopY + 5)
+    doc.setFontSize(TYPE.BODY.size); doc.setFont(pdfFont, 'normal'); doc.setTextColor(...MUTED)
+    doc.text(termLines, 17, termsTopY + 10)
   }
 
-  // Footer
-  if (tmpl === 'minimal') {
-    doc.setDrawColor(...DARK); doc.setLineWidth(0.5); doc.line(14, pageH - 14, pageW - 14, pageH - 14)
-    doc.setFontSize(7); doc.setFont('helvetica', 'normal'); doc.setTextColor(...MUTED)
-    doc.text(orgName, 14, pageH - 6)
-    doc.text(`Generated by Audity  ·  ${new Date().toLocaleDateString()}`, pageW / 2, pageH - 6, { align: 'center' })
-    if (orgEmail) doc.text(orgEmail, pageW - 14, pageH - 6, { align: 'right' })
-  } else {
-    doc.setFillColor(...BRAND); doc.rect(0, pageH - 12, pageW, 12, 'F')
-    doc.setFontSize(7); doc.setFont('helvetica', 'normal'); doc.setTextColor(255, 255, 255)
-    doc.text(orgName, 14, pageH - 4.5)
-    doc.text(`Generated by Audity  ·  ${new Date().toLocaleDateString()}`, pageW / 2, pageH - 4.5, { align: 'center' })
-    if (orgEmail) doc.text(orgEmail, pageW - 14, pageH - 4.5, { align: 'right' })
-  }
-
-  // Company stamp
+  // ── Company stamp ──────────────────────────────────────────────────────────
   if (companyStamp) {
     try {
       const stampData = await urlToDataUrl(companyStamp)
       if (stampData) {
-        const STAMP_SIZE = 36
+        const pageH = doc.internal.pageSize.getHeight()
+        const SZ = 34
         doc.saveGraphicsState()
-        doc.setGState(new (doc as any).GState({ opacity: 0.55 }))
-        doc.addImage(stampData, 'PNG', pageW - 14 - STAMP_SIZE, pageH - 20 - STAMP_SIZE, STAMP_SIZE, STAMP_SIZE)
+        doc.setGState(new (doc as any).GState({ opacity: 0.50 }))
+        doc.addImage(stampData, 'PNG', pageW - 16 - SZ, pageH - 18 - SZ, SZ, SZ)
         doc.restoreGraphicsState()
       }
     } catch { /* skip stamp on error */ }
   }
 
-  const blob = doc.output('blob')
-  const url  = URL.createObjectURL(blob)
-  const filename = `Quote-${q.quote_number}.pdf`
-  return { url, filename, quoteId: q.id }
+  // ── Footer (every page) ────────────────────────────────────────────────────
+  addDocFooter(doc, { orgName, docTitle: 'QUOTE', docRef: q.quote_number, BRAND, pdfFont })
+
+  return { url: URL.createObjectURL(doc.output('blob')), filename: `Quote-${q.quote_number}.pdf`, quoteId: q.id }
 }
 
 type StatusFilter = 'all' | 'draft' | 'sent' | 'accepted' | 'rejected' | 'expired' | 'converted'
