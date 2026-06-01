@@ -14,9 +14,23 @@ Fields intentionally NOT protected (allowed post-post updates):
   - gl_post_status / gl_post_error  (GL retry workflow needs to update these)
   - reconciled_at                   (bank reconciliation marks entries later)
   - updated_at                      (auto-managed by Django)
+
+This migration is a no-op on non-PostgreSQL databases (e.g. SQLite used in tests).
 """
 
 from django.db import migrations
+
+
+class RunSQLIfPostgres(migrations.RunSQL):
+    """RunSQL that silently skips execution on non-PostgreSQL databases."""
+
+    def database_forwards(self, app_label, schema_editor, from_state, to_state):
+        if schema_editor.connection.vendor == "postgresql":
+            super().database_forwards(app_label, schema_editor, from_state, to_state)
+
+    def database_backwards(self, app_label, schema_editor, from_state, to_state):
+        if schema_editor.connection.vendor == "postgresql":
+            super().database_backwards(app_label, schema_editor, from_state, to_state)
 
 
 class Migration(migrations.Migration):
@@ -26,7 +40,7 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.RunSQL(
+        RunSQLIfPostgres(
             sql="""
             CREATE OR REPLACE FUNCTION prevent_posted_journal_mutation()
             RETURNS TRIGGER AS $$
