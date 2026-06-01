@@ -1,10 +1,37 @@
 import { useRef, useState } from 'react'
 import { api } from '@/services/api'
-import { Upload, Download, CheckCircle, XCircle, AlertTriangle, FileText, Users, BookOpen, Loader2 } from 'lucide-react'
+import { Upload, Download, CheckCircle, XCircle, AlertTriangle, FileText, Users, BookOpen, Loader2, Maximize2, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { importApi } from '@/services/api'
 import { save } from '@tauri-apps/plugin-dialog'
 import { writeFile } from '@tauri-apps/plugin-fs'
+
+/** Parse a full CSV text (handles quoted fields with embedded commas/newlines) */
+function parseCSV(text: string): string[][] {
+  const rows: string[][] = []
+  let row: string[] = []
+  let cell = ''
+  let inQuote = false
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+    if (inQuote) {
+      if (ch === '"' && text[i + 1] === '"') { cell += '"'; i++ }
+      else if (ch === '"') { inQuote = false }
+      else { cell += ch }
+    } else {
+      if (ch === '"') { inQuote = true }
+      else if (ch === ',') { row.push(cell.trim()); cell = '' }
+      else if (ch === '\n' || (ch === '\r' && text[i + 1] === '\n')) {
+        if (ch === '\r') i++
+        row.push(cell.trim()); cell = ''
+        if (row.some(Boolean)) rows.push(row)
+        row = []
+      } else { cell += ch }
+    }
+  }
+  if (cell || row.length) { row.push(cell.trim()); if (row.some(Boolean)) rows.push(row) }
+  return rows
+}
 
 type Entity = 'products' | 'customers' | 'accounts'
 type ImportError = { row: number; field: string; message: string }
@@ -37,20 +64,23 @@ const ENTITIES: { key: Entity; label: string; icon: React.ReactNode; description
 export default function ImportPage() {
   const [entity, setEntity] = useState<Entity>('products')
   const [file, setFile] = useState<File | null>(null)
-  const [preview, setPreview] = useState<string[][] | null>(null)
+  const [allRows, setAllRows] = useState<string[][]>([])
   const [previewHeaders, setPreviewHeaders] = useState<string[]>([])
   const [importing, setImporting] = useState(false)
   const [result, setResult] = useState<ImportResult | null>(null)
+  const [expanded, setExpanded] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const selected = ENTITIES.find(e => e.key === entity)!
+  const previewRows = allRows.slice(0, 5)
 
   function handleEntityChange(e: Entity) {
     setEntity(e)
     setFile(null)
-    setPreview(null)
+    setAllRows([])
     setPreviewHeaders([])
     setResult(null)
+    setExpanded(false)
     if (fileRef.current) fileRef.current.value = ''
   }
 
@@ -58,13 +88,12 @@ export default function ImportPage() {
     if (!f) return
     setFile(f)
     setResult(null)
+    setExpanded(false)
     const reader = new FileReader()
     reader.onload = (ev) => {
-      const text = ev.target?.result as string
-      const lines = text.split(/\r?\n/).filter(Boolean)
-      const parsed = lines.slice(0, 6).map(l => l.split(',').map(c => c.replace(/^"|"$/g, '').trim()))
+      const parsed = parseCSV(ev.target?.result as string)
       setPreviewHeaders(parsed[0] ?? [])
-      setPreview(parsed.slice(1))
+      setAllRows(parsed.slice(1).filter(r => r.some(Boolean)))
     }
     reader.readAsText(f)
   }
@@ -145,30 +174,43 @@ export default function ImportPage() {
         </div>
       </div>
 
-      {/* File upload */}
+      {/* File upload — compact strip */}
       <div
         onClick={() => fileRef.current?.click()}
         onDragOver={ev => ev.preventDefault()}
         onDrop={ev => { ev.preventDefault(); handleFile(ev.dataTransfer.files[0]) }}
-        className="rounded-xl border-2 border-dashed border-surface-600 hover:border-indigo-500/60 bg-surface-800/50 p-10 flex flex-col items-center gap-3 cursor-pointer transition-colors"
+        className="rounded-xl border-2 border-dashed border-surface-600 hover:border-indigo-500/60 bg-surface-800/50 px-5 py-4 flex items-center gap-4 cursor-pointer transition-colors"
       >
-        <Upload size={28} className="text-slate-500" />
-        <p className="text-slate-300 font-medium">{file ? file.name : 'Click or drag a CSV file here'}</p>
-        <p className="text-xs text-slate-500">CSV files only · UTF-8 encoding · Max 10 MB</p>
-        <input
-          ref={fileRef}
-          type="file"
-          accept=".csv,text/csv"
-          className="hidden"
-          onChange={ev => handleFile(ev.target.files?.[0])}
-        />
+        <Upload size={20} className="text-slate-500 shrink-0" />
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium text-slate-300 truncate">{file ? file.name : 'Click or drag a CSV file here'}</p>
+          <p className="text-xs text-slate-500 mt-0.5">CSV · UTF-8 · Max 10 MB</p>
+        </div>
+        {file && (
+          <button
+            onClick={e => { e.stopPropagation(); setFile(null); setAllRows([]); setPreviewHeaders([]); if (fileRef.current) fileRef.current.value = '' }}
+            className="shrink-0 p-1 text-slate-500 hover:text-slate-300 transition-colors"
+          >
+            <X size={14} />
+          </button>
+        )}
+        <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden" onChange={ev => handleFile(ev.target.files?.[0])} />
       </div>
 
       {/* Preview table */}
-      {preview && previewHeaders.length > 0 && (
+      {previewHeaders.length > 0 && (
         <div className="rounded-xl border border-surface-700 overflow-hidden">
-          <div className="px-4 py-2 bg-surface-800 border-b border-surface-700">
-            <p className="text-xs font-medium text-slate-400">Preview (first 5 rows)</p>
+          <div className="px-4 py-2 bg-surface-800 border-b border-surface-700 flex items-center justify-between">
+            <p className="text-xs font-medium text-slate-400">
+              Preview · {allRows.length} row{allRows.length !== 1 ? 's' : ''} total (showing first 5)
+            </p>
+            <button
+              onClick={() => setExpanded(true)}
+              className="flex items-center gap-1.5 text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
+              title="Expand full view"
+            >
+              <Maximize2 size={13} /> Full view
+            </button>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
@@ -180,7 +222,7 @@ export default function ImportPage() {
                 </tr>
               </thead>
               <tbody>
-                {preview.map((row, ri) => (
+                {previewRows.map((row, ri) => (
                   <tr key={ri} className="border-t border-surface-700">
                     {previewHeaders.map((_, ci) => (
                       <td key={ci} className="px-3 py-1.5 text-slate-300 whitespace-nowrap max-w-[200px] truncate">{row[ci] ?? ''}</td>
@@ -189,6 +231,43 @@ export default function ImportPage() {
                 ))}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* Full expand modal */}
+      {expanded && previewHeaders.length > 0 && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+          <div className="bg-surface-800 border border-surface-700 rounded-2xl w-full max-w-6xl max-h-[90vh] flex flex-col shadow-2xl animate-slide-up">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-surface-700 shrink-0">
+              <div>
+                <p className="text-sm font-semibold text-white">{file?.name}</p>
+                <p className="text-xs text-slate-400">{allRows.length} rows · {previewHeaders.length} columns</p>
+              </div>
+              <button onClick={() => setExpanded(false)} className="btn-ghost p-1.5"><X size={18} /></button>
+            </div>
+            <div className="overflow-auto flex-1">
+              <table className="w-full text-xs">
+                <thead className="bg-surface-900 sticky top-0 z-10">
+                  <tr>
+                    <th className="px-3 py-2 text-left text-slate-500 font-medium w-10">#</th>
+                    {previewHeaders.map(h => (
+                      <th key={h} className="px-3 py-2 text-left text-slate-400 font-medium whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {allRows.map((row, ri) => (
+                    <tr key={ri} className="border-t border-surface-700 hover:bg-surface-700/30">
+                      <td className="px-3 py-1.5 text-slate-600 tabular-nums">{ri + 1}</td>
+                      {previewHeaders.map((_, ci) => (
+                        <td key={ci} className="px-3 py-1.5 text-slate-300 max-w-[240px] truncate" title={row[ci] ?? ''}>{row[ci] ?? ''}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
@@ -266,7 +345,7 @@ export default function ImportPage() {
           {/* Import again */}
           <div className="flex justify-end">
             <button
-              onClick={() => { setResult(null); setFile(null); setPreview(null); if (fileRef.current) fileRef.current.value = '' }}
+              onClick={() => { setResult(null); setFile(null); setAllRows([]); setPreviewHeaders([]); setExpanded(false); if (fileRef.current) fileRef.current.value = '' }}
               className="text-xs text-indigo-400 hover:text-indigo-300"
             >
               Import another file
