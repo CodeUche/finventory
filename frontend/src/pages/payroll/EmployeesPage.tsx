@@ -311,12 +311,11 @@ export default function EmployeesPage() {
     if (!docName.trim()) { toast.error('Document name is required'); return }
     setUploadingDoc(true)
     try {
-      const fd = new FormData()
-      fd.append('employee', editId!)
-      fd.append('name', docName.trim())
-      fd.append('document_type', docType)
-      fd.append('file', docFile)
-      await payrollApi.uploadDocument(fd)
+      await payrollApi.uploadDocument(docFile, {
+        employee: editId!,
+        name: docName.trim(),
+        document_type: docType,
+      })
       toast.success('Document uploaded')
       setDocName(''); setDocType('other'); setDocFile(null)
       if (docFileRef.current) docFileRef.current.value = ''

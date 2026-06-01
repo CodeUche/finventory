@@ -999,7 +999,8 @@ export const creditApi = {
 export const purchaseApi = {
   list: (params?: object) => api.get('/purchases/orders/', { params }),
   create: (data: object) => api.post('/purchases/orders/', data),
-  patch: (id: string, data: FormData | object) => api.patch(`/purchases/orders/${id}/`, data),
+  patch: (id: string, data: object) => api.patch(`/purchases/orders/${id}/`, data),
+  uploadReceipt: (id: string, file: File) => _multipartPatch(`/purchases/orders/${id}/`, file, 'receipt'),
   delete: (id: string) => api.delete(`/purchases/orders/${id}/`),
   removeReceipt: (id: string) => api.post(`/purchases/orders/${id}/clear_receipt/`),
   receive: (id: string, items: object[]) => api.post(`/purchases/orders/${id}/receive/`, { items }),
@@ -1163,10 +1164,7 @@ export const accountingApi = {
   markReconciled: (id: string) => api.post(`/accounting/reconciliations/${id}/mark_reconciled/`),
   addReconLine: (id: string, data: object) => api.post(`/accounting/reconciliations/${id}/add_line/`, data),
   updateReconLine: (id: string, data: object) => api.patch(`/accounting/reconciliations/${id}/update_line/`, data),
-  importStatement: (id: string, file: File) => {
-    const fd = new FormData(); fd.append('file', file)
-    return api.post(`/accounting/reconciliations/${id}/import_statement/`, fd)
-  },
+  importStatement: (id: string, file: File) => _importPost(`/accounting/reconciliations/${id}/import_statement/`, file),
   aiReconcile: (id: string) => api.post(`/accounting/reconciliations/${id}/ai_reconcile/`),
   confirmMatch: (id: string, data: { match_id: string; action: 'confirm' | 'reject' }) =>
     api.post(`/accounting/reconciliations/${id}/confirm_match/`, data),
@@ -1212,7 +1210,8 @@ export const payrollApi = {
   // Employee documents
   documents: (employeeId: string) =>
     api.get('/payroll/documents/', { params: { employee: employeeId } }),
-  uploadDocument: (data: FormData) => api.post('/payroll/documents/', data),
+  uploadDocument: (file: File, fields: { employee: string; name: string; document_type: string }) =>
+    _multipartPost('/payroll/documents/', file, 'file', fields),
   deleteDocument: (id: string) => api.delete(`/payroll/documents/${id}/`),
 }
 
@@ -1342,26 +1341,53 @@ export const einvoicingApi = {
 // Tauri's HTTP plugin re-encodes FormData as application/x-www-form-urlencoded
 // when proxying through Rust/reqwest. Build the multipart body manually as raw
 // bytes so the plugin passes it through unchanged, with the boundary intact.
-async function _buildMultipart(file: File): Promise<{ body: Uint8Array; contentType: string }> {
+async function _buildMultipartForm(
+  file: File,
+  fileFieldName = 'file',
+  textFields: Record<string, string> = {},
+  fileMimeType?: string,
+): Promise<{ body: Uint8Array; contentType: string }> {
   const boundary = `----AudityBoundary${Date.now()}`
   const enc = new TextEncoder()
   const fileBytes = new Uint8Array(await file.arrayBuffer())
-  const head = enc.encode(
-    `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${file.name}"\r\nContent-Type: text/csv\r\n\r\n`
-  )
-  const tail = enc.encode(`\r\n--${boundary}--\r\n`)
-  const body = new Uint8Array(head.byteLength + fileBytes.byteLength + tail.byteLength)
-  body.set(head, 0)
-  body.set(fileBytes, head.byteLength)
-  body.set(tail, head.byteLength + fileBytes.byteLength)
+  const mime = fileMimeType ?? (file.type || 'application/octet-stream')
+
+  const parts: Uint8Array[] = []
+  for (const [name, value] of Object.entries(textFields)) {
+    parts.push(enc.encode(`--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`))
+  }
+  parts.push(enc.encode(`--${boundary}\r\nContent-Disposition: form-data; name="${fileFieldName}"; filename="${file.name}"\r\nContent-Type: ${mime}\r\n\r\n`))
+  parts.push(fileBytes)
+  parts.push(enc.encode(`\r\n--${boundary}--\r\n`))
+
+  const totalLength = parts.reduce((acc, p) => acc + p.byteLength, 0)
+  const body = new Uint8Array(totalLength)
+  let offset = 0
+  for (const p of parts) { body.set(p, offset); offset += p.byteLength }
   return { body, contentType: `multipart/form-data; boundary=${boundary}` }
 }
 
 async function _importPost(url: string, file: File) {
-  const { body, contentType } = await _buildMultipart(file)
+  const { body, contentType } = await _buildMultipartForm(file, 'file', {}, 'text/csv')
   return api.post(url, body, {
     headers: { 'Content-Type': contentType },
     transformRequest: [(d: unknown) => d], // prevent Axios re-serialising the Uint8Array
+  })
+}
+
+async function _multipartPost(url: string, file: File, fileFieldName: string, textFields?: Record<string, string>) {
+  const { body, contentType } = await _buildMultipartForm(file, fileFieldName, textFields)
+  return api.post(url, body, {
+    headers: { 'Content-Type': contentType },
+    transformRequest: [(d: unknown) => d],
+  })
+}
+
+async function _multipartPatch(url: string, file: File, fileFieldName: string, textFields?: Record<string, string>) {
+  const { body, contentType } = await _buildMultipartForm(file, fileFieldName, textFields)
+  return api.patch(url, body, {
+    headers: { 'Content-Type': contentType },
+    transformRequest: [(d: unknown) => d],
   })
 }
 

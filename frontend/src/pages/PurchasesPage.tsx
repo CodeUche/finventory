@@ -192,9 +192,7 @@ export default function PurchasesPage() {
       if (form.expected_date) payload.expected_date = form.expected_date
       const { data: created } = await purchaseApi.create(payload)
       if (receiptFile) {
-        const fd = new FormData()
-        fd.append('receipt', receiptFile)
-        await purchaseApi.patch(created.id, fd)
+        await purchaseApi.uploadReceipt(created.id, receiptFile)
       }
       toast.success('Purchase order created')
       setShowModal(false)
@@ -283,9 +281,7 @@ export default function PurchasesPage() {
       if (editForm.expected_date) payload.expected_date = editForm.expected_date
       await purchaseApi.patch(editOrder.id, payload)
       if (editReceiptFile) {
-        const fd = new FormData()
-        fd.append('receipt', editReceiptFile)
-        await purchaseApi.patch(editOrder.id, fd)
+        await purchaseApi.uploadReceipt(editOrder.id, editReceiptFile)
       }
       toast.success('Purchase order updated')
       setEditOrder(null)
