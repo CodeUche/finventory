@@ -1338,22 +1338,36 @@ export const einvoicingApi = {
   goLiveChecklist: () => api.get('/einvoicing/go_live_checklist/'),
 }
 
+// Tauri's HTTP plugin re-encodes FormData as application/x-www-form-urlencoded
+// when proxying through Rust/reqwest. Build the multipart body manually as raw
+// bytes so the plugin passes it through unchanged, with the boundary intact.
+async function _buildMultipart(file: File): Promise<{ body: Uint8Array; contentType: string }> {
+  const boundary = `----AudityBoundary${Date.now()}`
+  const enc = new TextEncoder()
+  const fileBytes = new Uint8Array(await file.arrayBuffer())
+  const head = enc.encode(
+    `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${file.name}"\r\nContent-Type: text/csv\r\n\r\n`
+  )
+  const tail = enc.encode(`\r\n--${boundary}--\r\n`)
+  const body = new Uint8Array(head.byteLength + fileBytes.byteLength + tail.byteLength)
+  body.set(head, 0)
+  body.set(fileBytes, head.byteLength)
+  body.set(tail, head.byteLength + fileBytes.byteLength)
+  return { body, contentType: `multipart/form-data; boundary=${boundary}` }
+}
+
+async function _importPost(url: string, file: File) {
+  const { body, contentType } = await _buildMultipart(file)
+  return api.post(url, body, {
+    headers: { 'Content-Type': contentType },
+    transformRequest: [(d: unknown) => d], // prevent Axios re-serialising the Uint8Array
+  })
+}
+
 export const importApi = {
-  /** POST /import/products/ — multipart FormData with `file` field */
-  products: (file: File) => {
-    const fd = new FormData(); fd.append('file', file)
-    return api.post('/import/products/', fd)
-  },
-  /** POST /import/customers/ — multipart FormData with `file` field */
-  customers: (file: File) => {
-    const fd = new FormData(); fd.append('file', file)
-    return api.post('/import/customers/', fd)
-  },
-  /** POST /import/accounts/ — multipart FormData with `file` field */
-  accounts: (file: File) => {
-    const fd = new FormData(); fd.append('file', file)
-    return api.post('/import/accounts/', fd)
-  },
+  products: (file: File) => _importPost('/import/products/', file),
+  customers: (file: File) => _importPost('/import/customers/', file),
+  accounts: (file: File) => _importPost('/import/accounts/', file),
   /** GET /import/template/<entity>/ — download CSV template */
   templateUrl: (entity: 'products' | 'customers' | 'accounts') =>
     `/import/template/${entity}/`,
