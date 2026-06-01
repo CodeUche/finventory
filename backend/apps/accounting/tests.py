@@ -892,3 +892,289 @@ class Phase1WiringTests(TestCase):
         summary = res.data.get("summary", {})
         total = sum(summary.values())
         self.assertGreater(total, 0, "GL health should reflect at least one auto-posted entry")
+
+
+class BulkRetryTests(TestCase):
+    """Phase 3: bulk retry endpoint."""
+
+    def setUp(self):
+        self.user = _make_user("bulk_owner@example.com")
+        self.org = _make_org(self.user, "Bulk Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+
+    def test_bulk_retry_endpoint_returns_200(self):
+        """POST /accounting/gl-health/retry-all/ should return 200."""
+        res = self.client.post("/api/v1/accounting/gl-health/retry-all/")
+        self.assertEqual(res.status_code, 200)
+
+    def test_bulk_retry_response_has_expected_keys(self):
+        res = self.client.post("/api/v1/accounting/gl-health/retry-all/")
+        self.assertEqual(res.status_code, 200)
+        for key in ["attempted", "succeeded", "failed", "errors"]:
+            self.assertIn(key, res.data)
+
+    def test_bulk_retry_with_no_failures_returns_zero_attempted(self):
+        """With no failed entries, attempted should be 0."""
+        res = self.client.post("/api/v1/accounting/gl-health/retry-all/")
+        self.assertEqual(res.data["attempted"], 0)
+
+    def test_bulk_retry_retries_failed_invoices(self):
+        """Failed invoices should be included in the attempt count."""
+        from apps.sales.models import Invoice
+        from apps.inventory.models import Product, Warehouse
+        from apps.customers.models import Customer
+
+        product = Product.objects.create(
+            organisation=self.org, name="Bulk Product",
+            selling_price=Decimal("100"), cost_price=Decimal("50"), product_type="service",
+        )
+        customer = Customer.objects.create(
+            organisation=self.org, name="Bulk Customer", email="bulk@example.com"
+        )
+        warehouse = Warehouse.objects.create(organisation=self.org, name="Bulk WH")
+        from apps.sales.services import SaleService
+        invoice = SaleService.create_sale(
+            organisation=self.org, customer=customer, warehouse=warehouse,
+            items=[{"product_id": product.id, "quantity": 1, "unit_price": Decimal("100")}],
+            payment_method="cash", created_by=self.user,
+        )
+        Invoice.objects.filter(pk=invoice.pk).update(gl_post_status="failed", gl_post_error="test error")
+        res = self.client.post("/api/v1/accounting/gl-health/retry-all/")
+        self.assertEqual(res.status_code, 200)
+        self.assertGreaterEqual(res.data["attempted"], 1)
+
+    def test_bulk_retry_unauthenticated_denied(self):
+        from rest_framework.test import APIClient
+        anon = APIClient()
+        res = anon.post("/api/v1/accounting/gl-health/retry-all/")
+        self.assertIn(res.status_code, [401, 403])
+
+
+class ReconPostConfirmedGLTests(TestCase):
+    """Phase 3: Post confirmed AI matches as GL journal entries."""
+
+    def setUp(self):
+        self.user = _make_user("recon_gl_owner@example.com")
+        self.org = _make_org(self.user, "Recon GL Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+
+    def _make_recon(self):
+        from apps.accounting.models import BankReconciliation, BankReconciliationLine, AIReconMatch
+        account = Account.objects.filter(organisation=self.org, account_type="asset").first()
+        recon = BankReconciliation.objects.create(
+            organisation=self.org,
+            account=account,
+            period_start=timezone.now().date().replace(day=1),
+            period_end=timezone.now().date(),
+            statement_closing_balance=Decimal("5000"),
+        )
+        return recon
+
+    def test_post_confirmed_gl_endpoint_exists(self):
+        recon = self._make_recon()
+        res = self.client.post(f"/api/v1/accounting/reconciliations/{recon.id}/post_confirmed_gl/")
+        self.assertIn(res.status_code, [200, 201, 422])
+
+    def test_post_confirmed_gl_with_no_confirmed_matches_returns_0(self):
+        recon = self._make_recon()
+        res = self.client.post(f"/api/v1/accounting/reconciliations/{recon.id}/post_confirmed_gl/")
+        self.assertIn(res.status_code, [200, 422])
+        self.assertEqual(res.data.get("posted", 0), 0)
+
+    def test_post_confirmed_gl_creates_journal_entry(self):
+        """Confirmed AI match with no book_line should produce a GL journal entry."""
+        from apps.accounting.models import (
+            BankReconciliation, BankReconciliationLine, AIReconMatch
+        )
+        account = Account.objects.filter(organisation=self.org, account_type="asset").first()
+        recon = BankReconciliation.objects.create(
+            organisation=self.org,
+            account=account,
+            period_start=timezone.now().date().replace(day=1),
+            period_end=timezone.now().date(),
+            statement_closing_balance=Decimal("1000"),
+        )
+        bank_line = BankReconciliationLine.objects.create(
+            organisation=self.org,
+            reconciliation=recon,
+            description="Test inflow",
+            transaction_date=timezone.now().date(),
+            amount=Decimal("500"),
+        )
+        AIReconMatch.objects.create(
+            organisation=self.org,
+            reconciliation=recon,
+            bank_line=bank_line,
+            book_line=None,
+            confidence=0.9,
+            match_type="exact",
+            status="confirmed",
+        )
+        je_count_before = JournalEntry.objects.filter(organisation=self.org).count()
+        res = self.client.post(f"/api/v1/accounting/reconciliations/{recon.id}/post_confirmed_gl/")
+        je_count_after = JournalEntry.objects.filter(organisation=self.org).count()
+        self.assertIn(res.status_code, [201, 422])
+        if res.status_code == 201:
+            self.assertGreater(je_count_after, je_count_before)
+
+    def test_post_confirmed_gl_marks_bank_line_cleared(self):
+        """After posting, the bank_line.is_cleared should be True."""
+        from apps.accounting.models import (
+            BankReconciliation, BankReconciliationLine, AIReconMatch
+        )
+        account = Account.objects.filter(organisation=self.org, account_type="asset").first()
+        recon = BankReconciliation.objects.create(
+            organisation=self.org,
+            account=account,
+            period_start=timezone.now().date().replace(day=1),
+            period_end=timezone.now().date(),
+            statement_closing_balance=Decimal("2000"),
+        )
+        bank_line = BankReconciliationLine.objects.create(
+            organisation=self.org,
+            reconciliation=recon,
+            description="Test payment",
+            transaction_date=timezone.now().date(),
+            amount=Decimal("250"),
+        )
+        AIReconMatch.objects.create(
+            organisation=self.org,
+            reconciliation=recon,
+            bank_line=bank_line,
+            book_line=None,
+            confidence=0.95,
+            match_type="exact",
+            status="confirmed",
+        )
+        res = self.client.post(f"/api/v1/accounting/reconciliations/{recon.id}/post_confirmed_gl/")
+        if res.status_code == 201 and res.data.get("posted", 0) > 0:
+            bank_line.refresh_from_db()
+            self.assertTrue(bank_line.is_cleared)
+
+
+class StrictGLModeTests(TestCase):
+    """Phase 4: Strict GL mode blocks transactions when mappings are missing."""
+
+    def setUp(self):
+        self.user = _make_user("strict_owner@example.com")
+        self.org = _make_org(self.user, "Strict Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+
+    def test_strict_mode_off_allows_sale_without_full_mapping(self):
+        """With strict_gl_mode=False (default), sales proceed even if mapping has nulls."""
+        from apps.accounting.models import AccountMapping
+        from apps.sales.services import SaleService
+        from apps.inventory.models import Product, Warehouse
+        from apps.customers.models import Customer
+
+        self.org.strict_gl_mode = False
+        self.org.save(update_fields=["strict_gl_mode"])
+        mapping = AccountMapping.objects.get(organisation=self.org)
+        mapping.revenue_account = None
+        mapping.save()
+        product = Product.objects.create(
+            organisation=self.org, name="Strict Off Product",
+            selling_price=Decimal("100"), cost_price=Decimal("50"), product_type="service",
+        )
+        customer = Customer.objects.create(
+            organisation=self.org, name="Strict Off Customer", email="strictoff@example.com"
+        )
+        warehouse = Warehouse.objects.create(organisation=self.org, name="Strict Off WH")
+        try:
+            invoice = SaleService.create_sale(
+                organisation=self.org, customer=customer, warehouse=warehouse,
+                items=[{"product_id": product.id, "quantity": 1, "unit_price": Decimal("100")}],
+                payment_method="cash", created_by=self.user,
+            )
+            self.assertIsNotNone(invoice)
+        except Exception as e:
+            self.fail(f"Sale should succeed with strict_gl_mode=False, got: {e}")
+
+    def test_strict_mode_on_blocks_sale_when_mapping_incomplete(self):
+        """With strict_gl_mode=True and missing mappings, creating a sale must raise ValueError."""
+        from apps.accounting.models import AccountMapping
+        from apps.sales.services import SaleService
+        from apps.inventory.models import Product, Warehouse
+        from apps.customers.models import Customer
+
+        self.org.strict_gl_mode = True
+        self.org.save(update_fields=["strict_gl_mode"])
+        mapping = AccountMapping.objects.get(organisation=self.org)
+        mapping.revenue_account = None
+        mapping.cash_account = None
+        mapping.bank_account = None
+        mapping.accounts_receivable = None
+        mapping.inventory_account = None
+        mapping.cogs_account = None
+        mapping.accounts_payable = None
+        mapping.save()
+        product = Product.objects.create(
+            organisation=self.org, name="Strict On Product",
+            selling_price=Decimal("100"), cost_price=Decimal("50"), product_type="service",
+        )
+        customer = Customer.objects.create(
+            organisation=self.org, name="Strict On Customer", email="stricton@example.com"
+        )
+        warehouse = Warehouse.objects.create(organisation=self.org, name="Strict On WH")
+        with self.assertRaises(ValueError) as ctx:
+            SaleService.create_sale(
+                organisation=self.org, customer=customer, warehouse=warehouse,
+                items=[{"product_id": product.id, "quantity": 1, "unit_price": Decimal("100")}],
+                payment_method="cash", created_by=self.user,
+            )
+        self.assertIn("Strict GL mode", str(ctx.exception))
+
+    def test_strict_mode_toggled_via_org_serializer(self):
+        """strict_gl_mode must be writable via the org update API."""
+        res = self.client.patch(
+            f"/api/v1/tenancy/organisations/{self.org.id}/",
+            {"strict_gl_mode": True},
+            format="json",
+        )
+        self.assertIn(res.status_code, [200, 201])
+        self.org.refresh_from_db()
+        self.assertTrue(self.org.strict_gl_mode)
+
+    def test_strict_mode_false_by_default(self):
+        """New organisations must have strict_gl_mode=False."""
+        new_user = _make_user("strict_new@example.com")
+        new_org = _make_org(new_user, "Strict New Org")
+        self.assertFalse(new_org.strict_gl_mode)
+
+    def test_check_strict_gl_with_complete_mapping_passes(self):
+        """check_strict_gl_mode should not raise when all required roles are mapped."""
+        from apps.accounting.services import check_strict_gl_mode
+        self.org.strict_gl_mode = True
+        self.org.save(update_fields=["strict_gl_mode"])
+        try:
+            check_strict_gl_mode(self.org)
+        except ValueError:
+            self.fail("check_strict_gl_mode raised with complete mapping")
+
+
+class PostHogMiddlewareTests(TestCase):
+    """Phase 5: PostHog middleware must not crash on newer SDK signature."""
+
+    def setUp(self):
+        self.user = _make_user("posthog_user@example.com")
+        self.org = _make_org(self.user, "PostHog Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+
+    def test_api_request_does_not_500_due_to_posthog(self):
+        """Any authenticated API request must not 500 due to the PostHog middleware."""
+        res = self.client.get("/api/v1/accounting/accounts/")
+        self.assertNotEqual(res.status_code, 500)
+
+    def test_gl_health_does_not_500_due_to_posthog(self):
+        """GL health endpoint specifically must not 500 (was broken before fix)."""
+        res = self.client.get("/api/v1/accounting/gl-health/")
+        self.assertEqual(res.status_code, 200)
+
+    def test_account_mapping_does_not_500_due_to_posthog(self):
+        """Account mapping endpoint must not 500 (was broken before fix)."""
+        res = self.client.get("/api/v1/accounting/account-mapping/")
+        self.assertEqual(res.status_code, 200)

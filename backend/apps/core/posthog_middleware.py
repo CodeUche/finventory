@@ -89,8 +89,8 @@ class PostHogMiddleware:
         try:
             org_id = request.headers.get("X-Organisation-ID", "") or request.GET.get("org", "")
             ph.capture(
-                str(user.id),
                 event="api_request",
+                distinct_id=str(user.id),
                 properties={
                     "method": request.method,
                     "path": path,

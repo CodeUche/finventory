@@ -1172,6 +1172,8 @@ export const accountingApi = {
   glHealth: () => api.get('/accounting/gl-health/'),
   glRetry: (modelType: string, objectId: string) =>
     api.post(`/accounting/gl-health/${modelType}/${objectId}/retry/`),
+  glBulkRetry: () => api.post('/accounting/gl-health/retry-all/'),
+  postConfirmedGL: (reconId: string) => api.post(`/accounting/reconciliations/${reconId}/post_confirmed_gl/`),
   // Account Mapping
   getAccountMapping: () => api.get('/accounting/account-mapping/'),
   updateAccountMapping: (data: object) => api.put('/accounting/account-mapping/', data),

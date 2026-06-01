@@ -39,6 +39,32 @@ COA_SEED = [
 ]
 
 
+def check_strict_gl_mode(organisation):
+    """
+    Raises ValueError if strict_gl_mode is enabled and any required mapping roles are null.
+    Called at the start of business event creation (sale, bill, expense, payroll).
+    """
+    if not getattr(organisation, 'strict_gl_mode', False):
+        return
+    try:
+        mapping = AccountMapping.objects.get(organisation=organisation)
+    except AccountMapping.DoesNotExist:
+        raise ValueError(
+            "Strict GL mode is enabled but no account mapping exists for this organisation. "
+            "Go to Settings → GL Mapping to configure accounts."
+        )
+    REQUIRED_ROLES = [
+        'revenue_account', 'cogs_account', 'inventory_account', 'accounts_receivable',
+        'cash_account', 'bank_account', 'accounts_payable',
+    ]
+    missing = [r for r in REQUIRED_ROLES if getattr(mapping, f'{r}_id') is None]
+    if missing:
+        raise ValueError(
+            f"Strict GL mode is enabled but the following accounts are not mapped: "
+            f"{', '.join(missing)}. Go to Settings → GL Mapping to configure them."
+        )
+
+
 def safe_post_gl(post_fn, *args, model_instance=None, **kwargs):
     """
     Wraps any post_*_journal call. Updates gl_post_status on the model instance.

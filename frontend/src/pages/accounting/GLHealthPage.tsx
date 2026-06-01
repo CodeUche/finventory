@@ -42,6 +42,7 @@ export default function GLHealthPage() {
   const [data, setData] = useState<GLHealth | null>(null)
   const [loading, setLoading] = useState(true)
   const [retrying, setRetrying] = useState<string | null>(null)
+  const [bulkRetrying, setBulkRetrying] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -56,6 +57,20 @@ export default function GLHealthPage() {
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  const handleBulkRetry = async () => {
+    setBulkRetrying(true)
+    try {
+      const res = await accountingApi.glBulkRetry()
+      const { succeeded, failed: failCount } = res.data
+      toast.success(`Retry complete: ${succeeded} succeeded, ${failCount} still failed`)
+      load()
+    } catch {
+      toast.error('Bulk retry failed')
+    } finally {
+      setBulkRetrying(false)
+    }
+  }
 
   const handleRetry = async (failure: GLFailure) => {
     setRetrying(failure.id)
@@ -82,14 +97,26 @@ export default function GLHealthPage() {
           <h1 className="text-xl font-semibold text-white">GL Health</h1>
           <p className="text-sm text-slate-400 mt-0.5">Monitor and retry failed journal auto-postings</p>
         </div>
-        <button
-          onClick={load}
-          disabled={loading}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-700 text-slate-200 text-sm hover:bg-slate-600 disabled:opacity-50"
-        >
-          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          {(summary.failed > 0 || summary.not_configured > 0) && (
+            <button
+              onClick={handleBulkRetry}
+              disabled={bulkRetrying}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-500 disabled:opacity-50"
+            >
+              <RotateCcw size={14} className={bulkRetrying ? 'animate-spin' : ''} />
+              Retry All Failed
+            </button>
+          )}
+          <button
+            onClick={load}
+            disabled={loading}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-700 text-slate-200 text-sm hover:bg-slate-600 disabled:opacity-50"
+          >
+            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+            Refresh
+          </button>
+        </div>
       </div>
 
       {/* Summary tiles */}

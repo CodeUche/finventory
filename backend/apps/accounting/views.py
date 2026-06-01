@@ -717,6 +717,77 @@ RESPONSE FORMAT — Return ONLY valid JSON, nothing else:
             AIReconMatch.objects.select_related('bank_line', 'book_line', 'book_line__journal_entry').get(id=match.id)
         ).data)
 
+    @action(detail=True, methods=['post'], url_path='post_confirmed_gl')
+    def post_confirmed_gl(self, request, pk=None):
+        """
+        POST /accounting/reconciliations/{id}/post_confirmed_gl/
+        Creates journal entries for all confirmed AI matches that don't yet have
+        a corresponding GL entry. Marks each bank_line.is_cleared = True.
+
+        Entry pattern: DR Bank Account → CR Accounts Receivable (for inflows)
+                       DR Accounts Payable → CR Bank Account (for outflows)
+        """
+        recon = self.get_object()
+        org = self._get_organisation()
+
+        confirmed = AIReconMatch.objects.filter(
+            reconciliation=recon,
+            status='confirmed',
+            book_line__isnull=True,  # no existing GL entry linked
+        ).select_related('bank_line')
+
+        if not confirmed.exists():
+            confirmed_with_book = AIReconMatch.objects.filter(
+                reconciliation=recon, status='confirmed'
+            ).count()
+            return Response({
+                'posted': 0,
+                'message': f'No unmatched confirmed entries to post. ({confirmed_with_book} already linked to GL entries)',
+            })
+
+        posted, errors = [], []
+        for match in confirmed:
+            bank_line = match.bank_line
+            amount_val = abs(bank_line.amount)
+            if amount_val == 0:
+                continue
+            try:
+                from apps.accounting.services import AccountingService, AccountMappingService
+                from decimal import Decimal
+                from django.utils import timezone as tz
+                amt = Decimal(str(amount_val))
+                zero = Decimal('0')
+                is_inflow = bank_line.amount >= 0
+                if is_inflow:
+                    dr_acct = AccountMappingService.resolve(org, 'bank_account')
+                    cr_acct = AccountMappingService.resolve(org, 'accounts_receivable')
+                else:
+                    dr_acct = AccountMappingService.resolve(org, 'accounts_payable')
+                    cr_acct = AccountMappingService.resolve(org, 'bank_account')
+                je = AccountingService.post_journal_entry(
+                    organisation=org,
+                    description=f"Bank recon: {bank_line.description[:80]}",
+                    entry_date=bank_line.transaction_date,
+                    lines=[
+                        (dr_acct, amt, zero),
+                        (cr_acct, zero, amt),
+                    ],
+                    created_by=request.user,
+                    source_type='bank_recon',
+                    source_ref=str(bank_line.id),
+                )
+                bank_line.is_cleared = True
+                bank_line.save(update_fields=['is_cleared'])
+                posted.append(str(je.id))
+            except Exception as e:
+                errors.append({'bank_line_id': str(bank_line.id), 'error': str(e)})
+
+        return Response({
+            'posted': len(posted),
+            'errors': errors,
+            'journal_entry_ids': posted,
+        }, status=status.HTTP_201_CREATED if posted else status.HTTP_422_UNPROCESSABLE_ENTITY)
+
 
 class AccountMappingView(APIView):
     """
@@ -815,6 +886,55 @@ class GLHealthView(APIView):
             return Response({'error': 'Organisation not found'}, status=400)
         data = AccountingService.get_gl_health(org)
         return Response(data)
+
+
+class GLHealthBulkRetryView(APIView):
+    """POST /accounting/gl-health/retry-all/ — retry ALL failed/not_configured GL posts."""
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
+
+    def _get_org(self, request):
+        org_id = request.META.get('HTTP_X_ORGANISATION_ID')
+        if not org_id:
+            return None
+        from apps.tenancy.models import Organisation
+        try:
+            return Organisation.objects.get(id=org_id)
+        except Exception:
+            return None
+
+    def post(self, request):
+        org = self._get_org(request)
+        if not org:
+            return Response({'error': 'Organisation not found'}, status=400)
+
+        from apps.sales.models import Invoice
+        from apps.bills.models import Bill
+        from apps.expenses.models import Expense
+        from apps.payroll.models import PayrollRun
+
+        results = {'attempted': 0, 'succeeded': 0, 'failed': 0, 'errors': []}
+        retry_statuses = ['failed', 'not_configured']
+
+        for model_name, qs in [
+            ('invoice', Invoice.objects.filter(organisation=org, gl_post_status__in=retry_statuses)),
+            ('bill',    Bill.objects.filter(organisation=org, gl_post_status__in=retry_statuses)),
+            ('expense', Expense.objects.filter(organisation=org, gl_post_status__in=retry_statuses)),
+            ('payroll', PayrollRun.objects.filter(organisation=org, gl_post_status__in=retry_statuses)),
+        ]:
+            for obj in qs[:50]:  # cap per model to avoid timeout
+                results['attempted'] += 1
+                try:
+                    success, err = AccountingService.retry_gl_post(org, model_name, str(obj.id), request.user)
+                    if success:
+                        results['succeeded'] += 1
+                    else:
+                        results['failed'] += 1
+                        results['errors'].append({'model': model_name, 'id': str(obj.id), 'error': err})
+                except Exception as e:
+                    results['failed'] += 1
+                    results['errors'].append({'model': model_name, 'id': str(obj.id), 'error': str(e)})
+
+        return Response(results)
 
 
 class GLHealthRetryView(APIView):

@@ -136,10 +136,9 @@ class Organisation(SoftDeleteModel):
         help_text="Short label for this entity within the group (e.g. 'Lagos Branch', 'Holdings').",
     )
     is_active = models.BooleanField(default=True)
-    # Set to True once the user explicitly completes the onboarding flow
-    # (selects a plan and pays, or deliberately chooses the free plan).
-    # Until this is True, the user is redirected to /onboarding on every login.
     onboarding_completed = models.BooleanField(default=False)
+    # When True, transactions are rejected if required GL account mappings are missing
+    strict_gl_mode = models.BooleanField(default=False)
 
     class Meta(SoftDeleteModel.Meta):
         verbose_name = "Organisation"

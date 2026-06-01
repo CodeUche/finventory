@@ -53,6 +53,7 @@ class OrganisationSerializer(serializers.ModelSerializer):
             "show_company_name_on_pdf",
             "invoice_template", "pension_provider", "ai_custom_context",
             "onboarding_completed",
+            "strict_gl_mode",
             "managing_firm_name", "managing_firm_logo",
             "parent_org", "entity_group_name", "child_entity_count",
         ]

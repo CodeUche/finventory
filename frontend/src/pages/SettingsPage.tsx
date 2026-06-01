@@ -2712,6 +2712,35 @@ export default function SettingsPage() {
               Map GL roles to your chart of accounts. These are used for automatic journal posting.
             </p>
           </div>
+          {/* Strict GL Mode toggle */}
+          <div className="rounded-xl bg-slate-800 border border-slate-700 px-5 py-4 flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium text-white">Strict GL Mode</p>
+              <p className="text-xs text-slate-400 mt-0.5">
+                When enabled, transactions (sales, bills, expenses) will be blocked if required account mappings below are missing.
+                Disable to allow transactions to proceed with missing GL mappings (postings will be skipped silently).
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={async () => {
+                const newVal = !organisation?.strict_gl_mode
+                try {
+                  const { data } = await orgApi.update(organisation!.id, { strict_gl_mode: newVal })
+                  updateOrganisation(data)
+                  toast.success(newVal ? 'Strict GL mode enabled' : 'Strict GL mode disabled')
+                } catch {
+                  toast.error('Failed to update setting')
+                }
+              }}
+              className={`relative inline-flex h-6 w-11 shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none ${organisation?.strict_gl_mode ? 'bg-brand-600' : 'bg-slate-600'}`}
+            >
+              <span
+                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${organisation?.strict_gl_mode ? 'translate-x-5' : 'translate-x-0'}`}
+              />
+            </button>
+          </div>
+
           {!glMapping ? (
             <div className="flex justify-center py-8"><Loader2 size={24} className="animate-spin text-slate-400" /></div>
           ) : (

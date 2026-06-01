@@ -1,5 +1,5 @@
 import django_filters
-from rest_framework import viewsets
+from rest_framework import serializers, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -97,8 +97,12 @@ class ExpenseViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
         import logging as _log
         org = self.request.organisation
 
-        # Period lock check
-        from apps.accounting.services import AccountingService
+        # Strict GL mode + period lock check
+        from apps.accounting.services import AccountingService, check_strict_gl_mode
+        try:
+            check_strict_gl_mode(org)
+        except ValueError as e:
+            raise serializers.ValidationError(str(e))
         expense_date = serializer.validated_data.get('expense_date')
         if expense_date and AccountingService.is_period_locked(org, expense_date):
             from django.core.exceptions import PermissionDenied

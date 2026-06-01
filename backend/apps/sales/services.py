@@ -62,9 +62,11 @@ class SaleService:
             Confirmed Invoice with all related records created.
         """
         from django.utils import timezone as tz
-        from apps.accounting.services import AccountingService
+        from apps.accounting.services import AccountingService, check_strict_gl_mode
 
         issue_date = issue_date or tz.now().date()
+
+        check_strict_gl_mode(organisation)
 
         if AccountingService.is_period_locked(organisation, issue_date):
             from django.core.exceptions import PermissionDenied

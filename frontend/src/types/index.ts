@@ -55,6 +55,7 @@ export interface Organisation {
   ai_custom_context?: string
   managing_firm_name?: string | null
   managing_firm_logo?: string | null
+  strict_gl_mode?: boolean
 }
 
 // ─── Product ──────────────────────────────────────────────────────────────────

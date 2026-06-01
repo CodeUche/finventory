@@ -112,6 +112,9 @@ export default function BankReconciliationPage() {
   const [clearedIds, setClearedIds] = useState<Set<string>>(new Set())
   const [reconciling, setReconciling] = useState(false)
 
+  // ── GL posting ──
+  const [postingGL, setPostingGL] = useState(false)
+
   // ─── Data loading ──────────────────────────────────────────────────────────
 
   const load = async () => {
@@ -212,6 +215,25 @@ export default function BankReconciliationPage() {
       toast.error(msg)
     } finally {
       setAiRunning(false)
+    }
+  }
+
+  // ─── Post confirmed GL entries ────────────────────────────────────────────
+
+  const handlePostConfirmedGL = async () => {
+    if (!activeRecon) return
+    setPostingGL(true)
+    try {
+      const { data } = await accountingApi.postConfirmedGL(activeRecon.id)
+      toast.success(`${data.posted} GL entr${data.posted !== 1 ? 'ies' : 'y'} posted`)
+      if (data.errors?.length) toast.error(`${data.errors.length} entries failed — check GL Health`)
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { error?: unknown } } }
+      const apiErr = e?.response?.data?.error
+      const msg = typeof apiErr === 'string' ? apiErr : 'Failed to post GL entries'
+      toast.error(msg)
+    } finally {
+      setPostingGL(false)
     }
   }
 
@@ -431,6 +453,26 @@ export default function BankReconciliationPage() {
                       {aiRunning ? 'Analyzing transactions…' : aiRan ? 'Re-run AI Match' : 'Run AI Reconciliation'}
                     </button>
                   </div>
+
+                  {/* Post confirmed GL button */}
+                  {aiRan && aiMatches.some((m) => m.status === 'confirmed') && (
+                    <div className="card p-4 flex items-center justify-between gap-4">
+                      <div>
+                        <p className="text-white text-sm font-medium">
+                          {aiMatches.filter((m) => m.status === 'confirmed').length} confirmed match{aiMatches.filter((m) => m.status === 'confirmed').length !== 1 ? 'es' : ''} ready to post
+                        </p>
+                        <p className="text-xs text-slate-400">Create journal entries for confirmed AI matches that have no existing GL entry</p>
+                      </div>
+                      <button
+                        onClick={handlePostConfirmedGL}
+                        disabled={postingGL}
+                        className="btn-primary flex items-center gap-2 shrink-0 disabled:opacity-50"
+                      >
+                        <CheckSquare size={15} className={postingGL ? 'animate-pulse' : ''} />
+                        {postingGL ? 'Posting…' : 'Post Confirmed GL'}
+                      </button>
+                    </div>
+                  )}
 
                   {/* Results */}
                   {aiRan && (
