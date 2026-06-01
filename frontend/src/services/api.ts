@@ -1342,17 +1342,17 @@ export const importApi = {
   /** POST /import/products/ — multipart FormData with `file` field */
   products: (file: File) => {
     const fd = new FormData(); fd.append('file', file)
-    return api.post('/import/products/', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+    return api.post('/import/products/', fd)
   },
   /** POST /import/customers/ — multipart FormData with `file` field */
   customers: (file: File) => {
     const fd = new FormData(); fd.append('file', file)
-    return api.post('/import/customers/', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+    return api.post('/import/customers/', fd)
   },
   /** POST /import/accounts/ — multipart FormData with `file` field */
   accounts: (file: File) => {
     const fd = new FormData(); fd.append('file', file)
-    return api.post('/import/accounts/', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+    return api.post('/import/accounts/', fd)
   },
   /** GET /import/template/<entity>/ — download CSV template */
   templateUrl: (entity: 'products' | 'customers' | 'accounts') =>
