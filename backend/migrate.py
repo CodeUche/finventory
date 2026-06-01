@@ -24,6 +24,9 @@ if db_url:
         "DB_PORT":     str(parsed.port or 5432),
         "DB_NAME":     parsed.path.lstrip("/"),
     })
+    # Prevent production.py from overriding DB config with the limited audity_app
+    # user — migrations must run as the postgres superuser (from DATABASE_URL).
+    os.environ.pop("APP_DATABASE_URL", None)
 
 result = subprocess.run(
     [sys.executable, "manage.py", "migrate", "--noinput"],
