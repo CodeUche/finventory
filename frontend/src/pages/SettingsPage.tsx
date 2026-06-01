@@ -131,7 +131,7 @@ export default function SettingsPage() {
     phone: user?.phone ?? '',
   })
   const [avatarFile, setAvatarFile] = useState<File | null>(null)
-  const [avatarPreview, setAvatarPreview] = useState<string | null>(user?.avatar ?? null)
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null)
   const avatarRef = useRef<HTMLInputElement>(null)
   const [savingProfile, setSavingProfile] = useState(false)
 
@@ -163,6 +163,44 @@ export default function SettingsPage() {
     ai_custom_context: organisation?.ai_custom_context ?? '',
   })
 
+  // Re-sync company form when full org data arrives.
+  // The login response returns only 8 fields; AppLayout's orgApi.list() returns
+  // the full set. invoice_template is absent in the login stub, so we use it
+  // as a sentinel to detect when the enriched response has arrived.
+  const orgCompanySynced = useRef<string | null>(null)
+  useEffect(() => {
+    if (!organisation?.id) return
+    if (organisation.invoice_template === undefined) return
+    if (orgCompanySynced.current === organisation.id) return
+    orgCompanySynced.current = organisation.id
+    setCompany({
+      name: organisation.name ?? '',
+      country: organisation.country ?? '',
+      currency: organisation.currency ?? '',
+      tax_id: organisation.tax_id ?? '',
+      registration_number: organisation.registration_number ?? '',
+      address: organisation.address ?? '',
+      phone: organisation.phone ?? '',
+      email: organisation.email ?? '',
+      bank_name: organisation.bank_name ?? '',
+      bank_account_number: organisation.bank_account_number ?? '',
+      bank_account_name: organisation.bank_account_name ?? '',
+      bank_sort_code: organisation.bank_sort_code ?? '',
+      brand_color: organisation.brand_color ?? '#f97316',
+      invoice_company_name: organisation.invoice_company_name ?? '',
+      company_name_font: organisation.company_name_font ?? 'helvetica',
+      company_name_font_color: organisation.company_name_font_color ?? '#1e293b',
+      company_name_font_size: organisation.company_name_font_size ?? 14,
+      company_name_font_bold: organisation.company_name_font_bold ?? true,
+      company_name_font_italic: organisation.company_name_font_italic ?? false,
+      company_name_font_underline: organisation.company_name_font_underline ?? false,
+      show_company_name_on_pdf: organisation.show_company_name_on_pdf ?? true,
+      invoice_template: organisation.invoice_template ?? 'classic',
+      pension_provider: organisation.pension_provider ?? '',
+      ai_custom_context: organisation.ai_custom_context ?? '',
+    })
+  }, [organisation?.id, organisation?.invoice_template])
+
   // ─── Bank account resolve state ──────────────────────────────────────────────
   const [resolvingAccount, setResolvingAccount] = useState(false)
 
@@ -175,9 +213,11 @@ export default function SettingsPage() {
       if (data?.data?.account_name) {
         setCompany(c => ({ ...c, bank_account_name: data.data.account_name }))
         toast.success('Account name resolved')
+      } else {
+        toast.error('Could not resolve account name. Check your account number and bank selection.')
       }
     } catch {
-      // Silently ignore — user can type manually
+      toast.error('Bank account lookup failed. Ensure your Paystack integration is configured.')
     } finally {
       setResolvingAccount(false)
     }
@@ -188,11 +228,11 @@ export default function SettingsPage() {
   const [loadingPeriods, setLoadingPeriods] = useState(false)
   const [lockingPeriod, setLockingPeriod] = useState<string | null>(null)
   const [logoFile, setLogoFile] = useState<File | null>(null)
-  const [logoPreview, setLogoPreview] = useState<string | null>(organisation?.logo ?? null)
+  const [logoPreview, setLogoPreview] = useState<string | null>(null)
   const [logoRemoved, setLogoRemoved] = useState(false)
   const logoRef = useRef<HTMLInputElement>(null)
   const [stampFile, setStampFile] = useState<File | null>(null)
-  const [stampPreview, setStampPreview] = useState<string | null>(organisation?.company_stamp ?? null)
+  const [stampPreview, setStampPreview] = useState<string | null>(null)
   const [stampRemoved, setStampRemoved] = useState(false)
   const stampRef = useRef<HTMLInputElement>(null)
   const [savingCompany, setSavingCompany] = useState(false)
@@ -433,6 +473,7 @@ export default function SettingsPage() {
     const file = e.target.files?.[0]
     if (!file) return
     setLogoFile(file)
+    setLogoRemoved(false)
     setLogoPreview(URL.createObjectURL(file))
   }
 
@@ -458,6 +499,7 @@ export default function SettingsPage() {
         const resp = await authApi.uploadAvatar(avatarFile)
         if (resp.ok) data = await resp.json()
         setAvatarFile(null)
+        setAvatarPreview(null) // loadDataUrl will repopulate from the saved URL
       }
       updateUser(data)
       toast.success('Profile updated')
@@ -470,6 +512,13 @@ export default function SettingsPage() {
 
   const saveCompany = async () => {
     if (!organisation?.id) return
+    // Validate bank details: either all blank, or account number + bank name + account name must all be filled
+    const { bank_name, bank_account_number, bank_account_name } = company
+    const bankFieldsFilled = [bank_name, bank_account_number, bank_account_name].filter(Boolean)
+    if (bankFieldsFilled.length > 0 && bankFieldsFilled.length < 3) {
+      toast.error('Please complete all bank details: bank name, account number, and account name are all required.')
+      return
+    }
     setSavingCompany(true)
     try {
       if (logoRemoved) {
@@ -521,11 +570,13 @@ export default function SettingsPage() {
         const resp = await orgApi.uploadLogo(organisation.id, logoFile)
         if (resp.ok) data = await resp.json()
         setLogoFile(null)
+        setLogoPreview(null) // loadDataUrl will repopulate from the saved URL
       }
       if (stampFile) {
         const resp = await orgApi.uploadStamp(organisation.id, stampFile)
         if (resp.ok) data = await resp.json()
         setStampFile(null)
+        setStampPreview(null) // loadDataUrl will repopulate from the saved URL
       }
 
       updateOrganisation(data)
@@ -827,7 +878,7 @@ export default function SettingsPage() {
   const activeNonOwners = teamMembers.filter((m) => m.is_active && m.role !== 'owner')
   const MAX_MEMBERS = getPlanMaxMembers(planName)
 
-  const allTabs: { id: Tab; label: string; icon: React.ElementType; ownerOnly?: boolean; requiresSettings?: boolean; requiresPlan?: string }[] = [
+  const allTabs: { id: Tab; label: string; icon: React.ElementType; ownerOnly?: boolean; requiresSettings?: boolean; requiresPlan?: string; comingSoon?: boolean }[] = [
     { id: 'profile',           label: 'Profile',    icon: User },
     { id: 'company',           label: 'Company',    icon: Building2,  requiresSettings: true },
     { id: 'security',          label: 'Security',   icon: Shield },
@@ -840,7 +891,7 @@ export default function SettingsPage() {
     { id: 'ai',                label: 'AI',         icon: Bot,        ownerOnly: true },
     { id: 'access',            label: 'Accountant Access', icon: ShieldCheck, ownerOnly: true },
     { id: 'whitelabel',        label: 'White-label',       icon: Globe,        ownerOnly: true },
-    { id: 'firs',              label: 'FIRS',              icon: Shield,       ownerOnly: true },
+    { id: 'firs',              label: 'FIRS',              icon: Shield,       ownerOnly: true, comingSoon: true },
   ]
   const tabs = allTabs.filter((t) => {
     if (t.ownerOnly && !isOwner) return false
@@ -867,15 +918,20 @@ export default function SettingsPage() {
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
-            title={t.label}
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-              activeTab === t.id
-                ? 'bg-brand-500 text-white'
-                : 'text-slate-400 hover:text-white'
+            title={t.comingSoon ? `${t.label} — Coming Soon` : t.label}
+            className={`relative flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+              t.comingSoon
+                ? 'opacity-50 cursor-not-allowed text-slate-500'
+                : activeTab === t.id
+                  ? 'bg-brand-500 text-white'
+                  : 'text-slate-400 hover:text-white'
             }`}
           >
             <t.icon size={15} />
             <span className="hidden sm:inline">{t.label}</span>
+            {t.comingSoon && (
+              <span className="hidden sm:inline text-[9px] bg-slate-600 text-slate-300 px-1 rounded ml-0.5">Soon</span>
+            )}
           </button>
         ))}
       </div>
@@ -1640,22 +1696,16 @@ export default function SettingsPage() {
           <div className="card p-6 space-y-4">
             <div>
               <h3 className="text-base font-semibold text-white mb-1">Inactivity Timeout</h3>
-              <p className="text-sm text-slate-400 mb-4">Automatically sign you out after a period of inactivity.</p>
-              <div className="space-y-2">
+              <p className="text-sm text-slate-400 mb-3">Automatically sign you out after a period of inactivity.</p>
+              <select
+                className="input max-w-xs"
+                value={timeout}
+                onChange={(e) => setTimeoutState(e.target.value as TimeoutOption)}
+              >
                 {TIMEOUT_OPTIONS.map((opt) => (
-                  <label key={opt.value} className="flex items-center gap-3 p-3 rounded-xl border border-surface-700 cursor-pointer hover:border-surface-600 transition-colors">
-                    <input
-                      type="radio"
-                      name="timeout"
-                      value={opt.value}
-                      checked={timeout === opt.value}
-                      onChange={() => setTimeoutState(opt.value)}
-                      className="accent-brand-500"
-                    />
-                    <span className="text-sm text-white">{opt.label}</span>
-                  </label>
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
                 ))}
-              </div>
+              </select>
             </div>
             <button onClick={saveSecurity} className="btn-primary">
               Save Security Settings
@@ -3021,7 +3071,17 @@ export default function SettingsPage() {
 
       {/* ── FIRS e-invoicing Tab ─────────────────────────────────────────── */}
       {activeTab === 'firs' && (
-        <FirsTab />
+        <div className="max-w-xl mx-auto text-center py-16 space-y-4">
+          <div className="w-16 h-16 rounded-2xl bg-slate-700/50 flex items-center justify-center mx-auto">
+            <Shield size={28} className="text-slate-400" />
+          </div>
+          <h2 className="text-lg font-semibold text-white">FIRS e-Invoicing — Coming Soon</h2>
+          <p className="text-sm text-slate-400 leading-relaxed">
+            Direct integration with the Federal Inland Revenue Service (FIRS) e-invoicing mandate is currently in development.
+            This will allow you to submit compliant electronic invoices directly from Audity.
+          </p>
+          <span className="inline-block px-3 py-1 rounded-full bg-amber-500/15 text-amber-400 text-xs font-medium">In Development</span>
+        </div>
       )}
     </>
   )
@@ -3181,10 +3241,9 @@ function WhiteLabelTab() {
 }
 
 // ── FIRS E-Invoicing Settings Tab ─────────────────────────────────────────────
-// Rendered inside SettingsPage's {activeTab === 'firs' && <FirsTab />}.
-// Kept as a separate component so it has its own isolated state and avoids
-// re-rendering the rest of SettingsPage when FIRS state changes.
-function FirsTab() {
+// Reserved for future FIRS integration. Currently replaced with a Coming Soon
+// placeholder in the activeTab === 'firs' block above.
+export function FirsTab() {
   const { organisation } = useAuthStore()
   const [firsConfig, setFirsConfig] = useState<FirsConfig | null>(null)
   const [firsStats, setFirsStats] = useState<FirsStats | null>(null)
