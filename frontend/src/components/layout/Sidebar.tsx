@@ -68,6 +68,7 @@ const navGroups: { label: string | null; items: { name: string; href: string; ic
       { name: 'Journal Entries', href: '/accounting/journal', icon: BookMarked, module: 'accounting' },
       { name: 'Fixed Assets', href: '/accounting/assets', icon: Landmark, module: 'accounting' },
       { name: 'Bank Reconciliation', href: '/accounting/reconciliation', icon: Scale, module: 'accounting' },
+      { name: 'GL Health', href: '/accounting/gl-health', icon: ShieldCheck, module: 'accounting' },
     ],
   },
   {

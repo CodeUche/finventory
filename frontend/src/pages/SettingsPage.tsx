@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { User, Building2, Shield, Loader2, Camera, CreditCard, CheckCircle, Mail, Lock, Unlock, LandmarkIcon, UsersRound, UserPlus, X, ChevronDown, ChevronUp, Bot, Layout, Copy, Trash2, ShieldCheck, Key, Clock, XCircle, Send, Globe, AlertTriangle, Wifi, WifiOff, RefreshCw, Activity, FileText } from 'lucide-react'
+import { User, Building2, Shield, Loader2, Camera, CreditCard, CheckCircle, Mail, Lock, Unlock, LandmarkIcon, UsersRound, UserPlus, X, ChevronDown, ChevronUp, Bot, Layout, Copy, Trash2, ShieldCheck, Key, Clock, XCircle, Send, Globe, AlertTriangle, Wifi, WifiOff, RefreshCw, Activity, FileText, GitBranch } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { authApi, orgApi, paymentGatewayApi, accountingApi, teamApi, tauriFetch, partnerApi, einvoicingApi } from '@/services/api'
 import type { FirsConfig, FirsStats, FirsSubmission, SandboxProgress, GoLiveChecklist } from '@/types'
@@ -110,7 +110,7 @@ const TIMEOUT_OPTIONS: { value: TimeoutOption; label: string }[] = [
   { value: '4h', label: '4 hours (recommended)' },
 ]
 
-type Tab = 'profile' | 'company' | 'security' | 'payments' | 'email' | 'periods' | 'team' | 'invoice_templates' | 'ai' | 'access' | 'whitelabel' | 'firs'
+type Tab = 'profile' | 'company' | 'security' | 'payments' | 'email' | 'periods' | 'team' | 'invoice_templates' | 'ai' | 'access' | 'whitelabel' | 'firs' | 'gl_mapping'
 
 export default function SettingsPage() {
   const navigate = useNavigate()
@@ -325,6 +325,11 @@ export default function SettingsPage() {
   const [partnerLinks, setPartnerLinks] = useState<PartnerClientLink[]>([])
   const [accessLoading, setAccessLoading] = useState(false)
 
+  // GL Mapping state
+  const [glMapping, setGlMapping] = useState<Record<string, any> | null>(null)
+  const [glAccounts, setGlAccounts] = useState<any[]>([])
+  const [glMappingSaving, setGlMappingSaving] = useState(false)
+
   // FIRS state lives in the FirsTab sub-component (see bottom of this file)
   const [approvingReq, setApprovingReq] = useState<string | null>(null)
   const [rejectingReq, setRejectingReq] = useState<string | null>(null)
@@ -401,6 +406,18 @@ export default function SettingsPage() {
           setPartnerLinks(Array.isArray(d) ? d : d.results ?? [])
         }
       }).finally(() => setAccessLoading(false))
+    }
+    if (activeTab === 'gl_mapping' && organisation?.id) {
+      Promise.allSettled([
+        accountingApi.getAccountMapping(),
+        accountingApi.accounts(),
+      ]).then(([mapRes, acctRes]) => {
+        if (mapRes.status === 'fulfilled') setGlMapping(mapRes.value.data)
+        if (acctRes.status === 'fulfilled') {
+          const d = acctRes.value.data
+          setGlAccounts(Array.isArray(d) ? d : d.results ?? [])
+        }
+      })
     }
   }, [tab])
 
@@ -818,6 +835,7 @@ export default function SettingsPage() {
     { id: 'payments',          label: 'Payments',   icon: CreditCard, requiresSettings: true },
     { id: 'email',             label: 'Email',      icon: Mail,       ownerOnly: true },
     { id: 'periods',           label: 'Periods',    icon: Lock,       requiresSettings: true, requiresPlan: 'accounting' },
+    { id: 'gl_mapping',        label: 'GL Mapping', icon: GitBranch,  requiresSettings: true, requiresPlan: 'accounting' },
     { id: 'invoice_templates', label: 'Templates',  icon: Layout,     ownerOnly: true },
     { id: 'ai',                label: 'AI',         icon: Bot,        ownerOnly: true },
     { id: 'access',            label: 'Accountant Access', icon: ShieldCheck, ownerOnly: true },
@@ -2680,6 +2698,96 @@ export default function SettingsPage() {
               Ask things like: "Am I making profit?", "Where am I losing money?", "How is my cash flow?"
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── GL Mapping Tab ───────────────────────────────────────────────── */}
+      {activeTab === 'gl_mapping' && (
+        <div className="space-y-6 max-w-3xl">
+          <div>
+            <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+              <GitBranch size={18} className="text-brand-400" /> Account Mapping
+            </h2>
+            <p className="text-sm text-slate-400 mt-1">
+              Map GL roles to your chart of accounts. These are used for automatic journal posting.
+            </p>
+          </div>
+          {!glMapping ? (
+            <div className="flex justify-center py-8"><Loader2 size={24} className="animate-spin text-slate-400" /></div>
+          ) : (
+            <div className="space-y-3">
+              {[
+                { role: 'revenue_account',         label: 'Revenue Account',          hint: 'Sales/revenue credited on invoice' },
+                { role: 'cogs_account',             label: 'Cost of Goods Sold',       hint: 'Debited on sale for product cost' },
+                { role: 'inventory_account',        label: 'Inventory Account',        hint: 'Credited on sale (stock reduction)' },
+                { role: 'accounts_receivable',      label: 'Accounts Receivable',      hint: 'Debited for credit sales' },
+                { role: 'cash_account',             label: 'Cash Account',             hint: 'Debited on cash payments received' },
+                { role: 'bank_account',             label: 'Bank Account',             hint: 'Debited on bank/POS payments' },
+                { role: 'accounts_payable',         label: 'Accounts Payable',         hint: 'Credited on bill approval' },
+                { role: 'vat_output_account',       label: 'VAT Output (Payable)',     hint: 'Credited on VAT collected' },
+                { role: 'vat_input_account',        label: 'VAT Input (Recoverable)',  hint: 'Debited on VAT paid to suppliers' },
+                { role: 'paye_account',             label: 'PAYE Payable',             hint: 'Credited on payroll run' },
+                { role: 'pension_account',          label: 'Pension Payable',          hint: 'Credited on payroll run' },
+                { role: 'wht_account',              label: 'WHT / NHF Payable',        hint: 'Withholding tax liability' },
+                { role: 'salary_expense_account',   label: 'Salaries & Wages',         hint: 'Debited on payroll run' },
+                { role: 'general_expense_account',  label: 'General Expenses',         hint: 'Debited on expense recording' },
+                { role: 'bank_charges_account',     label: 'Bank Charges',             hint: 'Bank fees expense account' },
+              ].map(({ role, label, hint }) => {
+                const currentId = glMapping[`${role}_id`] ?? null
+                const suggestion = glMapping[`${role}_suggestion`]
+                return (
+                  <div key={role} className="rounded-lg bg-slate-800 border border-slate-700 px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-2">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-white">{label}</p>
+                      <p className="text-xs text-slate-500">{hint}</p>
+                      {!currentId && suggestion && (
+                        <p className="text-xs text-amber-400 mt-0.5">Suggested: {suggestion.code} – {suggestion.name}</p>
+                      )}
+                    </div>
+                    <select
+                      className="w-full sm:w-64 bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-brand-500"
+                      value={currentId ?? ''}
+                      onChange={(e) => {
+                        const val = e.target.value || null
+                        setGlMapping((prev: any) => ({
+                          ...prev,
+                          [`${role}_id`]: val,
+                          [`${role}_name`]: glAccounts.find((a: any) => a.id === val)?.name ?? null,
+                        }))
+                      }}
+                    >
+                      <option value="">— Not mapped —</option>
+                      {glAccounts.map((a: any) => (
+                        <option key={a.id} value={a.id}>{a.code} – {a.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )
+              })}
+              <button
+                onClick={async () => {
+                  setGlMappingSaving(true)
+                  try {
+                    const payload: Record<string, string | null> = {}
+                    const roles = ['revenue_account','cogs_account','inventory_account','accounts_receivable','cash_account','bank_account','accounts_payable','vat_output_account','vat_input_account','paye_account','pension_account','wht_account','salary_expense_account','general_expense_account','bank_charges_account']
+                    roles.forEach((r) => { payload[r] = glMapping?.[`${r}_id`] ?? null })
+                    const res = await accountingApi.updateAccountMapping(payload)
+                    setGlMapping(res.data)
+                    toast.success('Account mapping saved')
+                  } catch {
+                    toast.error('Failed to save mapping')
+                  } finally {
+                    setGlMappingSaving(false)
+                  }
+                }}
+                disabled={glMappingSaving}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-brand-600 hover:bg-brand-500 text-white text-sm font-medium disabled:opacity-50"
+              >
+                {glMappingSaving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle size={14} />}
+                Save Mapping
+              </button>
+            </div>
+          )}
         </div>
       )}
 

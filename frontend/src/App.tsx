@@ -31,6 +31,7 @@ import ChartOfAccountsPage from '@/pages/accounting/ChartOfAccountsPage'
 import JournalPage from '@/pages/accounting/JournalPage'
 import AssetsPage from '@/pages/accounting/AssetsPage'
 import BankReconciliationPage from '@/pages/accounting/BankReconciliationPage'
+import GLHealthPage from '@/pages/accounting/GLHealthPage'
 import EmployeesPage from '@/pages/payroll/EmployeesPage'
 import PayrollPage from '@/pages/payroll/PayrollPage'
 import BudgetPage from '@/pages/BudgetPage'
@@ -254,6 +255,7 @@ export default function App() {
         <Route path="accounting/journal"          element={<ModuleRoute module="accounting"><JournalPage /></ModuleRoute>} />
         <Route path="accounting/assets"           element={<ModuleRoute module="accounting"><AssetsPage /></ModuleRoute>} />
         <Route path="accounting/reconciliation"   element={<ModuleRoute module="accounting"><BankReconciliationPage /></ModuleRoute>} />
+        <Route path="accounting/gl-health"        element={<ModuleRoute module="accounting"><GLHealthPage /></ModuleRoute>} />
 
         {/* Payroll */}
         <Route path="payroll/employees" element={<ModuleRoute module="payroll"><EmployeesPage /></ModuleRoute>} />

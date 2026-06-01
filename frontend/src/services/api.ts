@@ -1168,6 +1168,14 @@ export const accountingApi = {
   aiReconcile: (id: string) => api.post(`/accounting/reconciliations/${id}/ai_reconcile/`),
   confirmMatch: (id: string, data: { match_id: string; action: 'confirm' | 'reject' }) =>
     api.post(`/accounting/reconciliations/${id}/confirm_match/`, data),
+  // GL Health
+  glHealth: () => api.get('/accounting/gl-health/'),
+  glRetry: (modelType: string, objectId: string) =>
+    api.post(`/accounting/gl-health/${modelType}/${objectId}/retry/`),
+  // Account Mapping
+  getAccountMapping: () => api.get('/accounting/account-mapping/'),
+  updateAccountMapping: (data: object) => api.put('/accounting/account-mapping/', data),
+  getAccountMappingSuggestions: () => api.get('/accounting/account-mapping/suggestions/'),
 }
 
 export const payrollApi = {
