@@ -3,6 +3,8 @@ import { api } from '@/services/api'
 import { Upload, Download, CheckCircle, XCircle, AlertTriangle, FileText, Users, BookOpen, Loader2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { importApi } from '@/services/api'
+import { save } from '@tauri-apps/plugin-dialog'
+import { writeFile } from '@tauri-apps/plugin-fs'
 
 type Entity = 'products' | 'customers' | 'accounts'
 type ImportError = { row: number; field: string; message: string }
@@ -88,13 +90,15 @@ export default function ImportPage() {
 
   async function downloadTemplate() {
     try {
-      const resp = await api.get(importApi.templateUrl(entity), { responseType: 'blob' })
-      const objectUrl = URL.createObjectURL(new Blob([resp.data], { type: 'text/csv' }))
-      const a = document.createElement('a')
-      a.href = objectUrl
-      a.download = `${entity}_import_template.csv`
-      a.click()
-      URL.revokeObjectURL(objectUrl)
+      const resp = await api.get(importApi.templateUrl(entity), { responseType: 'arraybuffer' })
+      const defaultName = `${entity}_import_template.csv`
+      const filePath = await save({
+        defaultPath: defaultName,
+        filters: [{ name: 'CSV', extensions: ['csv'] }],
+      })
+      if (!filePath) return // user cancelled
+      await writeFile(filePath, new Uint8Array(resp.data))
+      toast.success(`Template saved to ${filePath.split(/[\\/]/).pop()}`)
     } catch {
       toast.error('Failed to download template')
     }
