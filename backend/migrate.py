@@ -28,6 +28,19 @@ if db_url:
     # user — migrations must run as the postgres superuser (from DATABASE_URL).
     os.environ.pop("APP_DATABASE_URL", None)
 
+    # PostgreSQL 15 removed CREATE from the default PUBLIC grant on the public
+    # schema. Ensure the migration user can CREATE objects before Django runs.
+    try:
+        import psycopg2
+        conn = psycopg2.connect(db_url)
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute("GRANT CREATE ON SCHEMA public TO CURRENT_USER;")
+        conn.close()
+        print("migrate.py: GRANT CREATE ON SCHEMA public succeeded.", flush=True)
+    except Exception as exc:
+        print(f"migrate.py: schema grant warning: {exc}", file=sys.stderr, flush=True)
+
 result = subprocess.run(
     [sys.executable, "manage.py", "migrate", "--noinput"],
     check=False,
