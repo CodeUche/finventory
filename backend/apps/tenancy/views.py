@@ -621,6 +621,7 @@ class OrganisationViewSet(viewsets.ModelViewSet):
             account name/status from Paystack's response is forwarded.
         """
         import json as _json
+        import urllib.error
         import urllib.request
         from django.conf import settings
 
@@ -665,7 +666,17 @@ class OrganisationViewSet(viewsets.ModelViewSet):
             with urllib.request.urlopen(req, timeout=10) as resp:
                 body = _json.loads(resp.read().decode())
             return Response(body)
+        except urllib.error.HTTPError as e:
+            body = {}
+            try:
+                body = _json.loads(e.read().decode())
+            except Exception:
+                pass
+            msg = body.get("message") or f"Paystack returned HTTP {e.code}"
+            logger.warning("Paystack bank resolve HTTP %s: %s", e.code, msg)
+            return Response({"error": {"message": msg}}, status=502)
         except Exception as e:
+            logger.warning("Paystack bank resolve error: %s", e)
             return Response({"error": {"message": "Bank account lookup failed. Please try again."}}, status=502)
 
 
