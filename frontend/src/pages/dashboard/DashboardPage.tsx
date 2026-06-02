@@ -6,7 +6,7 @@ import {
 } from 'recharts'
 import {
   TrendingUp, TrendingDown, Package,
-  AlertTriangle, DollarSign, Zap, ArrowUpRight, ShoppingCart, Clock, Sparkles, RefreshCw,
+  AlertTriangle, DollarSign, Zap, ArrowUpRight, ShoppingCart, Clock, Sparkles, RefreshCw, Upload,
 } from 'lucide-react'
 import { reportApi, inventoryApi, salesApi, einvoicingApi } from '@/services/api'
 import type { FirsStats } from '@/types'
@@ -402,6 +402,17 @@ export default function DashboardPage() {
             </div>
           </div>
         )}
+      </div>
+
+      {/* Quick Actions */}
+      <div className="flex flex-wrap gap-2">
+        <button
+          onClick={() => navigate('/settings?tab=import')}
+          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-surface-800 border border-surface-700 hover:border-brand-500/50 hover:bg-surface-700 transition-colors text-sm text-slate-300 hover:text-white"
+        >
+          <Upload size={15} className="text-brand-400" />
+          Import CSV
+        </button>
       </div>
 
       {/* Bottom row — Overdue Invoices + Low Stock side by side */}

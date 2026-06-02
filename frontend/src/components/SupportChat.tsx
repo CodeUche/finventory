@@ -88,7 +88,7 @@ export default function SupportChat() {
   const [messages, setMessages] = useState<Message[]>([
     {
       role: 'assistant',
-      content: "Hi! I'm Audity Support. Ask me anything about how to use the app — invoices, inventory, payroll, reports, and more. Or pick a common question below.",
+      content: "Hi! I'm Uche, your Audity assistant. Ask me anything about how to use the app — invoices, inventory, payroll, reports, and more. Or pick a common question below.",
     },
   ])
   const [input, setInput] = useState('')
@@ -137,8 +137,8 @@ export default function SupportChat() {
         onClick={() => setOpen((o) => !o)}
         className="fixed bottom-5 right-5 z-50 w-13 h-13 rounded-full bg-brand-500 hover:bg-brand-600 text-white shadow-xl flex items-center justify-center transition-all duration-200 hover:scale-110"
         style={{ width: 52, height: 52 }}
-        title="Support Chat"
-        aria-label="Open support chat"
+        title="Chat with Uche"
+        aria-label="Chat with Uche"
       >
         {open ? <X size={22} /> : <MessageCircle size={22} />}
         {!open && messages.length > 1 && (
@@ -157,8 +157,8 @@ export default function SupportChat() {
               <Bot size={16} className="text-brand-400" />
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-white leading-tight">Audity Support</p>
-              <p className="text-xs text-emerald-400">Online · AI-powered</p>
+              <p className="text-sm font-semibold text-white leading-tight">Uche</p>
+              <p className="text-xs text-emerald-400">Online · Audity Assistant</p>
             </div>
             <button onClick={() => setOpen(false)} className="btn-ghost p-1 text-slate-400">
               <ChevronDown size={18} />

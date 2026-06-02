@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { User, Building2, Shield, Loader2, Camera, CreditCard, CheckCircle, Mail, Lock, Unlock, LandmarkIcon, UsersRound, UserPlus, X, ChevronDown, ChevronUp, Bot, Layout, Copy, Trash2, ShieldCheck, Key, Clock, XCircle, Send, Globe, AlertTriangle, Wifi, WifiOff, RefreshCw, Activity, FileText, GitBranch } from 'lucide-react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { User, Building2, Shield, Loader2, Camera, CreditCard, CheckCircle, Mail, Lock, Unlock, LandmarkIcon, UsersRound, UserPlus, X, ChevronDown, ChevronUp, Bot, Layout, Copy, Trash2, ShieldCheck, Key, Clock, XCircle, Send, Globe, AlertTriangle, Wifi, WifiOff, RefreshCw, Activity, FileText, GitBranch, Upload } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { authApi, orgApi, paymentGatewayApi, accountingApi, teamApi, tauriFetch, partnerApi, einvoicingApi } from '@/services/api'
+import ImportPage from '@/pages/ImportPage'
 import type { FirsConfig, FirsStats, FirsSubmission, SandboxProgress, GoLiveChecklist } from '@/types'
 import type { AxiosError } from 'axios'
 import { useAuthStore } from '@/store/authStore'
@@ -110,7 +111,7 @@ const TIMEOUT_OPTIONS: { value: TimeoutOption; label: string }[] = [
   { value: '4h', label: '4 hours (recommended)' },
 ]
 
-type Tab = 'profile' | 'company' | 'security' | 'payments' | 'email' | 'periods' | 'team' | 'invoice_templates' | 'ai' | 'access' | 'whitelabel' | 'firs' | 'gl_mapping'
+type Tab = 'profile' | 'company' | 'security' | 'payments' | 'email' | 'periods' | 'team' | 'invoice_templates' | 'ai' | 'access' | 'whitelabel' | 'firs' | 'gl_mapping' | 'import'
 
 export default function SettingsPage() {
   const navigate = useNavigate()
@@ -122,7 +123,11 @@ export default function SettingsPage() {
     const lvl = modulePermissions?.['settings'] ?? 'none'
     return lvl !== 'none'
   })()
-  const [tab, setTab] = useState<Tab>('profile')
+  const [searchParams] = useSearchParams()
+  const [tab, setTab] = useState<Tab>(() => {
+    const t = searchParams.get('tab') as Tab | null
+    return t ?? 'profile'
+  })
 
   // ─── Profile state ─────────────────────────────────────────────────────────
   const [profile, setProfile] = useState({
@@ -891,6 +896,7 @@ export default function SettingsPage() {
     { id: 'access',            label: 'Accountant Access', icon: ShieldCheck, ownerOnly: true },
     { id: 'whitelabel',        label: 'White-label',       icon: Globe,        ownerOnly: true },
     { id: 'firs',              label: 'FIRS',              icon: Shield,       ownerOnly: true, comingSoon: true },
+    { id: 'import',            label: 'Import',            icon: Upload,       requiresSettings: true },
   ]
   const tabs = allTabs.filter((t) => {
     if (t.ownerOnly && !isOwner) return false
@@ -3081,6 +3087,11 @@ export default function SettingsPage() {
           </p>
           <span className="inline-block px-3 py-1 rounded-full bg-amber-500/15 text-amber-400 text-xs font-medium">In Development</span>
         </div>
+      )}
+
+      {/* ── Data Import Tab ──────────────────────────────────────────────────── */}
+      {activeTab === 'import' && (
+        <ImportPage />
       )}
     </>
   )

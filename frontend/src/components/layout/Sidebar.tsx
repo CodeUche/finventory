@@ -6,7 +6,7 @@ import {
   CreditCard, Truck, Building2, Warehouse, Calculator, BookOpen,
   BookMarked, Landmark, UsersRound, Banknote, ArrowDownCircle,
   PieChart, Scale, Shield, ClipboardList, ChevronDown, ChevronRight, ShieldCheck,
-  MapPin, ClipboardCheck, GraduationCap, Briefcase, ShoppingCart, Upload,
+  MapPin, ClipboardCheck, GraduationCap, Briefcase, ShoppingCart,
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { authApi } from '@/services/api'
@@ -106,7 +106,6 @@ const navGroups: { label: string | null; items: { name: string; href: string; ic
     label: 'BILLING',
     items: [
       { name: 'Billing & Plans', href: '/billing', icon: CreditCard, ownerOnly: true },
-      { name: 'CSV Import', href: '/import', icon: Upload, module: 'settings' },
     ],
   },
 ]
