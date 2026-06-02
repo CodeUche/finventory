@@ -184,6 +184,9 @@ export default function ProductsPage() {
   const [historyDateTo, setHistoryDateTo] = useState('')
   const [batchForm, setBatchForm] = useState({ ...BLANK_BATCH })
   const [warehouses, setWarehouses] = useState<{ id: string; name: string }[]>([])
+  const [editWarehouse, setEditWarehouse] = useState('')
+  const [editOrigWarehouse, setEditOrigWarehouse] = useState('')
+  const [editOrigQty, setEditOrigQty] = useState(0)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [categories, setCategories] = useState<{ id: string; name: string }[]>([])
@@ -253,6 +256,21 @@ export default function ProductsPage() {
       category: (p as any).category ?? '',
     })
     loadModalDeps()
+    // Fetch current warehouse for this product (largest stock qty wins)
+    setEditWarehouse('')
+    setEditOrigWarehouse('')
+    setEditOrigQty(0)
+    inventoryApi.stock({ product_id: p.id }).then(({ data }) => {
+      const items: any[] = data.results ?? data
+      if (items.length > 0) {
+        const top = items.reduce((a: any, b: any) =>
+          parseFloat(b.quantity_on_hand) > parseFloat(a.quantity_on_hand) ? b : a
+        )
+        setEditWarehouse(String(top.warehouse ?? ''))
+        setEditOrigWarehouse(String(top.warehouse ?? ''))
+        setEditOrigQty(parseFloat(top.quantity_on_hand) || 0)
+      }
+    }).catch(() => {})
     setShowModal(true)
   }
 
@@ -283,7 +301,30 @@ export default function ProductsPage() {
     try {
       if (editId) {
         await inventoryApi.updateProduct(editId, payload)
-        toast.success('Product updated')
+        // Transfer stock if warehouse changed and there is stock to move
+        if (
+          form.product_type === 'physical' &&
+          editWarehouse &&
+          editOrigWarehouse &&
+          editWarehouse !== editOrigWarehouse &&
+          editOrigQty > 0
+        ) {
+          try {
+            await inventoryApi.transferStock({
+              product_id: editId,
+              from_warehouse_id: editOrigWarehouse,
+              to_warehouse_id: editWarehouse,
+              quantity: editOrigQty,
+              notes: 'Warehouse reassigned via product edit',
+            })
+            toast.success('Product updated and stock moved to new warehouse')
+          } catch {
+            toast.success('Product updated')
+            toast.error('Stock transfer failed — move stock manually from the Stock page')
+          }
+        } else {
+          toast.success('Product updated')
+        }
       } else {
         const { data: newProduct } = await inventoryApi.createProduct(payload)
         // Set opening stock if a warehouse was selected (always register product in warehouse)
@@ -644,6 +685,20 @@ export default function ProductsPage() {
                     <label className="label">Max Safety Level <FieldTooltip text="Do not stock above this quantity. Leave blank for no limit." /></label>
                     <input type="number" min="0" className="input" value={form.max_stock_level} onChange={upd('max_stock_level')} placeholder="No limit" />
                   </div>
+                </div>
+              )}
+              {editId && form.product_type === 'physical' && warehouses.length > 0 && (
+                <div>
+                  <label className="label">Warehouse <FieldTooltip text="Where this product is stocked. Changing this will transfer all existing stock to the selected warehouse." /></label>
+                  <select className="input" value={editWarehouse} onChange={(e) => setEditWarehouse(e.target.value)}>
+                    <option value="">— No warehouse assigned —</option>
+                    {warehouses.map((w) => (
+                      <option key={w.id} value={w.id}>{w.name}</option>
+                    ))}
+                  </select>
+                  {editWarehouse && editOrigWarehouse && editWarehouse !== editOrigWarehouse && editOrigQty > 0 && (
+                    <p className="text-xs text-amber-400 mt-1">{editOrigQty} units will be transferred to the new warehouse on save.</p>
+                  )}
                 </div>
               )}
               <div className="grid grid-cols-2 gap-4">
