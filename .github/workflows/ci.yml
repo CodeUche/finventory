@@ -140,7 +140,7 @@ jobs:
         uses: codecov/codecov-action@v4
         if: always()
         with:
-          files: ./coverage.xml
+          files: backend/coverage.xml
           fail_ci_if_error: false
 
 # ─── Frontend — Type Check & Build ────────────────────────────────────────────
@@ -370,9 +370,9 @@ jobs:
         run: npm ci
 
       - name: Build Tauri app
-        run: npm run tauri:build
+        # tauri:build:cloud always targets the Railway production API (via .env.cloud)
+        run: npm run tauri:build:cloud
         env:
-          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
           # Tauri v2 update signing — safe to omit if auto-update not configured yet.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}

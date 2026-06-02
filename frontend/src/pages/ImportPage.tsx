@@ -35,7 +35,7 @@ function parseCSV(text: string): string[][] {
 
 type Entity = 'products' | 'customers' | 'accounts'
 type ImportError = { row: number; field: string; message: string }
-type ImportResult = { created: number; updated: number; errors: ImportError[]; total_rows: number }
+type ImportResult = { created: number; updated: number; errors: ImportError[]; total_rows: number; warehouses_created?: number; stock_assigned?: number }
 
 const ENTITIES: { key: Entity; label: string; icon: React.ReactNode; description: string; columns: string }[] = [
   {
@@ -43,7 +43,7 @@ const ENTITIES: { key: Entity; label: string; icon: React.ReactNode; description
     label: 'Products',
     icon: <FileText size={20} />,
     description: 'Bulk import your product catalogue with pricing and stock settings.',
-    columns: 'sku*, name*, selling_price*, cost_price*, product_type, category, brand, unit_of_measure, reorder_level, barcode, description',
+    columns: 'sku*, name*, selling_price*, cost_price*, product_type, category, brand, unit_of_measure, reorder_level, barcode, description, warehouse, opening_stock',
   },
   {
     key: 'customers',
@@ -105,7 +105,9 @@ export default function ImportPage() {
       const { data } = await importApi[entity](file)
       setResult(data)
       if (data.errors.length === 0) {
-        toast.success(`Import complete: ${data.created} created, ${data.updated} updated`)
+        const stockMsg = data.stock_assigned ? `, ${data.stock_assigned} stocked` : ''
+        const whMsg = data.warehouses_created ? `, ${data.warehouses_created} warehouse(s) created` : ''
+        toast.success(`Import complete: ${data.created} created, ${data.updated} updated${stockMsg}${whMsg}`)
       } else {
         toast(`Import done with ${data.errors.length} error(s)`, { icon: '⚠️' })
       }
@@ -164,6 +166,9 @@ export default function ImportPage() {
           <div>
             <p className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-1">Required columns (marked *) and optional columns</p>
             <p className="text-xs text-slate-300 font-mono leading-relaxed">{selected.columns}</p>
+            {entity === 'products' && (
+              <p className="text-xs text-amber-400/80 mt-1.5">💡 Include <span className="font-mono">warehouse</span> and <span className="font-mono">opening_stock</span> columns to auto-create warehouses and assign stock levels in one step.</p>
+            )}
           </div>
           <button
             onClick={downloadTemplate}
@@ -290,7 +295,7 @@ export default function ImportPage() {
       {result && (
         <div className="space-y-4">
           {/* Summary strip */}
-          <div className="grid grid-cols-3 gap-3">
+          <div className={`grid gap-3 ${result.warehouses_created !== undefined ? 'grid-cols-2 sm:grid-cols-5' : 'grid-cols-3'}`}>
             <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 flex items-center gap-3">
               <CheckCircle size={20} className="text-emerald-400" />
               <div>
@@ -305,6 +310,24 @@ export default function ImportPage() {
                 <p className="text-xl font-bold text-indigo-400">{result.updated}</p>
               </div>
             </div>
+            {result.warehouses_created !== undefined && (
+              <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 flex items-center gap-3">
+                <CheckCircle size={20} className="text-amber-400" />
+                <div>
+                  <p className="text-xs text-slate-400">Warehouses</p>
+                  <p className="text-xl font-bold text-amber-400">{result.warehouses_created}</p>
+                </div>
+              </div>
+            )}
+            {result.stock_assigned !== undefined && (
+              <div className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 p-4 flex items-center gap-3">
+                <CheckCircle size={20} className="text-cyan-400" />
+                <div>
+                  <p className="text-xs text-slate-400">Stocked</p>
+                  <p className="text-xl font-bold text-cyan-400">{result.stock_assigned}</p>
+                </div>
+              </div>
+            )}
             <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 flex items-center gap-3">
               <XCircle size={20} className="text-red-400" />
               <div>

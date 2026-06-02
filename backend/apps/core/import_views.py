@@ -29,6 +29,7 @@ PRODUCT_REQUIRED = ["sku", "name", "selling_price", "cost_price"]
 PRODUCT_OPTIONAL = [
     "product_type", "category", "brand", "unit_of_measure",
     "reorder_level", "barcode", "description",
+    "warehouse", "opening_stock",
 ]
 PRODUCT_ALL = PRODUCT_REQUIRED + PRODUCT_OPTIONAL
 
@@ -129,11 +130,32 @@ class ImportProductsView(APIView):
                 status=400,
             )
 
-        from apps.inventory.models import Product, Category
+        from decimal import Decimal as D
+        from apps.inventory.models import Product, Category, Warehouse
+        from apps.inventory.services import InventoryService
+        from django.db import transaction
 
+        has_warehouse_col = "warehouse" in headers
         created = 0
         updated = 0
+        stock_assigned = 0
+        warehouses_created = 0
         errors = []
+
+        # Pre-build warehouse cache to avoid N+1 lookups
+        warehouse_cache: dict = {}
+
+        def _get_or_create_warehouse(name: str):
+            key = name.strip().lower()
+            if key in warehouse_cache:
+                return warehouse_cache[key]
+            wh, wh_new = Warehouse.objects.get_or_create(
+                organisation=org,
+                name__iexact=name,
+                defaults={"name": name.strip(), "organisation": org, "is_active": True},
+            )
+            warehouse_cache[key] = (wh, wh_new)
+            return wh, wh_new
 
         for idx, row in enumerate(rows, start=2):
             row_num = idx
@@ -186,12 +208,48 @@ class ImportProductsView(APIView):
             else:
                 updated += 1
 
-        return Response({
+            # ── Warehouse + opening stock ─────────────────────────────────────
+            if has_warehouse_col and product_type == "physical":
+                wh_name = row.get("warehouse", "").strip()
+                qty_raw = row.get("opening_stock", "").strip()
+                qty = D("0")
+                if qty_raw:
+                    try:
+                        qty = D(qty_raw.replace(",", ""))
+                    except Exception:
+                        errors.append({"row": row_num, "field": "opening_stock",
+                                       "message": f"Invalid number '{qty_raw}'"})
+
+                if wh_name:
+                    try:
+                        wh, wh_new = _get_or_create_warehouse(wh_name)
+                        if wh_new:
+                            warehouses_created += 1
+                        if qty > 0:
+                            with transaction.atomic():
+                                InventoryService.adjust_stock(
+                                    organisation=org,
+                                    product=obj,
+                                    warehouse=wh,
+                                    quantity=qty,
+                                    reason="Opening stock — CSV import",
+                                    created_by=request.user,
+                                )
+                            stock_assigned += 1
+                    except Exception as exc:
+                        errors.append({"row": row_num, "field": "warehouse",
+                                       "message": str(exc)})
+
+        response_data = {
             "created": created,
             "updated": updated,
             "errors": errors,
             "total_rows": len(rows),
-        })
+        }
+        if has_warehouse_col:
+            response_data["warehouses_created"] = warehouses_created
+            response_data["stock_assigned"] = stock_assigned
+        return Response(response_data)
 
 
 # ---------------------------------------------------------------------------
@@ -356,8 +414,8 @@ TEMPLATES = {
 
 SAMPLE_ROWS = {
     "products": [
-        ["SKU001", "Hennessy VS 750ml", "5500.00", "3200.00", "physical", "Cognac", "Hennessy", "bottle", "10", "", ""],
-        ["SKU002", "Delivery Service", "2000.00", "0.00", "service", "Logistics", "", "hour", "0", "", "Delivery service charge"],
+        ["SKU001", "Hennessy VS 750ml", "5500.00", "3200.00", "physical", "Cognac", "Hennessy", "bottle", "10", "", "", "Main Warehouse", "24"],
+        ["SKU002", "Delivery Service", "2000.00", "0.00", "service", "Logistics", "", "hour", "0", "", "Delivery service charge", "", ""],
     ],
     "customers": [
         ["CUST001", "Adaeze Okafor", "retail", "adaeze@example.com", "08012345678", "Lagos", "Adaeze", "0", "0", ""],

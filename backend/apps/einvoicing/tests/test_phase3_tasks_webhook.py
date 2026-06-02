@@ -815,16 +815,14 @@ class WebhookSignatureTests(TestCase):
         self.assertTrue(resp.json().get("received"))
 
     @override_settings(DIGITAX_WEBHOOK_SECRET="", DEBUG=True)
-    def test_debug_mode_no_secret_skips_validation(self):
-        """In DEBUG mode with no secret configured, HMAC check should be bypassed."""
-        with patch("apps.einvoicing.tasks.handle_irn_callback_task.apply_async"):
-            resp = self.client.post(
-                _WEBHOOK_URL,
-                data=json.dumps(_VALID_PAYLOAD),
-                content_type="application/json",
-                # No signature header
-            )
-        self.assertEqual(resp.status_code, 200)
+    def test_debug_mode_no_secret_rejects_request(self):
+        """Even in DEBUG mode, missing DIGITAX_WEBHOOK_SECRET must reject the request (security hardening)."""
+        resp = self.client.post(
+            _WEBHOOK_URL,
+            data=json.dumps(_VALID_PAYLOAD),
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 400)
 
     @override_settings(DIGITAX_WEBHOOK_SECRET="", DEBUG=False)
     def test_production_mode_no_secret_rejects_request(self):
@@ -843,40 +841,37 @@ class WebhookPayloadTests(TestCase):
     def setUp(self):
         self.client = APIClient()
 
-    @override_settings(DIGITAX_WEBHOOK_SECRET="", DEBUG=True)
+    def _post_signed(self, payload, secret=_TEST_SECRET):
+        body = json.dumps(payload).encode()
+        sig = _make_webhook_signature(body, secret)
+        return self.client.post(
+            _WEBHOOK_URL,
+            data=body,
+            content_type="application/json",
+            HTTP_X_DIGITAX_SIGNATURE=sig,
+        )
+
+    @override_settings(DIGITAX_WEBHOOK_SECRET=_TEST_SECRET, DEBUG=False)
     def test_missing_submission_ref_returns_400(self):
         """Payload without submission_ref should be rejected with 400."""
         bad_payload = {k: v for k, v in _VALID_PAYLOAD.items() if k != "submission_ref"}
-        resp = self.client.post(
-            _WEBHOOK_URL,
-            data=json.dumps(bad_payload),
-            content_type="application/json",
-        )
+        resp = self._post_signed(bad_payload)
         self.assertEqual(resp.status_code, 400)
-        # details is a dict of field errors
         resp_data = resp.json()
         self.assertIn("submission_ref", resp_data.get("details", resp_data))
 
-    @override_settings(DIGITAX_WEBHOOK_SECRET="", DEBUG=True)
+    @override_settings(DIGITAX_WEBHOOK_SECRET=_TEST_SECRET, DEBUG=False)
     def test_missing_irn_returns_400(self):
         """Payload without irn should be rejected with 400."""
         bad_payload = {k: v for k, v in _VALID_PAYLOAD.items() if k != "irn"}
-        resp = self.client.post(
-            _WEBHOOK_URL,
-            data=bad_payload,
-            content_type="application/json",
-        )
+        resp = self._post_signed(bad_payload)
         self.assertEqual(resp.status_code, 400)
 
-    @override_settings(DIGITAX_WEBHOOK_SECRET="", DEBUG=True)
+    @override_settings(DIGITAX_WEBHOOK_SECRET=_TEST_SECRET, DEBUG=False)
     def test_valid_payload_dispatches_task_with_correct_kwargs(self):
         """Valid webhook should dispatch handle_irn_callback_task with correct kwargs."""
         with patch("apps.einvoicing.tasks.handle_irn_callback_task.apply_async") as mock_task:
-            self.client.post(
-                _WEBHOOK_URL,
-                data=json.dumps(_VALID_PAYLOAD),
-                content_type="application/json",
-            )
+            self._post_signed(_VALID_PAYLOAD)
 
         mock_task.assert_called_once()
         kwargs = mock_task.call_args.kwargs["kwargs"]
@@ -885,31 +880,23 @@ class WebhookPayloadTests(TestCase):
         self.assertEqual(kwargs["csid"], _VALID_PAYLOAD["csid"])
         self.assertEqual(kwargs["firs_invoice_number"], _VALID_PAYLOAD["invoice_number"])
 
-    @override_settings(DIGITAX_WEBHOOK_SECRET="", DEBUG=True)
+    @override_settings(DIGITAX_WEBHOOK_SECRET=_TEST_SECRET, DEBUG=False)
     def test_optional_qr_code_passed_through(self):
         """Optional qr_code field should be forwarded to the task."""
         payload_with_qr = {**_VALID_PAYLOAD, "qr_code": "base64imagedata"}
         with patch("apps.einvoicing.tasks.handle_irn_callback_task.apply_async") as mock_task:
-            self.client.post(
-                _WEBHOOK_URL,
-                data=json.dumps(payload_with_qr),
-                content_type="application/json",
-            )
+            self._post_signed(payload_with_qr)
         kwargs = mock_task.call_args.kwargs["kwargs"]
         self.assertEqual(kwargs["qr_code_b64"], "base64imagedata")
 
-    @override_settings(DIGITAX_WEBHOOK_SECRET="", DEBUG=True)
+    @override_settings(DIGITAX_WEBHOOK_SECRET=_TEST_SECRET, DEBUG=False)
     def test_task_dispatch_failure_still_returns_200(self):
         """Even if task dispatch fails, webhook should still return 200."""
         with patch(
             "apps.einvoicing.tasks.handle_irn_callback_task.apply_async",
             side_effect=Exception("broker down"),
         ):
-            resp = self.client.post(
-                _WEBHOOK_URL,
-                data=json.dumps(_VALID_PAYLOAD),
-                content_type="application/json",
-            )
+            resp = self._post_signed(_VALID_PAYLOAD)
         self.assertEqual(resp.status_code, 200)
 
 
