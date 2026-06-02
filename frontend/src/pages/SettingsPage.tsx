@@ -213,11 +213,10 @@ export default function SettingsPage() {
       if (data?.data?.account_name) {
         setCompany(c => ({ ...c, bank_account_name: data.data.account_name }))
         toast.success('Account name resolved')
-      } else {
-        toast.error('Could not resolve account name. Check your account number and bank selection.')
       }
+      // silently ignore failed resolve — field is still manually editable
     } catch {
-      toast.error('Bank account lookup failed. Ensure your Paystack integration is configured.')
+      // silently ignore — user can type account name manually
     } finally {
       setResolvingAccount(false)
     }
