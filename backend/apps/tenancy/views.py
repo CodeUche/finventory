@@ -645,7 +645,8 @@ class OrganisationViewSet(viewsets.ModelViewSet):
                 status=400,
             )
 
-        paystack_key = getattr(settings, "PAYSTACK_SECRET_KEY", "")
+        paystack_key = getattr(settings, "PAYSTACK_SECRET_KEY", "").strip()
+        logger.debug("Paystack key prefix: %s*** len=%d", paystack_key[:8], len(paystack_key))
         if not paystack_key:
             return Response(
                 {"error": {"message": "Paystack API key not configured on server."}},
