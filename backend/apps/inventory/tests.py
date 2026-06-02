@@ -170,7 +170,7 @@ class LowStockTests(TestCase):
         self.warehouse = _make_warehouse(self.org)
 
     def test_low_stock_endpoint_accessible(self):
-        res = self.client.get("/api/v1/inventory/products/low_stock/")
+        res = self.client.get("/api/v1/inventory/products/low-stock/")
         self.assertEqual(res.status_code, 200)
 
     def test_product_with_no_stock_appears_in_low_stock(self):
@@ -185,7 +185,7 @@ class LowStockTests(TestCase):
             unit_of_measure="unit",
             reorder_level=5,
         )
-        res = self.client.get("/api/v1/inventory/products/low_stock/")
+        res = self.client.get("/api/v1/inventory/products/low-stock/")
         self.assertEqual(res.status_code, 200)
         data = res.data if isinstance(res.data, list) else (res.data.get("results") or res.data)
         # low_stock response has "product" field = product UUID for no-movement items

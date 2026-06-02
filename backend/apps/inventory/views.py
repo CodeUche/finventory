@@ -168,7 +168,7 @@ class ProductViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
         return Response(status=status.HTTP_204_NO_CONTENT)
 
-    @action(detail=False, methods=["get"])
+    @action(detail=False, methods=["get"], url_path="low-stock")
     def low_stock(self, request):
         """GET /api/v1/inventory/products/low-stock/"""
         org = self._get_organisation()
