@@ -47,6 +47,12 @@ backend/logs/
 htmlcov/
 .pytest_cache/
 coverage.xml
+test-results/
+backend/test-results.xml
+tests/e2e/test-results/
+tests/e2e/playwright-report/
+package-lock.json
+package.json
 
 # Node / Frontend
 node_modules/
