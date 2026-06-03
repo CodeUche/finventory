@@ -1,9 +1,12 @@
 import { useRef, useState } from 'react'
-import { Bell, X, Package, AlertCircle, CalendarClock, Receipt, Users, Clock, ShieldCheck, Truck, CheckCircle2 } from 'lucide-react'
+import { Bell, X, Package, AlertCircle, CalendarClock, Receipt, Users, Clock, ShieldCheck, Truck, CheckCircle2, CheckCircle, XCircle } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useNotifications, EtaAlert } from '@/contexts/NotificationsContext'
+import { orgApi } from '@/services/api'
+import { useAuthStore } from '@/store/authStore'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { cn } from '@/lib/utils'
+import toast from 'react-hot-toast'
 
 export default function NotificationBell() {
   const {
@@ -14,6 +17,8 @@ export default function NotificationBell() {
   } = useNotifications()
   const [open, setOpen] = useState(false)
   const [receivingId, setReceivingId] = useState<string | null>(null)
+  const [partnerActionId, setPartnerActionId] = useState<string | null>(null)
+  const { organisation } = useAuthStore()
   const navigate = useNavigate()
   const ref = useRef<HTMLDivElement>(null)
 
@@ -21,6 +26,38 @@ export default function NotificationBell() {
     setReceivingId(id)
     await quickReceive(id)
     setReceivingId(null)
+  }
+
+  const handleApprovePartner = async (alertId: string) => {
+    if (!organisation?.id) return
+    const reqId = alertId.replace(/^pr-/, '')
+    setPartnerActionId(alertId)
+    try {
+      await orgApi.approvePartnerRequest(organisation.id, reqId)
+      dismissPartnerRequest(alertId)
+      toast.success('Accountant access approved')
+    } catch (err: any) {
+      const msg = err?.response?.data?.error
+      toast.error(typeof msg === 'string' ? msg : msg?.message ?? 'Failed to approve')
+    } finally {
+      setPartnerActionId(null)
+    }
+  }
+
+  const handleRejectPartner = async (alertId: string) => {
+    if (!organisation?.id) return
+    const reqId = alertId.replace(/^pr-/, '')
+    setPartnerActionId(alertId)
+    try {
+      await orgApi.rejectPartnerRequest(organisation.id, reqId, '')
+      dismissPartnerRequest(alertId)
+      toast.success('Request rejected')
+    } catch (err: any) {
+      const msg = err?.response?.data?.error
+      toast.error(typeof msg === 'string' ? msg : msg?.message ?? 'Failed to reject')
+    } finally {
+      setPartnerActionId(null)
+    }
   }
 
   const go = (path: string) => { setOpen(false); navigate(path) }
@@ -82,6 +119,22 @@ export default function NotificationBell() {
                             <p className="text-xs text-slate-500 truncate">
                               {req.partner_firm_name || req.partner_email} wants access to your books
                             </p>
+                            <div className="flex gap-1.5 mt-1.5" onClick={(e) => e.stopPropagation()}>
+                              <button
+                                disabled={partnerActionId === req.id}
+                                onClick={() => handleApprovePartner(req.id)}
+                                className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md bg-green-500/20 text-green-400 hover:bg-green-500/30 disabled:opacity-50 transition-colors"
+                              >
+                                <CheckCircle size={10} /> Approve
+                              </button>
+                              <button
+                                disabled={partnerActionId === req.id}
+                                onClick={() => handleRejectPartner(req.id)}
+                                className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md bg-red-500/20 text-red-400 hover:bg-red-500/30 disabled:opacity-50 transition-colors"
+                              >
+                                <XCircle size={10} /> Reject
+                              </button>
+                            </div>
                           </div>
                           <button
                             onClick={(e) => { e.stopPropagation(); dismissPartnerRequest(req.id) }}

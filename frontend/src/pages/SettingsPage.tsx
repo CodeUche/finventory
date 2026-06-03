@@ -128,6 +128,10 @@ export default function SettingsPage() {
     const t = searchParams.get('tab') as Tab | null
     return t ?? 'profile'
   })
+  useEffect(() => {
+    const t = searchParams.get('tab') as Tab | null
+    if (t) setTab(t)
+  }, [searchParams])
 
   // ─── Profile state ─────────────────────────────────────────────────────────
   const [profile, setProfile] = useState({

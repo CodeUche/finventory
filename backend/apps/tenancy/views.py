@@ -839,7 +839,7 @@ class OrganisationViewSet(viewsets.ModelViewSet):
         Share this token with the accountant who calls POST /partner/accept-invite/.
         """
         import uuid as _uuid
-        from .models import PartnerProfile
+        from .models import PartnerProfile, PartnerClientLink
         from .serializers import PartnerAccessRequestSerializer
 
         org = self.get_object()
@@ -871,16 +871,21 @@ class OrganisationViewSet(viewsets.ModelViewSet):
         token = _uuid.uuid4()
 
         # Upsert — invalidate previous unused token for this (partner, org) pair
-        req, created = PartnerAccessRequest.objects.get_or_create(
-            partner=partner_profile,
-            organisation=org,
-            defaults={
-                "status": PartnerAccessRequest.Status.PENDING,
-                "invite_token": token,
-                "invite_token_used": False,
-                "requested_by": request.user,
-            },
-        )
+        try:
+            req, created = PartnerAccessRequest.objects.get_or_create(
+                partner=partner_profile,
+                organisation=org,
+                defaults={
+                    "status": PartnerAccessRequest.Status.PENDING,
+                    "invite_token": token,
+                    "invite_token_used": False,
+                    "requested_by": request.user,
+                },
+            )
+        except Exception as exc:
+            logger.exception("generate_partner_invite: get_or_create failed for org=%s partner=%s", org.id, partner_email)
+            return Response({"error": f"Could not create invite record: {type(exc).__name__}: {exc}"}, status=500)
+
         if not created:
             if req.status == PartnerAccessRequest.Status.APPROVED:
                 # Only block if the PartnerClientLink actually exists — if the
@@ -897,10 +902,14 @@ class OrganisationViewSet(viewsets.ModelViewSet):
             req.rejection_reason = ""
             req.reviewed_by = None
             req.reviewed_at = None
-            req.save(update_fields=[
-                "status", "invite_token", "invite_token_used",
-                "rejection_reason", "reviewed_by", "reviewed_at", "updated_at",
-            ])
+            try:
+                req.save(update_fields=[
+                    "status", "invite_token", "invite_token_used",
+                    "rejection_reason", "reviewed_by", "reviewed_at", "updated_at",
+                ])
+            except Exception as exc:
+                logger.exception("generate_partner_invite: save failed for req=%s", req.id)
+                return Response({"error": f"Could not update invite record: {type(exc).__name__}: {exc}"}, status=500)
 
         _audit_partner_event(request, org, "partner_invite_generated",
                              f"Owner {request.user.email} generated invite token for {partner_email}")
@@ -1521,9 +1530,11 @@ class PartnerViewSet(viewsets.ViewSet):
         # Activate link + membership — bypass RLS for cross-org inserts.
         # The partner's GUC is set to their own org but the link/membership
         # targets the client org, which the RLS policy would otherwise block.
-        from django.db import connection as _conn
-        with _conn.cursor() as _cur:
-            _cur.execute("SET LOCAL row_security = OFF")
+        # SET LOCAL requires an active transaction to persist across statements.
+        from django.db import connection as _conn, transaction as _tx
+        with _tx.atomic():
+            with _conn.cursor() as _cur:
+                _cur.execute("SET LOCAL row_security = OFF")
             link, created = PartnerClientLink.objects.get_or_create(
                 partner=profile,
                 organisation=req.organisation,
