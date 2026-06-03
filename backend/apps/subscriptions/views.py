@@ -247,6 +247,9 @@ class SubscriptionViewSet(viewsets.GenericViewSet):
 
         Initialises a Paystack transaction. Returns { authorization_url, reference }.
         """
+        if not request.organisation:
+            return Response({"error": "Organisation not found. Please select an organisation first."}, status=400)
+
         plan_id = request.data.get("plan_id")
         if not plan_id:
             return Response({"error": "plan_id is required."}, status=400)
