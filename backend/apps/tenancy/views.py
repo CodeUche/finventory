@@ -883,8 +883,14 @@ class OrganisationViewSet(viewsets.ModelViewSet):
         )
         if not created:
             if req.status == PartnerAccessRequest.Status.APPROVED:
-                return Response({"error": "This partner already has access to your organisation."}, status=400)
-            # Refresh the token for rejected/withdrawn/pending
+                # Only block if the PartnerClientLink actually exists — if the
+                # link was never created (e.g. RLS crash), allow regeneration.
+                link_exists = PartnerClientLink.objects.filter(
+                    partner=partner_profile, organisation=org
+                ).exists()
+                if link_exists:
+                    return Response({"error": "This partner already has access to your organisation."}, status=400)
+            # Refresh the token for rejected/withdrawn/pending (or broken approved)
             req.status = PartnerAccessRequest.Status.PENDING
             req.invite_token = token
             req.invite_token_used = False
