@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Scale, Loader2, RefreshCw, CheckCircle, AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -56,6 +57,7 @@ function groupAccounts(accounts: BSAccount[], groups: { label: string; from: num
 }
 
 export default function BalanceSheetPage() {
+  const navigate = useNavigate()
   const now = new Date()
   const [selectedYear, setSelectedYear] = useState(now.getFullYear())
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1)
@@ -176,7 +178,7 @@ export default function BalanceSheetPage() {
             <button onClick={handleSeed} disabled={seeding} className="btn-primary disabled:opacity-50">
               {seeding ? <><Loader2 size={14} className="animate-spin" /> Seeding…</> : 'Seed Default COA'}
             </button>
-            <a href="/accounting/coa" className="btn-ghost">Manage Accounts</a>
+            <button onClick={() => navigate('/accounting/coa')} className="btn-ghost">Manage Accounts</button>
           </div>
         </div>
       ) : data ? (
