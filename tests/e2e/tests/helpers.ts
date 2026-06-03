@@ -23,15 +23,27 @@ export function skipIfNoCredentials(test: { skip(reason?: string): void }) {
   }
 }
 
-/** Log in and optionally navigate to `path`. Waits for dashboard URL before redirect. */
+/**
+ * Log in and navigate to `path`.
+ *
+ * Fixes vs. old version:
+ * - Timeout raised to 25 s to survive Railway cold-starts.
+ * - Always navigates to the requested path, even when path === "/dashboard".
+ *   (Old code skipped the goto for "/dashboard", leaving the page on whatever
+ *   the login redirect went to — e.g. /platform-admin for superusers.)
+ * - Waits for the page to leave /login before navigating, so the session
+ *   cookie is set before we hit a protected route.
+ */
 export async function loginAndGo(page: Page, path = "/dashboard") {
   await page.goto("/login");
   await page.locator('input[type="email"]').fill(EMAIL);
   await page.locator('input[type="password"]').first().fill(PASS);
   await page.locator('button[type="submit"]').click();
-  // Wait for either success (dashboard) or failure (stays on /login with error)
-  await page.waitForURL(url => !url.pathname.includes("/login"), { timeout: 15_000 });
-  if (path !== "/dashboard" && path !== "/") await page.goto(path);
+  // Wait for post-login redirect — any URL that is not /login.
+  // 25 s covers Railway cold-start latency (~20 s on the free tier).
+  await page.waitForURL(url => !url.pathname.includes("/login"), { timeout: 25_000 });
+  // Always navigate to the target path so tests land where they expect.
+  await page.goto(path);
 }
 
 /** Assert a page loaded — checks for heading OR table OR empty-state text. */

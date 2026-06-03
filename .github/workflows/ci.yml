@@ -298,31 +298,37 @@ jobs:
 
       - name: Deploy to Railway
         if: steps.preflight.outputs.configured == 'true'
-        # Railway CLI v3 uses `railway deploy`; `railway up` is kept as a fallback.
-        continue-on-error: false
+        # Railway CLI v3: `railway up` uploads + deploys. `--detach` returns
+        # immediately so CI doesn't block waiting for the rollout to finish.
+        # RAILWAY_SERVICE_NAME is the env-var form; --service flag is the flag form.
+        working-directory: backend
         run: |
-          railway deploy \
-            --service "${{ secrets.RAILWAY_BACKEND_SERVICE }}" \
-            --environment production \
-            --detach \
-          || railway up \
+          railway up \
             --service "${{ secrets.RAILWAY_BACKEND_SERVICE }}" \
             --environment production \
             --detach
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
 
-      # Verify rollout — non-blocking; deployment status is visible in Railway dashboard.
-      - name: Verify deployment
+      # Verify rollout — poll health endpoint; non-fatal if Railway is slow to wake.
+      - name: Verify deployment health
         if: steps.preflight.outputs.configured == 'true'
         continue-on-error: true
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: |
-          echo "Waiting 30 s for Railway rollout..."
-          sleep 30
-          railway status 2>&1 | head -20 || true
-          echo "✓ Deploy triggered — check Railway dashboard for live status."
+          echo "Waiting 45 s for Railway to roll out..."
+          sleep 45
+          HEALTH_URL="${{ secrets.BACKEND_HEALTH_URL }}"
+          if [ -z "$HEALTH_URL" ]; then
+            HEALTH_URL="https://audity-backend-production-30f9.up.railway.app/api/v1/health/"
+          fi
+          for i in 1 2 3; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$HEALTH_URL" || echo "000")
+            echo "Health check $i/3: HTTP $STATUS"
+            [ "$STATUS" = "200" ] && echo "✓ Backend healthy" && exit 0
+            sleep 15
+          done
+          echo "::warning title=Health Check::Backend health check did not return 200 — check Railway dashboard."
+          exit 0
 
 # ─── Build — Tauri Desktop (Windows) ──────────────────────────────────────────
 # Runs on push to main AND on version tags (for GitHub Release).
@@ -394,7 +400,7 @@ jobs:
           retention-days: 30
 
 # ─── E2E — Playwright smoke suite ────────────────────────────────────────────
-# Runs after deploy-backend so it tests the live production stack.
+# Runs after deploy-backend completes so it tests the freshly deployed stack.
 # Requires these GitHub secrets:
 #   TEST_EMAIL      — email of a real account on Railway production
 #   TEST_PASSWORD   — password for that account
@@ -402,9 +408,10 @@ jobs:
   e2e-smoke:
     name: E2E — Playwright Smoke
     runs-on: ubuntu-latest
-    # Run after tests pass — does NOT need deploy-backend (Vercel + Railway are
-    # always live; we test the production stack directly, not a CI deploy).
-    needs: [backend-test, frontend-build]
+    # Run after deploy-backend so the new code is live before we test it.
+    # deploy-backend is skipped when RAILWAY_TOKEN is absent — needs: with
+    # a skipped dep is treated as satisfied, so e2e still runs.
+    needs: [backend-test, frontend-build, deploy-backend]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     defaults:
@@ -426,6 +433,21 @@ jobs:
 
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
+
+      # Wake the Railway backend before running tests.
+      # Railway's free tier sleeps after inactivity; cold-start takes ~20 s.
+      # We hit the health endpoint up to 6 times (90 s total) so the first
+      # real test request doesn't time out waiting for the dyno to boot.
+      - name: Warm up Railway backend
+        run: |
+          API="https://audity-backend-production-30f9.up.railway.app/api/v1/health/"
+          echo "Warming up $API …"
+          for i in $(seq 1 6); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 "$API" || echo "000")
+            echo "  attempt $i/6: HTTP $STATUS"
+            [ "$STATUS" = "200" ] && echo "  ✓ Backend warm" && break
+            sleep 15
+          done
 
       - name: Run smoke tests
         run: npm run test:smoke

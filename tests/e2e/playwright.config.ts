@@ -11,8 +11,8 @@ export default defineConfig({
     ["list"],
     ["html", { outputFolder: "playwright-report", open: "never" }],
   ],
-  timeout: 45_000,       // raised from 30s — auth + page load + data fetch
-  expect: { timeout: 8_000 },
+  timeout: 60_000,       // 60 s — covers Railway cold-start (~20 s) + auth + page load
+  expect: { timeout: 10_000 },
 
   use: {
     baseURL: BASE_URL,

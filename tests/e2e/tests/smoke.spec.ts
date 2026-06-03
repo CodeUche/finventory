@@ -99,11 +99,14 @@ test.describe("@smoke Login Flow", () => {
 
   test("can log in and see navigation", async ({ page }) => {
     await page.goto("/login");
-    await page.getByLabel(/email/i).fill(EMAIL);
-    await page.getByLabel(/password/i).fill(PASS);
-    await page.getByRole("button", { name: /sign in|log in/i }).click();
+    // Use attribute selectors — the login form labels have no htmlFor so
+    // getByLabel() cannot associate them with inputs.
+    await page.locator('input[type="email"]').fill(EMAIL);
+    await page.locator('input[type="password"]').first().fill(PASS);
+    await page.locator('button[type="submit"]').click();
 
-    // Navigation / sidebar must appear
+    // Navigation / sidebar must appear after redirect
+    await page.waitForURL(url => !url.pathname.includes("/login"), { timeout: 25_000 });
     await expect(
       page.getByRole("navigation").or(page.locator("[data-testid='sidebar']"))
     ).toBeVisible({ timeout: 10_000 });

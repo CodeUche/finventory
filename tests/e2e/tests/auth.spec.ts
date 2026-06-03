@@ -35,11 +35,17 @@ test.describe("@smoke Authentication", () => {
   test("valid credentials redirect to dashboard @smoke", async ({ page }) => {
     if (!hasCredentials) test.skip();
     await login(page);
-    // Must NOT land on /onboarding — must reach /dashboard
-    await expect(page).not.toHaveURL(/\/onboarding/i, { timeout: 12_000 });
-    await expect(page).toHaveURL(/\/(dashboard|app|home)?$/i, { timeout: 12_000 });
+    // Wait for any post-login redirect (25 s covers Railway cold-starts).
+    // Accept /dashboard (normal user), /platform-admin (superuser), or root.
+    // Fail only if we end up back on /login or stuck on /onboarding.
+    await page.waitForURL(url => !url.pathname.includes("/login"), { timeout: 25_000 });
+    await expect(page).not.toHaveURL(/\/onboarding/i, { timeout: 5_000 });
+    await expect(page).toHaveURL(
+      /\/(dashboard|platform-admin|app|home)?$/i,
+      { timeout: 5_000 }
+    );
     // Sidebar must be visible after login
-    await expect(page.getByRole("navigation")).toBeVisible();
+    await expect(page.getByRole("navigation")).toBeVisible({ timeout: 8_000 });
   });
 
   test("invalid credentials show error message @smoke", async ({ page }) => {
@@ -59,7 +65,10 @@ test.describe("Full authentication journey", () => {
   test("login → view dashboard → log out → redirected to login", async ({ page }) => {
     if (!hasCredentials) test.skip();
     await login(page);
-    await page.waitForURL(/\/(dashboard|app|home)?$/i, { timeout: 12_000 });
+    await page.waitForURL(
+      /\/(dashboard|platform-admin|app|home)?$/i,
+      { timeout: 25_000 }
+    );
 
     // Log out — try sidebar button first, then dropdown
     const logoutBtn = page.getByRole("button", { name: /logout|sign out/i });
