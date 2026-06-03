@@ -1512,15 +1512,20 @@ class PartnerViewSet(viewsets.ViewSet):
             "invite_token_used", "status", "reviewed_at", "requested_by", "updated_at",
         ])
 
-        # Activate link + membership
-        link, created = PartnerClientLink.objects.get_or_create(
-            partner=profile,
-            organisation=req.organisation,
-            defaults={"is_active": True, "is_referred": False},
-        )
-        if not created and not link.is_active:
-            link.is_active = True
-            link.save(update_fields=["is_active"])
+        # Activate link + membership — bypass RLS for cross-org inserts.
+        # The partner's GUC is set to their own org but the link/membership
+        # targets the client org, which the RLS policy would otherwise block.
+        from django.db import connection as _conn
+        with _conn.cursor() as _cur:
+            _cur.execute("SET LOCAL row_security = OFF")
+            link, created = PartnerClientLink.objects.get_or_create(
+                partner=profile,
+                organisation=req.organisation,
+                defaults={"is_active": True, "is_referred": False},
+            )
+            if not created and not link.is_active:
+                link.is_active = True
+                link.save(update_fields=["is_active"])
 
         self._provision_membership(request.user, req.organisation)
 
