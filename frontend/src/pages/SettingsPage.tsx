@@ -111,7 +111,7 @@ const TIMEOUT_OPTIONS: { value: TimeoutOption; label: string }[] = [
   { value: '4h', label: '4 hours (recommended)' },
 ]
 
-type Tab = 'profile' | 'company' | 'security' | 'payments' | 'email' | 'periods' | 'team' | 'invoice_templates' | 'ai' | 'access' | 'whitelabel' | 'firs' | 'gl_mapping' | 'import'
+type Tab = 'profile' | 'security' | 'payments' | 'email' | 'periods' | 'team' | 'invoice_templates' | 'ai' | 'access' | 'whitelabel' | 'firs' | 'gl_mapping' | 'import'
 
 export default function SettingsPage() {
   const navigate = useNavigate()
@@ -883,20 +883,20 @@ export default function SettingsPage() {
   const MAX_MEMBERS = getPlanMaxMembers(planName)
 
   const allTabs: { id: Tab; label: string; icon: React.ElementType; ownerOnly?: boolean; requiresSettings?: boolean; requiresPlan?: string; comingSoon?: boolean }[] = [
-    { id: 'profile',           label: 'Profile',    icon: User },
-    { id: 'company',           label: 'Company',    icon: Building2,  requiresSettings: true },
-    { id: 'security',          label: 'Security',   icon: Shield },
-    { id: 'team',              label: 'Team',       icon: UsersRound, ownerOnly: true, requiresPlan: 'team' },
-    { id: 'payments',          label: 'Payments',   icon: CreditCard, requiresSettings: true },
-    { id: 'email',             label: 'Email',      icon: Mail,       ownerOnly: true },
-    { id: 'periods',           label: 'Periods',    icon: Lock,       requiresSettings: true, requiresPlan: 'accounting' },
-    { id: 'gl_mapping',        label: 'GL Mapping', icon: GitBranch,  requiresSettings: true, requiresPlan: 'accounting' },
-    { id: 'invoice_templates', label: 'Templates',  icon: Layout,     ownerOnly: true },
-    { id: 'ai',                label: 'AI',         icon: Bot,        ownerOnly: true },
-    { id: 'access',            label: 'Accountant Access', icon: ShieldCheck, ownerOnly: true },
-    { id: 'whitelabel',        label: 'White-label',       icon: Globe,        ownerOnly: true },
-    { id: 'firs',              label: 'FIRS',              icon: Shield,       ownerOnly: true, comingSoon: true },
-    { id: 'import',            label: 'Import',            icon: Upload,       requiresSettings: true },
+    { id: 'profile',           label: 'Profile',            icon: User },
+    { id: 'invoice_templates', label: 'Templates',           icon: Layout,     ownerOnly: true },
+    { id: 'team',              label: 'Team',                icon: UsersRound, ownerOnly: true },
+    { id: 'security',          label: 'Security',            icon: Shield },
+    { id: 'email',             label: 'Email',               icon: Mail,       ownerOnly: true },
+    { id: 'gl_mapping',        label: 'GL Mapping',          icon: GitBranch,  requiresSettings: true, requiresPlan: 'accounting' },
+    { id: 'periods',           label: 'Periods',             icon: Lock,       requiresSettings: true, requiresPlan: 'accounting' },
+    { id: 'ai',                label: 'AI',                  icon: Bot,        ownerOnly: true },
+    { id: 'access',            label: 'Accountant Access',   icon: ShieldCheck, ownerOnly: true },
+    { id: 'whitelabel',        label: 'White-label',         icon: Globe,      ownerOnly: true },
+    { id: 'import',            label: 'Migration',           icon: Upload,     requiresSettings: true },
+    // Coming Soon — always last
+    { id: 'firs',              label: 'FIRS',                icon: Shield,     ownerOnly: true, comingSoon: true },
+    { id: 'payments',          label: 'Payments',            icon: CreditCard, requiresSettings: true, comingSoon: true },
   ]
   const tabs = allTabs.filter((t) => {
     if (t.ownerOnly && !isOwner) return false
@@ -922,7 +922,7 @@ export default function SettingsPage() {
         {tabs.map((t) => (
           <button
             key={t.id}
-            onClick={() => setTab(t.id)}
+            onClick={() => !t.comingSoon && setTab(t.id)}
             title={t.comingSoon ? `${t.label} — Coming Soon` : t.label}
             className={`relative flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
               t.comingSoon
@@ -941,9 +941,11 @@ export default function SettingsPage() {
         ))}
       </div>
 
-      {/* ── Profile ── */}
+      {/* ── Profile + Company (merged) ── */}
       {activeTab === 'profile' && (
-        <div className="card p-6 space-y-6 max-w-3xl">
+        <div className="space-y-6 max-w-3xl">
+        {/* Personal Info card */}
+        <div className="card p-6 space-y-6">
           {/* Avatar */}
           <div className="flex items-center gap-5">
             <div className="relative group">
@@ -992,11 +994,14 @@ export default function SettingsPage() {
             {savingProfile ? <><Loader2 size={16} className="animate-spin" /> Saving…</> : 'Save Profile'}
           </button>
         </div>
-      )}
 
-      {/* ── Company ── */}
-      {activeTab === 'company' && (
-        <div className="card p-6 space-y-6 max-w-3xl">
+        {/* Organisation Settings card — only visible to users with settings permission */}
+        {hasSettingsPerm && (
+        <div className="card p-6 space-y-6">
+          <div className="flex items-center gap-2 pb-1 border-b border-surface-700">
+            <Building2 size={16} className="text-brand-400" />
+            <h2 className="text-base font-semibold text-white">Organisation Settings</h2>
+          </div>
           {/* Logo */}
           <div className="flex items-center gap-5">
             <div className="relative group">
@@ -1019,23 +1024,13 @@ export default function SettingsPage() {
               <p className="font-semibold text-white">{organisation?.name}</p>
               <p className="text-sm text-slate-400">{organisation?.currency} · {organisation?.country}</p>
               <p className="text-xs text-slate-500 mt-0.5">
-                Workspace ID:{' '}
-                <button
-                  onClick={() => { navigator.clipboard.writeText(organisation?.slug ?? ''); toast.success('Workspace ID copied') }}
-                  className="font-mono text-brand-400 hover:text-brand-300 inline-flex items-center gap-1"
-                  title="Click to copy"
-                >
-                  {organisation?.slug} <Copy size={10} />
-                </button>
-              </p>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Organisation ID:{' '}
+                ID:{' '}
                 <button
                   onClick={() => { navigator.clipboard.writeText(organisation?.id ?? ''); toast.success('Organisation ID copied') }}
-                  className="font-mono text-slate-400 hover:text-slate-300 inline-flex items-center gap-1 break-all text-left"
-                  title="Click to copy — share this with your accountant partner"
+                  className="font-mono text-slate-400 hover:text-slate-300 inline-flex items-center gap-1"
+                  title="Click to copy"
                 >
-                  {organisation?.id} <Copy size={10} className="shrink-0" />
+                  {organisation?.id?.slice(0, 8)}… <Copy size={10} />
                 </button>
               </p>
               <div className="flex items-center gap-3 mt-1">
@@ -1179,8 +1174,10 @@ export default function SettingsPage() {
           </div>
 
           <button onClick={saveCompany} disabled={savingCompany} className="btn-primary">
-            {savingCompany ? <><Loader2 size={16} className="animate-spin" /> Saving…</> : 'Save Company Settings'}
+            {savingCompany ? <><Loader2 size={16} className="animate-spin" /> Saving…</> : 'Save Organisation Settings'}
           </button>
+        </div>
+        )}
         </div>
       )}
 

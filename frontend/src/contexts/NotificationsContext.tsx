@@ -340,6 +340,21 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     }
   }, [isAuthenticated])
 
+  // Clear all stale alerts immediately when the org or auth state changes so
+  // a previous user's notifications are never visible under a different context.
+  useEffect(() => {
+    setAlerts([])
+    setOverdueAlerts([])
+    setExpiryAlerts([])
+    setBillDueAlerts([])
+    setPayrollPendingAlerts([])
+    setCustomerDueAlerts([])
+    setPartnerRequestAlerts([])
+    setEtaAlerts([])
+    prevIdsRef.current = new Set()
+    firstPollRef.current = true
+  }, [organisationId, isAuthenticated])
+
   useEffect(() => {
     if (!isAuthenticated || !organisationId) return
     poll()
