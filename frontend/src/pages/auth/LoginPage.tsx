@@ -5,7 +5,7 @@ import toast from 'react-hot-toast'
 import { api, authApi, bypassNextGets } from '@/services/api'
 import { offlineCache } from '@/lib/offlineCache'
 import { useAuthStore } from '@/store/authStore'
-import AudityLogo from '@/components/AudityLogo'
+import AuthShell from '@/components/auth/AuthShell'
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -201,183 +201,141 @@ export default function LoginPage() {
   // ── MFA verification screen ────────────────────────────────────────────────
   if (mfaToken) {
     return (
-      <div className="min-h-screen bg-surface-950 flex items-center justify-center p-6">
-        <div className="w-full max-w-md">
-          <AudityLogo className="h-10 w-auto mb-8" />
-
-          <div className="card">
-            <div className="flex items-center gap-3 mb-5">
-              <div className="w-10 h-10 bg-brand-500/15 rounded-xl flex items-center justify-center">
-                <ShieldCheck size={20} className="text-brand-400" />
-              </div>
-              <div>
-                <h2 className="text-lg font-bold text-white">Two-factor authentication</h2>
-                <p className="text-sm text-slate-400">Enter the code from your authenticator app</p>
-              </div>
-            </div>
-
-            <form onSubmit={handleMFASubmit} className="space-y-5">
-              <div>
-                <label className="label">6-digit code</label>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  pattern="[0-9a-fA-F]*"
-                  maxLength={10}
-                  className="input text-center text-2xl tracking-widest font-mono"
-                  placeholder="000000"
-                  value={mfaCode}
-                  onChange={(e) => setMfaCode(e.target.value.replace(/\s/g, ''))}
-                  autoFocus
-                  required
-                />
-                <p className="text-xs text-slate-500 mt-2">
-                  Can't access your app? Enter one of your backup codes instead.
-                </p>
-              </div>
-
-              <button type="submit" disabled={mfaLoading || mfaCode.length < 6} className="btn-primary w-full justify-center py-3">
-                {mfaLoading ? <Loader2 size={18} className="animate-spin" /> : null}
-                {mfaLoading ? 'Verifying…' : 'Verify'}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => { setMfaToken(null); setMfaCode('') }}
-                className="w-full text-center text-sm text-slate-400 hover:text-white transition-colors"
-              >
-                ← Back to sign in
-              </button>
-            </form>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="min-h-screen bg-surface-950 flex">
-      {/* Left panel */}
-      <div className="force-dark hidden lg:flex lg:w-1/2 relative overflow-hidden bg-gradient-to-br from-surface-900 to-surface-950 items-center justify-center p-12">
-        <div className="absolute top-0 left-0 w-96 h-96 bg-brand-500/10 rounded-full -translate-x-1/2 -translate-y-1/2 blur-3xl" />
-        <div className="absolute bottom-0 right-0 w-80 h-80 bg-blue-500/10 rounded-full translate-x-1/2 translate-y-1/2 blur-3xl" />
-
-        <div className="relative z-10 max-w-md">
-          <AudityLogo className="h-12 w-auto mb-12" />
-
-          <h2 className="text-4xl font-bold text-white leading-tight mb-4">
-            Manage your<br />
-            <span className="text-brand-400">empire</span><br />
-            with precision
-          </h2>
-          <p className="text-slate-400 text-lg leading-relaxed">
-            Track inventory, record sales, manage payroll, and file taxes — all from one platform.
-          </p>
-
-          <div className="mt-8 space-y-3">
-            {['Real-time inventory tracking', 'Progressive tax engine', 'Payroll & statutory remittances', 'Credit management & aging', 'P&L and cash flow reports'].map((f) => (
-              <div key={f} className="flex items-center gap-3 text-slate-300">
-                <div className="w-1.5 h-1.5 bg-brand-400 rounded-full shrink-0" />
-                {f}
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Right panel — form */}
-      <div className="flex-1 flex items-center justify-center p-6">
-        <div className="w-full max-w-md">
-          <AudityLogo className="h-10 w-auto mb-8 lg:hidden" />
-
-          <h2 className="text-3xl font-bold text-white mb-2">Sign in</h2>
-          <p className="text-slate-400 mb-8">
-            Don't have an account?{' '}
-            <Link to="/register" className="text-brand-400 hover:text-brand-300 font-medium">Create one</Link>
-          </p>
-
-          {/* Email-not-verified banner */}
-          {showVerifyBanner && (
-            <div className="mb-5 p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl flex gap-3">
-              <AlertCircle size={18} className="text-amber-400 shrink-0 mt-0.5" />
-              <div className="flex-1 min-w-0">
-                <p className="text-sm text-amber-300 font-medium">Email not verified</p>
-                <p className="text-xs text-amber-400/80 mt-0.5">Check your inbox for a verification link.</p>
-                <button
-                  onClick={handleResendVerification}
-                  disabled={resending}
-                  className="text-xs text-amber-300 hover:text-amber-200 underline mt-1.5 flex items-center gap-1"
-                >
-                  {resending ? <Loader2 size={11} className="animate-spin" /> : null}
-                  {resending ? 'Sending…' : 'Resend verification email'}
-                </button>
-              </div>
-            </div>
-          )}
-
-          <form onSubmit={handleSubmit} className="space-y-5">
+      <AuthShell>
+        <div className="au-card">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 22 }}>
+            <div className="au-badge"><ShieldCheck size={22} /></div>
             <div>
-              <label className="label">Email address</label>
+              <h2 className="au-title" style={{ fontSize: 22 }}>Two-factor authentication</h2>
+              <p className="au-sub" style={{ margin: '4px 0 0' }}>Enter the code from your authenticator app.</p>
+            </div>
+          </div>
+
+          <form onSubmit={handleMFASubmit}>
+            <div className="au-field">
+              <label>6-digit code</label>
               <input
-                type="email"
-                value={form.email}
-                onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-                placeholder="you@company.com"
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9a-fA-F]*"
+                maxLength={10}
+                className="au-input"
+                style={{ textAlign: 'center', fontSize: 24, letterSpacing: '.3em', fontFamily: 'JetBrains Mono, monospace' }}
+                placeholder="000000"
+                value={mfaCode}
+                onChange={(e) => setMfaCode(e.target.value.replace(/\s/g, ''))}
+                autoFocus
                 required
-                className="input"
               />
+              <p className="au-sub" style={{ fontSize: 12.5, margin: '8px 0 0' }}>
+                Can't access your app? Enter one of your backup codes instead.
+              </p>
             </div>
 
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="label !mb-0">Password</label>
-                <Link to="/forgot-password" className="text-xs text-brand-400 hover:text-brand-300 font-medium">
-                  Forgot password?
-                </Link>
-              </div>
-              <div className="relative">
-                <input
-                  type={showPw ? 'text' : 'password'}
-                  value={form.password}
-                  onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
-                  placeholder="••••••••••"
-                  required
-                  className="input pr-12"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPw((v) => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors"
-                >
-                  {showPw ? <EyeOff size={18} /> : <Eye size={18} />}
-                </button>
-              </div>
-            </div>
-
-            <label className="flex items-center gap-2.5 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={rememberMe}
-                onChange={(e) => setRememberMe(e.target.checked)}
-                className="w-4 h-4 rounded accent-brand-500"
-              />
-              <span className="text-sm text-slate-400">Remember me on this device</span>
-            </label>
-
-            <button type="submit" disabled={loading} className="btn-primary w-full justify-center py-3">
-              {loading ? <Loader2 size={18} className="animate-spin" /> : null}
-              {loading ? 'Signing in…' : 'Sign in'}
+            <button type="submit" disabled={mfaLoading || mfaCode.length < 6} className="au-btn" style={{ marginTop: 18 }}>
+              {mfaLoading ? <Loader2 size={18} className="animate-spin" /> : null}
+              {mfaLoading ? 'Verifying…' : 'Verify'}
             </button>
 
-            <p className="text-center text-sm text-slate-500">
-              Team member?{' '}
-              <button type="button" onClick={() => navigate('/staff-login')} className="text-brand-400 hover:text-brand-300 font-medium">
-                Staff sign in →
+            <p className="au-foot">
+              <button type="button" className="au-link" onClick={() => { setMfaToken(null); setMfaCode('') }}>
+                ← Back to sign in
               </button>
             </p>
           </form>
         </div>
+      </AuthShell>
+    )
+  }
+
+  // ── Sign-in screen ─────────────────────────────────────────────────────────
+  return (
+    <AuthShell>
+      <div className="au-card">
+        <div className="au-eyebrow">Welcome back</div>
+        <h2 className="au-title">Sign in to Audity</h2>
+        <p className="au-sub">Pick up exactly where you left off.</p>
+
+        <div className="au-switch">
+          <button type="button" className="on">Sign in</button>
+          <button type="button" onClick={() => navigate('/register')}>Create account</button>
+        </div>
+
+        {/* Email-not-verified banner */}
+        {showVerifyBanner && (
+          <div className="au-alert">
+            <AlertCircle size={18} style={{ color: '#E8B65A', flex: 'none', marginTop: 1 }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <p style={{ fontSize: 13.5, fontWeight: 600, color: '#E8B65A' }}>Email not verified</p>
+              <p className="au-sub" style={{ fontSize: 12.5, margin: '2px 0 0' }}>Check your inbox for a verification link.</p>
+              <button
+                onClick={handleResendVerification}
+                disabled={resending}
+                className="au-link"
+                style={{ fontSize: 12.5, marginTop: 6, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+              >
+                {resending ? <Loader2 size={11} className="animate-spin" /> : null}
+                {resending ? 'Sending…' : 'Resend verification email'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit}>
+          <div className="au-field">
+            <label>Work email</label>
+            <input
+              type="email"
+              value={form.email}
+              onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+              placeholder="you@company.com"
+              required
+              className="au-input"
+            />
+          </div>
+
+          <div className="au-field">
+            <div className="au-field-head">
+              <label>Password</label>
+              <Link to="/forgot-password" className="au-link" style={{ fontSize: 12.5 }}>Forgot password?</Link>
+            </div>
+            <div className="au-pw">
+              <input
+                type={showPw ? 'text' : 'password'}
+                value={form.password}
+                onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
+                placeholder="••••••••••"
+                required
+                className="au-input"
+              />
+              <button type="button" className="au-eye" onClick={() => setShowPw((v) => !v)} aria-label="Toggle password visibility">
+                {showPw ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </div>
+          </div>
+
+          <label className="au-check">
+            <input
+              type="checkbox"
+              checked={rememberMe}
+              onChange={(e) => setRememberMe(e.target.checked)}
+            />
+            Remember me on this device
+          </label>
+
+          <button type="submit" disabled={loading} className="au-btn" style={{ marginTop: 18 }}>
+            {loading ? <Loader2 size={18} className="animate-spin" /> : null}
+            {loading ? 'Signing in…' : 'Sign in'}
+          </button>
+
+          <p className="au-foot">
+            Team member?{' '}
+            <button type="button" onClick={() => navigate('/staff-login')} className="au-link">
+              Staff sign in →
+            </button>
+          </p>
+        </form>
       </div>
-    </div>
+    </AuthShell>
   )
 }

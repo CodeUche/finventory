@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
-import AudityLogo from '@/components/AudityLogo'
 import { Link, useNavigate } from 'react-router-dom'
 import { Eye, EyeOff, Loader2, CheckCircle2, XCircle, Mail } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { api, authApi, orgApi } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
+import AuthShell from '@/components/auth/AuthShell'
 
 const PW_CRITERIA = [
   { label: 'At least 10 characters', test: (p: string) => p.length >= 10 },
@@ -114,147 +114,138 @@ export default function RegisterPage() {
   const update = (field: string) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm((f) => ({ ...f, [field]: e.target.value }))
 
-  const strengthColor = pwStrength <= 1 ? 'bg-red-500' : pwStrength <= 3 ? 'bg-amber-500' : 'bg-green-500'
+  const strengthColor = pwStrength <= 1 ? '#ef4444' : pwStrength <= 3 ? '#E8B65A' : '#34C98A'
 
   // ── Check-your-email screen ──────────────────────────────────────────────────
   if (registered) {
     return (
-      <div className="min-h-screen bg-surface-950 flex items-center justify-center p-6">
-        <div className="w-full max-w-md">
-          <AudityLogo className="h-10 w-auto mb-8" />
-
-          <div className="card text-center space-y-5">
-            <div className="w-16 h-16 bg-brand-500/15 rounded-full flex items-center justify-center mx-auto">
-              <Mail size={28} className="text-brand-400" />
-            </div>
-            <div>
-              <h2 className="text-2xl font-bold text-white mb-2">Check your email</h2>
-              <p className="text-slate-400 text-sm leading-relaxed">
-                We've sent a verification link to{' '}
-                <span className="text-white font-medium">{form.email}</span>.
-                Click the link to activate your account.
-              </p>
-            </div>
-            <div className="bg-surface-800 border border-surface-700 rounded-xl p-4 text-left space-y-2">
-              <p className="text-xs text-slate-400">Didn't receive it?</p>
-              <ul className="text-xs text-slate-500 list-disc list-inside space-y-1">
-                <li>Check your spam/junk folder</li>
-                <li>Make sure you entered the right email</li>
-                <li>The link expires in 24 hours</li>
-              </ul>
-            </div>
-            <button
-              onClick={handleResend}
-              disabled={resending}
-              className="btn-secondary w-full justify-center py-2.5"
-            >
-              {resending ? <Loader2 size={16} className="animate-spin mr-2" /> : null}
-              {resending ? 'Sending…' : 'Resend verification email'}
-            </button>
-            <p className="text-sm text-slate-500">
-              Already verified?{' '}
-              <Link to="/login" className="text-brand-400 hover:text-brand-300 font-medium">Sign in</Link>
-            </p>
+      <AuthShell>
+        <div className="au-card" style={{ textAlign: 'center' }}>
+          <div className="au-badge au-badge-em" style={{ margin: '0 auto 18px', width: 60, height: 60, borderRadius: '50%' }}>
+            <Mail size={26} />
           </div>
+          <h2 className="au-title" style={{ fontSize: 26 }}>Check your email</h2>
+          <p className="au-sub" style={{ margin: '10px 0 22px' }}>
+            We've sent a verification link to{' '}
+            <span style={{ color: 'var(--head)', fontWeight: 600 }}>{form.email}</span>.
+            Click the link to activate your account.
+          </p>
+          <div className="au-soft" style={{ textAlign: 'left' }}>
+            <p className="au-sub" style={{ fontSize: 12.5, fontWeight: 600, margin: '0 0 8px' }}>Didn't receive it?</p>
+            <ul className="au-sub" style={{ fontSize: 12.5, margin: 0, paddingLeft: 18, lineHeight: 1.7 }}>
+              <li>Check your spam/junk folder</li>
+              <li>Make sure you entered the right email</li>
+              <li>The link expires in 24 hours</li>
+            </ul>
+          </div>
+          <button onClick={handleResend} disabled={resending} className="au-btn" style={{ marginTop: 20, background: 'var(--field-bg)', color: 'var(--ink)', border: '1px solid var(--field-bd)' }}>
+            {resending ? <Loader2 size={16} className="animate-spin" /> : null}
+            {resending ? 'Sending…' : 'Resend verification email'}
+          </button>
+          <p className="au-foot">
+            Already verified? <Link to="/login" className="au-link">Sign in</Link>
+          </p>
         </div>
-      </div>
+      </AuthShell>
     )
   }
 
   // ── Registration form ────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-surface-950 flex items-center justify-center p-6">
-      <div className="w-full max-w-lg">
-        <AudityLogo className="h-10 w-auto mb-8" />
+    <AuthShell>
+      <div className="au-card au-card-wide">
+        <div className="au-eyebrow">Get started</div>
+        <h2 className="au-title">Create your workspace</h2>
+        <p className="au-sub">Set up your books in minutes — free for 14 days.</p>
 
-        <div className="card">
-          <h2 className="text-2xl font-bold text-white mb-1">Create account</h2>
-          <p className="text-slate-400 text-sm mb-6">
-            Already have an account?{' '}
-            <Link to="/login" className="text-brand-400 hover:text-brand-300 font-medium">Sign in</Link>
-          </p>
-
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="label">First name</label>
-                <input className="input" value={form.first_name} onChange={update('first_name')} required placeholder="John" />
-              </div>
-              <div>
-                <label className="label">Last name</label>
-                <input className="input" value={form.last_name} onChange={update('last_name')} required placeholder="Doe" />
-              </div>
-            </div>
-
-            <div>
-              <label className="label">Email address</label>
-              <input type="email" className="input" value={form.email} onChange={update('email')} required placeholder="john@company.com" />
-            </div>
-
-            <div>
-              <label className="label">Phone number</label>
-              <input type="tel" className="input" value={form.phone} onChange={update('phone')} placeholder="+234 800 000 0000" />
-            </div>
-
-            <div>
-              <label className="label">Password</label>
-              <div className="relative">
-                <input
-                  type={showPw ? 'text' : 'password'}
-                  className="input pr-12"
-                  value={form.password}
-                  onChange={update('password')}
-                  onFocus={() => setPwFocused(true)}
-                  required
-                  placeholder="Create a strong password"
-                />
-                <button type="button" onClick={() => setShowPw((v) => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">
-                  {showPw ? <EyeOff size={18} /> : <Eye size={18} />}
-                </button>
-              </div>
-
-              {form.password.length > 0 && (
-                <div className="mt-2 flex gap-1">
-                  {PW_CRITERIA.map((_, i) => (
-                    <div key={i} className={`h-1 flex-1 rounded-full transition-colors ${i < pwStrength ? strengthColor : 'bg-surface-700'}`} />
-                  ))}
-                </div>
-              )}
-
-              {(pwFocused || form.password.length > 0) && (
-                <div className="mt-3 p-3 bg-surface-800 rounded-xl border border-surface-700 space-y-1.5">
-                  <p className="text-xs font-medium text-slate-400 mb-2">Password requirements:</p>
-                  {PW_CRITERIA.map((c, i) => (
-                    <div key={i} className="flex items-center gap-2">
-                      {pwMet[i]
-                        ? <CheckCircle2 size={13} className="text-green-400 shrink-0" />
-                        : <XCircle size={13} className="text-slate-600 shrink-0" />
-                      }
-                      <span className={`text-xs ${pwMet[i] ? 'text-green-400' : 'text-slate-500'}`}>{c.label}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div>
-              <label className="label">Confirm password</label>
-              <input type={showPw ? 'text' : 'password'} className="input"
-                value={form.password_confirm} onChange={update('password_confirm')}
-                required placeholder="Repeat password" />
-              {form.password_confirm.length > 0 && form.password !== form.password_confirm && (
-                <p className="text-xs text-red-400 mt-1">Passwords do not match</p>
-              )}
-            </div>
-
-            <button type="submit" disabled={loading} className="btn-primary w-full justify-center py-3 mt-2">
-              {loading ? <Loader2 size={18} className="animate-spin" /> : null}
-              {loading ? 'Creating account…' : 'Create account'}
-            </button>
-          </form>
+        <div className="au-switch">
+          <button type="button" onClick={() => navigate('/login')}>Sign in</button>
+          <button type="button" className="on">Create account</button>
         </div>
+
+        <form onSubmit={handleSubmit}>
+          <div className="au-grid2">
+            <div className="au-field">
+              <label>First name</label>
+              <input className="au-input" value={form.first_name} onChange={update('first_name')} required placeholder="John" />
+            </div>
+            <div className="au-field">
+              <label>Last name</label>
+              <input className="au-input" value={form.last_name} onChange={update('last_name')} required placeholder="Doe" />
+            </div>
+          </div>
+
+          <div className="au-field">
+            <label>Email address</label>
+            <input type="email" className="au-input" value={form.email} onChange={update('email')} required placeholder="john@company.com" />
+          </div>
+
+          <div className="au-field">
+            <label>Phone number</label>
+            <input type="tel" className="au-input" value={form.phone} onChange={update('phone')} placeholder="+234 800 000 0000" />
+          </div>
+
+          <div className="au-field">
+            <label>Password</label>
+            <div className="au-pw">
+              <input
+                type={showPw ? 'text' : 'password'}
+                className="au-input"
+                value={form.password}
+                onChange={update('password')}
+                onFocus={() => setPwFocused(true)}
+                required
+                placeholder="Create a strong password"
+              />
+              <button type="button" className="au-eye" onClick={() => setShowPw((v) => !v)} aria-label="Toggle password visibility">
+                {showPw ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </div>
+
+            {form.password.length > 0 && (
+              <div style={{ marginTop: 8, display: 'flex', gap: 4 }}>
+                {PW_CRITERIA.map((_, i) => (
+                  <div key={i} style={{ height: 4, flex: 1, borderRadius: 4, transition: 'background .2s', background: i < pwStrength ? strengthColor : 'var(--field-bd)' }} />
+                ))}
+              </div>
+            )}
+
+            {(pwFocused || form.password.length > 0) && (
+              <div className="au-soft" style={{ marginTop: 12 }}>
+                <p className="au-sub" style={{ fontSize: 12, fontWeight: 600, margin: '0 0 8px' }}>Password requirements:</p>
+                {PW_CRITERIA.map((c, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
+                    {pwMet[i]
+                      ? <CheckCircle2 size={13} style={{ color: '#34C98A', flex: 'none' }} />
+                      : <XCircle size={13} style={{ color: 'var(--muted)', flex: 'none', opacity: .6 }} />}
+                    <span style={{ fontSize: 12, color: pwMet[i] ? '#34C98A' : 'var(--muted)' }}>{c.label}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="au-field">
+            <label>Confirm password</label>
+            <input
+              type={showPw ? 'text' : 'password'}
+              className="au-input"
+              value={form.password_confirm}
+              onChange={update('password_confirm')}
+              required
+              placeholder="Repeat password"
+            />
+            {form.password_confirm.length > 0 && form.password !== form.password_confirm && (
+              <p style={{ fontSize: 12, color: '#ef4444', marginTop: 6 }}>Passwords do not match</p>
+            )}
+          </div>
+
+          <button type="submit" disabled={loading} className="au-btn" style={{ marginTop: 8 }}>
+            {loading ? <Loader2 size={18} className="animate-spin" /> : null}
+            {loading ? 'Creating account…' : 'Create account'}
+          </button>
+        </form>
       </div>
-    </div>
+    </AuthShell>
   )
 }
