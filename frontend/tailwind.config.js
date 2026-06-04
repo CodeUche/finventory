@@ -5,31 +5,46 @@ export default {
   theme: {
     extend: {
       colors: {
+        // Brand = Audity gold. Drives all accent/highlight usages (active nav,
+        // links, icon tiles, focus rings). Primary buttons are navy — see
+        // .btn-primary in index.css. (Was orange.)
         brand: {
-          50:  '#fff7ed',
-          100: '#ffedd5',
-          200: '#fed7aa',
-          300: '#fdba74',
-          400: '#fb923c',
-          500: '#f97316',  // primary orange
-          600: '#ea580c',
-          700: '#c2410c',
-          800: '#9a3412',
-          900: '#7c2d12',
-          950: '#431407',
+          50:  '#FBF6E6',
+          100: '#F8ECC4',
+          200: '#F2DD97',
+          300: '#EFD06F',
+          400: '#E8B65A',  // accent text/icons on dark
+          500: '#D4A017',  // primary gold
+          600: '#B8891F',
+          700: '#9A7416',  // gold text on light surfaces
+          800: '#7E5E12',
+          900: '#5F470E',
+          950: '#3A2B08',
         },
+        // Surfaces = Audity navy (deep midnight in dark mode). Was slate.
         surface: {
-          50:  '#f8fafc',
-          100: '#f1f5f9',
-          200: '#e2e8f0',
-          300: '#cbd5e1',
-          400: '#94a3b8',
-          500: '#64748b',
-          600: '#475569',
-          700: '#334155',
-          800: '#1e293b',
-          900: '#0f172a',
-          950: '#020617',
+          50:  '#F7F8FB',
+          100: '#EEF1F7',
+          200: '#DBE1EC',
+          300: '#B9C3D6',
+          400: '#8C9ABA',
+          500: '#5E6E92',
+          600: '#314272',
+          700: '#1E2F56',
+          800: '#13244B',
+          900: '#0B1730',
+          950: '#060C1C',
+        },
+        gold: {
+          400: '#E8B65A',
+          500: '#D4A017',
+          600: '#B8891F',
+          700: '#9A7416',
+        },
+        // Kill orange app-wide: any leftover `*-orange-*` utility now renders gold.
+        orange: {
+          50:  '#FBF6E6', 100: '#F8ECC4', 200: '#F2DD97', 300: '#EFD06F', 400: '#E8B65A',
+          500: '#D4A017', 600: '#B8891F', 700: '#9A7416', 800: '#7E5E12', 900: '#5F470E', 950: '#3A2B08',
         },
       },
       fontFamily: {
@@ -37,7 +52,10 @@ export default {
         mono: ['JetBrains Mono', 'monospace'],
       },
       boxShadow: {
-        'glow-orange': '0 0 20px rgba(249, 115, 22, 0.3)',
+        // 'glow-orange' kept as a name for back-compat but now emits a gold glow.
+        'glow-orange': '0 0 22px rgba(212, 160, 23, 0.30)',
+        'glow-gold':   '0 0 22px rgba(212, 160, 23, 0.30)',
+        'glow-navy':   '0 10px 30px rgba(8, 31, 68, 0.35)',
         'glow-green':  '0 0 20px rgba(34, 197, 94, 0.3)',
         'glow-red':    '0 0 20px rgba(239, 68, 68, 0.3)',
       },
@@ -60,6 +78,7 @@ export default {
   safelist: [
     'hover:bg-brand-600',
     'hover:shadow-glow-orange',
+    'hover:shadow-glow-navy',
     'hover:bg-surface-600',
     'hover:bg-surface-700',
     'hover:bg-surface-700/30',

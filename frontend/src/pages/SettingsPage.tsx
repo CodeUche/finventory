@@ -158,7 +158,7 @@ export default function SettingsPage() {
     bank_account_number: organisation?.bank_account_number ?? '',
     bank_account_name: organisation?.bank_account_name ?? '',
     bank_sort_code: organisation?.bank_sort_code ?? '',
-    brand_color: organisation?.brand_color ?? '#f97316',
+    brand_color: organisation?.brand_color ?? '#D4A017',
     invoice_company_name: organisation?.invoice_company_name ?? '',
     company_name_font: organisation?.company_name_font ?? 'helvetica',
     company_name_font_color: organisation?.company_name_font_color ?? '#1e293b',
@@ -195,7 +195,7 @@ export default function SettingsPage() {
       bank_account_number: organisation.bank_account_number ?? '',
       bank_account_name: organisation.bank_account_name ?? '',
       bank_sort_code: organisation.bank_sort_code ?? '',
-      brand_color: organisation.brand_color ?? '#f97316',
+      brand_color: organisation.brand_color ?? '#D4A017',
       invoice_company_name: organisation.invoice_company_name ?? '',
       company_name_font: organisation.company_name_font ?? 'helvetica',
       company_name_font_color: organisation.company_name_font_color ?? '#1e293b',
@@ -2008,23 +2008,23 @@ export default function SettingsPage() {
                   preview: (
                     <svg viewBox="0 0 160 110" className="w-full" xmlns="http://www.w3.org/2000/svg">
                       {/* Header bar */}
-                      <rect x="0" y="0" width="160" height="30" fill="#f97316" rx="3"/>
+                      <rect x="0" y="0" width="160" height="30" fill="#D4A017" rx="3"/>
                       <rect x="8" y="8" width="60" height="6" rx="2" fill="white" opacity="0.9"/>
                       <rect x="8" y="17" width="35" height="3" rx="1.5" fill="white" opacity="0.6"/>
                       <rect x="110" y="8" width="40" height="5" rx="1.5" fill="white" opacity="0.7"/>
                       <rect x="120" y="16" width="30" height="3" rx="1.5" fill="white" opacity="0.5"/>
                       {/* Invoice label */}
-                      <rect x="8" y="38" width="30" height="4" rx="2" fill="#f97316" opacity="0.8"/>
+                      <rect x="8" y="38" width="30" height="4" rx="2" fill="#D4A017" opacity="0.8"/>
                       {/* Info rows */}
                       <rect x="8" y="48" width="55" height="2.5" rx="1.2" fill="#94a3b8"/>
                       <rect x="8" y="54" width="40" height="2.5" rx="1.2" fill="#94a3b8"/>
                       <rect x="100" y="48" width="52" height="2.5" rx="1.2" fill="#94a3b8"/>
                       <rect x="100" y="54" width="38" height="2.5" rx="1.2" fill="#94a3b8"/>
                       {/* Table header */}
-                      <rect x="8" y="63" width="144" height="8" rx="2" fill="#f97316" opacity="0.15"/>
-                      <rect x="12" y="65.5" width="30" height="2.5" rx="1" fill="#f97316" opacity="0.7"/>
-                      <rect x="115" y="65.5" width="18" height="2.5" rx="1" fill="#f97316" opacity="0.7"/>
-                      <rect x="138" y="65.5" width="10" height="2.5" rx="1" fill="#f97316" opacity="0.7"/>
+                      <rect x="8" y="63" width="144" height="8" rx="2" fill="#D4A017" opacity="0.15"/>
+                      <rect x="12" y="65.5" width="30" height="2.5" rx="1" fill="#D4A017" opacity="0.7"/>
+                      <rect x="115" y="65.5" width="18" height="2.5" rx="1" fill="#D4A017" opacity="0.7"/>
+                      <rect x="138" y="65.5" width="10" height="2.5" rx="1" fill="#D4A017" opacity="0.7"/>
                       {/* Table rows */}
                       {[0,1,2].map(i => (
                         <g key={i}>
@@ -2035,9 +2035,9 @@ export default function SettingsPage() {
                         </g>
                       ))}
                       {/* Total */}
-                      <rect x="100" y="104" width="52" height="4" rx="2" fill="#f97316" opacity="0.3"/>
-                      <rect x="104" y="105.5" width="20" height="1.5" rx="1" fill="#f97316" opacity="0.8"/>
-                      <rect x="138" y="105.5" width="12" height="1.5" rx="1" fill="#f97316" opacity="0.8"/>
+                      <rect x="100" y="104" width="52" height="4" rx="2" fill="#D4A017" opacity="0.3"/>
+                      <rect x="104" y="105.5" width="20" height="1.5" rx="1" fill="#D4A017" opacity="0.8"/>
+                      <rect x="138" y="105.5" width="12" height="1.5" rx="1" fill="#D4A017" opacity="0.8"/>
                     </svg>
                   ),
                 },
@@ -2048,27 +2048,27 @@ export default function SettingsPage() {
                   preview: (
                     <svg viewBox="0 0 160 110" className="w-full" xmlns="http://www.w3.org/2000/svg">
                       {/* Top accent line */}
-                      <rect x="0" y="0" width="160" height="4" fill="#f97316" rx="2"/>
+                      <rect x="0" y="0" width="160" height="4" fill="#D4A017" rx="2"/>
                       {/* Company name large */}
                       <rect x="8" y="12" width="70" height="7" rx="2" fill="#1e293b"/>
                       <rect x="8" y="22" width="45" height="3" rx="1.5" fill="#94a3b8"/>
                       {/* INVOICE right aligned */}
-                      <rect x="110" y="10" width="42" height="8" rx="2" fill="#f97316" opacity="0.15"/>
-                      <rect x="114" y="12.5" width="34" height="3" rx="1.5" fill="#f97316" opacity="0.9"/>
+                      <rect x="110" y="10" width="42" height="8" rx="2" fill="#D4A017" opacity="0.15"/>
+                      <rect x="114" y="12.5" width="34" height="3" rx="1.5" fill="#D4A017" opacity="0.9"/>
                       <rect x="120" y="19" width="28" height="2" rx="1" fill="#94a3b8"/>
                       {/* Divider */}
                       <line x1="8" y1="32" x2="152" y2="32" stroke="#e2e8f0" strokeWidth="0.8"/>
                       {/* Bill to / info */}
-                      <rect x="8" y="38" width="25" height="2.5" rx="1" fill="#f97316" opacity="0.7"/>
+                      <rect x="8" y="38" width="25" height="2.5" rx="1" fill="#D4A017" opacity="0.7"/>
                       <rect x="8" y="44" width="55" height="2" rx="1" fill="#94a3b8"/>
                       <rect x="8" y="49" width="40" height="2" rx="1" fill="#94a3b8"/>
                       <rect x="100" y="38" width="25" height="2.5" rx="1" fill="#94a3b8"/>
                       <rect x="100" y="44" width="40" height="2" rx="1" fill="#94a3b8"/>
                       {/* Table */}
                       <line x1="8" y1="60" x2="152" y2="60" stroke="#e2e8f0" strokeWidth="0.8"/>
-                      <rect x="8" y="63" width="30" height="2" rx="1" fill="#f97316" opacity="0.7"/>
-                      <rect x="118" y="63" width="14" height="2" rx="1" fill="#f97316" opacity="0.7"/>
-                      <rect x="138" y="63" width="14" height="2" rx="1" fill="#f97316" opacity="0.7"/>
+                      <rect x="8" y="63" width="30" height="2" rx="1" fill="#D4A017" opacity="0.7"/>
+                      <rect x="118" y="63" width="14" height="2" rx="1" fill="#D4A017" opacity="0.7"/>
+                      <rect x="138" y="63" width="14" height="2" rx="1" fill="#D4A017" opacity="0.7"/>
                       <line x1="8" y1="68" x2="152" y2="68" stroke="#e2e8f0" strokeWidth="0.8"/>
                       {[0,1,2].map(i => (
                         <g key={i}>
@@ -2079,9 +2079,9 @@ export default function SettingsPage() {
                         </g>
                       ))}
                       {/* Total */}
-                      <rect x="100" y="103" width="52" height="5" rx="2" fill="#f97316" opacity="0.12"/>
-                      <rect x="104" y="105" width="18" height="2" rx="1" fill="#f97316"/>
-                      <rect x="136" y="105" width="14" height="2" rx="1" fill="#f97316"/>
+                      <rect x="100" y="103" width="52" height="5" rx="2" fill="#D4A017" opacity="0.12"/>
+                      <rect x="104" y="105" width="18" height="2" rx="1" fill="#D4A017"/>
+                      <rect x="136" y="105" width="14" height="2" rx="1" fill="#D4A017"/>
                     </svg>
                   ),
                 },
@@ -2129,7 +2129,7 @@ export default function SettingsPage() {
                   preview: (
                     <svg viewBox="0 0 160 110" className="w-full" xmlns="http://www.w3.org/2000/svg">
                       {/* Header: brand-color left (~46%) | light right */}
-                      <rect x="0" y="0" width="74" height="36" fill={company.brand_color || '#f97316'}/>
+                      <rect x="0" y="0" width="74" height="36" fill={company.brand_color || '#D4A017'}/>
                       <rect x="75" y="0" width="85" height="36" fill="#f8fafc"/>
                       {/* Left: logo placeholder + company */}
                       <rect x="8" y="6" width="14" height="14" rx="2" fill="rgba(255,255,255,0.2)"/>
@@ -2144,11 +2144,11 @@ export default function SettingsPage() {
                       <rect x="80" y="24" width="22" height="2" rx="1" fill="#94a3b8"/>
                       <rect x="115" y="24" width="22" height="2" rx="1" fill="#1e293b"/>
                       {/* Bill to */}
-                      <rect x="8" y="43" width="22" height="3" rx="1.5" fill={company.brand_color || '#f97316'} opacity="0.8"/>
+                      <rect x="8" y="43" width="22" height="3" rx="1.5" fill={company.brand_color || '#D4A017'} opacity="0.8"/>
                       <rect x="8" y="50" width="55" height="2" rx="1" fill="#94a3b8"/>
                       <rect x="8" y="55" width="40" height="2" rx="1" fill="#94a3b8"/>
                       {/* Table header with brand color */}
-                      <rect x="8" y="64" width="144" height="7" rx="2" fill={company.brand_color || '#f97316'}/>
+                      <rect x="8" y="64" width="144" height="7" rx="2" fill={company.brand_color || '#D4A017'}/>
                       <rect x="12" y="66.5" width="30" height="2" rx="1" fill="white" opacity="0.8"/>
                       <rect x="115" y="66.5" width="14" height="2" rx="1" fill="white" opacity="0.8"/>
                       <rect x="138" y="66.5" width="10" height="2" rx="1" fill="white" opacity="0.8"/>
@@ -2161,7 +2161,7 @@ export default function SettingsPage() {
                         </g>
                       ))}
                       {/* Total box: brand color */}
-                      <rect x="96" y="102" width="56" height="7" rx="2" fill={company.brand_color || '#f97316'}/>
+                      <rect x="96" y="102" width="56" height="7" rx="2" fill={company.brand_color || '#D4A017'}/>
                       <rect x="100" y="104.5" width="18" height="2" rx="1" fill="white" opacity="0.8"/>
                       <rect x="136" y="104.5" width="12" height="2" rx="1" fill="white" opacity="0.9"/>
                     </svg>
@@ -2218,14 +2218,14 @@ export default function SettingsPage() {
                 className="input w-32 font-mono text-sm"
                 value={company.brand_color}
                 maxLength={7}
-                placeholder="#f97316"
+                placeholder="#D4A017"
                 onChange={(e) => {
                   const v = e.target.value
                   if (/^#[0-9a-fA-F]{0,6}$/.test(v)) setCompany({ ...company, brand_color: v })
                 }}
               />
               <div className="w-10 h-10 rounded-lg border border-surface-600" style={{ backgroundColor: company.brand_color }} />
-              <button type="button" onClick={() => setCompany({ ...company, brand_color: '#f97316' })} className="text-xs text-slate-500 hover:text-slate-300">Reset</button>
+              <button type="button" onClick={() => setCompany({ ...company, brand_color: '#D4A017' })} className="text-xs text-slate-500 hover:text-slate-300">Reset</button>
             </div>
           </div>
 
@@ -2451,7 +2451,7 @@ export default function SettingsPage() {
               {/* CLASSIC */}
               {company.invoice_template === 'classic' && (
                 <div style={{ fontSize: 11, color: '#1e293b' }}>
-                  <div style={{ background: company.brand_color || '#f97316', padding: '20px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                  <div style={{ background: company.brand_color || '#D4A017', padding: '20px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                     <div>
                       <div style={{ width: 48, height: 48, background: 'rgba(255,255,255,0.25)', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 8, fontSize: 9, color: 'rgba(255,255,255,0.8)', fontWeight: 600 }}>LOGO</div>
                       <div style={{ color: 'white', fontWeight: 700, fontSize: 16 }}>Acme Business Ltd</div>
@@ -2481,7 +2481,7 @@ export default function SettingsPage() {
                   <div style={{ margin: '0 24px' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10 }}>
                       <thead>
-                        <tr style={{ background: company.brand_color || '#f97316' }}>
+                        <tr style={{ background: company.brand_color || '#D4A017' }}>
                           {['Description', 'Qty', 'Unit Price', 'Total'].map(h => (
                             <th key={h} style={{ color: 'white', padding: '7px 8px', textAlign: h === 'Description' ? 'left' : 'right', fontWeight: 600, fontSize: 9 }}>{h}</th>
                           ))}
@@ -2506,7 +2506,7 @@ export default function SettingsPage() {
                           <span>{l}</span><span>{v}</span>
                         </div>
                       ))}
-                      <div style={{ display: 'flex', justifyContent: 'space-between', background: company.brand_color || '#f97316', color: 'white', padding: '7px 10px', borderRadius: 6, marginTop: 6, fontWeight: 700, fontSize: 12 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', background: company.brand_color || '#D4A017', color: 'white', padding: '7px 10px', borderRadius: 6, marginTop: 6, fontWeight: 700, fontSize: 12 }}>
                         <span>Total</span><span>₦364,425</span>
                       </div>
                     </div>
@@ -2522,7 +2522,7 @@ export default function SettingsPage() {
               {company.invoice_template === 'modern' && (
                 <div style={{ fontSize: 11, color: '#1e293b' }}>
                   {/* 4px brand accent bar */}
-                  <div style={{ height: 4, background: company.brand_color || '#f97316' }} />
+                  <div style={{ height: 4, background: company.brand_color || '#D4A017' }} />
                   {/* Header: company left, INVOICE + info-box right */}
                   <div style={{ padding: '16px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                     <div>
@@ -2532,7 +2532,7 @@ export default function SettingsPage() {
                       <div style={{ color: '#64748b', fontSize: 9 }}>info@acmebiz.ng</div>
                     </div>
                     <div style={{ textAlign: 'right' }}>
-                      <div style={{ color: company.brand_color || '#f97316', fontWeight: 800, fontSize: 22, letterSpacing: 3 }}>INVOICE</div>
+                      <div style={{ color: company.brand_color || '#D4A017', fontWeight: 800, fontSize: 22, letterSpacing: 3 }}>INVOICE</div>
                       {/* Floating rounded info box — matches jsPDF roundedRect */}
                       <div style={{ background: '#f8fafc', borderRadius: 6, padding: '6px 10px', marginTop: 4, fontSize: 9 }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 20 }}><span style={{ color: '#94a3b8' }}>Number</span><strong style={{ color: '#1e293b' }}>#INV-0042</strong></div>
@@ -2542,17 +2542,17 @@ export default function SettingsPage() {
                     </div>
                   </div>
                   {/* Brand-color divider line — matches doc.line(...BRAND...) */}
-                  <div style={{ height: 1, background: company.brand_color || '#f97316', margin: '0 24px 12px' }} />
+                  <div style={{ height: 1, background: company.brand_color || '#D4A017', margin: '0 24px 12px' }} />
                   {/* Bill To */}
                   <div style={{ padding: '0 24px 10px' }}>
-                    <div style={{ fontSize: 8, fontWeight: 700, textTransform: 'uppercase', color: company.brand_color || '#f97316', marginBottom: 3 }}>Bill To</div>
+                    <div style={{ fontSize: 8, fontWeight: 700, textTransform: 'uppercase', color: company.brand_color || '#D4A017', marginBottom: 3 }}>Bill To</div>
                     <div style={{ fontWeight: 600 }}>Global Ventures Ltd</div>
                     <div style={{ color: '#64748b', fontSize: 9 }}>45 Broad St, Victoria Island, Lagos</div>
                   </div>
                   <div style={{ margin: '0 24px' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10 }}>
                       <thead>
-                        <tr style={{ background: company.brand_color || '#f97316' }}>
+                        <tr style={{ background: company.brand_color || '#D4A017' }}>
                           {['Description', 'Qty', 'Unit Price', 'Total'].map(h => (
                             <th key={h} style={{ color: 'white', padding: '6px 4px', textAlign: h === 'Description' ? 'left' : 'right', fontWeight: 600, fontSize: 9 }}>{h}</th>
                           ))}
@@ -2577,7 +2577,7 @@ export default function SettingsPage() {
                           <span>{l}</span><span>{v}</span>
                         </div>
                       ))}
-                      <div style={{ display: 'flex', justifyContent: 'space-between', background: company.brand_color || '#f97316', color: 'white', padding: '7px 10px', borderRadius: 6, marginTop: 6, fontWeight: 700, fontSize: 12 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', background: company.brand_color || '#D4A017', color: 'white', padding: '7px 10px', borderRadius: 6, marginTop: 6, fontWeight: 700, fontSize: 12 }}>
                         <span>Total</span><span>₦364,425</span>
                       </div>
                     </div>
@@ -2648,7 +2648,7 @@ export default function SettingsPage() {
                 <div style={{ fontSize: 11, color: '#1e293b' }}>
                   {/* Split header: brand-color left (~46%) | light right */}
                   <div style={{ display: 'flex' }}>
-                    <div style={{ background: company.brand_color || '#f97316', width: '46%', padding: '20px 18px', minHeight: 110 }}>
+                    <div style={{ background: company.brand_color || '#D4A017', width: '46%', padding: '20px 18px', minHeight: 110 }}>
                       <div style={{ width: 40, height: 40, background: 'rgba(255,255,255,0.2)', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 8, fontSize: 8, color: 'rgba(255,255,255,0.8)', fontWeight: 600 }}>LOGO</div>
                       <div style={{ color: 'white', fontWeight: 700, fontSize: 13 }}>Acme Business Ltd</div>
                       <div style={{ color: 'rgba(255,255,255,0.75)', fontSize: 9, marginTop: 3 }}>12 Marina Street, Lagos</div>
@@ -2666,14 +2666,14 @@ export default function SettingsPage() {
                   </div>
                   {/* Bill To */}
                   <div style={{ padding: '10px 18px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
-                    <div style={{ fontSize: 8, fontWeight: 700, textTransform: 'uppercase', color: company.brand_color || '#f97316', marginBottom: 3 }}>Bill To</div>
+                    <div style={{ fontSize: 8, fontWeight: 700, textTransform: 'uppercase', color: company.brand_color || '#D4A017', marginBottom: 3 }}>Bill To</div>
                     <div style={{ fontWeight: 600, fontSize: 10 }}>Global Ventures Ltd</div>
                     <div style={{ color: '#64748b', fontSize: 9 }}>45 Broad St, Victoria Island, Lagos</div>
                   </div>
                   <div style={{ padding: '0 18px 4px' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10, marginTop: 8 }}>
                       <thead>
-                        <tr style={{ background: company.brand_color || '#f97316' }}>
+                        <tr style={{ background: company.brand_color || '#D4A017' }}>
                           {['Description', 'Qty', 'Unit Price', 'Total'].map(h => (
                             <th key={h} style={{ color: 'white', padding: '7px 6px', textAlign: h === 'Description' ? 'left' : 'right', fontWeight: 600, fontSize: 9 }}>{h}</th>
                           ))}
@@ -2696,7 +2696,7 @@ export default function SettingsPage() {
                       {[['Subtotal', '₦339,000'], ['VAT (7.5%)', '₦25,425']].map(([l, v]) => (
                         <div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', color: '#64748b', fontSize: 10 }}><span>{l}</span><span>{v}</span></div>
                       ))}
-                      <div style={{ display: 'flex', justifyContent: 'space-between', background: company.brand_color || '#f97316', color: 'white', padding: '7px 10px', borderRadius: 6, marginTop: 6, fontWeight: 700, fontSize: 12 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', background: company.brand_color || '#D4A017', color: 'white', padding: '7px 10px', borderRadius: 6, marginTop: 6, fontWeight: 700, fontSize: 12 }}>
                         <span>Total</span><span>₦364,425</span>
                       </div>
                     </div>
@@ -3110,7 +3110,7 @@ function WhiteLabelTab() {
   const [verifying, setVerifying] = useState(false)
   const [form, setForm] = useState({
     custom_domain: '', brand_name: '', logo_url: '', favicon_url: '',
-    primary_color: '#f97316', login_tagline: '',
+    primary_color: '#D4A017', login_tagline: '',
   })
 
   useEffect(() => {
@@ -3122,7 +3122,7 @@ function WhiteLabelTab() {
           brand_name: r.data.brand_name ?? '',
           logo_url: r.data.logo_url ?? '',
           favicon_url: r.data.favicon_url ?? '',
-          primary_color: r.data.primary_color ?? '#f97316',
+          primary_color: r.data.primary_color ?? '#D4A017',
           login_tagline: r.data.login_tagline ?? '',
         })
       })

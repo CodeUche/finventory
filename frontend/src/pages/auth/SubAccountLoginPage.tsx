@@ -1,10 +1,10 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import AudityLogo from '@/components/AudityLogo'
 import { Eye, EyeOff, Loader2, Users, KeyRound } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { api, authApi, bypassNextGets } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
+import AuthShell from '@/components/auth/AuthShell'
 
 export default function SubAccountLoginPage() {
   const navigate = useNavigate()
@@ -89,146 +89,105 @@ export default function SubAccountLoginPage() {
   }
 
   return (
-    <div className="min-h-screen bg-surface-950 flex">
-      {/* Left panel */}
-      <div className="force-dark hidden lg:flex lg:w-1/2 relative overflow-hidden bg-gradient-to-br from-surface-900 to-surface-950 items-center justify-center p-12">
-        <div className="absolute top-0 left-0 w-96 h-96 bg-brand-500/10 rounded-full -translate-x-1/2 -translate-y-1/2 blur-3xl" />
-        <div className="absolute bottom-0 right-0 w-80 h-80 bg-blue-500/10 rounded-full translate-x-1/2 translate-y-1/2 blur-3xl" />
-        <div className="relative z-10 max-w-md">
-          <AudityLogo className="h-12 w-auto mb-12" />
-          <h2 className="text-4xl font-bold text-white leading-tight mb-4">
-            Staff<br />
-            <span className="text-brand-400">access portal</span>
-          </h2>
-          <p className="text-slate-400 text-lg leading-relaxed">
-            Sign in with the credentials your administrator sent you. Your access level is managed by your workspace owner.
-          </p>
-          <div className="mt-8 space-y-3">
-            {[
-              'Access is controlled by your administrator',
-              'Your account is linked to your workspace',
-              'Contact your admin to reset your password',
-              'Your workspace subscription governs your access',
-            ].map((f) => (
-              <div key={f} className="flex items-center gap-3 text-slate-300">
-                <div className="w-1.5 h-1.5 bg-brand-400 rounded-full shrink-0" />
-                {f}
-              </div>
-            ))}
-          </div>
+    <AuthShell
+      headline={<>Your workspace, <em>your</em> access.</>}
+      lead="Sign in with the credentials your administrator sent you. Your access level is managed by your workspace owner."
+    >
+      <div className="au-card">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6 }}>
+          <div className="au-badge" style={{ width: 38, height: 38, borderRadius: 11 }}><Users size={18} /></div>
+          <h2 className="au-title" style={{ fontSize: 26 }}>Staff sign in</h2>
         </div>
-      </div>
+        <p className="au-sub">
+          Owner or manager?{' '}
+          <button type="button" className="au-link" onClick={() => navigate('/login')}>Sign in here</button>
+        </p>
 
-      {/* Right panel — form */}
-      <div className="flex-1 flex items-center justify-center p-6">
-        <div className="w-full max-w-md">
-          <AudityLogo className="h-10 w-auto mb-8 lg:hidden" />
-
-          <div className="flex items-center gap-3 mb-2">
-            <div className="w-9 h-9 bg-brand-500/15 rounded-xl flex items-center justify-center">
-              <Users size={18} className="text-brand-400" />
-            </div>
-            <h2 className="text-3xl font-bold text-white">Staff sign in</h2>
+        <form onSubmit={handleSubmit}>
+          <div className="au-field">
+            <label>Username</label>
+            <input
+              type="text"
+              autoComplete="username"
+              value={form.username}
+              onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))}
+              placeholder="e.g. john"
+              required
+              className="au-input"
+            />
+            <p className="au-sub" style={{ fontSize: 12, margin: '6px 0 0' }}>The username your administrator gave you (part before the @)</p>
           </div>
-          <p className="text-slate-400 mb-8">
-            Owner or manager?{' '}
-            <a href="/login" className="text-brand-400 hover:text-brand-300 font-medium" onClick={(e) => { e.preventDefault(); navigate('/login') }}>
-              Sign in here
-            </a>
-          </p>
 
-          <form onSubmit={handleSubmit} className="space-y-5">
-            <div>
-              <label className="label">Username</label>
+          <div className="au-field">
+            <label>Workspace</label>
+            <input
+              type="text"
+              autoComplete="organization"
+              value={form.org_slug}
+              onChange={(e) => setForm((f) => ({ ...f, org_slug: e.target.value }))}
+              placeholder="e.g. acme-corp"
+              required
+              className="au-input"
+            />
+            <p className="au-sub" style={{ fontSize: 12, margin: '6px 0 0' }}>Your company's workspace identifier (shown in your credentials email)</p>
+          </div>
+
+          <div className="au-field">
+            <label>Password</label>
+            <div className="au-pw">
               <input
-                type="text"
-                autoComplete="username"
-                value={form.username}
-                onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))}
-                placeholder="e.g. john"
+                type={showPw ? 'text' : 'password'}
+                autoComplete="current-password"
+                value={form.password}
+                onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
+                placeholder="••••••••••"
                 required
-                className="input"
+                className="au-input"
               />
-              <p className="text-xs text-slate-500 mt-1.5">The username your administrator gave you (part before the @)</p>
+              <button type="button" className="au-eye" onClick={() => setShowPw((v) => !v)} aria-label="Toggle password visibility">
+                {showPw ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
             </div>
+          </div>
 
-            <div>
-              <label className="label">Workspace</label>
-              <input
-                type="text"
-                autoComplete="organization"
-                value={form.org_slug}
-                onChange={(e) => setForm((f) => ({ ...f, org_slug: e.target.value }))}
-                placeholder="e.g. acme-corp"
-                required
-                className="input"
-              />
-              <p className="text-xs text-slate-500 mt-1.5">Your company's workspace identifier (shown in your credentials email)</p>
-            </div>
+          <button type="submit" disabled={loading} className="au-btn" style={{ marginTop: 18 }}>
+            {loading ? <Loader2 size={18} className="animate-spin" /> : null}
+            {loading ? 'Signing in…' : 'Sign in to workspace'}
+          </button>
+        </form>
 
-            <div>
-              <label className="label">Password</label>
-              <div className="relative">
-                <input
-                  type={showPw ? 'text' : 'password'}
-                  autoComplete="current-password"
-                  value={form.password}
-                  onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
-                  placeholder="••••••••••"
-                  required
-                  className="input pr-12"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPw((v) => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors"
-                >
-                  {showPw ? <EyeOff size={18} /> : <Eye size={18} />}
-                </button>
-              </div>
-            </div>
-
-            <button type="submit" disabled={loading} className="btn-primary w-full justify-center py-3">
-              {loading ? <Loader2 size={18} className="animate-spin" /> : null}
-              {loading ? 'Signing in…' : 'Sign in to workspace'}
-            </button>
-          </form>
-
-          <p className="text-xs text-slate-600 text-center mt-8">
-            Forgot your credentials? Contact your workspace administrator.
-          </p>
-        </div>
+        <p className="au-foot" style={{ fontSize: 12 }}>
+          Forgot your credentials? Contact your workspace administrator.
+        </p>
       </div>
 
       {/* Forced password change modal */}
       {showForceChange && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-          <div className="bg-surface-800 border border-surface-600 rounded-2xl p-7 w-full max-w-md shadow-2xl space-y-5">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-amber-500/15 flex items-center justify-center">
-                <KeyRound size={20} className="text-amber-400" />
-              </div>
+        <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, background: 'rgba(0,0,0,.7)', backdropFilter: 'blur(4px)' }}>
+          <div className="au-card" style={{ maxWidth: 420 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18 }}>
+              <div className="au-badge" style={{ width: 40, height: 40, borderRadius: 11 }}><KeyRound size={20} /></div>
               <div>
-                <h2 className="text-lg font-bold text-white">Set your password</h2>
-                <p className="text-xs text-slate-400">Your administrator requires you to change your password before continuing.</p>
+                <h2 className="au-title" style={{ fontSize: 19 }}>Set your password</h2>
+                <p className="au-sub" style={{ fontSize: 12, margin: '3px 0 0' }}>Your administrator requires you to change your password before continuing.</p>
               </div>
             </div>
-            <div>
-              <label className="text-xs text-slate-400 block mb-1.5">New Password <span className="text-red-400">*</span></label>
+            <div className="au-field">
+              <label>New password</label>
               <input
                 type="password"
-                className="input"
+                className="au-input"
                 placeholder="At least 10 characters"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
                 autoFocus
               />
             </div>
-            <div>
-              <label className="text-xs text-slate-400 block mb-1.5">Confirm Password <span className="text-red-400">*</span></label>
+            <div className="au-field">
+              <label>Confirm password</label>
               <input
                 type="password"
-                className="input"
+                className="au-input"
                 placeholder="Repeat new password"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
@@ -237,13 +196,14 @@ export default function SubAccountLoginPage() {
             <button
               onClick={handleForcePasswordChange}
               disabled={changingPw || !newPassword || !confirmPassword}
-              className="btn-primary w-full justify-center py-3 disabled:opacity-50"
+              className="au-btn"
+              style={{ marginTop: 8 }}
             >
-              {changingPw ? <Loader2 size={16} className="animate-spin" /> : 'Set Password & Continue'}
+              {changingPw ? <Loader2 size={16} className="animate-spin" /> : 'Set password & continue'}
             </button>
           </div>
         </div>
       )}
-    </div>
+    </AuthShell>
   )
 }

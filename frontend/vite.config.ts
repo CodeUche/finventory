@@ -23,8 +23,8 @@ export default defineConfig(({ mode }) => {
         name: 'Audity — Business Finance',
         short_name: 'Audity',
         description: 'All-in-one business finance, inventory & payroll platform for Nigerian SMEs',
-        theme_color: '#f97316',
-        background_color: '#0f172a',
+        theme_color: '#D4A017',
+        background_color: '#0B1730',
         display: 'standalone',
         orientation: 'portrait',
         start_url: '/',
@@ -63,6 +63,10 @@ export default defineConfig(({ mode }) => {
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      // App-wide icon set: route lucide-react imports to our Phosphor duotone
+      // shim so every existing `import { X } from 'lucide-react'` renders the
+      // new icons with zero per-file changes.
+      'lucide-react': path.resolve(__dirname, './src/lib/lucide-shim.tsx'),
     },
   },
 

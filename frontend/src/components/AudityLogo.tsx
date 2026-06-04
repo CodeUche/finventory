@@ -31,8 +31,11 @@ export default function AudityLogo({ variant = 'horizontal', className, alt = 'A
     return () => window.removeEventListener('themechange', handler)
   }, [])
 
+  // App icon (square mark) is intentionally inverted vs. the theme so the tile
+  // contrasts with the background: light tile on dark UI, dark tile on light UI.
+  // The horizontal wordmark logo still follows the theme (white text on dark).
   const src = variant === 'icon'
-    ? (theme === 'dark' ? '/audity-icon-dark.svg' : '/audity-icon-light.svg')
+    ? (theme === 'dark' ? '/audity-icon-light.svg' : '/audity-icon-dark.svg')
     : (theme === 'dark' ? '/audity-logo-dark.svg' : '/audity-logo-light.svg')
 
   return <img src={src} alt={alt} className={className} draggable={false} />

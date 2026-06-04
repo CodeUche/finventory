@@ -34,7 +34,7 @@ type TabId = (typeof TABS)[number]['id']
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const COLORS = ['#f97316', '#3b82f6', '#10b981', '#a855f7', '#f59e0b', '#ef4444']
+const COLORS = ['#D4A017', '#3b82f6', '#10b981', '#a855f7', '#f59e0b', '#ef4444']
 
 function kpi(label: string, value: string, sub?: string, positive = true) {
   return (
@@ -392,8 +392,8 @@ export default function ReportsPage() {
                 <AreaChart data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
                   <defs>
                     <linearGradient id="revGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#f97316" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="#f97316" stopOpacity={0} />
+                      <stop offset="5%" stopColor="#D4A017" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="#D4A017" stopOpacity={0} />
                     </linearGradient>
                     <linearGradient id="taxGrad" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.2} />
@@ -407,7 +407,7 @@ export default function ReportsPage() {
                   <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle}
                     formatter={(v: number) => formatCurrency(v)} />
                   <Legend wrapperStyle={{ fontSize: 12, paddingTop: 16, color: '#94a3b8' }} />
-                  <Area type="monotone" dataKey="Revenue" stroke="#f97316" strokeWidth={2} fill="url(#revGrad)" dot={false} />
+                  <Area type="monotone" dataKey="Revenue" stroke="#D4A017" strokeWidth={2} fill="url(#revGrad)" dot={false} />
                   <Area type="monotone" dataKey="Tax" stroke="#3b82f6" strokeWidth={1.5} fill="url(#taxGrad)" dot={false} />
                 </AreaChart>
               </ResponsiveContainer>

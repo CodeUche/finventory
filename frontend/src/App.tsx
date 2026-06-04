@@ -80,7 +80,7 @@ class ErrorBoundaryInner extends React.Component<
             <p style={{ color: '#f8fafc', fontSize: '18px', fontWeight: 700, marginBottom: '8px' }}>Something went wrong</p>
             <p style={{ color: '#94a3b8', fontSize: '12px', fontFamily: 'monospace', wordBreak: 'break-all', marginBottom: '20px' }}>{this.state.message}</p>
             <button
-              style={{ background: '#f97316', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 24px', cursor: 'pointer', fontWeight: 600, fontSize: '14px' }}
+              style={{ background: '#122C63', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 24px', cursor: 'pointer', fontWeight: 600, fontSize: '14px' }}
               onClick={() => {
                 this.setState({ hasError: false, message: '' })
                 // Use React Router navigate so Tauri never does a full-page reload

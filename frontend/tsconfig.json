@@ -17,7 +17,8 @@
     "noFallthroughCasesInSwitch": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "lucide-react": ["./src/lib/lucide-shim.tsx"]
     }
   },
   "include": ["src"],
