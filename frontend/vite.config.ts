@@ -37,7 +37,7 @@ export default defineConfig(({ mode }) => {
         screenshots: [],
       },
       workbox: {
-        maximumFileSizeToCacheInBytes: 4 * 1024 * 1024, // 4 MiB — main bundle exceeds 2 MiB default
+        maximumFileSizeToCacheInBytes: 12 * 1024 * 1024, // main bundle > 2 MiB default; allow headroom
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
         runtimeCaching: [
           {
