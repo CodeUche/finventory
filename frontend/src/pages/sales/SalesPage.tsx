@@ -1204,7 +1204,7 @@ export default function SalesPage() {
                   <button
                     onClick={openReturnModal}
                     disabled={acting || !detail}
-                    className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-amber-500/30 text-amber-400 hover:bg-amber-500/10 text-sm font-medium transition-colors disabled:opacity-50"
+                    className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-green-500/30 text-green-400 hover:bg-green-500/10 text-sm font-medium transition-colors disabled:opacity-50"
                   >
                     <RotateCcw size={14} /> Process Return / Credit Note
                   </button>

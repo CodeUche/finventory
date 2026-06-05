@@ -66,7 +66,7 @@ export default function NotificationBell() {
     <div ref={ref} className="relative">
       <button
         onClick={() => setOpen((v) => !v)}
-        className={cn('btn-ghost relative p-2', open && 'bg-surface-700')}
+        className={cn('btn-ghost relative p-2 text-slate-300 hover:text-white', open && 'bg-surface-700')}
       >
         <Bell size={18} />
         {count > 0 && (

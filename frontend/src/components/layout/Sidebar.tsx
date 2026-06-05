@@ -13,7 +13,6 @@ import { authApi } from '@/services/api'
 import { cn } from '@/lib/utils'
 import { FEATURES } from '@/lib/featureFlags'
 import type { ModuleKey } from '@/types'
-import AudityLogo from '@/components/AudityLogo'
 
 // ─── Navigation structure ─────────────────────────────────────────────────────
 // `module` maps to ModuleKey for permission filtering; null = always visible
@@ -180,7 +179,7 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
     >
       {/* Logo */}
       <div className="flex items-center justify-between px-5 py-4 border-b border-surface-700 shrink-0">
-        <AudityLogo className="h-9 w-auto" />
+        <img src="/audity-logo-dark.svg" alt="Audity" className="h-9 w-auto" draggable={false} />
         <button onClick={onClose} className="lg:hidden btn-ghost p-1">
           <X size={18} />
         </button>

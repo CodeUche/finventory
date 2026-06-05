@@ -24,11 +24,11 @@ interface GLHealth {
   failures: GLFailure[]
 }
 
-const STATUS_META: Record<string, { label: string; icon: React.ElementType; color: string; bg: string }> = {
-  posted:        { label: 'Posted',        icon: CheckCircle,   color: 'text-green-400',  bg: 'bg-green-900/30' },
-  failed:        { label: 'Failed',        icon: XCircle,       color: 'text-red-400',    bg: 'bg-red-900/30' },
-  not_configured:{ label: 'Not Configured',icon: AlertTriangle, color: 'text-amber-400',  bg: 'bg-amber-900/30' },
-  pending:       { label: 'Pending',       icon: Clock,         color: 'text-slate-400',  bg: 'bg-slate-700/30' },
+const STATUS_META: Record<string, { label: string; icon: React.ElementType; color: string; bg: string; border: string }> = {
+  posted:        { label: 'Posted',        icon: CheckCircle,   color: 'text-green-500',  bg: 'bg-green-500/15',  border: 'border-green-500/30' },
+  failed:        { label: 'Failed',        icon: XCircle,       color: 'text-red-500',    bg: 'bg-red-500/15',    border: 'border-red-500/30' },
+  not_configured:{ label: 'Not Configured',icon: AlertTriangle, color: 'text-amber-500',  bg: 'bg-amber-500/15',  border: 'border-amber-500/30' },
+  pending:       { label: 'Pending',       icon: Clock,         color: 'text-slate-500',  bg: 'bg-surface-800',   border: 'border-surface-600' },
 }
 
 const MODEL_LABELS: Record<string, string> = {
@@ -125,10 +125,10 @@ export default function GLHealthPage() {
           const Icon = meta.icon
           const count = summary[key as keyof GLSummary] ?? 0
           return (
-            <div key={key} className={`rounded-xl p-4 ${meta.bg} border border-slate-700/50`}>
+            <div key={key} className={`rounded-xl p-4 ${meta.bg} border ${meta.border}`}>
               <div className="flex items-center gap-2 mb-1">
                 <Icon size={16} className={meta.color} />
-                <span className="text-xs text-slate-400">{meta.label}</span>
+                <span className="text-xs font-medium text-slate-500">{meta.label}</span>
               </div>
               <p className={`text-2xl font-bold ${meta.color}`}>{count}</p>
             </div>
@@ -138,34 +138,34 @@ export default function GLHealthPage() {
 
       {/* Health bar */}
       {total > 0 && (
-        <div className="rounded-xl bg-slate-800 border border-slate-700 p-4">
-          <div className="flex justify-between text-sm text-slate-400 mb-2">
+        <div className="rounded-xl bg-surface-800 border border-surface-700 p-4">
+          <div className="flex justify-between text-sm text-slate-500 mb-2">
             <span>GL Posting Health</span>
             <span className={healthPct >= 90 ? 'text-green-400' : healthPct >= 70 ? 'text-amber-400' : 'text-red-400'}>
               {healthPct}%
             </span>
           </div>
-          <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
+          <div className="h-2 bg-surface-600 rounded-full overflow-hidden">
             <div
               className={`h-full rounded-full transition-all ${healthPct >= 90 ? 'bg-green-500' : healthPct >= 70 ? 'bg-amber-500' : 'bg-red-500'}`}
               style={{ width: `${healthPct}%` }}
             />
           </div>
-          <p className="text-xs text-slate-500 mt-2">{summary.posted} of {total} entries successfully posted to the GL</p>
+          <p className="text-xs text-slate-400 mt-2">{summary.posted} of {total} entries successfully posted to the GL</p>
         </div>
       )}
 
       {/* Failures table */}
       {(data?.failures?.length ?? 0) > 0 ? (
-        <div className="rounded-xl bg-slate-800 border border-slate-700 overflow-hidden">
-          <div className="px-4 py-3 border-b border-slate-700">
+        <div className="rounded-xl bg-surface-800 border border-surface-700 overflow-hidden">
+          <div className="px-4 py-3 border-b border-surface-700">
             <h2 className="text-sm font-medium text-white">Failures &amp; Missing Configurations</h2>
             <p className="text-xs text-slate-400 mt-0.5">Click Retry to re-attempt posting after fixing the account mapping</p>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-slate-700 text-slate-400 text-xs uppercase">
+                <tr className="border-b border-surface-700 text-slate-400 text-xs uppercase">
                   <th className="text-left px-4 py-2">Type</th>
                   <th className="text-left px-4 py-2">Reference</th>
                   <th className="text-left px-4 py-2">Date</th>
@@ -176,7 +176,7 @@ export default function GLHealthPage() {
               </thead>
               <tbody>
                 {data!.failures.map((f) => (
-                  <tr key={f.id} className="border-b border-slate-700/50 hover:bg-slate-700/20">
+                  <tr key={f.id} className="border-b border-surface-700/50 hover:bg-surface-700/20">
                     <td className="px-4 py-3">
                       <span className="px-2 py-0.5 rounded text-xs bg-slate-700 text-slate-300">
                         {MODEL_LABELS[f.model] ?? f.model}
@@ -203,10 +203,10 @@ export default function GLHealthPage() {
           </div>
         </div>
       ) : !loading && (
-        <div className="rounded-xl bg-slate-800 border border-slate-700 p-8 text-center">
+        <div className="rounded-xl bg-surface-800 border border-surface-700 p-8 text-center">
           <CheckCircle size={40} className="text-green-400 mx-auto mb-3" />
-          <p className="text-white font-medium">All GL entries posted successfully</p>
-          <p className="text-slate-400 text-sm mt-1">No failed or misconfigured postings</p>
+          <p className="font-medium text-slate-700 dark:text-white">All GL entries posted successfully</p>
+          <p className="text-slate-500 text-sm mt-1">No failed or misconfigured postings</p>
         </div>
       )}
     </div>

@@ -930,7 +930,7 @@ export default function SettingsPage() {
             title={t.comingSoon ? `${t.label} — Coming Soon` : t.label}
             className={`relative flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
               t.comingSoon
-                ? 'opacity-50 cursor-not-allowed text-slate-500'
+                ? 'cursor-not-allowed text-slate-400'
                 : activeTab === t.id
                   ? 'bg-brand-500 text-white'
                   : 'text-slate-400 hover:text-white'
@@ -939,7 +939,7 @@ export default function SettingsPage() {
             <t.icon size={15} />
             <span className="hidden sm:inline">{t.label}</span>
             {t.comingSoon && (
-              <span className="hidden sm:inline text-[9px] bg-slate-600 text-slate-300 px-1 rounded ml-0.5">Soon</span>
+              <span className="hidden sm:inline text-[9px] bg-brand-500/70 text-white px-1.5 py-0.5 rounded font-semibold ml-0.5">Soon</span>
             )}
           </button>
         ))}
