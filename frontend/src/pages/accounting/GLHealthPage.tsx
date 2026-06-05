@@ -111,7 +111,7 @@ export default function GLHealthPage() {
           <button
             onClick={load}
             disabled={loading}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-700 text-slate-200 text-sm hover:bg-slate-600 disabled:opacity-50"
+            className="btn-primary flex items-center gap-2 px-3 py-1.5 text-sm disabled:opacity-50"
           >
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
             Refresh
