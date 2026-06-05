@@ -69,7 +69,7 @@ html.light .audity-auth{
   min-height:100vh;align-items:center;gap:24px;padding:48px 60px;max-width:1280px;margin:0 auto;
 }
 .au-left{padding:8px 32px 8px 0;display:flex;flex-direction:column;gap:26px;animation:au-rise .6s ease both}
-.au-logo{height:auto;width:min(100%,260px);display:block}
+.au-logo{height:auto;width:min(100%,380px);display:block}
 .au-display{
   font-family:'Fraunces',Georgia,serif;font-weight:500;font-size:clamp(34px,4.4vw,54px);
   line-height:1.04;letter-spacing:-.02em;color:var(--head);max-width:13ch;
