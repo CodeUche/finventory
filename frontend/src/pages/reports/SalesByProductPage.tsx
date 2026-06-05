@@ -1,10 +1,25 @@
-import { useState, useEffect, useCallback } from 'react'
-import { ChevronDown, ChevronRight, Loader2, Package } from 'lucide-react'
+/**
+ * SalesByProductPage — Phase 3 enhancements:
+ *  1. Horizontal grouped bar chart — Revenue vs Gross Profit for the top 10 products.
+ *  2. Margin scatter chart — revenue (X) vs gross margin % (Y), bubble size = units sold.
+ *     Reveals which products are high-volume low-margin vs niche high-margin.
+ */
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import { ChevronDown, ChevronRight, Loader2, Package, BarChart2, TrendingUp } from 'lucide-react'
+import {
+  BarChart, Bar, ScatterChart, Scatter, XAxis, YAxis,
+  CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell,
+} from 'recharts'
 import { reportApi } from '@/services/api'
-import { formatCurrency, formatDate } from '@/lib/utils'
+import { formatCurrency, formatDate, formatNumber, getCurrencySymbol } from '@/lib/utils'
+import { useThemeAccent } from '@/hooks/useTheme'
 import PeriodSelector, { type PeriodValue } from '@/components/PeriodSelector'
 import ExportBar from '@/components/ExportBar'
 import type { SalesByProductRow, ProductSaleLine } from '@/types'
+
+const tooltipStyle  = { backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '12px', color: '#f1f5f9', fontSize: 12 }
+const axisTickStyle = { fill: '#64748b', fontSize: 11 }
+const trunc = (s: string, n = 14) => s?.length > n ? s.slice(0, n) + '…' : (s ?? '—')
 
 function periodToParams(p: PeriodValue): Record<string, string> {
   const out: Record<string, string> = { period: p.period }
@@ -14,6 +29,7 @@ function periodToParams(p: PeriodValue): Record<string, string> {
 }
 
 export default function SalesByProductPage() {
+  const accent = useThemeAccent()
   const [period, setPeriod] = useState<PeriodValue>({ period: 'month' })
   const [rows, setRows]     = useState<SalesByProductRow[]>([])
   const [loading, setLoading] = useState(false)
@@ -59,6 +75,41 @@ export default function SalesByProductPage() {
   const totalProfit   = rows.reduce((s, r) => s + parseFloat(r.gross_profit || '0'), 0)
   const totalUnits    = rows.reduce((s, r) => s + Number(r.units_sold || 0), 0)
 
+  /**
+   * Phase 3: Horizontal grouped bar data — top 10 products by revenue.
+   * Shows Revenue and Gross Profit side-by-side so profitability is visible
+   * without requiring the user to open each row's detail.
+   */
+  const barChartData = useMemo(() =>
+    [...rows]
+      .sort((a, b) => parseFloat(b.revenue || '0') - parseFloat(a.revenue || '0'))
+      .slice(0, 10)
+      .map(r => ({
+        name:        trunc(r.product_name, 16),
+        Revenue:     parseFloat(r.revenue || '0'),
+        GrossProfit: parseFloat(r.gross_profit || '0'),
+      })),
+  [rows])
+
+  /**
+   * Phase 3: Margin scatter data — each point is one product.
+   * X = revenue (size of opportunity), Y = gross margin %
+   * z = units sold (bubble size — larger bubble = more volume)
+   */
+  const scatterData = useMemo(() =>
+    rows.map(r => {
+      const rev    = parseFloat(r.revenue || '0')
+      const gp     = parseFloat(r.gross_profit || '0')
+      const margin = rev > 0 ? (gp / rev) * 100 : 0
+      return {
+        name:     r.product_name,
+        revenue:  rev,
+        margin:   parseFloat(margin.toFixed(1)),
+        units:    Number(r.units_sold || 0),
+      }
+    }).filter(d => d.revenue > 0),
+  [rows])
+
   return (
     <div className="space-y-5">
       {/* Header */}
@@ -100,6 +151,103 @@ export default function SalesByProductPage() {
             <p className={`text-lg font-semibold ${totalProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
               {formatCurrency(totalProfit)}
             </p>
+          </div>
+        </div>
+      )}
+
+      {/* Phase 3: Charts — only shown when data is available */}
+      {!loading && rows.length > 0 && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+          {/* Horizontal grouped bar — Revenue vs Gross Profit (top 10) */}
+          <div className="card p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <BarChart2 size={17} className="text-brand-400" />
+              <h2 className="text-sm font-semibold text-white">Top 10 Products: Revenue vs Gross Profit</h2>
+            </div>
+            <ResponsiveContainer width="100%" height={280}>
+              <BarChart
+                layout="vertical"
+                data={barChartData}
+                margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                <XAxis type="number" tick={axisTickStyle} axisLine={false} tickLine={false}
+                  tickFormatter={v => `${getCurrencySymbol()}${formatNumber(v)}`} />
+                <YAxis type="category" dataKey="name" tick={axisTickStyle}
+                  axisLine={false} tickLine={false} width={100} />
+                <Tooltip
+                  contentStyle={tooltipStyle}
+                  labelStyle={{ color: '#94a3b8' }}
+                  itemStyle={{ color: '#f1f5f9' }}
+                  formatter={(v: number) => formatCurrency(String(v))}
+                />
+                <Legend
+                  wrapperStyle={{ fontSize: 11, paddingTop: 12, color: '#94a3b8' }}
+                  formatter={(val: string) => <span style={{ color: '#94a3b8' }}>{val}</span>}
+                />
+                <Bar dataKey="Revenue"     fill={accent}    radius={[0, 4, 4, 0]} />
+                <Bar dataKey="GrossProfit" fill="#10b981"   radius={[0, 4, 4, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* Margin scatter — Revenue vs Margin%, bubble size = units */}
+          <div className="card p-5">
+            <div className="flex items-center gap-2 mb-1">
+              <TrendingUp size={17} className="text-emerald-400" />
+              <h2 className="text-sm font-semibold text-white">Margin Map: Revenue vs Gross Margin %</h2>
+            </div>
+            <p className="text-xs text-slate-500 mb-4">
+              Each dot = one product. Right = more revenue. Up = higher margin. Ideal = top-right.
+            </p>
+            <ResponsiveContainer width="100%" height={250}>
+              <ScatterChart margin={{ top: 10, right: 20, left: 0, bottom: 10 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                <XAxis
+                  type="number" dataKey="revenue" name="Revenue"
+                  tick={axisTickStyle} axisLine={false} tickLine={false}
+                  tickFormatter={v => `${getCurrencySymbol()}${formatNumber(v)}`}
+                  label={{ value: 'Revenue', position: 'insideBottom', offset: -2, fill: '#64748b', fontSize: 10 }}
+                />
+                <YAxis
+                  type="number" dataKey="margin" name="Margin %"
+                  tick={axisTickStyle} axisLine={false} tickLine={false}
+                  tickFormatter={v => `${v}%`}
+                  label={{ value: 'GP %', angle: -90, position: 'insideLeft', fill: '#64748b', fontSize: 10 }}
+                />
+                <Tooltip
+                  contentStyle={tooltipStyle}
+                  cursor={{ strokeDasharray: '3 3', stroke: '#475569' }}
+                  content={({ payload }) => {
+                    if (!payload?.length) return null
+                    const d = payload[0]?.payload as { name: string; revenue: number; margin: number; units: number }
+                    return (
+                      <div style={tooltipStyle} className="p-3 text-xs space-y-1">
+                        <p className="font-semibold text-white">{d.name}</p>
+                        <p className="text-slate-400">Revenue: <span className="text-emerald-400">{formatCurrency(String(d.revenue))}</span></p>
+                        <p className="text-slate-400">Gross Margin: <span className="text-blue-400">{d.margin}%</span></p>
+                        <p className="text-slate-400">Units Sold: <span className="text-white">{d.units.toLocaleString()}</span></p>
+                      </div>
+                    )
+                  }}
+                />
+                <Scatter data={scatterData} name="Products">
+                  {scatterData.map((entry, i) => (
+                    <Cell
+                      key={i}
+                      fill={entry.margin >= 30 ? '#10b981' : entry.margin >= 15 ? accent : '#ef4444'}
+                      fillOpacity={0.75}
+                    />
+                  ))}
+                </Scatter>
+              </ScatterChart>
+            </ResponsiveContainer>
+            <div className="flex items-center gap-4 mt-2 text-xs text-slate-500">
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" /> ≥30% margin</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: accent }} /> 15–30%</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500 inline-block" /> &lt;15%</span>
+            </div>
           </div>
         </div>
       )}

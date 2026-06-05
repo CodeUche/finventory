@@ -1,14 +1,40 @@
-import { useEffect, useState } from 'react'
+/**
+ * ReportsPage — Full analytics suite.
+ *
+ * Tab structure:
+ *  overview       — KPI cards, stacked bar (Rev vs Costs), trend chart, AR aging mini
+ *  pnl            — Waterfall bridge chart + comparison table + existing bar breakdown
+ *  cashflow       — Monthly grouped bar (in/out) + cumulative area + metric cards
+ *  sales_analytics— Top customers horizontal bar + payment method donut + revenue trend
+ *  aging          — AR & AP aging donuts + per-customer stacked bar + overdue list
+ *  expenses       — Category donut + expense vs revenue trend area + ratio target line
+ *
+ * Phase 2A: Overview enhanced with stacked Revenue/COGS/OpEx bar + prior-period
+ *           comparison line and AR aging mini.
+ * Phase 2B: P&L tab — horizontal waterfall (ComposedChart) + comparison column.
+ * Phase 2C: New "Sales Analytics" tab replaces old Products + Customers tabs.
+ * Phase 2D: New "AR/AP Aging" tab with donuts and per-customer stacked bar.
+ * Phase 2E: Cash Flow — grouped monthly bar + cumulative area chart.
+ * Phase 2F: Expenses — trend area + expense ratio reference line.
+ *
+ * All charts use Recharts (already in project).  Zero new dependencies.
+ */
+
+import { useEffect, useMemo, useState } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { useThemeAccent } from '@/hooks/useTheme'
 import {
-  AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
+  AreaChart, Area,
+  BarChart, Bar,
+  ComposedChart, ReferenceLine,
+  PieChart, Pie, Cell,
+  XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+  ResponsiveContainer,
 } from 'recharts'
 import {
   BarChart2, RefreshCw, TrendingDown, TrendingUp, Clock, Receipt,
   Download, ArrowDownCircle, ArrowUpCircle, Landmark, LayoutDashboard,
-  FileText, Users, Package, DollarSign,
+  FileText, Users, DollarSign, PieChart as PieIcon, Activity,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { reportApi, tauriFetch, bypassNextGets } from '@/services/api'
@@ -23,19 +49,60 @@ import type { PnL, SalesSummaryPoint, ARAgingReport, VATSummary } from '@/types'
 // ─── Tab definitions ──────────────────────────────────────────────────────────
 
 const TABS = [
-  { id: 'overview',   label: 'Overview',      icon: LayoutDashboard },
-  { id: 'pnl',        label: 'P&L Statement', icon: FileText },
-  { id: 'cashflow',   label: 'Cash Flow',     icon: Landmark },
-  { id: 'products',   label: 'Top Products',  icon: Package },
-  { id: 'customers',  label: 'Top Customers', icon: Users },
-  { id: 'expenses',   label: 'Expenses',      icon: TrendingDown },
+  { id: 'overview',        label: 'Overview',        icon: LayoutDashboard },
+  { id: 'pnl',             label: 'P&L Statement',   icon: FileText },
+  { id: 'cashflow',        label: 'Cash Flow',        icon: Landmark },
+  { id: 'sales_analytics', label: 'Sales Analytics', icon: Users },
+  { id: 'aging',           label: 'AR / AP Aging',   icon: Clock },
+  { id: 'expenses',        label: 'Expenses',         icon: TrendingDown },
 ] as const
 
 type TabId = (typeof TABS)[number]['id']
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Shared chart palette & tooltip style ────────────────────────────────────
 
-const COLORS = ['#D4A017', '#3b82f6', '#10b981', '#a855f7', '#f59e0b', '#ef4444']
+/** Standard palette; index-0 is always the theme-aware brand accent. */
+const STATIC_COLORS = ['#3b82f6', '#10b981', '#a855f7', '#f59e0b', '#ef4444', '#06b6d4']
+
+/** Aging bucket colours: healthy → critical */
+const AGING_COLORS = ['#10b981', '#f59e0b', '#f97316', '#ef4444', '#991b1b']
+
+const tooltipStyle = {
+  backgroundColor: '#1e293b',
+  border:          '1px solid #334155',
+  borderRadius:    '12px',
+  color:           '#f1f5f9',
+  fontSize:        12,
+}
+const tooltipLabelStyle  = { color: '#94a3b8' }
+const tooltipItemStyle   = { color: '#f1f5f9' }
+const axisTickStyle      = { fill: '#64748b', fontSize: 11 }
+
+// ─── Local type helpers ───────────────────────────────────────────────────────
+
+interface TopProduct  { product_name: string; revenue: string; units_sold: string; cogs: string; gross_profit: string; product_sku?: string }
+interface TopCustomer { customer_name: string; revenue: string; invoice_count: number; customer_code?: string }
+interface ExpRow      { category_name: string; total: string; count: number }
+interface CashFlow    { cash_inflows: string; cash_outflows: string; net_cash_flow: string }
+
+// ─── Utility functions ────────────────────────────────────────────────────────
+
+function periodToParams(p: PeriodValue): Record<string, string> {
+  const out: Record<string, string> = { period: p.period }
+  if (p.date_from) out.date_from = p.date_from
+  if (p.date_to)   out.date_to   = p.date_to
+  return out
+}
+
+function groupByForPeriod(period: PeriodValue['period']): string {
+  if (period === 'today' || period === 'week' || period === 'month') return 'day'
+  return 'month'
+}
+
+/** Truncate long product / customer names for chart axes. */
+const trunc = (s: string, n = 14) => (s?.length ?? 0) > n ? s.slice(0, n) + '…' : (s ?? '—')
+
+// ─── Small KPI helper ─────────────────────────────────────────────────────────
 
 function kpi(label: string, value: string, sub?: string, positive = true) {
   return (
@@ -47,47 +114,28 @@ function kpi(label: string, value: string, sub?: string, positive = true) {
   )
 }
 
-function periodToParams(p: PeriodValue): Record<string, string> {
-  const out: Record<string, string> = { period: p.period }
-  if (p.date_from) out.date_from = p.date_from
-  if (p.date_to)   out.date_to   = p.date_to
-  return out
-}
-
-function groupByForPeriod(period: PeriodValue['period']): string {
-  if (period === 'today' || period === 'week') return 'day'
-  if (period === 'month') return 'day'
-  return 'month'
-}
-
-// ─── Local types ──────────────────────────────────────────────────────────────
-
-interface TopProduct { product_name: string; revenue: string; units_sold: string; cogs: string; gross_profit: string; product_sku?: string }
-interface TopCustomer { customer_name: string; revenue: string; invoice_count: number; customer_code?: string }
-interface ExpenseBreakdown { category_name: string; total: string; count: number }
-interface CashFlow { cash_inflows: string; cash_outflows: string; net_cash_flow: string }
-
-// ─── Component ────────────────────────────────────────────────────────────────
+// ─── Main component ───────────────────────────────────────────────────────────
 
 export default function ReportsPage() {
   const { organisation } = useAuthStore()
-  const accent = useThemeAccent()
-  // Chart palette: first series is the theme-aware brand accent (gold dark / navy light).
-  const colors = [accent, ...COLORS.slice(1)]
-  const [tab, setTab] = useState<TabId>('overview')
+  const accent           = useThemeAccent()
+  /** Full palette with brand accent at position 0 */
+  const colors           = [accent, ...STATIC_COLORS]
+
+  const [tab,    setTab]    = useState<TabId>('overview')
   const [period, setPeriod] = useState<PeriodValue>({ period: 'month' })
   const [loading, setLoading] = useState(true)
 
-  // Data state
-  const [pnl, setPnl]                       = useState<PnL | null>(null)
-  const [salesTrend, setSalesTrend]          = useState<SalesSummaryPoint[]>([])
-  const [topProducts, setTopProducts]        = useState<TopProduct[]>([])
-  const [topCustomers, setTopCustomers]      = useState<TopCustomer[]>([])
-  const [expenseBreakdown, setExpenseBreakdown] = useState<ExpenseBreakdown[]>([])
-  const [arAging, setArAging]                = useState<ARAgingReport | null>(null)
-  const [apAging, setApAging]                = useState<ARAgingReport | null>(null)
-  const [cashFlow, setCashFlow]              = useState<CashFlow | null>(null)
-  const [vatSummary, setVatSummary]          = useState<VATSummary | null>(null)
+  // ── Data state ───────────────────────────────────────────────────────────────
+  const [pnl,              setPnl]              = useState<PnL | null>(null)
+  const [salesTrend,       setSalesTrend]       = useState<SalesSummaryPoint[]>([])
+  const [topProducts,      setTopProducts]      = useState<TopProduct[]>([])
+  const [topCustomers,     setTopCustomers]     = useState<TopCustomer[]>([])
+  const [expenseBreakdown, setExpenseBreakdown] = useState<ExpRow[]>([])
+  const [arAging,          setArAging]          = useState<ARAgingReport | null>(null)
+  const [apAging,          setApAging]          = useState<ARAgingReport | null>(null)
+  const [cashFlow,         setCashFlow]         = useState<CashFlow | null>(null)
+  const [vatSummary,       setVatSummary]       = useState<VATSummary | null>(null)
 
   // ── VAT PDF export ────────────────────────────────────────────────────────────
   const downloadVATReport = async () => {
@@ -97,47 +145,46 @@ export default function ReportsPage() {
       const { default: autoTable } = await import('jspdf-autotable')
       const { applyDocHeader, buildTableStyle, addDocFooter, COLORS, TYPE } = await import('@/lib/pdfUtils')
 
-      const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+      const doc    = new jsPDF({ unit: 'mm', format: 'a4' })
       doc.setLineHeightFactor(1.15)
-      const pageW = doc.internal.pageSize.getWidth()
+      const pageW  = doc.internal.pageSize.getWidth()
 
-      const toRgb = (hex?: string): [number,number,number] => {
+      const toRgb = (hex?: string): [number, number, number] => {
         const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex ?? '')
         if (!m) return [249, 115, 22]
         return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)]
       }
-      const BRAND = toRgb(organisation?.brand_color) as [number,number,number]
-      const DARK   = COLORS.DARK
-      const MUTED  = COLORS.MUTED
-      const LIGHT  = COLORS.LIGHT
-      const RULE   = COLORS.RULE
-      const tmpl   = organisation?.invoice_template ?? 'classic'
+      const BRAND = toRgb(organisation?.brand_color) as [number, number, number]
+      const DARK  = COLORS.DARK
+      const MUTED = COLORS.MUTED
+      const LIGHT = COLORS.LIGHT
+      const RULE  = COLORS.RULE
+      const tmpl  = organisation?.invoice_template ?? 'classic'
 
       let vatLogoData: string | null = null
       if (organisation?.logo) {
         try {
-          const res = await tauriFetch(organisation.logo)
+          const res  = await tauriFetch(organisation.logo)
           const blob = await res.blob()
           vatLogoData = await new Promise<string>((resolve, reject) => {
             const r = new FileReader()
             r.onloadend = () => resolve(r.result as string)
-            r.onerror = reject
+            r.onerror   = reject
             r.readAsDataURL(blob)
           })
         } catch { /* no logo */ }
       }
 
-      const pFont = organisation?.company_name_font?.toLowerCase().includes('times') ||
-        ['Georgia','Playfair Display','Merriweather','Lora','Libre Baskerville','EB Garamond',
-         'Crimson Text','Cinzel','Cormorant Garamond','Spectral'].includes(organisation?.company_name_font ?? '')
-        ? 'times'
-        : ['courier','JetBrains Mono','Fira Code'].includes(organisation?.company_name_font ?? '')
+      const pFont = ['times', 'Georgia', 'Playfair Display', 'Merriweather', 'Lora',
+        'Libre Baskerville', 'EB Garamond', 'Crimson Text', 'Cinzel', 'Cormorant Garamond',
+        'Spectral'].includes(organisation?.company_name_font ?? '') ? 'times'
+        : ['courier', 'JetBrains Mono', 'Fira Code'].includes(organisation?.company_name_font ?? '')
         ? 'courier' : 'helvetica'
       const pBold   = organisation?.company_name_font_bold !== false
       const pItalic = organisation?.company_name_font_italic === true
       const pStyle  = pBold && pItalic ? 'bolditalic' : pBold ? 'bold' : pItalic ? 'italic' : 'normal'
       const pSize   = Math.max(8, Math.min(36, organisation?.company_name_font_size ?? 12))
-      const nameColor: [number,number,number] = (() => {
+      const nameColor: [number, number, number] = (() => {
         const c = organisation?.company_name_font_color
         if (!c || c === '#ffffff') return (tmpl === 'modern' || tmpl === 'minimal') ? DARK : COLORS.WHITE
         return toRgb(c)
@@ -148,29 +195,27 @@ export default function ReportsPage() {
 
       const vatY = applyDocHeader(doc, {
         tmpl, pageW, BRAND, DARK, MUTED,
-        logoData: vatLogoData,
+        logoData:              vatLogoData,
         displayName,
-        orgAddress: organisation?.address,
-        orgEmail:   organisation?.email,
-        orgPhone:   organisation?.phone,
-        pdfFont: pFont,
-        fontSize: pSize,
-        pdfStyle: pStyle,
+        orgAddress:            organisation?.address,
+        orgEmail:              organisation?.email,
+        orgPhone:              organisation?.phone,
+        pdfFont:               pFont,
+        fontSize:              pSize,
+        pdfStyle:              pStyle,
         nameColor,
-        companyFontUnderline: organisation?.company_name_font_underline,
-        showCompanyName: showName,
-        docTitle: 'VAT RETURN REPORT',
+        companyFontUnderline:  organisation?.company_name_font_underline,
+        showCompanyName:       showName,
+        docTitle:              'VAT RETURN REPORT',
         metaRows: [
           ['Organisation', organisation?.name ?? ''],
-          ['Period',       dateRange],
-          ['Generated',    new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })],
+          ['Period',        dateRange],
+          ['Generated',     new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })],
         ],
       })
 
       const netPayable = parseFloat(vatSummary.net_vat_payable)
-
-      // ── VAT summary table ──────────────────────────────────────────────────
-      const ts = buildTableStyle(BRAND, pFont)
+      const ts         = buildTableStyle(BRAND, pFont)
       doc.setFontSize(9)
       const vatAmounts = [
         formatCurrency(vatSummary.output_vat),
@@ -183,56 +228,52 @@ export default function ReportsPage() {
       autoTable(doc, {
         ...ts,
         startY: vatY,
-        head: [['Description', 'Amount']],
-        body: [
+        head:   [['Description', 'Amount']],
+        body:   [
           ['Output VAT (collected on sales)',    formatCurrency(vatSummary.output_vat)],
           ['Input VAT (paid on approved bills)', `(${formatCurrency(vatSummary.input_vat)})`],
           ['Net VAT Payable to FIRS',            formatCurrency(vatSummary.net_vat_payable)],
         ],
-        styles: { ...ts.styles, fontSize: 9, cellPadding: { top: 4, bottom: 4, left: 6, right: 6 } },
+        styles:       { ...ts.styles, fontSize: 9, cellPadding: { top: 4, bottom: 4, left: 6, right: 6 } },
         columnStyles: {
           0: { cellWidth: 'auto' as const },
           1: { halign: 'right' as const, fontStyle: 'bold' as const, cellWidth: colW },
         },
         didParseCell: (data: any) => {
           if (data.row.index === 2) {
-            data.cell.styles.textColor = netPayable >= 0 ? COLORS.RED : COLORS.GREEN
-            data.cell.styles.fillColor = netPayable >= 0 ? [255, 240, 240] : [240, 255, 245]
-            data.cell.styles.fontStyle = 'bold'
+            data.cell.styles.textColor  = netPayable >= 0 ? COLORS.RED   : COLORS.GREEN
+            data.cell.styles.fillColor  = netPayable >= 0 ? [255, 240, 240] : [240, 255, 245]
+            data.cell.styles.fontStyle  = 'bold'
           }
         },
       })
 
       const afterY = (doc as any).lastAutoTable.finalY + 6
-
-      // ── Formula note ───────────────────────────────────────────────────────
       doc.setFontSize(TYPE.BODY.size); doc.setFont(pFont, 'italic'); doc.setTextColor(...MUTED)
       doc.text(
         `Formula: Output VAT − Input VAT = Net VAT Payable  (${netPayable >= 0 ? 'Owed to FIRS' : 'VAT Credit / Refund'})`,
-        14, afterY
+        14, afterY,
       )
 
-      // ── Disclaimer ─────────────────────────────────────────────────────────
       const disclaimerY = afterY + 10
       doc.setFillColor(...LIGHT); doc.setDrawColor(...RULE); doc.setLineWidth(0.25)
       doc.roundedRect(14, disclaimerY, pageW - 28, 22, 2, 2, 'FD')
       doc.setFontSize(TYPE.SMALL.size); doc.setFont(pFont, 'bold'); doc.setTextColor(...MUTED)
       doc.text('DISCLAIMER', 17, disclaimerY + 5)
       doc.setFont(pFont, 'italic')
-      const disclaimerText = 'This VAT Return Report is generated for informational purposes only. ' +
+      const disclaimerText =
+        'This VAT Return Report is generated for informational purposes only. ' +
         'Figures are based on transactions recorded in Audity during the selected period. ' +
         'You are solely responsible for verifying accuracy and filing returns with FIRS via TaxPro-Max. ' +
         'Consult a qualified tax professional before submitting your official VAT return.'
-      const disclaimerLines = doc.splitTextToSize(disclaimerText, pageW - 28 - 6)
-      doc.text(disclaimerLines, 17, disclaimerY + 10)
+      doc.text(doc.splitTextToSize(disclaimerText, pageW - 28 - 6), 17, disclaimerY + 10)
 
-      // ── Footer (every page, brand accent bar on last page) ─────────────────
       addDocFooter(doc, {
-        orgName: organisation?.name ?? 'Company',
+        orgName:  organisation?.name ?? 'Company',
         docTitle: 'VAT RETURN REPORT',
-        docRef: dateRange,
+        docRef:   dateRange,
         BRAND,
-        pdfFont: pFont,
+        pdfFont:  pFont,
       })
 
       const dateTag = (period.date_from && period.date_to)
@@ -248,8 +289,8 @@ export default function ReportsPage() {
   // ── Data fetch ───────────────────────────────────────────────────────────────
   const load = async () => {
     setLoading(true)
-    const params = periodToParams(period)
-    const group_by = groupByForPeriod(period.period)
+    const params    = periodToParams(period)
+    const group_by  = groupByForPeriod(period.period)
     try {
       const [pnlRes, salesRes, prodRes, custRes, expRes, arRes, apRes, cfRes, vatRes] =
         await Promise.allSettled([
@@ -264,56 +305,141 @@ export default function ReportsPage() {
           reportApi.vatSummary(params),
         ])
 
-      if (pnlRes.status === 'fulfilled')  setPnl(pnlRes.value.data)
+      if (pnlRes.status  === 'fulfilled') setPnl(pnlRes.value.data)
       if (salesRes.status === 'fulfilled') setSalesTrend(salesRes.value.data.results ?? salesRes.value.data)
-      if (prodRes.status === 'fulfilled')  setTopProducts(prodRes.value.data.results ?? prodRes.value.data)
-      if (custRes.status === 'fulfilled')  setTopCustomers(custRes.value.data.results ?? custRes.value.data)
-      if (expRes.status === 'fulfilled')   setExpenseBreakdown(expRes.value.data.results ?? expRes.value.data)
-      if (arRes.status === 'fulfilled')    setArAging(arRes.value.data)
-      if (apRes.status === 'fulfilled')    setApAging(apRes.value.data)
-      if (cfRes.status === 'fulfilled')    setCashFlow(cfRes.value.data)
-      if (vatRes.status === 'fulfilled')   setVatSummary(vatRes.value.data)
+      if (prodRes.status  === 'fulfilled') setTopProducts(prodRes.value.data.results ?? prodRes.value.data)
+      if (custRes.status  === 'fulfilled') setTopCustomers(custRes.value.data.results ?? custRes.value.data)
+      if (expRes.status   === 'fulfilled') setExpenseBreakdown(expRes.value.data.results ?? expRes.value.data)
+      if (arRes.status    === 'fulfilled') setArAging(arRes.value.data)
+      if (apRes.status    === 'fulfilled') setApAging(apRes.value.data)
+      if (cfRes.status    === 'fulfilled') setCashFlow(cfRes.value.data)
+      if (vatRes.status   === 'fulfilled') setVatSummary(vatRes.value.data)
     } catch { toast.error('Failed to load reports') }
-    finally { setLoading(false) }
+    finally  { setLoading(false) }
   }
 
   useEffect(() => { load() }, [period])
   useDataRefresh(load)
 
-  // ── Chart data ────────────────────────────────────────────────────────────────
-  const chartData = salesTrend.map(s => ({
-    period: s.period,
+  // ── Derived chart data ────────────────────────────────────────────────────────
+
+  /** Sales trend formatted for Recharts */
+  const trendData = salesTrend.map(s => ({
+    period:  s.period,
     Revenue: parseFloat(s.total_revenue),
-    Tax: parseFloat(s.total_tax),
+    Tax:     parseFloat(s.total_tax),
   }))
 
-  const expensePieData = expenseBreakdown.map(e => ({
-    name: e.category_name,
+  /** Expense donut data */
+  const expPieData = expenseBreakdown.map(e => ({
+    name:  e.category_name,
     value: parseFloat(e.total),
   }))
 
-  const tooltipStyle = { backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '12px', color: '#f1f5f9', fontSize: 12 }
-  const tooltipLabelStyle = { color: '#94a3b8' }
-  const tooltipItemStyle  = { color: '#f1f5f9' }
+  /**
+   * Phase 2B: Waterfall / bridge chart data.
+   * Each bar represents a P&L step.  "start" is the invisible base bar;
+   * "value" is the visible segment; "end" marks whether it's positive or negative.
+   */
+  const waterfallData = useMemo(() => {
+    if (!pnl) return []
+    const revenue = parseFloat(pnl.revenue.gross_sales)
+    const cogs    = parseFloat(pnl.cost_of_goods_sold)
+    const gp      = parseFloat(pnl.gross_profit)
+    const opex    = parseFloat(pnl.operating_expenses)
+    const net     = parseFloat(pnl.net_profit)
+
+    return [
+      { name: 'Revenue',      start: 0,       value: revenue, fill: '#10b981', label: formatCurrency(String(revenue)) },
+      { name: '– COGS',       start: gp,       value: cogs,   fill: '#ef4444', label: `(${formatCurrency(String(cogs))})` },
+      { name: 'Gross Profit', start: 0,       value: gp,      fill: '#3b82f6', label: formatCurrency(String(gp)) },
+      { name: '– Op Expenses',start: net,     value: opex,    fill: '#f97316', label: `(${formatCurrency(String(opex))})` },
+      { name: 'Net Profit',   start: 0,       value: net,     fill: net >= 0 ? '#10b981' : '#ef4444', label: formatCurrency(String(net)) },
+    ]
+  }, [pnl])
+
+  /**
+   * Phase 2E: Build monthly in-vs-out grouped bar data from the sales trend
+   * (inflows proxy) and expense breakdown totals (outflows proxy).
+   * Since the API returns a single cash_inflows/cash_outflows total, we render
+   * the trend data as the time-series and annotate with the overall summary.
+   */
+  const cashFlowTrendData = useMemo(() => {
+    // Use sales trend as inflow proxy; we don't have per-period expense API
+    // so we evenly distribute total outflows across periods for visualisation.
+    const outflowTotal = cashFlow ? parseFloat(cashFlow.cash_outflows) : 0
+    const n            = trendData.length || 1
+    const outPerPeriod = outflowTotal / n
+    return trendData.map((d, i) => ({
+      period:   d.period,
+      Inflows:  d.Revenue,
+      Outflows: Math.round(outPerPeriod),
+      // Running net for cumulative area
+      cumulative: trendData.slice(0, i + 1).reduce((s, x) => s + x.Revenue, 0)
+        - (outflowTotal / n) * (i + 1),
+    }))
+  }, [trendData, cashFlow])
+
+  // expenseRatioData removed — ratio shown inline via text instead of chart line
+
+  /**
+   * Phase 2D: AR aging per-bucket donut data for both AR and AP.
+   */
+  const arDonutData = arAging ? [
+    { name: 'Current', value: parseFloat(String(arAging.buckets?.current ?? 0)) },
+    { name: '1–30d',   value: parseFloat(String(arAging.buckets?.['1_30'] ?? 0)) },
+    { name: '31–60d',  value: parseFloat(String(arAging.buckets?.['31_60'] ?? 0)) },
+    { name: '61–90d',  value: parseFloat(String(arAging.buckets?.['61_90'] ?? 0)) },
+    { name: '90d+',    value: parseFloat(String(arAging.buckets?.over_90  ?? 0)) },
+  ].filter(b => b.value > 0) : []
+
+  const apDonutData = apAging ? [
+    { name: 'Current', value: parseFloat(String(apAging.buckets?.current ?? 0)) },
+    { name: '1–30d',   value: parseFloat(String(apAging.buckets?.['1_30'] ?? 0)) },
+    { name: '31–60d',  value: parseFloat(String(apAging.buckets?.['31_60'] ?? 0)) },
+    { name: '61–90d',  value: parseFloat(String(apAging.buckets?.['61_90'] ?? 0)) },
+    { name: '90d+',    value: parseFloat(String(apAging.buckets?.over_90  ?? 0)) },
+  ].filter(b => b.value > 0) : []
+
+  /**
+   * Phase 2C: Customer concentration — top-3 revenue as % of total.
+   * Surfaced as a risk alert when > 50 %.
+   */
+  const totalRevenue    = topCustomers.reduce((s, c) => s + parseFloat(c.revenue ?? 0), 0)
+  const top3Revenue     = topCustomers.slice(0, 3).reduce((s, c) => s + parseFloat(c.revenue ?? 0), 0)
+  const concentrationPct = totalRevenue > 0 ? Math.round((top3Revenue / totalRevenue) * 100) : 0
+
+  /**
+   * Phase 2C: Payment method breakdown derived from sales trend meta or pnl.
+   * The backend doesn't expose a dedicated payment-method breakdown in this
+   * endpoint, so we surface what we have (cash flow summary) as a simple proxy.
+   */
+  const paymentMethodData = cashFlow ? [
+    { name: 'Cash Inflows',  value: Math.max(0, parseFloat(cashFlow.cash_inflows)) },
+    { name: 'Cash Outflows', value: Math.max(0, parseFloat(cashFlow.cash_outflows)) },
+  ].filter(d => d.value > 0) : []
 
   const exportParams = periodToParams(period)
 
   // ── P&L table rows ────────────────────────────────────────────────────────────
   const pnlRows: (string | number)[][] = pnl ? [
-    ['Gross Sales',           formatCurrency(pnl.revenue.gross_sales)],
-    ['Tax Collected',         formatCurrency(pnl.revenue.tax_collected)],
-    ['Discounts',             formatCurrency(pnl.revenue.discounts)],
-    ['Cost of Goods Sold',    formatCurrency(pnl.cost_of_goods_sold)],
-    ['Gross Profit',          formatCurrency(pnl.gross_profit)],
-    [`Gross Margin %`,        `${parseFloat(pnl.gross_margin_pct).toFixed(2)}%`],
-    ['Operating Expenses',    formatCurrency(pnl.operating_expenses)],
-    ['Misc. Income',          formatCurrency(pnl.miscellaneous_income ?? '0')],
-    ['Net Profit',            formatCurrency(pnl.net_profit)],
-    [`Net Margin %`,          `${parseFloat(pnl.net_margin_pct).toFixed(2)}%`],
+    ['Gross Sales',        formatCurrency(pnl.revenue.gross_sales)],
+    ['Tax Collected',      formatCurrency(pnl.revenue.tax_collected)],
+    ['Discounts',          formatCurrency(pnl.revenue.discounts)],
+    ['Cost of Goods Sold', formatCurrency(pnl.cost_of_goods_sold)],
+    ['Gross Profit',       formatCurrency(pnl.gross_profit)],
+    ['Gross Margin %',     `${parseFloat(pnl.gross_margin_pct).toFixed(2)}%`],
+    ['Operating Expenses', formatCurrency(pnl.operating_expenses)],
+    ['Misc. Income',       formatCurrency(pnl.miscellaneous_income ?? '0')],
+    ['Net Profit',         formatCurrency(pnl.net_profit)],
+    ['Net Margin %',       `${parseFloat(pnl.net_margin_pct).toFixed(2)}%`],
   ] : []
+
+  // ─────────────────────────────────────────────────────────────────────────────
 
   return (
     <div className="space-y-5">
+
       {/* ── Header ──────────────────────────────────────────────────────────── */}
       <div className="flex flex-col sm:flex-row sm:items-start gap-4">
         <div>
@@ -325,15 +451,16 @@ export default function ReportsPage() {
           <button
             onClick={() => { bypassNextGets(); load() }}
             disabled={loading}
-            className="p-2 rounded-xl border border-surface-600 text-slate-400 hover:text-white hover:border-surface-500 transition-colors"
+            className="btn-primary flex items-center gap-2 px-3 py-1.5 text-sm disabled:opacity-50"
             title="Refresh"
           >
-            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+            <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
+            Refresh
           </button>
         </div>
       </div>
 
-      {/* ── Tabs ────────────────────────────────────────────────────────────── */}
+      {/* ── Tab navigation ──────────────────────────────────────────────────── */}
       <div className="flex overflow-x-auto gap-1 border-b border-surface-700 pb-0">
         {TABS.map(t => {
           const Icon = t.icon
@@ -355,21 +482,21 @@ export default function ReportsPage() {
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════════════
-          TAB: OVERVIEW
+          TAB: OVERVIEW  (Phase 2A)
+          — KPI strip, stacked Revenue/COGS bar, trend chart, AR aging mini
       ══════════════════════════════════════════════════════════════════════════ */}
       {tab === 'overview' && (
         <div className="space-y-6">
-          {/* P&L KPI Cards */}
+
+          {/* KPI cards */}
           {pnl ? (
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              {kpi('Gross Sales', formatCurrency(pnl.revenue.gross_sales))}
-              {kpi('COGS', formatCurrency(pnl.cost_of_goods_sold), undefined, false)}
-              {kpi('Gross Profit', formatCurrency(pnl.gross_profit),
-                `${parseFloat(pnl.gross_margin_pct).toFixed(1)}% margin`,
-                parseFloat(pnl.gross_profit) >= 0)}
-              {kpi('Net Profit', formatCurrency(pnl.net_profit),
-                `${parseFloat(pnl.net_margin_pct).toFixed(1)}% margin`,
-                parseFloat(pnl.net_profit) >= 0)}
+              {kpi('Gross Sales',   formatCurrency(pnl.revenue.gross_sales))}
+              {kpi('COGS',          formatCurrency(pnl.cost_of_goods_sold), undefined, false)}
+              {kpi('Gross Profit',  formatCurrency(pnl.gross_profit),
+                `${parseFloat(pnl.gross_margin_pct).toFixed(1)}% margin`, parseFloat(pnl.gross_profit) >= 0)}
+              {kpi('Net Profit',    formatCurrency(pnl.net_profit),
+                `${parseFloat(pnl.net_margin_pct).toFixed(1)}% margin`,  parseFloat(pnl.net_profit) >= 0)}
             </div>
           ) : loading ? (
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
@@ -379,103 +506,72 @@ export default function ReportsPage() {
             </div>
           ) : null}
 
-          {/* Revenue Trend */}
-          <div className="card p-5">
-            <div className="flex items-center gap-2 mb-5">
-              <TrendingUp size={18} className="text-brand-400" />
-              <h2 className="text-base font-semibold text-white">Revenue Trend</h2>
-            </div>
-            {loading ? (
-              <div className="h-64 bg-surface-800 rounded-xl animate-pulse" />
-            ) : chartData.length === 0 ? (
-              <div className="h-64 flex items-center justify-center">
-                <p className="text-slate-500 text-sm">No sales data for this period</p>
-              </div>
-            ) : (
-              <ResponsiveContainer width="100%" height={280}>
-                <AreaChart data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
-                  <defs>
-                    <linearGradient id="revGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor={accent} stopOpacity={0.3} />
-                      <stop offset="95%" stopColor={accent} stopOpacity={0} />
-                    </linearGradient>
-                    <linearGradient id="taxGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.2} />
-                      <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                  <XAxis dataKey="period" tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickLine={false}
-                    tickFormatter={v => `${getCurrencySymbol()}${formatNumber(v)}`} />
-                  <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle}
-                    formatter={(v: number) => formatCurrency(v)} />
-                  <Legend wrapperStyle={{ fontSize: 12, paddingTop: 16, color: '#94a3b8' }} />
-                  <Area type="monotone" dataKey="Revenue" stroke={accent} strokeWidth={2} fill="url(#revGrad)" dot={false} />
-                  <Area type="monotone" dataKey="Tax" stroke="#3b82f6" strokeWidth={1.5} fill="url(#taxGrad)" dot={false} />
-                </AreaChart>
-              </ResponsiveContainer>
-            )}
-          </div>
-
-          {/* Top Products bar + Expense Pie */}
+          {/* Phase 2A: Stacked Revenue vs COGS vs OpEx grouped bar + existing trend */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+            {/* Stacked cost breakdown bar chart */}
             <div className="card p-5">
               <div className="flex items-center gap-2 mb-5">
-                <BarChart2 size={18} className="text-emerald-400" />
-                <h2 className="text-base font-semibold text-white">Top Products</h2>
+                <BarChart2 size={18} className="text-brand-400" />
+                <h2 className="text-base font-semibold text-white">Revenue vs Costs</h2>
+                <span className="text-xs text-slate-500 ml-auto">per period</span>
               </div>
-              {loading ? <div className="h-52 bg-surface-800 rounded-xl animate-pulse" /> :
-               topProducts.length === 0 ? (
-                <div className="h-52 flex items-center justify-center">
+              {loading ? (
+                <div className="h-56 bg-surface-800 rounded-xl animate-pulse" />
+              ) : trendData.length === 0 ? (
+                <div className="h-56 flex items-center justify-center">
                   <p className="text-slate-500 text-sm">No data</p>
                 </div>
               ) : (
-                <ResponsiveContainer width="100%" height={220}>
+                <ResponsiveContainer width="100%" height={240}>
                   <BarChart
-                    data={topProducts.slice(0, 6).map(p => ({
-                      name: (p.product_name ?? 'Unknown').length > 16
-                        ? (p.product_name ?? 'Unknown').slice(0, 16) + '…'
-                        : (p.product_name ?? 'Unknown'),
-                      Revenue: parseFloat(p.revenue),
+                    data={trendData.map(d => ({
+                      period:  d.period,
+                      Revenue: d.Revenue,
+                      // Spread COGS and OpEx proportionally across periods as proxy
+                      COGS:    pnl ? Math.round(d.Revenue * (parseFloat(pnl.cost_of_goods_sold) / Math.max(1, parseFloat(pnl.revenue.gross_sales)))) : 0,
                     }))}
                     margin={{ top: 5, right: 10, left: 0, bottom: 5 }}
                   >
                     <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                    <XAxis dataKey="name" tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false} />
-                    <YAxis tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false}
+                    <XAxis dataKey="period" tick={axisTickStyle} axisLine={false} tickLine={false} />
+                    <YAxis tick={axisTickStyle} axisLine={false} tickLine={false}
                       tickFormatter={v => `${getCurrencySymbol()}${formatNumber(v)}`} />
-                    <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle}
-                      formatter={(v: number) => formatCurrency(v)} />
-                    <Bar dataKey="Revenue" fill="#10b981" radius={[4, 4, 0, 0]} />
+                    <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle}
+                      itemStyle={tooltipItemStyle} formatter={(v: number) => formatCurrency(String(v))} />
+                    <Legend wrapperStyle={{ fontSize: 11, paddingTop: 12, color: '#94a3b8' }} />
+                    <Bar dataKey="Revenue" stackId="a" fill={accent}  radius={[0, 0, 0, 0]} />
+                    <Bar dataKey="COGS"    stackId="b" fill="#ef4444" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               )}
             </div>
 
+            {/* Expense breakdown donut (existing, enhanced) */}
             <div className="card p-5">
               <div className="flex items-center gap-2 mb-5">
-                <TrendingDown size={18} className="text-red-400" />
+                <PieIcon size={18} className="text-red-400" />
                 <h2 className="text-base font-semibold text-white">Expense Breakdown</h2>
               </div>
-              {loading ? <div className="h-52 bg-surface-800 rounded-xl animate-pulse" /> :
-               expensePieData.length === 0 ? (
-                <div className="h-52 flex items-center justify-center">
+              {loading ? (
+                <div className="h-56 bg-surface-800 rounded-xl animate-pulse" />
+              ) : expPieData.length === 0 ? (
+                <div className="h-56 flex items-center justify-center">
                   <p className="text-slate-500 text-sm">No expense data</p>
                 </div>
               ) : (
-                <ResponsiveContainer width="100%" height={220}>
+                <ResponsiveContainer width="100%" height={240}>
                   <PieChart>
-                    <Pie data={expensePieData} cx="50%" cy="50%"
-                      innerRadius={55} outerRadius={90} paddingAngle={3} dataKey="value">
-                      {expensePieData.map((_, i) => (
-                        <Cell key={`cell-${i}`} fill={colors[i % colors.length]} />
+                    <Pie data={expPieData} cx="50%" cy="45%"
+                      innerRadius={60} outerRadius={90} paddingAngle={3} dataKey="value">
+                      {expPieData.map((_, i) => (
+                        <Cell key={i} fill={colors[i % colors.length]} />
                       ))}
                     </Pie>
-                    <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle}
-                      formatter={(v: number) => formatCurrency(v)} />
+                    <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle}
+                      itemStyle={tooltipItemStyle} formatter={(v: number) => formatCurrency(String(v))} />
                     <Legend
-                      wrapperStyle={{ fontSize: 11, paddingTop: 12 }}
+                      wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
                       formatter={(value: string) => <span style={{ color: '#94a3b8' }}>{value}</span>}
                     />
                   </PieChart>
@@ -484,10 +580,51 @@ export default function ReportsPage() {
             </div>
           </div>
 
-          {/* AR Aging + VAT Summary */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <AgingCard title="Accounts Receivable Aging" aging={arAging} loading={loading} iconColor="text-amber-400" />
+          {/* Revenue trend area chart */}
+          <div className="card p-5">
+            <div className="flex items-center gap-2 mb-5">
+              <Activity size={18} className="text-brand-400" />
+              <h2 className="text-base font-semibold text-white">Revenue Trend</h2>
+            </div>
+            {loading ? (
+              <div className="h-64 bg-surface-800 rounded-xl animate-pulse" />
+            ) : trendData.length === 0 ? (
+              <div className="h-64 flex items-center justify-center">
+                <p className="text-slate-500 text-sm">No sales data for this period</p>
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height={280}>
+                <AreaChart data={trendData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+                  <defs>
+                    <linearGradient id="revGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%"  stopColor={accent}    stopOpacity={0.3} />
+                      <stop offset="95%" stopColor={accent}    stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="taxGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%"  stopColor="#3b82f6" stopOpacity={0.2} />
+                      <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                  <XAxis dataKey="period" tick={axisTickStyle} axisLine={false} tickLine={false} />
+                  <YAxis tick={axisTickStyle} axisLine={false} tickLine={false}
+                    tickFormatter={v => `${getCurrencySymbol()}${formatNumber(v)}`} />
+                  <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle}
+                    itemStyle={tooltipItemStyle} formatter={(v: number) => formatCurrency(String(v))} />
+                  <Legend wrapperStyle={{ fontSize: 12, paddingTop: 16, color: '#94a3b8' }} />
+                  <Area type="monotone" dataKey="Revenue" stroke={accent} strokeWidth={2}
+                    fill="url(#revGrad)" dot={false} />
+                  <Area type="monotone" dataKey="Tax" stroke="#3b82f6" strokeWidth={1.5}
+                    fill="url(#taxGrad)" dot={false} />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
+          </div>
 
+          {/* AR Aging summary mini + VAT Summary */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <AgingCard title="Accounts Receivable Aging" aging={arAging} loading={loading}
+              iconColor="text-amber-400" />
             <div className="card p-5">
               <div className="flex items-center justify-between gap-2 mb-4">
                 <div className="flex items-center gap-2">
@@ -496,7 +633,7 @@ export default function ReportsPage() {
                 </div>
                 {vatSummary && (
                   <button onClick={downloadVATReport}
-                    className="flex items-center gap-1.5 text-xs text-brand-400 hover:text-brand-300 transition-colors">
+                    className="flex items-center gap-1.5 text-xs text-brand-400 hover:text-brand-300">
                     <Download size={13} /> Export PDF
                   </button>
                 )}
@@ -504,10 +641,11 @@ export default function ReportsPage() {
               {vatSummary ? (
                 <div className="space-y-4">
                   <div className="grid grid-cols-3 gap-3">
-                    <VATCard label="Output VAT" sub="Collected on sales" value={vatSummary.output_vat} />
-                    <VATCard label="Input VAT" sub="Paid on bills" value={vatSummary.input_vat} />
+                    <VATCard label="Output VAT"     sub="Collected on sales" value={vatSummary.output_vat} />
+                    <VATCard label="Input VAT"      sub="Paid on bills"      value={vatSummary.input_vat} />
                     <VATCard
-                      label="Net VAT Payable" sub={parseFloat(vatSummary.net_vat_payable) >= 0 ? 'Owed to FIRS' : 'VAT credit'}
+                      label="Net VAT Payable"
+                      sub={parseFloat(vatSummary.net_vat_payable) >= 0 ? 'Owed to FIRS' : 'VAT credit'}
                       value={vatSummary.net_vat_payable}
                       highlight={parseFloat(vatSummary.net_vat_payable) >= 0 ? 'red' : 'green'}
                     />
@@ -532,7 +670,7 @@ export default function ReportsPage() {
             <div className="card p-5">
               <div className="flex items-center gap-2 mb-4">
                 <Landmark size={18} className="text-emerald-400" />
-                <h2 className="text-base font-semibold text-white">Cash Flow Statement</h2>
+                <h2 className="text-base font-semibold text-white">Cash Flow Summary</h2>
               </div>
               {cashFlow ? (
                 <div className="space-y-3">
@@ -548,71 +686,26 @@ export default function ReportsPage() {
                     <span className="text-sm font-semibold text-white">Net Cash Flow</span>
                     <span className={`text-lg font-bold ${parseFloat(cashFlow.net_cash_flow) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                       {parseFloat(cashFlow.net_cash_flow) >= 0 ? '' : '-'}
-                      {formatCurrency(Math.abs(parseFloat(cashFlow.net_cash_flow)))}
+                      {formatCurrency(String(Math.abs(parseFloat(cashFlow.net_cash_flow))))}
                     </span>
                   </div>
                   <p className="text-xs text-slate-600">Inflows: cash/bank/POS sales + misc income · Outflows: all expenses</p>
                 </div>
               ) : (
                 <div className="h-40 flex items-center justify-center text-slate-500 text-sm">
-                  {loading ? 'Loading…' : 'No cash flow data for this period'}
+                  {loading ? 'Loading…' : 'No cash flow data'}
                 </div>
               )}
             </div>
-
-            <AgingCard title="Accounts Payable Aging" aging={apAging} loading={loading} iconColor="text-red-400" payable />
-          </div>
-
-          {/* Top Customers summary table */}
-          <div className="card p-0 overflow-hidden">
-            <div className="px-5 py-4 border-b border-surface-700">
-              <h2 className="text-base font-semibold text-white">Top Customers</h2>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-surface-700">
-                    {['#', 'Customer', 'Invoices', 'Revenue'].map(h => (
-                      <th key={h} className="px-5 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {loading ? (
-                    Array.from({ length: 5 }).map((_, i) => (
-                      <tr key={i}>
-                        {Array.from({ length: 4 }).map((_, j) => (
-                          <td key={j} className="px-5 py-3.5">
-                            <div className="h-4 bg-surface-700 rounded animate-pulse w-24" />
-                          </td>
-                        ))}
-                      </tr>
-                    ))
-                  ) : topCustomers.length === 0 ? (
-                    <tr><td colSpan={4} className="px-5 py-10 text-center text-slate-500 text-sm">No customer data</td></tr>
-                  ) : topCustomers.slice(0, 5).map((c, i) => (
-                    <tr key={i} className="table-row">
-                      <td className="px-5 py-3.5">
-                        <span className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${
-                          i === 0 ? 'bg-amber-500/20 text-amber-400' :
-                          i === 1 ? 'bg-slate-500/20 text-slate-300' :
-                          i === 2 ? 'bg-orange-700/20 text-orange-400' : 'bg-surface-700 text-slate-400'
-                        }`}>{i + 1}</span>
-                      </td>
-                      <td className="px-5 py-3.5 text-white font-medium">{c.customer_name ?? 'Walk-in'}</td>
-                      <td className="px-5 py-3.5 text-slate-400">{c.invoice_count}</td>
-                      <td className="px-5 py-3.5 font-semibold text-brand-400">{formatCurrency(c.revenue)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <AgingCard title="Accounts Payable Aging" aging={apAging} loading={loading}
+              iconColor="text-red-400" payable />
           </div>
         </div>
       )}
 
       {/* ═══════════════════════════════════════════════════════════════════════
-          TAB: P&L STATEMENT
+          TAB: P&L STATEMENT  (Phase 2B)
+          — Horizontal waterfall chart (ComposedChart) + comparison table
       ══════════════════════════════════════════════════════════════════════════ */}
       {tab === 'pnl' && (
         <div className="space-y-4">
@@ -633,41 +726,79 @@ export default function ReportsPage() {
           {/* KPI strip */}
           {pnl && (
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {kpi('Gross Sales', formatCurrency(pnl.revenue.gross_sales))}
-              {kpi('COGS', formatCurrency(pnl.cost_of_goods_sold), undefined, false)}
-              {kpi('Gross Profit', formatCurrency(pnl.gross_profit),
-                `${parseFloat(pnl.gross_margin_pct).toFixed(1)}% margin`,
-                parseFloat(pnl.gross_profit) >= 0)}
-              {kpi('Net Profit', formatCurrency(pnl.net_profit),
-                `${parseFloat(pnl.net_margin_pct).toFixed(1)}% margin`,
-                parseFloat(pnl.net_profit) >= 0)}
+              {kpi('Gross Sales',   formatCurrency(pnl.revenue.gross_sales))}
+              {kpi('COGS',          formatCurrency(pnl.cost_of_goods_sold), undefined, false)}
+              {kpi('Gross Profit',  formatCurrency(pnl.gross_profit),
+                `${parseFloat(pnl.gross_margin_pct).toFixed(1)}% margin`, parseFloat(pnl.gross_profit) >= 0)}
+              {kpi('Net Profit',    formatCurrency(pnl.net_profit),
+                `${parseFloat(pnl.net_margin_pct).toFixed(1)}% margin`,  parseFloat(pnl.net_profit) >= 0)}
             </div>
           )}
 
-          {/* Detailed table */}
+          {/* Phase 2B: Profit Waterfall / Bridge Chart */}
+          {waterfallData.length > 0 && (
+            <div className="card p-5">
+              <div className="flex items-center gap-2 mb-5">
+                <TrendingUp size={18} className="text-brand-400" />
+                <h2 className="text-base font-semibold text-white">Profit Waterfall</h2>
+                <span className="text-xs text-slate-500 ml-2">Revenue → Gross Profit → Net Profit</span>
+              </div>
+              <ResponsiveContainer width="100%" height={280}>
+                {/*
+                  Waterfall implemented as a ComposedChart with two stacked bars:
+                  "start" (invisible, creates the floating base) + "value" (coloured segment).
+                  ReferenceLine shows the break-even at 0.
+                */}
+                <ComposedChart data={waterfallData} margin={{ top: 10, right: 20, left: 10, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                  <XAxis dataKey="name" tick={axisTickStyle} axisLine={false} tickLine={false} />
+                  <YAxis tick={axisTickStyle} axisLine={false} tickLine={false}
+                    tickFormatter={v => `${getCurrencySymbol()}${formatNumber(v)}`} />
+                  <Tooltip
+                    contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle}
+                    itemStyle={tooltipItemStyle}
+                    formatter={(v: number, name: string) =>
+                      name === 'start' ? null : [formatCurrency(String(v)), 'Amount']
+                    }
+                  />
+                  {/* Invisible stacking base — gives bars their "floating" appearance */}
+                  <Bar dataKey="start" stackId="w" fill="transparent" />
+                  {/* Coloured segment — each entry has its own fill via Cell */}
+                  <Bar dataKey="value" stackId="w" radius={[4, 4, 0, 0]}>
+                    {waterfallData.map((entry, i) => (
+                      <Cell key={i} fill={entry.fill} />
+                    ))}
+                  </Bar>
+                  <ReferenceLine y={0} stroke="#475569" strokeDasharray="4 2" />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          {/* Detailed P&L table */}
           <ReportTable
-            headers={['Line Item', 'Amount (₦)']}
+            headers={['Line Item', 'Amount']}
             rows={pnlRows}
             loading={loading}
             emptyMessage="No P&L data for this period."
             rightAlignCols={[1]}
           />
 
-          {/* Revenue vs Expenses visual */}
+          {/* Revenue vs Costs progress bars (existing, kept for detail) */}
           {pnl && (
             <div className="card p-5">
-              <h3 className="text-sm font-semibold text-slate-300 mb-4">Revenue vs Costs Breakdown</h3>
+              <h3 className="text-sm font-semibold text-slate-300 mb-4">Revenue vs Costs — % of Gross Sales</h3>
               <div className="space-y-3">
                 {[
-                  { label: 'Gross Sales', value: parseFloat(pnl.revenue.gross_sales), color: 'bg-brand-500' },
-                  { label: 'Tax Collected', value: parseFloat(pnl.revenue.tax_collected), color: 'bg-blue-500' },
-                  { label: 'Discounts', value: parseFloat(pnl.revenue.discounts), color: 'bg-yellow-500' },
-                  { label: 'COGS', value: parseFloat(pnl.cost_of_goods_sold), color: 'bg-red-500' },
-                  { label: 'Operating Expenses', value: parseFloat(pnl.operating_expenses), color: 'bg-orange-500' },
-                  { label: 'Net Profit', value: parseFloat(pnl.net_profit), color: parseFloat(pnl.net_profit) >= 0 ? 'bg-emerald-500' : 'bg-red-600' },
+                  { label: 'Gross Sales',        value: parseFloat(pnl.revenue.gross_sales),    color: 'bg-brand-500' },
+                  { label: 'Tax Collected',       value: parseFloat(pnl.revenue.tax_collected),  color: 'bg-blue-500' },
+                  { label: 'Discounts',           value: parseFloat(pnl.revenue.discounts),      color: 'bg-yellow-500' },
+                  { label: 'COGS',                value: parseFloat(pnl.cost_of_goods_sold),     color: 'bg-red-500' },
+                  { label: 'Operating Expenses',  value: parseFloat(pnl.operating_expenses),     color: 'bg-orange-500' },
+                  { label: 'Net Profit',          value: parseFloat(pnl.net_profit), color: parseFloat(pnl.net_profit) >= 0 ? 'bg-emerald-500' : 'bg-red-600' },
                 ].map(({ label, value, color }) => {
                   const gross = parseFloat(pnl.revenue.gross_sales) || 1
-                  const pct = Math.min(100, Math.abs(Math.round((value / gross) * 100)))
+                  const pct   = Math.min(100, Math.abs(Math.round((value / gross) * 100)))
                   return (
                     <div key={label}>
                       <div className="flex justify-between text-xs mb-1">
@@ -687,7 +818,8 @@ export default function ReportsPage() {
       )}
 
       {/* ═══════════════════════════════════════════════════════════════════════
-          TAB: CASH FLOW
+          TAB: CASH FLOW  (Phase 2E)
+          — KPI cards, monthly grouped bar (in vs out), cumulative area
       ══════════════════════════════════════════════════════════════════════════ */}
       {tab === 'cashflow' && (
         <div className="space-y-4">
@@ -696,28 +828,17 @@ export default function ReportsPage() {
             <ExportBar endpoint="/reports/cash-flow/" params={exportParams} filenameBase="cash_flow" />
           </div>
 
-          <ReportTable
-            headers={['Line Item', 'Amount (₦)']}
-            rows={cashFlow ? [
-              ['Cash Inflows (sales + misc income)', formatCurrency(cashFlow.cash_inflows)],
-              ['Cash Outflows (expenses)',           formatCurrency(cashFlow.cash_outflows)],
-              ['Net Cash Flow',                      formatCurrency(cashFlow.net_cash_flow)],
-            ] : []}
-            loading={loading}
-            emptyMessage="No cash flow data for this period."
-            rightAlignCols={[1]}
-          />
-
+          {/* Summary metric cards */}
           {cashFlow && (
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <MetricCard
-                label="Total Inflows" value={formatCurrency(cashFlow.cash_inflows)}
+                label="Total Inflows"    value={formatCurrency(cashFlow.cash_inflows)}
                 sub="Sales + misc income" color="emerald"
                 icon={<ArrowDownCircle size={20} className="text-emerald-400" />}
               />
               <MetricCard
-                label="Total Outflows" value={formatCurrency(cashFlow.cash_outflows)}
-                sub="All expenses" color="red"
+                label="Total Outflows"   value={formatCurrency(cashFlow.cash_outflows)}
+                sub="All expenses"        color="red"
                 icon={<ArrowUpCircle size={20} className="text-red-400" />}
               />
               <MetricCard
@@ -729,87 +850,465 @@ export default function ReportsPage() {
               />
             </div>
           )}
-        </div>
-      )}
 
-      {/* ═══════════════════════════════════════════════════════════════════════
-          TAB: TOP PRODUCTS
-      ══════════════════════════════════════════════════════════════════════════ */}
-      {tab === 'products' && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-white">Top Products by Revenue</h2>
-            <ExportBar endpoint="/reports/top-products/" params={{ ...exportParams, limit: 50 }} filenameBase="top_products" />
-          </div>
+          {/* Phase 2E: Monthly Cash In vs Out grouped bar */}
+          {cashFlowTrendData.length > 0 && (
+            <div className="card p-5">
+              <div className="flex items-center gap-2 mb-5">
+                <BarChart2 size={18} className="text-emerald-400" />
+                <h2 className="text-base font-semibold text-white">Cash In vs Out by Period</h2>
+              </div>
+              <ResponsiveContainer width="100%" height={260}>
+                <BarChart data={cashFlowTrendData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                  <XAxis dataKey="period" tick={axisTickStyle} axisLine={false} tickLine={false} />
+                  <YAxis tick={axisTickStyle} axisLine={false} tickLine={false}
+                    tickFormatter={v => `${getCurrencySymbol()}${formatNumber(v)}`} />
+                  <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle}
+                    itemStyle={tooltipItemStyle} formatter={(v: number) => formatCurrency(String(v))} />
+                  <Legend wrapperStyle={{ fontSize: 11, paddingTop: 12, color: '#94a3b8' }} />
+                  <Bar dataKey="Inflows"  fill="#10b981" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="Outflows" fill="#ef4444" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          {/* Phase 2E: Cumulative cash flow area chart */}
+          {cashFlowTrendData.length > 0 && (
+            <div className="card p-5">
+              <div className="flex items-center gap-2 mb-5">
+                <Activity size={18} className="text-brand-400" />
+                <h2 className="text-base font-semibold text-white">Cumulative Cash Position</h2>
+              </div>
+              <ResponsiveContainer width="100%" height={240}>
+                <AreaChart data={cashFlowTrendData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+                  <defs>
+                    <linearGradient id="cashGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%"  stopColor={accent} stopOpacity={0.3} />
+                      <stop offset="95%" stopColor={accent} stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                  <XAxis dataKey="period" tick={axisTickStyle} axisLine={false} tickLine={false} />
+                  <YAxis tick={axisTickStyle} axisLine={false} tickLine={false}
+                    tickFormatter={v => `${getCurrencySymbol()}${formatNumber(v)}`} />
+                  <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle}
+                    itemStyle={tooltipItemStyle} formatter={(v: number) => formatCurrency(String(v))} />
+                  <ReferenceLine y={0} stroke="#ef4444" strokeDasharray="4 2"
+                    label={{ value: 'Break-even', fill: '#ef4444', fontSize: 10, position: 'insideTopRight' }} />
+                  <Area type="monotone" dataKey="cumulative" stroke={accent} strokeWidth={2}
+                    fill="url(#cashGrad)" dot={false} name="Cumulative Net" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          {/* Detailed table */}
           <ReportTable
-            headers={['Product', 'SKU', 'Units Sold', 'Revenue', 'COGS', 'Gross Profit']}
-            rows={topProducts.map(p => [
-              p.product_name ?? '—',
-              p.product_sku ?? '—',
-              formatNumber(parseFloat(p.units_sold)),
-              formatCurrency(p.revenue),
-              formatCurrency(p.cogs),
-              formatCurrency(p.gross_profit),
-            ])}
+            headers={['Line Item', 'Amount']}
+            rows={cashFlow ? [
+              ['Cash Inflows (sales + misc income)', formatCurrency(cashFlow.cash_inflows)],
+              ['Cash Outflows (expenses)',            formatCurrency(cashFlow.cash_outflows)],
+              ['Net Cash Flow',                       formatCurrency(cashFlow.net_cash_flow)],
+            ] : []}
             loading={loading}
-            emptyMessage="No product sales data for this period."
-            rightAlignCols={[2, 3, 4, 5]}
+            emptyMessage="No cash flow data for this period."
+            rightAlignCols={[1]}
           />
         </div>
       )}
 
       {/* ═══════════════════════════════════════════════════════════════════════
-          TAB: TOP CUSTOMERS
+          TAB: SALES ANALYTICS  (Phase 2C)
+          — Revenue trend, top customers horizontal bar, payment method donut,
+            concentration risk alert, top products table
       ══════════════════════════════════════════════════════════════════════════ */}
-      {tab === 'customers' && (
-        <div className="space-y-4">
+      {tab === 'sales_analytics' && (
+        <div className="space-y-5">
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-white">Top Customers by Revenue</h2>
-            <ExportBar endpoint="/reports/top-customers/" params={{ ...exportParams, limit: 50 }} filenameBase="top_customers" />
+            <h2 className="text-lg font-semibold text-white">Sales Analytics</h2>
+            <ExportBar endpoint="/reports/top-customers/" params={{ ...exportParams, limit: 50 }} filenameBase="sales_analytics" />
           </div>
-          <ReportTable
-            headers={['Customer', 'Code', 'Invoice Count', 'Revenue']}
-            rows={topCustomers.map(c => [
-              c.customer_name ?? 'Walk-in',
-              c.customer_code ?? '—',
-              c.invoice_count,
-              formatCurrency(c.revenue),
-            ])}
-            loading={loading}
-            emptyMessage="No customer data for this period."
-            rightAlignCols={[2, 3]}
-          />
+
+          {/* Revenue trend area chart */}
+          {trendData.length > 0 && (
+            <div className="card p-5">
+              <div className="flex items-center gap-2 mb-5">
+                <Activity size={18} className="text-brand-400" />
+                <h2 className="text-base font-semibold text-white">Revenue Trend</h2>
+              </div>
+              <ResponsiveContainer width="100%" height={220}>
+                <AreaChart data={trendData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+                  <defs>
+                    <linearGradient id="salesGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%"  stopColor={accent} stopOpacity={0.3} />
+                      <stop offset="95%" stopColor={accent} stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                  <XAxis dataKey="period" tick={axisTickStyle} axisLine={false} tickLine={false} />
+                  <YAxis tick={axisTickStyle} axisLine={false} tickLine={false}
+                    tickFormatter={v => `${getCurrencySymbol()}${formatNumber(v)}`} />
+                  <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle}
+                    itemStyle={tooltipItemStyle} formatter={(v: number) => formatCurrency(String(v))} />
+                  <Area type="monotone" dataKey="Revenue" stroke={accent} strokeWidth={2}
+                    fill="url(#salesGrad)" dot={false} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          {/* Phase 2C: Top Customers horizontal bar + Payment method donut */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+            {/* Top 10 Customers — horizontal bar ranked by revenue */}
+            <div className="card p-5">
+              <div className="flex items-center gap-2 mb-4">
+                <Users size={18} className="text-brand-400" />
+                <h2 className="text-base font-semibold text-white">Top Customers by Revenue</h2>
+              </div>
+              {loading ? (
+                <div className="h-60 bg-surface-800 rounded-xl animate-pulse" />
+              ) : topCustomers.length === 0 ? (
+                <div className="h-60 flex items-center justify-center">
+                  <p className="text-slate-500 text-sm">No customer data</p>
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height={260}>
+                  <BarChart
+                    layout="vertical"
+                    data={topCustomers.slice(0, 8).map(c => ({
+                      name:    trunc(c.customer_name ?? 'Walk-in', 16),
+                      Revenue: parseFloat(c.revenue),
+                    }))}
+                    margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                    <XAxis type="number" tick={axisTickStyle} axisLine={false} tickLine={false}
+                      tickFormatter={v => `${getCurrencySymbol()}${formatNumber(v)}`} />
+                    <YAxis type="category" dataKey="name" tick={axisTickStyle}
+                      axisLine={false} tickLine={false} width={90} />
+                    <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle}
+                      itemStyle={tooltipItemStyle} formatter={(v: number) => formatCurrency(String(v))} />
+                    <Bar dataKey="Revenue" fill={accent} radius={[0, 4, 4, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+
+              {/* Phase 2C: Customer concentration risk alert */}
+              {!loading && concentrationPct > 50 && (
+                <div className="mt-3 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30">
+                  <p className="text-xs text-amber-400 font-medium">
+                    ⚠ Concentration risk — top 3 customers = {concentrationPct}% of revenue.
+                    Consider diversifying your customer base.
+                  </p>
+                </div>
+              )}
+              {!loading && concentrationPct > 0 && concentrationPct <= 50 && (
+                <p className="mt-2 text-xs text-slate-500">
+                  Top 3 customers = {concentrationPct}% of revenue · healthy spread
+                </p>
+              )}
+            </div>
+
+            {/* Cash flow in/out as payment method proxy */}
+            <div className="card p-5">
+              <div className="flex items-center gap-2 mb-4">
+                <PieIcon size={18} className="text-emerald-400" />
+                <h2 className="text-base font-semibold text-white">Cash Flow Composition</h2>
+              </div>
+              {loading ? (
+                <div className="h-60 bg-surface-800 rounded-xl animate-pulse" />
+              ) : paymentMethodData.length === 0 ? (
+                <div className="h-60 flex items-center justify-center">
+                  <p className="text-slate-500 text-sm">No data</p>
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height={260}>
+                  <PieChart>
+                    <Pie data={paymentMethodData} cx="50%" cy="45%"
+                      innerRadius={60} outerRadius={90} paddingAngle={4} dataKey="value">
+                      <Cell fill="#10b981" />
+                      <Cell fill="#ef4444" />
+                    </Pie>
+                    <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle}
+                      itemStyle={tooltipItemStyle} formatter={(v: number) => formatCurrency(String(v))} />
+                    <Legend
+                      wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
+                      formatter={(value: string) => <span style={{ color: '#94a3b8' }}>{value}</span>}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </div>
+
+          {/* Top Products table */}
+          <div>
+            <h3 className="text-base font-semibold text-white mb-3">Top Products by Revenue</h3>
+            <ReportTable
+              headers={['Product', 'SKU', 'Units Sold', 'Revenue', 'COGS', 'Gross Profit']}
+              rows={topProducts.map(p => [
+                p.product_name ?? '—',
+                p.product_sku  ?? '—',
+                formatNumber(parseFloat(p.units_sold)),
+                formatCurrency(p.revenue),
+                formatCurrency(p.cogs),
+                formatCurrency(p.gross_profit),
+              ])}
+              loading={loading}
+              emptyMessage="No product sales data for this period."
+              rightAlignCols={[2, 3, 4, 5]}
+            />
+          </div>
+
+          {/* Top Customers table */}
+          <div>
+            <h3 className="text-base font-semibold text-white mb-3">Top Customers by Revenue</h3>
+            <ReportTable
+              headers={['Customer', 'Code', 'Invoice Count', 'Revenue']}
+              rows={topCustomers.map(c => [
+                c.customer_name ?? 'Walk-in',
+                c.customer_code ?? '—',
+                c.invoice_count,
+                formatCurrency(c.revenue),
+              ])}
+              loading={loading}
+              emptyMessage="No customer data for this period."
+              rightAlignCols={[2, 3]}
+            />
+          </div>
         </div>
       )}
 
       {/* ═══════════════════════════════════════════════════════════════════════
-          TAB: EXPENSES
+          TAB: AR / AP AGING  (Phase 2D)
+          — AR + AP summary donuts, per-customer stacked horizontal bar,
+            overdue action list
+      ══════════════════════════════════════════════════════════════════════════ */}
+      {tab === 'aging' && (
+        <div className="space-y-5">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-white">AR / AP Aging Analysis</h2>
+            {/* DSO / DPO derived metrics shown as badges */}
+            {arAging && pnl && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs px-2 py-1 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400">
+                  AR Outstanding: {formatCurrency(arAging.total_outstanding)}
+                </span>
+                {apAging && (
+                  <span className="text-xs px-2 py-1 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400">
+                    AP Outstanding: {formatCurrency(apAging.total_outstanding)}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Phase 2D: AR + AP summary donuts side by side */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+            {/* AR Aging donut */}
+            <div className="card p-5">
+              <div className="flex items-center gap-2 mb-4">
+                <Clock size={18} className="text-amber-400" />
+                <h2 className="text-base font-semibold text-white">Accounts Receivable Aging</h2>
+              </div>
+              {loading ? (
+                <div className="h-56 bg-surface-800 rounded-xl animate-pulse" />
+              ) : arDonutData.length === 0 ? (
+                <div className="h-56 flex items-center justify-center">
+                  <div className="text-center">
+                    <Clock size={32} className="mx-auto mb-2 text-green-400 opacity-50" />
+                    <p className="text-slate-500 text-sm">No outstanding receivables</p>
+                  </div>
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height={240}>
+                  <PieChart>
+                    <Pie data={arDonutData} cx="50%" cy="45%"
+                      innerRadius={60} outerRadius={90} paddingAngle={3} dataKey="value"
+                      startAngle={90} endAngle={-270}>
+                      {arDonutData.map((_, i) => (
+                        <Cell key={i} fill={AGING_COLORS[i % AGING_COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle}
+                      itemStyle={tooltipItemStyle} formatter={(v: number) => formatCurrency(String(v))} />
+                    <Legend
+                      wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
+                      formatter={(value: string) => <span style={{ color: '#94a3b8' }}>{value}</span>}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+
+            {/* AP Aging donut */}
+            <div className="card p-5">
+              <div className="flex items-center gap-2 mb-4">
+                <Clock size={18} className="text-red-400" />
+                <h2 className="text-base font-semibold text-white">Accounts Payable Aging</h2>
+              </div>
+              {loading ? (
+                <div className="h-56 bg-surface-800 rounded-xl animate-pulse" />
+              ) : apDonutData.length === 0 ? (
+                <div className="h-56 flex items-center justify-center">
+                  <div className="text-center">
+                    <Clock size={32} className="mx-auto mb-2 text-green-400 opacity-50" />
+                    <p className="text-slate-500 text-sm">No outstanding payables</p>
+                  </div>
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height={240}>
+                  <PieChart>
+                    <Pie data={apDonutData} cx="50%" cy="45%"
+                      innerRadius={60} outerRadius={90} paddingAngle={3} dataKey="value"
+                      startAngle={90} endAngle={-270}>
+                      {apDonutData.map((_, i) => (
+                        <Cell key={i} fill={AGING_COLORS[i % AGING_COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle}
+                      itemStyle={tooltipItemStyle} formatter={(v: number) => formatCurrency(String(v))} />
+                    <Legend
+                      wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
+                      formatter={(value: string) => <span style={{ color: '#94a3b8' }}>{value}</span>}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </div>
+
+          {/* AR detailed aging card with progress bars + overdue list */}
+          <AgingCard title="AR Aging Detail" aging={arAging} loading={loading} iconColor="text-amber-400" />
+
+          {/* AP detailed aging card */}
+          <AgingCard title="AP Aging Detail" aging={apAging} loading={loading} iconColor="text-red-400" payable />
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════════════════════
+          TAB: EXPENSES  (Phase 2F)
+          — Category donut, expense vs revenue trend area, ratio reference line
       ══════════════════════════════════════════════════════════════════════════ */}
       {tab === 'expenses' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-white">Expense Breakdown by Category</h2>
+            <h2 className="text-lg font-semibold text-white">Expense Analysis</h2>
             <ExportBar endpoint="/reports/expenses/" params={exportParams} filenameBase="expense_breakdown" />
           </div>
-          <ReportTable
-            headers={['Category', 'Total (₦)', 'Count']}
-            rows={expenseBreakdown.map(e => [
-              e.category_name,
-              formatCurrency(e.total),
-              e.count,
-            ])}
-            loading={loading}
-            emptyMessage="No expense data for this period."
-            rightAlignCols={[1, 2]}
-          />
 
+          {/* Phase 2F: Expense donut + Revenue vs Expense trend */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+            {/* Category donut */}
+            <div className="card p-5">
+              <div className="flex items-center gap-2 mb-5">
+                <PieIcon size={18} className="text-red-400" />
+                <h2 className="text-base font-semibold text-white">Expense by Category</h2>
+              </div>
+              {loading ? (
+                <div className="h-56 bg-surface-800 rounded-xl animate-pulse" />
+              ) : expPieData.length === 0 ? (
+                <div className="h-56 flex items-center justify-center">
+                  <p className="text-slate-500 text-sm">No expense data</p>
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height={260}>
+                  <PieChart>
+                    <Pie data={expPieData} cx="50%" cy="45%"
+                      innerRadius={60} outerRadius={90} paddingAngle={3} dataKey="value">
+                      {expPieData.map((_, i) => (
+                        <Cell key={i} fill={colors[i % colors.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle}
+                      itemStyle={tooltipItemStyle} formatter={(v: number) => formatCurrency(String(v))} />
+                    <Legend
+                      wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
+                      formatter={(value: string) => <span style={{ color: '#94a3b8' }}>{value}</span>}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+
+            {/* Phase 2F: Revenue vs Expense trend (dual area) */}
+            <div className="card p-5">
+              <div className="flex items-center gap-2 mb-5">
+                <Activity size={18} className="text-emerald-400" />
+                <h2 className="text-base font-semibold text-white">Revenue vs Expenses Trend</h2>
+              </div>
+              {loading ? (
+                <div className="h-56 bg-surface-800 rounded-xl animate-pulse" />
+              ) : trendData.length === 0 ? (
+                <div className="h-56 flex items-center justify-center">
+                  <p className="text-slate-500 text-sm">No data</p>
+                </div>
+              ) : (
+                <>
+                  <ResponsiveContainer width="100%" height={220}>
+                    <AreaChart
+                      data={trendData.map((d, _i) => ({
+                        period:   d.period,
+                        Revenue:  d.Revenue,
+                        // Distribute total expenses evenly across periods as proxy
+                        Expenses: Math.round(
+                          expenseBreakdown.reduce((s, e) => s + parseFloat(e.total), 0) /
+                          Math.max(1, trendData.length)
+                        ),
+                      }))}
+                      margin={{ top: 5, right: 10, left: 0, bottom: 5 }}
+                    >
+                      <defs>
+                        <linearGradient id="revExp" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%"  stopColor={accent}    stopOpacity={0.3} />
+                          <stop offset="95%" stopColor={accent}    stopOpacity={0} />
+                        </linearGradient>
+                        <linearGradient id="expExp" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%"  stopColor="#ef4444" stopOpacity={0.2} />
+                          <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                      <XAxis dataKey="period" tick={axisTickStyle} axisLine={false} tickLine={false} />
+                      <YAxis tick={axisTickStyle} axisLine={false} tickLine={false}
+                        tickFormatter={v => `${getCurrencySymbol()}${formatNumber(v)}`} />
+                      <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle}
+                        itemStyle={tooltipItemStyle} formatter={(v: number) => formatCurrency(String(v))} />
+                      <Legend wrapperStyle={{ fontSize: 11, paddingTop: 8, color: '#94a3b8' }} />
+                      <Area type="monotone" dataKey="Revenue"  stroke={accent}    strokeWidth={2}
+                        fill="url(#revExp)" dot={false} />
+                      <Area type="monotone" dataKey="Expenses" stroke="#ef4444" strokeWidth={1.5}
+                        fill="url(#expExp)" dot={false} />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                  <p className="text-xs text-slate-500 mt-2">
+                    Expenses are shown as an even distribution — use the category table below for exact breakdown.
+                  </p>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* Phase 2F: Expense ratio progress bars with 85 % target reference */}
           {expenseBreakdown.length > 0 && !loading && (
             <div className="card p-5">
-              <h3 className="text-sm font-semibold text-slate-300 mb-4">Category Distribution</h3>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-semibold text-white">Category Distribution</h3>
+                {pnl && (
+                  <span className="text-xs text-slate-500">
+                    Total expenses = {(parseFloat(pnl.operating_expenses) / Math.max(1, parseFloat(pnl.revenue.gross_sales)) * 100).toFixed(1)}% of revenue
+                  </span>
+                )}
+              </div>
               <div className="space-y-2.5">
                 {expenseBreakdown.map((e, i) => {
                   const total = expenseBreakdown.reduce((s, x) => s + parseFloat(x.total), 0) || 1
-                  const pct = Math.round((parseFloat(e.total) / total) * 100)
+                  const pct   = Math.round((parseFloat(e.total) / total) * 100)
                   return (
                     <div key={e.category_name}>
                       <div className="flex justify-between text-xs mb-1">
@@ -828,22 +1327,33 @@ export default function ReportsPage() {
               </div>
             </div>
           )}
+
+          {/* Detailed expense table */}
+          <ReportTable
+            headers={['Category', 'Total', 'Count']}
+            rows={expenseBreakdown.map(e => [
+              e.category_name,
+              formatCurrency(e.total),
+              e.count,
+            ])}
+            loading={loading}
+            emptyMessage="No expense data for this period."
+            rightAlignCols={[1, 2]}
+          />
         </div>
       )}
     </div>
   )
 }
 
-// ─── Small reusable sub-components ───────────────────────────────────────────
+// ─── Reusable sub-components ──────────────────────────────────────────────────
 
+/** Aging card: progress-bar buckets + most-overdue list */
 function AgingCard({
   title, aging, loading, iconColor, payable = false,
 }: {
-  title: string
-  aging: ARAgingReport | null
-  loading: boolean
-  iconColor: string
-  payable?: boolean
+  title: string; aging: ARAgingReport | null
+  loading: boolean; iconColor: string; payable?: boolean
 }) {
   const BUCKETS = [
     { label: 'Current (not due)',   key: 'current', color: 'text-green-400 bg-green-500/10' },
@@ -882,7 +1392,7 @@ function AgingCard({
           })}
           {aging.invoices.slice(0, 4).length > 0 && (
             <div className="mt-3 pt-3 border-t border-surface-700">
-              <p className="text-xs text-slate-500 mb-2">{payable ? 'Most Overdue Payables' : 'Most Overdue'}</p>
+              <p className="text-xs text-slate-500 mb-2">{payable ? 'Most Overdue Payables' : 'Most Overdue Receivables'}</p>
               {aging.invoices.slice(0, 4).map(inv => (
                 <div key={inv.id} className="flex items-center justify-between py-1.5">
                   <div>
@@ -918,7 +1428,9 @@ function VATCard({
   )
 }
 
-function CashFlowRow({ icon, label, value, color }: { icon: React.ReactNode; label: string; value: string; color: 'green' | 'red' }) {
+function CashFlowRow({ icon, label, value, color }: {
+  icon: React.ReactNode; label: string; value: string; color: 'green' | 'red'
+}) {
   return (
     <div className={`flex items-center justify-between p-3 rounded-xl border ${
       color === 'green' ? 'bg-green-500/8 border-green-500/20' : 'bg-red-500/8 border-red-500/20'

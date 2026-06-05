@@ -1,10 +1,24 @@
-import { useEffect, useState } from 'react'
+/**
+ * BalanceSheetPage — Phase 4 enhancements:
+ *  1. Asset mix donut  — Current Assets vs Fixed Assets vs Other Assets.
+ *  2. Liabilities & Equity donut — shows the capital structure at a glance.
+ *  3. Financial ratios strip — Working Capital, Current Ratio, D/E Ratio.
+ *     These three numbers are what a banker or board member asks for first.
+ */
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
-import { Scale, Loader2, RefreshCw, CheckCircle, AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react'
+import {
+  Scale, Loader2, RefreshCw, CheckCircle, AlertTriangle,
+  ChevronDown, ChevronUp,
+} from 'lucide-react'
+import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import toast from 'react-hot-toast'
 import { accountingApi, bypassNextGets } from '@/services/api'
 import { formatCurrency } from '@/lib/utils'
+import { useThemeAccent } from '@/hooks/useTheme'
+
+const tooltipStyle = { backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '12px', color: '#f1f5f9', fontSize: 12 }
 
 interface BSAccount { code: string; name: string; balance: string | number }
 interface BalanceSheetData {
@@ -58,6 +72,7 @@ function groupAccounts(accounts: BSAccount[], groups: { label: string; from: num
 
 export default function BalanceSheetPage() {
   const navigate = useNavigate()
+  const accent   = useThemeAccent()
   const now = new Date()
   const [selectedYear, setSelectedYear] = useState(now.getFullYear())
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1)
@@ -116,9 +131,52 @@ export default function BalanceSheetPage() {
     }
   }
 
-  const totalAssets = parseFloat(String(data?.total_assets ?? 0))
-  const totalLiabEquity = parseFloat(String(data?.total_liabilities ?? 0)) + parseFloat(String(data?.total_equity ?? 0))
-  const isBalanced = data ? Math.abs(totalAssets - totalLiabEquity) < 0.01 : false
+  const totalAssets     = parseFloat(String(data?.total_assets     ?? 0))
+  const totalLiab       = parseFloat(String(data?.total_liabilities ?? 0))
+  const totalEquity     = parseFloat(String(data?.total_equity     ?? 0))
+  const totalLiabEquity = totalLiab + totalEquity
+  const isBalanced      = data ? Math.abs(totalAssets - totalLiabEquity) < 0.01 : false
+
+  /**
+   * Phase 4: Derived ratios and donut data — computed once whenever `data` changes.
+   */
+  const { assetDonut, structureDonut, ratios } = useMemo(() => {
+    if (!data) return { assetDonut: [], structureDonut: [], ratios: null }
+
+    // Bucket assets by code range for the donut
+    const sumGroup = (accts: BSAccount[], from: number, to: number) =>
+      accts
+        .filter(a => { const c = parseInt(a.code, 10); return c >= from && c <= to })
+        .reduce((s, a) => s + parseFloat(String(a.balance)), 0)
+
+    const currentAssets = sumGroup(data.assets, 1000, 1299)
+    const fixedAssets   = sumGroup(data.assets, 1300, 1599)
+    const otherAssets   = sumGroup(data.assets, 1600, 1999)
+
+    // Current liabilities (codes 2000–2499) for Current Ratio
+    const currentLiab = sumGroup(data.liabilities, 2000, 2499)
+
+    const assetDonut = [
+      { name: 'Current Assets', value: Math.abs(currentAssets) },
+      { name: 'Fixed Assets',   value: Math.abs(fixedAssets)   },
+      { name: 'Other Assets',   value: Math.abs(otherAssets)   },
+    ].filter(d => d.value > 0)
+
+    const structureDonut = [
+      { name: 'Liabilities', value: Math.abs(totalLiab)   },
+      { name: 'Equity',      value: Math.abs(totalEquity) },
+    ].filter(d => d.value > 0)
+
+    const workingCapital  = currentAssets - currentLiab
+    const currentRatio    = currentLiab > 0 ? currentAssets / currentLiab : null
+    const debtEquityRatio = totalEquity  > 0 ? totalLiab / totalEquity     : null
+
+    return {
+      assetDonut,
+      structureDonut,
+      ratios: { workingCapital, currentRatio, debtEquityRatio },
+    }
+  }, [data, totalLiab, totalEquity])
 
   const yearOptions = Array.from({ length: 6 }, (_, i) => now.getFullYear() - i)
 
@@ -195,6 +253,119 @@ export default function BalanceSheetPage() {
             }
           </div>
 
+          {/* Phase 4: Composition donuts + financial ratios */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+
+            {/* Asset mix donut */}
+            <div className="card p-5">
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Asset Mix</p>
+              {assetDonut.length > 0 ? (
+                <ResponsiveContainer width="100%" height={200}>
+                  <PieChart>
+                    <Pie data={assetDonut} cx="50%" cy="45%"
+                      innerRadius={50} outerRadius={72} paddingAngle={3} dataKey="value">
+                      <Cell fill={accent}    />
+                      <Cell fill="#3b82f6"   />
+                      <Cell fill="#a855f7"   />
+                    </Pie>
+                    <Tooltip contentStyle={tooltipStyle}
+                      labelStyle={{ color: '#94a3b8' }} itemStyle={{ color: '#f1f5f9' }}
+                      formatter={(v: number) => formatCurrency(String(v))} />
+                    <Legend
+                      wrapperStyle={{ fontSize: 10, paddingTop: 4 }}
+                      formatter={(v: string) => <span style={{ color: '#94a3b8' }}>{v}</span>}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-40 flex items-center justify-center text-slate-500 text-xs">No asset data</div>
+              )}
+              <p className="text-center text-xs text-slate-500 mt-1">
+                Total: <span className="text-white font-semibold">{formatCurrency(String(totalAssets))}</span>
+              </p>
+            </div>
+
+            {/* Liabilities & Equity structure donut */}
+            <div className="card p-5">
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Capital Structure</p>
+              {structureDonut.length > 0 ? (
+                <ResponsiveContainer width="100%" height={200}>
+                  <PieChart>
+                    <Pie data={structureDonut} cx="50%" cy="45%"
+                      innerRadius={50} outerRadius={72} paddingAngle={3} dataKey="value">
+                      <Cell fill="#ef4444" />
+                      <Cell fill="#10b981" />
+                    </Pie>
+                    <Tooltip contentStyle={tooltipStyle}
+                      labelStyle={{ color: '#94a3b8' }} itemStyle={{ color: '#f1f5f9' }}
+                      formatter={(v: number) => formatCurrency(String(v))} />
+                    <Legend
+                      wrapperStyle={{ fontSize: 10, paddingTop: 4 }}
+                      formatter={(v: string) => <span style={{ color: '#94a3b8' }}>{v}</span>}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-40 flex items-center justify-center text-slate-500 text-xs">No data</div>
+              )}
+              <p className="text-center text-xs text-slate-500 mt-1">
+                Total: <span className="text-white font-semibold">{formatCurrency(String(totalLiabEquity))}</span>
+              </p>
+            </div>
+
+            {/* Financial ratios */}
+            <div className="card p-5 space-y-4">
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Financial Ratios</p>
+              {ratios ? (
+                <>
+                  <RatioRow
+                    label="Working Capital"
+                    value={formatCurrency(String(ratios.workingCapital))}
+                    sub="Current Assets − Current Liabilities"
+                    status={ratios.workingCapital > 0 ? 'good' : 'bad'}
+                  />
+                  <RatioRow
+                    label="Current Ratio"
+                    value={ratios.currentRatio !== null ? `${ratios.currentRatio.toFixed(2)}×` : 'N/A'}
+                    sub="Current Assets ÷ Current Liabilities"
+                    status={
+                      ratios.currentRatio === null ? 'neutral'
+                      : ratios.currentRatio >= 2   ? 'good'
+                      : ratios.currentRatio >= 1   ? 'warn'
+                      : 'bad'
+                    }
+                    hint={
+                      ratios.currentRatio === null ? undefined
+                      : ratios.currentRatio >= 2   ? 'Healthy liquidity'
+                      : ratios.currentRatio >= 1   ? 'Acceptable — watch closely'
+                      : 'Risk — may not cover short-term obligations'
+                    }
+                  />
+                  <RatioRow
+                    label="D/E Ratio"
+                    value={ratios.debtEquityRatio !== null ? ratios.debtEquityRatio.toFixed(2) : 'N/A'}
+                    sub="Total Liabilities ÷ Total Equity"
+                    status={
+                      ratios.debtEquityRatio === null ? 'neutral'
+                      : ratios.debtEquityRatio <= 1   ? 'good'
+                      : ratios.debtEquityRatio <= 2   ? 'warn'
+                      : 'bad'
+                    }
+                    hint={
+                      ratios.debtEquityRatio === null ? undefined
+                      : ratios.debtEquityRatio <= 1   ? 'Low leverage — conservative'
+                      : ratios.debtEquityRatio <= 2   ? 'Moderate leverage'
+                      : 'High leverage — review debt obligations'
+                    }
+                  />
+                </>
+              ) : (
+                <p className="text-slate-500 text-xs">No data</p>
+              )}
+            </div>
+          </div>
+
+          {/* 3-column account detail */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Assets */}
             <BSSection
@@ -238,6 +409,30 @@ export default function BalanceSheetPage() {
           </div>
         </>
       ) : null}
+    </div>
+  )
+}
+
+/** Phase 4: Colour-coded ratio row with traffic-light status indicator. */
+function RatioRow({
+  label, value, sub, status, hint,
+}: {
+  label: string; value: string; sub: string
+  status: 'good' | 'warn' | 'bad' | 'neutral'; hint?: string
+}) {
+  const color = status === 'good' ? 'text-emerald-400' : status === 'warn' ? 'text-amber-400' : status === 'bad' ? 'text-red-400' : 'text-slate-300'
+  const dot   = status === 'good' ? 'bg-emerald-500' : status === 'warn' ? 'bg-amber-500' : status === 'bad' ? 'bg-red-500' : 'bg-slate-500'
+  return (
+    <div className="space-y-0.5">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5">
+          <div className={`w-2 h-2 rounded-full shrink-0 ${dot}`} />
+          <span className="text-xs text-slate-400">{label}</span>
+        </div>
+        <span className={`text-sm font-bold font-mono ${color}`}>{value}</span>
+      </div>
+      <p className="text-xs text-slate-600 pl-3.5">{sub}</p>
+      {hint && <p className={`text-xs pl-3.5 ${color} opacity-75`}>{hint}</p>}
     </div>
   )
 }

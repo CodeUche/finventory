@@ -1,9 +1,23 @@
-import { useState, useEffect } from 'react'
+/**
+ * StockReportsPage — Phase 5 chart additions:
+ *  • Availability tab: horizontal bar chart comparing qty_on_hand vs reorder level,
+ *    colour-coded by status (green/amber/red). Immediately shows which products
+ *    are at risk without reading every row.
+ *  • Usage tab: horizontal bar chart of top products by units consumed.
+ *    Answers "what am I selling the most of?" at a glance.
+ *  • Valuation tab: donut (category breakdown) + horizontal bar (top 10 by value).
+ *    Shows inventory concentration risk and capital allocation.
+ */
+import { useState, useEffect, useMemo } from 'react'
 import {
   ClipboardCheck, BarChart2, ArrowLeftRight, AlertTriangle,
   CheckCircle, XCircle, TrendingDown, FileText, FileDown, Table2,
-  Pencil, Check, X as XIcon, Loader2, Wallet,
+  Pencil, Check, X as XIcon, Loader2, Wallet, PieChart as PieIcon,
 } from 'lucide-react'
+import {
+  BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis,
+  CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+} from 'recharts'
 import { stockReportApi, inventoryApi, reportApi } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
 import type { Organisation } from '@/types'
@@ -13,6 +27,11 @@ import DateInput from '@/components/DateInput'
 import autoTable from 'jspdf-autotable'
 import jsPDF from 'jspdf'
 import { saveBlobFile } from '@/lib/saveBlobFile'
+
+const tooltipStyle  = { backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '12px', color: '#f1f5f9', fontSize: 12 }
+const axisTickStyle = { fill: '#64748b', fontSize: 11 }
+const trunc = (s: string, n = 16) => s?.length > n ? s.slice(0, n) + '…' : (s ?? '—')
+const CHART_COLORS = ['#f97316', '#3b82f6', '#10b981', '#a855f7', '#f59e0b', '#06b6d4', '#ec4899', '#84cc16']
 
 type ReportTab = 'availability' | 'usage' | 'transfers' | 'stock_card' | 'valuation'
 
@@ -564,6 +583,55 @@ export default function StockReportsPage() {
   const filteredAvailability =
     statusFilter === 'all' ? availability : availability.filter((r) => r.status === statusFilter)
 
+  /**
+   * Phase 5: Availability bar chart — top 20 products sorted by qty_on_hand.
+   * Each bar is split into qty_on_hand (coloured by status) vs reorder threshold.
+   */
+  const availabilityChartData = useMemo(() =>
+    [...availability]
+      .sort((a, b) => b.quantity_on_hand - a.quantity_on_hand)
+      .slice(0, 20)
+      .map(r => ({
+        name:    trunc(r.name, 14),
+        onHand:  r.quantity_on_hand,
+        reorder: r.min_safety_level,
+        status:  r.status,
+      })),
+  [availability])
+
+  /**
+   * Phase 5: Usage bar chart — top 15 products by total units consumed.
+   */
+  const usageChartData = useMemo(() =>
+    [...usage]
+      .sort((a, b) => b.total_used - a.total_used)
+      .slice(0, 15)
+      .map(u => ({ name: trunc(u.name, 14), units: u.total_used })),
+  [usage])
+
+  /**
+   * Phase 5: Valuation donut — group items by product name (summing across
+   * warehouses) then take the top 8 by total value + aggregate the rest as "Other".
+   */
+  const valuationChartData = useMemo(() => {
+    if (!valuation) return { donut: [], topBar: [] }
+    // Aggregate by product name
+    const byProduct: Record<string, number> = {}
+    for (const item of valuation.items) {
+      byProduct[item.product] = (byProduct[item.product] ?? 0) + item.total_value
+    }
+    const sorted = Object.entries(byProduct)
+      .sort(([, a], [, b]) => b - a)
+    const top8  = sorted.slice(0, 8)
+    const other = sorted.slice(8).reduce((s, [, v]) => s + v, 0)
+    const donut = [
+      ...top8.map(([name, value]) => ({ name: trunc(name, 14), value })),
+      ...(other > 0 ? [{ name: 'Other', value: other }] : []),
+    ]
+    const topBar = top8.slice(0, 10).map(([name, value]) => ({ name: trunc(name, 16), value }))
+    return { donut, topBar }
+  }, [valuation])
+
   const TABS: { id: ReportTab; label: string; icon: React.ElementType }[] = [
     { id: 'availability', label: 'Stock Availability', icon: ClipboardCheck },
     { id: 'usage', label: 'Usage Report', icon: BarChart2 },
@@ -689,6 +757,51 @@ export default function StockReportsPage() {
             ))}
           </div>
 
+          {/* Phase 5: Availability horizontal bar — qty on hand vs reorder level */}
+          {availabilityChartData.length > 0 && (
+            <div className="card p-5">
+              <div className="flex items-center gap-2 mb-4">
+                <BarChart2 size={17} className="text-brand-400" />
+                <h2 className="text-sm font-semibold text-white">Stock Level vs Reorder Level (Top 20)</h2>
+              </div>
+              <ResponsiveContainer width="100%" height={Math.min(500, availabilityChartData.length * 28 + 40)}>
+                <BarChart
+                  layout="vertical"
+                  data={availabilityChartData}
+                  margin={{ top: 5, right: 60, left: 10, bottom: 5 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                  <XAxis type="number" tick={axisTickStyle} axisLine={false} tickLine={false} />
+                  <YAxis type="category" dataKey="name" tick={axisTickStyle}
+                    axisLine={false} tickLine={false} width={100} />
+                  <Tooltip
+                    contentStyle={tooltipStyle}
+                    labelStyle={{ color: '#94a3b8' }}
+                    itemStyle={{ color: '#f1f5f9' }}
+                  />
+                  <Legend
+                    wrapperStyle={{ fontSize: 11, paddingTop: 10, color: '#94a3b8' }}
+                    formatter={(v: string) => <span style={{ color: '#94a3b8' }}>{v}</span>}
+                  />
+                  <Bar dataKey="onHand" name="On Hand" radius={[0, 4, 4, 0]}>
+                    {availabilityChartData.map((entry, i) => (
+                      <Cell
+                        key={i}
+                        fill={
+                          entry.status === 'out_of_stock' ? '#ef4444'
+                          : entry.status === 'low'        ? '#f59e0b'
+                          : entry.status === 'overstocked' ? '#3b82f6'
+                          : '#10b981'
+                        }
+                      />
+                    ))}
+                  </Bar>
+                  <Bar dataKey="reorder" name="Reorder Level" fill="#475569" radius={[0, 4, 4, 0]} opacity={0.5} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
           <div className="flex justify-end">
             <ExportBar onPDF={() => exportAvailabilityPDF(filteredAvailability, organisation)} onCSV={() => exportAvailabilityCSV(filteredAvailability)} />
           </div>
@@ -812,6 +925,35 @@ export default function StockReportsPage() {
             </div>
             <ExportBar onPDF={() => exportUsagePDF(usage, usageTransactions, organisation)} onCSV={() => exportUsageCSV(usage, usageTransactions)} />
           </div>
+
+          {/* Phase 5: Usage horizontal bar — top products by units consumed */}
+          {!showUsageTx && usageChartData.length > 0 && (
+            <div className="card p-5">
+              <div className="flex items-center gap-2 mb-4">
+                <BarChart2 size={17} className="text-brand-400" />
+                <h2 className="text-sm font-semibold text-white">Top Products by Units Consumed</h2>
+              </div>
+              <ResponsiveContainer width="100%" height={Math.min(420, usageChartData.length * 28 + 40)}>
+                <BarChart
+                  layout="vertical"
+                  data={usageChartData}
+                  margin={{ top: 5, right: 40, left: 10, bottom: 5 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                  <XAxis type="number" tick={axisTickStyle} axisLine={false} tickLine={false} />
+                  <YAxis type="category" dataKey="name" tick={axisTickStyle}
+                    axisLine={false} tickLine={false} width={100} />
+                  <Tooltip
+                    contentStyle={tooltipStyle}
+                    labelStyle={{ color: '#94a3b8' }}
+                    itemStyle={{ color: '#f1f5f9' }}
+                    formatter={(v: number) => [`${v.toLocaleString()} units`, 'Used']}
+                  />
+                  <Bar dataKey="units" name="Units Used" fill="#f97316" radius={[0, 4, 4, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
 
           {!showUsageTx ? (
             <div className="card overflow-x-auto p-0">
@@ -1023,6 +1165,62 @@ export default function StockReportsPage() {
                   <p className="text-xl font-bold text-white">{valuation.items.length}</p>
                 </div>
               </div>
+
+              {/* Phase 5: Valuation donut + top-10 horizontal bar */}
+              {(valuationChartData.donut.length > 0 || valuationChartData.topBar.length > 0) && (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+                  {/* Category (product) donut */}
+                  <div className="card p-5">
+                    <div className="flex items-center gap-2 mb-4">
+                      <PieIcon size={17} className="text-brand-400" />
+                      <h2 className="text-sm font-semibold text-white">Inventory Value by Product</h2>
+                    </div>
+                    <ResponsiveContainer width="100%" height={240}>
+                      <PieChart>
+                        <Pie data={valuationChartData.donut} cx="50%" cy="45%"
+                          innerRadius={55} outerRadius={80} paddingAngle={3} dataKey="value">
+                          {valuationChartData.donut.map((_, i) => (
+                            <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                          ))}
+                        </Pie>
+                        <Tooltip contentStyle={tooltipStyle}
+                          labelStyle={{ color: '#94a3b8' }} itemStyle={{ color: '#f1f5f9' }}
+                          formatter={(v: number) => formatMoney(v)} />
+                        <Legend
+                          wrapperStyle={{ fontSize: 10, paddingTop: 6 }}
+                          formatter={(v: string) => <span style={{ color: '#94a3b8' }}>{v}</span>}
+                        />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  {/* Top 10 by total value — horizontal bar */}
+                  <div className="card p-5">
+                    <div className="flex items-center gap-2 mb-4">
+                      <BarChart2 size={17} className="text-emerald-400" />
+                      <h2 className="text-sm font-semibold text-white">Top Products by Inventory Value</h2>
+                    </div>
+                    <ResponsiveContainer width="100%" height={240}>
+                      <BarChart
+                        layout="vertical"
+                        data={valuationChartData.topBar}
+                        margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                        <XAxis type="number" tick={axisTickStyle} axisLine={false} tickLine={false}
+                          tickFormatter={v => formatMoney(v)} />
+                        <YAxis type="category" dataKey="name" tick={axisTickStyle}
+                          axisLine={false} tickLine={false} width={100} />
+                        <Tooltip contentStyle={tooltipStyle}
+                          labelStyle={{ color: '#94a3b8' }} itemStyle={{ color: '#f1f5f9' }}
+                          formatter={(v: number) => [formatMoney(v), 'Value']} />
+                        <Bar dataKey="value" name="Inventory Value" fill="#10b981" radius={[0, 4, 4, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              )}
 
               {/* Export buttons */}
               <div className="flex justify-end">
