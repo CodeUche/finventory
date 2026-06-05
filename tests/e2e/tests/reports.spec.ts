@@ -54,25 +54,74 @@ test.describe("Reports — Charts", () => {
     expect(real).toHaveLength(0);
   });
 
-  test("top products section visible", async ({ page }) => {
-    await loginAndGo(page, "/reports");
+  // Top products and top customers are now in the "Sales Analytics" tab — navigate there first.
+  test("top products section visible (Sales Analytics tab)", async ({ page }) => {
+    await loginAndGo(page, "/reports?tab=sales_analytics");
     await expect(
       page.getByText(/top product/i).first()
-    ).toBeVisible({ timeout: 8_000 });
+    ).toBeVisible({ timeout: 10_000 });
   });
 
-  test("top customers section visible", async ({ page }) => {
-    await loginAndGo(page, "/reports");
+  test("top customers section visible (Sales Analytics tab)", async ({ page }) => {
+    await loginAndGo(page, "/reports?tab=sales_analytics");
     await expect(
       page.getByText(/top customer/i).first()
+    ).toBeVisible({ timeout: 10_000 });
+  });
+
+  test("URL ?tab= param pre-selects correct tab", async ({ page }) => {
+    await loginAndGo(page, "/reports?tab=pnl");
+    await expect(
+      page.getByText(/profit.*loss|p&l|waterfall/i).first()
     ).toBeVisible({ timeout: 8_000 });
   });
 
-  test("expense breakdown section visible", async ({ page }) => {
+  test("URL ?tab= legacy redirect: products → Sales Analytics", async ({ page }) => {
+    await loginAndGo(page, "/reports?tab=products");
+    // Should silently show Sales Analytics content
+    await expect(
+      page.getByText(/sales analytics|top customer|top product/i).first()
+    ).toBeVisible({ timeout: 8_000 });
+  });
+
+  test("expense breakdown section visible (Overview tab)", async ({ page }) => {
     await loginAndGo(page, "/reports");
     await expect(
       page.getByText(/expense breakdown|by category/i).first()
     ).toBeVisible({ timeout: 8_000 });
+  });
+
+  test("P&L waterfall chart renders (no uncaught errors)", async ({ page }) => {
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await loginAndGo(page, "/reports?tab=pnl");
+    await page.waitForTimeout(3000);
+    const real = errors.filter(e =>
+      !e.includes("ResizeObserver") && !e.includes("ChunkLoadError")
+    );
+    expect(real).toHaveLength(0);
+  });
+
+  test("AR/AP aging tab renders (no uncaught errors)", async ({ page }) => {
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await loginAndGo(page, "/reports?tab=aging");
+    await page.waitForTimeout(3000);
+    const real = errors.filter(e =>
+      !e.includes("ResizeObserver") && !e.includes("ChunkLoadError")
+    );
+    expect(real).toHaveLength(0);
+  });
+
+  test("cash flow tab renders (no uncaught errors)", async ({ page }) => {
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await loginAndGo(page, "/reports?tab=cashflow");
+    await page.waitForTimeout(3000);
+    const real = errors.filter(e =>
+      !e.includes("ResizeObserver") && !e.includes("ChunkLoadError")
+    );
+    expect(real).toHaveLength(0);
   });
 });
 

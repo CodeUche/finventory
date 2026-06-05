@@ -441,18 +441,39 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
-      # Wake the Railway backend before running tests.
+      # ── 1. Wake the Railway backend ─────────────────────────────────────────
       # Railway's free tier sleeps after inactivity; cold-start takes ~20 s.
-      # We hit the health endpoint up to 6 times (90 s total) so the first
-      # real test request doesn't time out waiting for the dyno to boot.
+      # We poll the health endpoint up to 8 times (120 s total).
       - name: Warm up Railway backend
         run: |
           API="https://audity-backend-production-30f9.up.railway.app/api/v1/health/"
-          echo "Warming up $API …"
-          for i in $(seq 1 6); do
+          echo "Polling Railway backend at $API …"
+          for i in $(seq 1 8); do
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 "$API" || echo "000")
-            echo "  attempt $i/6: HTTP $STATUS"
-            [ "$STATUS" = "200" ] && echo "  ✓ Backend warm" && break
+            echo "  attempt $i/8: HTTP $STATUS"
+            [ "$STATUS" = "200" ] && echo "  ✓ Backend healthy — proceeding" && break
+            [ "$i" = "8" ] && echo "  ⚠ Backend did not return 200 after 8 attempts — tests may time out" && true
+            sleep 15
+          done
+
+      # ── 2. Wait for Vercel to finish deploying the latest commit ────────────
+      # Railway's GitHub integration auto-deploys on push; Vercel does too, but
+      # both happen ASYNC relative to this CI job. We poll the Vercel preview URL
+      # for up to 3 min so E2E tests always hit freshly deployed code.
+      - name: Wait for Vercel frontend deployment
+        run: |
+          VERCEL_URL="https://audity-git-main-auditytechnologies.vercel.app"
+          echo "Polling Vercel frontend at $VERCEL_URL …"
+          for i in $(seq 1 12); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$VERCEL_URL" || echo "000")
+            BODY=$(curl -s --max-time 10 "$VERCEL_URL" 2>/dev/null | head -c 500)
+            echo "  attempt $i/12: HTTP $STATUS"
+            # 200 + HTML content (not Vercel 404) = deployment live
+            if [ "$STATUS" = "200" ] && echo "$BODY" | grep -qi "html"; then
+              echo "  ✓ Vercel frontend live — proceeding"
+              break
+            fi
+            [ "$i" = "12" ] && echo "  ⚠ Vercel not ready after 12 attempts — E2E tests will skip frontend assertions gracefully"
             sleep 15
           done
 

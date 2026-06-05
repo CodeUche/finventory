@@ -264,9 +264,9 @@ export default function BalanceSheetPage() {
                   <PieChart>
                     <Pie data={assetDonut} cx="50%" cy="45%"
                       innerRadius={50} outerRadius={72} paddingAngle={3} dataKey="value">
-                      <Cell fill={accent}    />
-                      <Cell fill="#3b82f6"   />
-                      <Cell fill="#a855f7"   />
+                      {assetDonut.map((_, i) => (
+                        <Cell key={i} fill={[accent, '#3b82f6', '#a855f7'][i % 3]} />
+                      ))}
                     </Pie>
                     <Tooltip contentStyle={tooltipStyle}
                       labelStyle={{ color: '#94a3b8' }} itemStyle={{ color: '#f1f5f9' }}
@@ -278,7 +278,9 @@ export default function BalanceSheetPage() {
                   </PieChart>
                 </ResponsiveContainer>
               ) : (
-                <div className="h-40 flex items-center justify-center text-slate-500 text-xs">No asset data</div>
+                <div className="h-40 flex items-center justify-center">
+                  <p className="text-slate-500 text-xs text-center">No asset balances recorded.<br/>Post transactions to see asset mix.</p>
+                </div>
               )}
               <p className="text-center text-xs text-slate-500 mt-1">
                 Total: <span className="text-white font-semibold">{formatCurrency(String(totalAssets))}</span>
@@ -293,8 +295,9 @@ export default function BalanceSheetPage() {
                   <PieChart>
                     <Pie data={structureDonut} cx="50%" cy="45%"
                       innerRadius={50} outerRadius={72} paddingAngle={3} dataKey="value">
-                      <Cell fill="#ef4444" />
-                      <Cell fill="#10b981" />
+                      {structureDonut.map((_, i) => (
+                        <Cell key={i} fill={['#ef4444', '#10b981'][i % 2]} />
+                      ))}
                     </Pie>
                     <Tooltip contentStyle={tooltipStyle}
                       labelStyle={{ color: '#94a3b8' }} itemStyle={{ color: '#f1f5f9' }}
@@ -306,7 +309,9 @@ export default function BalanceSheetPage() {
                   </PieChart>
                 </ResponsiveContainer>
               ) : (
-                <div className="h-40 flex items-center justify-center text-slate-500 text-xs">No data</div>
+                <div className="h-40 flex items-center justify-center">
+                  <p className="text-slate-500 text-xs text-center">No liability or equity balances.<br/>Capital structure shows once accounts are seeded.</p>
+                </div>
               )}
               <p className="text-center text-xs text-slate-500 mt-1">
                 Total: <span className="text-white font-semibold">{formatCurrency(String(totalLiabEquity))}</span>

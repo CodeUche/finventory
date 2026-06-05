@@ -463,6 +463,8 @@ export default function DashboardPage() {
   const [showAI,          setShowAI]          = useState(false)
   const [_refreshTick,    setRefreshTick]     = useState(0)
   const [firsStats,       setFirsStats]       = useState<FirsStats | null>(null)
+  /** Tracks when data was last successfully fetched — shown in the header */
+  const [lastFetched,     setLastFetched]     = useState<Date | null>(null)
 
   // Phase 1C: prior-period sales for comparison line on revenue chart
   const [priorSalesData, setPriorSalesData] = useState<any[]>([])
@@ -557,6 +559,7 @@ export default function DashboardPage() {
       }
 
       setLoading(false)
+      setLastFetched(new Date())
     }
 
     fetchAll()
@@ -681,7 +684,11 @@ export default function DashboardPage() {
             title="Refresh all data"
           >
             <RefreshCw size={14} className={`text-slate-400 ${loading ? 'animate-spin' : ''}`} />
-            <span className="text-xs text-slate-400 font-medium hidden sm:inline">Refresh</span>
+            <span className="text-xs text-slate-400 font-medium hidden sm:inline">
+              {loading ? 'Loading…' : lastFetched
+                ? `Updated ${format(lastFetched, 'HH:mm')}`
+                : 'Refresh'}
+            </span>
           </button>
 
           <div className="flex items-center gap-2 px-3 py-2 bg-green-500/10 border border-green-500/30 rounded-xl">

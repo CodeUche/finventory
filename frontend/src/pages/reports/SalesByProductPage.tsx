@@ -8,7 +8,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { ChevronDown, ChevronRight, Loader2, Package, BarChart2, TrendingUp } from 'lucide-react'
 import {
   BarChart, Bar, ScatterChart, Scatter, XAxis, YAxis,
-  CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell,
+  CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts'
 import { reportApi } from '@/services/api'
 import { formatCurrency, formatDate, formatNumber, getCurrencySymbol } from '@/lib/utils'
@@ -232,15 +232,18 @@ export default function SalesByProductPage() {
                     )
                   }}
                 />
-                <Scatter data={scatterData} name="Products">
-                  {scatterData.map((entry, i) => (
-                    <Cell
-                      key={i}
-                      fill={entry.margin >= 30 ? '#10b981' : entry.margin >= 15 ? accent : '#ef4444'}
-                      fillOpacity={0.75}
-                    />
-                  ))}
-                </Scatter>
+                <Scatter
+                  data={scatterData}
+                  name="Products"
+                  // Render each point as a circle; r scales with unit volume (min 6 px, max 18 px)
+                  shape={(props: any) => {
+                    const { cx, cy, payload } = props
+                    const maxUnits = Math.max(...scatterData.map(d => d.units), 1)
+                    const r = Math.max(6, Math.min(18, 6 + (payload.units / maxUnits) * 12))
+                    const fill = payload.margin >= 30 ? '#10b981' : payload.margin >= 15 ? accent : '#ef4444'
+                    return <circle cx={cx} cy={cy} r={r} fill={fill} fillOpacity={0.7} stroke={fill} strokeWidth={1} />
+                  }}
+                />
               </ScatterChart>
             </ResponsiveContainer>
             <div className="flex items-center gap-4 mt-2 text-xs text-slate-500">

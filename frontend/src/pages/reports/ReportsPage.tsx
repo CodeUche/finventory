@@ -20,7 +20,8 @@
  * All charts use Recharts (already in project).  Zero new dependencies.
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useCallback } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { useThemeAccent } from '@/hooks/useTheme'
 import {
@@ -116,14 +117,41 @@ function kpi(label: string, value: string, sub?: string, positive = true) {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
+/** Map legacy tab IDs (removed tabs) to their replacement. */
+const TAB_REDIRECT: Record<string, TabId> = {
+  products:  'sales_analytics',
+  customers: 'sales_analytics',
+  tax:       'overview',  // tax summary surfaced in Overview now
+}
+
 export default function ReportsPage() {
   const { organisation } = useAuthStore()
   const accent           = useThemeAccent()
   /** Full palette with brand accent at position 0 */
   const colors           = [accent, ...STATIC_COLORS]
 
-  const [tab,    setTab]    = useState<TabId>('overview')
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  /**
+   * Read initial tab from ?tab= URL param so dashboard shortcut cards work.
+   * Legacy tab IDs (e.g. ?tab=products) are silently redirected.
+   */
+  const initialTab = (() => {
+    const raw = searchParams.get('tab') as TabId | null
+    if (!raw) return 'overview' as TabId
+    if (TAB_REDIRECT[raw]) return TAB_REDIRECT[raw]
+    const valid = TABS.map(t => t.id)
+    return valid.includes(raw) ? raw : ('overview' as TabId)
+  })()
+
+  const [tab,    setTab]    = useState<TabId>(initialTab)
   const [period, setPeriod] = useState<PeriodValue>({ period: 'month' })
+
+  /** Sync tab selection to URL so users can share/bookmark specific tabs. */
+  const handleSetTab = useCallback((t: TabId) => {
+    setTab(t)
+    setSearchParams(prev => { prev.set('tab', t); return prev }, { replace: true })
+  }, [setSearchParams])
   const [loading, setLoading] = useState(true)
 
   // ── Data state ───────────────────────────────────────────────────────────────
@@ -467,7 +495,7 @@ export default function ReportsPage() {
           return (
             <button
               key={t.id}
-              onClick={() => setTab(t.id)}
+              onClick={() => handleSetTab(t.id)}
               className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium whitespace-nowrap transition-colors border-b-2 -mb-px
                 ${tab === t.id
                   ? 'border-brand-400 text-brand-400'
@@ -1390,18 +1418,23 @@ function AgingCard({
               </div>
             )
           })}
-          {aging.invoices.slice(0, 4).length > 0 && (
+          {(aging.invoices ?? []).slice(0, 4).length > 0 && (
             <div className="mt-3 pt-3 border-t border-surface-700">
               <p className="text-xs text-slate-500 mb-2">{payable ? 'Most Overdue Payables' : 'Most Overdue Receivables'}</p>
-              {aging.invoices.slice(0, 4).map(inv => (
+              {(aging.invoices ?? []).slice(0, 4).map(inv => {
+                // AP aging items have bill_number; AR items have invoice_number
+                const ref = (inv as any).bill_number ?? (inv as any).invoice_number ?? '—'
+                const who = (inv as any).supplier_name ?? inv.customer_name ?? (payable ? 'Supplier' : 'Walk-in')
+                return (
                 <div key={inv.id} className="flex items-center justify-between py-1.5">
                   <div>
-                    <p className="text-xs font-medium text-white">{inv.customer_name ?? (payable ? 'Supplier' : 'Walk-in')}</p>
-                    <p className="text-xs text-slate-500">{inv.invoice_number} · {inv.days_overdue}d overdue</p>
+                    <p className="text-xs font-medium text-white">{who}</p>
+                    <p className="text-xs text-slate-500">{ref} · {inv.days_overdue}d overdue</p>
                   </div>
                   <span className="text-xs font-semibold text-red-400">{formatCurrency(inv.amount_due)}</span>
                 </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>
