@@ -212,8 +212,8 @@ export default function AIChatModal({ open, onClose }: Props) {
                   <Sparkles size={13} className="text-brand-400" />
                 </div>
                 <div className="bg-surface-700/50 rounded-2xl rounded-tl-sm px-4 py-3 text-sm text-slate-200 leading-relaxed">
-                  Hi! I'm your Audity AI financial assistant. I have access to your real business data —
-                  ask me anything about your finances and I'll explain it in plain English. 💡
+                  Hi! I'm your Uche, your financial assistant. I have access to your real business data —
+                  ask me anything about your finances and I'll explain it in plain English.
                 </div>
               </div>
 
