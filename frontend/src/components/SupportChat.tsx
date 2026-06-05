@@ -135,12 +135,12 @@ export default function SupportChat() {
       {/* Floating button */}
       <button
         onClick={() => setOpen((o) => !o)}
-        className="fixed bottom-5 right-5 z-50 w-13 h-13 rounded-full bg-brand-500 hover:bg-brand-600 text-white shadow-xl flex items-center justify-center transition-all duration-200 hover:scale-110"
+        className="fixed bottom-5 right-5 z-50 w-13 h-13 rounded-full bg-brand-500 hover:bg-brand-600 text-always-white shadow-xl flex items-center justify-center transition-all duration-200 hover:scale-110"
         style={{ width: 52, height: 52 }}
         title="Chat with Uche"
         aria-label="Chat with Uche"
       >
-        {open ? <X size={22} /> : <MessageCircle size={22} />}
+        {open ? <X size={22} className="text-always-white" /> : <MessageCircle size={22} className="text-always-white" />}
         {!open && messages.length > 1 && (
           <span className="absolute -top-1 -right-1 w-4 h-4 bg-emerald-400 rounded-full border-2 border-surface-950" />
         )}

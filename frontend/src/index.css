@@ -212,6 +212,12 @@ html.light .text-slate-600 { color: #334155; }  /* was #64748b — darker       
 html.light .text-slate-700 { color: #1e293b; }
 html.light .text-white     { color: #0f172a; }
 
+/* bg-brand-500 / bg-brand-600 are always dark (navy in light mode).
+   Restore white text so labels/icons on those backgrounds stay readable.
+   Must come after the .text-white override so it takes precedence.        */
+html.light .bg-brand-500   { color: #ffffff; }
+html.light .bg-brand-600   { color: #ffffff; }
+
 /* ── Surface background overrides ──────────────────────────────────────── */
 html.light .bg-surface-600   { background-color: #cbd5e1; }
 html.light .bg-surface-700   { background-color: #e2e8f0; }
@@ -352,3 +358,7 @@ html.light .force-dark .text-orange-300 { color: #fdba74 !important; }
 html.light .force-dark .text-red-400    { color: #f87171 !important; }
 html.light .force-dark .text-amber-400  { color: #fbbf24 !important; }
 html.light .force-dark .text-emerald-400 { color: #34d399 !important; }
+
+/* Always-white text — use on icons/labels placed on permanently-dark surfaces
+   (bg-brand-500, dark FABs, badges) so they stay visible in both themes.   */
+.text-always-white { color: #ffffff !important; }

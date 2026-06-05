@@ -939,7 +939,7 @@ export default function SettingsPage() {
             <t.icon size={15} />
             <span className="hidden sm:inline">{t.label}</span>
             {t.comingSoon && (
-              <span className="hidden sm:inline text-[9px] bg-brand-500/70 text-white px-1.5 py-0.5 rounded font-semibold ml-0.5">Soon</span>
+              <span className="hidden sm:inline text-[9px] bg-brand-500/70 text-always-white px-1.5 py-0.5 rounded font-semibold ml-0.5">Soon</span>
             )}
           </button>
         ))}
