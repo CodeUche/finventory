@@ -15,6 +15,7 @@ import { offlineCache } from '@/lib/offlineCache'
 import { formatCurrency, getCurrencySymbol } from '@/lib/utils'
 import { format, subDays, subMonths, subYears, startOfYear } from 'date-fns'
 import AIChatModal from '@/components/AIChatModal'
+import { useThemeAccent } from '@/hooks/useTheme'
 
 // ─── Period options ─────────────────────────────────────────────────────────
 type PeriodKey = 'today' | '7d' | '14d' | '30d' | '60d' | '90d' | '6m' | '1y' | 'ytd'
@@ -103,6 +104,7 @@ function invoiceStatusBadge(status: string): { cls: string; label: string } {
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function DashboardPage() {
   const navigate = useNavigate()
+  const accent = useThemeAccent()
   const [period, setPeriod] = useState<PeriodKey>('30d')
   const [pnl, setPnl] = useState<any>(null)
   const [salesData, setSalesData] = useState<any[]>([])
@@ -474,8 +476,8 @@ export default function DashboardPage() {
             <AreaChart data={chartData}>
               <defs>
                 <linearGradient id="grad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#D4A017" stopOpacity={0.3} />
-                  <stop offset="95%" stopColor="#D4A017" stopOpacity={0} />
+                  <stop offset="5%" stopColor={accent} stopOpacity={0.3} />
+                  <stop offset="95%" stopColor={accent} stopOpacity={0} />
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
@@ -487,8 +489,8 @@ export default function DashboardPage() {
                 labelStyle={{ color: '#94a3b8' }}
                 formatter={(v: number) => [formatCurrency(v), 'Revenue']}
               />
-              <Area type="monotone" dataKey="revenue" stroke="#D4A017" strokeWidth={2}
-                fill="url(#grad)" dot={false} activeDot={{ r: 4, fill: '#D4A017' }} />
+              <Area type="monotone" dataKey="revenue" stroke={accent} strokeWidth={2}
+                fill="url(#grad)" dot={false} activeDot={{ r: 4, fill: accent }} />
             </AreaChart>
           </ResponsiveContainer>
         )}

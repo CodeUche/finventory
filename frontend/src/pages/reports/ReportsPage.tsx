@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
+import { useThemeAccent } from '@/hooks/useTheme'
 import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
@@ -70,6 +71,9 @@ interface CashFlow { cash_inflows: string; cash_outflows: string; net_cash_flow:
 
 export default function ReportsPage() {
   const { organisation } = useAuthStore()
+  const accent = useThemeAccent()
+  // Chart palette: first series is the theme-aware brand accent (gold dark / navy light).
+  const colors = [accent, ...COLORS.slice(1)]
   const [tab, setTab] = useState<TabId>('overview')
   const [period, setPeriod] = useState<PeriodValue>({ period: 'month' })
   const [loading, setLoading] = useState(true)
@@ -392,8 +396,8 @@ export default function ReportsPage() {
                 <AreaChart data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
                   <defs>
                     <linearGradient id="revGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#D4A017" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="#D4A017" stopOpacity={0} />
+                      <stop offset="5%" stopColor={accent} stopOpacity={0.3} />
+                      <stop offset="95%" stopColor={accent} stopOpacity={0} />
                     </linearGradient>
                     <linearGradient id="taxGrad" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.2} />
@@ -407,7 +411,7 @@ export default function ReportsPage() {
                   <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle}
                     formatter={(v: number) => formatCurrency(v)} />
                   <Legend wrapperStyle={{ fontSize: 12, paddingTop: 16, color: '#94a3b8' }} />
-                  <Area type="monotone" dataKey="Revenue" stroke="#D4A017" strokeWidth={2} fill="url(#revGrad)" dot={false} />
+                  <Area type="monotone" dataKey="Revenue" stroke={accent} strokeWidth={2} fill="url(#revGrad)" dot={false} />
                   <Area type="monotone" dataKey="Tax" stroke="#3b82f6" strokeWidth={1.5} fill="url(#taxGrad)" dot={false} />
                 </AreaChart>
               </ResponsiveContainer>
@@ -465,7 +469,7 @@ export default function ReportsPage() {
                     <Pie data={expensePieData} cx="50%" cy="50%"
                       innerRadius={55} outerRadius={90} paddingAngle={3} dataKey="value">
                       {expensePieData.map((_, i) => (
-                        <Cell key={`cell-${i}`} fill={COLORS[i % COLORS.length]} />
+                        <Cell key={`cell-${i}`} fill={colors[i % colors.length]} />
                       ))}
                     </Pie>
                     <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle}
@@ -815,7 +819,7 @@ export default function ReportsPage() {
                       <div className="h-2 bg-surface-700 rounded-full">
                         <div
                           className="h-full rounded-full"
-                          style={{ width: `${pct}%`, backgroundColor: COLORS[i % COLORS.length] }}
+                          style={{ width: `${pct}%`, backgroundColor: colors[i % colors.length] }}
                         />
                       </div>
                     </div>

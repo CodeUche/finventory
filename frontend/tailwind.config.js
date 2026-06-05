@@ -8,15 +8,20 @@ export default {
         // Brand = Audity gold. Drives all accent/highlight usages (active nav,
         // links, icon tiles, focus rings). Primary buttons are navy — see
         // .btn-primary in index.css. (Was orange.)
+        // Brand accent is theme-aware via CSS vars (see index.css):
+        //   dark  → gold  (#D4A017 family)
+        //   light → navy  (#081F44 family)
+        // The numbered shades used across the app (300/400/500/600) read the
+        // vars so every brand utility — incl. /opacity variants — flips per theme.
         brand: {
           50:  '#FBF6E6',
           100: '#F8ECC4',
           200: '#F2DD97',
-          300: '#EFD06F',
-          400: '#E8B65A',  // accent text/icons on dark
-          500: '#D4A017',  // primary gold
-          600: '#B8891F',
-          700: '#9A7416',  // gold text on light surfaces
+          300: 'rgb(var(--brand-300) / <alpha-value>)',
+          400: 'rgb(var(--brand-400) / <alpha-value>)',
+          500: 'rgb(var(--brand-500) / <alpha-value>)',
+          600: 'rgb(var(--brand-600) / <alpha-value>)',
+          700: '#9A7416',
           800: '#7E5E12',
           900: '#5F470E',
           950: '#3A2B08',
@@ -52,9 +57,9 @@ export default {
         mono: ['JetBrains Mono', 'monospace'],
       },
       boxShadow: {
-        // 'glow-orange' kept as a name for back-compat but now emits a gold glow.
-        'glow-orange': '0 0 22px rgba(212, 160, 23, 0.30)',
-        'glow-gold':   '0 0 22px rgba(212, 160, 23, 0.30)',
+        // Theme-aware brand glow (gold in dark, navy in light) via --brand-500.
+        'glow-orange': '0 0 22px rgb(var(--brand-500) / 0.30)',
+        'glow-gold':   '0 0 22px rgb(var(--brand-500) / 0.30)',
         'glow-navy':   '0 10px 30px rgba(8, 31, 68, 0.35)',
         'glow-green':  '0 0 20px rgba(34, 197, 94, 0.3)',
         'glow-red':    '0 0 20px rgba(239, 68, 68, 0.3)',
