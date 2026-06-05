@@ -147,6 +147,15 @@ export default function ExpensesPage() {
   useEffect(() => { loadExpenses() }, [search, typeFilter, periodFilter, archiveYear, archiveMonth])
   useDataRefresh(loadExpenses)
 
+  // Deep-link from Dashboard Quick Actions: /expenses?new=1 opens the New Expense modal.
+  useEffect(() => {
+    if (searchParams.get('new') === '1') {
+      setShowModal(true)
+      searchParams.delete('new')
+      setSearchParams(searchParams, { replace: true })
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     budgetApi.list().then(({ data }) => {
       const list = data.results ?? data

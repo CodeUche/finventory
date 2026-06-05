@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { useModuleAccess } from '@/hooks/useModuleAccess'
 import { Plus, Search, Package, AlertTriangle, X, Pencil, Loader2, TrendingUp, TrendingDown, History, Maximize2, Minimize2, ShieldCheck, FileDown, Table2, ArrowDownCircle, Trash2, RefreshCw } from 'lucide-react'
@@ -228,6 +229,16 @@ export default function ProductsPage() {
     loadModalDeps()
     setShowModal(true)
   }
+
+  // Deep-link from Dashboard Quick Actions: /inventory/products?new=1 opens the New Product modal.
+  const [searchParams, setSearchParams] = useSearchParams()
+  useEffect(() => {
+    if (searchParams.get('new') === '1') {
+      openCreate()
+      searchParams.delete('new')
+      setSearchParams(searchParams, { replace: true })
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const safeAmt = (v: string | null | undefined) => formatAmountInput(v ?? '0')
 

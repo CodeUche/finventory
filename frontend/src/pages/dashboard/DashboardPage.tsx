@@ -7,6 +7,7 @@ import {
 import {
   TrendingUp, TrendingDown, Package,
   AlertTriangle, DollarSign, Zap, ArrowUpRight, ShoppingCart, Clock, Sparkles, RefreshCw, Upload,
+  Receipt, UserPlus, Plus, Scale, Wallet, FileText,
 } from 'lucide-react'
 import { reportApi, inventoryApi, salesApi, einvoicingApi } from '@/services/api'
 import type { FirsStats } from '@/types'
@@ -87,6 +88,18 @@ function StatCard({
   )
 }
 
+// ─── Invoice status badge ─────────────────────────────────────────────────────
+function invoiceStatusBadge(status: string): { cls: string; label: string } {
+  const s = (status || '').toLowerCase()
+  if (s === 'paid') return { cls: 'badge-green', label: 'Paid' }
+  if (s === 'overdue') return { cls: 'badge-red', label: 'Overdue' }
+  if (s === 'partial' || s === 'partially_paid') return { cls: 'badge-yellow', label: 'Partial' }
+  if (s === 'draft') return { cls: 'badge-slate', label: 'Draft' }
+  if (s === 'proforma') return { cls: 'badge-blue', label: 'Proforma' }
+  if (s === 'cancelled' || s === 'void') return { cls: 'badge-slate', label: 'Cancelled' }
+  return { cls: 'badge-yellow', label: s ? s.charAt(0).toUpperCase() + s.slice(1) : 'Pending' }
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function DashboardPage() {
   const navigate = useNavigate()
@@ -98,6 +111,7 @@ export default function DashboardPage() {
   const [lowStockTotal, setLowStockTotal] = useState(0)
   const [overdueInvoices, setOverdueInvoices] = useState<any[]>([])
   const [overdueTotal, setOverdueTotal] = useState(0)
+  const [recentInvoices, setRecentInvoices] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [showAI, setShowAI] = useState(false)
   const [_refreshTick, setRefreshTick] = useState(0)
@@ -111,12 +125,13 @@ export default function DashboardPage() {
   useEffect(() => {
     setLoading(true)
     const fetchAll = async () => {
-      const [pnlRes, salesRes, topProdRes, stockRes, overdueRes] = await Promise.allSettled([
+      const [pnlRes, salesRes, topProdRes, stockRes, overdueRes, recentRes] = await Promise.allSettled([
         reportApi.pnl({ date_from: dateFrom, date_to: dateTo }),
         reportApi.sales({ date_from: dateFrom, date_to: dateTo, group_by: 'day' }),
         reportApi.topProducts({ date_from: dateFrom, date_to: dateTo, limit: 5 }),
         inventoryApi.stock(),
         salesApi.invoices({ status: 'overdue', page_size: 5 }),
+        salesApi.invoices({ page_size: 6 }),
       ])
 
       if (pnlRes.status === 'fulfilled') setPnl(pnlRes.value.data)
@@ -145,6 +160,12 @@ export default function DashboardPage() {
         const total = Array.isArray(d) ? d.length : (d.count ?? items.length)
         setOverdueTotal(total)
         setOverdueInvoices(items.slice(0, 5))
+      }
+
+      if (recentRes.status === 'fulfilled') {
+        const d = recentRes.value.data
+        const items: any[] = Array.isArray(d) ? d : (d.results ?? [])
+        setRecentInvoices(items.slice(0, 6))
       }
 
       setLoading(false)
@@ -339,6 +360,93 @@ export default function DashboardPage() {
           color="red"
           onClick={() => navigate('/sales?status=overdue')}
         />
+      </div>
+
+      {/* ── Recent Invoices + Quick Actions ─────────────────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Recent Invoices */}
+        <div className="card lg:col-span-2">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-semibold text-white flex items-center gap-2">
+              <Receipt size={16} className="text-brand-400" /> Recent Invoices
+            </h2>
+            <button onClick={() => navigate('/sales')} className="text-xs text-brand-400 hover:text-brand-300 flex items-center gap-1">
+              View all <ArrowUpRight size={12} />
+            </button>
+          </div>
+          {loading ? (
+            <div className="h-40 flex items-center justify-center">
+              <div className="w-7 h-7 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : recentInvoices.length === 0 ? (
+            <div className="flex flex-col items-center py-10 text-slate-500">
+              <FileText size={30} className="mb-2 opacity-30" />
+              <p className="text-sm">No invoices yet</p>
+              <button onClick={() => navigate('/sales/new')} className="mt-3 text-xs text-brand-400 hover:text-brand-300 font-medium">
+                Create your first invoice →
+              </button>
+            </div>
+          ) : (
+            <div className="divide-y divide-surface-700/60">
+              {recentInvoices.map((inv, i) => {
+                const badge = invoiceStatusBadge(inv.status)
+                return (
+                  <button
+                    key={i}
+                    onClick={() => navigate('/sales')}
+                    className="w-full flex items-center gap-3 py-2.5 first:pt-0 last:pb-0 hover:bg-surface-700/40 rounded-lg px-2 -mx-2 transition-colors text-left"
+                  >
+                    <div className="w-9 h-9 rounded-xl bg-brand-500/15 border border-brand-500/25 flex items-center justify-center shrink-0">
+                      <FileText size={15} className="text-brand-400" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-white truncate">{inv.invoice_number}</p>
+                      <p className="text-xs text-slate-500 truncate">{inv.customer_name ?? 'Walk-in customer'}</p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-sm font-semibold text-white">{formatCurrency(inv.total_amount ?? inv.amount_due ?? 0)}</p>
+                      <span className={`${badge.cls} mt-0.5`}>{badge.label}</span>
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Quick Actions */}
+        <div className="card">
+          <h2 className="font-semibold text-white flex items-center gap-2 mb-4">
+            <Zap size={16} className="text-brand-400" /> Quick Actions
+          </h2>
+          <div className="grid grid-cols-2 gap-3">
+            {([
+              { label: 'New Sale',    icon: ShoppingCart, color: 'text-brand-400 bg-brand-500/15 border-brand-500/25',   to: '/sales/new' },
+              { label: 'New Bill',    icon: Receipt,      color: 'text-blue-400 bg-blue-500/15 border-blue-500/25',      to: '/bills?new=1' },
+              { label: 'Add Customer',icon: UserPlus,     color: 'text-green-400 bg-green-500/15 border-green-500/25',   to: '/customers?new=1' },
+              { label: 'Add Product', icon: Package,      color: 'text-brand-400 bg-brand-500/15 border-brand-500/25',   to: '/inventory/products?new=1' },
+              { label: 'Record Expense', icon: Wallet,    color: 'text-red-400 bg-red-500/15 border-red-500/25',         to: '/expenses?new=1' },
+              { label: 'Reconcile',   icon: Scale,        color: 'text-blue-400 bg-blue-500/15 border-blue-500/25',      to: '/accounting/reconciliation' },
+            ] as { label: string; icon: React.ElementType; color: string; to: string }[]).map((a) => (
+              <button
+                key={a.label}
+                onClick={() => navigate(a.to)}
+                className="flex flex-col items-center justify-center gap-2 p-4 rounded-xl bg-surface-800 border border-surface-700 hover:border-brand-500/50 hover:bg-surface-700/60 transition-colors"
+              >
+                <span className={`w-10 h-10 rounded-xl border flex items-center justify-center ${a.color}`}>
+                  <a.icon size={18} />
+                </span>
+                <span className="text-xs font-medium text-slate-300 text-center leading-tight">{a.label}</span>
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={() => navigate('/sales/new')}
+            className="btn-primary w-full justify-center mt-4 py-2.5"
+          >
+            <Plus size={16} /> New Sale
+          </button>
+        </div>
       </div>
 
       {/* Revenue Trend — full width */}

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, Search, Users, X, Pencil, Loader2, FileText, RefreshCw, Download, Trash2, MinusCircle, ChevronRight, Maximize2, Minimize2 } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -109,6 +110,16 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
 
   useEffect(() => { load() }, [search, typeFilter])
   useDataRefresh(load)
+
+  // Deep-link from Dashboard Quick Actions: /customers?new=1 opens the New Customer modal.
+  const [searchParams, setSearchParams] = useSearchParams()
+  useEffect(() => {
+    if (searchParams.get('new') === '1') {
+      setShowModal(true)
+      searchParams.delete('new')
+      setSearchParams(searchParams, { replace: true })
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleCreate = async () => {
     if (!form.name.trim()) { toast.error('Customer name required'); return }

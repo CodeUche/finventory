@@ -160,6 +160,15 @@ export default function BillsPage() {
     setShowModal(true)
   }
 
+  // Deep-link from Dashboard Quick Actions: /bills?new=1 opens the New Bill modal.
+  useEffect(() => {
+    if (searchParams.get('new') === '1') {
+      openCreate()
+      searchParams.delete('new')
+      setSearchParams(searchParams, { replace: true })
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   const openEdit = (b: Bill) => {
     setEditingBillId(b.id)
     const subtotal = parseFloat((b as any).subtotal ?? '0')
