@@ -11,18 +11,29 @@ class HealthCheckView(APIView):
     """
     GET /api/v1/health/
 
-    Returns 200 if the application, database, and cache are reachable.
-    Used by load balancers, monitoring systems, and CI health checks.
+    HTTP 200  — database reachable (app is serving requests).
+               Cache may report "degraded" but the app still functions.
+    HTTP 503  — database unreachable (app cannot serve requests).
+
+    Redis/cache is treated as optional infrastructure: its failure degrades
+    background tasks (Celery) but does not prevent API responses. Returning
+    503 for a missing Redis service would break CI and load-balancer health
+    checks even though the app is perfectly healthy.
+
     No authentication required.
     """
 
     permission_classes = [AllowAny]
 
     def get(self, request):
-        db_status = self._check_db()
+        db_status    = self._check_db()
         cache_status = self._check_cache()
 
-        overall = "ok" if db_status == "ok" and cache_status == "ok" else "degraded"
+        # App is "ok" only when both services are healthy.
+        # DB down → 503 (hard failure). Cache down → 200 with degraded warning.
+        db_ok    = db_status == "ok"
+        overall  = "ok" if db_ok and cache_status == "ok" else "degraded"
+        http_status = 200 if db_ok else 503
 
         return Response(
             {
@@ -31,7 +42,7 @@ class HealthCheckView(APIView):
                 "cache": cache_status,
                 "version": "1.0.0",
             },
-            status=200 if overall == "ok" else 503,
+            status=http_status,
         )
 
     def _check_db(self) -> str:

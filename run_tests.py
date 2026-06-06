@@ -554,24 +554,26 @@ class Suites:
 
     # ── E2E: Playwright smoke (Chromium only) ─────────────────────────────────
     @staticmethod
-    def e2e_smoke(verbose: bool, base_url: str) -> SuiteResult:
+    def e2e_smoke(verbose: bool, base_url: str, api_url: str = "") -> SuiteResult:
         return _run_playwright(
             "E2E Smoke (Chromium)",
             project="chromium",
             grep="@smoke",
             base_url=base_url,
+            api_url=api_url,
             verbose=verbose,
             report_name="e2e-smoke",
         )
 
     # ── E2E: full user journey (Chromium + Firefox) ───────────────────────────
     @staticmethod
-    def e2e_full(verbose: bool, base_url: str) -> SuiteResult:
+    def e2e_full(verbose: bool, base_url: str, api_url: str = "") -> SuiteResult:
         return _run_playwright(
             "E2E Full (multi-browser)",
             project=None,   # all configured browsers
             grep=None,
             base_url=base_url,
+            api_url=api_url,
             verbose=verbose,
             report_name="e2e-full",
         )
@@ -623,6 +625,7 @@ def _run_playwright(
     base_url: str,
     verbose: bool,
     report_name: str,
+    api_url: str = "",
 ) -> SuiteResult:
     print(bold(f"\n▶  {name}"))
     t0 = time.monotonic()
@@ -647,7 +650,11 @@ def _run_playwright(
         f"--reporter=list",
         f"--output={ROOT}/test-results/{report_name}",
     ]
-    env = {"BASE_URL": base_url, "CI": "true"}
+    env: dict[str, str] = {"BASE_URL": base_url, "CI": "true"}
+    # Pass API_URL separately so smoke.spec.ts can target the backend correctly
+    # even when BASE_URL points to a frontend URL (e.g. Vercel) that differs
+    # from the API host.  Falls back to --api-url arg or base_url when blank.
+    env["API_URL"] = api_url or base_url
     rc, out, err = run_cmd(cmd, cwd=E2E_DIR, env=env, verbose=verbose, timeout=300)
     passed = rc == 0
     duration = time.monotonic() - t0
@@ -778,6 +785,7 @@ def orchestrate(args: argparse.Namespace) -> RunReport:
     retries = args.retry
     fail_fast = args.fail_fast
     base_url = args.base_url
+    api_url   = args.api_url
 
     def add(result: SuiteResult):
         report.suites.append(result)
@@ -814,7 +822,7 @@ def orchestrate(args: argparse.Namespace) -> RunReport:
         elif suite == "perf":
             add(Suites.performance_locust(verbose, base_url))
         elif suite == "e2e":
-            add(Suites.e2e_full(verbose, base_url))
+            add(Suites.e2e_full(verbose, base_url, api_url))
         elif suite == "smoke":
             add(Suites.backend_smoke(verbose, retries))
         else:
@@ -855,8 +863,8 @@ def orchestrate(args: argparse.Namespace) -> RunReport:
 
     # 9. E2E browser tests (optional)
     if args.e2e:
-        add(Suites.e2e_smoke(verbose, base_url))
-        add(Suites.e2e_full(verbose, base_url))
+        add(Suites.e2e_smoke(verbose, base_url, api_url))
+        add(Suites.e2e_full(verbose, base_url, api_url))
 
     return report
 
@@ -931,8 +939,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--fail-fast", action="store_true", help="Stop on first suite failure")
     p.add_argument("--verbose", "-v", action="store_true", help="Stream subprocess output")
     p.add_argument("--report", action="store_true", help="Write test-report.md")
-    p.add_argument("--base-url", default="http://localhost:8000",
-                   help="Backend base URL for E2E / Perf tests (default: http://localhost:8000)")
+    p.add_argument("--base-url", default="http://localhost:3000",
+                   help="Frontend base URL for E2E tests (default: http://localhost:3000)")
+    p.add_argument("--api-url", default="http://localhost:8000",
+                   help="Backend API URL for E2E / Perf tests (default: http://localhost:8000)")
     return p.parse_args()
 
 
