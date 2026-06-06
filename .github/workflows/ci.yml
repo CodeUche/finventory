@@ -337,7 +337,12 @@ jobs:
           exit 0
 
 # ─── Build — Tauri Desktop (Windows) ──────────────────────────────────────────
-# Runs on push to main AND on version tags (for GitHub Release).
+# Runs only on version tags (v*.*.*) — NOT on every push to main.
+# This keeps installers private until a deliberate release tag is pushed.
+#
+# On launch day:
+#   git tag v1.0.0 && git push origin v1.0.0
+#
 # Requires these GitHub secrets:
 #   VITE_API_BASE_URL                  — Production API URL
 #   TAURI_SIGNING_PRIVATE_KEY          — Base64 private key (tauri signer generate)
@@ -346,9 +351,9 @@ jobs:
     name: Build — Desktop (Windows)
     runs-on: windows-latest
     needs: [frontend-build]
-    if: >
-      github.event_name == 'push' &&
-      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
+    # Only build + publish installers when a version tag is pushed.
+    # Keeps .exe / .msi private on this public repo until launch.
+    if: startsWith(github.ref, 'refs/tags/v')
 
     concurrency:
       group: build-desktop-${{ github.ref }}
@@ -395,7 +400,7 @@ jobs:
           name: audity-windows-msi
           path: frontend/src-tauri/target/release/bundle/msi/*.msi
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90
 
       - name: Upload NSIS setup
         uses: actions/upload-artifact@v4
@@ -403,7 +408,7 @@ jobs:
           name: audity-windows-nsis
           path: frontend/src-tauri/target/release/bundle/nsis/*.exe
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90
 
 # ─── E2E — Playwright smoke suite ────────────────────────────────────────────
 # Runs after deploy-backend completes so it tests the freshly deployed stack.
