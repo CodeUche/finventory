@@ -1418,10 +1418,11 @@ function AgingCard({
               </div>
             )
           })}
-          {(aging.invoices ?? []).slice(0, 4).length > 0 && (
+          {/* AP aging backend returns `bills` key; AR aging returns `invoices` */}
+          {((payable ? (aging as any).bills : aging.invoices) ?? []).slice(0, 4).length > 0 && (
             <div className="mt-3 pt-3 border-t border-surface-700">
               <p className="text-xs text-slate-500 mb-2">{payable ? 'Most Overdue Payables' : 'Most Overdue Receivables'}</p>
-              {(aging.invoices ?? []).slice(0, 4).map(inv => {
+              {((payable ? (aging as any).bills : aging.invoices) ?? []).slice(0, 4).map((inv: any) => {
                 // AP aging items have bill_number; AR items have invoice_number
                 const ref = (inv as any).bill_number ?? (inv as any).invoice_number ?? '—'
                 const who = (inv as any).supplier_name ?? inv.customer_name ?? (payable ? 'Supplier' : 'Walk-in')
