@@ -12,7 +12,7 @@
  */
 
 import { test, expect } from "@playwright/test";
-import { EMAIL, PASS, hasCredentials } from "./helpers";
+import { EMAIL, PASS, credentialsWork } from "./helpers";
 
 const BASE = process.env.BASE_URL || "http://localhost:3000";
 const API  = process.env.API_URL  || (process.env.BASE_URL ? process.env.BASE_URL.replace(/\/api\/v1\/?$/, "") : "http://localhost:8000");
@@ -117,7 +117,7 @@ test.describe("@smoke Frontend Critical Pages", () => {
 test.describe("@smoke Login Flow", () => {
   test.beforeEach(({}, testInfo) => {
     if (!frontendLive) testInfo.skip("Frontend not reachable at BASE_URL — skipping");
-    if (!hasCredentials) testInfo.skip("TEST_EMAIL / TEST_PASSWORD secrets not configured — skipping auth-dependent test");
+    if (!credentialsWork) testInfo.skip("TEST_EMAIL / TEST_PASSWORD secrets not configured — skipping auth-dependent test");
   });
 
   test("can log in and see navigation", async ({ page }) => {

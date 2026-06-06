@@ -10,7 +10,7 @@
  */
 
 import { test, expect, Page } from "@playwright/test";
-import { EMAIL, PASS, hasCredentials } from "./helpers";
+import { EMAIL, PASS, credentialsWork } from "./helpers";
 
 // Detect whether the web frontend is actually accessible at BASE_URL.
 // Re-used from smoke.spec.ts so auth tests skip cleanly when Vercel isn't live.
@@ -55,7 +55,7 @@ test.describe("@smoke Authentication", () => {
   });
 
   test("valid credentials redirect to dashboard @smoke", async ({ page }) => {
-    if (!hasCredentials) test.skip();
+    if (!credentialsWork) test.skip();
     await login(page);
     // Accept any non-login URL — Railway cold-start can cause slow redirects.
     // /dashboard (regular user), /platform-admin (superuser), / (root redirect).
@@ -88,7 +88,7 @@ test.describe("Full authentication journey", () => {
   });
 
   test("login → view dashboard → log out → redirected to login", async ({ page }) => {
-    if (!hasCredentials) test.skip();
+    if (!credentialsWork) test.skip();
     await login(page);
     // Accept any non-login, non-onboarding URL after redirect
     await page.waitForURL(

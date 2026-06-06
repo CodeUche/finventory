@@ -10,12 +10,12 @@
  */
 
 import { test, expect } from "@playwright/test";
-import { loginAndGo, hasCredentials } from "./helpers";
+import { loginAndGo, credentialsWork } from "./helpers";
 
 // ─── Navigation to sales ──────────────────────────────────────────────────────
 
 test.describe("Sales Navigation", () => {
-  test.beforeEach(({}, testInfo) => { if (!hasCredentials) testInfo.skip(); });
+  test.beforeEach(({}, testInfo) => { if (!credentialsWork) testInfo.skip(); });
   test("sales link in sidebar navigates to sales page", async ({ page }) => {
     await loginAndGo(page);
     await page.getByRole("link", { name: /sales|invoices/i }).first().click();
@@ -28,7 +28,7 @@ test.describe("Sales Navigation", () => {
 
 test.describe("New Sale / Invoice", () => {
   test.beforeEach(async ({ page }, testInfo) => {
-    if (!hasCredentials) { testInfo.skip(); return; }
+    if (!credentialsWork) { testInfo.skip(); return; }
     await loginAndGo(page, "/sales");
   });
 
@@ -54,7 +54,7 @@ test.describe("New Sale / Invoice", () => {
 // ─── Invoice detail ───────────────────────────────────────────────────────────
 
 test.describe("Invoice Detail", () => {
-  test.beforeEach(({}, testInfo) => { if (!hasCredentials) testInfo.skip(); });
+  test.beforeEach(({}, testInfo) => { if (!credentialsWork) testInfo.skip(); });
   test("clicking an invoice row opens the invoice drawer/detail", async ({ page }) => {
     await loginAndGo(page, "/sales");
 
@@ -76,7 +76,7 @@ test.describe("Invoice Detail", () => {
 // ─── Quotes journey ───────────────────────────────────────────────────────────
 
 test.describe("Quotes", () => {
-  test.beforeEach(({}, testInfo) => { if (!hasCredentials) testInfo.skip(); });
+  test.beforeEach(({}, testInfo) => { if (!credentialsWork) testInfo.skip(); });
   test("quotes page loads", async ({ page }) => {
     await loginAndGo(page, "/quotes");
     await expect(
@@ -96,7 +96,7 @@ test.describe("Quotes", () => {
 // ─── Customers journey ────────────────────────────────────────────────────────
 
 test.describe("Customers", () => {
-  test.beforeEach(({}, testInfo) => { if (!hasCredentials) testInfo.skip(); });
+  test.beforeEach(({}, testInfo) => { if (!credentialsWork) testInfo.skip(); });
   test("customers page loads and shows content", async ({ page }) => {
     await loginAndGo(page, "/customers");
     await expect(
@@ -122,7 +122,7 @@ test.describe("Customers", () => {
 // ─── Dashboard tiles ─────────────────────────────────────────────────────────
 
 test.describe("@smoke Dashboard", () => {
-  test.beforeEach(({}, testInfo) => { if (!hasCredentials) testInfo.skip(); });
+  test.beforeEach(({}, testInfo) => { if (!credentialsWork) testInfo.skip(); });
   test("dashboard shows key metric tiles after login", async ({ page }) => {
     await loginAndGo(page);
     // Wait for at least one metric tile / card
@@ -155,7 +155,7 @@ test.describe("Accessibility", () => {
   });
 
   test("interactive elements have accessible labels", async ({ page }) => {
-    if (!hasCredentials) test.skip();
+    if (!credentialsWork) test.skip();
     await loginAndGo(page, "/sales");
     // All buttons should have accessible names
     const buttons = page.getByRole("button");

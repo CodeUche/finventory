@@ -4,6 +4,7 @@ const BASE_URL = process.env.BASE_URL || "http://localhost:3000";
 
 export default defineConfig({
   testDir: "./tests",
+  globalSetup: "./global-setup",
   fullyParallel: true,
   retries: process.env.CI ? 2 : 0,
   workers: process.env.CI ? 2 : undefined,

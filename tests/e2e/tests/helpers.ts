@@ -1,20 +1,39 @@
 /**
  * Shared E2E helpers — imported by all spec files.
- *
- * Update this file whenever a new page, route, or auth pattern is added.
  */
 
 import { Page, expect } from "@playwright/test";
+import * as fs from "fs";
+import * as path from "path";
 
 export const EMAIL = process.env.TEST_EMAIL    || "";
 export const PASS  = process.env.TEST_PASSWORD || "";
 
 /**
  * True when real credentials are configured.
- * Tests that require login call `skipIfNoCredentials()` at the top so they
- * appear as ⊘ skipped (not ✘ failed) when secrets aren't set in CI.
  */
 export const hasCredentials = Boolean(EMAIL && PASS);
+
+// ─── Login-validity flag ──────────────────────────────────────────────────────
+// global-setup.ts writes a sentinel file when the login pre-check fails.
+// Workers read it here at module load time so all credential-dependent tests
+// skip instantly rather than timing out.
+
+// helpers.ts is at tests/e2e/tests/ — sentinel lives one level up at tests/e2e/
+const LOGIN_FAILED_SENTINEL = path.join(__dirname, "..", ".login-failed");
+
+function _readLoginWorksFlag(): boolean {
+  try {
+    return !fs.existsSync(LOGIN_FAILED_SENTINEL);
+  } catch {
+    return true; // default: assume login works until proven otherwise
+  }
+}
+
+/** True if global-setup determined that the test credentials are valid. */
+export const credentialsWork: boolean = hasCredentials && _readLoginWorksFlag();
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /** Call at the top of any test that needs a logged-in session. */
 export function skipIfNoCredentials(test: { skip(reason?: string): void }) {
@@ -26,22 +45,31 @@ export function skipIfNoCredentials(test: { skip(reason?: string): void }) {
 /**
  * Log in and navigate to `path`.
  *
- * Fixes vs. old version:
- * - Timeout raised to 25 s to survive Railway cold-starts.
- * - Always navigates to the requested path, even when path === "/dashboard".
- *   (Old code skipped the goto for "/dashboard", leaving the page on whatever
- *   the login redirect went to — e.g. /platform-admin for superusers.)
- * - Waits for the page to leave /login before navigating, so the session
- *   cookie is set before we hit a protected route.
+ * Fails fast (≤5 s) when login is rejected rather than waiting 25 s.
+ * Uses a Promise.race between the redirect URL change and a timeout; if
+ * the redirect doesn't happen the credentials are bad.
  */
 export async function loginAndGo(page: Page, path = "/dashboard") {
   await page.goto("/login");
   await page.locator('input[type="email"]').fill(EMAIL);
   await page.locator('input[type="password"]').first().fill(PASS);
   await page.locator('button[type="submit"]').click();
-  // Wait for post-login redirect — any URL that is not /login.
-  // 25 s covers Railway cold-start latency (~20 s on the free tier).
-  await page.waitForURL(url => !url.pathname.includes("/login"), { timeout: 25_000 });
+
+  // Fast failure: if still on /login after 5 s, credentials were rejected.
+  // This surfaces as a clear error instead of a 25 s timeout.
+  const redirected = await page
+    .waitForURL(url => !url.pathname.includes("/login"), { timeout: 5_000 })
+    .then(() => true)
+    .catch(() => false);
+
+  if (!redirected) {
+    throw new Error(
+      "LOGIN FAILED — page stayed on /login after submit. " +
+      "Check that TEST_EMAIL / TEST_PASSWORD GitHub secrets match a real user " +
+      "on the Railway production database."
+    );
+  }
+
   // Always navigate to the target path so tests land where they expect.
   await page.goto(path);
 }

@@ -17,7 +17,7 @@
  */
 
 import { test, expect, Page } from "@playwright/test";
-import { hasCredentials } from "./helpers";
+import { credentialsWork } from "./helpers";
 
 const PARTNER_EMAIL = process.env.TEST_PARTNER_EMAIL || process.env.TEST_EMAIL || "";
 const PARTNER_PASS  = process.env.TEST_PARTNER_PASSWORD || process.env.TEST_PASSWORD || "";

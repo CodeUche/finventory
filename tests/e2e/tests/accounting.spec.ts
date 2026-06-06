@@ -8,10 +8,10 @@
  */
 
 import { test, expect } from "@playwright/test";
-import { loginAndGo, hasCredentials } from "./helpers";
+import { loginAndGo, credentialsWork } from "./helpers";
 
 test.beforeEach(({}, testInfo) => {
-  if (!hasCredentials) testInfo.skip();
+  if (!credentialsWork) testInfo.skip();
 });
 
 // ─── Chart of Accounts ─────────────────────────────────────────────────────────
