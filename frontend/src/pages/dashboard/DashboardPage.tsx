@@ -247,18 +247,22 @@ function HealthRatioStrip({
     bad:     'text-red-400',
     neutral: 'text-slate-400',
   }
-  const statusBg = {
-    good:    'bg-emerald-500/10 border-emerald-500/20',
-    warn:    'bg-amber-500/10 border-amber-500/20',
-    bad:     'bg-red-500/10 border-red-500/20',
-    neutral: 'bg-surface-800 border-surface-700',
-  }
+  // Each ratio card gets its own identity tint so no two cards ever share a
+  // colour (Gross Margin vs Net Margin in particular). Financial health is
+  // still conveyed by the status-coloured value below, not the card background.
+  const cardTheme = [
+    'bg-blue-500/10 border-blue-500/20',     // DSO
+    'bg-violet-500/10 border-violet-500/20', // DPO
+    'bg-teal-500/10 border-teal-500/20',     // Gross Margin
+    'bg-pink-500/10 border-pink-500/20',     // Net Margin
+    'bg-cyan-500/10 border-cyan-500/20',     // Cust. Concentration
+  ]
 
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-      {ratios.map(r => (
-        <div key={r.label} className={`rounded-xl border p-3 ${statusBg[r.status]}`}>
-          <p className="text-xs text-slate-500 mb-1">{r.label}</p>
+      {ratios.map((r, i) => (
+        <div key={r.label} className={`rounded-xl border p-3 ${cardTheme[i % cardTheme.length]}`}>
+          <p className="text-xs text-slate-500 mb-1 leading-tight">{r.label}</p>
           <p className={`text-lg font-bold tabular-nums ${statusColor[r.status]}`}>{r.value}</p>
           <p className="text-[10px] text-slate-500 mt-0.5 leading-snug">{r.note}</p>
         </div>
@@ -417,12 +421,12 @@ function ReportShortcuts({
             onClick={() => navigate(c.to)}
             className="card p-4 text-left hover:border-brand-500/40 transition-colors group"
           >
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2">
-                <Icon size={14} className={c.iconColor} />
-                <p className="text-xs font-semibold text-white">{c.title}</p>
+            <div className="flex items-start justify-between gap-1 mb-2">
+              <div className="flex items-start gap-1.5 min-w-0">
+                <Icon size={14} className={`${c.iconColor} shrink-0 mt-px`} />
+                <p className="text-xs font-semibold text-white leading-tight">{c.title}</p>
               </div>
-              <ArrowUpRight size={12} className="text-slate-600 group-hover:text-brand-400 transition-colors" />
+              <ArrowUpRight size={12} className="shrink-0 text-slate-600 group-hover:text-brand-400 transition-colors" />
             </div>
             <p className="text-[10px] text-slate-500 mb-2">{c.sub}</p>
             {/* Mini chart or skeleton placeholder */}
