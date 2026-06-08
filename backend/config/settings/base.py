@@ -131,8 +131,12 @@ MIDDLEWARE = [
     "apps.tenancy.middleware.TenantMiddleware",
     # White-label domain detection — attaches request.white_label for branded login
     "apps.tenancy.white_label_middleware.WhiteLabelMiddleware",
-    # PostHog server-side analytics — must be last so request.user is populated
-    "apps.core.posthog_middleware.PostHogMiddleware",
+    # NOTE: PostHogMiddleware (server-side `api_request` per call) is intentionally
+    # disabled — it fired one event on every authenticated API request, which is
+    # far too noisy and costly (PostHog bills per event). Product analytics is
+    # handled client-side instead (frontend `$pageview` + identified users).
+    # The middleware class still exists in apps/core/posthog_middleware.py if a
+    # scoped (writes-only) version is ever wanted.
 ]
 
 ROOT_URLCONF = "config.urls"
