@@ -126,6 +126,8 @@ export const useAuthStore = create<AuthState>()(
         sessionStorage.removeItem('finventory-auth') // belt-and-suspenders
         // Clear offline cache so the next user doesn't see stale org data
         import('@/lib/offlineCache').then(({ offlineCache }) => offlineCache.clearAll()).catch(() => {})
+        // Clear PostHog identity so the next user starts a fresh session
+        import('@/lib/analytics').then(({ resetAnalytics }) => resetAnalytics()).catch(() => {})
         set({
           user: null, tokens: null, organisation: null, isAuthenticated: false,
           orgInitialized: false,

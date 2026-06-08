@@ -1,6 +1,7 @@
 import React from 'react'
 import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
+import { trackPageview } from '@/lib/analytics'
 import type { ModuleKey } from '@/types'
 import AppLayout from '@/components/layout/AppLayout'
 import LoginPage from '@/pages/auth/LoginPage'
@@ -198,9 +199,19 @@ function WriteModuleRoute({ module, children }: { module: ModuleKey; children: R
   return <>{children}</>
 }
 
+// Fires a PostHog $pageview whenever the route changes (SPA navigation).
+function RouteAnalytics() {
+  const location = useLocation()
+  React.useEffect(() => {
+    trackPageview(location.pathname + location.search)
+  }, [location.pathname, location.search])
+  return null
+}
+
 export default function App() {
   return (
     <ErrorBoundary>
+    <RouteAnalytics />
     <Routes>
       {/* Public */}
       <Route path="/login" element={<LoginPage />} />

@@ -4,6 +4,7 @@ import { Eye, EyeOff, Loader2, Users, KeyRound } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { api, authApi, bypassNextGets } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
+import { identifyUser } from '@/lib/analytics'
 import AuthShell from '@/components/auth/AuthShell'
 
 export default function SubAccountLoginPage() {
@@ -57,6 +58,7 @@ export default function SubAccountLoginPage() {
       // Atomic commit — single set() so ProtectedRoute never sees isAuthenticated=true
       // with organisation=null (the race condition that caused /onboarding redirects).
       initSession(data.user, { access: data.access, refresh: data.refresh }, firstOrg, orgs)
+      identifyUser(data.user, firstOrg)
       if (firstOrg) api.defaults.headers.common['X-Organisation-ID'] = firstOrg.id
       bypassNextGets(3000)
 

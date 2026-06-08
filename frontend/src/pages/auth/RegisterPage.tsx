@@ -4,6 +4,7 @@ import { Eye, EyeOff, Loader2, CheckCircle2, XCircle, Mail } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { api, authApi, orgApi } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
+import { identifyUser } from '@/lib/analytics'
 import AuthShell from '@/components/auth/AuthShell'
 
 const PW_CRITERIA = [
@@ -56,10 +57,12 @@ export default function RegisterPage() {
             const orgs = orgsRes.data.results ?? orgsRes.data
             const firstOrg = orgs[0] ?? (bootstrapOrgId ? { id: bootstrapOrgId } as any : null)
             initSession(data.user, data.tokens, firstOrg, orgs)
+            identifyUser(data.user, firstOrg)
             if (firstOrg) api.defaults.headers.common['X-Organisation-ID'] = firstOrg.id
             navigate(firstOrg ? '/dashboard' : '/onboarding')
           } catch {
             initSession(data.user, data.tokens, null, [])
+            identifyUser(data.user, null)
             navigate('/onboarding')
           }
         }

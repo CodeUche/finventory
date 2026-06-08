@@ -6,10 +6,14 @@ import App from './App'
 import { NotificationsProvider } from './contexts/NotificationsContext'
 import { initTheme } from './hooks/useTheme'
 import { useAuthStore } from './store/authStore'
+import { initAnalytics } from './lib/analytics'
 import './index.css'
 
 // Apply stored theme before first render to avoid flash
 initTheme()
+
+// Initialise PostHog product analytics (no-op if VITE_POSTHOG_KEY is unset).
+initAnalytics()
 
 // ── White-label branding ──────────────────────────────────────────────────
 // Fetch branding for the current hostname. On the main Audity domain the

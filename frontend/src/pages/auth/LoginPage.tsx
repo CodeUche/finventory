@@ -5,6 +5,7 @@ import toast from 'react-hot-toast'
 import { api, authApi, bypassNextGets } from '@/services/api'
 import { offlineCache } from '@/lib/offlineCache'
 import { useAuthStore } from '@/store/authStore'
+import { identifyUser } from '@/lib/analytics'
 import AuthShell from '@/components/auth/AuthShell'
 
 export default function LoginPage() {
@@ -117,6 +118,7 @@ export default function LoginPage() {
     // Atomic commit — single set() so ProtectedRoute never sees isAuthenticated=true
     // with organisation=null (which caused /onboarding redirects in the past).
     initSession(user, tokens, firstOrg, orgs)
+    identifyUser(user, firstOrg)
     if (firstOrg) {
       api.defaults.headers.common['X-Organisation-ID'] = firstOrg.id
     } else {
