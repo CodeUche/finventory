@@ -85,6 +85,7 @@ THIRD_PARTY_APPS = [
     "drf_spectacular",
     "django_celery_beat",
     "anymail",
+    "django_prometheus",   # exposes /metrics for Prometheus → Grafana
 ]
 
 LOCAL_APPS = [
@@ -115,6 +116,9 @@ INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
 # ─── Middleware ────────────────────────────────────────────────────────────────
 MIDDLEWARE = [
+    # Prometheus request timing — MUST be the very first middleware so it wraps
+    # the whole stack (see PrometheusAfterMiddleware at the bottom of this list).
+    "django_prometheus.middleware.PrometheusBeforeMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "apps.core.security_middleware.SecurityHeadersMiddleware",  # security headers on every response
     "corsheaders.middleware.CorsMiddleware",          # must be before CommonMiddleware
@@ -137,6 +141,8 @@ MIDDLEWARE = [
     # handled client-side instead (frontend `$pageview` + identified users).
     # The middleware class still exists in apps/core/posthog_middleware.py if a
     # scoped (writes-only) version is ever wanted.
+    # Prometheus response timing — MUST be the very last middleware.
+    "django_prometheus.middleware.PrometheusAfterMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"

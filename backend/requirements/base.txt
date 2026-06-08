@@ -61,3 +61,6 @@ dnspython==2.7.0
 
 # Analytics
 posthog>=3.0.0
+
+# Observability — exposes Prometheus metrics at /metrics for Grafana
+django-prometheus>=2.3.1

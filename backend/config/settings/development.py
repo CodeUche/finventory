@@ -4,8 +4,10 @@ from .base import *  # noqa: F401, F403
 
 DEBUG = True
 
-# Restrict to known local origins only — prevents host-header injection even in dev
-ALLOWED_HOSTS = ["localhost", "127.0.0.1", "0.0.0.0"]
+# Restrict to known local origins only — prevents host-header injection even in dev.
+# host.docker.internal lets the local observability stack (Prometheus/blackbox in
+# Docker) scrape the host-run dev server without tripping DisallowedHost.
+ALLOWED_HOSTS = ["localhost", "127.0.0.1", "0.0.0.0", "host.docker.internal"]
 
 # Whitelist only known local origins in development
 CORS_ALLOW_ALL_ORIGINS = False

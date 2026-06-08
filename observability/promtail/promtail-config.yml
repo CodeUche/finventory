@@ -1,0 +1,31 @@
+# Promtail tails the Django log directory and ships entries to Loki.
+# The backend writes rotating logs to backend/logs/ (see LOGGING in base.py),
+# which is mounted into this container at /var/log/finventory.
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: finventory-backend
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: finventory
+          service: backend
+          __path__: /var/log/finventory/*.log
+    pipeline_stages:
+      # Tag obvious error lines so they're easy to filter in Grafana.
+      - match:
+          selector: '{job="finventory"}'
+          stages:
+            - regex:
+                expression: '(?P<level>DEBUG|INFO|WARNING|ERROR|CRITICAL)'
+            - labels:
+                level:

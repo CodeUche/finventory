@@ -1,0 +1,51 @@
+# Prometheus scrape configuration for the Audity observability stack.
+# Targets use host.docker.internal so they reach services on the host machine
+# (Django + Postgres), regardless of how those are started.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    app: audity
+
+scrape_configs:
+  # ─── Prometheus self-monitoring ─────────────────────────────
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # ─── Django application metrics (django-prometheus /metrics) ─
+  - job_name: django
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["host.docker.internal:8000"]
+        labels:
+          service: backend
+
+  # ─── PostgreSQL metrics (postgres_exporter) ─────────────────
+  - job_name: postgres
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+        labels:
+          service: database
+
+  # ─── Uptime / health checks (blackbox_exporter, HTTP probe) ─
+  - job_name: blackbox-http
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+          # Add any public URLs you want uptime monitoring for here.
+          - http://host.docker.internal:8000/api/v1/health/
+        labels:
+          service: uptime
+    relabel_configs:
+      # Standard blackbox relabel: pass the target as the ?target= param and
+      # point the actual scrape at the blackbox_exporter.
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115

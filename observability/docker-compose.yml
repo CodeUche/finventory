@@ -1,0 +1,116 @@
+# ============================================================
+# Finventory / Audity — Observability stack (Grafana)
+# ============================================================
+# A self-contained monitoring stack: Prometheus (metrics), Loki + Promtail
+# (logs), postgres_exporter (DB metrics), blackbox_exporter (uptime), and
+# Grafana (dashboards) — all pre-provisioned.
+#
+# Usage:
+#   cd finventory/observability
+#   cp .env.example .env          # then edit DB creds if needed
+#   docker compose up -d
+#   open http://localhost:3001    # Grafana (admin / admin by default)
+#
+# It scrapes whatever runs on the HOST machine via host.docker.internal, so it
+# works whether you run Django via the venv (manage.py runserver) or in Docker,
+# and Postgres via the main compose. No need to share networks.
+#
+# To monitor PRODUCTION (Railway) instead, see README.md → "Monitoring prod".
+# ============================================================
+
+name: audity-observability
+
+x-host-gateway: &host-gateway
+  extra_hosts:
+    - "host.docker.internal:host-gateway"   # Linux compatibility (no-op on Docker Desktop)
+
+services:
+
+  # ─── Prometheus — metrics collection ─────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    restart: unless-stopped
+    <<: *host-gateway
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+    ports:
+      - "9090:9090"
+
+  # ─── postgres_exporter — PostgreSQL metrics ──────────────────
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+    restart: unless-stopped
+    <<: *host-gateway
+    environment:
+      # Points at the host's Postgres (the main docker-compose db on :5432).
+      # Split URI/USER/PASS form avoids URL-encoding issues with special chars in
+      # the password (#, +, * etc.).
+      DATA_SOURCE_URI: "host.docker.internal:5432/${DB_NAME:-finventory}?sslmode=disable"
+      DATA_SOURCE_USER: "${DB_USER:-finv_app}"
+      DATA_SOURCE_PASS: "${DB_PASSWORD:-postgres}"
+    ports:
+      - "9187:9187"
+
+  # ─── blackbox_exporter — uptime / health probing ─────────────
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.25.0
+    restart: unless-stopped
+    <<: *host-gateway
+    volumes:
+      - ./blackbox/blackbox.yml:/etc/blackbox_exporter/config.yml:ro
+    command:
+      - "--config.file=/etc/blackbox_exporter/config.yml"
+    ports:
+      - "9115:9115"
+
+  # ─── Loki — log aggregation ──────────────────────────────────
+  loki:
+    image: grafana/loki:3.1.1
+    restart: unless-stopped
+    volumes:
+      - ./loki/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    ports:
+      - "3100:3100"
+
+  # ─── Promtail — ships Django logs into Loki ──────────────────
+  promtail:
+    image: grafana/promtail:3.1.1
+    restart: unless-stopped
+    volumes:
+      - ./promtail/promtail-config.yml:/etc/promtail/config.yml:ro
+      # Mount the Django log directory (read-only) so Promtail can tail it.
+      - ../backend/logs:/var/log/finventory:ro
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+
+  # ─── Grafana — dashboards ────────────────────────────────────
+  grafana:
+    image: grafana/grafana:11.2.0
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GF_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3001:3000"   # 3001 on host to avoid clashing with the Vite dev server
+    depends_on:
+      - prometheus
+      - loki
+
+volumes:
+  prometheus_data:
+  grafana_data:
+  loki_data:
