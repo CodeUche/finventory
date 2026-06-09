@@ -422,11 +422,11 @@ function ReportShortcuts({
             className="card p-4 text-left hover:border-brand-500/40 transition-colors group relative"
           >
             <ArrowUpRight size={12} className="absolute top-3 right-3 text-slate-600 group-hover:text-brand-400 transition-colors" />
-            <div className="flex items-center gap-1.5 mb-1 pr-4">
-              <Icon size={14} className={`${c.iconColor} shrink-0`} />
-              <p className="text-xs font-semibold text-white leading-tight whitespace-nowrap">{c.title}</p>
+            <div className="flex items-start gap-1.5 mb-1 pr-5">
+              <Icon size={13} className={`${c.iconColor} shrink-0 mt-px`} />
+              <p className="text-xs font-semibold text-white leading-tight">{c.title}</p>
             </div>
-            <p className="text-[10px] text-slate-500 mb-2">{c.sub}</p>
+            <p className="text-[10px] text-slate-500 mb-2 leading-tight">{c.sub}</p>
             {/* Mini chart or skeleton placeholder */}
             {c.chart ?? (
               <div className="h-20 flex items-center justify-center">
