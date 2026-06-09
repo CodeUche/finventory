@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, X, ClipboardList, Loader2, FileText, ChevronDown, ChevronUp, Trash2, FileDown, Mail, MessageCircle, CheckCircle, ExternalLink, RefreshCw } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { quoteApi, customerApi, inventoryApi, salesApi, tauriFetch, bypassNextGets } from '@/services/api'
+import { quoteApi, customerApi, inventoryApi, salesApi, urlToDataUrl, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
 import { saveBlobFile } from '@/lib/saveBlobFile'
@@ -20,18 +20,6 @@ function hexToRgb(hex?: string): [number, number, number] {
   return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)]
 }
 
-async function urlToDataUrl(url: string): Promise<string | null> {
-  try {
-    const res = await tauriFetch(url)
-    const blob = await res.blob()
-    return await new Promise<string>((resolve, reject) => {
-      const r = new FileReader()
-      r.onloadend = () => resolve(r.result as string)
-      r.onerror = reject
-      r.readAsDataURL(blob)
-    })
-  } catch { return null }
-}
 
 async function buildQuotePDF(
   q: Quote,

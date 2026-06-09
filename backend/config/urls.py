@@ -86,7 +86,11 @@ if settings.DEBUG:
         urlpatterns = [path("__debug__/", include(debug_toolbar.urls))] + urlpatterns
     except ImportError:
         pass
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+
+# Serve user-uploaded media files in all environments.
+# In production this is handled by Django directly; configure S3/R2 via USE_S3=True
+# for persistent storage (Railway filesystem is ephemeral and wiped on redeploy).
+urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 
 # Platform admin API (superusers only) + Audit log (owner/admin/superuser)
 from apps.core.admin_views import AuditLogView, PlatformStatsView, PlatformUsersView, PlatformUserDetailView

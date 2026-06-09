@@ -327,6 +327,9 @@ CORS_ALLOWED_ORIGINS: list[str] = config(
     cast=Csv(),
 )
 CORS_ALLOW_CREDENTIALS = True
+# Apply CORS headers to both API routes and media files so that browsers
+# (e.g. the Vercel web app) can fetch uploaded logos/avatars via fetch().
+CORS_URLS_REGEX = r'^/(api/|media/).*$'
 
 # Extend default headers to include the tenant header used by all API requests
 CORS_ALLOW_HEADERS = [

@@ -7,7 +7,7 @@ import MonthFilter, { monthToDateParams, type ArchiveMonth } from '@/components/
 import ExportButton from '@/components/ExportButton'
 import { Link, useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
-import { salesApi, tauriFetch, bypassNextGets } from '@/services/api'
+import { salesApi, urlToDataUrl, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatDate, getStatusColor, formatAmountInput, stripCommas } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
 import { useModuleAccess } from '@/hooks/useModuleAccess'
@@ -34,21 +34,7 @@ function hexToRgb(hex?: string): [number, number, number] {
   return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)]
 }
 
-/** Fetch any URL and return a base-64 data URL for jsPDF addImage. */
-async function urlToDataUrl(url: string): Promise<string | null> {
-  try {
-    const res = await tauriFetch(url)
-    const blob = await res.blob()
-    return await new Promise<string>((resolve, reject) => {
-      const r = new FileReader()
-      r.onloadend = () => resolve(r.result as string)
-      r.onerror = reject
-      r.readAsDataURL(blob)
-    })
-  } catch {
-    return null
-  }
-}
+
 
 // ── PDF builder ───────────────────────────────────────────────────────────────
 async function buildInvoicePDF(

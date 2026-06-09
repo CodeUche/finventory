@@ -38,7 +38,7 @@ import {
   FileText, Users, DollarSign, PieChart as PieIcon, Activity,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { reportApi, tauriFetch, bypassNextGets } from '@/services/api'
+import { reportApi, urlToDataUrl, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatNumber, formatDate, getCurrencySymbol } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
 import { saveBlobFile } from '@/lib/saveBlobFile'
@@ -189,19 +189,7 @@ export default function ReportsPage() {
       const RULE  = COLORS.RULE
       const tmpl  = organisation?.invoice_template ?? 'classic'
 
-      let vatLogoData: string | null = null
-      if (organisation?.logo) {
-        try {
-          const res  = await tauriFetch(organisation.logo)
-          const blob = await res.blob()
-          vatLogoData = await new Promise<string>((resolve, reject) => {
-            const r = new FileReader()
-            r.onloadend = () => resolve(r.result as string)
-            r.onerror   = reject
-            r.readAsDataURL(blob)
-          })
-        } catch { /* no logo */ }
-      }
+      const vatLogoData = await urlToDataUrl(organisation?.logo)
 
       const pFont = ['times', 'Georgia', 'Playfair Display', 'Merriweather', 'Lora',
         'Libre Baskerville', 'EB Garamond', 'Crimson Text', 'Cinzel', 'Cormorant Garamond',

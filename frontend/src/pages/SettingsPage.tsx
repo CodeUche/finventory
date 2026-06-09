@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { User, Building2, Shield, Loader2, Camera, CreditCard, CheckCircle, Mail, Lock, Unlock, LandmarkIcon, UsersRound, UserPlus, X, ChevronDown, ChevronUp, Bot, Layout, Copy, Trash2, ShieldCheck, Key, Clock, XCircle, Send, Globe, AlertTriangle, Wifi, WifiOff, RefreshCw, Activity, FileText, GitBranch, Upload } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { authApi, orgApi, paymentGatewayApi, accountingApi, teamApi, tauriFetch, partnerApi, einvoicingApi } from '@/services/api'
+import { authApi, orgApi, paymentGatewayApi, accountingApi, teamApi, urlToDataUrl, partnerApi, einvoicingApi } from '@/services/api'
 import ImportPage from '@/pages/ImportPage'
 import type { FirsConfig, FirsStats, FirsSubmission, SandboxProgress, GoLiveChecklist } from '@/types'
 import type { AxiosError } from 'axios'
@@ -245,27 +245,14 @@ export default function SettingsPage() {
   const stampRef = useRef<HTMLInputElement>(null)
   const [savingCompany, setSavingCompany] = useState(false)
 
-  // ─── Load existing org/user images as data URLs (Tauri <img> can't reach http://localhost:8000 directly)
+  // ─── Load existing org/user images as data URLs on mount / URL change ─────────
   useEffect(() => {
-    const loadDataUrl = async (url: string | null | undefined): Promise<string | null> => {
-      if (!url) return null
-      try {
-        const res = await tauriFetch(url)
-        const blob = await res.blob()
-        return await new Promise<string>((resolve, reject) => {
-          const r = new FileReader()
-          r.onloadend = () => resolve(r.result as string)
-          r.onerror = reject
-          r.readAsDataURL(blob)
-        })
-      } catch { return null }
-    }
     if (organisation?.logo && !logoFile && !logoRemoved)
-      loadDataUrl(organisation.logo).then((d) => { if (d) setLogoPreview(d) })
+      urlToDataUrl(organisation.logo).then((d) => { if (d) setLogoPreview(d) })
     if (organisation?.company_stamp && !stampFile && !stampRemoved)
-      loadDataUrl(organisation.company_stamp).then((d) => { if (d) setStampPreview(d) })
+      urlToDataUrl(organisation.company_stamp).then((d) => { if (d) setStampPreview(d) })
     if (user?.avatar && !avatarFile)
-      loadDataUrl(user.avatar).then((d) => { if (d) setAvatarPreview(d) })
+      urlToDataUrl(user.avatar).then((d) => { if (d) setAvatarPreview(d) })
   }, [organisation?.logo, organisation?.company_stamp, user?.avatar])
 
   // ─── Security state ─────────────────────────────────────────────────────────
@@ -507,7 +494,10 @@ export default function SettingsPage() {
         const resp = await authApi.uploadAvatar(avatarFile)
         if (resp.ok) data = await resp.json()
         setAvatarFile(null)
-        setAvatarPreview(null) // loadDataUrl will repopulate from the saved URL
+        // Keep the blob URL preview — it already shows the correct image.
+        // The useEffect will replace it with a server data URL on next mount.
+        // Force-fetch now in case the server URL is unchanged (same filename).
+        if (data?.avatar) urlToDataUrl(data.avatar).then((d) => { if (d) setAvatarPreview(d) })
       }
       updateUser(data)
       toast.success('Profile updated')
@@ -578,13 +568,14 @@ export default function SettingsPage() {
         const resp = await orgApi.uploadLogo(organisation.id, logoFile)
         if (resp.ok) data = await resp.json()
         setLogoFile(null)
-        setLogoPreview(null) // loadDataUrl will repopulate from the saved URL
+        // Keep blob URL preview; force-refresh from server in case URL is unchanged.
+        if (data?.logo) urlToDataUrl(data.logo).then((d) => { if (d) setLogoPreview(d) })
       }
       if (stampFile) {
         const resp = await orgApi.uploadStamp(organisation.id, stampFile)
         if (resp.ok) data = await resp.json()
         setStampFile(null)
-        setStampPreview(null) // loadDataUrl will repopulate from the saved URL
+        if (data?.company_stamp) urlToDataUrl(data.company_stamp).then((d) => { if (d) setStampPreview(d) })
       }
 
       updateOrganisation(data)

@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, Search, Users, X, Pencil, Loader2, FileText, RefreshCw, Download, Trash2, MinusCircle, ChevronRight, Maximize2, Minimize2 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { customerApi, tauriFetch, bypassNextGets } from '@/services/api'
+import { customerApi, urlToDataUrl, bypassNextGets } from '@/services/api'
 import ExportButton from '@/components/ExportButton'
 import { formatCurrency, formatDate, getStatusColor, getCurrencySymbol } from '@/lib/utils'
 import DateInput from '@/components/DateInput'
@@ -203,21 +203,8 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
     const RULE   = COLORS.RULE
     const tmpl   = organisation?.invoice_template ?? 'classic'
 
-    // Pre-load logo
-    const fetchDataUrl = async (url: string): Promise<string | null> => {
-      try {
-        const res = await tauriFetch(url)
-        const blob = await res.blob()
-        return await new Promise<string>((resolve, reject) => {
-          const r = new FileReader()
-          r.onloadend = () => resolve(r.result as string)
-          r.onerror = reject
-          r.readAsDataURL(blob)
-        })
-      } catch { return null }
-    }
     let logoData: string | null = null
-    if (organisation?.logo) logoData = await fetchDataUrl(organisation.logo)
+    if (organisation?.logo) logoData = await urlToDataUrl(organisation.logo)
 
     const pdfFont = organisation?.company_name_font?.toLowerCase().includes('times') ||
       ['Georgia','Playfair Display','Merriweather','Lora','Libre Baskerville','EB Garamond',

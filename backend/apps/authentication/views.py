@@ -1118,7 +1118,7 @@ class UploadAvatarView(APIView):
         if user.avatar:
             user.avatar.delete(save=False)
         user.avatar.save(f"avatar_{user.id}{ext}", ContentFile(body), save=True)
-        return Response(UserProfileSerializer(user).data)
+        return Response(UserProfileSerializer(user, context={"request": request}).data)
 
 
 class ChangePasswordView(APIView):

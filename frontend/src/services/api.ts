@@ -801,6 +801,30 @@ export async function tauriFetch(url: string): Promise<Response> {
   }
 }
 
+/**
+ * Fetch a remote URL and return it as a base-64 data URL suitable for
+ * <img src=...> or jsPDF.addImage().
+ *
+ * Returns null on any failure (network error, non-2xx status, non-image body)
+ * so callers never receive a broken data: URI of an HTML error page.
+ */
+export async function urlToDataUrl(url: string | null | undefined): Promise<string | null> {
+  if (!url) return null
+  try {
+    const res = await tauriFetch(url)
+    if (!res.ok) return null          // 404/403/etc. → skip, don't convert error HTML
+    const blob = await res.blob()
+    return await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onloadend = () => resolve(reader.result as string)
+      reader.onerror = reject
+      reader.readAsDataURL(blob)
+    })
+  } catch {
+    return null
+  }
+}
+
 // ─── Binary file upload (bypasses Tauri FormData/multipart bug) ───────────────
 // Tauri's IPC layer serialises FormData as application/x-www-form-urlencoded
 // instead of multipart/form-data. This helper sends the file as raw binary with
