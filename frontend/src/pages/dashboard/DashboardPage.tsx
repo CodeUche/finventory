@@ -419,14 +419,12 @@ function ReportShortcuts({
           <button
             key={c.title}
             onClick={() => navigate(c.to)}
-            className="card p-4 text-left hover:border-brand-500/40 transition-colors group"
+            className="card p-4 text-left hover:border-brand-500/40 transition-colors group relative"
           >
-            <div className="flex items-start justify-between gap-1 mb-2">
-              <div className="flex items-start gap-1.5 min-w-0">
-                <Icon size={14} className={`${c.iconColor} shrink-0 mt-px`} />
-                <p className="text-xs font-semibold text-white leading-tight">{c.title}</p>
-              </div>
-              <ArrowUpRight size={12} className="shrink-0 text-slate-600 group-hover:text-brand-400 transition-colors" />
+            <ArrowUpRight size={12} className="absolute top-3 right-3 text-slate-600 group-hover:text-brand-400 transition-colors" />
+            <div className="flex items-center gap-1.5 mb-1 pr-4">
+              <Icon size={14} className={`${c.iconColor} shrink-0`} />
+              <p className="text-xs font-semibold text-white leading-tight whitespace-nowrap">{c.title}</p>
             </div>
             <p className="text-[10px] text-slate-500 mb-2">{c.sub}</p>
             {/* Mini chart or skeleton placeholder */}
