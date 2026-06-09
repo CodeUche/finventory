@@ -62,7 +62,7 @@ class ReportService:
 
         qs = Invoice.objects.filter(
             organisation=organisation,
-            status__in=["paid", "confirmed", "partially_paid", "credit"],
+            status__in=["paid", "confirmed", "partially_paid", "credit", "overdue"],
         )
         qs = _date_filter(qs, "issue_date", date_from, date_to)
 
@@ -90,7 +90,7 @@ class ReportService:
 
         qs = SaleItem.objects.filter(
             organisation=organisation,
-            invoice__status__in=["paid", "confirmed", "partially_paid"],
+            invoice__status__in=["paid", "confirmed", "partially_paid", "credit", "overdue"],
         )
         qs = _date_filter(qs, "invoice__issue_date", date_from, date_to)
 
@@ -129,7 +129,7 @@ class ReportService:
 
         qs = Invoice.objects.filter(
             organisation=organisation,
-            status__in=["paid", "confirmed", "partially_paid"],
+            status__in=["paid", "confirmed", "partially_paid", "credit", "overdue"],
             customer__isnull=False,
         )
         qs = _date_filter(qs, "issue_date", date_from, date_to)
@@ -172,7 +172,7 @@ class ReportService:
 
         rev_qs = Invoice.objects.filter(
             organisation=organisation,
-            status__in=["paid", "confirmed", "partially_paid", "credit"],
+            status__in=["paid", "confirmed", "partially_paid", "credit", "overdue"],
         )
         rev_qs = _date_filter(rev_qs, "issue_date", date_from, date_to)
         revenue_data = rev_qs.aggregate(
@@ -183,7 +183,7 @@ class ReportService:
 
         cogs_qs = SaleItem.objects.filter(
             organisation=organisation,
-            invoice__status__in=["paid", "confirmed", "partially_paid", "credit"],
+            invoice__status__in=["paid", "confirmed", "partially_paid", "credit", "overdue"],
         )
         cogs_qs = _date_filter(cogs_qs, "invoice__issue_date", date_from, date_to)
         cogs_data = cogs_qs.aggregate(total_cogs=Sum("cost_of_goods"))
@@ -244,7 +244,7 @@ class ReportService:
 
         qs = Invoice.objects.filter(
             organisation=organisation,
-            status__in=["paid", "confirmed", "partially_paid"],
+            status__in=["paid", "confirmed", "partially_paid", "credit", "overdue"],
         )
         qs = _date_filter(qs, "issue_date", date_from, date_to)
         qs = (
@@ -286,7 +286,7 @@ class ReportService:
 
         qs = Invoice.objects.filter(
             organisation=organisation,
-            status__in=["paid", "confirmed", "partially_paid"],
+            status__in=["paid", "confirmed", "partially_paid", "credit", "overdue"],
         )
         if customer_id is None:
             qs = qs.filter(customer__isnull=True)
@@ -313,7 +313,7 @@ class ReportService:
 
         qs = SaleItem.objects.filter(
             organisation=organisation,
-            invoice__status__in=["paid", "confirmed", "partially_paid"],
+            invoice__status__in=["paid", "confirmed", "partially_paid", "credit", "overdue"],
         )
         qs = _date_filter(qs, "invoice__issue_date", date_from, date_to)
         qs = (
@@ -352,7 +352,7 @@ class ReportService:
         qs = SaleItem.objects.filter(
             organisation=organisation,
             product__id=product_id,
-            invoice__status__in=["paid", "confirmed", "partially_paid"],
+            invoice__status__in=["paid", "confirmed", "partially_paid", "credit", "overdue"],
         )
         qs = _date_filter(qs, "invoice__issue_date", date_from, date_to)
         qs = qs.select_related("invoice", "invoice__customer").order_by(
@@ -563,7 +563,7 @@ class ReportService:
 
         out_qs = Invoice.objects.filter(
             organisation=organisation,
-            status__in=["paid", "confirmed", "partially_paid", "credit"],
+            status__in=["paid", "confirmed", "partially_paid", "credit", "overdue"],
         )
         out_qs = _date_filter(out_qs, "issue_date", date_from, date_to)
         output_vat = out_qs.aggregate(t=Sum("tax_amount"))["t"] or Decimal("0")
