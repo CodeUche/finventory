@@ -1052,6 +1052,7 @@ export const reportApi = {
   vatSummary: (params: object) => api.get('/reports/vat-summary/', { params }),
   salesByCustomer: (params?: object) => api.get('/reports/sales-by-customer/', { params }),
   salesByProduct: (params?: object) => api.get('/reports/sales-by-product/', { params }),
+  paymentMethods: (params?: object) => api.get('/reports/payment-methods/', { params }),
 
   /**
    * Download a report as Excel or PDF.

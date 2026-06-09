@@ -483,3 +483,27 @@ class SalesByProductView(BaseDateRangeView):
             title="Sales by Product",
             filename_base="sales_by_product",
         )
+
+
+# ─── Payment Method Breakdown ─────────────────────────────────────────────────
+
+
+class PaymentMethodsView(BaseDateRangeView):
+    """GET /api/v1/reports/payment-methods/ — Revenue by payment method."""
+
+    _HEADERS = ["Method", "Total (₦)", "Transactions"]
+
+    def get(self, request):
+        date_from, date_to = self.get_date_range(request)
+        data = ReportService.payment_methods(request.organisation, date_from, date_to)
+
+        def _rows(d):
+            return [[r["label"], r["total"], r["count"]] for r in d]
+
+        return self._export_or_json(
+            request, data,
+            headers=self._HEADERS,
+            row_fn=_rows,
+            title="Payment Method Breakdown",
+            filename_base="payment_methods",
+        )

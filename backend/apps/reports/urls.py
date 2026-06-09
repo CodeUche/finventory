@@ -5,6 +5,7 @@ from .views import (
     CashFlowView,
     ExpenseBreakdownView,
     InventoryValuationView,
+    PaymentMethodsView,
     ProfitAndLossView,
     SalesByCustomerView,
     SalesByProductView,
@@ -27,4 +28,5 @@ urlpatterns = [
     path("vat-summary/", VATSummaryView.as_view(), name="report-vat-summary"),
     path("sales-by-customer/", SalesByCustomerView.as_view(), name="report-sales-by-customer"),
     path("sales-by-product/", SalesByProductView.as_view(), name="report-sales-by-product"),
+    path("payment-methods/", PaymentMethodsView.as_view(), name="report-payment-methods"),
 ]

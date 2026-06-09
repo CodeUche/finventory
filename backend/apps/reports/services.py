@@ -442,7 +442,7 @@ class ReportService:
         as_of = as_of or _date.today()
         invoices = Invoice.objects.filter(
             organisation=organisation,
-            status__in=["credit", "partially_paid", "overdue"],
+            status__in=["confirmed", "credit", "partially_paid", "overdue"],
             amount_due__gt=0,
         ).select_related("customer")
 
@@ -620,3 +620,43 @@ class ReportService:
             "cash_outflows": cash_out,
             "net_cash_flow": (cash_in + misc_in) - cash_out,
         }
+
+    # ─── Payment Method Breakdown ─────────────────────────────────────────────
+
+    @staticmethod
+    def payment_methods(
+        organisation,
+        date_from: Optional[date],
+        date_to: Optional[date],
+    ) -> list[dict]:
+        """Revenue collected grouped by payment method."""
+        from apps.sales.models import SalePayment
+
+        qs = SalePayment.objects.filter(organisation=organisation)
+        if date_from:
+            qs = qs.filter(received_at__date__gte=date_from)
+        if date_to:
+            qs = qs.filter(received_at__date__lte=date_to)
+
+        qs = (
+            qs.values("method")
+            .annotate(total=Sum("amount"), count=Count("id"))
+            .order_by("-total")
+        )
+
+        METHOD_LABELS = {
+            "cash": "Cash",
+            "bank_transfer": "Bank Transfer",
+            "pos": "POS",
+            "cheque": "Cheque",
+            "credit_applied": "Credit Applied",
+        }
+        return [
+            {
+                "method": r["method"],
+                "label": METHOD_LABELS.get(r["method"], r["method"].replace("_", " ").title()),
+                "total": r["total"],
+                "count": r["count"],
+            }
+            for r in qs
+        ]

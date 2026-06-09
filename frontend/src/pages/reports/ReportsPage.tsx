@@ -81,10 +81,12 @@ const axisTickStyle      = { fill: '#64748b', fontSize: 11 }
 
 // ─── Local type helpers ───────────────────────────────────────────────────────
 
-interface TopProduct  { product_name: string; revenue: string; units_sold: string; cogs: string; gross_profit: string; product_sku?: string }
-interface TopCustomer { customer_name: string; revenue: string; invoice_count: number; customer_code?: string }
-interface ExpRow      { category_name: string; total: string; count: number }
-interface CashFlow    { cash_inflows: string; cash_outflows: string; net_cash_flow: string }
+interface TopProduct    { product_name: string; revenue: string; units_sold: string; cogs: string; gross_profit: string; product_sku?: string }
+interface TopCustomer  { customer_name: string; revenue: string; invoice_count: number; customer_code?: string }
+interface ExpRow       { category_name: string; total: string; count: number }
+interface CashFlow     { cash_inflows: string; cash_outflows: string; net_cash_flow: string }
+interface PayMethod    { method: string; label: string; total: string; count: number }
+interface InventoryVal { total_inventory_value: string | number; items: { product: string; sku: string; warehouse: string; quantity: number; unit_cost: string; total_value: string }[] }
 
 // ─── Utility functions ────────────────────────────────────────────────────────
 
@@ -102,6 +104,21 @@ function groupByForPeriod(period: PeriodValue['period']): string {
 
 /** Truncate long product / customer names for chart axes. */
 const trunc = (s: string, n = 14) => (s?.length ?? 0) > n ? s.slice(0, n) + '…' : (s ?? '—')
+
+/**
+ * Format an ISO period string (from TruncDay/Month/Year) to a readable label.
+ * e.g. "2024-01-01T00:00:00Z" → "Jan 2024" (month) or "1 Jan" (day)
+ */
+function fmtPeriod(raw: string, groupBy: string): string {
+  if (!raw) return raw
+  try {
+    const d = new Date(raw)
+    if (isNaN(d.getTime())) return raw
+    if (groupBy === 'year') return String(d.getUTCFullYear())
+    if (groupBy === 'month') return d.toLocaleDateString('en-GB', { month: 'short', year: 'numeric', timeZone: 'UTC' })
+    return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' })
+  } catch { return raw }
+}
 
 // ─── Small KPI helper ─────────────────────────────────────────────────────────
 
@@ -164,6 +181,8 @@ export default function ReportsPage() {
   const [apAging,          setApAging]          = useState<ARAgingReport | null>(null)
   const [cashFlow,         setCashFlow]         = useState<CashFlow | null>(null)
   const [vatSummary,       setVatSummary]       = useState<VATSummary | null>(null)
+  const [paymentMethods,   setPaymentMethods]   = useState<PayMethod[]>([])
+  const [inventory,        setInventory]        = useState<InventoryVal | null>(null)
 
   // ── VAT PDF export ────────────────────────────────────────────────────────────
   const downloadVATReport = async () => {
@@ -308,7 +327,7 @@ export default function ReportsPage() {
     const params    = periodToParams(period)
     const group_by  = groupByForPeriod(period.period)
     try {
-      const [pnlRes, salesRes, prodRes, custRes, expRes, arRes, apRes, cfRes, vatRes] =
+      const [pnlRes, salesRes, prodRes, custRes, expRes, arRes, apRes, cfRes, vatRes, pmRes, invRes] =
         await Promise.allSettled([
           reportApi.pnl(params),
           reportApi.sales({ ...params, group_by }),
@@ -319,17 +338,21 @@ export default function ReportsPage() {
           reportApi.apAging(),
           reportApi.cashFlow(params),
           reportApi.vatSummary(params),
+          reportApi.paymentMethods(params),
+          reportApi.inventory(),
         ])
 
-      if (pnlRes.status  === 'fulfilled') setPnl(pnlRes.value.data)
-      if (salesRes.status === 'fulfilled') setSalesTrend(salesRes.value.data.results ?? salesRes.value.data)
-      if (prodRes.status  === 'fulfilled') setTopProducts(prodRes.value.data.results ?? prodRes.value.data)
-      if (custRes.status  === 'fulfilled') setTopCustomers(custRes.value.data.results ?? custRes.value.data)
-      if (expRes.status   === 'fulfilled') setExpenseBreakdown(expRes.value.data.results ?? expRes.value.data)
-      if (arRes.status    === 'fulfilled') setArAging(arRes.value.data)
-      if (apRes.status    === 'fulfilled') setApAging(apRes.value.data)
-      if (cfRes.status    === 'fulfilled') setCashFlow(cfRes.value.data)
-      if (vatRes.status   === 'fulfilled') setVatSummary(vatRes.value.data)
+      if (pnlRes.status   === 'fulfilled') setPnl(pnlRes.value.data)
+      if (salesRes.status  === 'fulfilled') setSalesTrend(salesRes.value.data.results ?? salesRes.value.data)
+      if (prodRes.status   === 'fulfilled') setTopProducts(prodRes.value.data.results ?? prodRes.value.data)
+      if (custRes.status   === 'fulfilled') setTopCustomers(custRes.value.data.results ?? custRes.value.data)
+      if (expRes.status    === 'fulfilled') setExpenseBreakdown(expRes.value.data.results ?? expRes.value.data)
+      if (arRes.status     === 'fulfilled') setArAging(arRes.value.data)
+      if (apRes.status     === 'fulfilled') setApAging(apRes.value.data)
+      if (cfRes.status     === 'fulfilled') setCashFlow(cfRes.value.data)
+      if (vatRes.status    === 'fulfilled') setVatSummary(vatRes.value.data)
+      if (pmRes.status     === 'fulfilled') setPaymentMethods(pmRes.value.data.results ?? pmRes.value.data)
+      if (invRes.status    === 'fulfilled') setInventory(invRes.value.data)
     } catch { toast.error('Failed to load reports') }
     finally  { setLoading(false) }
   }
@@ -339,9 +362,11 @@ export default function ReportsPage() {
 
   // ── Derived chart data ────────────────────────────────────────────────────────
 
-  /** Sales trend formatted for Recharts */
+  const groupBy = groupByForPeriod(period.period)
+
+  /** Sales trend formatted for Recharts (period labels formatted for readability) */
   const trendData = salesTrend.map(s => ({
-    period:  s.period,
+    period:  fmtPeriod(String(s.period), groupBy),
     Revenue: parseFloat(s.total_revenue),
     Tax:     parseFloat(s.total_tax),
   }))
@@ -425,15 +450,11 @@ export default function ReportsPage() {
   const top3Revenue     = topCustomers.slice(0, 3).reduce((s, c) => s + parseFloat(c.revenue ?? 0), 0)
   const concentrationPct = totalRevenue > 0 ? Math.round((top3Revenue / totalRevenue) * 100) : 0
 
-  /**
-   * Phase 2C: Payment method breakdown derived from sales trend meta or pnl.
-   * The backend doesn't expose a dedicated payment-method breakdown in this
-   * endpoint, so we surface what we have (cash flow summary) as a simple proxy.
-   */
-  const paymentMethodData = cashFlow ? [
-    { name: 'Cash Inflows',  value: Math.max(0, parseFloat(cashFlow.cash_inflows)) },
-    { name: 'Cash Outflows', value: Math.max(0, parseFloat(cashFlow.cash_outflows)) },
-  ].filter(d => d.value > 0) : []
+  /** Payment method donut data from SalePayment records. */
+  const paymentMethodData = paymentMethods.map(m => ({
+    name:  m.label,
+    value: parseFloat(String(m.total)),
+  })).filter(d => d.value > 0)
 
   const exportParams = periodToParams(period)
 
@@ -716,6 +737,58 @@ export default function ReportsPage() {
             <AgingCard title="Accounts Payable Aging" aging={apAging} loading={loading}
               iconColor="text-red-400" payable />
           </div>
+
+          {/* Inventory Valuation snapshot */}
+          {(inventory || loading) && (
+            <div className="card p-5">
+              <div className="flex items-center gap-2 mb-4">
+                <BarChart2 size={18} className="text-purple-400" />
+                <h2 className="text-base font-semibold text-white">Inventory Valuation</h2>
+                <span className="text-xs text-slate-500 ml-auto">current snapshot</span>
+              </div>
+              {loading ? (
+                <div className="h-20 bg-surface-800 rounded-xl animate-pulse" />
+              ) : inventory ? (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between p-4 rounded-xl bg-purple-500/10 border border-purple-500/20">
+                    <span className="text-sm text-slate-300">Total Inventory Value</span>
+                    <span className="text-xl font-bold text-purple-300">
+                      {formatCurrency(String(inventory.total_inventory_value))}
+                    </span>
+                  </div>
+                  {inventory.items.length > 0 && (
+                    <div className="max-h-48 overflow-y-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="text-slate-500 border-b border-surface-700">
+                            <th className="text-left pb-1.5">Product</th>
+                            <th className="text-right pb-1.5">Qty</th>
+                            <th className="text-right pb-1.5">Unit Cost</th>
+                            <th className="text-right pb-1.5">Value</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {inventory.items.slice(0, 10).map((item, i) => (
+                            <tr key={i} className="border-b border-surface-800">
+                              <td className="py-1.5 text-slate-300 truncate max-w-[160px]">{item.product}</td>
+                              <td className="py-1.5 text-right text-slate-400">{formatNumber(item.quantity)}</td>
+                              <td className="py-1.5 text-right text-slate-400">{formatCurrency(String(item.unit_cost))}</td>
+                              <td className="py-1.5 text-right font-medium text-white">{formatCurrency(String(item.total_value))}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      {inventory.items.length > 10 && (
+                        <p className="text-xs text-slate-600 mt-2 text-center">
+                          +{inventory.items.length - 10} more items · see Inventory → Stock Reports for full list
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : null}
+            </div>
+          )}
         </div>
       )}
 
@@ -1028,34 +1101,45 @@ export default function ReportsPage() {
               )}
             </div>
 
-            {/* Cash flow in/out as payment method proxy */}
+            {/* Payment method breakdown */}
             <div className="card p-5">
               <div className="flex items-center gap-2 mb-4">
                 <PieIcon size={18} className="text-emerald-400" />
-                <h2 className="text-base font-semibold text-white">Cash Flow Composition</h2>
+                <h2 className="text-base font-semibold text-white">Revenue by Payment Method</h2>
               </div>
               {loading ? (
                 <div className="h-60 bg-surface-800 rounded-xl animate-pulse" />
               ) : paymentMethodData.length === 0 ? (
                 <div className="h-60 flex items-center justify-center">
-                  <p className="text-slate-500 text-sm">No data</p>
+                  <p className="text-slate-500 text-sm">No payment data for this period</p>
                 </div>
               ) : (
-                <ResponsiveContainer width="100%" height={260}>
-                  <PieChart>
-                    <Pie data={paymentMethodData} cx="50%" cy="45%"
-                      innerRadius={60} outerRadius={90} paddingAngle={4} dataKey="value">
-                      <Cell fill="#10b981" />
-                      <Cell fill="#ef4444" />
-                    </Pie>
-                    <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle}
-                      itemStyle={tooltipItemStyle} formatter={(v: number) => formatCurrency(String(v))} />
-                    <Legend
-                      wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
-                      formatter={(value: string) => <span style={{ color: '#94a3b8' }}>{value}</span>}
-                    />
-                  </PieChart>
-                </ResponsiveContainer>
+                <>
+                  <ResponsiveContainer width="100%" height={220}>
+                    <PieChart>
+                      <Pie data={paymentMethodData} cx="50%" cy="45%"
+                        innerRadius={60} outerRadius={90} paddingAngle={4} dataKey="value">
+                        {paymentMethodData.map((_, i) => (
+                          <Cell key={i} fill={colors[i % colors.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle}
+                        itemStyle={tooltipItemStyle} formatter={(v: number) => formatCurrency(String(v))} />
+                      <Legend
+                        wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
+                        formatter={(value: string) => <span style={{ color: '#94a3b8' }}>{value}</span>}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="mt-1 space-y-1">
+                    {paymentMethods.map(m => (
+                      <div key={m.method} className="flex justify-between text-xs text-slate-400">
+                        <span>{m.label}</span>
+                        <span className="text-slate-200">{formatCurrency(String(m.total))} · {m.count} txn{m.count !== 1 ? 's' : ''}</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
               )}
             </div>
           </div>
