@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { api } from '@/services/api'
-import { Upload, Download, CheckCircle, XCircle, AlertTriangle, FileText, Users, BookOpen, Loader2, Maximize2, X } from 'lucide-react'
+import { Upload, Download, CheckCircle, XCircle, AlertTriangle, FileText, Users, BookOpen, Loader2, Maximize2, X, Sparkles, ChevronDown, ChevronUp } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { importApi } from '@/services/api'
 import { save } from '@tauri-apps/plugin-dialog'
@@ -37,13 +37,34 @@ type Entity = 'products' | 'customers' | 'accounts'
 type ImportError = { row: number; field: string; message: string }
 type ImportResult = { created: number; updated: number; errors: ImportError[]; total_rows: number; warehouses_created?: number; stock_assigned?: number }
 
+// All product fields with human-readable labels
+const PRODUCT_FIELD_LABELS: Record<string, string> = {
+  sku: 'SKU / Product Code',
+  name: 'Product Name',
+  selling_price: 'Selling Price',
+  cost_price: 'Cost Price',
+  wholesale_price: 'Wholesale Price',
+  product_type: 'Product Type',
+  category: 'Category',
+  brand: 'Brand',
+  unit_of_measure: 'Unit of Measure',
+  reorder_level: 'Reorder Level',
+  barcode: 'Barcode',
+  description: 'Description',
+  warehouse: 'Warehouse',
+  opening_stock: 'Opening Stock Qty',
+}
+
+const PRODUCT_KEY_FIELDS = ['sku', 'name', 'selling_price', 'cost_price', 'wholesale_price']
+const PRODUCT_EXTRA_FIELDS = Object.keys(PRODUCT_FIELD_LABELS).filter(f => !PRODUCT_KEY_FIELDS.includes(f))
+
 const ENTITIES: { key: Entity; label: string; icon: React.ReactNode; description: string; columns: string }[] = [
   {
     key: 'products',
     label: 'Products',
     icon: <FileText size={20} />,
-    description: 'Bulk import your product catalogue with pricing and stock settings.',
-    columns: 'sku*, name*, selling_price*, cost_price*, product_type, category, brand, unit_of_measure, reorder_level, barcode, description, warehouse, opening_stock',
+    description: 'Bulk import your product catalogue. All fields are optional — AI maps your columns automatically.',
+    columns: 'sku, name, selling_price, cost_price, wholesale_price, product_type, category, brand, unit_of_measure, reorder_level, barcode, description, warehouse, opening_stock',
   },
   {
     key: 'customers',
@@ -69,6 +90,13 @@ export default function ImportPage() {
   const [importing, setImporting] = useState(false)
   const [result, setResult] = useState<ImportResult | null>(null)
   const [expanded, setExpanded] = useState(false)
+
+  // Column mapping state (for products): { ourField: csvColumn }
+  const [mapping, setMapping] = useState<Record<string, string>>({})
+  const [mappingLoading, setMappingLoading] = useState(false)
+  const [mappingMethod, setMappingMethod] = useState<string>('')
+  const [showExtraFields, setShowExtraFields] = useState(false)
+
   const fileRef = useRef<HTMLInputElement>(null)
 
   const selected = ENTITIES.find(e => e.key === entity)!
@@ -81,7 +109,26 @@ export default function ImportPage() {
     setPreviewHeaders([])
     setResult(null)
     setExpanded(false)
+    setMapping({})
+    setMappingLoading(false)
+    setMappingMethod('')
     if (fileRef.current) fileRef.current.value = ''
+  }
+
+  async function suggestMapping(headers: string[]) {
+    setMappingLoading(true)
+    setMappingMethod('')
+    try {
+      const { data } = await importApi.suggestMapping(entity, headers)
+      // data.mapping = { ourField: "CSV Column Header" }
+      setMapping(data.mapping || {})
+      setMappingMethod(data.method || 'rules')
+    } catch {
+      // silent — user can set manually
+      setMapping({})
+    } finally {
+      setMappingLoading(false)
+    }
   }
 
   function handleFile(f: File | undefined) {
@@ -89,11 +136,17 @@ export default function ImportPage() {
     setFile(f)
     setResult(null)
     setExpanded(false)
+    setMapping({})
+    setMappingMethod('')
     const reader = new FileReader()
     reader.onload = (ev) => {
       const parsed = parseCSV(ev.target?.result as string)
-      setPreviewHeaders(parsed[0] ?? [])
+      const headers = parsed[0] ?? []
+      setPreviewHeaders(headers)
       setAllRows(parsed.slice(1).filter(r => r.some(Boolean)))
+      if (entity === 'products' && headers.length > 0) {
+        suggestMapping(headers)
+      }
     }
     reader.readAsText(f)
   }
@@ -102,7 +155,8 @@ export default function ImportPage() {
     if (!file) return
     setImporting(true)
     try {
-      const { data } = await importApi[entity](file)
+      const importMapping = entity === 'products' ? mapping : undefined
+      const { data } = await importApi[entity](file as any, importMapping as any)
       setResult(data)
       if (data.errors.length === 0) {
         const stockMsg = data.stock_assigned ? `, ${data.stock_assigned} stocked` : ''
@@ -127,12 +181,40 @@ export default function ImportPage() {
         defaultPath: defaultName,
         filters: [{ name: 'CSV', extensions: ['csv'] }],
       })
-      if (!filePath) return // user cancelled
+      if (!filePath) return
       await writeFile(filePath, new Uint8Array(resp.data))
       toast.success(`Template saved to ${filePath.split(/[\\/]/).pop()}`)
     } catch {
       toast.error('Failed to download template')
     }
+  }
+
+  function MappingRow({ field }: { field: string }) {
+    const label = PRODUCT_FIELD_LABELS[field] || field
+    const isKey = PRODUCT_KEY_FIELDS.includes(field)
+    const currentVal = mapping[field] || ''
+
+    return (
+      <div className="flex items-center gap-2 py-1.5 border-b border-surface-700/50 last:border-0">
+        <div className="w-44 shrink-0">
+          <span className="text-xs text-slate-300">{label}</span>
+          {isKey && <span className="ml-1.5 text-[10px] text-indigo-400 bg-indigo-500/10 px-1 rounded">key</span>}
+        </div>
+        <select
+          value={currentVal}
+          onChange={e => setMapping(prev => ({ ...prev, [field]: e.target.value }))}
+          className="flex-1 bg-surface-700 border border-surface-600 rounded-lg px-2 py-1 text-xs text-slate-300 focus:outline-none focus:border-indigo-500"
+        >
+          <option value="">— Skip / Not in CSV —</option>
+          {previewHeaders.map(h => (
+            <option key={h} value={h}>{h}</option>
+          ))}
+        </select>
+        {currentVal && (
+          <span className="text-[10px] text-emerald-400 shrink-0">matched</span>
+        )}
+      </div>
+    )
   }
 
   return (
@@ -164,10 +246,15 @@ export default function ImportPage() {
       <div className="rounded-xl border border-surface-700 bg-surface-800 p-4 space-y-2">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-1">Required columns (marked *) and optional columns</p>
+            <p className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-1">
+              {entity === 'products' ? 'Available columns (all optional — AI maps your headers automatically)' : 'Required columns (marked *) and optional columns'}
+            </p>
             <p className="text-xs text-slate-300 font-mono leading-relaxed">{selected.columns}</p>
             {entity === 'products' && (
-              <p className="text-xs text-amber-400/80 mt-1.5">💡 Include <span className="font-mono">warehouse</span> and <span className="font-mono">opening_stock</span> columns to auto-create warehouses and assign stock levels in one step.</p>
+              <p className="text-xs text-indigo-400/80 mt-1.5">
+                <Sparkles size={11} className="inline mr-1" />
+                Your CSV can use any column names — AI will match "Retail Price" → selling_price, "Product Name" → name, etc.
+              </p>
             )}
           </div>
           <button
@@ -179,7 +266,7 @@ export default function ImportPage() {
         </div>
       </div>
 
-      {/* File upload — compact strip */}
+      {/* File upload */}
       <div
         onClick={() => fileRef.current?.click()}
         onDragOver={ev => ev.preventDefault()}
@@ -193,7 +280,7 @@ export default function ImportPage() {
         </div>
         {file && (
           <button
-            onClick={e => { e.stopPropagation(); setFile(null); setAllRows([]); setPreviewHeaders([]); if (fileRef.current) fileRef.current.value = '' }}
+            onClick={e => { e.stopPropagation(); setFile(null); setAllRows([]); setPreviewHeaders([]); setMapping({}); if (fileRef.current) fileRef.current.value = '' }}
             className="shrink-0 p-1 text-slate-500 hover:text-slate-300 transition-colors"
           >
             <X size={14} />
@@ -240,6 +327,52 @@ export default function ImportPage() {
         </div>
       )}
 
+      {/* AI Column Mapping (products only) */}
+      {entity === 'products' && previewHeaders.length > 0 && (
+        <div className="rounded-xl border border-indigo-500/30 bg-surface-800 overflow-hidden">
+          <div className="px-4 py-3 bg-indigo-500/10 border-b border-indigo-500/20 flex items-center gap-2">
+            <Sparkles size={14} className="text-indigo-400" />
+            <p className="text-sm font-semibold text-indigo-300">AI Column Mapping</p>
+            {mappingLoading && (
+              <span className="flex items-center gap-1 text-xs text-slate-400 ml-auto">
+                <Loader2 size={11} className="animate-spin" /> Detecting columns…
+              </span>
+            )}
+            {!mappingLoading && mappingMethod && (
+              <span className="ml-auto text-[10px] text-slate-500">
+                {mappingMethod === 'ai+rules' ? '🤖 AI + rules' : '📋 Rules matched'}
+              </span>
+            )}
+          </div>
+          <div className="p-4">
+            <p className="text-xs text-slate-400 mb-3">
+              Review how your CSV columns map to our fields. Adjust any mismatches. Fields with no match will use default values.
+            </p>
+
+            {/* Key fields */}
+            <div className="mb-1">
+              <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-2">Core fields</p>
+              {PRODUCT_KEY_FIELDS.map(f => <MappingRow key={f} field={f} />)}
+            </div>
+
+            {/* Extra fields toggle */}
+            <button
+              onClick={() => setShowExtraFields(p => !p)}
+              className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-300 mt-3 transition-colors"
+            >
+              {showExtraFields ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+              {showExtraFields ? 'Hide' : 'Show'} optional fields ({PRODUCT_EXTRA_FIELDS.length})
+            </button>
+
+            {showExtraFields && (
+              <div className="mt-2">
+                {PRODUCT_EXTRA_FIELDS.map(f => <MappingRow key={f} field={f} />)}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Full expand modal */}
       {expanded && previewHeaders.length > 0 && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
@@ -279,10 +412,15 @@ export default function ImportPage() {
 
       {/* Import button */}
       {file && !result && (
-        <div className="flex justify-end">
+        <div className="flex items-center justify-between">
+          <p className="text-xs text-slate-500">
+            {entity === 'products'
+              ? 'Missing fields will use defaults (auto-generated SKU, price = 0).'
+              : 'Existing records are matched by their unique code and updated.'}
+          </p>
           <button
             onClick={handleImport}
-            disabled={importing}
+            disabled={importing || mappingLoading}
             className="btn-primary flex items-center gap-2 px-6"
           >
             {importing ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
@@ -294,7 +432,6 @@ export default function ImportPage() {
       {/* Result */}
       {result && (
         <div className="space-y-4">
-          {/* Summary strip */}
           <div className={`grid gap-3 ${result.warehouses_created !== undefined ? 'grid-cols-2 sm:grid-cols-5' : 'grid-cols-3'}`}>
             <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 flex items-center gap-3">
               <CheckCircle size={20} className="text-emerald-400" />
@@ -337,7 +474,6 @@ export default function ImportPage() {
             </div>
           </div>
 
-          {/* Error table */}
           {result.errors.length > 0 && (
             <div className="rounded-xl border border-red-500/30 overflow-hidden">
               <div className="px-4 py-2 bg-red-500/10 border-b border-red-500/20 flex items-center gap-2">
@@ -365,10 +501,9 @@ export default function ImportPage() {
             </div>
           )}
 
-          {/* Import again */}
           <div className="flex justify-end">
             <button
-              onClick={() => { setResult(null); setFile(null); setAllRows([]); setPreviewHeaders([]); setExpanded(false); if (fileRef.current) fileRef.current.value = '' }}
+              onClick={() => { setResult(null); setFile(null); setAllRows([]); setPreviewHeaders([]); setExpanded(false); setMapping({}); if (fileRef.current) fileRef.current.value = '' }}
               className="text-xs text-indigo-400 hover:text-indigo-300"
             >
               Import another file

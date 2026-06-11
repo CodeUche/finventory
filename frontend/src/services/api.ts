@@ -1402,8 +1402,11 @@ async function _buildMultipartForm(
   return { body, contentType: `multipart/form-data; boundary=${boundary}` }
 }
 
-async function _importPost(url: string, file: File) {
-  const { body, contentType } = await _buildMultipartForm(file, 'file', {}, 'text/csv')
+async function _importPost(url: string, file: File, mapping?: Record<string, string>) {
+  const extra: Record<string, string> = (mapping && Object.keys(mapping).length > 0)
+    ? { column_mapping: JSON.stringify(mapping) }
+    : {}
+  const { body, contentType } = await _buildMultipartForm(file, 'file', extra, 'text/csv')
   return api.post(url, body, {
     headers: { 'Content-Type': contentType },
     transformRequest: [(d: unknown) => d], // prevent Axios re-serialising the Uint8Array
@@ -1427,9 +1430,12 @@ async function _multipartPatch(url: string, file: File, fileFieldName: string, t
 }
 
 export const importApi = {
-  products: (file: File) => _importPost('/import/products/', file),
+  products: (file: File, mapping?: Record<string, string>) => _importPost('/import/products/', file, mapping),
   customers: (file: File) => _importPost('/import/customers/', file),
   accounts: (file: File) => _importPost('/import/accounts/', file),
+  /** POST /import/suggest-mapping/ — AI column name mapper */
+  suggestMapping: (entity: string, headers: string[]) =>
+    api.post('/import/suggest-mapping/', { entity, headers }),
   /** GET /import/template/<entity>/ — download CSV template */
   templateUrl: (entity: 'products' | 'customers' | 'accounts') =>
     `/import/template/${entity}/`,

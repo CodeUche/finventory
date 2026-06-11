@@ -1,17 +1,24 @@
 """
 CSV bulk-import endpoints.
 
-POST /api/v1/import/products/   — multipart form with `file` field (CSV)
-POST /api/v1/import/customers/  — multipart form with `file` field (CSV)
-POST /api/v1/import/accounts/   — multipart form with `file` field (CSV)
-GET  /api/v1/import/template/<entity>/  — download a CSV template
+POST /api/v1/import/products/        — multipart form with `file` field (CSV)
+POST /api/v1/import/customers/       — multipart form with `file` field (CSV)
+POST /api/v1/import/accounts/        — multipart form with `file` field (CSV)
+POST /api/v1/import/suggest-mapping/ — AI column-name mapper
+GET  /api/v1/import/template/<entity>/ — download a CSV template
 
 All endpoints require authentication and a valid X-Organisation-ID header.
 Only managers and above can use import endpoints (IsManagerOrSuperuser).
+
+AI column mapping uses Groq (same key as AI assistant) to intelligently map
+non-standard column names (e.g. "Retail selling price") to our canonical field
+names (e.g. "selling_price"). Rule-based aliases are tried first; Groq is called
+only for headers that don't match any known alias.
 """
 
 import csv
 import io
+import json
 from decimal import Decimal, InvalidOperation
 
 from rest_framework.permissions import IsAuthenticated
@@ -22,16 +29,18 @@ from apps.core.permissions import IsManagerOrSuperuser, IsVerified, _get_or_reso
 
 
 # ---------------------------------------------------------------------------
-# CSV column definitions (required / optional) per entity
+# Column definitions per entity
 # ---------------------------------------------------------------------------
 
-PRODUCT_REQUIRED = ["sku", "name", "selling_price", "cost_price"]
+# Products: all fields are optional — AI mapping + sensible defaults cover gaps.
+PRODUCT_REQUIRED = []
 PRODUCT_OPTIONAL = [
+    "sku", "name", "selling_price", "cost_price", "wholesale_price",
     "product_type", "category", "brand", "unit_of_measure",
     "reorder_level", "barcode", "description",
     "warehouse", "opening_stock",
 ]
-PRODUCT_ALL = PRODUCT_REQUIRED + PRODUCT_OPTIONAL
+PRODUCT_ALL = PRODUCT_OPTIONAL  # kept for template generation order
 
 CUSTOMER_REQUIRED = ["code", "name"]
 CUSTOMER_OPTIONAL = [
@@ -48,7 +57,6 @@ VALID_ACCOUNT_TYPES = [
     "asset", "liability", "equity", "revenue",
     "expense", "cost_of_goods",
 ]
-
 PRODUCT_TYPES = ["physical", "service", "digital"]
 UNITS = ["bottle", "carton", "case", "litre", "unit", "hour", "day", "kg", "piece"]
 CUSTOMER_TYPES = [
@@ -57,6 +65,64 @@ CUSTOMER_TYPES = [
 ]
 
 CSV_ROW_LIMIT = 10_000
+
+# ---------------------------------------------------------------------------
+# Known column aliases for rule-based matching (before calling AI)
+# Format: { our_canonical_field: [list of known aliases, all lowercase] }
+# ---------------------------------------------------------------------------
+
+PRODUCT_ALIASES = {
+    "sku": [
+        "sku", "product code", "item code", "code", "product id", "item id",
+        "stock code", "part number", "part no", "ref", "item ref", "product ref",
+        "article number", "article no", "product number",
+    ],
+    "name": [
+        "name", "product name", "item name", "product title", "title",
+        "item description", "product description", "goods name", "goods",
+    ],
+    "selling_price": [
+        "selling_price", "selling price", "sale price", "retail price",
+        "retail selling price", "price", "unit price", "mrp", "list price",
+        "customer price", "vat price", "inclusive price",
+    ],
+    "cost_price": [
+        "cost_price", "cost price", "cost", "purchase price", "buy price",
+        "supply price", "supplier price", "landed cost", "net price",
+    ],
+    "wholesale_price": [
+        "wholesale_price", "wholesale price", "wholesale selling price",
+        "trade price", "bulk price", "distributor price", "dealer price",
+    ],
+    "product_type": ["product_type", "product type", "type", "item type", "goods type"],
+    "category": [
+        "category", "product category", "category name", "dept", "department",
+        "item category", "group", "product group",
+    ],
+    "brand": ["brand", "brand name", "manufacturer", "make", "supplier brand"],
+    "unit_of_measure": [
+        "unit_of_measure", "unit", "uom", "unit of measure", "measure",
+        "unit of sale", "sales unit",
+    ],
+    "reorder_level": [
+        "reorder_level", "reorder level", "reorder point", "minimum stock",
+        "min stock", "low stock threshold", "reorder qty",
+    ],
+    "barcode": ["barcode", "bar code", "upc", "ean", "gtin", "isbn", "scan code"],
+    "description": [
+        "description", "details", "notes", "remarks", "product details",
+        "item notes", "long description",
+    ],
+    "warehouse": [
+        "warehouse", "warehouse name", "location", "store", "storage",
+        "stock location", "bin", "depot",
+    ],
+    "opening_stock": [
+        "opening_stock", "opening stock", "initial stock", "quantity",
+        "qty", "stock quantity", "on hand", "stock on hand", "stock level",
+        "current stock", "available qty",
+    ],
+}
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +169,116 @@ def _missing_required(row, required, errors, row_num):
     return any(not row.get(col) for col in required)
 
 
+def _rule_based_mapping(csv_headers, aliases_dict):
+    """
+    Map CSV headers to canonical field names using the known-alias lookup.
+    Returns { canonical_field: original_csv_header } for headers that matched.
+    """
+    lower_to_original = {h.lower().strip(): h for h in csv_headers}
+    mapping = {}  # canonical_field → original csv header
+    used_csv_cols = set()
+
+    for our_field, aliases in aliases_dict.items():
+        for alias in aliases:
+            if alias in lower_to_original:
+                original = lower_to_original[alias]
+                if original not in used_csv_cols:
+                    mapping[our_field] = original
+                    used_csv_cols.add(original)
+                    break
+
+    return mapping
+
+
+def _groq_mapping(csv_headers, target_fields, already_mapped_csv_cols, api_key):
+    """
+    Call Groq to map remaining unmapped CSV headers to target fields.
+    Returns { canonical_field: csv_header } for any newly found matches.
+    """
+    import re
+    import requests as req
+
+    unmapped_headers = [h for h in csv_headers if h not in already_mapped_csv_cols]
+    unassigned_fields = [f for f in target_fields if f not in already_mapped_csv_cols.values() if f]
+
+    if not unmapped_headers or not unassigned_fields:
+        return {}
+
+    prompt = (
+        "You are a data-import assistant for a business inventory system.\n"
+        f"CSV columns not yet matched: {unmapped_headers}\n"
+        f"Target system fields still needing a match: {unassigned_fields}\n\n"
+        "Map each unassigned target field to the most semantically appropriate unmapped CSV column. "
+        "Only map when confident. Each CSV column can only be used once. "
+        "Return ONLY a JSON object like: {\"target_field\": \"CSV Column\"}. No explanation."
+    )
+
+    try:
+        resp = req.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={
+                "model": "llama-3.1-8b-instant",
+                "messages": [
+                    {"role": "system", "content": "Return only valid JSON. No markdown, no explanation."},
+                    {"role": "user", "content": prompt},
+                ],
+                "temperature": 0,
+                "max_tokens": 300,
+            },
+            timeout=8,
+        )
+        resp.raise_for_status()
+        content = resp.json()["choices"][0]["message"]["content"].strip()
+        match = re.search(r'\{[^{}]*\}', content, re.DOTALL)
+        if match:
+            result = json.loads(match.group())
+            # Validate: only keep mappings where both field and csv col are valid
+            validated = {}
+            used = set()
+            for field, csv_col in result.items():
+                if (
+                    field in unassigned_fields
+                    and csv_col in unmapped_headers
+                    and csv_col not in used
+                ):
+                    validated[field] = csv_col
+                    used.add(csv_col)
+            return validated
+    except Exception:
+        pass
+
+    return {}
+
+
+def _apply_column_mapping(rows, field_to_csv_col):
+    """
+    field_to_csv_col: { our_canonical_field: original_csv_header }
+    _parse_csv already lowercased row keys, so we normalise csv header to lowercase when looking up.
+    Adds canonical field keys to each row without overwriting existing direct matches.
+    """
+    if not field_to_csv_col:
+        return rows
+
+    # Normalise: our_field → lowercase csv col for row lookup
+    norm = {
+        our_field: csv_col.strip().lower()
+        for our_field, csv_col in field_to_csv_col.items()
+        if csv_col
+    }
+
+    result = []
+    for row in rows:
+        new_row = dict(row)
+        for our_field, csv_col_lower in norm.items():
+            # Only add alias if: (a) our canonical key isn't already in the row,
+            # or (b) it is but it's blank (prefer the remapped value)
+            if csv_col_lower in row and (our_field not in row or not row[our_field]):
+                new_row[our_field] = row[csv_col_lower]
+        result.append(new_row)
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Products import
 # ---------------------------------------------------------------------------
@@ -111,6 +287,12 @@ class ImportProductsView(APIView):
     permission_classes = [IsAuthenticated, IsVerified, IsManagerOrSuperuser]
 
     def post(self, request):
+        import uuid as _uuid
+        from decimal import Decimal as D
+        from django.db import transaction
+        from apps.inventory.models import Category, Product, Warehouse
+        from apps.inventory.services import InventoryService
+
         org = _get_or_resolve_org(request)
         if not org:
             return Response({"error": "Organisation not found"}, status=400)
@@ -123,26 +305,30 @@ class ImportProductsView(APIView):
             headers, rows = _parse_csv(file_obj)
         except ValueError as e:
             return Response({"error": str(e)}, status=400)
-        missing_cols = [c for c in PRODUCT_REQUIRED if c not in headers]
-        if missing_cols:
-            return Response(
-                {"error": f"CSV missing required columns: {', '.join(missing_cols)}"},
-                status=400,
-            )
 
-        from decimal import Decimal as D
-        from apps.inventory.models import Product, Category, Warehouse
-        from apps.inventory.services import InventoryService
-        from django.db import transaction
+        # Parse optional column mapping supplied by the frontend
+        mapping_raw = request.data.get("column_mapping", "{}")
+        try:
+            field_to_csv_col = json.loads(mapping_raw) if isinstance(mapping_raw, str) else (mapping_raw or {})
+        except Exception:
+            field_to_csv_col = {}
 
-        has_warehouse_col = "warehouse" in headers
+        # Apply mapping: add canonical field keys to each row
+        rows = _apply_column_mapping(rows, field_to_csv_col)
+
+        has_warehouse_col = "warehouse" in headers or any(
+            v.strip().lower() == "warehouse" or
+            (v and field_to_csv_col.get("warehouse", "").strip().lower() == v.strip().lower())
+            for v in field_to_csv_col.values()
+        ) or "warehouse" in [r.strip().lower() for r in field_to_csv_col.values() if r]
+        # Simpler: just check if any row has a warehouse value after mapping
+        has_warehouse_col = any(r.get("warehouse") for r in rows[:5]) or "warehouse" in headers
+
         created = 0
         updated = 0
         stock_assigned = 0
         warehouses_created = 0
         errors = []
-
-        # Pre-build warehouse cache to avoid N+1 lookups
         warehouse_cache: dict = {}
 
         def _get_or_create_warehouse(name: str):
@@ -159,13 +345,29 @@ class ImportProductsView(APIView):
 
         for idx, row in enumerate(rows, start=2):
             row_num = idx
-            if _missing_required(row, PRODUCT_REQUIRED, errors, row_num):
-                continue
 
-            selling_price = _money(row["selling_price"], "selling_price", errors, row_num)
-            cost_price = _money(row["cost_price"], "cost_price", errors, row_num)
-            if selling_price is None or cost_price is None:
-                continue
+            # SKU: auto-generate if absent
+            sku = row.get("sku", "").strip()
+            if not sku:
+                sku = f"AUTO-{str(_uuid.uuid4())[:8].upper()}"
+
+            # Name: default to SKU if absent
+            name = row.get("name", "").strip() or f"Product {sku}"
+
+            # Prices: default to 0 if absent or unparseable
+            selling_price_raw = row.get("selling_price", "0") or "0"
+            cost_price_raw = row.get("cost_price", "0") or "0"
+            wholesale_price_raw = row.get("wholesale_price", "0") or "0"
+
+            selling_price = _money(selling_price_raw, "selling_price", errors, row_num)
+            cost_price = _money(cost_price_raw, "cost_price", errors, row_num)
+            wholesale_price = _money(wholesale_price_raw, "wholesale_price", errors, row_num)
+            if selling_price is None:
+                selling_price = D("0")
+            if cost_price is None:
+                cost_price = D("0")
+            if wholesale_price is None:
+                wholesale_price = D("0")
 
             product_type = row.get("product_type", "physical").lower()
             if product_type not in PRODUCT_TYPES:
@@ -189,12 +391,13 @@ class ImportProductsView(APIView):
 
             obj, was_created = Product.objects.update_or_create(
                 organisation=org,
-                sku=row["sku"],
+                sku=sku,
                 defaults={
-                    "name": row["name"],
+                    "name": name,
                     "product_type": product_type,
                     "selling_price": selling_price,
                     "cost_price": cost_price,
+                    "wholesale_price": wholesale_price,
                     "brand": row.get("brand", ""),
                     "unit_of_measure": unit,
                     "reorder_level": reorder_level,
@@ -208,8 +411,8 @@ class ImportProductsView(APIView):
             else:
                 updated += 1
 
-            # ── Warehouse + opening stock ─────────────────────────────────────
-            if has_warehouse_col and product_type == "physical":
+            # Warehouse + opening stock
+            if product_type == "physical":
                 wh_name = row.get("warehouse", "").strip()
                 qty_raw = row.get("opening_stock", "").strip()
                 qty = D("0")
@@ -250,6 +453,57 @@ class ImportProductsView(APIView):
             response_data["warehouses_created"] = warehouses_created
             response_data["stock_assigned"] = stock_assigned
         return Response(response_data)
+
+
+# ---------------------------------------------------------------------------
+# AI Column Mapping suggestion
+# ---------------------------------------------------------------------------
+
+class SuggestColumnMappingView(APIView):
+    """
+    POST /api/v1/import/suggest-mapping/
+    Body: { "entity": "products", "headers": ["Product Name", "Retail Price", ...] }
+    Returns: { "mapping": { "name": "Product Name", "selling_price": "Retail Price" } }
+
+    Uses rule-based alias lookup first, then Groq for any remaining headers.
+    Works without GROQ_API_KEY — falls back to rules-only.
+    """
+    permission_classes = [IsAuthenticated, IsVerified]
+
+    def post(self, request):
+        from django.conf import settings
+
+        entity = (request.data.get("entity") or "products").lower()
+        headers = request.data.get("headers") or []
+
+        if not headers:
+            return Response({"mapping": {}, "method": "none"})
+
+        if entity == "products":
+            aliases = PRODUCT_ALIASES
+            target_fields = PRODUCT_ALL
+        else:
+            # customers and accounts keep their required fields; no AI mapping needed
+            return Response({"mapping": {}, "method": "none"})
+
+        # Step 1: rule-based matching
+        rule_mapping = _rule_based_mapping(headers, aliases)
+        # rule_mapping: { our_field → original_csv_header }
+
+        # Step 2: Groq for any remaining unmapped headers + unassigned fields
+        used_csv_cols = set(rule_mapping.values())
+        api_key = getattr(settings, "GROQ_API_KEY", "") or ""
+        ai_mapping = {}
+        if api_key:
+            ai_mapping = _groq_mapping(headers, target_fields, used_csv_cols, api_key)
+
+        # Merge: rule-based takes priority, AI fills gaps
+        combined = {**ai_mapping, **rule_mapping}
+
+        return Response({
+            "mapping": combined,  # { our_canonical_field: original_csv_header }
+            "method": "ai+rules" if ai_mapping else "rules",
+        })
 
 
 # ---------------------------------------------------------------------------
@@ -444,7 +698,6 @@ class ImportTemplateView(APIView):
         writer = csv.writer(output)
         writer.writerow(columns)
         for row in sample_rows:
-            # Pad row to match column count
             padded = row + [""] * (len(columns) - len(row))
             writer.writerow(padded[:len(columns)])
 

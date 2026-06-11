@@ -512,7 +512,7 @@ export default function ProductsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-surface-700">
-                {['SKU', 'Product', 'Type', 'Cost Price', ...(showOwnerFeatures ? ['Owner Cost'] : []), 'Selling Price', 'Profit / Margin', 'Stock', 'Status', ''].map((h) => (
+                {['SKU', 'Product', 'Type', 'Cost Price', ...(showOwnerFeatures ? ['Owner Cost'] : []), 'Selling Price', 'Wholesale Price', 'Profit / Margin', 'Stock', 'Status', ''].map((h) => (
                   <th key={h} className={`px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wider ${h === 'Owner Cost' ? 'text-brand-400' : 'text-slate-400'}`}>{h}</th>
                 ))}
               </tr>
@@ -555,6 +555,7 @@ export default function ProductsPage() {
                       <td className="px-5 py-3.5 font-mono text-brand-400 text-xs">{formatCurrency(p.owner_cost_price ?? '0')}</td>
                     )}
                     <td className="px-5 py-3.5 font-semibold text-white">{formatCurrency(p.selling_price)}</td>
+                    <td className="px-5 py-3.5 text-slate-400">{(p as any).wholesale_price && parseFloat((p as any).wholesale_price) > 0 ? formatCurrency((p as any).wholesale_price) : <span className="text-slate-600">—</span>}</td>
                     <td className="px-5 py-3.5">
                       <div className="flex items-center gap-1.5">
                         {isProfit
