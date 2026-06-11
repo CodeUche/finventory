@@ -48,7 +48,7 @@ User = get_user_model()
 
 # Security constants
 MAX_LOGIN_ATTEMPTS = 5
-LOCKOUT_MINUTES = 30
+LOCKOUT_MINUTES = 10  # Industry best-practice: short lockout (10 min) discourages brute-force without locking users out for hours
 VERIFICATION_MAX_AGE = 900         # 15 minutes
 MFA_CHALLENGE_MAX_AGE = 300        # 5 minutes
 

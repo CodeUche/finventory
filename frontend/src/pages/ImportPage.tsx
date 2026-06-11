@@ -6,9 +6,12 @@ import { importApi } from '@/services/api'
 import { save } from '@tauri-apps/plugin-dialog'
 import { writeFile } from '@tauri-apps/plugin-fs'
 
-/** Parse a full CSV text (handles quoted fields with embedded commas/newlines) */
+/** Parse a full CSV text and return [headerRow, ...dataRows] with smart header detection.
+ *  Handles exported spreadsheets that have title/blank rows before the actual header.
+ *  Empty header columns are stripped; sparse rows (< 2 non-empty cells) are skipped. */
 function parseCSV(text: string): string[][] {
-  const rows: string[][] = []
+  // Step 1: full CSV parse into raw rows
+  const allRows: string[][] = []
   let row: string[] = []
   let cell = ''
   let inQuote = false
@@ -24,13 +27,41 @@ function parseCSV(text: string): string[][] {
       else if (ch === '\n' || (ch === '\r' && text[i + 1] === '\n')) {
         if (ch === '\r') i++
         row.push(cell.trim()); cell = ''
-        if (row.some(Boolean)) rows.push(row)
+        if (row.some(Boolean)) allRows.push(row)
         row = []
       } else { cell += ch }
     }
   }
-  if (cell || row.length) { row.push(cell.trim()); if (row.some(Boolean)) rows.push(row) }
-  return rows
+  if (cell || row.length) { row.push(cell.trim()); if (row.some(Boolean)) allRows.push(row) }
+
+  if (allRows.length === 0) return []
+
+  // Step 2: find the real header row — first row with 3+ non-empty cells
+  let headerIdx = 0
+  for (let i = 0; i < allRows.length; i++) {
+    if (allRows[i].filter(c => c.trim()).length >= 3) { headerIdx = i; break }
+  }
+
+  // Step 3: collect non-empty, non-duplicate header columns and their indices
+  const headerRow = allRows[headerIdx]
+  const colIndices: number[] = []
+  const cleanHeaders: string[] = []
+  const seen = new Set<string>()
+  headerRow.forEach((h, idx) => {
+    const clean = h.trim()
+    if (clean && !seen.has(clean.toLowerCase())) {
+      colIndices.push(idx)
+      cleanHeaders.push(clean)
+      seen.add(clean.toLowerCase())
+    }
+  })
+
+  // Step 4: data rows — only keep rows with 2+ non-empty cells, use only detected column indices
+  const dataRows = allRows.slice(headerIdx + 1)
+    .filter(r => r.filter(c => c.trim()).length >= 2)
+    .map(r => colIndices.map(idx => r[idx]?.trim() ?? ''))
+
+  return [cleanHeaders, ...dataRows]
 }
 
 type Entity = 'products' | 'customers' | 'accounts'
@@ -193,17 +224,27 @@ export default function ImportPage() {
     const label = PRODUCT_FIELD_LABELS[field] || field
     const isKey = PRODUCT_KEY_FIELDS.includes(field)
     const currentVal = mapping[field] || ''
+    const unmatched = isKey && !currentVal
 
     return (
-      <div className="flex items-center gap-2 py-1.5 border-b border-surface-700/50 last:border-0">
+      <div className={`flex items-center gap-2 py-1.5 border-b last:border-0 ${unmatched ? 'border-amber-500/20' : 'border-surface-700/50'}`}>
         <div className="w-44 shrink-0">
-          <span className="text-xs text-slate-300">{label}</span>
-          {isKey && <span className="ml-1.5 text-[10px] text-indigo-400 bg-indigo-500/10 px-1 rounded">key</span>}
+          <span className={`text-xs ${unmatched ? 'text-amber-300' : 'text-slate-300'}`}>{label}</span>
+          {isKey && !currentVal && (
+            <span className="ml-1.5 text-[10px] text-amber-400 bg-amber-500/10 px-1 rounded">select column</span>
+          )}
+          {isKey && currentVal && (
+            <span className="ml-1.5 text-[10px] text-indigo-400 bg-indigo-500/10 px-1 rounded">key</span>
+          )}
         </div>
         <select
           value={currentVal}
           onChange={e => setMapping(prev => ({ ...prev, [field]: e.target.value }))}
-          className="flex-1 bg-surface-700 border border-surface-600 rounded-lg px-2 py-1 text-xs text-slate-300 focus:outline-none focus:border-indigo-500"
+          className={`flex-1 border rounded-lg px-2 py-1 text-xs focus:outline-none ${
+            unmatched
+              ? 'bg-amber-500/5 border-amber-500/40 text-amber-200 focus:border-amber-400'
+              : 'bg-surface-700 border-surface-600 text-slate-300 focus:border-indigo-500'
+          }`}
         >
           <option value="">— Skip / Not in CSV —</option>
           {previewHeaders.map(h => (
@@ -211,7 +252,7 @@ export default function ImportPage() {
           ))}
         </select>
         {currentVal && (
-          <span className="text-[10px] text-emerald-400 shrink-0">matched</span>
+          <span className="text-[10px] text-emerald-400 shrink-0">✓</span>
         )}
       </div>
     )
@@ -412,16 +453,26 @@ export default function ImportPage() {
 
       {/* Import button */}
       {file && !result && (
-        <div className="flex items-center justify-between">
-          <p className="text-xs text-slate-500">
-            {entity === 'products'
-              ? 'Missing fields will use defaults (auto-generated SKU, price = 0).'
-              : 'Existing records are matched by their unique code and updated.'}
-          </p>
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            {entity === 'products' && (() => {
+              const unmatchedCount = PRODUCT_KEY_FIELDS.filter(f => !mapping[f]).length
+              return unmatchedCount > 0 ? (
+                <p className="text-xs text-amber-400">
+                  ⚠ {unmatchedCount} key field{unmatchedCount > 1 ? 's' : ''} unmatched — those columns will use defaults. Review the mapping above.
+                </p>
+              ) : (
+                <p className="text-xs text-emerald-400/80">All key fields mapped ✓</p>
+              )
+            })()}
+            {entity !== 'products' && (
+              <p className="text-xs text-slate-500">Existing records are matched by their unique code and updated.</p>
+            )}
+          </div>
           <button
             onClick={handleImport}
             disabled={importing || mappingLoading}
-            className="btn-primary flex items-center gap-2 px-6"
+            className="btn-primary flex items-center gap-2 px-6 shrink-0"
           >
             {importing ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
             {importing ? 'Importing…' : `Import ${selected.label}`}

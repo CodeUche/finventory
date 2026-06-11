@@ -247,8 +247,16 @@ class SubscriptionViewSet(viewsets.GenericViewSet):
 
         Initialises a Paystack transaction. Returns { authorization_url, reference }.
         """
-        if not request.organisation:
-            return Response({"error": "Organisation not found. Please select an organisation first."}, status=400)
+        org = getattr(request, "organisation", None)
+        if org is None:
+            org_id_hint = (
+                request.data.get("org_id")
+                or request.headers.get("X-Organisation-ID")
+                or request.query_params.get("org")
+            )
+            org = _resolve_org_for_user_raw(request.user, org_id_hint)
+        if not org:
+            return Response({"error": "Organisation not found. Please log out and back in, then try again."}, status=400)
 
         plan_id = request.data.get("plan_id")
         if not plan_id:
@@ -265,14 +273,14 @@ class SubscriptionViewSet(viewsets.GenericViewSet):
         user_email = request.user.email
         try:
             result = PaystackSubscriptionService.initiate_payment(
-                request.organisation, plan, user_email
+                org, plan, user_email
             )
         except ValueError as e:
             return Response({"error": str(e)}, status=400)
         except Exception:
             logger.exception(
                 "Unexpected error in initiate_payment for org %s, plan %s",
-                request.organisation.id, plan.slug,
+                org.id, plan.slug,
             )
             return Response(
                 {"error": "Payment initialization failed. Please try again."},

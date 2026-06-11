@@ -80,6 +80,7 @@ PRODUCT_ALIASES = {
     "name": [
         "name", "product name", "item name", "product title", "title",
         "item description", "product description", "goods name", "goods",
+        "description",  # inventory/stock reports often use "Description" as the product name
     ],
     "selling_price": [
         "selling_price", "selling price", "sale price", "retail price",
@@ -92,6 +93,7 @@ PRODUCT_ALIASES = {
     ],
     "wholesale_price": [
         "wholesale_price", "wholesale price", "wholesale selling price",
+        "whole sale price", "whole sale selling price",  # common spelling variants
         "trade price", "bulk price", "distributor price", "dealer price",
     ],
     "product_type": ["product_type", "product type", "type", "item type", "goods type"],
@@ -102,7 +104,7 @@ PRODUCT_ALIASES = {
     "brand": ["brand", "brand name", "manufacturer", "make", "supplier brand"],
     "unit_of_measure": [
         "unit_of_measure", "unit", "uom", "unit of measure", "measure",
-        "unit of sale", "sales unit",
+        "unit of sale", "sales unit", "unit of ms.", "unit of ms", "unit ms",
     ],
     "reorder_level": [
         "reorder_level", "reorder level", "reorder point", "minimum stock",
@@ -130,19 +132,63 @@ PRODUCT_ALIASES = {
 # ---------------------------------------------------------------------------
 
 def _parse_csv(file_obj):
-    """Return (headers, rows) where rows is a list of dicts. Raises ValueError if over limit."""
+    """
+    Parse CSV with smart header detection.
+
+    Handles exported spreadsheets that have title rows, blank rows, or store/section
+    headers before the actual column headers (e.g. stock availability reports).
+
+    Returns (headers_lower, rows):
+      - headers_lower: deduplicated, lowercased, non-empty column names
+      - rows: list of dicts keyed by those headers
+    """
     text = file_obj.read().decode("utf-8-sig")
-    reader = csv.DictReader(io.StringIO(text))
-    rows = list(reader)
+    raw_reader = csv.reader(io.StringIO(text))
+    all_rows = [row for row in raw_reader]
+
+    if not all_rows:
+        raise ValueError("CSV file is empty")
+
+    # Find the actual header row: first row that has 3 or more non-empty cells.
+    # This skips blank rows, single-cell title rows ("STOCK AVAILABILITY REPORT"),
+    # and single-cell store/section rows ("Store: DREAM WINE STORE").
+    header_idx = 0
+    for i, row in enumerate(all_rows):
+        if sum(1 for c in row if c.strip()) >= 3:
+            header_idx = i
+            break
+
+    raw_headers = all_rows[header_idx]
+
+    # Build column index: position → lowercase header, skipping blanks and duplicates
+    col_map: dict[int, str] = {}
+    seen: set[str] = set()
+    for j, h in enumerate(raw_headers):
+        h_clean = h.strip().lower()
+        if h_clean and h_clean not in seen:
+            col_map[j] = h_clean
+            seen.add(h_clean)
+
+    headers_lower = list(col_map.values())
+    max_col = max(col_map.keys(), default=0)
+
+    # Build row dicts; skip rows with fewer than 2 non-empty cells (blank lines,
+    # section headers like "Store: X", serial-number-only rows, etc.)
+    rows: list[dict] = []
+    for raw_row in all_rows[header_idx + 1:]:
+        if sum(1 for c in raw_row if c.strip()) < 2:
+            continue
+        padded = raw_row + [""] * max(0, max_col + 1 - len(raw_row))
+        row_dict = {col_map[j]: padded[j].strip() for j in col_map}
+        rows.append(row_dict)
+
     if len(rows) > CSV_ROW_LIMIT:
         raise ValueError(
             f"CSV exceeds the {CSV_ROW_LIMIT:,}-row limit ({len(rows):,} rows found). "
             "Split the file into smaller batches and re-import."
         )
-    headers = reader.fieldnames or []
-    return [h.strip().lower() for h in headers], [
-        {k.strip().lower(): (v or "").strip() for k, v in row.items()} for row in rows
-    ]
+
+    return headers_lower, rows
 
 
 def _money(val, field, errors, row_num):
@@ -169,19 +215,33 @@ def _missing_required(row, required, errors, row_num):
     return any(not row.get(col) for col in required)
 
 
+def _normalize_ws(s: str) -> str:
+    """Lowercase and collapse all whitespace to single spaces."""
+    return " ".join(s.lower().split())
+
+
 def _rule_based_mapping(csv_headers, aliases_dict):
     """
     Map CSV headers to canonical field names using the known-alias lookup.
+    Normalises whitespace before comparison so 'Whole Sale  Selling Price'
+    matches the alias 'whole sale selling price'.
     Returns { canonical_field: original_csv_header } for headers that matched.
     """
-    lower_to_original = {h.lower().strip(): h for h in csv_headers}
-    mapping = {}  # canonical_field → original csv header
-    used_csv_cols = set()
+    # Build normalised → original mapping (first occurrence wins for duplicates)
+    norm_to_original: dict[str, str] = {}
+    for h in csv_headers:
+        norm = _normalize_ws(h)
+        if norm not in norm_to_original:
+            norm_to_original[norm] = h
+
+    mapping: dict[str, str] = {}
+    used_csv_cols: set[str] = set()
 
     for our_field, aliases in aliases_dict.items():
         for alias in aliases:
-            if alias in lower_to_original:
-                original = lower_to_original[alias]
+            norm_alias = _normalize_ws(alias)
+            if norm_alias in norm_to_original:
+                original = norm_to_original[norm_alias]
                 if original not in used_csv_cols:
                     mapping[our_field] = original
                     used_csv_cols.add(original)
@@ -205,12 +265,18 @@ def _groq_mapping(csv_headers, target_fields, already_mapped_csv_cols, api_key):
         return {}
 
     prompt = (
-        "You are a data-import assistant for a business inventory system.\n"
-        f"CSV columns not yet matched: {unmapped_headers}\n"
-        f"Target system fields still needing a match: {unassigned_fields}\n\n"
-        "Map each unassigned target field to the most semantically appropriate unmapped CSV column. "
-        "Only map when confident. Each CSV column can only be used once. "
-        "Return ONLY a JSON object like: {\"target_field\": \"CSV Column\"}. No explanation."
+        "You are a data-import assistant for a business inventory/stock management system.\n"
+        f"Unmatched CSV columns: {unmapped_headers}\n"
+        f"Target fields still needing a match: {unassigned_fields}\n\n"
+        "Rules:\n"
+        "- In stock/inventory reports, 'Description' usually means the PRODUCT NAME (map to 'name').\n"
+        "- 'S/No', 'No.', 'Seq', 'Row' are serial numbers — do NOT map them to any field.\n"
+        "- 'Unit of Ms.', 'UOM', 'Unit' → 'unit_of_measure'.\n"
+        "- 'Qty', 'Quantity', 'Stock Qty', 'On Hand' → 'opening_stock'.\n"
+        "- 'Whole Sale *' or 'Wholesale *' price columns → 'wholesale_price'.\n"
+        "- 'Retail *' price columns → 'selling_price'.\n"
+        "- Only map when confident. Each CSV column can only be used once.\n"
+        "Return ONLY a JSON object: {\"target_field\": \"CSV Column\"}. No explanation."
     )
 
     try:
