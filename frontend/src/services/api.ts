@@ -947,6 +947,7 @@ export const inventoryApi = {
   createProduct: (data: object) => api.post('/inventory/products/', data),
   updateProduct: (id: string, data: object) => api.patch(`/inventory/products/${id}/`, data),
   deleteProduct: (id: string) => api.delete(`/inventory/products/${id}/`),
+  bulkDeleteProducts: (ids?: string[]) => api.delete('/inventory/products/bulk-delete/', { data: { ids: ids ?? [] } }),
   stock: (params?: object) => api.get('/inventory/stock/', { params }),
   lowStock: (params?: object) => api.get('/inventory/products/low-stock/', { params }),
   valuation: () => api.get('/inventory/products/valuation/'),

@@ -7,7 +7,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.core.mixins import TenantFilterMixin
-from apps.core.permissions import IsManager, IsStaff
+from apps.core.permissions import IsManager, IsManagerOrSuperuser, IsStaff
 
 from .models import Batch, Category, Product, StockItem, StockMovement, Warehouse
 from .serializers import (
@@ -199,6 +199,68 @@ class ProductViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                 "is_low_stock": True,
             })
         return Response(data)
+
+    @action(detail=False, methods=["delete"], url_path="bulk-delete",
+            permission_classes=[IsAuthenticated, IsManagerOrSuperuser])
+    def bulk_delete(self, request):
+        """
+        DELETE /api/v1/inventory/products/bulk-delete/
+        Body: { "ids": ["<uuid>", ...] }  — delete specific products
+              (omit or pass empty list to delete ALL products in the org)
+
+        Products referenced by invoices, purchase orders, or returns are skipped
+        (not deleted) and their names are returned in the response.
+        """
+        from django.db import transaction
+        from apps.sales.models import SaleItem, SaleReturnItem
+        from apps.purchases.models import PurchaseOrderItem
+        from apps.core.models import AuditLog
+
+        org = self._get_organisation()
+        ids = request.data.get("ids") or []
+
+        qs = Product.objects.filter(organisation=org)
+        if ids:
+            qs = qs.filter(id__in=ids)
+
+        # Determine which products are referenced and must be skipped
+        referenced_ids = set()
+        referenced_ids.update(
+            SaleItem.objects.filter(product__organisation=org).values_list("product_id", flat=True)
+        )
+        referenced_ids.update(
+            PurchaseOrderItem.objects.filter(product__organisation=org).values_list("product_id", flat=True)
+        )
+        referenced_ids.update(
+            SaleReturnItem.objects.filter(product__organisation=org).values_list("product_id", flat=True)
+        )
+
+        to_delete = qs.exclude(id__in=referenced_ids)
+        skipped = list(qs.filter(id__in=referenced_ids).values_list("name", flat=True))
+
+        deleted_count = 0
+        with transaction.atomic():
+            for product in to_delete:
+                product_id = str(product.pk)
+                product_repr = str(product)
+                product.delete()
+                deleted_count += 1
+                try:
+                    AuditLog.log(
+                        action=AuditLog.DELETE,
+                        user=request.user,
+                        model_name='Product',
+                        object_id=product_id,
+                        object_repr=product_repr,
+                        request=request,
+                    )
+                except Exception:
+                    pass
+
+        return Response({
+            "deleted": deleted_count,
+            "skipped": skipped,
+        }, status=status.HTTP_200_OK)
 
     @action(detail=False, methods=["get"])
     def valuation(self, request):

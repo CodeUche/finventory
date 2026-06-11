@@ -240,6 +240,7 @@ export default function ImportPage() {
         <select
           value={currentVal}
           onChange={e => setMapping(prev => ({ ...prev, [field]: e.target.value }))}
+          style={{ colorScheme: 'dark' }}
           className={`flex-1 border rounded-lg px-2 py-1 text-xs focus:outline-none ${
             unmatched
               ? 'bg-amber-500/5 border-amber-500/40 text-amber-200 focus:border-amber-400'

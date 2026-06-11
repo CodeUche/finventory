@@ -190,11 +190,13 @@ export default function ProductsPage() {
   const [editOrigQty, setEditOrigQty] = useState(0)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
+  const [showDeleteAll, setShowDeleteAll] = useState(false)
+  const [deletingAll, setDeletingAll] = useState(false)
   const [categories, setCategories] = useState<{ id: string; name: string }[]>([])
 
   const fetchProducts = async () => {
     try {
-      const { data } = await inventoryApi.products({ search, ordering: sortBy })
+      const { data } = await inventoryApi.products({ search, ordering: sortBy, page_size: 9999 })
       setProducts(data.results ?? data)
     } catch {
       toast.error('Failed to load products')
@@ -434,6 +436,26 @@ export default function ProductsPage() {
     }
   }
 
+  const handleDeleteAll = async () => {
+    setDeletingAll(true)
+    try {
+      const { data } = await inventoryApi.bulkDeleteProducts()
+      if (data.skipped?.length) {
+        toast.success(`Deleted ${data.deleted} product${data.deleted !== 1 ? 's' : ''}. ${data.skipped.length} skipped (used in documents).`, { duration: 7000 })
+      } else {
+        toast.success(`All ${data.deleted} product${data.deleted !== 1 ? 's' : ''} deleted.`)
+      }
+      setShowDeleteAll(false)
+      fetchProducts()
+    } catch (err: any) {
+      const apiErr = err?.response?.data?.error
+      const msg = typeof apiErr === 'string' ? apiErr : (apiErr?.message ?? 'Failed to delete products')
+      toast.error(msg, { duration: 6000 })
+    } finally {
+      setDeletingAll(false)
+    }
+  }
+
   const openHistory = async (p: Product) => {
     setHistoryProduct(p)
     setHistoryItems([])
@@ -480,6 +502,11 @@ export default function ProductsPage() {
           <button onClick={handleRefresh} disabled={refreshing} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
             <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
           </button>
+          {products.length > 0 && (
+            <button onClick={() => setShowDeleteAll(true)} className="btn-ghost p-2 text-red-400 hover:text-red-300 hover:bg-red-500/10" title="Delete all products">
+              <Trash2 size={16} />
+            </button>
+          )}
           <button onClick={openCreate} className="btn-primary">
             <Plus size={16} /> Add Product
           </button>
@@ -1023,6 +1050,34 @@ export default function ProductsPage() {
                   </tbody>
                 </table>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showDeleteAll && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-surface-800 border border-red-500/30 rounded-xl p-6 max-w-sm w-full shadow-2xl">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2 bg-red-500/10 rounded-lg">
+                <Trash2 size={20} className="text-red-400" />
+              </div>
+              <h2 className="text-lg font-semibold text-white">Delete All Products</h2>
+            </div>
+            <p className="text-slate-300 text-sm mb-2">
+              This will permanently delete <span className="text-white font-semibold">{products.length} product{products.length !== 1 ? 's' : ''}</span> from your catalogue.
+            </p>
+            <p className="text-slate-400 text-xs mb-6">
+              Products used in invoices, purchase orders, or returns will be skipped. Stock records and batch data will be removed. This cannot be undone.
+            </p>
+            <div className="flex gap-3">
+              <button onClick={() => setShowDeleteAll(false)} disabled={deletingAll} className="flex-1 btn-ghost">
+                Cancel
+              </button>
+              <button onClick={handleDeleteAll} disabled={deletingAll} className="flex-1 bg-red-600 hover:bg-red-700 text-white rounded-lg px-4 py-2 text-sm font-medium flex items-center justify-center gap-2 transition-colors">
+                {deletingAll ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                {deletingAll ? 'Deleting…' : 'Delete All'}
+              </button>
             </div>
           </div>
         </div>
