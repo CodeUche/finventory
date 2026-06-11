@@ -408,7 +408,7 @@ export default function OnboardingPage() {
     // This is the only call that breaks the onboarding loop.
     await markOnboardingComplete()
     if (trialStarted) {
-      toast.success(plan.is_free ? 'Welcome to Audity! No card needed.' : `${plan.name} trial started — 14 days free!`)
+      toast.success(plan.is_free ? 'Welcome to Audity! No card needed.' : `${plan.name} trial started — 30 days free!`)
     } else if (!trialStarted) {
       toast.success('Welcome to Audity! Set up your plan from Settings any time.')
     }
@@ -775,7 +775,7 @@ export default function OnboardingPage() {
 
                       {/* Plan badge */}
                       <div className={`text-xs font-medium px-3 py-1.5 rounded-lg text-center ${meta.color.pill}`}>
-                        {activePlan.is_free ? 'No card needed' : trialUsed ? 'Subscribe directly' : '14-day free trial'}
+                        {activePlan.is_free ? 'No card needed' : trialUsed ? 'Subscribe directly' : '30-day free trial'}
                       </div>
                     </div>
                   )
@@ -795,7 +795,7 @@ export default function OnboardingPage() {
                 ) : trialUsed ? (
                   <span className="flex items-center gap-2"><ExternalLink size={17} /> Subscribe to {selectedPlan?.name ?? 'plan'}</span>
                 ) : (
-                  <span className="flex items-center gap-2"><Clock size={17} /> Start my 14-day free trial</span>
+                  <span className="flex items-center gap-2"><Clock size={17} /> Start my 30-day free trial</span>
                 )}
               </button>
 
@@ -803,7 +803,7 @@ export default function OnboardingPage() {
                 <p className="text-center text-xs text-slate-500">
                   {trialUsed
                     ? 'You have already used your free trial. Subscribe to continue.'
-                    : 'Full access for 14 days. No card required upfront. Cancel anytime.'}
+                    : 'Full access for 30 days. No card required upfront. Cancel anytime.'}
                 </p>
               )}
 

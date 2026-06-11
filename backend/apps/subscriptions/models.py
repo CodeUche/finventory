@@ -44,7 +44,7 @@ class Plan(TimeStampedModel):
     description = models.TextField(blank=True)
     price = MoneyField(help_text="Price per interval in the org's currency")
     interval = models.CharField(max_length=10, choices=Interval.choices, default=Interval.MONTHLY)
-    trial_days = models.PositiveIntegerField(default=14)
+    trial_days = models.PositiveIntegerField(default=30)
     is_active = models.BooleanField(default=True)
     is_public = models.BooleanField(default=True, help_text="Visible on pricing page")
 

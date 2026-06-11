@@ -670,7 +670,7 @@ const PARTNER_TIERS = [
       'Multi-client dashboard (up to 10 SMBs)',
       'Per-client seat billing',
       'Referral commission tracking',
-      '14-day free trial',
+      '30-day free trial',
     ],
   },
   {

@@ -184,7 +184,7 @@ export default function SubscriptionPaywall({ subscription, onDismiss }: Props) 
           </h2>
           <p className="text-slate-400 text-sm leading-relaxed">
             {isTrial
-              ? `Your 14-day free trial on the ${planName} plan has ended.`
+              ? `Your 30-day free trial on the ${planName} plan has ended.`
               : `Your ${planName} subscription has expired.`}
             {' '}Renew to continue using all features.
           </p>

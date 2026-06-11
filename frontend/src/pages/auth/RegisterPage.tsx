@@ -159,7 +159,7 @@ export default function RegisterPage() {
       <div className="au-card au-card-wide">
         <div className="au-eyebrow">Get started</div>
         <h2 className="au-title">Create your workspace</h2>
-        <p className="au-sub">Set up your books in minutes — free for 14 days.</p>
+        <p className="au-sub">Set up your books in minutes — free for 30 days.</p>
 
         <div className="au-switch">
           <button type="button" onClick={() => navigate('/login')}>Sign in</button>
