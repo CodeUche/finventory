@@ -121,7 +121,10 @@ class ProductViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                 },
                 status=status.HTTP_422_UNPROCESSABLE_ENTITY,
             )
-        if PurchaseOrderItem.objects.filter(product=instance).exists():
+        if PurchaseOrderItem.objects.filter(
+            product=instance,
+            purchase_order__is_deleted=False,
+        ).exists():
             return Response(
                 {
                     'error': (
@@ -228,7 +231,10 @@ class ProductViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             SaleItem.objects.filter(product__organisation=org).values_list("product_id", flat=True)
         )
         referenced_ids.update(
-            PurchaseOrderItem.objects.filter(product__organisation=org).values_list("product_id", flat=True)
+            PurchaseOrderItem.objects.filter(
+                product__organisation=org,
+                purchase_order__is_deleted=False,
+            ).values_list("product_id", flat=True)
         )
         referenced_ids.update(
             SaleReturnItem.objects.filter(product__organisation=org).values_list("product_id", flat=True)
