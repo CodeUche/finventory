@@ -41,6 +41,8 @@ export default function ChartOfAccountsPage() {
   const [trialBalance, setTrialBalance] = useState<Record<string, unknown> | null>(null)
   const [loadingTB, setLoadingTB] = useState(false)
   const [typeFilter, setTypeFilter] = useState<string>('all')
+  const [showExportMenu, setShowExportMenu] = useState(false)
+  const exportRef = useRef<HTMLDivElement>(null)
 
   // Ledger drill-down
   const [ledgerAccount, setLedgerAccount] = useState<Account | null>(null)
@@ -512,13 +514,9 @@ export default function ChartOfAccountsPage() {
           await saveBlobFile(blob, `trial-balance-${dateStr}.pdf`)
         }
 
-        // Inline dropdown state via ref (avoids lifting state out of IIFE)
-        const [showExportMenu, setShowExportMenu] = useState(false)
-        const exportRef = useRef<HTMLDivElement>(null)
-
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setShowTrialBalance(false)} />
+            <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => { setShowTrialBalance(false); setShowExportMenu(false) }} />
             <div className="relative card w-full max-w-2xl p-6 space-y-4 overflow-y-auto max-h-[85vh]">
               <div className="flex items-center justify-between">
                 <h2 className="text-lg font-bold text-white">Trial Balance</h2>
@@ -550,7 +548,7 @@ export default function ChartOfAccountsPage() {
                       )}
                     </div>
                   )}
-                  <button onClick={() => setShowTrialBalance(false)} className="text-slate-400 hover:text-white"><X size={20} /></button>
+                  <button onClick={() => { setShowTrialBalance(false); setShowExportMenu(false) }} className="text-slate-400 hover:text-white"><X size={20} /></button>
                 </div>
               </div>
               <table className="w-full text-sm">
