@@ -18,7 +18,7 @@ import {
   BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis,
   CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts'
-import { stockReportApi, inventoryApi, reportApi } from '@/services/api'
+import { stockReportApi, inventoryApi, reportApi, urlToDataUrl } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
 import type { Organisation } from '@/types'
 import toast from 'react-hot-toast'
@@ -187,12 +187,14 @@ async function exportAvailabilityPDF(rows: AvailabilityRow[], org?: Organisation
   const base = buildDocBase(org)
   const { BRAND, tmpl, displayName, orgAddress, orgEmail, orgPhone, pdfFont } = base
   const DARK = COLORS.DARK; const MUTED = COLORS.MUTED
+  let logoData: string | null = null
+  if (org?.logo) { try { logoData = await urlToDataUrl(org.logo) } catch { /* skip */ } }
   const doc = new jsPDF({ unit: 'mm', format: 'a4' })
   doc.setLineHeightFactor(1.15)
   const pageW = doc.internal.pageSize.getWidth()
   const exportedAt = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
   const y = applyDocHeader(doc, {
-    tmpl, pageW, BRAND, DARK, MUTED, displayName, orgAddress, orgEmail, orgPhone, pdfFont,
+    tmpl, pageW, BRAND, DARK, MUTED, logoData, displayName, orgAddress, orgEmail, orgPhone, pdfFont,
     fontSize: base.fontSize, pdfStyle: base.isBold ? 'bold' : 'normal', nameColor: base.nameColor,
     showCompanyName: base.showCompanyName, companyFontUnderline: base.companyFontUnderline,
     docTitle: 'STOCK AVAILABILITY',
@@ -241,12 +243,14 @@ async function exportUsagePDF(rows: UsageRow[], txRows: UsageTransaction[], org?
   const base = buildDocBase(org)
   const { BRAND, tmpl, displayName, orgAddress, orgEmail, orgPhone, pdfFont } = base
   const DARK = COLORS.DARK; const MUTED = COLORS.MUTED
+  let logoData: string | null = null
+  if (org?.logo) { try { logoData = await urlToDataUrl(org.logo) } catch { /* skip */ } }
   const doc = new jsPDF({ unit: 'mm', format: 'a4' })
   doc.setLineHeightFactor(1.15)
   const pageW = doc.internal.pageSize.getWidth()
   const exportedAt = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
   let y = applyDocHeader(doc, {
-    tmpl, pageW, BRAND, DARK, MUTED, displayName, orgAddress, orgEmail, orgPhone, pdfFont,
+    tmpl, pageW, BRAND, DARK, MUTED, logoData, displayName, orgAddress, orgEmail, orgPhone, pdfFont,
     fontSize: base.fontSize, pdfStyle: base.isBold ? 'bold' : 'normal', nameColor: base.nameColor,
     showCompanyName: base.showCompanyName, companyFontUnderline: base.companyFontUnderline,
     docTitle: 'STOCK USAGE REPORT',
@@ -301,12 +305,14 @@ async function exportTransfersPDF(rows: TransferRow[], org?: Organisation | null
   const base = buildDocBase(org)
   const { BRAND, tmpl, displayName, orgAddress, orgEmail, orgPhone, pdfFont } = base
   const DARK = COLORS.DARK; const MUTED = COLORS.MUTED
+  let logoData: string | null = null
+  if (org?.logo) { try { logoData = await urlToDataUrl(org.logo) } catch { /* skip */ } }
   const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' })
   doc.setLineHeightFactor(1.15)
   const pageW = doc.internal.pageSize.getWidth()
   const exportedAt = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
   const y = applyDocHeader(doc, {
-    tmpl, pageW, BRAND, DARK, MUTED, displayName, orgAddress, orgEmail, orgPhone, pdfFont,
+    tmpl, pageW, BRAND, DARK, MUTED, logoData, displayName, orgAddress, orgEmail, orgPhone, pdfFont,
     landscape: true,
     fontSize: base.fontSize, pdfStyle: base.isBold ? 'bold' : 'normal', nameColor: base.nameColor,
     showCompanyName: base.showCompanyName, companyFontUnderline: base.companyFontUnderline,
@@ -348,12 +354,14 @@ async function exportStockCardPDF(rows: StockCardRow[], productName: string, pro
   const base = buildDocBase(org)
   const { BRAND, tmpl, displayName, orgAddress, orgEmail, orgPhone, pdfFont } = base
   const DARK = COLORS.DARK; const MUTED = COLORS.MUTED
+  let logoData: string | null = null
+  if (org?.logo) { try { logoData = await urlToDataUrl(org.logo) } catch { /* skip */ } }
   const doc = new jsPDF({ unit: 'mm', format: 'a4' })
   doc.setLineHeightFactor(1.15)
   const pageW = doc.internal.pageSize.getWidth()
   const exportedAt = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
   const y = applyDocHeader(doc, {
-    tmpl, pageW, BRAND, DARK, MUTED, displayName, orgAddress, orgEmail, orgPhone, pdfFont,
+    tmpl, pageW, BRAND, DARK, MUTED, logoData, displayName, orgAddress, orgEmail, orgPhone, pdfFont,
     fontSize: base.fontSize, pdfStyle: base.isBold ? 'bold' : 'normal', nameColor: base.nameColor,
     showCompanyName: base.showCompanyName, companyFontUnderline: base.companyFontUnderline,
     docTitle: 'STOCK CARD',
@@ -397,12 +405,14 @@ async function exportValuationPDF(report: ValuationReport, org?: Organisation | 
   const base = buildDocBase(org)
   const { BRAND, tmpl, displayName, orgAddress, orgEmail, orgPhone, pdfFont } = base
   const DARK = COLORS.DARK; const MUTED = COLORS.MUTED
+  let logoData: string | null = null
+  if (org?.logo) { try { logoData = await urlToDataUrl(org.logo) } catch { /* skip */ } }
   const doc = new jsPDF({ unit: 'mm', format: 'a4' })
   doc.setLineHeightFactor(1.15)
   const pageW = doc.internal.pageSize.getWidth()
   const exportedAt = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
   const y = applyDocHeader(doc, {
-    tmpl, pageW, BRAND, DARK, MUTED, displayName, orgAddress, orgEmail, orgPhone, pdfFont,
+    tmpl, pageW, BRAND, DARK, MUTED, logoData, displayName, orgAddress, orgEmail, orgPhone, pdfFont,
     fontSize: base.fontSize, pdfStyle: base.isBold ? 'bold' : 'normal', nameColor: base.nameColor,
     showCompanyName: base.showCompanyName, companyFontUnderline: base.companyFontUnderline,
     docTitle: 'INVENTORY VALUATION',

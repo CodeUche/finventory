@@ -53,6 +53,10 @@ async function exportHistoryPDF(items: SalesHistoryItem[], product: Product, org
   })()
   const displayName = org?.invoice_company_name?.trim() || org?.name || 'Audity'
 
+  const { urlToDataUrl } = await import('@/services/api')
+  let logoData: string | null = null
+  if (org?.logo) { try { logoData = await urlToDataUrl(org.logo) } catch { /* skip */ } }
+
   const doc = new jsPDF({ unit: 'mm', format: 'a4' })
   doc.setLineHeightFactor(1.15)
   const pageW = doc.internal.pageSize.getWidth()
@@ -60,6 +64,7 @@ async function exportHistoryPDF(items: SalesHistoryItem[], product: Product, org
 
   const y = applyDocHeader(doc, {
     tmpl, pageW, BRAND, DARK, MUTED,
+    logoData,
     displayName,
     orgAddress: org?.address,
     orgEmail:   org?.email,

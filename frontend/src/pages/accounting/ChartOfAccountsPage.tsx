@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, X, BookOpen, Edit2, Trash2, Loader2, Download, RefreshCw, ChevronRight, AlertTriangle, ChevronDown } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { accountingApi, bypassNextGets } from '@/services/api'
+import { accountingApi, bypassNextGets, urlToDataUrl } from '@/services/api'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { saveBlobFile } from '@/lib/saveBlobFile'
 import DateInput from '@/components/DateInput'
+import { useAuthStore } from '@/store/authStore'
 import type { Account, AccountLedger } from '@/types'
 
 const TYPE_BADGE: Record<string, string> = {
@@ -28,6 +29,7 @@ interface AccountForm {
 const BLANK: AccountForm = { code: '', name: '', account_type: 'asset', parent: '', description: '' }
 
 export default function ChartOfAccountsPage() {
+  const { organisation } = useAuthStore()
   const [accounts, setAccounts] = useState<Account[]>([])
   const [loading, setLoading] = useState(true)
   const [seeding, setSeeding] = useState(false)
@@ -489,14 +491,56 @@ export default function ChartOfAccountsPage() {
         const exportPDF = async () => {
           const { default: jsPDF } = await import('jspdf')
           const { default: autoTable } = await import('jspdf-autotable')
+          const { applyDocHeader, buildTableStyle, addDocFooter, COLORS } = await import('@/lib/pdfUtils')
+
+          const toRgb = (hex?: string): [number,number,number] => {
+            const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex ?? '')
+            if (!m) return [249, 115, 22]; return [parseInt(m[1],16), parseInt(m[2],16), parseInt(m[3],16)]
+          }
+          const BRAND = toRgb(organisation?.brand_color)
+          const DARK = COLORS.DARK; const MUTED = COLORS.MUTED
+          const tmpl = organisation?.invoice_template ?? 'classic'
+          const pdfFont = organisation?.company_name_font?.toLowerCase().includes('times') ? 'times'
+            : organisation?.company_name_font?.toLowerCase().includes('courier') ? 'courier' : 'helvetica'
+          const isBold   = organisation?.company_name_font_bold !== false
+          const isItalic = organisation?.company_name_font_italic === true
+          const pdfStyle = isBold && isItalic ? 'bolditalic' : isBold ? 'bold' : isItalic ? 'italic' : 'normal'
+          const fontSize = Math.max(8, Math.min(36, organisation?.company_name_font_size ?? 12))
+          const nameColor: [number,number,number] = (() => {
+            const c = organisation?.company_name_font_color
+            if (!c || c === '#ffffff') return (tmpl === 'modern' || tmpl === 'minimal') ? DARK : COLORS.WHITE
+            return toRgb(c)
+          })()
+          const displayName = organisation?.show_company_name_on_pdf === false
+            ? '' : (organisation?.invoice_company_name?.trim() || organisation?.name || 'Audity')
+
+          let logoData: string | null = null
+          if (organisation?.logo) { try { logoData = await urlToDataUrl(organisation.logo) } catch { /* skip */ } }
+
           const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
-          doc.setFontSize(16)
-          doc.text('Trial Balance', 14, 18)
-          doc.setFontSize(9)
-          doc.setTextColor(120)
-          doc.text(`Generated ${dateStr}`, 14, 25)
+          doc.setLineHeightFactor(1.15)
+          const pageW = doc.internal.pageSize.getWidth()
+
+          const y = applyDocHeader(doc, {
+            tmpl, pageW, BRAND, DARK, MUTED, logoData,
+            displayName,
+            orgAddress: organisation?.address,
+            orgEmail:   organisation?.email,
+            orgPhone:   organisation?.phone,
+            pdfFont, fontSize, pdfStyle, nameColor,
+            showCompanyName: organisation?.show_company_name_on_pdf !== false,
+            companyFontUnderline: organisation?.company_name_font_underline,
+            docTitle: 'TRIAL BALANCE',
+            metaRows: [
+              ['Generated', dateStr],
+              ['Status', balanced ? 'Balanced ✓' : 'Not Balanced ⚠'],
+            ],
+          })
+
+          const ts = buildTableStyle(BRAND, pdfFont)
           autoTable(doc, {
-            startY: 30,
+            ...ts,
+            startY: y,
             head: [['Code', 'Account', 'Type', 'Debit', 'Credit']],
             body: rows.map((r) => [
               r.code, r.name, r.type,
@@ -504,14 +548,17 @@ export default function ChartOfAccountsPage() {
               r.credit > 0 ? r.credit.toFixed(2) : '—',
             ]),
             foot: [['', 'TOTAL', '', totalDebit.toFixed(2), totalCredit.toFixed(2)]],
-            headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: 'bold', fontSize: 8 },
-            footStyles: { fillColor: [15, 23, 42], textColor: 255, fontStyle: 'bold', fontSize: 8 },
-            bodyStyles: { fontSize: 8 },
-            columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right' } },
-            alternateRowStyles: { fillColor: [248, 250, 252] },
+            ...ts,
+            footStyles: { ...ts.headStyles, fontSize: 8 },
+            columnStyles: {
+              0: { cellWidth: 18, fontStyle: 'bold' as const },
+              3: { halign: 'right' as const, cellWidth: 32 },
+              4: { halign: 'right' as const, cellWidth: 32 },
+            },
           })
-          const blob = new Blob([doc.output('arraybuffer')], { type: 'application/pdf' })
-          await saveBlobFile(blob, `trial-balance-${dateStr}.pdf`)
+
+          addDocFooter(doc, { orgName: displayName, docTitle: 'TRIAL BALANCE', BRAND, pdfFont })
+          await saveBlobFile(doc.output('blob'), `trial-balance-${dateStr}.pdf`)
         }
 
         return (
