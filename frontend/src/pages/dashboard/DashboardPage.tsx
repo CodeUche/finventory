@@ -32,7 +32,7 @@ import {
   Upload, Receipt, UserPlus, Plus, Scale, Wallet, FileText,
   BarChart2, Activity,
 } from 'lucide-react'
-import { reportApi, inventoryApi, salesApi, einvoicingApi } from '@/services/api'
+import { reportApi, inventoryApi, salesApi, einvoicingApi, bypassNextGets } from '@/services/api'
 import type { FirsStats } from '@/types'
 import { offlineCache } from '@/lib/offlineCache'
 import { formatCurrency, getCurrencySymbol } from '@/lib/utils'
@@ -626,7 +626,11 @@ export default function DashboardPage() {
 
   // ── Refresh helper ───────────────────────────────────────────────────────────
   const handleRefresh = async () => {
+    // Bypass the 5-minute fresh-cache for ALL GET requests in the next 8 seconds
+    // so every report endpoint fetches live data instead of serving cached figures.
+    bypassNextGets(8000)
     await Promise.allSettled([
+      offlineCache.invalidatePrefix('/reports/'),
       offlineCache.invalidatePrefix('/tenancy/organisations/my_membership/'),
       offlineCache.invalidatePrefix('/tenancy/memberships/'),
       offlineCache.invalidatePrefix('/tenancy/organisations/'),
@@ -653,7 +657,7 @@ export default function DashboardPage() {
         <div className="flex items-center gap-2 flex-wrap">
           <select
             value={period}
-            onChange={e => setPeriod(e.target.value as PeriodKey)}
+            onChange={e => { bypassNextGets(8000); setPeriod(e.target.value as PeriodKey) }}
             className="input text-sm py-1.5 w-auto"
           >
             {PERIODS.map(({ key, label }) => (

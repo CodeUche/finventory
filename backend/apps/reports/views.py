@@ -14,7 +14,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.permissions import IsAccountant
+from apps.core.permissions import IsStaff
 
 from .exporters import dispatch_export
 from .period_utils import period_label, resolve_period
@@ -29,7 +29,7 @@ class BaseDateRangeView(APIView):
     provides a helper for optionally returning an export file instead of JSON.
     """
 
-    permission_classes = [IsAuthenticated, IsAccountant]
+    permission_classes = [IsAuthenticated, IsStaff]
 
     def get_date_range(self, request):
         """Return (date_from, date_to) — both None when period='all'."""

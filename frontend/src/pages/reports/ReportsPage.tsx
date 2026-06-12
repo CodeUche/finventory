@@ -484,9 +484,9 @@ export default function ReportsPage() {
           <p className="text-slate-400 text-sm">Financial overview and performance metrics</p>
         </div>
         <div className="sm:ml-auto flex flex-wrap items-center gap-2">
-          <PeriodSelector value={period} onChange={setPeriod} />
+          <PeriodSelector value={period} onChange={(v) => { bypassNextGets(8000); setPeriod(v) }} />
           <button
-            onClick={() => { bypassNextGets(); load() }}
+            onClick={() => { bypassNextGets(8000); load() }}
             disabled={loading}
             className="btn-primary flex items-center gap-2 px-3 py-1.5 text-sm disabled:opacity-50"
             title="Refresh"
