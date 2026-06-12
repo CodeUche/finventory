@@ -98,7 +98,12 @@ class ExpenseViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
     def perform_create(self, serializer):
         import logging as _log
         logger = _log.getLogger(__name__)
-        org = self.request.organisation
+        # Use _get_organisation() (not self.request.organisation) so that
+        # resolve_organisation() re-sets the PostgreSQL RLS GUC
+        # (app.current_org_id) within the current DB transaction before any
+        # INSERT.  The GUC set during the permission check is transaction-local
+        # and may have expired by the time perform_create runs.
+        org = self._get_organisation()
 
         # Strict GL mode + period lock check
         from apps.accounting.services import AccountingService, check_strict_gl_mode
@@ -129,7 +134,7 @@ class ExpenseViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
         )
 
     def perform_update(self, serializer):
-        org = self.request.organisation
+        org = self._get_organisation()
         label = serializer.validated_data.pop('category_label', None)
         instance = serializer.instance
         before = {f: getattr(instance, f, None) for f in serializer.validated_data}
