@@ -105,8 +105,10 @@ export default function StockPage() {
 
   const openEditRow = async (s: StockItem) => {
     setAdjustRowLocked(true)
-    setAdjustRowLabel(`${s.product_name} @ ${s.warehouse_name}`)
-    setAdjustForm({ product_id: s.product, warehouse_id: s.warehouse, quantity: '', reason: '' })
+    const defaultWarehouse = warehouses.find((w) => w.is_default)?.id ?? warehouses[0]?.id ?? ''
+    const warehouseId = s.warehouse || defaultWarehouse
+    setAdjustRowLabel(`${s.product_name} @ ${s.warehouse_name === '—' ? (warehouses.find((w) => w.id === warehouseId)?.name ?? 'Default') : s.warehouse_name}`)
+    setAdjustForm({ product_id: s.product, warehouse_id: warehouseId, quantity: '', reason: '' })
     setNewProduct({ name: '', sku: '', cost_price: '', selling_price: '' })
     setCreatingProduct(false)
     setShowAdjust(true)
@@ -328,7 +330,7 @@ export default function StockPage() {
                 </td></tr>
               ) : (
                 displayed.map((s) => (
-                  <tr key={s.id} className="table-row">
+                  <tr key={s.id ?? `phantom-${s.product}`} className="table-row">
                     <td className="px-5 py-3.5 font-medium text-white">{s.product_name}</td>
                     <td className="px-5 py-3.5 font-mono text-xs text-brand-400">{s.product_sku}</td>
                     <td className="px-5 py-3.5 text-slate-400">{s.warehouse_name}</td>
@@ -360,16 +362,18 @@ export default function StockPage() {
                         >
                           <Pencil size={14} />
                         </button>
-                        <button
-                          onClick={() => handleDeleteStockItem(s)}
-                          disabled={deletingStockId === s.id}
-                          title="Remove stock record"
-                          className="btn-ghost p-1.5 text-slate-400 hover:text-red-400"
-                        >
-                          {deletingStockId === s.id
-                            ? <Loader2 size={14} className="animate-spin" />
-                            : <Trash2 size={14} />}
-                        </button>
+                        {s.id && (
+                          <button
+                            onClick={() => handleDeleteStockItem(s)}
+                            disabled={deletingStockId === s.id}
+                            title="Remove stock record"
+                            className="btn-ghost p-1.5 text-slate-400 hover:text-red-400"
+                          >
+                            {deletingStockId === s.id
+                              ? <Loader2 size={14} className="animate-spin" />
+                              : <Trash2 size={14} />}
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>

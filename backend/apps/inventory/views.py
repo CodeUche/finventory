@@ -182,7 +182,6 @@ class ProductViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         ).values_list("product_id", flat=True)
         no_movement_products = Product.objects.filter(
             organisation=org,
-            reorder_level__gt=0,
             is_active=True,
         ).exclude(id__in=product_ids_with_stock)
         for p in no_movement_products:
@@ -588,6 +587,54 @@ class StockItemViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         if self.action == "destroy":
             return [IsAuthenticated(), IsManager()]
         return [IsAuthenticated(), IsStaff()]
+
+    def list(self, request, *args, **kwargs):
+        """
+        Extend the default list to include products that have never had any
+        stock movement (no StockItem row yet).  These show as 0 qty / low stock
+        so users can see all imported products immediately after a CSV import.
+        """
+        response = super().list(request, *args, **kwargs)
+        org = self._get_organisation()
+
+        ids_with_stock = StockItem.objects.filter(
+            organisation=org
+        ).values_list("product_id", flat=True)
+
+        no_movement = Product.objects.filter(
+            organisation=org, is_active=True,
+        ).exclude(id__in=ids_with_stock).values(
+            "id", "name", "sku"
+        )
+
+        phantom_rows = [
+            {
+                "id": None,
+                "product": str(p["id"]),
+                "product_name": p["name"],
+                "product_sku": p["sku"] or "",
+                "warehouse": None,
+                "warehouse_name": "—",
+                "quantity_on_hand": "0.00",
+                "quantity_available": "0.00",
+                "quantity_incoming": 0,
+                "incoming_eta": None,
+                "is_low_stock": True,
+                "stock_level": "low",
+            }
+            for p in no_movement
+        ]
+
+        if not phantom_rows:
+            return response
+
+        if isinstance(response.data, dict) and "results" in response.data:
+            response.data["results"] = list(response.data["results"]) + phantom_rows
+            response.data["count"] = (response.data.get("count") or 0) + len(phantom_rows)
+        else:
+            response.data = list(response.data) + phantom_rows
+
+        return response
 
     def destroy(self, request, *args, **kwargs):
         """
