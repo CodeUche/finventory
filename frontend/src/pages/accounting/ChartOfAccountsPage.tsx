@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
-import { Plus, X, BookOpen, Edit2, Trash2, Loader2, Download, RefreshCw, ChevronRight, AlertTriangle } from 'lucide-react'
+import { Plus, X, BookOpen, Edit2, Trash2, Loader2, Download, RefreshCw, ChevronRight, AlertTriangle, ChevronDown } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { accountingApi, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatDate } from '@/lib/utils'
+import { saveBlobFile } from '@/lib/saveBlobFile'
 import DateInput from '@/components/DateInput'
 import type { Account, AccountLedger } from '@/types'
 
@@ -458,15 +459,62 @@ export default function ChartOfAccountsPage() {
         const totalDebit = rows.reduce((s, r) => s + r.debit, 0)
         const totalCredit = rows.reduce((s, r) => s + r.credit, 0)
         const balanced = Math.abs(totalDebit - totalCredit) < 0.01
+        const dateStr = new Date().toISOString().split('T')[0]
 
-        const downloadCSV = () => {
+        const exportCSV = async () => {
           const header = 'Code,Account,Type,Debit,Credit\n'
           const body = rows.map((r) => `${r.code},"${r.name}",${r.type},${r.debit.toFixed(2)},${r.credit.toFixed(2)}`).join('\n')
           const totals = `\n,TOTAL,,${totalDebit.toFixed(2)},${totalCredit.toFixed(2)}`
           const blob = new Blob([header + body + totals], { type: 'text/csv' })
-          const a = document.createElement('a'); a.href = URL.createObjectURL(blob)
-          a.download = `trial-balance-${new Date().toISOString().split('T')[0]}.csv`; a.click()
+          await saveBlobFile(blob, `trial-balance-${dateStr}.csv`)
         }
+
+        const exportExcel = async () => {
+          const { utils, write } = await import('xlsx')
+          const wsData = [
+            ['Code', 'Account', 'Type', 'Debit', 'Credit'],
+            ...rows.map((r) => [r.code, r.name, r.type, r.debit, r.credit]),
+            ['', 'TOTAL', '', totalDebit, totalCredit],
+          ]
+          const ws = utils.aoa_to_sheet(wsData)
+          ws['!cols'] = [{ wch: 8 }, { wch: 36 }, { wch: 12 }, { wch: 16 }, { wch: 16 }]
+          const wb = utils.book_new()
+          utils.book_append_sheet(wb, ws, 'Trial Balance')
+          const buf = write(wb, { type: 'array', bookType: 'xlsx' })
+          await saveBlobFile(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `trial-balance-${dateStr}.xlsx`)
+        }
+
+        const exportPDF = async () => {
+          const { default: jsPDF } = await import('jspdf')
+          const { default: autoTable } = await import('jspdf-autotable')
+          const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+          doc.setFontSize(16)
+          doc.text('Trial Balance', 14, 18)
+          doc.setFontSize(9)
+          doc.setTextColor(120)
+          doc.text(`Generated ${dateStr}`, 14, 25)
+          autoTable(doc, {
+            startY: 30,
+            head: [['Code', 'Account', 'Type', 'Debit', 'Credit']],
+            body: rows.map((r) => [
+              r.code, r.name, r.type,
+              r.debit > 0 ? r.debit.toFixed(2) : '—',
+              r.credit > 0 ? r.credit.toFixed(2) : '—',
+            ]),
+            foot: [['', 'TOTAL', '', totalDebit.toFixed(2), totalCredit.toFixed(2)]],
+            headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: 'bold', fontSize: 8 },
+            footStyles: { fillColor: [15, 23, 42], textColor: 255, fontStyle: 'bold', fontSize: 8 },
+            bodyStyles: { fontSize: 8 },
+            columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right' } },
+            alternateRowStyles: { fillColor: [248, 250, 252] },
+          })
+          const blob = new Blob([doc.output('arraybuffer')], { type: 'application/pdf' })
+          await saveBlobFile(blob, `trial-balance-${dateStr}.pdf`)
+        }
+
+        // Inline dropdown state via ref (avoids lifting state out of IIFE)
+        const [showExportMenu, setShowExportMenu] = useState(false)
+        const exportRef = useRef<HTMLDivElement>(null)
 
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -476,9 +524,31 @@ export default function ChartOfAccountsPage() {
                 <h2 className="text-lg font-bold text-white">Trial Balance</h2>
                 <div className="flex items-center gap-2">
                   {rows.length > 0 && (
-                    <button onClick={downloadCSV} className="flex items-center gap-1.5 text-xs text-brand-400 hover:text-brand-300 transition-colors">
-                      <Download size={13} /> Export CSV
-                    </button>
+                    <div className="relative" ref={exportRef}>
+                      <button
+                        onClick={() => setShowExportMenu((v) => !v)}
+                        className="flex items-center gap-1.5 text-xs btn-ghost px-3 py-1.5"
+                      >
+                        <Download size={13} /> Export <ChevronDown size={11} />
+                      </button>
+                      {showExportMenu && (
+                        <div className="absolute right-0 top-full mt-1 bg-surface-800 border border-surface-600 rounded-xl shadow-xl z-10 py-1 w-36">
+                          {[
+                            { label: 'CSV', fn: exportCSV },
+                            { label: 'Excel (.xlsx)', fn: exportExcel },
+                            { label: 'PDF', fn: exportPDF },
+                          ].map(({ label, fn }) => (
+                            <button
+                              key={label}
+                              onClick={() => { setShowExportMenu(false); fn() }}
+                              className="w-full text-left px-4 py-2 text-sm text-slate-300 hover:bg-surface-700 hover:text-white transition-colors"
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   )}
                   <button onClick={() => setShowTrialBalance(false)} className="text-slate-400 hover:text-white"><X size={20} /></button>
                 </div>
