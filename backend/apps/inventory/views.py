@@ -265,8 +265,9 @@ class ProductViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     @action(detail=False, methods=["get"])
     def valuation(self, request):
         """GET /api/v1/inventory/products/valuation/ — Inventory value report."""
+        from decimal import Decimal
         items = InventoryService.get_stock_valuation(self._get_organisation())
-        data = [
+        item_data = [
             {
                 "product": i.product.name,
                 "sku": i.product.sku,
@@ -277,7 +278,8 @@ class ProductViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             }
             for i in items
         ]
-        return Response(data)
+        total = sum(Decimal(str(d["total_value"])) for d in item_data)
+        return Response({"total_inventory_value": total, "items": item_data})
 
     @action(detail=False, methods=["get"], url_path="stock-availability")
     def stock_availability(self, request):

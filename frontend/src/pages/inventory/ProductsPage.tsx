@@ -426,6 +426,7 @@ export default function ProductsPage() {
     try {
       await inventoryApi.deleteProduct(p.id)
       toast.success('Product deleted')
+      bypassNextGets()
       fetchProducts()
     } catch (err: any) {
       const apiErr = err?.response?.data?.error
@@ -446,6 +447,7 @@ export default function ProductsPage() {
         toast.success(`All ${data.deleted} product${data.deleted !== 1 ? 's' : ''} deleted.`)
       }
       setShowDeleteAll(false)
+      bypassNextGets()  // force-refresh stock levels, batches, warehouses pages
       fetchProducts()
     } catch (err: any) {
       const apiErr = err?.response?.data?.error

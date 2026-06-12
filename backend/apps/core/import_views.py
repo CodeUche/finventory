@@ -353,12 +353,20 @@ class ImportProductsView(APIView):
     permission_classes = [IsAuthenticated, IsVerified, IsManagerOrSuperuser]
 
     def post(self, request):
+        import logging as _log
         import uuid as _uuid
         from decimal import Decimal as D
         from django.db import transaction
         from apps.inventory.models import Category, Product, Warehouse
         from apps.inventory.services import InventoryService
 
+        try:
+            return self._do_import(request, _uuid, D, transaction, Category, Product, Warehouse, InventoryService)
+        except Exception as exc:
+            _log.getLogger(__name__).exception("CSV product import failed")
+            return Response({"error": f"[{type(exc).__name__}] {exc}"}, status=422)
+
+    def _do_import(self, request, _uuid, D, transaction, Category, Product, Warehouse, InventoryService):
         org = _get_or_resolve_org(request)
         if not org:
             return Response({"error": "Organisation not found"}, status=400)

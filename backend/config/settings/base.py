@@ -431,6 +431,11 @@ CELERY_BEAT_SCHEDULE = {
         "task": "accounting.run_monthly_depreciation",
         "schedule": crontab(hour=1, minute=0, day_of_month=1),
     },
+    # Archive previous month's expenses/income into a named folder on the 1st at 00:20
+    "archive-expenses-to-monthly-folders": {
+        "task": "expenses.archive_to_monthly_folders",
+        "schedule": crontab(hour=0, minute=20, day_of_month=1),
+    },
     # Create year-archive folders on Jan 1 at 00:30 (invoices) and 00:35 (bills)
     "create-invoice-year-archive": {
         "task": "sales.create_year_archive_folders",

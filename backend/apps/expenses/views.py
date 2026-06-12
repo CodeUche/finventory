@@ -97,6 +97,7 @@ class ExpenseViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         import logging as _log
+        logger = _log.getLogger(__name__)
         org = self.request.organisation
 
         # Strict GL mode + period lock check
@@ -112,8 +113,12 @@ class ExpenseViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
 
         label = serializer.validated_data.pop('category_label', '')
         is_income = serializer.validated_data.get('is_income', False)
-        category = self._resolve_category(label, is_income, org)
-        expense = serializer.save(organisation=org, recorded_by=self.request.user, category=category)
+        try:
+            category = self._resolve_category(label, is_income, org)
+            expense = serializer.save(organisation=org, recorded_by=self.request.user, category=category)
+        except Exception as exc:
+            logger.exception("Expense create failed: %s", exc)
+            raise serializers.ValidationError(f"Could not save: [{type(exc).__name__}] {exc}")
         self._write_audit('create', expense, {k: {'old': None, 'new': str(v)} for k, v in serializer.validated_data.items()})
 
         # Auto-post journal entry (non-blocking)
