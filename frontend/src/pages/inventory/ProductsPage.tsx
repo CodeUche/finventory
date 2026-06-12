@@ -188,6 +188,7 @@ export default function ProductsPage() {
   const [editWarehouse, setEditWarehouse] = useState('')
   const [editOrigWarehouse, setEditOrigWarehouse] = useState('')
   const [editOrigQty, setEditOrigQty] = useState(0)
+  const [editStockQty, setEditStockQty] = useState('')
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [showDeleteAll, setShowDeleteAll] = useState(false)
@@ -273,17 +274,22 @@ export default function ProductsPage() {
     setEditWarehouse('')
     setEditOrigWarehouse('')
     setEditOrigQty(0)
+    setEditStockQty('')
     inventoryApi.stock({ product_id: p.id }).then(({ data }) => {
-      const items: any[] = data.results ?? data
+      const items: any[] = (data.results ?? data).filter((i: any) => i.id !== null)
       if (items.length > 0) {
         const top = items.reduce((a: any, b: any) =>
           parseFloat(b.quantity_on_hand) > parseFloat(a.quantity_on_hand) ? b : a
         )
         setEditWarehouse(String(top.warehouse ?? ''))
         setEditOrigWarehouse(String(top.warehouse ?? ''))
-        setEditOrigQty(parseFloat(top.quantity_on_hand) || 0)
+        const qty = parseFloat(top.quantity_on_hand) || 0
+        setEditOrigQty(qty)
+        setEditStockQty(String(qty))
+      } else {
+        setEditStockQty('0')
       }
-    }).catch(() => {})
+    }).catch(() => { setEditStockQty('0') })
     setShowModal(true)
   }
 
@@ -314,6 +320,24 @@ export default function ProductsPage() {
     try {
       if (editId) {
         await inventoryApi.updateProduct(editId, payload)
+
+        // Apply stock quantity change if user edited the qty field
+        const newQty = parseFloat(editStockQty) || 0
+        const delta = newQty - editOrigQty
+        const targetWarehouse = editWarehouse || (warehouses.find((w: any) => w.is_default)?.id ?? warehouses[0]?.id)
+        if (form.product_type === 'physical' && delta !== 0 && targetWarehouse) {
+          try {
+            await inventoryApi.adjustStock({
+              product_id: editId,
+              warehouse_id: targetWarehouse,
+              quantity: delta,
+              reason: delta > 0 ? 'Stock adjustment (added via product edit)' : 'Stock adjustment (removed via product edit)',
+            })
+          } catch {
+            toast.error('Stock quantity could not be updated — adjust it from the Stock page')
+          }
+        }
+
         // Transfer stock if warehouse changed and there is stock to move
         if (
           form.product_type === 'physical' &&
@@ -740,6 +764,31 @@ export default function ProductsPage() {
                   {editWarehouse && editOrigWarehouse && editWarehouse !== editOrigWarehouse && editOrigQty > 0 && (
                     <p className="text-xs text-amber-400 mt-1">{editOrigQty} units will be transferred to the new warehouse on save.</p>
                   )}
+                </div>
+              )}
+              {editId && form.product_type === 'physical' && editStockQty !== '' && (
+                <div>
+                  <label className="label">
+                    Stock Quantity
+                    <FieldTooltip text="Current units on hand. Changing this value creates a stock adjustment movement immediately on save." />
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    className="input"
+                    value={editStockQty}
+                    onChange={(e) => setEditStockQty(e.target.value)}
+                  />
+                  {(() => {
+                    const delta = (parseFloat(editStockQty) || 0) - editOrigQty
+                    if (delta === 0) return null
+                    return (
+                      <p className={`text-xs mt-1 ${delta > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {delta > 0 ? `+${delta}` : delta} units will be {delta > 0 ? 'added' : 'removed'} on save
+                      </p>
+                    )
+                  })()}
                 </div>
               )}
               <div className="grid grid-cols-2 gap-4">
