@@ -18,7 +18,7 @@ import ExportBar from '@/components/ExportBar'
 import type { SalesByProductRow, ProductSaleLine } from '@/types'
 
 const tooltipStyle  = { backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '12px', color: '#f1f5f9', fontSize: 12 }
-const axisTickStyle = { fill: '#64748b', fontSize: 11 }
+const axisTickStyle = { fill: '#94a3b8', fontSize: 11 }
 const trunc = (s: string, n = 14) => s?.length > n ? s.slice(0, n) + '…' : (s ?? '—')
 
 function periodToParams(p: PeriodValue): Record<string, string> {
@@ -30,7 +30,7 @@ function periodToParams(p: PeriodValue): Record<string, string> {
 
 export default function SalesByProductPage() {
   const accent = useThemeAccent()
-  const [period, setPeriod] = useState<PeriodValue>({ period: 'month' })
+  const [period, setPeriod] = useState<PeriodValue>({ period: 'all' })
   const [rows, setRows]     = useState<SalesByProductRow[]>([])
   const [loading, setLoading] = useState(false)
 
@@ -171,7 +171,7 @@ export default function SalesByProductPage() {
                 data={barChartData}
                 margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
               >
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                 <XAxis type="number" tick={axisTickStyle} axisLine={false} tickLine={false}
                   tickFormatter={v => `${getCurrencySymbol()}${formatNumber(v)}`} />
                 <YAxis type="category" dataKey="name" tick={axisTickStyle}
@@ -203,7 +203,7 @@ export default function SalesByProductPage() {
             </p>
             <ResponsiveContainer width="100%" height={250}>
               <ScatterChart margin={{ top: 10, right: 20, left: 0, bottom: 10 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                 <XAxis
                   type="number" dataKey="revenue" name="Revenue"
                   tick={axisTickStyle} axisLine={false} tickLine={false}

@@ -20,7 +20,7 @@ const STATUS_COLOR: Record<string, string> = {
 }
 
 export default function SalesByCustomerPage() {
-  const [period, setPeriod] = useState<PeriodValue>({ period: 'month' })
+  const [period, setPeriod] = useState<PeriodValue>({ period: 'all' })
   const [rows, setRows]     = useState<SalesByCustomerRow[]>([])
   const [loading, setLoading] = useState(false)
 
