@@ -3,10 +3,11 @@ import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { usePagination } from '@/hooks/usePagination'
 import Pagination from '@/components/Pagination'
-import { AlertTriangle, Boxes, Plus, RefreshCw, ArrowLeftRight, Pencil, Trash2, Loader2, CheckSquare } from 'lucide-react'
+import { AlertTriangle, Boxes, Plus, RefreshCw, ArrowLeftRight, Pencil, Trash2, Loader2, CheckSquare, Search } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { inventoryApi, bypassNextGets } from '@/services/api'
 import { formatAmountInput, stripCommas } from '@/lib/utils'
+import SortSelect from '@/components/SortSelect'
 import type { Product, StockItem, Warehouse } from '@/types'
 
 interface TransferForm {
@@ -37,10 +38,12 @@ export default function StockPage() {
   const [items, setItems] = useState<StockItem[]>([])
   const [loading, setLoading] = useState(true)
   const [lowStockTotal, setLowStockTotal] = useState(0)
-  const [filter, setFilter] = useState<'all' | 'low'>(
+  const [filter, setFilter] = useState<'all' | 'medium' | 'low'>(
     searchParams.get('filter') === 'low' ? 'low' : 'all'
   )
   const [warehouseFilter, setWarehouseFilter] = useState<string>('all')
+  const [search, setSearch] = useState('')
+  const [sortBy, setSortBy] = useState('name')
 
   // ── Stock adjustment modal ──────────────────────────────────────────────
   const [showAdjust, setShowAdjust] = useState(false)
@@ -309,10 +312,33 @@ export default function StockPage() {
 
   // lowStockTotal from the dedicated endpoint (includes products with no stock movements)
   const lowCount = lowStockTotal || items.filter((i) => i.stock_level === 'low' || i.is_low_stock).length
-  const displayed = items.filter((i) => {
-    if (filter === 'low') return i.stock_level === 'low' || i.is_low_stock
-    return true
-  })
+  const mediumCount = items.filter((i) => i.stock_level === 'medium').length
+
+  const displayed = items
+    .filter((i) => {
+      if (filter === 'low') return i.stock_level === 'low' || i.is_low_stock
+      if (filter === 'medium') return i.stock_level === 'medium'
+      return true
+    })
+    .filter((i) => {
+      if (!search.trim()) return true
+      const q = search.toLowerCase()
+      return (
+        i.product_name?.toLowerCase().includes(q) ||
+        i.warehouse_name?.toLowerCase().includes(q) ||
+        i.product_sku?.toLowerCase().includes(q)
+      )
+    })
+    .sort((a, b) => {
+      switch (sortBy) {
+        case 'name':    return (a.product_name ?? '').localeCompare(b.product_name ?? '')
+        case '-name':   return (b.product_name ?? '').localeCompare(a.product_name ?? '')
+        case 'qty':     return parseFloat(a.quantity_on_hand ?? '0') - parseFloat(b.quantity_on_hand ?? '0')
+        case '-qty':    return parseFloat(b.quantity_on_hand ?? '0') - parseFloat(a.quantity_on_hand ?? '0')
+        case 'level':   return (a.stock_level ?? 'ok').localeCompare(b.stock_level ?? 'ok')
+        default:        return 0
+      }
+    })
   const { page, setPage, pageSize, setPageSize, totalPages, paged: pagedStock, total: stockTotal } = usePagination(displayed)
 
   return (
@@ -323,20 +349,6 @@ export default function StockPage() {
           <p className="text-slate-400 text-sm">{stockTotal} product{stockTotal !== 1 ? 's' : ''}{warehouseFilter !== 'all' ? ` in ${warehouses.find(w => w.id === warehouseFilter)?.name ?? 'warehouse'}` : ' across all warehouses'}</p>
         </div>
         <div className="flex items-center gap-2 ml-auto flex-wrap">
-          {/* Warehouse filter */}
-          <select
-            className="input py-2 pr-8 text-sm"
-            value={warehouseFilter}
-            onChange={(e) => handleWarehouseChange(e.target.value)}
-          >
-            <option value="all">All Warehouses</option>
-            {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}{w.is_default ? ' (default)' : ''}</option>)}
-          </select>
-          <button onClick={() => setFilter('all')} className={filter === 'all' ? 'btn-primary py-2 px-4' : 'btn-secondary py-2 px-4'}>All</button>
-
-          <button onClick={() => setFilter('low')} className={filter === 'low' ? 'btn-danger py-2 px-4' : 'btn-secondary py-2 px-4'}>
-            <AlertTriangle size={14} /> Low Stock {lowCount > 0 && `(${lowCount})`}
-          </button>
           <button onClick={() => { bypassNextGets(); load() }} className="btn-ghost p-2.5" title="Refresh"><RefreshCw size={16} /></button>
           <button onClick={openTransfer} className="btn-secondary flex items-center gap-2 py-2 px-4" title="Transfer stock between locations">
             <ArrowLeftRight size={15} />
@@ -345,6 +357,47 @@ export default function StockPage() {
           <button onClick={openAdjust} className="btn-primary flex items-center gap-2 py-2 px-4">
             <Plus size={15} />
             Add / Adjust Stock
+          </button>
+        </div>
+      </div>
+
+      {/* Search + filter + sort bar */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative flex-1 min-w-[200px] max-w-sm">
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+          <input
+            className="input pl-9"
+            placeholder="Search by product name or SKU…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+        <select
+          className="input py-2 pr-8 text-sm"
+          value={warehouseFilter}
+          onChange={(e) => handleWarehouseChange(e.target.value)}
+        >
+          <option value="all">All Warehouses</option>
+          {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}{w.is_default ? ' (default)' : ''}</option>)}
+        </select>
+        <SortSelect
+          value={sortBy}
+          onChange={setSortBy}
+          options={[
+            { label: 'Name A→Z', value: 'name' },
+            { label: 'Name Z→A', value: '-name' },
+            { label: 'Qty ↑', value: 'qty' },
+            { label: 'Qty ↓', value: '-qty' },
+            { label: 'Stock level', value: 'level' },
+          ]}
+        />
+        <div className="flex items-center gap-2">
+          <button onClick={() => setFilter('all')} className={filter === 'all' ? 'btn-primary py-2 px-4' : 'btn-secondary py-2 px-4'}>All</button>
+          <button onClick={() => setFilter('medium')} className={filter === 'medium' ? 'bg-amber-500/20 border border-amber-500/50 text-amber-300 py-2 px-4 rounded-xl text-sm font-medium' : 'btn-secondary py-2 px-4'}>
+            Medium {mediumCount > 0 && `(${mediumCount})`}
+          </button>
+          <button onClick={() => setFilter('low')} className={filter === 'low' ? 'btn-danger py-2 px-4' : 'btn-secondary py-2 px-4'}>
+            <AlertTriangle size={14} /> Low {lowCount > 0 && `(${lowCount})`}
           </button>
         </div>
       </div>
