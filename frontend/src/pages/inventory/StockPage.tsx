@@ -72,15 +72,15 @@ export default function StockPage() {
   })
   const [transferSaving, setTransferSaving] = useState(false)
 
-  const loadStock = async (whId: string) => {
-    setLoading(true)
+  const loadStock = async (whId: string, silent = false) => {
+    if (!silent) setLoading(true)
     try {
       const params = whId === 'all' ? undefined : { warehouse: whId }
       const stockRes = await inventoryApi.stock(params)
       const data: StockItem[] = stockRes.data.results ?? stockRes.data
       setItems(data)
-    } catch { toast.error('Failed to load stock') }
-    finally { setLoading(false) }
+    } catch { if (!silent) toast.error('Failed to load stock') }
+    finally { if (!silent) setLoading(false) }
   }
 
   const load = async () => {
@@ -283,25 +283,28 @@ export default function StockPage() {
     setBulkAdding(true)
     bulkInProgress.current = true  // block useDataRefresh from re-running load() per call
 
-    let done = 0, failed = 0
-    for (const item of itemsToProcess) {
-      try {
-        await inventoryApi.adjustStock({
+    // Fire all calls simultaneously instead of sequentially
+    const results = await Promise.allSettled(
+      itemsToProcess.map((item) =>
+        inventoryApi.adjustStock({
           product_id: item.product,
           warehouse_id: targetWarehouse,
           quantity: qty,
           reason: qty === 0 ? 'Registered to warehouse' : 'Bulk stock entry',
         })
-        done++
-      } catch { failed++ }
-    }
-    bulkInProgress.current = false  // re-enable, then do one final reload
+      )
+    )
+    bulkInProgress.current = false
+
+    const done = results.filter((r) => r.status === 'fulfilled').length
+    const failed = results.filter((r) => r.status === 'rejected').length
     const msg = failed
       ? `Done: ${done} product${done !== 1 ? 's' : ''}, ${failed} failed`
       : `${done} product${done !== 1 ? 's' : ''} added to warehouse`
     toast.success(msg, { duration: 5000 })
     setBulkAdding(false)
-    load()
+    // Silent refresh — update table data without flashing the loading skeleton
+    await loadStock(warehouseFilter, true)
   }
 
   // lowStockTotal from the dedicated endpoint (includes products with no stock movements)
