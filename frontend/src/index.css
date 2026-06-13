@@ -327,6 +327,14 @@ html.light .badge-orange { background-color: #E7ECF5; color: #1C2F5C; border-col
 html.light .badge-purple { background-color: #f3e8ff; color: #6b21a8; border-color: #d8b4fe; }
 html.light .badge-slate  { background-color: #f1f5f9; color: #334155; border-color: #cbd5e1; }
 
+/* ── Reports & Analytics active tab: navy pill in light mode ───────────────── */
+html.light .report-tab-active {
+  background-color: #1C2F5C !important;
+  color:            #ffffff !important;
+  border-color:     #1C2F5C !important;
+  border-radius:    8px 8px 0 0;
+}
+
 /* Recharts SVG text elements */
 html.light .recharts-text { fill: #334155 !important; }
 html.light .recharts-cartesian-axis-tick-value { fill: #475569 !important; }

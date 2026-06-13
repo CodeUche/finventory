@@ -511,7 +511,7 @@ export default function ReportsPage() {
               onClick={() => handleSetTab(t.id)}
               className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium whitespace-nowrap transition-colors border-b-2 -mb-px
                 ${tab === t.id
-                  ? 'border-brand-400 text-brand-400'
+                  ? 'report-tab-active border-brand-400 text-brand-400'
                   : 'border-transparent text-slate-400 hover:text-slate-200'
                 }`}
             >
