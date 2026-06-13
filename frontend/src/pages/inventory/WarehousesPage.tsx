@@ -85,8 +85,9 @@ export default function WarehousesPage() {
       }
       setShowModal(false)
       load()
-    } catch {
-      toast.error('Failed to save warehouse')
+    } catch (err: any) {
+      const msg = err?.response?.data?.error
+      toast.error(typeof msg === 'string' ? msg : 'Failed to save warehouse')
     } finally {
       setSaving(false)
     }
