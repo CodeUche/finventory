@@ -63,23 +63,35 @@ export default function StockPage() {
   })
   const [transferSaving, setTransferSaving] = useState(false)
 
-  const load = async () => {
+  const loadStock = async (whId: string) => {
     setLoading(true)
     try {
-      const [stockRes, wRes] = await Promise.all([
-        inventoryApi.stock(),
-        inventoryApi.warehouses(),
-      ])
-      setItems(stockRes.data.results ?? stockRes.data)
-      setWarehouses(wRes.data.results ?? wRes.data)
+      const params = whId === 'all' ? undefined : { warehouse: whId }
+      const stockRes = await inventoryApi.stock(params)
+      const data: StockItem[] = stockRes.data.results ?? stockRes.data
+      setItems(data)
     } catch { toast.error('Failed to load stock') }
     finally { setLoading(false) }
+  }
+
+  const load = async () => {
+    try {
+      const wRes = await inventoryApi.warehouses()
+      const wList: Warehouse[] = wRes.data.results ?? wRes.data
+      setWarehouses(wList)
+    } catch { toast.error('Failed to load warehouses') }
+    await loadStock(warehouseFilter)
     // Fetch low stock count independently so a failure doesn't break the main load
     try {
       const lowRes = await inventoryApi.lowStock()
       const lowData = lowRes.data
       setLowStockTotal(Array.isArray(lowData) ? lowData.length : (lowData.count ?? 0))
     } catch { /* fall back to client-side count */ }
+  }
+
+  const handleWarehouseChange = async (whId: string) => {
+    setWarehouseFilter(whId)
+    await loadStock(whId)
   }
 
   useEffect(() => { load() }, [])
@@ -237,39 +249,34 @@ export default function StockPage() {
 
   // lowStockTotal from the dedicated endpoint (includes products with no stock movements)
   const lowCount = lowStockTotal || items.filter((i) => i.stock_level === 'low' || i.is_low_stock).length
-  const displayed = items
-    .filter((i) => {
-      if (filter === 'low') return i.stock_level === 'low' || i.is_low_stock
-      return true
-    })
-    .filter((i) => warehouseFilter === 'all' ? true : i.warehouse_name === warehouseFilter)
-
-  // Unique warehouse names for the filter dropdown
-  const warehouseNames = Array.from(new Set(items.map((i) => i.warehouse_name))).sort()
+  const displayed = items.filter((i) => {
+    if (filter === 'low') return i.stock_level === 'low' || i.is_low_stock
+    return true
+  })
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-3">
         <div>
           <h1 className="text-2xl font-bold text-white">Stock Levels</h1>
-          <p className="text-slate-400 text-sm">{displayed.length} of {items.length} product-warehouse pairs</p>
+          <p className="text-slate-400 text-sm">{displayed.length} product{displayed.length !== 1 ? 's' : ''}{warehouseFilter !== 'all' ? ` in ${warehouses.find(w => w.id === warehouseFilter)?.name ?? 'warehouse'}` : ' across all warehouses'}</p>
         </div>
         <div className="flex items-center gap-2 ml-auto flex-wrap">
           {/* Warehouse filter */}
           <select
             className="input py-2 pr-8 text-sm"
             value={warehouseFilter}
-            onChange={(e) => setWarehouseFilter(e.target.value)}
+            onChange={(e) => handleWarehouseChange(e.target.value)}
           >
             <option value="all">All Warehouses</option>
-            {warehouseNames.map((w) => <option key={w} value={w}>{w}</option>)}
+            {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}{w.is_default ? ' (default)' : ''}</option>)}
           </select>
           <button onClick={() => setFilter('all')} className={filter === 'all' ? 'btn-primary py-2 px-4' : 'btn-secondary py-2 px-4'}>All</button>
 
           <button onClick={() => setFilter('low')} className={filter === 'low' ? 'btn-danger py-2 px-4' : 'btn-secondary py-2 px-4'}>
             <AlertTriangle size={14} /> Low Stock {lowCount > 0 && `(${lowCount})`}
           </button>
-          <button onClick={() => { bypassNextGets(); load() }} className="btn-ghost p-2.5"><RefreshCw size={16} /></button>
+          <button onClick={() => { bypassNextGets(); load() }} className="btn-ghost p-2.5" title="Refresh"><RefreshCw size={16} /></button>
           <button onClick={openTransfer} className="btn-secondary flex items-center gap-2 py-2 px-4" title="Transfer stock between locations">
             <ArrowLeftRight size={15} />
             Transfer

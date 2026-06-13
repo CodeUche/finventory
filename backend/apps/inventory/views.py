@@ -599,8 +599,18 @@ class StockItemViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         Extend the default list to include products that have never had any
         stock movement (no StockItem row yet).  These show as 0 qty / low stock
         so users can see all imported products immediately after a CSV import.
+
+        Phantom rows are ONLY added for the unfiltered (all-warehouses) view.
+        When a specific warehouse is requested the response must reflect only
+        that warehouse's actual stock — never phantom-inheriting from others.
         """
         response = super().list(request, *args, **kwargs)
+
+        # A warehouse filter means the caller wants one warehouse's actual stock.
+        # Skip phantom rows so newly-created warehouses always appear empty.
+        if request.query_params.get("warehouse"):
+            return response
+
         org = self._get_organisation()
 
         ids_with_stock = StockItem.objects.filter(
