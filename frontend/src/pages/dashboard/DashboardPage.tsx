@@ -318,8 +318,10 @@ function ReportShortcuts({
 
   const tooltipStyle = {
     background: '#1e293b', border: '1px solid #334155',
-    borderRadius: 8, fontSize: 11,
+    borderRadius: 8, fontSize: 11, color: '#f1f5f9',
   }
+  const ttLabel = { color: '#94a3b8' }
+  const ttItem  = { color: '#f1f5f9' }
 
   const cards = [
     {
@@ -337,7 +339,7 @@ function ReportShortcuts({
               ))}
             </Bar>
             <Tooltip
-              contentStyle={tooltipStyle} labelStyle={{ color: '#94a3b8' }}
+              contentStyle={tooltipStyle} labelStyle={ttLabel} itemStyle={ttItem}
               formatter={(v: number) => formatCurrency(String(v))}
             />
           </BarChart>
@@ -360,7 +362,9 @@ function ReportShortcuts({
               ))}
             </Pie>
             <Tooltip
-              contentStyle={tooltipStyle} labelStyle={{ color: '#94a3b8' }}
+              contentStyle={tooltipStyle} labelStyle={ttLabel} itemStyle={ttItem}
+              wrapperStyle={{ zIndex: 50, minWidth: 160 }}
+              position={{ x: 0, y: -72 }}
               formatter={(v: number) => formatCurrency(String(v))}
             />
           </PieChart>
@@ -379,7 +383,7 @@ function ReportShortcuts({
             margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
             <Bar dataKey="rev" fill="#10b981" radius={[0, 3, 3, 0]} />
             <Tooltip
-              contentStyle={tooltipStyle} labelStyle={{ color: '#94a3b8' }}
+              contentStyle={tooltipStyle} labelStyle={ttLabel} itemStyle={ttItem}
               formatter={(v: number) => formatCurrency(String(v))}
             />
           </BarChart>
@@ -402,7 +406,9 @@ function ReportShortcuts({
               ))}
             </Pie>
             <Tooltip
-              contentStyle={tooltipStyle} labelStyle={{ color: '#94a3b8' }}
+              contentStyle={tooltipStyle} labelStyle={ttLabel} itemStyle={ttItem}
+              wrapperStyle={{ zIndex: 50, minWidth: 180 }}
+              position={{ x: 0, y: -72 }}
               formatter={(v: number) => formatCurrency(String(v))}
             />
           </PieChart>
@@ -621,7 +627,7 @@ export default function DashboardPage() {
   // ── Shared chart tooltip style (theme-aware) ─────────────────────────────────
   const tooltipStyle = {
     background: '#1e293b', border: '1px solid #334155',
-    borderRadius: '12px', fontSize: '13px',
+    borderRadius: '12px', fontSize: '13px', color: '#f1f5f9',
   }
 
   // ── Refresh helper ───────────────────────────────────────────────────────────
@@ -840,6 +846,7 @@ export default function DashboardPage() {
                 <Tooltip
                   contentStyle={tooltipStyle}
                   labelStyle={{ color: '#94a3b8' }}
+                  itemStyle={{ color: '#f1f5f9' }}
                   formatter={(v: number, name: string) => [
                     formatCurrency(String(v)),
                     name === 'revenue' ? 'Revenue' : 'Prior Period',
