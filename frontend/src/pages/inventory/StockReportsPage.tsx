@@ -892,8 +892,18 @@ export default function StockReportsPage() {
                     cursor={{ fill: isLight ? 'rgba(28,47,92,0.08)' : 'rgba(255,255,255,0.05)' }}
                   />
                   <Legend
-                    wrapperStyle={{ fontSize: 11, paddingTop: 10, color: legendColor }}
-                    formatter={(v: string) => <span style={{ color: legendColor }}>{v}</span>}
+                    content={() => (
+                      <div style={{ display: 'flex', justifyContent: 'center', gap: 20, paddingTop: 10, fontSize: 11, color: legendColor }}>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                          <span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: 2, background: '#10b981' }} />
+                          On Hand
+                        </span>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                          <span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: 2, background: reorderFill, opacity: 0.85 }} />
+                          Reorder Level
+                        </span>
+                      </div>
+                    )}
                   />
                   <Bar dataKey="onHand" name="On Hand" radius={[0, 4, 4, 0]}>
                     {availabilityChartData.map((entry, i) => (
