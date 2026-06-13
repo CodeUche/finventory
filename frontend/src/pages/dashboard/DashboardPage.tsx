@@ -446,7 +446,7 @@ export default function DashboardPage() {
   const navigate = useNavigate()
   const accent   = useThemeAccent()
 
-  const [period, setPeriod] = useState<PeriodKey>('30d')
+  const [period, setPeriod] = useState<PeriodKey>('ytd')
 
   // Current period data
   const [pnl,             setPnl]             = useState<any>(null)
@@ -831,10 +831,10 @@ export default function DashboardPage() {
                     <stop offset="95%" stopColor={accent} stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                <XAxis dataKey="date" tick={{ fill: '#64748b', fontSize: 10 }}
+                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                <XAxis dataKey="date" tick={{ fill: '#94a3b8', fontSize: 10 }}
                   axisLine={false} tickLine={false} />
-                <YAxis tick={{ fill: '#64748b', fontSize: 10 }}
+                <YAxis tick={{ fill: '#94a3b8', fontSize: 10 }}
                   axisLine={false} tickLine={false}
                   tickFormatter={v => `${getCurrencySymbol()}${(v / 1000).toFixed(0)}k`} />
                 <Tooltip

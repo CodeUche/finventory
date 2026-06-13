@@ -68,6 +68,8 @@ const STATIC_COLORS = ['#3b82f6', '#10b981', '#a855f7', '#f59e0b', '#ef4444', '#
 /** Aging bucket colours: healthy → critical */
 const AGING_COLORS = ['#10b981', '#f59e0b', '#f97316', '#ef4444', '#991b1b']
 
+// Chart styles — defined as module-level defaults (dark mode).
+// Light mode tooltip override lives in index.css via the recharts-tooltip-wrapper rule.
 const tooltipStyle = {
   backgroundColor: '#1e293b',
   border:          '1px solid #334155',
@@ -77,7 +79,9 @@ const tooltipStyle = {
 }
 const tooltipLabelStyle  = { color: '#94a3b8' }
 const tooltipItemStyle   = { color: '#f1f5f9' }
-const axisTickStyle      = { fill: '#64748b', fontSize: 11 }
+// Use a light-grey fill so axis ticks are readable on the dark card background.
+// In light mode, index.css remaps via .recharts-cartesian-axis-tick-value.
+const axisTickStyle      = { fill: '#94a3b8', fontSize: 11 }
 
 // ─── Local type helpers ───────────────────────────────────────────────────────
 
@@ -162,7 +166,7 @@ export default function ReportsPage() {
   })()
 
   const [tab,    setTab]    = useState<TabId>(initialTab)
-  const [period, setPeriod] = useState<PeriodValue>({ period: 'month' })
+  const [period, setPeriod] = useState<PeriodValue>({ period: 'all' })
 
   /** Sync tab selection to URL so users can share/bookmark specific tabs. */
   const handleSetTab = useCallback((t: TabId) => {
@@ -570,7 +574,7 @@ export default function ReportsPage() {
                     }))}
                     margin={{ top: 5, right: 10, left: 0, bottom: 5 }}
                   >
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                     <XAxis dataKey="period" tick={axisTickStyle} axisLine={false} tickLine={false} />
                     <YAxis tick={axisTickStyle} axisLine={false} tickLine={false}
                       tickFormatter={v => `${getCurrencySymbol()}${formatNumber(v)}`} />
@@ -642,7 +646,7 @@ export default function ReportsPage() {
                       <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                   <XAxis dataKey="period" tick={axisTickStyle} axisLine={false} tickLine={false} />
                   <YAxis tick={axisTickStyle} axisLine={false} tickLine={false}
                     tickFormatter={v => `${getCurrencySymbol()}${formatNumber(v)}`} />
@@ -839,7 +843,7 @@ export default function ReportsPage() {
                   ReferenceLine shows the break-even at 0.
                 */}
                 <ComposedChart data={waterfallData} margin={{ top: 10, right: 20, left: 10, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                   <XAxis dataKey="name" tick={axisTickStyle} axisLine={false} tickLine={false} />
                   <YAxis tick={axisTickStyle} axisLine={false} tickLine={false}
                     tickFormatter={v => `${getCurrencySymbol()}${formatNumber(v)}`} />
@@ -850,15 +854,15 @@ export default function ReportsPage() {
                       name === 'start' ? null : [formatCurrency(String(v)), 'Amount']
                     }
                   />
-                  {/* Invisible stacking base — gives bars their "floating" appearance */}
-                  <Bar dataKey="start" stackId="w" fill="transparent" />
+                  {/* Invisible stacking base — gives bars their floating appearance */}
+                  <Bar dataKey="start" stackId="w" fill="transparent" legendType="none" />
                   {/* Coloured segment — each entry has its own fill via Cell */}
-                  <Bar dataKey="value" stackId="w" radius={[4, 4, 0, 0]}>
+                  <Bar dataKey="value" stackId="w" radius={[4, 4, 0, 0]} minPointSize={3}>
                     {waterfallData.map((entry, i) => (
                       <Cell key={i} fill={entry.fill} />
                     ))}
                   </Bar>
-                  <ReferenceLine y={0} stroke="#475569" strokeDasharray="4 2" />
+                  <ReferenceLine y={0} stroke="#64748b" strokeDasharray="4 2" />
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
@@ -949,7 +953,7 @@ export default function ReportsPage() {
               </div>
               <ResponsiveContainer width="100%" height={260}>
                 <BarChart data={cashFlowTrendData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                   <XAxis dataKey="period" tick={axisTickStyle} axisLine={false} tickLine={false} />
                   <YAxis tick={axisTickStyle} axisLine={false} tickLine={false}
                     tickFormatter={v => `${getCurrencySymbol()}${formatNumber(v)}`} />
@@ -978,7 +982,7 @@ export default function ReportsPage() {
                       <stop offset="95%" stopColor={accent} stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                   <XAxis dataKey="period" tick={axisTickStyle} axisLine={false} tickLine={false} />
                   <YAxis tick={axisTickStyle} axisLine={false} tickLine={false}
                     tickFormatter={v => `${getCurrencySymbol()}${formatNumber(v)}`} />
@@ -1035,7 +1039,7 @@ export default function ReportsPage() {
                       <stop offset="95%" stopColor={accent} stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                   <XAxis dataKey="period" tick={axisTickStyle} axisLine={false} tickLine={false} />
                   <YAxis tick={axisTickStyle} axisLine={false} tickLine={false}
                     tickFormatter={v => `${getCurrencySymbol()}${formatNumber(v)}`} />
@@ -1073,7 +1077,7 @@ export default function ReportsPage() {
                     }))}
                     margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
                   >
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                     <XAxis type="number" tick={axisTickStyle} axisLine={false} tickLine={false}
                       tickFormatter={v => `${getCurrencySymbol()}${formatNumber(v)}`} />
                     <YAxis type="category" dataKey="name" tick={axisTickStyle}
@@ -1373,7 +1377,7 @@ export default function ReportsPage() {
                           <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
                         </linearGradient>
                       </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                      <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                       <XAxis dataKey="period" tick={axisTickStyle} axisLine={false} tickLine={false} />
                       <YAxis tick={axisTickStyle} axisLine={false} tickLine={false}
                         tickFormatter={v => `${getCurrencySymbol()}${formatNumber(v)}`} />

@@ -28,10 +28,10 @@ import autoTable from 'jspdf-autotable'
 import jsPDF from 'jspdf'
 import { saveBlobFile } from '@/lib/saveBlobFile'
 
-const tooltipStyle  = { backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '12px', color: '#f1f5f9', fontSize: 12 }
-const axisTickStyle = { fill: '#64748b', fontSize: 11 }
-const trunc = (s: string, n = 16) => s?.length > n ? s.slice(0, n) + '…' : (s ?? '—')
+// Chart style constants — dark mode defaults (index.css overrides for light mode)
+const axisTickStyle = { fill: '#94a3b8', fontSize: 11 }
 const CHART_COLORS = ['#f97316', '#3b82f6', '#10b981', '#a855f7', '#f59e0b', '#06b6d4', '#ec4899', '#84cc16']
+const trunc = (s: string, n = 16) => s?.length > n ? s.slice(0, n) + '…' : (s ?? '—')
 
 type ReportTab = 'availability' | 'usage' | 'transfers' | 'stock_card' | 'valuation'
 
@@ -451,10 +451,105 @@ async function exportValuationCSV(report: ValuationReport) {
   )
 }
 
+// ── Excel export helpers (using xlsx) ─────────────────────────────────────────
+
+async function exportExcel(
+  sheetName: string,
+  headers: string[],
+  rows: (string | number | null)[][],
+  filename: string,
+) {
+  const XLSX = await import('xlsx')
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...rows])
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, sheetName)
+  const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' })
+  const blob = new Blob([buf], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  })
+  await saveBlobFile(blob, filename)
+}
+
+async function exportAvailabilityExcel(rows: AvailabilityRow[]) {
+  await exportExcel(
+    'Stock Availability',
+    ['SKU', 'Product', 'Unit', 'On Hand', 'Min Level', 'Max Level', 'Qty/Pack', 'Status'],
+    rows.map((r) => [r.sku, r.name, r.unit_of_measure, r.quantity_on_hand, r.min_safety_level, r.max_safety_level ?? '', r.quantity_in_pack, STATUS_LABEL[r.status]]),
+    'stock-availability.xlsx',
+  )
+}
+
+async function exportUsageExcel(rows: UsageRow[], txRows: UsageTransaction[]) {
+  const XLSX = await import('xlsx')
+  const wb = XLSX.utils.book_new()
+  const ws1 = XLSX.utils.aoa_to_sheet([
+    ['SKU', 'Product', 'Unit', 'Total Used'],
+    ...rows.map((r) => [r.sku, r.name, r.unit_of_measure, r.total_used]),
+  ])
+  XLSX.utils.book_append_sheet(wb, ws1, 'Summary')
+  if (txRows.length > 0) {
+    const ws2 = XLSX.utils.aoa_to_sheet([
+      ['Date', 'Product', 'SKU', 'Warehouse', 'Qty', 'Unit Cost', 'Invoice No', 'Customer', 'Batch', 'Sold By', 'Notes'],
+      ...txRows.map((r) => [r.date, r.product_name, r.product_sku, r.warehouse, r.quantity, r.unit_cost, r.invoice_no, r.customer, r.batch_number, r.sold_by, r.notes]),
+    ])
+    XLSX.utils.book_append_sheet(wb, ws2, 'Transactions')
+  }
+  const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' })
+  await saveBlobFile(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), 'stock-usage.xlsx')
+}
+
+async function exportTransfersExcel(rows: TransferRow[]) {
+  await exportExcel(
+    'Stock Transfers',
+    ['Date', 'Type', 'Product', 'SKU', 'Warehouse', 'Qty', 'Unit Cost', 'Supplier', 'Batch No', 'Expiry', 'Reference', 'Received By', 'Notes'],
+    rows.map((r) => [r.date, r.movement_label || r.movement_type, r.product_name, r.product_sku, r.warehouse, r.quantity, r.unit_cost, r.supplier, r.batch_number, r.batch_expiry, r.reference, r.received_by, r.notes]),
+    'stock-transfers.xlsx',
+  )
+}
+
+async function exportStockCardExcel(rows: StockCardRow[], productSku: string) {
+  await exportExcel(
+    'Stock Card',
+    ['Date', 'Warehouse', 'IN', 'OUT', 'BALANCE', 'Unit Cost', 'Invoice No', 'Batch No', 'Remark', 'By'],
+    rows.map((r) => [r.date, r.warehouse, r.in ?? '', r.out ?? '', r.balance, r.unit_cost, r.invoice_no, r.batch_number, r.remark, r.created_by]),
+    `stock-card-${productSku}.xlsx`,
+  )
+}
+
+async function exportValuationExcel(report: ValuationReport) {
+  await exportExcel(
+    'Inventory Valuation',
+    ['Product', 'SKU', 'Warehouse', 'Qty On Hand', 'Unit Cost', 'Total Value'],
+    report.items.map((r) => [r.product, r.sku, r.warehouse, r.quantity, r.unit_cost, r.total_value]),
+    'inventory-valuation.xlsx',
+  )
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 
 export default function StockReportsPage() {
   const { organisation } = useAuthStore()
+
+  // ── Theme detection ──────────────────────────────────────────────────────────
+  const [isLight, setIsLight] = useState(() =>
+    typeof document !== 'undefined' && document.documentElement.classList.contains('light')
+  )
+  useEffect(() => {
+    const h = (e: Event) => setIsLight((e as CustomEvent).detail === 'light')
+    window.addEventListener('themechange', h)
+    return () => window.removeEventListener('themechange', h)
+  }, [])
+
+  // Chart styles derived from theme
+  const tooltipStyle = isLight
+    ? { backgroundColor: '#0f2347', border: '1px solid #1C2F5C', borderRadius: '12px', color: '#f1f5f9', fontSize: 12 }
+    : { backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '12px', color: '#f1f5f9', fontSize: 12 }
+  const chartGrid   = isLight ? '#cbd5e1' : '#334155'
+  // Reorder level bar: white-ish in dark mode, deep navy in light mode
+  const reorderFill  = isLight ? '#1e3a5f' : '#cbd5e1'
+  const legendColor  = isLight ? '#334155' : '#94a3b8'
+  // ─────────────────────────────────────────────────────────────────────────────
+
   const [tab, setTab] = useState<ReportTab>('availability')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
@@ -484,20 +579,19 @@ export default function StockReportsPage() {
 
   useEffect(() => {
     const fetchProds = () => {
-      inventoryApi.products({ page_size: 500 }).then(({ data }) => {
+      inventoryApi.products({ page_size: 500, is_active: true }).then(({ data }) => {
         const list = (data.results ?? data) as { id: string; name: string; sku: string }[]
-        if (list.length > 0) setProducts(list)
+        setProducts(list)   // always update — even if empty so dropdown stays accurate
       }).catch(() => {})
     }
     fetchProds()
-    // Retry when reconnecting after an offline period
     window.addEventListener('online', fetchProds)
     return () => window.removeEventListener('online', fetchProds)
   }, [])
 
   useEffect(() => {
     if (tab !== 'valuation') return
-    if (valuation) return   // already loaded
+    // Always reload on tab switch so data stays fresh
     setValuationLoading(true)
     reportApi.inventory()
       .then(({ data }) => setValuation(data as ValuationReport))
@@ -650,13 +744,20 @@ export default function StockReportsPage() {
     { id: 'valuation', label: 'Inventory Value', icon: Wallet },
   ]
 
-  const ExportBar = ({ onPDF, onCSV }: { onPDF: () => void; onCSV: () => void }) => (
+  const ExportBar = ({
+    onPDF, onCSV, onExcel,
+  }: { onPDF: () => void; onCSV: () => void; onExcel?: () => void }) => (
     <div className="flex gap-2">
       <button onClick={onPDF} className="btn-ghost text-xs flex items-center gap-1.5 py-1.5 px-3">
         <FileDown size={14} /> PDF
       </button>
+      {onExcel && (
+        <button onClick={onExcel} className="btn-ghost text-xs flex items-center gap-1.5 py-1.5 px-3">
+          <Table2 size={14} /> Excel
+        </button>
+      )}
       <button onClick={onCSV} className="btn-ghost text-xs flex items-center gap-1.5 py-1.5 px-3">
-        <Table2 size={14} /> Excel
+        <Table2 size={14} /> CSV
       </button>
     </div>
   )
@@ -780,7 +881,7 @@ export default function StockReportsPage() {
                   data={availabilityChartData}
                   margin={{ top: 5, right: 60, left: 10, bottom: 5 }}
                 >
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                  <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} />
                   <XAxis type="number" tick={axisTickStyle} axisLine={false} tickLine={false} />
                   <YAxis type="category" dataKey="name" tick={axisTickStyle}
                     axisLine={false} tickLine={false} width={100} />
@@ -788,10 +889,11 @@ export default function StockReportsPage() {
                     contentStyle={tooltipStyle}
                     labelStyle={{ color: '#94a3b8' }}
                     itemStyle={{ color: '#f1f5f9' }}
+                    cursor={{ fill: isLight ? 'rgba(28,47,92,0.08)' : 'rgba(255,255,255,0.05)' }}
                   />
                   <Legend
-                    wrapperStyle={{ fontSize: 11, paddingTop: 10, color: '#94a3b8' }}
-                    formatter={(v: string) => <span style={{ color: '#94a3b8' }}>{v}</span>}
+                    wrapperStyle={{ fontSize: 11, paddingTop: 10, color: legendColor }}
+                    formatter={(v: string) => <span style={{ color: legendColor }}>{v}</span>}
                   />
                   <Bar dataKey="onHand" name="On Hand" radius={[0, 4, 4, 0]}>
                     {availabilityChartData.map((entry, i) => (
@@ -806,14 +908,18 @@ export default function StockReportsPage() {
                       />
                     ))}
                   </Bar>
-                  <Bar dataKey="reorder" name="Reorder Level" fill="#475569" radius={[0, 4, 4, 0]} opacity={0.5} />
+                  <Bar dataKey="reorder" name="Reorder Level" fill={reorderFill} radius={[0, 4, 4, 0]} opacity={0.7} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
           )}
 
           <div className="flex justify-end">
-            <ExportBar onPDF={() => exportAvailabilityPDF(filteredAvailability, organisation)} onCSV={() => exportAvailabilityCSV(filteredAvailability)} />
+            <ExportBar
+              onPDF={() => exportAvailabilityPDF(filteredAvailability, organisation)}
+              onExcel={() => exportAvailabilityExcel(filteredAvailability)}
+              onCSV={() => exportAvailabilityCSV(filteredAvailability)}
+            />
           </div>
 
           {/* Table */}
@@ -933,7 +1039,11 @@ export default function StockReportsPage() {
                 className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${showUsageTx ? 'bg-brand-500/20 text-brand-400 border border-brand-500/40' : 'text-slate-400 hover:bg-surface-700'}`}
               >Transactions ({usageTransactions.length})</button>
             </div>
-            <ExportBar onPDF={() => exportUsagePDF(usage, usageTransactions, organisation)} onCSV={() => exportUsageCSV(usage, usageTransactions)} />
+            <ExportBar
+              onPDF={() => exportUsagePDF(usage, usageTransactions, organisation)}
+              onExcel={() => exportUsageExcel(usage, usageTransactions)}
+              onCSV={() => exportUsageCSV(usage, usageTransactions)}
+            />
           </div>
 
           {/* Phase 5: Usage horizontal bar — top products by units consumed */}
@@ -949,7 +1059,7 @@ export default function StockReportsPage() {
                   data={usageChartData}
                   margin={{ top: 5, right: 40, left: 10, bottom: 5 }}
                 >
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                  <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} />
                   <XAxis type="number" tick={axisTickStyle} axisLine={false} tickLine={false} />
                   <YAxis type="category" dataKey="name" tick={axisTickStyle}
                     axisLine={false} tickLine={false} width={100} />
@@ -958,6 +1068,7 @@ export default function StockReportsPage() {
                     labelStyle={{ color: '#94a3b8' }}
                     itemStyle={{ color: '#f1f5f9' }}
                     formatter={(v: number) => [`${v.toLocaleString()} units`, 'Used']}
+                    cursor={{ fill: isLight ? 'rgba(28,47,92,0.08)' : 'rgba(255,255,255,0.07)' }}
                   />
                   <Bar dataKey="units" name="Units Used" fill="#f97316" radius={[0, 4, 4, 0]} />
                 </BarChart>
@@ -1033,7 +1144,11 @@ export default function StockReportsPage() {
       {loaded && tab === 'transfers' && (
         <div className="space-y-3">
           <div className="flex justify-end">
-            <ExportBar onPDF={() => exportTransfersPDF(transfers, organisation)} onCSV={() => exportTransfersCSV(transfers)} />
+            <ExportBar
+              onPDF={() => exportTransfersPDF(transfers, organisation)}
+              onExcel={() => exportTransfersExcel(transfers)}
+              onCSV={() => exportTransfersCSV(transfers)}
+            />
           </div>
           <div className="card overflow-x-auto p-0">
             <table className="w-full text-sm">
@@ -1097,6 +1212,7 @@ export default function StockReportsPage() {
             <p className="text-sm font-semibold text-white">{cardProductName} <span className="text-slate-500 font-mono text-xs ml-1">{cardProductSku}</span></p>
             <ExportBar
               onPDF={() => exportStockCardPDF(cardRows, cardProductName, cardProductSku, organisation)}
+              onExcel={() => exportStockCardExcel(cardRows, cardProductSku)}
               onCSV={() => exportStockCardCSV(cardRows, cardProductSku)}
             />
           </div>
@@ -1198,8 +1314,8 @@ export default function StockReportsPage() {
                           labelStyle={{ color: '#94a3b8' }} itemStyle={{ color: '#f1f5f9' }}
                           formatter={(v: number) => formatMoney(v)} />
                         <Legend
-                          wrapperStyle={{ fontSize: 10, paddingTop: 6 }}
-                          formatter={(v: string) => <span style={{ color: '#94a3b8' }}>{v}</span>}
+                          wrapperStyle={{ fontSize: 10, paddingTop: 6, color: legendColor }}
+                          formatter={(v: string) => <span style={{ color: legendColor }}>{v}</span>}
                         />
                       </PieChart>
                     </ResponsiveContainer>
@@ -1217,14 +1333,16 @@ export default function StockReportsPage() {
                         data={valuationChartData.topBar}
                         margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
                       >
-                        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                        <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} />
                         <XAxis type="number" tick={axisTickStyle} axisLine={false} tickLine={false}
                           tickFormatter={v => formatMoney(v)} />
                         <YAxis type="category" dataKey="name" tick={axisTickStyle}
                           axisLine={false} tickLine={false} width={100} />
                         <Tooltip contentStyle={tooltipStyle}
                           labelStyle={{ color: '#94a3b8' }} itemStyle={{ color: '#f1f5f9' }}
-                          formatter={(v: number) => [formatMoney(v), 'Value']} />
+                          formatter={(v: number) => [formatMoney(v), 'Value']}
+                          cursor={{ fill: isLight ? 'rgba(28,47,92,0.08)' : 'rgba(255,255,255,0.05)' }}
+                        />
                         <Bar dataKey="value" name="Inventory Value" fill="#10b981" radius={[0, 4, 4, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
@@ -1236,6 +1354,7 @@ export default function StockReportsPage() {
               <div className="flex justify-end">
                 <ExportBar
                   onPDF={() => exportValuationPDF(valuation, organisation)}
+                  onExcel={() => exportValuationExcel(valuation)}
                   onCSV={() => exportValuationCSV(valuation)}
                 />
               </div>

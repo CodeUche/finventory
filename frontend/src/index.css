@@ -330,11 +330,32 @@ html.light .badge-slate  { background-color: #f1f5f9; color: #334155; border-col
 /* Recharts SVG text elements */
 html.light .recharts-text { fill: #334155 !important; }
 html.light .recharts-cartesian-axis-tick-value { fill: #475569 !important; }
-html.light .recharts-legend-item-text { color: #334155 !important; }
-html.light .recharts-tooltip-wrapper .recharts-default-tooltip {
-  background-color: #ffffff !important;
-  border-color: #e2e8f0 !important;
-  color: #0f172a !important;
+html.light .recharts-legend-item-text { color: #1e293b !important; font-weight: 500; }
+
+/* ── Tooltip: dark navy in light mode for contrast ──────────────────────────
+   The JS contentStyle sets background/border as inline style; !important
+   overrides that so the tooltip is always navy-on-white, not washed out.    */
+html.light .recharts-tooltip-wrapper .recharts-default-tooltip,
+html.light .recharts-tooltip-content {
+  background-color: #0f2347 !important;
+  border-color:     #1C2F5C !important;
+  color:            #f1f5f9 !important;
+  border-radius:    10px !important;
+}
+html.light .recharts-tooltip-label,
+html.light .recharts-tooltip-wrapper .recharts-default-tooltip .recharts-tooltip-label {
+  color: #93c5fd !important;
+}
+html.light .recharts-tooltip-item,
+html.light .recharts-tooltip-item-name,
+html.light .recharts-tooltip-item-value {
+  color: #f1f5f9 !important;
+}
+
+/* Grid lines: slate-700 in light mode so they're visible but not harsh */
+html.light .recharts-cartesian-grid-horizontal line,
+html.light .recharts-cartesian-grid-vertical line {
+  stroke: #cbd5e1 !important;
 }
 
 /* th / thead text inside tables */

@@ -405,30 +405,59 @@ class ReportService:
 
     @staticmethod
     def inventory_valuation(organisation) -> dict:
-        """Current inventory value — point-in-time snapshot, no date range."""
-        from apps.inventory.models import StockItem
+        """
+        Current inventory value — point-in-time snapshot, no date range.
 
-        items = (
-            StockItem.objects.filter(organisation=organisation, quantity_on_hand__gt=0)
+        Includes:
+          • Products with StockItem records (any quantity ≥ 0)
+          • Physical products with NO StockItem records yet (imported / never received)
+            — these appear with quantity 0 and value 0 for visibility.
+        """
+        from apps.inventory.models import StockItem, Product
+
+        stock_items = (
+            StockItem.objects.filter(organisation=organisation, quantity_on_hand__gte=0)
             .select_related("product", "warehouse")
             .annotate(total_value=F("quantity_on_hand") * F("product__cost_price"))
         )
 
-        total_value = sum(i.total_value for i in items)
+        total_value = sum((i.total_value or Decimal("0")) for i in stock_items)
+
+        product_ids_with_stock = set(
+            StockItem.objects.filter(organisation=organisation)
+            .values_list("product_id", flat=True)
+        )
+        phantom_products = Product.objects.filter(
+            organisation=organisation,
+            is_active=True,
+            product_type="physical",
+        ).exclude(id__in=product_ids_with_stock)
+
+        items = [
+            {
+                "product": i.product.name,
+                "sku": i.product.sku or "",
+                "warehouse": i.warehouse.name,
+                "quantity": i.quantity_on_hand,
+                "unit_cost": i.product.cost_price,
+                "total_value": i.total_value or Decimal("0"),
+            }
+            for i in stock_items
+        ] + [
+            {
+                "product": p.name,
+                "sku": p.sku or "",
+                "warehouse": "—",
+                "quantity": 0,
+                "unit_cost": p.cost_price,
+                "total_value": Decimal("0"),
+            }
+            for p in phantom_products
+        ]
 
         return {
             "total_inventory_value": total_value,
-            "items": [
-                {
-                    "product": i.product.name,
-                    "sku": i.product.sku,
-                    "warehouse": i.warehouse.name,
-                    "quantity": i.quantity_on_hand,
-                    "unit_cost": i.product.cost_price,
-                    "total_value": i.total_value,
-                }
-                for i in items
-            ],
+            "items": items,
         }
 
     # ─── AR Aging ─────────────────────────────────────────────────────────────
