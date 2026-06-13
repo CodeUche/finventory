@@ -115,7 +115,7 @@ type Tab = 'profile' | 'security' | 'payments' | 'email' | 'periods' | 'team' | 
 
 export default function SettingsPage() {
   const navigate = useNavigate()
-  const { user, organisation, updateUser, updateOrganisation, memberRole, modulePermissions, planModules, planName, logoDataUrl, stampDataUrl, setLogoDataUrl, setStampDataUrl } = useAuthStore()
+  const { user, organisation, updateUser, updateOrganisation, memberRole, modulePermissions, planModules, planName, logoDataUrl, stampDataUrl, avatarDataUrl, setLogoDataUrl, setStampDataUrl, setAvatarDataUrl } = useAuthStore()
   // Owners, admins, and superusers have full settings access
   const isOwner = memberRole === 'owner' || memberRole === 'admin' || user?.is_superuser === true
   // Sub-accounts need explicit 'settings' module permission to access org settings tabs
@@ -257,8 +257,10 @@ export default function SettingsPage() {
       if (stampDataUrl) setStampPreview(stampDataUrl)
       else if (organisation?.company_stamp) urlToDataUrl(organisation.company_stamp).then((d) => { if (d) { setStampPreview(d); setStampDataUrl(d) } })
     }
-    if (user?.avatar && !avatarFile)
-      urlToDataUrl(user.avatar).then((d) => { if (d) setAvatarPreview(d) })
+    if (!avatarFile) {
+      if (avatarDataUrl) setAvatarPreview(avatarDataUrl)
+      else if (user?.avatar) urlToDataUrl(user.avatar).then((d) => { if (d) { setAvatarPreview(d); setAvatarDataUrl(d) } })
+    }
   }, [organisation?.logo, organisation?.company_stamp, user?.avatar])
 
   // ─── Security state ─────────────────────────────────────────────────────────
@@ -468,6 +470,9 @@ export default function SettingsPage() {
     if (!file) return
     setAvatarFile(file)
     setAvatarPreview(URL.createObjectURL(file))
+    const reader = new FileReader()
+    reader.onloadend = () => { if (reader.result) setAvatarDataUrl(reader.result as string) }
+    reader.readAsDataURL(file)
   }
 
   const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2410,7 +2415,7 @@ export default function SettingsPage() {
             <div className="flex items-start gap-4">
               {(stampPreview && !stampRemoved) ? (
                 <div className="relative group">
-                  <img src={stampPreview} alt="Company stamp" className="w-24 h-24 object-contain rounded-xl border border-surface-600 bg-white p-1" />
+                  <img src={stampPreview} alt="Company stamp" className="w-24 h-24 object-contain" />
                   <button
                     type="button"
                     onClick={() => { setStampPreview(null); setStampFile(null); setStampRemoved(true); setStampDataUrl(null) }}

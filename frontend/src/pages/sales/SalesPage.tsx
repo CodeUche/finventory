@@ -36,6 +36,29 @@ function hexToRgb(hex?: string): [number, number, number] {
 
 
 
+/** Convert a data URL to a PNG with white/near-white pixels made transparent, removing box borders from stamp images. */
+async function stripStampBackground(dataUrl: string): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new Image()
+    img.onload = () => {
+      const canvas = document.createElement('canvas')
+      canvas.width = img.width; canvas.height = img.height
+      const ctx = canvas.getContext('2d')!
+      ctx.drawImage(img, 0, 0)
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+      const d = imageData.data
+      for (let i = 0; i < d.length; i += 4) {
+        // Make near-white pixels transparent (threshold: all channels > 230)
+        if (d[i] > 230 && d[i + 1] > 230 && d[i + 2] > 230) d[i + 3] = 0
+      }
+      ctx.putImageData(imageData, 0, 0)
+      resolve(canvas.toDataURL('image/png'))
+    }
+    img.onerror = () => resolve(dataUrl) // fallback to original on error
+    img.src = dataUrl
+  })
+}
+
 // ── PDF builder ───────────────────────────────────────────────────────────────
 async function buildInvoicePDF(
   inv: Invoice,
@@ -124,13 +147,11 @@ async function buildInvoicePDF(
     ],
   })
 
-  // ── Bill To + Invoice Details side-by-side boxes ───────────────────────────
-  const boxW = 85
+  // ── Bill To box (full width) ───────────────────────────────────────────────
+  const boxW = pageW - 28
   const boxH = 32
   const lBoxX = 14
-  const rBoxX = lBoxX + boxW + 4
 
-  // Left: Bill To
   doc.setFillColor(...LIGHT); doc.setDrawColor(...RULE); doc.setLineWidth(0.25)
   doc.roundedRect(lBoxX, y, boxW, boxH, 2, 2, 'FD')
   doc.setFontSize(TYPE.H3.size); doc.setFont(pdfFont, 'bold'); doc.setTextColor(...BRAND)
@@ -139,19 +160,6 @@ async function buildInvoicePDF(
   doc.text(inv.customer_name ?? 'Walk-in Customer', lBoxX + 3, y + 11)
   doc.setFontSize(TYPE.BODY.size); doc.setFont(pdfFont, 'normal'); doc.setTextColor(...MUTED)
   doc.text(inv.payment_method.replace(/_/g, ' ') + ' payment', lBoxX + 3, y + 16.5)
-
-  // Right: From (seller / organisation details from settings)
-  doc.setFillColor(...LIGHT); doc.setDrawColor(...RULE); doc.setLineWidth(0.25)
-  doc.roundedRect(rBoxX, y, boxW, boxH, 2, 2, 'FD')
-  doc.setFontSize(TYPE.H3.size); doc.setFont(pdfFont, 'bold'); doc.setTextColor(...BRAND)
-  doc.text('FROM', rBoxX + 3, y + 5)
-  doc.setFontSize(TYPE.H2.size); doc.setFont(pdfFont, 'bold'); doc.setTextColor(...DARK)
-  doc.text(displayName || orgName, rBoxX + 3, y + 11)
-  let fromY = y + 16.5
-  doc.setFontSize(TYPE.BODY.size); doc.setFont(pdfFont, 'normal'); doc.setTextColor(...MUTED)
-  if (orgAddress) { doc.text(orgAddress, rBoxX + 3, fromY); fromY += 4.5 }
-  if (orgPhone)   { doc.text(orgPhone,   rBoxX + 3, fromY); fromY += 4.5 }
-  if (orgEmail)   { doc.text(orgEmail,   rBoxX + 3, fromY) }
 
   y += boxH + 6
 
@@ -320,12 +328,13 @@ async function buildInvoicePDF(
   // ── Company stamp (bottom-right of last page, semi-transparent) ───────────
   if (companyStamp) {
     try {
-      const stampData = await urlToDataUrl(companyStamp)
-      if (stampData) {
+      const raw = companyStamp.startsWith('data:') ? companyStamp : await urlToDataUrl(companyStamp)
+      if (raw) {
+        const stampData = await stripStampBackground(raw)
         const pageH = doc.internal.pageSize.getHeight()
         const SZ = 34
         doc.saveGraphicsState()
-        doc.setGState(new (doc as any).GState({ opacity: 0.50 }))
+        doc.setGState(new (doc as any).GState({ opacity: 0.55 }))
         doc.addImage(stampData, 'PNG', pageW - 16 - SZ, pageH - 18 - SZ, SZ, SZ)
         doc.restoreGraphicsState()
       }
@@ -455,12 +464,13 @@ async function buildDeliveryNotePDF(
   // ── Company stamp ──────────────────────────────────────────────────────────
   if (companyStamp) {
     try {
-      const stampData = await urlToDataUrl(companyStamp)
-      if (stampData) {
+      const raw = companyStamp.startsWith('data:') ? companyStamp : await urlToDataUrl(companyStamp)
+      if (raw) {
+        const stampData = await stripStampBackground(raw)
         const pageH = doc.internal.pageSize.getHeight()
         const SZ = 34
         doc.saveGraphicsState()
-        doc.setGState(new (doc as any).GState({ opacity: 0.50 }))
+        doc.setGState(new (doc as any).GState({ opacity: 0.55 }))
         doc.addImage(stampData, 'PNG', pageW - 16 - SZ, pageH - 18 - SZ, SZ, SZ)
         doc.restoreGraphicsState()
       }

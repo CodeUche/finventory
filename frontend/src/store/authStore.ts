@@ -29,10 +29,11 @@ interface AuthState {
   planName: string | null
   // Whether the current subscription is expired
   subscriptionExpired: boolean
-  // Persisted base-64 data URLs for logo and stamp — set when user uploads in Settings.
+  // Persisted base-64 data URLs for logo, stamp, and avatar — set when user uploads in Settings.
   // Avoids re-fetching from the server (which may be ephemeral on Railway without S3).
   logoDataUrl: string | null
   stampDataUrl: string | null
+  avatarDataUrl: string | null
 
   // Atomic login commit — sets user, tokens, org, and isAuthenticated in a single
   // Zustand set() call so ProtectedRoute never sees isAuthenticated=true with
@@ -49,6 +50,7 @@ interface AuthState {
   setSubscriptionExpired: (expired: boolean) => void
   setLogoDataUrl: (url: string | null) => void
   setStampDataUrl: (url: string | null) => void
+  setAvatarDataUrl: (url: string | null) => void
   updateUser: (user: Partial<User>) => void
   updateOrganisation: (org: Partial<Organisation>) => void
   updateTokens: (tokens: Partial<AuthTokens>) => void
@@ -73,6 +75,7 @@ export const useAuthStore = create<AuthState>()(
       subscriptionExpired: false,
       logoDataUrl: null,
       stampDataUrl: null,
+      avatarDataUrl: null,
 
       setRememberMe: (val) => {
         if (val) localStorage.setItem(REMEMBER_FLAG_KEY, 'true')
@@ -116,6 +119,7 @@ export const useAuthStore = create<AuthState>()(
 
       setLogoDataUrl: (url) => set({ logoDataUrl: url }),
       setStampDataUrl: (url) => set({ stampDataUrl: url }),
+      setAvatarDataUrl: (url) => set({ avatarDataUrl: url }),
 
       updateUser: (partial) =>
         set((s) => ({ user: s.user ? { ...s.user, ...partial } : s.user })),
@@ -144,7 +148,7 @@ export const useAuthStore = create<AuthState>()(
           orgInitialized: false,
           rememberMe: false, memberRole: null, modulePermissions: {}, planModules: null,
           planTaxEngine: null, planName: null, subscriptionExpired: false,
-          logoDataUrl: null, stampDataUrl: null,
+          logoDataUrl: null, stampDataUrl: null, avatarDataUrl: null,
         })
       },
     }),
@@ -171,6 +175,7 @@ export const useAuthStore = create<AuthState>()(
         subscriptionExpired: state.subscriptionExpired,
         logoDataUrl: state.logoDataUrl,
         stampDataUrl: state.stampDataUrl,
+        avatarDataUrl: state.avatarDataUrl,
       }),
     },
   ),
