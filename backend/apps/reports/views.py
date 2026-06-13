@@ -31,6 +31,19 @@ class BaseDateRangeView(APIView):
 
     permission_classes = [IsAuthenticated, IsStaff]
 
+    def get_organisation(self):
+        """
+        Resolve and return the current organisation.
+
+        IsStaff short-circuits for superusers without calling resolve_organisation(),
+        leaving request.organisation=None. This method always resolves it so that
+        report queries have the correct org even for superusers.
+        """
+        if getattr(self.request, "organisation", None) is not None:
+            return self.request.organisation
+        from apps.tenancy.middleware import resolve_organisation
+        return resolve_organisation(self.request)
+
     def get_date_range(self, request):
         """Return (date_from, date_to) — both None when period='all'."""
         period = request.query_params.get("period", "custom")
@@ -83,7 +96,7 @@ class SalesSummaryView(BaseDateRangeView):
     def get(self, request):
         date_from, date_to = self.get_date_range(request)
         group_by = request.query_params.get("group_by", "day")
-        data = list(ReportService.sales_summary(request.organisation, date_from, date_to, group_by))
+        data = list(ReportService.sales_summary(self.get_organisation(), date_from, date_to, group_by))
 
         def _rows(d):
             return [
@@ -117,7 +130,7 @@ class TopProductsView(BaseDateRangeView):
     def get(self, request):
         date_from, date_to = self.get_date_range(request)
         limit = int(request.query_params.get("limit", 10))
-        data = ReportService.top_products(request.organisation, date_from, date_to, limit)
+        data = ReportService.top_products(self.get_organisation(), date_from, date_to, limit)
 
         def _rows(d):
             return [
@@ -146,7 +159,7 @@ class TopCustomersView(BaseDateRangeView):
     def get(self, request):
         date_from, date_to = self.get_date_range(request)
         limit = int(request.query_params.get("limit", 10))
-        data = ReportService.top_customers(request.organisation, date_from, date_to, limit)
+        data = ReportService.top_customers(self.get_organisation(), date_from, date_to, limit)
 
         def _rows(d):
             return [
@@ -173,7 +186,7 @@ class ProfitAndLossView(BaseDateRangeView):
 
     def get(self, request):
         date_from, date_to = self.get_date_range(request)
-        data = ReportService.profit_and_loss(request.organisation, date_from, date_to)
+        data = ReportService.profit_and_loss(self.get_organisation(), date_from, date_to)
 
         def _rows(d):
             rev = d.get("revenue", {})
@@ -209,7 +222,7 @@ class ExpenseBreakdownView(BaseDateRangeView):
 
     def get(self, request):
         date_from, date_to = self.get_date_range(request)
-        data = ReportService.expense_breakdown(request.organisation, date_from, date_to)
+        data = ReportService.expense_breakdown(self.get_organisation(), date_from, date_to)
 
         def _rows(d):
             return [[r["category_name"], r["total"], r["count"]] for r in d]
@@ -232,7 +245,7 @@ class InventoryValuationView(BaseDateRangeView):
     _HEADERS = ["Product", "SKU", "Warehouse", "Qty", "Unit Cost (₦)", "Total Value (₦)"]
 
     def get(self, request):
-        data = ReportService.inventory_valuation(request.organisation)
+        data = ReportService.inventory_valuation(self.get_organisation())
 
         def _rows(d):
             return [
@@ -260,7 +273,7 @@ class CashFlowView(BaseDateRangeView):
 
     def get(self, request):
         date_from, date_to = self.get_date_range(request)
-        data = ReportService.cash_flow(request.organisation, date_from, date_to)
+        data = ReportService.cash_flow(self.get_organisation(), date_from, date_to)
 
         def _rows(d):
             return [
@@ -295,7 +308,7 @@ class ARAgingView(BaseDateRangeView):
         except ValueError:
             as_of = date.today()
 
-        data = ReportService.ar_aging(request.organisation, as_of)
+        data = ReportService.ar_aging(self.get_organisation(), as_of)
 
         def _rows(d):
             return [
@@ -330,7 +343,7 @@ class APAgingView(BaseDateRangeView):
         except ValueError:
             as_of = date.today()
 
-        data = ReportService.ap_aging(request.organisation, as_of)
+        data = ReportService.ap_aging(self.get_organisation(), as_of)
 
         def _rows(d):
             return [
@@ -358,7 +371,7 @@ class VATSummaryView(BaseDateRangeView):
 
     def get(self, request):
         date_from, date_to = self.get_date_range(request)
-        data = ReportService.vat_summary(request.organisation, date_from, date_to)
+        data = ReportService.vat_summary(self.get_organisation(), date_from, date_to)
 
         def _rows(d):
             return [
@@ -396,7 +409,7 @@ class SalesByCustomerView(BaseDateRangeView):
         if customer_id:
             # Detail mode: invoices for one customer
             cid = None if customer_id == "walk-in" else customer_id
-            data = ReportService.customer_invoices(request.organisation, cid, date_from, date_to)
+            data = ReportService.customer_invoices(self.get_organisation(), cid, date_from, date_to)
 
             def _rows(d):
                 return [
@@ -414,7 +427,7 @@ class SalesByCustomerView(BaseDateRangeView):
             )
 
         # Summary mode
-        data = ReportService.sales_by_customer(request.organisation, date_from, date_to)
+        data = ReportService.sales_by_customer(self.get_organisation(), date_from, date_to)
 
         def _rows(d):
             return [
@@ -450,7 +463,7 @@ class SalesByProductView(BaseDateRangeView):
         product_id = request.query_params.get("product_id")
 
         if product_id:
-            data = ReportService.product_sale_lines(request.organisation, product_id, date_from, date_to)
+            data = ReportService.product_sale_lines(self.get_organisation(), product_id, date_from, date_to)
 
             def _rows(d):
                 return [
@@ -467,7 +480,7 @@ class SalesByProductView(BaseDateRangeView):
                 filename_base="product_sale_lines",
             )
 
-        data = ReportService.sales_by_product(request.organisation, date_from, date_to)
+        data = ReportService.sales_by_product(self.get_organisation(), date_from, date_to)
 
         def _rows(d):
             return [
@@ -495,7 +508,7 @@ class PaymentMethodsView(BaseDateRangeView):
 
     def get(self, request):
         date_from, date_to = self.get_date_range(request)
-        data = ReportService.payment_methods(request.organisation, date_from, date_to)
+        data = ReportService.payment_methods(self.get_organisation(), date_from, date_to)
 
         def _rows(d):
             return [[r["label"], r["total"], r["count"]] for r in d]

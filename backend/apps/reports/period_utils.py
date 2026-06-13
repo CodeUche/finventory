@@ -12,7 +12,7 @@ from datetime import date, datetime, timedelta
 from typing import Optional, Tuple
 
 # Canonical period names accepted by all report endpoints
-VALID_PERIODS = frozenset({"today", "week", "month", "year", "all", "custom"})
+VALID_PERIODS = frozenset({"today", "week", "month", "year", "ytd", "all", "custom"})
 
 _DATE_FMT = "%Y-%m-%d"
 
@@ -47,7 +47,7 @@ def resolve_period(
     if canonical == "month":
         return today.replace(day=1), today
 
-    if canonical == "year":
+    if canonical in ("year", "ytd", "1y"):
         return today.replace(month=1, day=1), today
 
     if canonical == "all":
@@ -71,6 +71,8 @@ def period_label(
         "week": "This Week",
         "month": "This Month",
         "year": "This Year",
+        "ytd": "Year to Date",
+        "1y": "Last 12 Months",
         "all": "All Time",
     }
     if canonical in labels:
