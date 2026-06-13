@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { usePagination } from '@/hooks/usePagination'
@@ -63,6 +63,7 @@ export default function StockPage() {
   const [bulkWarehouse, setBulkWarehouse] = useState('')
   const [bulkQty, setBulkQty] = useState('')
   const [bulkAdding, setBulkAdding] = useState(false)
+  const bulkInProgress = useRef(false)
 
   // ── Stock transfer modal ─────────────────────────────────────────────────
   const [showTransfer, setShowTransfer] = useState(false)
@@ -83,6 +84,7 @@ export default function StockPage() {
   }
 
   const load = async () => {
+    if (bulkInProgress.current) return
     try {
       const wRes = await inventoryApi.warehouses()
       const wList: Warehouse[] = wRes.data.results ?? wRes.data
@@ -279,6 +281,7 @@ export default function StockPage() {
     setBulkWarehouse('')
     setBulkQty('')
     setBulkAdding(true)
+    bulkInProgress.current = true  // block useDataRefresh from re-running load() per call
 
     let done = 0, failed = 0
     for (const item of itemsToProcess) {
@@ -292,6 +295,7 @@ export default function StockPage() {
         done++
       } catch { failed++ }
     }
+    bulkInProgress.current = false  // re-enable, then do one final reload
     const msg = failed
       ? `Done: ${done} product${done !== 1 ? 's' : ''}, ${failed} failed`
       : `${done} product${done !== 1 ? 's' : ''} added to warehouse`
