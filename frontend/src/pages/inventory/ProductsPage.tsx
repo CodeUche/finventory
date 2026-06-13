@@ -4,7 +4,7 @@ import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { useModuleAccess } from '@/hooks/useModuleAccess'
 import { usePagination } from '@/hooks/usePagination'
 import Pagination from '@/components/Pagination'
-import { Plus, Search, Package, AlertTriangle, X, Pencil, Loader2, TrendingUp, TrendingDown, History, Maximize2, Minimize2, ShieldCheck, FileDown, Table2, ArrowDownCircle, Trash2, RefreshCw, CheckSquare } from 'lucide-react'
+import { Plus, Search, Package, AlertTriangle, X, Pencil, Loader2, TrendingUp, TrendingDown, History, Maximize2, Minimize2, ShieldCheck, FileDown, Table2, ArrowDownCircle, Trash2, RefreshCw, CheckSquare, ChevronDown } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { inventoryApi, taxApi, salesApi, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatAmountInput, stripCommas, formatDate } from '@/lib/utils'
@@ -309,6 +309,7 @@ export default function ProductsPage() {
   const [editStockQty, setEditStockQty] = useState('')
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
+  const [exportOpen, setExportOpen] = useState(false)
   const [showDeleteAll, setShowDeleteAll] = useState(false)
   const [deletingAll, setDeletingAll] = useState(false)
   const [categories, setCategories] = useState<{ id: string; name: string }[]>([])
@@ -681,11 +682,39 @@ export default function ProductsPage() {
           </button>
           {products.length > 0 && (
             <>
-              <button onClick={() => exportProductsPDF(products, organisation)} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Export PDF">
-                <FileDown size={16} />
-              </button>
-              <button onClick={() => exportProductsExcel(products)} className="btn-ghost px-2.5 py-1.5 text-xs text-slate-400 hover:text-white border border-surface-700 rounded-lg">XLS</button>
-              <button onClick={() => exportProductsCSV(products)} className="btn-ghost px-2.5 py-1.5 text-xs text-slate-400 hover:text-white border border-surface-700 rounded-lg">CSV</button>
+              <div className="relative">
+                <button
+                  onClick={() => setExportOpen((v) => !v)}
+                  className="btn-ghost flex items-center gap-1.5 px-3 py-2 text-sm text-slate-400 hover:text-white"
+                  title="Export"
+                >
+                  <FileDown size={16} />
+                  Export
+                  <ChevronDown size={13} className={`transition-transform ${exportOpen ? 'rotate-180' : ''}`} />
+                </button>
+                {exportOpen && (
+                  <div className="absolute right-0 top-full mt-1 z-30 bg-surface-800 border border-surface-700 rounded-xl shadow-2xl py-1 min-w-[140px]" onMouseLeave={() => setExportOpen(false)}>
+                    <button
+                      onClick={() => { setExportOpen(false); exportProductsPDF(products, organisation) }}
+                      className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-slate-300 hover:bg-surface-700 hover:text-white transition-colors"
+                    >
+                      <FileDown size={14} className="text-slate-400" /> PDF
+                    </button>
+                    <button
+                      onClick={() => { setExportOpen(false); exportProductsExcel(products) }}
+                      className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-slate-300 hover:bg-surface-700 hover:text-white transition-colors"
+                    >
+                      <Table2 size={14} className="text-emerald-400" /> Excel (XLS)
+                    </button>
+                    <button
+                      onClick={() => { setExportOpen(false); exportProductsCSV(products) }}
+                      className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-slate-300 hover:bg-surface-700 hover:text-white transition-colors"
+                    >
+                      <ArrowDownCircle size={14} className="text-blue-400" /> CSV
+                    </button>
+                  </div>
+                )}
+              </div>
               <button onClick={() => setShowDeleteAll(true)} className="btn-ghost p-2 text-red-400 hover:text-red-300 hover:bg-red-500/10" title="Delete all products">
                 <Trash2 size={16} />
               </button>
