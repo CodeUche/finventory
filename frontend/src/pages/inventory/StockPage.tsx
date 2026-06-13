@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { useSearchParams, useNavigate } from 'react-router-dom'
-import { AlertTriangle, Boxes, Plus, RefreshCw, ArrowLeftRight, Pencil, Trash2, Loader2 } from 'lucide-react'
+import { AlertTriangle, Boxes, Plus, RefreshCw, ArrowLeftRight, Pencil, Trash2, Loader2, CheckSquare } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { inventoryApi, bypassNextGets } from '@/services/api'
 import { formatAmountInput, stripCommas } from '@/lib/utils'
@@ -55,6 +55,12 @@ export default function StockPage() {
   const [adjustRowLocked, setAdjustRowLocked] = useState(false)
   const [adjustRowLabel, setAdjustRowLabel] = useState('')
   const [deletingStockId, setDeletingStockId] = useState<string | null>(null)
+
+  // ── Multi-select + bulk add to warehouse ────────────────────────────────
+  const [selectedItems, setSelectedItems] = useState<StockItem[]>([])
+  const [bulkWarehouse, setBulkWarehouse] = useState('')
+  const [bulkQty, setBulkQty] = useState('')
+  const [bulkAdding, setBulkAdding] = useState(false)
 
   // ── Stock transfer modal ─────────────────────────────────────────────────
   const [showTransfer, setShowTransfer] = useState(false)
@@ -247,6 +253,44 @@ export default function StockPage() {
     }
   }
 
+  const toggleSelectItem = (item: StockItem) =>
+    setSelectedItems((prev) =>
+      prev.some((s) => s.id === item.id)
+        ? prev.filter((s) => s.id !== item.id)
+        : [...prev, item]
+    )
+
+  const toggleSelectAll = (list: StockItem[]) =>
+    setSelectedItems(selectedItems.length === list.length ? [] : [...list])
+
+  const handleBulkAddToWarehouse = async () => {
+    if (!bulkWarehouse) { toast.error('Select a destination warehouse'); return }
+    const qty = parseFloat(bulkQty)
+    if (!bulkQty || isNaN(qty) || qty === 0) { toast.error('Enter a non-zero quantity'); return }
+    setBulkAdding(true)
+    let done = 0, failed = 0
+    for (const item of selectedItems) {
+      try {
+        await inventoryApi.adjustStock({
+          product_id: item.product,
+          warehouse_id: bulkWarehouse,
+          quantity: qty,
+          reason: 'Bulk stock entry',
+        })
+        done++
+      } catch { failed++ }
+    }
+    const msg = failed
+      ? `Added to ${done} product${done !== 1 ? 's' : ''}, ${failed} failed`
+      : `Stock added to ${done} product${done !== 1 ? 's' : ''} in selected warehouse`
+    toast.success(msg, { duration: 5000 })
+    setSelectedItems([])
+    setBulkWarehouse('')
+    setBulkQty('')
+    setBulkAdding(false)
+    load()
+  }
+
   // lowStockTotal from the dedicated endpoint (includes products with no stock movements)
   const lowCount = lowStockTotal || items.filter((i) => i.stock_level === 'low' || i.is_low_stock).length
   const displayed = items.filter((i) => {
@@ -303,11 +347,54 @@ export default function StockPage() {
         </div>
       )}
 
+      {selectedItems.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3 bg-brand-500/10 border border-brand-500/30 rounded-xl px-4 py-3">
+          <CheckSquare size={16} className="text-brand-400 shrink-0" />
+          <span className="text-sm text-brand-300 font-medium">{selectedItems.length} item{selectedItems.length !== 1 ? 's' : ''} selected</span>
+          <div className="flex flex-wrap items-center gap-2 ml-auto">
+            <select
+              className="input py-1.5 text-sm"
+              value={bulkWarehouse}
+              onChange={(e) => setBulkWarehouse(e.target.value)}
+            >
+              <option value="">Select warehouse…</option>
+              {warehouses.map((w) => (
+                <option key={w.id} value={w.id}>{w.name}{w.is_default ? ' (default)' : ''}</option>
+              ))}
+            </select>
+            <input
+              type="number"
+              className="input py-1.5 text-sm w-28"
+              placeholder="Qty (±)"
+              value={bulkQty}
+              onChange={(e) => setBulkQty(e.target.value)}
+            />
+            <button
+              onClick={handleBulkAddToWarehouse}
+              disabled={bulkAdding}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 rounded-lg transition-colors disabled:opacity-50"
+            >
+              {bulkAdding ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
+              Add to Warehouse
+            </button>
+            <button onClick={() => setSelectedItems([])} className="btn-ghost px-3 py-1.5 text-xs text-slate-400">Clear</button>
+          </div>
+        </div>
+      )}
+
       <div className="card p-0 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-surface-700">
+                <th className="pl-5 pr-2 py-3.5 w-8">
+                  <input
+                    type="checkbox"
+                    className="accent-orange-500 w-4 h-4 cursor-pointer"
+                    checked={displayed.length > 0 && selectedItems.length === displayed.length}
+                    onChange={() => toggleSelectAll(displayed)}
+                  />
+                </th>
                 {['Product', 'SKU', 'Warehouse', 'On Hand', 'Incoming', 'ETA', 'Available', 'Status', ''].map((h) => (
                   <th key={h} className="px-5 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
                 ))}
@@ -337,7 +424,15 @@ export default function StockPage() {
                 </td></tr>
               ) : (
                 displayed.map((s) => (
-                  <tr key={s.id ?? `phantom-${s.product}`} className="table-row">
+                  <tr key={s.id ?? `phantom-${s.product}`} className={`table-row ${selectedItems.some((x) => x.id === s.id) ? 'bg-brand-500/5' : ''}`}>
+                    <td className="pl-5 pr-2 py-3.5 w-8">
+                      <input
+                        type="checkbox"
+                        className="accent-orange-500 w-4 h-4 cursor-pointer"
+                        checked={selectedItems.some((x) => x.id === s.id)}
+                        onChange={() => toggleSelectItem(s)}
+                      />
+                    </td>
                     <td className="px-5 py-3.5 font-medium text-white">{s.product_name}</td>
                     <td className="px-5 py-3.5 font-mono text-xs text-brand-400">{s.product_sku}</td>
                     <td className="px-5 py-3.5 text-slate-400">{s.warehouse_name}</td>

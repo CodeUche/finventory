@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { useModuleAccess } from '@/hooks/useModuleAccess'
-import { Plus, Search, Package, AlertTriangle, X, Pencil, Loader2, TrendingUp, TrendingDown, History, Maximize2, Minimize2, ShieldCheck, FileDown, Table2, ArrowDownCircle, Trash2, RefreshCw } from 'lucide-react'
+import { Plus, Search, Package, AlertTriangle, X, Pencil, Loader2, TrendingUp, TrendingDown, History, Maximize2, Minimize2, ShieldCheck, FileDown, Table2, ArrowDownCircle, Trash2, RefreshCw, CheckSquare } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { inventoryApi, taxApi, salesApi, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatAmountInput, stripCommas, formatDate } from '@/lib/utils'
@@ -310,6 +310,8 @@ export default function ProductsPage() {
   const [showDeleteAll, setShowDeleteAll] = useState(false)
   const [deletingAll, setDeletingAll] = useState(false)
   const [categories, setCategories] = useState<{ id: string; name: string }[]>([])
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [bulkDeleting, setBulkDeleting] = useState(false)
 
   const fetchProducts = async () => {
     try {
@@ -560,6 +562,29 @@ export default function ProductsPage() {
     setRefreshing(false)
   }
 
+  const toggleSelect = (id: string) =>
+    setSelectedIds((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+
+  const toggleSelectAll = () =>
+    setSelectedIds(selectedIds.size === products.length ? new Set() : new Set(products.map((p) => p.id)))
+
+  const handleBulkDelete = async () => {
+    if (!confirm(`Delete ${selectedIds.size} selected product(s)? This cannot be undone.\n\nProducts used on invoices or purchase orders will be skipped.`)) return
+    setBulkDeleting(true)
+    let deleted = 0, failed = 0
+    for (const id of selectedIds) {
+      try { await inventoryApi.deleteProduct(id); deleted++ } catch { failed++ }
+    }
+    const msg = failed
+      ? `Deleted ${deleted}, ${failed} skipped (linked to documents)`
+      : `Deleted ${deleted} product${deleted !== 1 ? 's' : ''}`
+    toast.success(msg, { duration: 5000 })
+    setSelectedIds(new Set())
+    setBulkDeleting(false)
+    bypassNextGets()
+    fetchProducts()
+  }
+
   const handleDelete = async (p: Product) => {
     if (!confirm(`Delete "${p.name}"? This cannot be undone.\n\nStock levels and batch records for this product will be removed. Products that appear on invoices or purchase orders cannot be deleted.`)) return
     setDeletingId(p.id)
@@ -683,11 +708,37 @@ export default function ProductsPage() {
         />
       </div>
 
+      {selectedIds.size > 0 && (
+        <div className="flex items-center gap-3 bg-brand-500/10 border border-brand-500/30 rounded-xl px-4 py-3">
+          <CheckSquare size={16} className="text-brand-400 shrink-0" />
+          <span className="text-sm text-brand-300 font-medium">{selectedIds.size} product{selectedIds.size !== 1 ? 's' : ''} selected</span>
+          <div className="ml-auto flex items-center gap-2">
+            <button onClick={() => setSelectedIds(new Set())} className="btn-ghost px-3 py-1.5 text-xs text-slate-400">Clear</button>
+            <button
+              onClick={handleBulkDelete}
+              disabled={bulkDeleting}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-400 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 rounded-lg transition-colors disabled:opacity-50"
+            >
+              {bulkDeleting ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+              Delete Selected
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="card p-0 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-surface-700">
+                <th className="pl-5 pr-2 py-3.5 w-8">
+                  <input
+                    type="checkbox"
+                    className="accent-orange-500 w-4 h-4 cursor-pointer"
+                    checked={products.length > 0 && selectedIds.size === products.length}
+                    onChange={toggleSelectAll}
+                  />
+                </th>
                 {['SKU', 'Product', 'Type', 'Cost Price', ...(showOwnerFeatures ? ['Owner Cost'] : []), 'Selling Price', 'Wholesale Price', 'Profit / Margin', 'Stock', 'Status', ''].map((h) => (
                   <th key={h} className={`px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wider ${h === 'Owner Cost' ? 'text-brand-400' : 'text-slate-400'}`}>{h}</th>
                 ))}
@@ -715,7 +766,15 @@ export default function ProductsPage() {
                   const margin = sell > 0 ? ((profit / sell) * 100).toFixed(1) : '0.0'
                   const isProfit = profit >= 0
                   return (
-                  <tr key={p.id} className="table-row">
+                  <tr key={p.id} className={`table-row ${selectedIds.has(p.id) ? 'bg-brand-500/5' : ''}`}>
+                    <td className="pl-5 pr-2 py-3.5 w-8">
+                      <input
+                        type="checkbox"
+                        className="accent-orange-500 w-4 h-4 cursor-pointer"
+                        checked={selectedIds.has(p.id)}
+                        onChange={() => toggleSelect(p.id)}
+                      />
+                    </td>
                     <td className="px-5 py-3.5 font-mono text-xs text-brand-400">{p.sku}</td>
                     <td className="px-5 py-3.5">
                       <p className="font-medium text-white">{p.name}</p>

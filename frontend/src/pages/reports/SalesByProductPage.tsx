@@ -12,12 +12,23 @@ import {
 } from 'recharts'
 import { reportApi } from '@/services/api'
 import { formatCurrency, formatDate, formatNumber, getCurrencySymbol } from '@/lib/utils'
-import { useThemeAccent } from '@/hooks/useTheme'
+import { useThemeAccent, getStoredTheme } from '@/hooks/useTheme'
 import PeriodSelector, { type PeriodValue } from '@/components/PeriodSelector'
 import ExportBar from '@/components/ExportBar'
 import type { SalesByProductRow, ProductSaleLine } from '@/types'
 
-const tooltipStyle  = { backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '12px', color: '#f1f5f9', fontSize: 12 }
+function useTooltipStyle() {
+  const [isLight, setIsLight] = useState(() => getStoredTheme() === 'light')
+  useEffect(() => {
+    const h = (e: Event) => setIsLight((e as CustomEvent).detail === 'light')
+    window.addEventListener('themechange', h)
+    return () => window.removeEventListener('themechange', h)
+  }, [])
+  return isLight
+    ? { backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', color: '#1e293b', fontSize: 12 }
+    : { backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '12px', color: '#f1f5f9', fontSize: 12 }
+}
+
 const axisTickStyle = { fill: '#94a3b8', fontSize: 11 }
 const trunc = (s: string, n = 14) => s?.length > n ? s.slice(0, n) + '…' : (s ?? '—')
 
@@ -30,6 +41,10 @@ function periodToParams(p: PeriodValue): Record<string, string> {
 
 export default function SalesByProductPage() {
   const accent = useThemeAccent()
+  const tooltipStyle = useTooltipStyle()
+  const isLight = getStoredTheme() === 'light'
+  const ttLabel = isLight ? '#64748b' : '#94a3b8'
+  const ttText  = isLight ? '#1e293b' : '#f1f5f9'
   const [period, setPeriod] = useState<PeriodValue>({ period: 'all' })
   const [rows, setRows]     = useState<SalesByProductRow[]>([])
   const [loading, setLoading] = useState(false)
@@ -178,8 +193,8 @@ export default function SalesByProductPage() {
                   axisLine={false} tickLine={false} width={100} />
                 <Tooltip
                   contentStyle={tooltipStyle}
-                  labelStyle={{ color: '#94a3b8' }}
-                  itemStyle={{ color: '#f1f5f9' }}
+                  labelStyle={{ color: ttLabel }}
+                  itemStyle={{ color: ttText }}
                   formatter={(v: number) => formatCurrency(String(v))}
                 />
                 <Legend
@@ -223,11 +238,11 @@ export default function SalesByProductPage() {
                     if (!payload?.length) return null
                     const d = payload[0]?.payload as { name: string; revenue: number; margin: number; units: number }
                     return (
-                      <div style={tooltipStyle} className="p-3 text-xs space-y-1">
-                        <p className="font-semibold text-white">{d.name}</p>
-                        <p className="text-slate-400">Revenue: <span className="text-emerald-400">{formatCurrency(String(d.revenue))}</span></p>
-                        <p className="text-slate-400">Gross Margin: <span className="text-blue-400">{d.margin}%</span></p>
-                        <p className="text-slate-400">Units Sold: <span className="text-white">{d.units.toLocaleString()}</span></p>
+                      <div style={{ ...tooltipStyle, padding: '10px 12px' }} className="text-xs space-y-1">
+                        <p style={{ color: ttText }} className="font-semibold">{d.name}</p>
+                        <p style={{ color: ttLabel }}>Revenue: <span className="text-emerald-400">{formatCurrency(String(d.revenue))}</span></p>
+                        <p style={{ color: ttLabel }}>Gross Margin: <span className="text-blue-400">{d.margin}%</span></p>
+                        <p style={{ color: ttLabel }}>Units Sold: <span style={{ color: ttText }}>{d.units.toLocaleString()}</span></p>
                       </div>
                     )
                   }}
