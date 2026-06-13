@@ -598,6 +598,10 @@ class StockItemViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     filterset_fields = ["product", "warehouse"]
     search_fields = ["product__name", "product__sku"]
     http_method_names = ["get", "delete", "head", "options"]
+    # Disable pagination — the list() override appends phantom rows after the
+    # queryset is fetched, so server-side pagination silently drops real rows on
+    # pages 2+.  The stock page always needs the full catalogue in one response.
+    pagination_class = None
 
     def get_permissions(self):
         if self.action == "destroy":
