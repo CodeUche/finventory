@@ -6,6 +6,23 @@ export const REMEMBER_FLAG_KEY = 'audity-remember-me'
 // Purge any legacy plaintext password that may have been stored by older builds
 localStorage.removeItem('audity-saved-creds')
 
+// Media data URLs are stored in a SEPARATE key so they survive logout() and the
+// startup guard in main.tsx (both wipe 'finventory-auth' but never this key).
+const MEDIA_KEY = 'audity-media'
+function readMediaCache(): { logoDataUrl?: string | null; stampDataUrl?: string | null; avatarDataUrl?: string | null } {
+  try { return JSON.parse(localStorage.getItem(MEDIA_KEY) ?? '{}') } catch { return {} }
+}
+function writeMediaCache(patch: Partial<{ logoDataUrl: string | null; stampDataUrl: string | null; avatarDataUrl: string | null }>) {
+  try {
+    const cur = readMediaCache()
+    const next: Record<string, string | null> = { ...cur }
+    for (const [k, v] of Object.entries(patch)) {
+      if (v == null) delete next[k]; else next[k] = v
+    }
+    localStorage.setItem(MEDIA_KEY, JSON.stringify(next))
+  } catch { /* storage quota — skip */ }
+}
+
 interface AuthState {
   user: User | null
   tokens: AuthTokens | null
@@ -88,17 +105,27 @@ export const useAuthStore = create<AuthState>()(
       // exactly once, so ProtectedRoute never sees the transient state where
       // isAuthenticated=true but organisation=null that caused /onboarding redirects.
       initSession: (user, tokens, org, orgs) => {
+        const media = readMediaCache()
         set({
           user, tokens, isAuthenticated: true,
           organisation: org, organisations: orgs,
           orgInitialized: true,
           memberRole: null, modulePermissions: {},
+          logoDataUrl: media.logoDataUrl ?? null,
+          stampDataUrl: media.stampDataUrl ?? null,
+          avatarDataUrl: media.avatarDataUrl ?? null,
         })
       },
 
       setAuth: (user, tokens) => {
-        // Clear stale membership from any previous session so the next myMembership load starts clean
-        set({ user, tokens, isAuthenticated: true, memberRole: null, modulePermissions: {} })
+        const media = readMediaCache()
+        set({
+          user, tokens, isAuthenticated: true,
+          memberRole: null, modulePermissions: {},
+          logoDataUrl: media.logoDataUrl ?? null,
+          stampDataUrl: media.stampDataUrl ?? null,
+          avatarDataUrl: media.avatarDataUrl ?? null,
+        })
       },
 
       setOrganisation: (org) => {
@@ -117,9 +144,9 @@ export const useAuthStore = create<AuthState>()(
 
       setSubscriptionExpired: (expired) => set({ subscriptionExpired: expired }),
 
-      setLogoDataUrl: (url) => set({ logoDataUrl: url }),
-      setStampDataUrl: (url) => set({ stampDataUrl: url }),
-      setAvatarDataUrl: (url) => set({ avatarDataUrl: url }),
+      setLogoDataUrl: (url) => { set({ logoDataUrl: url }); writeMediaCache({ logoDataUrl: url }) },
+      setStampDataUrl: (url) => { set({ stampDataUrl: url }); writeMediaCache({ stampDataUrl: url }) },
+      setAvatarDataUrl: (url) => { set({ avatarDataUrl: url }); writeMediaCache({ avatarDataUrl: url }) },
 
       updateUser: (partial) =>
         set((s) => ({ user: s.user ? { ...s.user, ...partial } : s.user })),
