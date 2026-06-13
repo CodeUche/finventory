@@ -11,6 +11,8 @@ import YearFilter, { yearToDateParams } from '@/components/YearFilter'
 import MonthFilter, { monthToDateParams, type ArchiveMonth } from '@/components/MonthFilter'
 import ExportButton from '@/components/ExportButton'
 import { FieldTooltip } from '@/components/FieldTooltip'
+import { usePagination } from '@/hooks/usePagination'
+import Pagination from '@/components/Pagination'
 
 interface Supplier { id: string; name: string }
 interface Warehouse { id: string; name: string }
@@ -106,7 +108,7 @@ export default function PurchasesPage() {
       const params: Record<string, unknown> = { ...activeDateParams }
       if (search) params.search = search
       if (statusFilter) params.status = statusFilter
-      const { data } = await purchaseApi.list(params)
+      const { data } = await purchaseApi.list({ ...params, page_size: 5000 })
       setOrders(data.results ?? data)
     } catch {
       toast.error('Failed to load purchase orders')
@@ -299,12 +301,14 @@ export default function PurchasesPage() {
   const upd = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
     setForm((f) => ({ ...f, [k]: e.target.value }))
 
+  const { page, setPage, pageSize, setPageSize, totalPages, paged, total } = usePagination(orders)
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center gap-4">
         <div>
           <h1 className="text-2xl font-bold text-white">Purchases</h1>
-          <p className="text-slate-400 text-sm">{orders.length} purchase orders</p>
+          <p className="text-slate-400 text-sm">{total} purchase orders</p>
         </div>
         <div className="flex items-center gap-2 sm:ml-auto">
           <button onClick={() => { bypassNextGets(); load() }} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
@@ -353,13 +357,13 @@ export default function PurchasesPage() {
                     ))}
                   </tr>
                 ))
-              ) : orders.length === 0 ? (
+              ) : total === 0 ? (
                 <tr><td colSpan={8} className="px-5 py-12 text-center">
                   <Truck size={32} className="mx-auto mb-2 text-slate-600" />
                   <p className="text-slate-500">No purchase orders yet</p>
                 </td></tr>
               ) : (
-                orders.map((o) => (
+                paged.map((o) => (
                   <React.Fragment key={o.id}>
                   <tr className="table-row">
                     <td className="px-5 py-3.5">
@@ -464,6 +468,7 @@ export default function PurchasesPage() {
             </tbody>
           </table>
         </div>
+        <Pagination page={page} totalPages={totalPages} pageSize={pageSize} total={total} onPage={setPage} onPageSize={setPageSize} />
       </div>
 
       {/* Receipt viewer modal */}

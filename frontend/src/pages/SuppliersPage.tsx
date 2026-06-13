@@ -3,6 +3,8 @@ import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, Search, Truck, X, Pencil, Loader2, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { supplierApi } from '@/services/api'
+import { usePagination } from '@/hooks/usePagination'
+import Pagination from '@/components/Pagination'
 
 interface Supplier {
   id: string
@@ -42,7 +44,7 @@ export default function SuppliersPage() {
   const load = async () => {
     setLoading(true)
     try {
-      const { data } = await supplierApi.list({ search: search || undefined })
+      const { data } = await supplierApi.list({ search: search || undefined, page_size: 5000 })
       setSuppliers(data.results ?? data)
     } catch {
       toast.error('Failed to load suppliers')
@@ -98,12 +100,14 @@ export default function SuppliersPage() {
   const upd = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setForm((f) => ({ ...f, [k]: e.target.value }))
 
+  const { page, setPage, pageSize, setPageSize, totalPages, paged, total } = usePagination(suppliers)
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center gap-4">
         <div>
           <h1 className="text-2xl font-bold text-white">Suppliers</h1>
-          <p className="text-slate-400 text-sm">{suppliers.length} supplier{suppliers.length !== 1 ? 's' : ''}</p>
+          <p className="text-slate-400 text-sm">{total} supplier{total !== 1 ? 's' : ''}</p>
         </div>
         <button className="btn-primary sm:ml-auto" onClick={openCreate}>
           <Plus size={16} /> Add Supplier
@@ -134,13 +138,13 @@ export default function SuppliersPage() {
                     ))}
                   </tr>
                 ))
-              ) : suppliers.length === 0 ? (
+              ) : total === 0 ? (
                 <tr><td colSpan={7} className="px-5 py-12 text-center">
                   <Truck size={32} className="mx-auto mb-2 text-slate-600" />
                   <p className="text-slate-500">No suppliers yet</p>
                 </td></tr>
               ) : (
-                suppliers.map((s) => (
+                paged.map((s) => (
                   <tr key={s.id} className="table-row">
                     <td className="px-5 py-3.5 font-mono text-xs text-brand-400">{s.code}</td>
                     <td className="px-5 py-3.5 font-medium text-white">{s.name}</td>
@@ -173,6 +177,7 @@ export default function SuppliersPage() {
             </tbody>
           </table>
         </div>
+        <Pagination page={page} totalPages={totalPages} pageSize={pageSize} total={total} onPage={setPage} onPageSize={setPageSize} />
       </div>
 
       {/* Create / Edit Modal */}

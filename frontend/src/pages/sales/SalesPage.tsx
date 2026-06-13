@@ -14,6 +14,8 @@ import { useModuleAccess } from '@/hooks/useModuleAccess'
 import DateInput from '@/components/DateInput'
 import { saveBlobFile } from '@/lib/saveBlobFile'
 import type { Invoice } from '@/types'
+import { usePagination } from '@/hooks/usePagination'
+import Pagination from '@/components/Pagination'
 
 const STATUS_OPTIONS = ['', 'paid', 'proforma', 'confirmed', 'partially_paid', 'credit', 'overdue', 'returned', 'voided']
 const RETURN_REASONS = [
@@ -539,7 +541,7 @@ export default function SalesPage() {
   const load = async () => {
     setLoading(true)
     try {
-      const { data } = await salesApi.invoices({ search, status: status || undefined, ordering: sortBy, ...activeDateParams })
+      const { data } = await salesApi.invoices({ search, status: status || undefined, ordering: sortBy, page_size: 5000, ...activeDateParams })
       setInvoices(data.results ?? data)
     } catch { toast.error('Failed to load invoices') }
     finally { setLoading(false) }
@@ -868,13 +870,14 @@ export default function SalesPage() {
   }
 
   const inv = detail ?? selected
+  const { page, setPage, pageSize, setPageSize, totalPages, paged, total } = usePagination(invoices)
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center gap-4">
         <div>
           <h1 className="text-2xl font-bold text-white">Sales & Invoices</h1>
-          <p className="text-slate-400 text-sm">{invoices.length} invoices</p>
+          <p className="text-slate-400 text-sm">{total} invoices</p>
         </div>
         <div className="flex items-center gap-2 sm:ml-auto">
           <button onClick={() => { bypassNextGets(); load() }} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
@@ -936,13 +939,13 @@ export default function SalesPage() {
                     ))}
                   </tr>
                 ))
-              ) : invoices.length === 0 ? (
+              ) : total === 0 ? (
                 <tr><td colSpan={8} className="px-5 py-12 text-center">
                   <Receipt size={32} className="mx-auto mb-2 text-slate-600" />
                   <p className="text-slate-500">No invoices yet</p>
                 </td></tr>
               ) : (
-                invoices.map((inv) => (
+                paged.map((inv) => (
                   <tr key={inv.id} className="table-row">
                     <td className="px-5 py-3.5 font-mono text-brand-400 text-xs font-medium">{inv.invoice_number}</td>
                     <td className="px-5 py-3.5 text-white">{inv.customer_name ?? <span className="text-slate-500">Walk-in</span>}</td>
@@ -1017,6 +1020,8 @@ export default function SalesPage() {
             </tbody>
           </table>
         </div>
+        <Pagination page={page} totalPages={totalPages} pageSize={pageSize} total={total}
+          onPage={setPage} onPageSize={setPageSize} />
       </div>
 
       {/* ── Invoice Detail Drawer ───────────────────────────────────────────── */}

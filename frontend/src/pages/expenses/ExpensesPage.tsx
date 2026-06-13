@@ -16,6 +16,8 @@ import YearFilter, { yearToDateParams } from '@/components/YearFilter'
 import MonthFilter, { monthToDateParams, type ArchiveMonth } from '@/components/MonthFilter'
 import ExportButton from '@/components/ExportButton'
 import { FieldTooltip } from '@/components/FieldTooltip'
+import { usePagination } from '@/hooks/usePagination'
+import Pagination from '@/components/Pagination'
 
 const PAYMENT_METHODS: { value: string; label: string }[] = [
   { value: 'cash', label: 'Cash' },
@@ -125,7 +127,7 @@ export default function ExpensesPage() {
       const params: Record<string, unknown> = { search: search || undefined, ...dateParams }
       if (typeFilter === 'income') params.is_income = true
       if (typeFilter === 'expense') params.is_income = false
-      const expRes = await expenseApi.list(params)
+      const expRes = await expenseApi.list({ ...params, page_size: 5000 })
       setExpenses(expRes.data.results ?? expRes.data)
 
       // Also load sales invoices for income view (revenue from sales)
@@ -362,13 +364,15 @@ export default function ExpensesPage() {
   const folderTotalExpenses = folderExpenses.filter(e => !e.is_income).reduce((s, e) => s + parseFloat(e.amount), 0)
   const folderTotalIncome = folderExpenses.filter(e => e.is_income).reduce((s, e) => s + parseFloat(e.amount), 0)
 
+  const { page: expPage, setPage: setExpPage, pageSize: expPageSize, setPageSize: setExpPageSize, totalPages: expTotalPages, paged: pagedExpenses, total: expTotal } = usePagination(expenses)
+
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-4">
         <div>
           <h1 className="text-2xl font-bold text-white">Income & Expenses</h1>
-          <p className="text-slate-400 text-sm">{activeTab === 'entries' ? `${expenses.length} entries` : 'Organise by folder'}</p>
+          <p className="text-slate-400 text-sm">{activeTab === 'entries' ? `${expTotal} entries` : 'Organise by folder'}</p>
         </div>
         <div className="sm:ml-auto flex items-center gap-2">
           <button onClick={() => { bypassNextGets(); loadExpenses() }} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
@@ -614,7 +618,7 @@ export default function ExpensesPage() {
             >
               <div className="text-left">
                 <p className="text-sm font-semibold text-white">Cashflow</p>
-                <p className="text-xs text-slate-500">{expenses.length} {expenses.length === 1 ? 'entry' : 'entries'} · manually recorded income &amp; expenses</p>
+                <p className="text-xs text-slate-500">{expTotal} {expTotal === 1 ? 'entry' : 'entries'} · manually recorded income &amp; expenses</p>
               </div>
               <div className="flex items-center gap-3">
                 <span className={`font-bold text-sm ${net >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
@@ -623,7 +627,7 @@ export default function ExpensesPage() {
                 <ChevronDown size={16} className={`text-slate-400 transition-transform duration-200 ${cashflowCollapsed ? '-rotate-90' : ''}`} />
               </div>
             </button>
-            {!cashflowCollapsed && (
+            {!cashflowCollapsed && (<>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -646,7 +650,7 @@ export default function ExpensesPage() {
                         ))}
                       </tr>
                     ))
-                  ) : expenses.length === 0 ? (
+                  ) : expTotal === 0 ? (
                     <tr>
                       <td colSpan={7} className="px-5 py-12 text-center">
                         <ArrowDownCircle size={32} className="mx-auto mb-2 text-slate-600" />
@@ -654,7 +658,7 @@ export default function ExpensesPage() {
                       </td>
                     </tr>
                   ) : (
-                    expenses.map((e) => (
+                    pagedExpenses.map((e) => (
                       <tr key={e.id} className="table-row">
                         <td className="px-5 py-3.5 text-slate-400 whitespace-nowrap">{formatDate(e.expense_date)}</td>
                         <td className="px-5 py-3.5">
@@ -684,7 +688,8 @@ export default function ExpensesPage() {
                 </tbody>
               </table>
             </div>
-            )}
+            <Pagination page={expPage} totalPages={expTotalPages} pageSize={expPageSize} total={expTotal} onPage={setExpPage} onPageSize={setExpPageSize} />
+            </>)}
           </div>
         </>
       )}

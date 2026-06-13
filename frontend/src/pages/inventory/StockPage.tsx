@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { useSearchParams, useNavigate } from 'react-router-dom'
+import { usePagination } from '@/hooks/usePagination'
+import Pagination from '@/components/Pagination'
 import { AlertTriangle, Boxes, Plus, RefreshCw, ArrowLeftRight, Pencil, Trash2, Loader2, CheckSquare } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { inventoryApi, bypassNextGets } from '@/services/api'
@@ -304,13 +306,14 @@ export default function StockPage() {
     if (filter === 'low') return i.stock_level === 'low' || i.is_low_stock
     return true
   })
+  const { page, setPage, pageSize, setPageSize, totalPages, paged: pagedStock, total: stockTotal } = usePagination(displayed)
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-3">
         <div>
           <h1 className="text-2xl font-bold text-white">Stock Levels</h1>
-          <p className="text-slate-400 text-sm">{displayed.length} product{displayed.length !== 1 ? 's' : ''}{warehouseFilter !== 'all' ? ` in ${warehouses.find(w => w.id === warehouseFilter)?.name ?? 'warehouse'}` : ' across all warehouses'}</p>
+          <p className="text-slate-400 text-sm">{stockTotal} product{stockTotal !== 1 ? 's' : ''}{warehouseFilter !== 'all' ? ` in ${warehouses.find(w => w.id === warehouseFilter)?.name ?? 'warehouse'}` : ' across all warehouses'}</p>
         </div>
         <div className="flex items-center gap-2 ml-auto flex-wrap">
           {/* Warehouse filter */}
@@ -398,8 +401,8 @@ export default function StockPage() {
                   <input
                     type="checkbox"
                     className="accent-orange-500 w-4 h-4 cursor-pointer"
-                    checked={displayed.length > 0 && selectedItems.length === displayed.length}
-                    onChange={() => toggleSelectAll(displayed)}
+                    checked={pagedStock.length > 0 && pagedStock.every((s) => selectedItems.some((x) => x.id === s.id))}
+                    onChange={() => toggleSelectAll(pagedStock)}
                   />
                 </th>
                 {['Product', 'SKU', 'Warehouse', 'On Hand', 'Incoming', 'ETA', 'Available', 'Status', ''].map((h) => (
@@ -416,7 +419,7 @@ export default function StockPage() {
                     ))}
                   </tr>
                 ))
-              ) : displayed.length === 0 ? (
+              ) : stockTotal === 0 ? (
                 <tr><td colSpan={9} className="px-5 py-12 text-center">
                   <Boxes size={32} className="mx-auto mb-2 text-slate-600" />
                   <p className="text-slate-500 mb-3">
@@ -430,7 +433,7 @@ export default function StockPage() {
                   )}
                 </td></tr>
               ) : (
-                displayed.map((s) => (
+                pagedStock.map((s) => (
                   <tr key={s.id ?? `phantom-${s.product}`} className={`table-row ${selectedItems.some((x) => x.id === s.id) ? 'bg-brand-500/5' : ''}`}>
                     <td className="pl-5 pr-2 py-3.5 w-8">
                       <input
@@ -491,6 +494,8 @@ export default function StockPage() {
             </tbody>
           </table>
         </div>
+        <Pagination page={page} totalPages={totalPages} pageSize={pageSize} total={stockTotal}
+          onPage={setPage} onPageSize={setPageSize} />
       </div>
 
       {/* Add / Adjust Stock Modal */}

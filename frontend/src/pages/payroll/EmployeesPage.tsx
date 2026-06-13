@@ -10,6 +10,8 @@ import { formatCurrency, formatAmountInput, stripCommas, formatDate } from '@/li
 import type { Employee, EmployeeDocument, EmployeePenalty, EmployeeLoan } from '@/types'
 import DateInput from '@/components/DateInput'
 import { FieldTooltip } from '@/components/FieldTooltip'
+import { usePagination } from '@/hooks/usePagination'
+import Pagination from '@/components/Pagination'
 
 interface EmployeeForm {
   first_name: string; last_name: string; email: string; phone: string
@@ -142,7 +144,7 @@ export default function EmployeesPage() {
     try {
       const params: Record<string, string> = {}
       if (search) params.search = search
-      const { data } = await payrollApi.employees(params)
+      const { data } = await payrollApi.employees({ ...params, page_size: 5000 })
       setEmployees(data.results ?? data)
     } catch { toast.error('Failed to load employees') }
     finally { setLoading(false) }
@@ -401,6 +403,8 @@ export default function EmployeesPage() {
     } catch { toast.error('Failed to delete employee') }
   }
 
+  const { page: empPage, setPage: setEmpPage, pageSize: empPageSize, setPageSize: setEmpPageSize, totalPages: empTotalPages, paged: pagedEmployees, total: empTotal } = usePagination(employees)
+
   const totalEmployees = employees.length
   const active = employees.filter((e) => e.is_active).length
   const contracted = employees.filter((e) => e.employment_type === 'contract').length
@@ -482,14 +486,14 @@ export default function EmployeesPage() {
                     ))}
                   </tr>
                 ))
-              ) : employees.length === 0 ? (
+              ) : empTotal === 0 ? (
                 <tr>
                   <td colSpan={8} className="px-4 py12 text-center">
                     <UsersRound size={32} className="mx-auto mb-2 text-slate-600" />
                     <p className="text-slate-500">No employees yet</p>
                   </td>
                 </tr>
-              ) : employees.map((e) => (
+              ) : pagedEmployees.map((e) => (
                 <tr key={e.id} className="table-row">
                   <td className="px-4 py-3.5 font-mono text-slate-400">{e.employee_id}</td>
                   <td className="px-4 py-3.5 text-white font-medium">{e.full_name}</td>
@@ -512,6 +516,7 @@ export default function EmployeesPage() {
             </tbody>
           </table>
         </div>
+        <Pagination page={empPage} totalPages={empTotalPages} pageSize={empPageSize} total={empTotal} onPage={setEmpPage} onPageSize={setEmpPageSize} />
       </div>
 
       {/* Employee Modal */}

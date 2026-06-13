@@ -10,11 +10,11 @@ from rest_framework.response import Response
 
 
 class StandardResultsSetPagination(PageNumberPagination):
-    """Default: 25 items per page, max 200."""
+    """Default: 25 items per page, max 5000 (for full client-side pagination)."""
 
     page_size = 25
     page_size_query_param = "page_size"
-    max_page_size = 200
+    max_page_size = 5000
 
     def get_paginated_response(self, data):
         return Response(

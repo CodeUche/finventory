@@ -8,6 +8,8 @@ import { useAuthStore } from '@/store/authStore'
 import { saveBlobFile } from '@/lib/saveBlobFile'
 import type { Quote, Customer, Warehouse, Product, Invoice } from '@/types'
 import DateInput from '@/components/DateInput'
+import { usePagination } from '@/hooks/usePagination'
+import Pagination from '@/components/Pagination'
 import YearFilter, { yearToDateParams } from '@/components/YearFilter'
 import MonthFilter, { monthToDateParams, type ArchiveMonth } from '@/components/MonthFilter'
 import { FieldTooltip } from '@/components/FieldTooltip'
@@ -332,7 +334,7 @@ export default function QuotesPage() {
       const params: Record<string, string> = { ...activeDateParams }
       if (statusFilter !== 'all') params.status = statusFilter
       const [qRes, cRes, wRes, pRes] = await Promise.all([
-        quoteApi.list(params),
+        quoteApi.list({ ...params, page_size: 5000 }),
         customerApi.list(),
         inventoryApi.warehouses(),
         inventoryApi.products(),
@@ -517,6 +519,7 @@ export default function QuotesPage() {
   const convRate = total > 0 ? Math.round((converted / total) * 100) : 0
 
   const filtered = statusFilter === 'all' ? quotes : quotes.filter((q) => q.status === statusFilter)
+  const { page: qPage, setPage: setQPage, pageSize: qPageSize, setPageSize: setQPageSize, totalPages: qTotalPages, paged: pagedQuotes, total: qTotal } = usePagination(filtered)
 
   return (
     <div className="space-y-6">
@@ -525,6 +528,7 @@ export default function QuotesPage() {
         <div>
           <h1 className="text-2xl font-bold text-white">Quotes / Estimates</h1>
           <p className="text-slate-400 text-sm">{quotes.length} total quotes</p>
+          {statusFilter !== 'all' && <p className="text-slate-500 text-xs">{qTotal} matching filter</p>}
         </div>
         <div className="flex items-center gap-2 sm:ml-auto">
           <button onClick={() => { bypassNextGets(); load() }} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
@@ -629,7 +633,7 @@ export default function QuotesPage() {
                     <p className="text-slate-500">No quotes found</p>
                   </td>
                 </tr>
-              ) : filtered.map((q) => {
+              ) : pagedQuotes.map((q) => {
                 const isExpiringSoon = (q.status === 'draft' || q.status === 'sent') && q.valid_until < today
                 return (
                 <>
@@ -710,6 +714,8 @@ export default function QuotesPage() {
             </tbody>
           </table>
         </div>
+        <Pagination page={qPage} totalPages={qTotalPages} pageSize={qPageSize} total={qTotal}
+          onPage={setQPage} onPageSize={setQPageSize} />
       </div>
 
       {/* PDF Preview Modal */}

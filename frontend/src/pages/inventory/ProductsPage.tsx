@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { useModuleAccess } from '@/hooks/useModuleAccess'
+import { usePagination } from '@/hooks/usePagination'
+import Pagination from '@/components/Pagination'
 import { Plus, Search, Package, AlertTriangle, X, Pencil, Loader2, TrendingUp, TrendingDown, History, Maximize2, Minimize2, ShieldCheck, FileDown, Table2, ArrowDownCircle, Trash2, RefreshCw, CheckSquare } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { inventoryApi, taxApi, salesApi, bypassNextGets } from '@/services/api'
@@ -312,6 +314,7 @@ export default function ProductsPage() {
   const [categories, setCategories] = useState<{ id: string; name: string }[]>([])
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkDeleting, setBulkDeleting] = useState(false)
+  const { page, setPage, pageSize, setPageSize, totalPages, paged, total } = usePagination(products)
 
   const fetchProducts = async () => {
     try {
@@ -565,8 +568,15 @@ export default function ProductsPage() {
   const toggleSelect = (id: string) =>
     setSelectedIds((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
 
-  const toggleSelectAll = () =>
-    setSelectedIds(selectedIds.size === products.length ? new Set() : new Set(products.map((p) => p.id)))
+  const toggleSelectAll = () => {
+    const pageIds = paged.map((p) => p.id)
+    const allSelected = pageIds.every((id) => selectedIds.has(id))
+    setSelectedIds((prev) => {
+      const n = new Set(prev)
+      allSelected ? pageIds.forEach((id) => n.delete(id)) : pageIds.forEach((id) => n.add(id))
+      return n
+    })
+  }
 
   const handleBulkDelete = async () => {
     if (!confirm(`Delete ${selectedIds.size} selected product(s)? This cannot be undone.\n\nProducts used on invoices or purchase orders will be skipped.`)) return
@@ -663,7 +673,7 @@ export default function ProductsPage() {
       <div className="flex flex-col sm:flex-row sm:items-center gap-4">
         <div>
           <h1 className="text-2xl font-bold text-white">Products</h1>
-          <p className="text-slate-400 text-sm">{products.length} SKUs in catalogue</p>
+          <p className="text-slate-400 text-sm">{total} SKUs in catalogue</p>
         </div>
         <div className="flex items-center gap-2 sm:ml-auto">
           <button onClick={handleRefresh} disabled={refreshing} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
@@ -735,7 +745,7 @@ export default function ProductsPage() {
                   <input
                     type="checkbox"
                     className="accent-orange-500 w-4 h-4 cursor-pointer"
-                    checked={products.length > 0 && selectedIds.size === products.length}
+                    checked={paged.length > 0 && paged.every((p) => selectedIds.has(p.id))}
                     onChange={toggleSelectAll}
                   />
                 </th>
@@ -753,13 +763,13 @@ export default function ProductsPage() {
                     ))}
                   </tr>
                 ))
-              ) : products.length === 0 ? (
+              ) : total === 0 ? (
                 <tr><td colSpan={9} className="px-5 py-12 text-center">
                   <Package size={32} className="mx-auto mb-2 text-slate-600" />
                   <p className="text-slate-500">No products found</p>
                 </td></tr>
               ) : (
-                products.map((p) => {
+                paged.map((p) => {
                   const cost = parseFloat(p.cost_price) || 0
                   const sell = parseFloat(p.selling_price) || 0
                   const profit = sell - cost
@@ -857,6 +867,8 @@ export default function ProductsPage() {
             </tbody>
           </table>
         </div>
+        <Pagination page={page} totalPages={totalPages} pageSize={pageSize} total={total}
+          onPage={setPage} onPageSize={setPageSize} />
       </div>
 
       {/* Create / Edit Modal */}

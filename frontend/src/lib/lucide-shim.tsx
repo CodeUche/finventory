@@ -29,7 +29,10 @@ import {
   CalendarCheck as _CalendarCheck,
   CalendarDots as _CalendarDots,
   Camera as _Camera,
+  CaretDoubleLeft as _CaretDoubleLeft,
+  CaretDoubleRight as _CaretDoubleRight,
   CaretDown as _CaretDown,
+  CaretLeft as _CaretLeft,
   CaretRight as _CaretRight,
   CaretUp as _CaretUp,
   CaretUpDown as _CaretUpDown,
@@ -171,6 +174,9 @@ export const CheckCircle = mk(_CheckCircle)
 export const CheckCircle2 = mk(_CheckCircle)
 export const CheckSquare = mk(_CheckSquare)
 export const ChevronDown = mk(_CaretDown)
+export const ChevronFirst = mk(_CaretDoubleLeft)
+export const ChevronLast = mk(_CaretDoubleRight)
+export const ChevronLeft = mk(_CaretLeft)
 export const ChevronRight = mk(_CaretRight)
 export const ChevronUp = mk(_CaretUp)
 export const ChevronsUpDown = mk(_CaretUpDown)

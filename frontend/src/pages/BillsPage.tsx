@@ -12,6 +12,8 @@ import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/li
 import type { Bill } from '@/types'
 import DateInput from '@/components/DateInput'
 import { FieldTooltip } from '@/components/FieldTooltip'
+import { usePagination } from '@/hooks/usePagination'
+import Pagination from '@/components/Pagination'
 
 interface Supplier { id: string; name: string }
 interface TaxClassOption { id: string; name: string; rate: string }
@@ -102,7 +104,7 @@ export default function BillsPage() {
       if (search) params.search = search
       if (sortBy) params.ordering = sortBy
       const [bRes, sRes, tRes, catRes, fRes] = await Promise.all([
-        billApi.list(params),
+        billApi.list({ ...params, page_size: 5000 }),
         supplierApi.list(),
         taxApi.classes(),
         expenseApi.categories(),
@@ -294,6 +296,7 @@ export default function BillsPage() {
     { label: 'Due This Week', value: dueThisWeek, color: 'text-orange-400', filter: 'approved', hint: 'Click to filter' },
     { label: 'Paid This Month', value: paidThisMonth, color: 'text-emerald-400', filter: 'paid', hint: 'Click to filter' },
   ]
+  const { page, setPage, pageSize, setPageSize, totalPages, paged, total } = usePagination(bills)
 
   return (
     <div className="space-y-6">
@@ -301,7 +304,7 @@ export default function BillsPage() {
       <div className="flex flex-col sm:flex-row sm:items-center gap-4">
         <div>
           <h1 className="text-2xl font-bold text-white">Bills (Accounts Payable)</h1>
-          <p className="text-slate-400 text-sm">{bills.length} total bills</p>
+          <p className="text-slate-400 text-sm">{total} total bills</p>
         </div>
         <div className="flex items-center gap-2 sm:ml-auto">
           <button onClick={() => { bypassNextGets(); load() }} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
@@ -384,14 +387,14 @@ export default function BillsPage() {
                     ))}
                   </tr>
                 ))
-              ) : bills.length === 0 ? (
+              ) : total === 0 ? (
                 <tr>
                   <td colSpan={10} className="px-4 py-12 text-center">
                     <Receipt size={32} className="mx-auto mb-2 text-slate-600" />
                     <p className="text-slate-500">No bills found</p>
                   </td>
                 </tr>
-              ) : bills.map((b) => (
+              ) : paged.map((b) => (
                 <tr key={b.id} className="table-row">
                   <td className="px-4 py-3.5 font-mono text-brand-400">{b.bill_number}</td>
                   <td className="px-4 py-3.5 text-slate-300">
@@ -432,6 +435,8 @@ export default function BillsPage() {
             </tbody>
           </table>
         </div>
+        <Pagination page={page} totalPages={totalPages} pageSize={pageSize} total={total}
+          onPage={setPage} onPageSize={setPageSize} />
       </div>
 
       {/* AP Aging */}
