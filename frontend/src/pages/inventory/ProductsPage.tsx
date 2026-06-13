@@ -30,7 +30,7 @@ async function exportProductsPDF(products: Product[], org?: Organisation | null)
   const pdfFont = 'helvetica'
   const displayName = org?.name ?? 'Company'
   const exportedAt = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' })
   doc.setLineHeightFactor(1.15)
   const pageW = doc.internal.pageSize.getWidth()
   let logoData: string | undefined
@@ -68,7 +68,17 @@ async function exportProductsPDF(products: Product[], org?: Organisation | null)
         margin,
       ]
     }),
-    columnStyles: { 0: { cellWidth: 22 }, 7: { halign: 'right' as const } },
+    columnStyles: {
+      0: { cellWidth: 24 },                              // SKU
+      1: { cellWidth: 70 },                              // Product
+      2: { cellWidth: 22 },                              // Type
+      3: { cellWidth: 33, halign: 'right' as const },   // Cost Price
+      4: { cellWidth: 33, halign: 'right' as const },   // Selling Price
+      5: { cellWidth: 33, halign: 'right' as const },   // Wholesale
+      6: { cellWidth: 33, halign: 'right' as const },   // Profit
+      7: { cellWidth: 22, halign: 'right' as const },   // Margin
+    },
+    styles: { ...ts.styles, fontSize: 8, cellPadding: 3 },
   })
   const finalY = (doc as any).lastAutoTable.finalY + 4
   doc.setFontSize(TYPE.TINY.size); doc.setFont(pdfFont, 'normal'); doc.setTextColor(...MUTED)
