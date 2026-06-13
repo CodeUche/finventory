@@ -115,7 +115,7 @@ type Tab = 'profile' | 'security' | 'payments' | 'email' | 'periods' | 'team' | 
 
 export default function SettingsPage() {
   const navigate = useNavigate()
-  const { user, organisation, updateUser, updateOrganisation, memberRole, modulePermissions, planModules, planName } = useAuthStore()
+  const { user, organisation, updateUser, updateOrganisation, memberRole, modulePermissions, planModules, planName, logoDataUrl, stampDataUrl, setLogoDataUrl, setStampDataUrl } = useAuthStore()
   // Owners, admins, and superusers have full settings access
   const isOwner = memberRole === 'owner' || memberRole === 'admin' || user?.is_superuser === true
   // Sub-accounts need explicit 'settings' module permission to access org settings tabs
@@ -247,10 +247,16 @@ export default function SettingsPage() {
 
   // ─── Load existing org/user images as data URLs on mount / URL change ─────────
   useEffect(() => {
-    if (organisation?.logo && !logoFile && !logoRemoved)
-      urlToDataUrl(organisation.logo).then((d) => { if (d) setLogoPreview(d) })
-    if (organisation?.company_stamp && !stampFile && !stampRemoved)
-      urlToDataUrl(organisation.company_stamp).then((d) => { if (d) setStampPreview(d) })
+    // Use persisted data URL first (survives navigation + Railway restarts)
+    // Fall back to fetching from the server URL only if no data URL is stored.
+    if (!logoFile && !logoRemoved) {
+      if (logoDataUrl) setLogoPreview(logoDataUrl)
+      else if (organisation?.logo) urlToDataUrl(organisation.logo).then((d) => { if (d) { setLogoPreview(d); setLogoDataUrl(d) } })
+    }
+    if (!stampFile && !stampRemoved) {
+      if (stampDataUrl) setStampPreview(stampDataUrl)
+      else if (organisation?.company_stamp) urlToDataUrl(organisation.company_stamp).then((d) => { if (d) { setStampPreview(d); setStampDataUrl(d) } })
+    }
     if (user?.avatar && !avatarFile)
       urlToDataUrl(user.avatar).then((d) => { if (d) setAvatarPreview(d) })
   }, [organisation?.logo, organisation?.company_stamp, user?.avatar])
@@ -469,7 +475,12 @@ export default function SettingsPage() {
     if (!file) return
     setLogoFile(file)
     setLogoRemoved(false)
-    setLogoPreview(URL.createObjectURL(file))
+    const blobUrl = URL.createObjectURL(file)
+    setLogoPreview(blobUrl)
+    // Persist as data URL so it survives navigation and server restarts
+    const reader = new FileReader()
+    reader.onloadend = () => { if (reader.result) setLogoDataUrl(reader.result as string) }
+    reader.readAsDataURL(file)
   }
 
   const handleStampChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -478,6 +489,9 @@ export default function SettingsPage() {
     setStampFile(file)
     setStampPreview(URL.createObjectURL(file))
     setStampRemoved(false)
+    const reader = new FileReader()
+    reader.onloadend = () => { if (reader.result) setStampDataUrl(reader.result as string) }
+    reader.readAsDataURL(file)
   }
 
   const saveProfile = async () => {
@@ -1035,7 +1049,7 @@ export default function SettingsPage() {
                 {logoPreview && (
                   <button
                     type="button"
-                    onClick={() => { setLogoPreview(null); setLogoFile(null); setLogoRemoved(true) }}
+                    onClick={() => { setLogoPreview(null); setLogoFile(null); setLogoRemoved(true); setLogoDataUrl(null) }}
                     className="text-xs text-red-400 hover:text-red-300 transition-colors"
                   >
                     Remove logo
@@ -2399,7 +2413,7 @@ export default function SettingsPage() {
                   <img src={stampPreview} alt="Company stamp" className="w-24 h-24 object-contain rounded-xl border border-surface-600 bg-white p-1" />
                   <button
                     type="button"
-                    onClick={() => { setStampPreview(null); setStampFile(null); setStampRemoved(true) }}
+                    onClick={() => { setStampPreview(null); setStampFile(null); setStampRemoved(true); setStampDataUrl(null) }}
                     className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-red-500 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
                   >
                     <X size={12} className="text-white" />
@@ -2420,7 +2434,7 @@ export default function SettingsPage() {
                   {(stampPreview && !stampRemoved) ? 'Change Stamp' : 'Choose Image'}
                 </button>
                 {(stampPreview && !stampRemoved) && (
-                  <button type="button" onClick={() => { setStampPreview(null); setStampFile(null); setStampRemoved(true) }} className="block text-xs text-red-400 hover:text-red-300">
+                  <button type="button" onClick={() => { setStampPreview(null); setStampFile(null); setStampRemoved(true); setStampDataUrl(null) }} className="block text-xs text-red-400 hover:text-red-300">
                     Remove stamp
                   </button>
                 )}

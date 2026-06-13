@@ -115,7 +115,9 @@ export function applyDocHeader(doc: any, opts: DocHeaderOptions): number {
   const LOGO_SIZE = 20
   const addLogoIfPresent = (x: number, top: number) => {
     if (!logoData) return
-    const fmt = logoData.includes('image/png') ? 'PNG' : 'JPEG'
+    const fmt = logoData.includes('image/png') ? 'PNG'
+      : logoData.includes('image/webp') ? 'WEBP'
+      : 'JPEG'
     doc.addImage(logoData, fmt, x, top, LOGO_SIZE, LOGO_SIZE)
   }
 

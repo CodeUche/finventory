@@ -34,7 +34,9 @@ async function exportProductsPDF(products: Product[], org?: Organisation | null)
   doc.setLineHeightFactor(1.15)
   const pageW = doc.internal.pageSize.getWidth()
   let logoData: string | undefined
-  if (org?.logo) { try { const r = await fetch(org.logo); const b = await r.blob(); logoData = await new Promise(res => { const fr = new FileReader(); fr.onload = () => res(fr.result as string); fr.readAsDataURL(b) }) } catch { /* skip */ } }
+  const _storedLogo = useAuthStore.getState().logoDataUrl
+  if (_storedLogo) { logoData = _storedLogo }
+  else if (org?.logo) { try { const r = await fetch(org.logo); const b = await r.blob(); logoData = await new Promise(res => { const fr = new FileReader(); fr.onload = () => res(fr.result as string); fr.readAsDataURL(b) }) } catch { /* skip */ } }
   const y = applyDocHeader(doc, {
     tmpl, pageW, BRAND, DARK, MUTED,
     logoData, displayName,
@@ -150,8 +152,11 @@ async function exportHistoryPDF(items: SalesHistoryItem[], product: Product, org
   const displayName = org?.invoice_company_name?.trim() || org?.name || 'Audity'
 
   const { urlToDataUrl } = await import('@/services/api')
+  const { useAuthStore: _authStore } = await import('@/store/authStore')
   let logoData: string | null = null
-  if (org?.logo) { try { logoData = await urlToDataUrl(org.logo) } catch { /* skip */ } }
+  const _storedLogo2 = _authStore.getState().logoDataUrl
+  if (_storedLogo2) { logoData = _storedLogo2 }
+  else if (org?.logo) { try { logoData = await urlToDataUrl(org.logo) } catch { /* skip */ } }
 
   const doc = new jsPDF({ unit: 'mm', format: 'a4' })
   doc.setLineHeightFactor(1.15)
@@ -376,7 +381,7 @@ export default function ProductsPage() {
     setEditOrigWarehouse('')
     setEditOrigQty(0)
     setEditStockQty('')
-    inventoryApi.stock({ product_id: p.id }).then(({ data }) => {
+    inventoryApi.stock({ product: p.id }).then(({ data }) => {
       const items: any[] = (data.results ?? data).filter((i: any) => i.id !== null)
       if (items.length > 0) {
         const top = items.reduce((a: any, b: any) =>

@@ -94,9 +94,12 @@ async function buildInvoicePDF(
     return hexToRgb(companyFontColor)
   })()
 
-  // Pre-load logo
+  // Pre-load logo — if already a data URL (from Zustand store), use it directly
   let logoData: string | null = null
-  if (orgLogo) { try { logoData = await urlToDataUrl(orgLogo) } catch { /* skip */ } }
+  if (orgLogo) {
+    if (orgLogo.startsWith('data:')) { logoData = orgLogo }
+    else { try { logoData = await urlToDataUrl(orgLogo) } catch { /* skip */ } }
+  }
 
   let y = applyDocHeader(doc, {
     tmpl, pageW, BRAND, DARK, MUTED,
@@ -391,7 +394,10 @@ async function buildDeliveryNotePDF(
   })()
 
   let logoData: string | null = null
-  if (orgLogo) { try { logoData = await urlToDataUrl(orgLogo) } catch { /* skip */ } }
+  if (orgLogo) {
+    if (orgLogo.startsWith('data:')) { logoData = orgLogo }
+    else { try { logoData = await urlToDataUrl(orgLogo) } catch { /* skip */ } }
+  }
 
   let y = applyDocHeader(doc, {
     tmpl, pageW, BRAND, DARK, MUTED,
@@ -471,7 +477,7 @@ async function buildDeliveryNotePDF(
 
 export default function SalesPage() {
   const navigate = useNavigate()
-  const { organisation, memberRole, user } = useAuthStore()
+  const { organisation, memberRole, user, logoDataUrl, stampDataUrl } = useAuthStore()
   const { canEdit: canEditSales } = useModuleAccess('sales')
   const isOwnerOrAdmin = memberRole === 'owner' || memberRole === 'admin' || user?.is_superuser === true
   const [invoices, setInvoices] = useState<Invoice[]>([])
@@ -629,7 +635,7 @@ export default function SalesPage() {
       const preview = await buildInvoicePDF(
         inv,
         organisation?.name ?? 'Audity',
-        organisation?.logo,
+        logoDataUrl ?? organisation?.logo,
         organisation?.address,
         organisation?.phone,
         organisation?.email,
@@ -646,7 +652,7 @@ export default function SalesPage() {
         organisation?.company_name_font_underline,
         organisation?.company_name_font_color,
         organisation?.invoice_template,
-        organisation?.company_stamp,
+        stampDataUrl ?? organisation?.company_stamp,
         organisation?.show_company_name_on_pdf ?? true,
       )
       setPdfPreview(preview)
@@ -701,8 +707,8 @@ export default function SalesPage() {
         organisation?.brand_color,
         organisation?.invoice_company_name,
         organisation?.company_name_font,
-        organisation?.logo,
-        organisation?.company_stamp,
+        logoDataUrl ?? organisation?.logo,
+        stampDataUrl ?? organisation?.company_stamp,
         organisation?.invoice_template,
         organisation?.show_company_name_on_pdf ?? true,
         organisation?.company_name_font_color,
@@ -739,7 +745,7 @@ export default function SalesPage() {
           const freshPreview = await buildInvoicePDF(
             inv,
             organisation?.name ?? 'Audity',
-            organisation?.logo,
+            logoDataUrl ?? organisation?.logo,
             organisation?.address,
             organisation?.phone,
             organisation?.email,
@@ -756,7 +762,7 @@ export default function SalesPage() {
             organisation?.company_name_font_underline,
             organisation?.company_name_font_color,
             organisation?.invoice_template,
-            organisation?.company_stamp,
+            stampDataUrl ?? organisation?.company_stamp,
           )
           blobUrl = freshPreview.url
         }

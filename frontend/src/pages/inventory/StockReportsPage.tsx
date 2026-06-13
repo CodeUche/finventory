@@ -188,7 +188,9 @@ async function exportAvailabilityPDF(rows: AvailabilityRow[], org?: Organisation
   const { BRAND, tmpl, displayName, orgAddress, orgEmail, orgPhone, pdfFont } = base
   const DARK = COLORS.DARK; const MUTED = COLORS.MUTED
   let logoData: string | null = null
-  if (org?.logo) { try { logoData = await urlToDataUrl(org.logo) } catch { /* skip */ } }
+  const _storedLogo = useAuthStore.getState().logoDataUrl
+  if (_storedLogo) { logoData = _storedLogo }
+  else if (org?.logo) { try { logoData = await urlToDataUrl(org.logo) } catch { /* skip */ } }
   const doc = new jsPDF({ unit: 'mm', format: 'a4' })
   doc.setLineHeightFactor(1.15)
   const pageW = doc.internal.pageSize.getWidth()
@@ -244,7 +246,9 @@ async function exportUsagePDF(rows: UsageRow[], txRows: UsageTransaction[], org?
   const { BRAND, tmpl, displayName, orgAddress, orgEmail, orgPhone, pdfFont } = base
   const DARK = COLORS.DARK; const MUTED = COLORS.MUTED
   let logoData: string | null = null
-  if (org?.logo) { try { logoData = await urlToDataUrl(org.logo) } catch { /* skip */ } }
+  const _storedLogo = useAuthStore.getState().logoDataUrl
+  if (_storedLogo) { logoData = _storedLogo }
+  else if (org?.logo) { try { logoData = await urlToDataUrl(org.logo) } catch { /* skip */ } }
   const doc = new jsPDF({ unit: 'mm', format: 'a4' })
   doc.setLineHeightFactor(1.15)
   const pageW = doc.internal.pageSize.getWidth()
@@ -306,7 +310,9 @@ async function exportTransfersPDF(rows: TransferRow[], org?: Organisation | null
   const { BRAND, tmpl, displayName, orgAddress, orgEmail, orgPhone, pdfFont } = base
   const DARK = COLORS.DARK; const MUTED = COLORS.MUTED
   let logoData: string | null = null
-  if (org?.logo) { try { logoData = await urlToDataUrl(org.logo) } catch { /* skip */ } }
+  const _storedLogo = useAuthStore.getState().logoDataUrl
+  if (_storedLogo) { logoData = _storedLogo }
+  else if (org?.logo) { try { logoData = await urlToDataUrl(org.logo) } catch { /* skip */ } }
   const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' })
   doc.setLineHeightFactor(1.15)
   const pageW = doc.internal.pageSize.getWidth()
@@ -355,7 +361,9 @@ async function exportStockCardPDF(rows: StockCardRow[], productName: string, pro
   const { BRAND, tmpl, displayName, orgAddress, orgEmail, orgPhone, pdfFont } = base
   const DARK = COLORS.DARK; const MUTED = COLORS.MUTED
   let logoData: string | null = null
-  if (org?.logo) { try { logoData = await urlToDataUrl(org.logo) } catch { /* skip */ } }
+  const _storedLogo = useAuthStore.getState().logoDataUrl
+  if (_storedLogo) { logoData = _storedLogo }
+  else if (org?.logo) { try { logoData = await urlToDataUrl(org.logo) } catch { /* skip */ } }
   const doc = new jsPDF({ unit: 'mm', format: 'a4' })
   doc.setLineHeightFactor(1.15)
   const pageW = doc.internal.pageSize.getWidth()
@@ -406,7 +414,9 @@ async function exportValuationPDF(report: ValuationReport, org?: Organisation | 
   const { BRAND, tmpl, displayName, orgAddress, orgEmail, orgPhone, pdfFont } = base
   const DARK = COLORS.DARK; const MUTED = COLORS.MUTED
   let logoData: string | null = null
-  if (org?.logo) { try { logoData = await urlToDataUrl(org.logo) } catch { /* skip */ } }
+  const _storedLogo = useAuthStore.getState().logoDataUrl
+  if (_storedLogo) { logoData = _storedLogo }
+  else if (org?.logo) { try { logoData = await urlToDataUrl(org.logo) } catch { /* skip */ } }
   const doc = new jsPDF({ unit: 'mm', format: 'a4' })
   doc.setLineHeightFactor(1.15)
   const pageW = doc.internal.pageSize.getWidth()

@@ -29,6 +29,10 @@ interface AuthState {
   planName: string | null
   // Whether the current subscription is expired
   subscriptionExpired: boolean
+  // Persisted base-64 data URLs for logo and stamp — set when user uploads in Settings.
+  // Avoids re-fetching from the server (which may be ephemeral on Railway without S3).
+  logoDataUrl: string | null
+  stampDataUrl: string | null
 
   // Atomic login commit — sets user, tokens, org, and isAuthenticated in a single
   // Zustand set() call so ProtectedRoute never sees isAuthenticated=true with
@@ -43,6 +47,8 @@ interface AuthState {
   setPlanTaxEngine: (engine: string | null) => void
   setPlanName: (name: string | null) => void
   setSubscriptionExpired: (expired: boolean) => void
+  setLogoDataUrl: (url: string | null) => void
+  setStampDataUrl: (url: string | null) => void
   updateUser: (user: Partial<User>) => void
   updateOrganisation: (org: Partial<Organisation>) => void
   updateTokens: (tokens: Partial<AuthTokens>) => void
@@ -65,6 +71,8 @@ export const useAuthStore = create<AuthState>()(
       planTaxEngine: null,
       planName: null,
       subscriptionExpired: false,
+      logoDataUrl: null,
+      stampDataUrl: null,
 
       setRememberMe: (val) => {
         if (val) localStorage.setItem(REMEMBER_FLAG_KEY, 'true')
@@ -106,6 +114,9 @@ export const useAuthStore = create<AuthState>()(
 
       setSubscriptionExpired: (expired) => set({ subscriptionExpired: expired }),
 
+      setLogoDataUrl: (url) => set({ logoDataUrl: url }),
+      setStampDataUrl: (url) => set({ stampDataUrl: url }),
+
       updateUser: (partial) =>
         set((s) => ({ user: s.user ? { ...s.user, ...partial } : s.user })),
 
@@ -133,6 +144,7 @@ export const useAuthStore = create<AuthState>()(
           orgInitialized: false,
           rememberMe: false, memberRole: null, modulePermissions: {}, planModules: null,
           planTaxEngine: null, planName: null, subscriptionExpired: false,
+          logoDataUrl: null, stampDataUrl: null,
         })
       },
     }),
@@ -157,6 +169,8 @@ export const useAuthStore = create<AuthState>()(
         planTaxEngine: state.planTaxEngine,
         planName: state.planName,
         subscriptionExpired: state.subscriptionExpired,
+        logoDataUrl: state.logoDataUrl,
+        stampDataUrl: state.stampDataUrl,
       }),
     },
   ),

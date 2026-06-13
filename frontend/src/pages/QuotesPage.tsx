@@ -73,7 +73,10 @@ async function buildQuotePDF(
   })()
 
   let logoData: string | null = null
-  if (orgLogo) { try { logoData = await urlToDataUrl(orgLogo) } catch { /* skip */ } }
+  if (orgLogo) {
+    if (orgLogo.startsWith('data:')) { logoData = orgLogo }
+    else { try { logoData = await urlToDataUrl(orgLogo) } catch { /* skip */ } }
+  }
 
   let y = applyDocHeader(doc, {
     tmpl, pageW, BRAND, DARK, MUTED,
@@ -286,7 +289,7 @@ const BLANK_FORM: QuoteForm = {
 }
 
 export default function QuotesPage() {
-  const { organisation } = useAuthStore()
+  const { organisation, logoDataUrl, stampDataUrl } = useAuthStore()
   const [quotes, setQuotes] = useState<Quote[]>([])
   const [customers, setCustomers] = useState<Customer[]>([])
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
@@ -424,7 +427,7 @@ export default function QuotesPage() {
       const preview = await buildQuotePDF(
         q,
         organisation?.name ?? 'Audity',
-        organisation?.logo,
+        logoDataUrl ?? organisation?.logo,
         organisation?.address,
         organisation?.phone,
         organisation?.email,
@@ -437,7 +440,7 @@ export default function QuotesPage() {
         organisation?.company_name_font_underline,
         organisation?.company_name_font_color,
         organisation?.invoice_template,
-        organisation?.company_stamp,
+        stampDataUrl ?? organisation?.company_stamp,
       )
       setPdfPreview(preview)
     } catch { toast.error('Failed to generate PDF') }
