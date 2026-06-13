@@ -137,26 +137,18 @@ async function buildInvoicePDF(
   doc.setFontSize(TYPE.BODY.size); doc.setFont(pdfFont, 'normal'); doc.setTextColor(...MUTED)
   doc.text(inv.payment_method.replace(/_/g, ' ') + ' payment', lBoxX + 3, y + 16.5)
 
-  // Right: Invoice Details
+  // Right: From (seller / organisation details from settings)
   doc.setFillColor(...LIGHT); doc.setDrawColor(...RULE); doc.setLineWidth(0.25)
   doc.roundedRect(rBoxX, y, boxW, boxH, 2, 2, 'FD')
   doc.setFontSize(TYPE.H3.size); doc.setFont(pdfFont, 'bold'); doc.setTextColor(...BRAND)
-  doc.text('INVOICE DETAILS', rBoxX + 3, y + 5)
-  const detailRows: [string, string][] = [
-    ['Invoice No.', inv.invoice_number],
-    ['Date', formatDate(inv.issue_date)],
-    ...(inv.due_date ? [['Due Date', formatDate(inv.due_date)] as [string, string]] : []),
-    ['Payment', inv.payment_method.replace(/_/g, ' ')],
-    ...(inv.sold_by ? [['Sold By', inv.sold_by] as [string, string]] : []),
-  ]
-  let dY = y + 11
-  detailRows.slice(0, 4).forEach(([lbl, val]) => {
-    doc.setFontSize(TYPE.SMALL.size); doc.setFont(pdfFont, 'normal'); doc.setTextColor(...MUTED)
-    doc.text(lbl + ':', rBoxX + 3, dY)
-    doc.setFont(pdfFont, 'bold'); doc.setTextColor(...DARK)
-    doc.text(val, rBoxX + boxW - 3, dY, { align: 'right' })
-    dY += 4.5
-  })
+  doc.text('FROM', rBoxX + 3, y + 5)
+  doc.setFontSize(TYPE.H2.size); doc.setFont(pdfFont, 'bold'); doc.setTextColor(...DARK)
+  doc.text(displayName || orgName, rBoxX + 3, y + 11)
+  let fromY = y + 16.5
+  doc.setFontSize(TYPE.BODY.size); doc.setFont(pdfFont, 'normal'); doc.setTextColor(...MUTED)
+  if (orgAddress) { doc.text(orgAddress, rBoxX + 3, fromY); fromY += 4.5 }
+  if (orgPhone)   { doc.text(orgPhone,   rBoxX + 3, fromY); fromY += 4.5 }
+  if (orgEmail)   { doc.text(orgEmail,   rBoxX + 3, fromY) }
 
   y += boxH + 6
 
