@@ -265,28 +265,35 @@ export default function StockPage() {
 
   const handleBulkAddToWarehouse = async () => {
     if (!bulkWarehouse) { toast.error('Select a destination warehouse'); return }
-    const qty = parseFloat(bulkQty)
-    if (!bulkQty || isNaN(qty) || qty === 0) { toast.error('Enter a non-zero quantity'); return }
+    const qty = bulkQty.trim() ? parseFloat(bulkQty) : 0
+    if (bulkQty.trim() && isNaN(qty)) { toast.error('Enter a valid quantity'); return }
+
+    // Capture before clearing so the loop still has access
+    const itemsToProcess = [...selectedItems]
+    const targetWarehouse = bulkWarehouse
+
+    // Clear UI immediately — prevents glitch from bar/checkboxes re-rendering during async ops
+    setSelectedItems([])
+    setBulkWarehouse('')
+    setBulkQty('')
     setBulkAdding(true)
+
     let done = 0, failed = 0
-    for (const item of selectedItems) {
+    for (const item of itemsToProcess) {
       try {
         await inventoryApi.adjustStock({
           product_id: item.product,
-          warehouse_id: bulkWarehouse,
+          warehouse_id: targetWarehouse,
           quantity: qty,
-          reason: 'Bulk stock entry',
+          reason: qty === 0 ? 'Registered to warehouse' : 'Bulk stock entry',
         })
         done++
       } catch { failed++ }
     }
     const msg = failed
-      ? `Added to ${done} product${done !== 1 ? 's' : ''}, ${failed} failed`
-      : `Stock added to ${done} product${done !== 1 ? 's' : ''} in selected warehouse`
+      ? `Done: ${done} product${done !== 1 ? 's' : ''}, ${failed} failed`
+      : `${done} product${done !== 1 ? 's' : ''} added to warehouse`
     toast.success(msg, { duration: 5000 })
-    setSelectedItems([])
-    setBulkWarehouse('')
-    setBulkQty('')
     setBulkAdding(false)
     load()
   }
@@ -364,8 +371,8 @@ export default function StockPage() {
             </select>
             <input
               type="number"
-              className="input py-1.5 text-sm w-28"
-              placeholder="Qty (±)"
+              className="input py-1.5 text-sm w-32"
+              placeholder="Qty (optional)"
               value={bulkQty}
               onChange={(e) => setBulkQty(e.target.value)}
             />
