@@ -700,6 +700,137 @@ export interface WHTTransaction {
   transaction_date: string
   status: 'withheld' | 'remitted'
   notes: string
+  has_certificate?: boolean
+}
+
+export interface WHTCertificate {
+  id: string
+  wht_transaction: string
+  certificate_number: string
+  issued_date: string
+  remittance_reference: string
+  notes: string
+  created_at: string
+  counterparty_name: string
+  wht_amount: string
+  gross_amount: string
+  transaction_date: string
+}
+
+export interface VATTransaction {
+  id: string
+  direction: 'output' | 'input'
+  period_start: string
+  period_end: string
+  counterparty_name: string
+  counterparty_tin: string
+  net_amount: string
+  vat_amount: string
+  vat_rate: string
+  is_claimable: boolean
+  source_ref: string
+  notes: string
+  created_at: string
+}
+
+export interface TaxObligation {
+  id: string
+  obligation_type: 'vat' | 'paye' | 'cit' | 'pit' | 'wht' | 'pension' | 'custom'
+  label: string
+  period_year: number | null
+  period_month: number | null
+  due_date: string
+  status: 'pending' | 'filed' | 'paid' | 'overdue'
+  amount_due: string
+  filed_date: string | null
+  payment_reference: string
+  notes: string
+  is_auto_generated: boolean
+  is_overdue: boolean
+  days_until_due: number
+  created_at: string
+}
+
+export interface CapitalAllowanceClaim {
+  id: string
+  asset_name: string
+  asset_class: string
+  asset_class_display: string
+  tax_year: number
+  cost: string
+  opening_tax_written_down_value: string
+  is_acquisition_year: boolean
+  initial_allowance_rate: string
+  annual_allowance_rate: string
+  initial_allowance: string
+  annual_allowance: string
+  total_allowance: string
+  closing_tax_written_down_value: string
+  notes: string
+  created_at: string
+}
+
+export interface DeferredTaxItem {
+  id: string
+  deferred_type: 'dta' | 'dtl'
+  deferred_type_display: string
+  category: 'depreciation' | 'provision' | 'revenue' | 'expense' | 'other'
+  category_display: string
+  description: string
+  tax_year: number
+  timing_difference: string
+  tax_rate: string
+  deferred_tax_amount: string
+  is_recognised: boolean
+  reversal_year: number | null
+  notes: string
+  created_at: string
+}
+
+export interface RelatedPartyTransaction {
+  id: string
+  related_party_name: string
+  relationship: string
+  country: string
+  transaction_type: string
+  transaction_type_display: string
+  tax_year: number
+  amount: string
+  currency: string
+  tp_method: string
+  tp_method_display: string
+  arm_length_price: string
+  adjustment_required: boolean
+  adjustment_amount: string
+  documentation_status: 'not_prepared' | 'in_progress' | 'completed' | 'filed'
+  exceeds_threshold: boolean
+  notes: string
+  created_at: string
+}
+
+export interface EmployeeTaxProfile {
+  id: string
+  employee: string
+  nhf_enrolled: boolean
+  voluntary_pension: string
+  life_assurance_premium: string
+  paye_exempt: boolean
+  notes: string
+}
+
+export interface PAYERemittance {
+  id: string
+  payroll_run: string
+  period_year: number
+  period_month: number
+  amount_due: string
+  amount_paid: string
+  balance_due: string
+  status: 'pending' | 'remitted' | 'overdue'
+  due_date: string
+  reference: string
+  notes: string
+  created_at: string
 }
 
 // Recurring invoices

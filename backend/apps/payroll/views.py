@@ -21,11 +21,14 @@ from apps.core.mixins import ExportMixin, TenantFilterMixin
 from apps.core.permissions import IsManager, IsStaff, IsOwnerOrAdmin, plan_requires
 
 _PlanPayroll = plan_requires('payroll')
-from .models import Employee, EmployeeDocument, EmployeePenalty, EmployeeLoan, PayrollRun, PayslipLine, Bonus, Attendance
+from .models import (
+    Attendance, Bonus, Employee, EmployeeDocument, EmployeeLoan,
+    EmployeePenalty, EmployeeTaxProfile, PAYERemittance, PayrollRun, PayslipLine,
+)
 from .serializers import (
-    EmployeeSerializer, EmployeeDocumentSerializer,
-    EmployeePenaltySerializer, EmployeeLoanSerializer,
-    PayrollRunSerializer, BonusSerializer, AttendanceSerializer,
+    AttendanceSerializer, BonusSerializer, EmployeeDocumentSerializer,
+    EmployeeLoanSerializer, EmployeePenaltySerializer, EmployeeSerializer,
+    EmployeeTaxProfileSerializer, PAYERemittanceSerializer, PayrollRunSerializer,
 )
 from .services import PayrollService
 
@@ -1257,3 +1260,68 @@ class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             submitted_for_approval=True,
         ).values('id', 'run_number', 'period_year', 'period_month', 'submitted_by__email')
         return Response(list(runs))
+
+
+class EmployeeTaxProfileViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+    """GET/PUT /payroll/tax-profiles/ — per-employee tax relief overrides."""
+    serializer_class = EmployeeTaxProfileSerializer
+    permission_classes = [IsAuthenticated, IsOwnerOrAdmin]
+
+    def get_queryset(self):
+        org = self._get_organisation()
+        return EmployeeTaxProfile.objects.filter(organisation=org).select_related('employee')
+
+    def perform_create(self, serializer):
+        serializer.save(organisation=self._get_organisation())
+
+    @action(detail=False, methods=['get', 'put', 'patch'], url_path='by_employee/(?P<employee_id>[^/.]+)')
+    def by_employee(self, request, employee_id=None):
+        """GET/PUT /payroll/tax-profiles/by_employee/{employee_id}/ — upsert profile for one employee."""
+        org = self._get_organisation()
+        profile, _ = EmployeeTaxProfile.objects.get_or_create(
+            organisation=org, employee_id=employee_id,
+            defaults={'nhf_enrolled': True, 'voluntary_pension': 0, 'life_assurance_premium': 0, 'paye_exempt': False},
+        )
+        if request.method == 'GET':
+            return Response(EmployeeTaxProfileSerializer(profile).data)
+        serializer = EmployeeTaxProfileSerializer(profile, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+
+class PAYERemittanceViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+    """GET/PATCH /payroll/paye-remittances/ — PAYE remittance tracker."""
+    serializer_class = PAYERemittanceSerializer
+    permission_classes = [IsAuthenticated, IsOwnerOrAdmin]
+    http_method_names = ['get', 'patch', 'head', 'options']  # no create/delete — auto-created by run_payroll
+
+    def get_queryset(self):
+        org = self._get_organisation()
+        return PAYERemittance.objects.filter(organisation=org).select_related('payroll_run')
+
+    def perform_update(self, serializer):
+        instance = serializer.instance
+        new_status = serializer.validated_data.get('status', instance.status)
+        amount_paid = serializer.validated_data.get('amount_paid', instance.amount_paid)
+        # Auto-update overdue status
+        from datetime import date as _date
+        from decimal import Decimal as _Dec
+        if new_status == PAYERemittance.REMITTED and _Dec(str(amount_paid)) >= _Dec(str(instance.amount_due)):
+            serializer.save(status=PAYERemittance.REMITTED)
+        else:
+            serializer.save()
+
+    @action(detail=True, methods=['post'])
+    def mark_remitted(self, request, pk=None):
+        """POST /payroll/paye-remittances/{id}/mark_remitted/ — mark as paid with reference."""
+        from datetime import date as _date
+        remittance = self.get_object()
+        ref = request.data.get('reference', '')
+        amount_paid = request.data.get('amount_paid', remittance.amount_due)
+        remittance.status = PAYERemittance.REMITTED
+        remittance.remittance_date = _date.today()
+        remittance.reference = ref
+        remittance.amount_paid = amount_paid
+        remittance.save()
+        return Response(PAYERemittanceSerializer(remittance).data)

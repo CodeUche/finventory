@@ -1,5 +1,8 @@
 from rest_framework import serializers
-from .models import Employee, EmployeeDocument, EmployeePenalty, EmployeeLoan, PayrollRun, PayslipLine, Bonus, Attendance
+from .models import (
+    Attendance, Bonus, Employee, EmployeeDocument, EmployeeLoan,
+    EmployeePenalty, EmployeeTaxProfile, PAYERemittance, PayrollRun, PayslipLine,
+)
 
 
 class EmployeeSerializer(serializers.ModelSerializer):
@@ -161,3 +164,31 @@ class PayrollRunSerializer(serializers.ModelSerializer):
             name = f"{obj.target_approver.first_name} {obj.target_approver.last_name}".strip()
             return name or obj.target_approver.email
         return None
+
+
+class EmployeeTaxProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = EmployeeTaxProfile
+        fields = [
+            'id', 'employee', 'nhf_enrolled', 'voluntary_pension',
+            'life_assurance_premium', 'paye_exempt', 'notes',
+        ]
+        read_only_fields = ['id']
+
+
+class PAYERemittanceSerializer(serializers.ModelSerializer):
+    run_number = serializers.CharField(source='payroll_run.run_number', read_only=True)
+    balance_due = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PAYERemittance
+        fields = [
+            'id', 'payroll_run', 'run_number', 'period_year', 'period_month',
+            'amount_due', 'amount_paid', 'balance_due', 'status',
+            'due_date', 'remittance_date', 'reference', 'notes', 'created_at',
+        ]
+        read_only_fields = ['id', 'payroll_run', 'run_number', 'period_year', 'period_month', 'amount_due', 'created_at']
+
+    def get_balance_due(self, obj):
+        from decimal import Decimal
+        return max(Decimal('0'), Decimal(str(obj.amount_due)) - Decimal(str(obj.amount_paid)))

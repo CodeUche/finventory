@@ -1078,6 +1078,43 @@ export const taxApi = {
     api.put(`/tax/configs/${configId}/brackets/`, brackets),
   calculateIncomeTax: (data: object) => api.post('/tax/configs/calculate_income_tax/', data),
   vatReport: (data: object) => api.post('/tax/configs/vat_report/', data),
+  // WHT certificates
+  whtCertificates: (params?: object) => api.get('/tax/wht-certificates/', { params }),
+  remitWht: (id: string, data: object) => api.post(`/tax/wht-transactions/${id}/remit/`, data),
+  whtCertificatePdf: (id: string) =>
+    api.get(`/tax/wht-transactions/${id}/certificate_pdf/`, { responseType: 'blob' }),
+  // VAT transactions
+  vatTransactions: (params?: object) => api.get('/tax/vat-transactions/', { params }),
+  createVatTransaction: (data: object) => api.post('/tax/vat-transactions/', data),
+  syncVatFromPeriod: (data: { period_start: string; period_end: string }) =>
+    api.post('/tax/vat-transactions/sync_from_period/', data),
+  // Tax obligations (compliance calendar)
+  obligations: (params?: object) => api.get('/tax/obligations/', { params }),
+  createObligation: (data: object) => api.post('/tax/obligations/', data),
+  updateObligation: (id: string, data: object) => api.patch(`/tax/obligations/${id}/`, data),
+  deleteObligation: (id: string) => api.delete(`/tax/obligations/${id}/`),
+  markObligationFiled: (id: string, data: object) => api.post(`/tax/obligations/${id}/mark_filed/`, data),
+  markObligationPaid: (id: string, data: object) => api.post(`/tax/obligations/${id}/mark_paid/`, data),
+  upcomingObligations: () => api.get('/tax/obligations/upcoming/'),
+  generateObligationsNow: () => api.post('/tax/obligations/generate_now/'),
+  // Capital allowances
+  capitalAllowances: (params?: object) => api.get('/tax/capital-allowances/', { params }),
+  createCapitalAllowance: (data: object) => api.post('/tax/capital-allowances/', data),
+  updateCapitalAllowance: (id: string, data: object) => api.patch(`/tax/capital-allowances/${id}/`, data),
+  deleteCapitalAllowance: (id: string) => api.delete(`/tax/capital-allowances/${id}/`),
+  capitalAllowanceSummary: () => api.get('/tax/capital-allowances/summary/'),
+  // Deferred tax
+  deferredTax: (params?: object) => api.get('/tax/deferred-tax/', { params }),
+  createDeferredTax: (data: object) => api.post('/tax/deferred-tax/', data),
+  updateDeferredTax: (id: string, data: object) => api.patch(`/tax/deferred-tax/${id}/`, data),
+  deleteDeferredTax: (id: string) => api.delete(`/tax/deferred-tax/${id}/`),
+  deferredTaxBalanceSheet: () => api.get('/tax/deferred-tax/balance_sheet_impact/'),
+  // Transfer pricing
+  transferPricing: (params?: object) => api.get('/tax/transfer-pricing/', { params }),
+  createTransferPricing: (data: object) => api.post('/tax/transfer-pricing/', data),
+  updateTransferPricing: (id: string, data: object) => api.patch(`/tax/transfer-pricing/${id}/`, data),
+  deleteTransferPricing: (id: string) => api.delete(`/tax/transfer-pricing/${id}/`),
+  tpDisclosureSummary: () => api.get('/tax/transfer-pricing/disclosure_summary/'),
 }
 
 export const quoteApi = {
@@ -1249,6 +1286,15 @@ export const payrollApi = {
   uploadDocument: (file: File, fields: { employee: string; name: string; document_type: string }) =>
     _multipartPost('/payroll/documents/', file, 'file', fields),
   deleteDocument: (id: string) => api.delete(`/payroll/documents/${id}/`),
+  // Employee tax profiles
+  taxProfile: (employeeId: string) =>
+    api.get(`/payroll/tax-profiles/by_employee/`, { params: { employee_id: employeeId } }),
+  saveTaxProfile: (employeeId: string, data: object) =>
+    api.put(`/payroll/tax-profiles/by_employee/`, { ...data, employee_id: employeeId }),
+  // PAYE remittances
+  payeRemittances: (params?: object) => api.get('/payroll/paye-remittances/', { params }),
+  markPayeRemitted: (id: string, data: object) =>
+    api.post(`/payroll/paye-remittances/${id}/mark_remitted/`, data),
 }
 
 export const budgetApi = {

@@ -20,9 +20,16 @@ logger = logging.getLogger(__name__)
 class TaxService:
 
     @staticmethod
-    def calculate_income_tax(organisation, income: Decimal, tax_year: int = None, allowances: Decimal = None, tax_type: str = None) -> dict:
+    def calculate_income_tax(
+        organisation, income: Decimal, tax_year: int = None,
+        allowances: Decimal = None, tax_type: str = None,
+        gross_turnover: Decimal = None,
+    ) -> dict:
         """
         Calculate income tax for the organisation using the active tax config.
+
+        For CIT: pass gross_turnover to enforce the 0.5% minimum tax floor.
+        For PIT: the 1% of gross income minimum tax floor is always applied.
 
         Returns a full breakdown suitable for tax return generation.
         """
@@ -39,13 +46,36 @@ class TaxService:
             raise ValueError(f"No active income tax configuration found for {year}.")
 
         result = TaxEngine.calculate(income=income, config=config, allowances=allowances)
+        tax_payable = result.tax_payable
+        minimum_tax_applied = False
+        minimum_tax_amount = Decimal('0')
+
+        # PIT minimum tax: 1% of gross income (PITA s.37; Finance Act 2020)
+        if config.tax_type == TaxConfig.TaxType.INCOME:
+            pit_minimum = income * Decimal('0.01')
+            if tax_payable < pit_minimum:
+                tax_payable = pit_minimum
+                minimum_tax_applied = True
+                minimum_tax_amount = pit_minimum
+
+        # CIT minimum tax: 0.5% of gross turnover (CITA s.33; Finance Act 2020)
+        elif config.tax_type == TaxConfig.TaxType.CORPORATE and gross_turnover:
+            cit_minimum = Decimal(str(gross_turnover)) * Decimal('0.005')
+            if tax_payable < cit_minimum:
+                tax_payable = cit_minimum
+                minimum_tax_applied = True
+                minimum_tax_amount = cit_minimum
+
+        effective_rate = (tax_payable / income * 100) if income > 0 else Decimal('0')
 
         return {
             "gross_income": result.gross_income,
             "total_allowances": result.total_allowances,
             "net_taxable_income": result.net_taxable_income,
-            "tax_payable": result.tax_payable,
-            "effective_rate": result.effective_rate,
+            "tax_payable": tax_payable,
+            "effective_rate": effective_rate,
+            "minimum_tax_applied": minimum_tax_applied,
+            "minimum_tax_amount": minimum_tax_amount if minimum_tax_applied else None,
             "brackets": [
                 {
                     "bracket": f"{b.lower:,.0f} – {'∞' if b.upper is None else f'{b.upper:,.0f}'}",

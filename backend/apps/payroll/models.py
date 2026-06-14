@@ -305,6 +305,52 @@ class Attendance(TenantAwareModel):
         return f"{self.employee} — {self.date} ({self.status})"
 
 
+class EmployeeTaxProfile(TenantAwareModel):
+    """
+    Individual-level tax relief overrides for an employee.
+    Used to adjust taxable income beyond the standard CRA formula.
+    """
+    employee = models.OneToOneField(Employee, on_delete=models.CASCADE, related_name='tax_profile')
+    nhf_enrolled = models.BooleanField(default=True, help_text="Employee pays NHF (2.5% of basic)")
+    voluntary_pension = MoneyField(default=0, help_text="Additional voluntary pension contributions per month")
+    life_assurance_premium = MoneyField(default=0, help_text="Monthly life assurance premium (pre-tax deductible)")
+    paye_exempt = models.BooleanField(default=False, help_text="If True, no PAYE is deducted (e.g., expatriate relief, diplomatic exemption)")
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        verbose_name = "Employee Tax Profile"
+
+    def __str__(self):
+        return f"Tax profile — {self.employee}"
+
+
+class PAYERemittance(TenantAwareModel):
+    """
+    Record of monthly PAYE remitted to FIRS.
+    Due by the 10th of the month following the payroll period.
+    """
+    PENDING = 'pending'; REMITTED = 'remitted'; OVERDUE = 'overdue'
+    STATUS_CHOICES = [(s, s) for s in [PENDING, REMITTED, OVERDUE]]
+
+    payroll_run = models.OneToOneField(PayrollRun, on_delete=models.CASCADE, related_name='paye_remittance')
+    period_year = models.PositiveIntegerField()
+    period_month = models.PositiveIntegerField()
+    amount_due = MoneyField(default=0)
+    amount_paid = MoneyField(default=0)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=PENDING)
+    due_date = models.DateField()
+    remittance_date = models.DateField(null=True, blank=True)
+    reference = models.CharField(max_length=200, blank=True, help_text="FIRS payment reference / TaxPro MAX schedule ref")
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ['-period_year', '-period_month']
+        unique_together = [('organisation', 'period_year', 'period_month')]
+
+    def __str__(self):
+        return f"PAYE {self.period_year}-{self.period_month:02d} — {self.status}"
+
+
 def _employee_doc_path(instance, filename):
     import os
     ext = os.path.splitext(filename)[1].lower()

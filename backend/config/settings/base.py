@@ -473,6 +473,22 @@ CELERY_BEAT_SCHEDULE = {
         "task": "einvoicing.report_b2c_invoices",
         "schedule": crontab(hour=23, minute=0),
     },
+    # ── Tax Compliance Calendar ───────────────────────────────────────────────
+    # 1st of each month at 00:45 — create VAT return obligation for prior month
+    "generate-monthly-vat-obligations": {
+        "task": "tax.generate_monthly_vat_obligations",
+        "schedule": crontab(hour=0, minute=45, day_of_month=1),
+    },
+    # 1st of each month at 00:50 — create PAYE remittance obligation for prior month
+    "generate-monthly-paye-obligations": {
+        "task": "tax.generate_monthly_paye_obligations",
+        "schedule": crontab(hour=0, minute=50, day_of_month=1),
+    },
+    # Daily at 06:00 — flag overdue obligations
+    "flag-overdue-tax-obligations": {
+        "task": "tax.flag_overdue_tax_obligations",
+        "schedule": crontab(hour=6, minute=0),
+    },
 }
 
 # ─── OpenAPI / Spectacular ────────────────────────────────────────────────────

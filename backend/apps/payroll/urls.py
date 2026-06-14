@@ -1,8 +1,9 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
-    EmployeeViewSet, EmployeeDocumentViewSet, EmployeePenaltyViewSet,
-    EmployeeLoanViewSet, PayrollRunViewSet, BonusViewSet, AttendanceViewSet,
+    AttendanceViewSet, BonusViewSet, EmployeeDocumentViewSet,
+    EmployeeLoanViewSet, EmployeePenaltyViewSet, EmployeeTaxProfileViewSet,
+    EmployeeViewSet, PAYERemittanceViewSet, PayrollRunViewSet,
 )
 
 router = DefaultRouter()
@@ -13,5 +14,7 @@ router.register('loans', EmployeeLoanViewSet, basename='employee-loan')
 router.register('runs', PayrollRunViewSet, basename='payroll-run')
 router.register('bonuses', BonusViewSet, basename='employee-bonus')
 router.register('attendance', AttendanceViewSet, basename='employee-attendance')
+router.register('tax-profiles', EmployeeTaxProfileViewSet, basename='employee-tax-profile')
+router.register('paye-remittances', PAYERemittanceViewSet, basename='paye-remittance')
 
 urlpatterns = [path('', include(router.urls))]

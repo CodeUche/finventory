@@ -3,14 +3,14 @@ import { useDataRefresh } from '@/hooks/useDataRefresh'
 import {
   ChevronDown, ChevronUp, Banknote, Loader2, ExternalLink, Send, CheckCircle,
   XCircle, AlertTriangle, Building2, CreditCard, RotateCcw, Download, Clock,
-  Users, TrendingUp, RefreshCw, Plus, Trash2, Calendar, Gift, X,
+  Users, TrendingUp, RefreshCw, Plus, Trash2, Calendar, Gift, X, Shield,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { openExternal } from '@/lib/openExternal'
 import { payrollApi, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { saveBlobFile } from '@/lib/saveBlobFile'
-import type { PayrollRun } from '@/types'
+import type { PayrollRun, PAYERemittance, EmployeeTaxProfile } from '@/types'
 import DateInput from '@/components/DateInput'
 import YearFilter from '@/components/YearFilter'
 import ExportButton from '@/components/ExportButton'
@@ -64,7 +64,7 @@ interface Bonus {
   status: string
 }
 
-type PageTab = 'runs' | 'attendance' | 'bonuses'
+type PageTab = 'runs' | 'attendance' | 'bonuses' | 'paye'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -220,6 +220,22 @@ export default function PayrollPage() {
   const [activePaymentKey, setActivePaymentKey] = useState<string | null>(null)
   const [exportingBankFile, setExportingBankFile] = useState<string | null>(null)
 
+  // ── PAYE Remittance state ────────────────────────────────────────────────────
+  const [payeRemittances, setPayeRemittances] = useState<PAYERemittance[]>([])
+  const [loadingPaye, setLoadingPaye] = useState(false)
+  const [showPayeRemitModal, setShowPayeRemitModal] = useState(false)
+  const [remittingPayeId, setRemittingPayeId] = useState<string | null>(null)
+  const [payeRemitForm, setPayeRemitForm] = useState({ reference: '', amount_paid: '', notes: '' })
+  const [savingPayeRemit, setSavingPayeRemit] = useState(false)
+
+  // ── Employee Tax Profile state ────────────────────────────────────────────────
+  const [showTaxProfileModal, setShowTaxProfileModal] = useState(false)
+  const [taxProfileEmployee, setTaxProfileEmployee] = useState<Employee | null>(null)
+  const [taxProfile, setTaxProfile] = useState<EmployeeTaxProfile | null>(null)
+  const [taxProfileForm, setTaxProfileForm] = useState({ nhf_enrolled: true, voluntary_pension: '0', life_assurance_premium: '0', paye_exempt: false, notes: '' })
+  const [loadingTaxProfile, setLoadingTaxProfile] = useState(false)
+  const [savingTaxProfile, setSavingTaxProfile] = useState(false)
+
   // ── Employees ───────────────────────────────────────────────────────────────
   const [employees, setEmployees] = useState<Employee[]>([])
 
@@ -288,9 +304,49 @@ export default function PayrollPage() {
   useEffect(() => { loadRuns() }, [loadRuns])
   useDataRefresh(loadRuns)
 
+  const loadPayeRemittances = async () => {
+    setLoadingPaye(true)
+    try { const { data } = await payrollApi.payeRemittances(); setPayeRemittances(data.results ?? data) }
+    catch { toast.error('Failed to load PAYE remittances') }
+    finally { setLoadingPaye(false) }
+  }
+
+  const openTaxProfile = async (emp: Employee) => {
+    setTaxProfileEmployee(emp)
+    setLoadingTaxProfile(true)
+    setShowTaxProfileModal(true)
+    try {
+      const { data } = await payrollApi.taxProfile(emp.id)
+      setTaxProfile(data)
+      setTaxProfileForm({ nhf_enrolled: data.nhf_enrolled, voluntary_pension: data.voluntary_pension, life_assurance_premium: data.life_assurance_premium, paye_exempt: data.paye_exempt, notes: data.notes })
+    } catch {
+      setTaxProfile(null)
+      setTaxProfileForm({ nhf_enrolled: true, voluntary_pension: '0', life_assurance_premium: '0', paye_exempt: false, notes: '' })
+    }
+    finally { setLoadingTaxProfile(false) }
+  }
+
+  const handleSaveTaxProfile = async () => {
+    if (!taxProfileEmployee) return
+    setSavingTaxProfile(true)
+    try {
+      await payrollApi.saveTaxProfile(taxProfileEmployee.id, {
+        nhf_enrolled: taxProfileForm.nhf_enrolled,
+        voluntary_pension: parseFloat(taxProfileForm.voluntary_pension) || 0,
+        life_assurance_premium: parseFloat(taxProfileForm.life_assurance_premium) || 0,
+        paye_exempt: taxProfileForm.paye_exempt,
+        notes: taxProfileForm.notes,
+      })
+      toast.success('Tax profile saved')
+      setShowTaxProfileModal(false)
+    } catch { toast.error('Failed to save tax profile') }
+    finally { setSavingTaxProfile(false) }
+  }
+
   useEffect(() => {
     if (pageTab === 'attendance') { loadEmployees(); loadAttendance() }
     if (pageTab === 'bonuses') { loadEmployees(); loadBonuses() }
+    if (pageTab === 'paye') { loadPayeRemittances(); loadEmployees() }
   }, [pageTab, selectedYear, selectedMonth, loadEmployees, loadAttendance, loadBonuses])
 
   // ── Runs handlers ────────────────────────────────────────────────────────────
@@ -529,6 +585,7 @@ export default function PayrollPage() {
           ['runs', 'Payroll Runs', Banknote],
           ['attendance', 'Attendance', Calendar],
           ['bonuses', 'Bonuses', Gift],
+          ['paye', 'PAYE Remittance', Shield],
         ] as [PageTab, string, any][]).map(([t, label, Icon]) => (
           <button
             key={t}
@@ -1246,6 +1303,212 @@ export default function PayrollPage() {
                 </button>
               </div>
               <p className="text-center text-[10px] text-slate-600">Paystack bulk transfers require sufficient Paystack balance and a verified business account.</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── PAYE Remittance Tab ──────────────────────────────────────────────── */}
+      {pageTab === 'paye' && (
+        <div className="space-y-6">
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-white font-semibold">PAYE Remittance Tracker</h2>
+                <p className="text-slate-500 text-xs mt-0.5">Monthly PAYE obligations auto-created after each payroll run. Remit by the 10th of the following month.</p>
+              </div>
+              <button onClick={loadPayeRemittances} className="btn-ghost flex items-center gap-1.5 text-sm"><RefreshCw size={14} /> Refresh</button>
+            </div>
+
+            {loadingPaye ? (
+              <div className="card p-8 text-center text-slate-500">Loading…</div>
+            ) : payeRemittances.length === 0 ? (
+              <div className="card p-12 text-center">
+                <Shield size={36} className="mx-auto text-slate-600 mb-3" />
+                <p className="text-slate-400 font-medium">No PAYE remittances yet</p>
+                <p className="text-slate-500 text-xs mt-1">Run payroll to generate monthly PAYE obligations</p>
+              </div>
+            ) : (
+              <div className="card overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-surface-700">
+                      {['Period', 'Due Date', 'Amount Due', 'Paid', 'Balance', 'Status', ''].map((h) => (
+                        <th key={h} className="px-5 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-surface-700">
+                    {payeRemittances.map((pr) => (
+                      <tr key={pr.id} className={`table-row ${pr.status === 'overdue' ? 'bg-red-500/5' : ''}`}>
+                        <td className="px-5 py-3.5 text-white font-medium">
+                          {String(pr.period_month).padStart(2, '0')}/{pr.period_year}
+                        </td>
+                        <td className="px-5 py-3.5 text-slate-400">{formatDate(pr.due_date)}</td>
+                        <td className="px-5 py-3.5 font-mono text-white">{formatCurrency(pr.amount_due)}</td>
+                        <td className="px-5 py-3.5 font-mono text-emerald-400">{formatCurrency(pr.amount_paid)}</td>
+                        <td className="px-5 py-3.5 font-mono">
+                          <span className={parseFloat(pr.balance_due) > 0 ? 'text-red-400' : 'text-emerald-400'}>
+                            {formatCurrency(pr.balance_due)}
+                          </span>
+                        </td>
+                        <td className="px-5 py-3.5">
+                          <span className={pr.status === 'remitted' ? 'badge-green' : pr.status === 'overdue' ? 'badge-red' : 'badge-yellow'}>
+                            {pr.status}
+                          </span>
+                        </td>
+                        <td className="px-5 py-3.5">
+                          {pr.status !== 'remitted' && (
+                            <button onClick={() => { setRemittingPayeId(pr.id); setPayeRemitForm({ reference: '', amount_paid: pr.balance_due, notes: '' }); setShowPayeRemitModal(true) }}
+                              className="text-xs px-2.5 py-1 rounded-lg bg-brand-500/15 text-brand-400 hover:bg-brand-500/25 transition-colors">
+                              Remit
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* Employee Tax Profiles */}
+          <div className="space-y-4">
+            <div>
+              <h2 className="text-white font-semibold">Employee Tax Profiles</h2>
+              <p className="text-slate-500 text-xs mt-0.5">Customise individual relief items per employee — NHF, voluntary pension, life assurance premiums, PAYE exempt status</p>
+            </div>
+            {employees.length === 0 ? (
+              <div className="card p-8 text-center text-slate-500">No employees found</div>
+            ) : (
+              <div className="card overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-surface-700">
+                      {['Employee', 'Department', 'Gross Salary', 'Tax Profile', ''].map((h) => (
+                        <th key={h} className="px-5 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-surface-700">
+                    {employees.filter((e) => e.is_active).map((emp) => (
+                      <tr key={emp.id} className="table-row">
+                        <td className="px-5 py-3.5 text-white font-medium">{emp.first_name} {emp.last_name}</td>
+                        <td className="px-5 py-3.5 text-slate-400">{emp.department || '—'}</td>
+                        <td className="px-5 py-3.5 font-mono text-white">{formatCurrency(emp.gross_salary)}</td>
+                        <td className="px-5 py-3.5">
+                          <span className="badge-slate">Custom relief configurable</span>
+                        </td>
+                        <td className="px-5 py-3.5">
+                          <button onClick={() => openTaxProfile(emp)}
+                            className="text-xs px-2.5 py-1 rounded-lg bg-surface-600 text-slate-300 hover:bg-surface-500 hover:text-white transition-colors flex items-center gap-1">
+                            <Shield size={11} /> Tax Profile
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* PAYE Remit Modal */}
+      {showPayeRemitModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-surface-800 border border-surface-600 rounded-2xl p-6 w-full max-w-md shadow-2xl">
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-lg font-bold text-white">Record PAYE Remittance</h2>
+              <button onClick={() => setShowPayeRemitModal(false)} className="text-slate-400 hover:text-white"><X size={18} /></button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Amount Paid (₦) *</label>
+                <input type="number" min="0" className="input" value={payeRemitForm.amount_paid} onChange={(e) => setPayeRemitForm({ ...payeRemitForm, amount_paid: e.target.value })} />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">FIRS Reference / Receipt *</label>
+                <input className="input" placeholder="e.g. FIRS-PAYE-2024-001234" value={payeRemitForm.reference} onChange={(e) => setPayeRemitForm({ ...payeRemitForm, reference: e.target.value })} />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Notes</label>
+                <textarea className="input resize-none" rows={2} value={payeRemitForm.notes} onChange={(e) => setPayeRemitForm({ ...payeRemitForm, notes: e.target.value })} />
+              </div>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button onClick={() => setShowPayeRemitModal(false)} className="btn-ghost flex-1">Cancel</button>
+              <button disabled={savingPayeRemit || !payeRemitForm.reference.trim()} className="btn-primary flex-1 disabled:opacity-50"
+                onClick={async () => {
+                  if (!remittingPayeId) return
+                  setSavingPayeRemit(true)
+                  try {
+                    await payrollApi.markPayeRemitted(remittingPayeId, { reference: payeRemitForm.reference, amount_paid: parseFloat(payeRemitForm.amount_paid) || 0, notes: payeRemitForm.notes })
+                    toast.success('PAYE remittance recorded')
+                    setShowPayeRemitModal(false); loadPayeRemittances()
+                  } catch { toast.error('Failed to record remittance') }
+                  finally { setSavingPayeRemit(false) }
+                }}>
+                {savingPayeRemit ? 'Saving…' : 'Record Remittance'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Employee Tax Profile Modal */}
+      {showTaxProfileModal && taxProfileEmployee && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-surface-800 border border-surface-600 rounded-2xl p-6 w-full max-w-lg shadow-2xl">
+            <div className="flex items-center justify-between mb-5">
+              <div>
+                <h2 className="text-lg font-bold text-white">Tax Profile — {taxProfileEmployee.first_name} {taxProfileEmployee.last_name}</h2>
+                <p className="text-xs text-slate-500 mt-0.5">Override individual tax relief items used in PAYE computation</p>
+              </div>
+              <button onClick={() => setShowTaxProfileModal(false)} className="text-slate-400 hover:text-white"><X size={18} /></button>
+            </div>
+            {loadingTaxProfile ? (
+              <div className="py-8 flex justify-center"><Loader2 size={20} className="animate-spin text-brand-400" /></div>
+            ) : (
+              <div className="space-y-4">
+                <div className="p-3 rounded-xl bg-brand-500/5 border border-brand-500/20">
+                  <p className="text-xs text-brand-400 font-semibold mb-2">Standard PAYE reliefs (auto-applied to all):</p>
+                  <p className="text-xs text-slate-400">Consolidated Relief Allowance: ₦200,000 + 20% of gross · Pension: 8% employee · NHF: 2.5% basic (if enrolled)</p>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Voluntary Pension (₦/month)</label>
+                  <input type="number" min="0" className="input" placeholder="0" value={taxProfileForm.voluntary_pension} onChange={(e) => setTaxProfileForm({ ...taxProfileForm, voluntary_pension: e.target.value })} />
+                  <p className="text-xs text-slate-500 mt-1">Added to the 8% statutory pension (increases pre-tax deduction)</p>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Life Assurance Premium (₦/month)</label>
+                  <input type="number" min="0" className="input" placeholder="0" value={taxProfileForm.life_assurance_premium} onChange={(e) => setTaxProfileForm({ ...taxProfileForm, life_assurance_premium: e.target.value })} />
+                </div>
+                <div className="flex gap-6">
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input type="checkbox" className="w-4 h-4 accent-orange-500" checked={taxProfileForm.nhf_enrolled} onChange={(e) => setTaxProfileForm({ ...taxProfileForm, nhf_enrolled: e.target.checked })} />
+                    <span className="text-sm text-slate-300">NHF enrolled (2.5% basic salary deducted)</span>
+                  </label>
+                </div>
+                <div className="flex gap-6">
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input type="checkbox" className="w-4 h-4 accent-red-500" checked={taxProfileForm.paye_exempt} onChange={(e) => setTaxProfileForm({ ...taxProfileForm, paye_exempt: e.target.checked })} />
+                    <span className="text-sm text-slate-300">PAYE Exempt (skip tax computation for this employee)</span>
+                  </label>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Notes</label>
+                  <textarea className="input resize-none" rows={2} placeholder="e.g. Expat with DTA treaty exemption" value={taxProfileForm.notes} onChange={(e) => setTaxProfileForm({ ...taxProfileForm, notes: e.target.value })} />
+                </div>
+              </div>
+            )}
+            <div className="flex gap-3 mt-6">
+              <button onClick={() => setShowTaxProfileModal(false)} className="btn-ghost flex-1">Cancel</button>
+              <button onClick={handleSaveTaxProfile} disabled={savingTaxProfile || loadingTaxProfile} className="btn-primary flex-1 disabled:opacity-50">
+                {savingTaxProfile ? 'Saving…' : taxProfile ? 'Save Changes' : 'Create Profile'}
+              </button>
             </div>
           </div>
         </div>

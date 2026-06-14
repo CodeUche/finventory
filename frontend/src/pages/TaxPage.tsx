@@ -1,19 +1,25 @@
 import { useEffect, useState } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import {
-  Building2, Calculator, ChevronDown, ChevronUp, Edit2, ExternalLink, Plus, Receipt, Trash2, X, Zap, AlertCircle, Lock, Star,
+  Building2, Calculator, ChevronDown, ChevronUp, CheckCircle, Clock,
+  Download, Edit2, ExternalLink, FileText, Globe, Plus, Receipt, RefreshCw,
+  Trash2, TrendingDown, X, Zap, AlertCircle, Lock, Star,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { openExternal } from '@/lib/openExternal'
 import { taxApi, exciseApi, whtApi } from '@/services/api'
-import { formatCurrency } from '@/lib/utils'
-import type { TaxClass, TaxConfig, ExciseDuty, WHTRate, WHTTransaction } from '@/types'
+import { formatCurrency, formatDate } from '@/lib/utils'
+import type {
+  TaxClass, TaxConfig, ExciseDuty, WHTRate, WHTTransaction,
+  VATTransaction, TaxObligation,
+  CapitalAllowanceClaim, DeferredTaxItem, RelatedPartyTransaction,
+} from '@/types'
 import DateInput from '@/components/DateInput'
 import { useAuthStore } from '@/store/authStore'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-type Tab = 'vat' | 'income' | 'tools' | 'excise' | 'wht' | 'filing'
+type Tab = 'vat' | 'income' | 'tools' | 'excise' | 'wht' | 'vat_itc' | 'compliance' | 'capital' | 'deferred' | 'tp' | 'filing'
 
 interface ClassForm { name: string; rate: string; description: string }
 const EMPTY_CLASS: ClassForm = { name: '', rate: '', description: '' }
@@ -40,9 +46,9 @@ const EMPTY_BRACKET: BracketRow = { lower_bound: '', upper_bound: '', rate: '', 
 // ── Component ─────────────────────────────────────────────────────────────────
 
 // Starter: all advanced tabs locked
-const ADVANCED_TABS: Tab[] = ['income', 'tools', 'excise', 'wht', 'filing']
-// Professional: WHT, Excise, Filing locked (Income Tax + Tools are available)
-const PRO_LOCKED_TABS: Tab[] = ['wht', 'excise', 'filing']
+const ADVANCED_TABS: Tab[] = ['income', 'tools', 'excise', 'wht', 'vat_itc', 'compliance', 'capital', 'deferred', 'tp', 'filing']
+// Professional: WHT, Excise, Filing, and advanced tabs locked
+const PRO_LOCKED_TABS: Tab[] = ['wht', 'excise', 'vat_itc', 'capital', 'deferred', 'tp', 'filing']
 
 export default function TaxPage() {
   const { planTaxEngine, planName, user } = useAuthStore()
@@ -101,10 +107,80 @@ export default function TaxPage() {
   const [calcResult, setCalcResult] = useState<Record<string, unknown> | null>(null)
   const [calculating, setCalculating] = useState(false)
 
+  const [calcGrossTurnover, setCalcGrossTurnover] = useState('')
   const [vatStart, setVatStart] = useState('')
   const [vatEnd, setVatEnd] = useState('')
   const [vatResult, setVatResult] = useState<Record<string, unknown> | null>(null)
   const [vatLoading, setVatLoading] = useState(false)
+
+  // ── WHT remittance ───────────────────────────────────────────────────────────
+  const [showRemitModal, setShowRemitModal] = useState(false)
+  const [remittingWhtId, setRemittingWhtId] = useState<string | null>(null)
+  const [remitForm, setRemitForm] = useState({ reference: '', notes: '' })
+  const [savingRemit, setSavingRemit] = useState(false)
+
+  // ── VAT ITC ──────────────────────────────────────────────────────────────────
+  const [vatTransactions, setVatTransactions] = useState<VATTransaction[]>([])
+  const [loadingVatTx, setLoadingVatTx] = useState(false)
+  const [showVatSyncModal, setShowVatSyncModal] = useState(false)
+  const [vatSyncPeriod, setVatSyncPeriod] = useState({ period_start: '', period_end: '' })
+  const [syncing, setSyncing] = useState(false)
+  const [vatTxFilter, setVatTxFilter] = useState<'all' | 'input' | 'output'>('all')
+
+  // ── Compliance calendar ───────────────────────────────────────────────────────
+  const [obligations, setObligations] = useState<TaxObligation[]>([])
+  const [loadingObligations, setLoadingObligations] = useState(false)
+  const [showObligationModal, setShowObligationModal] = useState(false)
+  const [editingObligationId, setEditingObligationId] = useState<string | null>(null)
+  const [obligationForm, setObligationForm] = useState({
+    obligation_type: 'vat', label: '',
+    period_year: String(new Date().getFullYear()), period_month: '',
+    due_date: '', amount_due: '', notes: '',
+  })
+  const [savingObligation, setSavingObligation] = useState(false)
+  const [showObligationActionModal, setShowObligationActionModal] = useState(false)
+  const [obligationAction, setObligationAction] = useState<'filed' | 'paid'>('filed')
+  const [actionObligationId, setActionObligationId] = useState<string | null>(null)
+  const [actionForm, setActionForm] = useState({ payment_reference: '', filed_date: '', notes: '' })
+  const [savingAction, setSavingAction] = useState(false)
+
+  // ── Capital allowances ───────────────────────────────────────────────────────
+  const [capitalAllowances, setCapitalAllowances] = useState<CapitalAllowanceClaim[]>([])
+  const [loadingCA, setLoadingCA] = useState(false)
+  const [showCAModal, setShowCAModal] = useState(false)
+  const [editingCAId, setEditingCAId] = useState<string | null>(null)
+  const [caForm, setCAForm] = useState({
+    asset_name: '', asset_class: 'plant_machinery',
+    tax_year: String(new Date().getFullYear()),
+    cost: '', opening_tax_written_down_value: '0', is_acquisition_year: true, notes: '',
+  })
+  const [savingCA, setSavingCA] = useState(false)
+
+  // ── Deferred tax ─────────────────────────────────────────────────────────────
+  const [deferredTax, setDeferredTax] = useState<DeferredTaxItem[]>([])
+  const [loadingDT, setLoadingDT] = useState(false)
+  const [showDTModal, setShowDTModal] = useState(false)
+  const [editingDTId, setEditingDTId] = useState<string | null>(null)
+  const [dtForm, setDTForm] = useState({
+    category: 'depreciation', description: '',
+    tax_year: String(new Date().getFullYear()),
+    timing_difference: '', tax_rate: '30', is_recognised: true, reversal_year: '', notes: '',
+  })
+  const [savingDT, setSavingDT] = useState(false)
+
+  // ── Transfer pricing ─────────────────────────────────────────────────────────
+  const [tpTransactions, setTPTransactions] = useState<RelatedPartyTransaction[]>([])
+  const [loadingTP, setLoadingTP] = useState(false)
+  const [showTPModal, setShowTPModal] = useState(false)
+  const [editingTPId, setEditingTPId] = useState<string | null>(null)
+  const [tpForm, setTPForm] = useState({
+    related_party_name: '', relationship: '', country: 'NG',
+    transaction_type: 'sale_goods', tax_year: String(new Date().getFullYear()),
+    amount: '', currency: 'NGN', tp_method: 'none', arm_length_price: '0',
+    adjustment_required: false, adjustment_amount: '0',
+    documentation_status: 'not_prepared', notes: '',
+  })
+  const [savingTP, setSavingTP] = useState(false)
 
   // ── Loaders ───────────────────────────────────────────────────────────────────
 
@@ -121,7 +197,8 @@ export default function TaxPage() {
     setLoadingConfigs(true)
     try {
       const { data } = await taxApi.configs()
-      setConfigs(data.results ?? data)
+      const raw: TaxConfig[] = data.results ?? data
+      setConfigs(raw.map((c) => ({ ...c, brackets: c.brackets ?? [] })))
     } catch { toast.error('Failed to load tax configs') }
     finally { setLoadingConfigs(false) }
   }
@@ -143,8 +220,54 @@ export default function TaxPage() {
     finally { setLoadingWHT(false) }
   }
 
-  useEffect(() => { loadClasses(); loadConfigs(); loadExcise(); loadWHT() }, [])
-  useDataRefresh(() => { loadClasses(); loadConfigs(); loadExcise(); loadWHT() })
+  const loadWHTCertificates = async () => {
+    try { await taxApi.whtCertificates() }
+    catch { /* non-critical */ }
+  }
+
+  const loadVatTransactions = async () => {
+    setLoadingVatTx(true)
+    try { const { data } = await taxApi.vatTransactions(); setVatTransactions(data.results ?? data) }
+    catch { toast.error('Failed to load VAT transactions') }
+    finally { setLoadingVatTx(false) }
+  }
+
+  const loadObligations = async () => {
+    setLoadingObligations(true)
+    try { const { data } = await taxApi.obligations(); setObligations(data.results ?? data) }
+    catch { toast.error('Failed to load tax obligations') }
+    finally { setLoadingObligations(false) }
+  }
+
+  const loadCapitalAllowances = async () => {
+    setLoadingCA(true)
+    try { const { data } = await taxApi.capitalAllowances(); setCapitalAllowances(data.results ?? data) }
+    catch { toast.error('Failed to load capital allowances') }
+    finally { setLoadingCA(false) }
+  }
+
+  const loadDeferredTax = async () => {
+    setLoadingDT(true)
+    try { const { data } = await taxApi.deferredTax(); setDeferredTax(data.results ?? data) }
+    catch { toast.error('Failed to load deferred tax') }
+    finally { setLoadingDT(false) }
+  }
+
+  const loadTransferPricing = async () => {
+    setLoadingTP(true)
+    try { const { data } = await taxApi.transferPricing(); setTPTransactions(data.results ?? data) }
+    catch { toast.error('Failed to load transfer pricing') }
+    finally { setLoadingTP(false) }
+  }
+
+  useEffect(() => {
+    loadClasses(); loadConfigs(); loadExcise(); loadWHT(); loadWHTCertificates()
+    loadVatTransactions(); loadObligations(); loadCapitalAllowances(); loadDeferredTax(); loadTransferPricing()
+  }, [])
+  useDataRefresh(() => {
+    loadClasses(); loadConfigs(); loadExcise(); loadWHT(); loadWHTCertificates()
+    loadVatTransactions(); loadObligations(); loadCapitalAllowances(); loadDeferredTax(); loadTransferPricing()
+  })
 
   // ── VAT Class CRUD ────────────────────────────────────────────────────────────
 
@@ -266,11 +389,15 @@ export default function TaxPage() {
     if (!calcIncome || parseFloat(calcIncome) < 0) { toast.error('Enter a valid income'); return }
     setCalculating(true)
     try {
-      const { data } = await taxApi.calculateIncomeTax({
+      const payload: Record<string, unknown> = {
         income: parseFloat(calcIncome),
         tax_year: parseInt(calcYear),
         tax_type: calcType,
-      })
+      }
+      if (calcType === 'corporate' && calcGrossTurnover) {
+        payload.gross_turnover = parseFloat(calcGrossTurnover)
+      }
+      const { data } = await taxApi.calculateIncomeTax(payload)
       setCalcResult(data)
     } catch { toast.error('No income tax config found for this year. Add one in the Income Tax tab.') }
     finally { setCalculating(false) }
@@ -286,6 +413,171 @@ export default function TaxPage() {
     finally { setVatLoading(false) }
   }
 
+  // ── WHT remittance ────────────────────────────────────────────────────────────
+
+  const openRemitModal = (tx: WHTTransaction) => {
+    setRemittingWhtId(tx.id); setRemitForm({ reference: '', notes: '' }); setShowRemitModal(true)
+  }
+
+  const handleRemit = async () => {
+    if (!remittingWhtId) return
+    setSavingRemit(true)
+    try {
+      await taxApi.remitWht(remittingWhtId, remitForm)
+      toast.success('WHT marked as remitted — certificate generated')
+      setShowRemitModal(false)
+      loadWHT(); loadWHTCertificates()
+    } catch { toast.error('Failed to remit WHT') }
+    finally { setSavingRemit(false) }
+  }
+
+  const downloadCertificate = async (txId: string) => {
+    try {
+      const { data } = await taxApi.whtCertificatePdf(txId)
+      const url = URL.createObjectURL(new Blob([data], { type: 'application/pdf' }))
+      const a = document.createElement('a'); a.href = url; a.download = `wht-certificate-${txId.slice(0, 8)}.pdf`
+      a.click(); URL.revokeObjectURL(url)
+    } catch { toast.error('Failed to download certificate') }
+  }
+
+  // ── VAT ITC ───────────────────────────────────────────────────────────────────
+
+  const handleSyncVat = async () => {
+    if (!vatSyncPeriod.period_start || !vatSyncPeriod.period_end) { toast.error('Select both dates'); return }
+    setSyncing(true)
+    try {
+      const { data } = await taxApi.syncVatFromPeriod(vatSyncPeriod)
+      toast.success(`Synced: ${data.created ?? 0} output, ${data.input_created ?? 0} input records`)
+      setShowVatSyncModal(false); loadVatTransactions()
+    } catch { toast.error('Sync failed') }
+    finally { setSyncing(false) }
+  }
+
+  // ── Compliance obligations ────────────────────────────────────────────────────
+
+  const openCreateObligation = () => {
+    setEditingObligationId(null)
+    setObligationForm({ obligation_type: 'vat', label: '', period_year: String(new Date().getFullYear()), period_month: '', due_date: '', amount_due: '', notes: '' })
+    setShowObligationModal(true)
+  }
+
+  const handleSaveObligation = async () => {
+    if (!obligationForm.label.trim() || !obligationForm.due_date) { toast.error('Label and due date are required'); return }
+    setSavingObligation(true)
+    try {
+      const payload = {
+        ...obligationForm,
+        period_year: obligationForm.period_year ? parseInt(obligationForm.period_year) : null,
+        period_month: obligationForm.period_month ? parseInt(obligationForm.period_month) : null,
+        amount_due: parseFloat(obligationForm.amount_due) || 0,
+      }
+      if (editingObligationId) { await taxApi.updateObligation(editingObligationId, payload); toast.success('Updated') }
+      else { await taxApi.createObligation(payload); toast.success('Obligation added') }
+      setShowObligationModal(false); loadObligations()
+    } catch { toast.error('Failed to save obligation') }
+    finally { setSavingObligation(false) }
+  }
+
+  const openObligationAction = (id: string, action: 'filed' | 'paid') => {
+    setActionObligationId(id); setObligationAction(action)
+    setActionForm({ payment_reference: '', filed_date: new Date().toISOString().slice(0, 10), notes: '' })
+    setShowObligationActionModal(true)
+  }
+
+  const handleObligationAction = async () => {
+    if (!actionObligationId) return
+    setSavingAction(true)
+    try {
+      if (obligationAction === 'filed') {
+        await taxApi.markObligationFiled(actionObligationId, { filed_date: actionForm.filed_date, notes: actionForm.notes })
+        toast.success('Marked as filed')
+      } else {
+        await taxApi.markObligationPaid(actionObligationId, { payment_reference: actionForm.payment_reference, notes: actionForm.notes })
+        toast.success('Marked as paid')
+      }
+      setShowObligationActionModal(false); loadObligations()
+    } catch { toast.error('Failed to update obligation') }
+    finally { setSavingAction(false) }
+  }
+
+  // ── Capital allowances ────────────────────────────────────────────────────────
+
+  const openCreateCA = () => {
+    setEditingCAId(null)
+    setCAForm({ asset_name: '', asset_class: 'plant_machinery', tax_year: String(new Date().getFullYear()), cost: '', opening_tax_written_down_value: '0', is_acquisition_year: true, notes: '' })
+    setShowCAModal(true)
+  }
+
+  const openEditCA = (ca: CapitalAllowanceClaim) => {
+    setEditingCAId(ca.id)
+    setCAForm({ asset_name: ca.asset_name, asset_class: ca.asset_class, tax_year: String(ca.tax_year), cost: ca.cost, opening_tax_written_down_value: ca.opening_tax_written_down_value, is_acquisition_year: ca.is_acquisition_year, notes: ca.notes })
+    setShowCAModal(true)
+  }
+
+  const handleSaveCA = async () => {
+    if (!caForm.asset_name.trim() || !caForm.cost) { toast.error('Asset name and cost are required'); return }
+    setSavingCA(true)
+    try {
+      const payload = { ...caForm, tax_year: parseInt(caForm.tax_year), cost: parseFloat(caForm.cost), opening_tax_written_down_value: parseFloat(caForm.opening_tax_written_down_value) || 0 }
+      if (editingCAId) { await taxApi.updateCapitalAllowance(editingCAId, payload); toast.success('Updated') }
+      else { await taxApi.createCapitalAllowance(payload); toast.success('Asset added') }
+      setShowCAModal(false); loadCapitalAllowances()
+    } catch { toast.error('Failed to save') }
+    finally { setSavingCA(false) }
+  }
+
+  // ── Deferred tax ──────────────────────────────────────────────────────────────
+
+  const openCreateDT = () => {
+    setEditingDTId(null)
+    setDTForm({ category: 'depreciation', description: '', tax_year: String(new Date().getFullYear()), timing_difference: '', tax_rate: '30', is_recognised: true, reversal_year: '', notes: '' })
+    setShowDTModal(true)
+  }
+
+  const openEditDT = (dt: DeferredTaxItem) => {
+    setEditingDTId(dt.id)
+    setDTForm({ category: dt.category, description: dt.description, tax_year: String(dt.tax_year), timing_difference: dt.timing_difference, tax_rate: dt.tax_rate, is_recognised: dt.is_recognised, reversal_year: dt.reversal_year ? String(dt.reversal_year) : '', notes: dt.notes })
+    setShowDTModal(true)
+  }
+
+  const handleSaveDT = async () => {
+    if (!dtForm.description.trim() || !dtForm.timing_difference) { toast.error('Description and timing difference are required'); return }
+    setSavingDT(true)
+    try {
+      const payload = { ...dtForm, tax_year: parseInt(dtForm.tax_year), timing_difference: parseFloat(dtForm.timing_difference), tax_rate: parseFloat(dtForm.tax_rate), reversal_year: dtForm.reversal_year ? parseInt(dtForm.reversal_year) : null }
+      if (editingDTId) { await taxApi.updateDeferredTax(editingDTId, payload); toast.success('Updated') }
+      else { await taxApi.createDeferredTax(payload); toast.success('Deferred tax item added') }
+      setShowDTModal(false); loadDeferredTax()
+    } catch { toast.error('Failed to save') }
+    finally { setSavingDT(false) }
+  }
+
+  // ── Transfer pricing ──────────────────────────────────────────────────────────
+
+  const openCreateTP = () => {
+    setEditingTPId(null)
+    setTPForm({ related_party_name: '', relationship: '', country: 'NG', transaction_type: 'sale_goods', tax_year: String(new Date().getFullYear()), amount: '', currency: 'NGN', tp_method: 'none', arm_length_price: '0', adjustment_required: false, adjustment_amount: '0', documentation_status: 'not_prepared', notes: '' })
+    setShowTPModal(true)
+  }
+
+  const openEditTP = (tp: RelatedPartyTransaction) => {
+    setEditingTPId(tp.id)
+    setTPForm({ related_party_name: tp.related_party_name, relationship: tp.relationship, country: tp.country, transaction_type: tp.transaction_type, tax_year: String(tp.tax_year), amount: tp.amount, currency: tp.currency, tp_method: tp.tp_method, arm_length_price: tp.arm_length_price, adjustment_required: tp.adjustment_required, adjustment_amount: tp.adjustment_amount, documentation_status: tp.documentation_status, notes: tp.notes })
+    setShowTPModal(true)
+  }
+
+  const handleSaveTP = async () => {
+    if (!tpForm.related_party_name.trim() || !tpForm.amount) { toast.error('Related party name and amount are required'); return }
+    setSavingTP(true)
+    try {
+      const payload = { ...tpForm, tax_year: parseInt(tpForm.tax_year), amount: parseFloat(tpForm.amount), arm_length_price: parseFloat(tpForm.arm_length_price) || 0, adjustment_amount: parseFloat(tpForm.adjustment_amount) || 0 }
+      if (editingTPId) { await taxApi.updateTransferPricing(editingTPId, payload); toast.success('Updated') }
+      else { await taxApi.createTransferPricing(payload); toast.success('Transaction added') }
+      setShowTPModal(false); loadTransferPricing()
+    } catch { toast.error('Failed to save') }
+    finally { setSavingTP(false) }
+  }
+
   // ── Render ────────────────────────────────────────────────────────────────────
 
   return (
@@ -297,13 +589,18 @@ export default function TaxPage() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 p-1 bg-surface-800 rounded-xl w-fit overflow-x-auto">
+      <div className="flex gap-1 p-1 bg-surface-800 rounded-xl overflow-x-auto">
         {([
           ['vat', 'VAT Classes'],
           ['income', 'Income Tax'],
           ['tools', 'Tax Tools'],
           ['excise', 'Excise Duty'],
           ['wht', 'WHT'],
+          ['vat_itc', 'VAT ITC'],
+          ['compliance', 'Compliance'],
+          ['capital', 'Capital Allow.'],
+          ['deferred', 'Deferred Tax'],
+          ['tp', 'Transfer Pricing'],
           ['filing', 'Filing Guide'],
         ] as [Tab, string][]).map(([t, label]) => {
           const locked =
@@ -572,6 +869,18 @@ export default function TaxPage() {
                   value={calcYear} onChange={(e) => setCalcYear(e.target.value)}
                 />
               </div>
+              {calcType === 'corporate' && (
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">
+                    Gross Turnover (for minimum tax floor)
+                  </label>
+                  <input
+                    type="number" className="input" placeholder="e.g. 50000000 (optional)"
+                    value={calcGrossTurnover} onChange={(e) => setCalcGrossTurnover(e.target.value)}
+                  />
+                  <p className="text-xs text-slate-500 mt-1">Min tax = 0.5% of turnover — applied if higher than computed CIT</p>
+                </div>
+              )}
               <button
                 onClick={handleCalculate} disabled={calculating}
                 className="btn-primary w-full disabled:opacity-50"
@@ -802,36 +1111,529 @@ export default function TaxPage() {
           </div>
 
           {/* WHT Transactions */}
-          {whtTransactions.length > 0 && (
-            <div className="space-y-4">
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
               <h2 className="text-white font-semibold">WHT Transactions</h2>
+              <span className="text-xs text-slate-500">Transactions are auto-created when WHT is applied to invoices/bills</span>
+            </div>
+            {whtTransactions.length === 0 ? (
+              <div className="card p-10 text-center">
+                <Receipt size={32} className="mx-auto text-slate-600 mb-3" />
+                <p className="text-slate-400">No WHT transactions yet</p>
+                <p className="text-slate-500 text-xs mt-1">WHT transactions appear here when applied to sales or purchase invoices</p>
+              </div>
+            ) : (
               <div className="card overflow-hidden">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-surface-700">
-                      {['Date', 'Counterparty', 'Type', 'Gross', 'WHT Rate', 'WHT Amount', 'Net', 'Status'].map((h) => (
-                        <th key={h} className="px-5 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
+                      {['Date', 'Counterparty', 'Type', 'Gross', 'WHT Rate', 'WHT Amt', 'Net', 'Status', ''].map((h) => (
+                        <th key={h} className="px-4 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-surface-700">
                     {whtTransactions.map((t) => (
                       <tr key={t.id} className="table-row">
-                        <td className="px-5 py-3.5 text-slate-400">{t.transaction_date}</td>
-                        <td className="px-5 py-3.5 text-white">{t.counterparty_name}</td>
-                        <td className="px-5 py-3.5"><span className={t.transaction_type === 'sale' ? 'badge-green' : 'badge-blue'}>{t.transaction_type}</span></td>
-                        <td className="px-5 py-3.5 font-mono text-white">{formatCurrency(t.gross_amount)}</td>
-                        <td className="px-5 py-3.5"><span className="badge-orange">{t.wht_rate_percent}%</span></td>
-                        <td className="px-5 py-3.5 font-mono text-red-400">{formatCurrency(t.wht_amount)}</td>
-                        <td className="px-5 py-3.5 font-mono text-emerald-400">{formatCurrency(t.net_amount)}</td>
-                        <td className="px-5 py-3.5"><span className={t.status === 'remitted' ? 'badge-green' : 'badge-yellow'}>{t.status}</span></td>
+                        <td className="px-4 py-3.5 text-slate-400">{t.transaction_date}</td>
+                        <td className="px-4 py-3.5 text-white">{t.counterparty_name}</td>
+                        <td className="px-4 py-3.5"><span className={t.transaction_type === 'sale' ? 'badge-green' : 'badge-blue'}>{t.transaction_type}</span></td>
+                        <td className="px-4 py-3.5 font-mono text-white">{formatCurrency(t.gross_amount)}</td>
+                        <td className="px-4 py-3.5"><span className="badge-orange">{t.wht_rate_percent}%</span></td>
+                        <td className="px-4 py-3.5 font-mono text-red-400">{formatCurrency(t.wht_amount)}</td>
+                        <td className="px-4 py-3.5 font-mono text-emerald-400">{formatCurrency(t.net_amount)}</td>
+                        <td className="px-4 py-3.5"><span className={t.status === 'remitted' ? 'badge-green' : 'badge-yellow'}>{t.status}</span></td>
+                        <td className="px-4 py-3.5">
+                          <div className="flex gap-1.5 justify-end">
+                            {t.status === 'withheld' && (
+                              <button onClick={() => openRemitModal(t)}
+                                className="text-xs px-2 py-1 rounded-lg bg-brand-500/15 text-brand-400 hover:bg-brand-500/25 transition-colors whitespace-nowrap">
+                                Remit
+                              </button>
+                            )}
+                            {t.has_certificate && (
+                              <button onClick={() => downloadCertificate(t.id)}
+                                title="Download WHT Certificate"
+                                className="p-1.5 text-slate-500 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-colors">
+                                <Download size={13} />
+                              </button>
+                            )}
+                          </div>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── VAT ITC Tab ─────────────────────────────────────────────────────── */}
+      {tab === 'vat_itc' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-white font-semibold">VAT Input Tax Credit (ITC) Ledger</h2>
+              <p className="text-slate-500 text-xs mt-0.5">Track output VAT collected and input VAT paid for accurate net VAT computation</p>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setShowVatSyncModal(true)} className="btn-ghost flex items-center gap-1.5 text-sm">
+                <RefreshCw size={14} /> Sync from Period
+              </button>
+            </div>
+          </div>
+
+          {/* Direction filter */}
+          <div className="flex gap-1 p-1 bg-surface-800 rounded-xl w-fit">
+            {(['all', 'output', 'input'] as const).map((f) => (
+              <button key={f} onClick={() => setVatTxFilter(f)}
+                className={`px-3 py-1.5 rounded-lg text-sm transition-colors capitalize ${vatTxFilter === f ? 'bg-brand-500 text-white font-semibold' : 'text-slate-400 hover:text-white'}`}>
+                {f === 'all' ? 'All' : f === 'output' ? 'Output VAT' : 'Input VAT (ITC)'}
+              </button>
+            ))}
+          </div>
+
+          <div className="card overflow-hidden">
+            {loadingVatTx ? (
+              <div className="p-8 text-center text-slate-500">Loading…</div>
+            ) : vatTransactions.filter((v) => vatTxFilter === 'all' || v.direction === vatTxFilter).length === 0 ? (
+              <div className="p-12 text-center">
+                <Receipt size={36} className="mx-auto text-slate-600 mb-3" />
+                <p className="text-slate-400 font-medium">No VAT transactions</p>
+                <p className="text-slate-500 text-xs mt-1">Use "Sync from Period" to pull VAT data from your sales invoices and bills</p>
+                <button onClick={() => setShowVatSyncModal(true)} className="btn-primary mt-4 inline-flex items-center gap-2 text-sm"><RefreshCw size={14} /> Sync Now</button>
+              </div>
+            ) : (
+              <>
+                {/* Summary row */}
+                {(() => {
+                  const filtered = vatTransactions.filter((v) => vatTxFilter === 'all' || v.direction === vatTxFilter)
+                  const output = filtered.filter((v) => v.direction === 'output').reduce((s, v) => s + parseFloat(v.vat_amount), 0)
+                  const input = filtered.filter((v) => v.direction === 'input').reduce((s, v) => s + parseFloat(v.vat_amount), 0)
+                  return (
+                    <div className="grid grid-cols-3 gap-4 p-4 border-b border-surface-700 bg-surface-800/50">
+                      <div><p className="text-xs text-slate-500">Output VAT</p><p className="font-mono text-white font-semibold">{formatCurrency(String(output))}</p></div>
+                      <div><p className="text-xs text-slate-500">Input VAT (ITC)</p><p className="font-mono text-emerald-400 font-semibold">{formatCurrency(String(input))}</p></div>
+                      <div><p className="text-xs text-slate-500">Net VAT Payable</p><p className={`font-mono font-semibold ${output - input >= 0 ? 'text-red-400' : 'text-emerald-400'}`}>{formatCurrency(String(Math.abs(output - input)))}</p></div>
+                    </div>
+                  )
+                })()}
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-surface-700">
+                      {['Direction', 'Counterparty', 'Period', 'Net Amount', 'VAT Rate', 'VAT Amount', 'Claimable', 'Ref'].map((h) => (
+                        <th key={h} className="px-4 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-surface-700">
+                    {vatTransactions.filter((v) => vatTxFilter === 'all' || v.direction === vatTxFilter).map((v) => (
+                      <tr key={v.id} className="table-row">
+                        <td className="px-4 py-3.5">
+                          <span className={v.direction === 'output' ? 'badge-orange' : 'badge-blue'}>{v.direction}</span>
+                        </td>
+                        <td className="px-4 py-3.5 text-white">{v.counterparty_name || '—'}</td>
+                        <td className="px-4 py-3.5 text-slate-400 text-xs">{formatDate(v.period_start)} – {formatDate(v.period_end)}</td>
+                        <td className="px-4 py-3.5 font-mono text-white">{formatCurrency(v.net_amount)}</td>
+                        <td className="px-4 py-3.5"><span className="badge-slate">{v.vat_rate}%</span></td>
+                        <td className="px-4 py-3.5 font-mono">
+                          <span className={v.direction === 'output' ? 'text-amber-400' : 'text-emerald-400'}>{formatCurrency(v.vat_amount)}</span>
+                        </td>
+                        <td className="px-4 py-3.5">
+                          {v.is_claimable ? <CheckCircle size={14} className="text-emerald-400" /> : <X size={14} className="text-slate-500" />}
+                        </td>
+                        <td className="px-4 py-3.5 text-slate-500 text-xs font-mono">{v.source_ref || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* VAT Sync Modal */}
+      {showVatSyncModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-surface-800 border border-surface-600 rounded-2xl p-6 w-full max-w-md shadow-2xl">
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-lg font-bold text-white">Sync VAT Transactions</h2>
+              <button onClick={() => setShowVatSyncModal(false)} className="text-slate-400 hover:text-white"><X size={18} /></button>
+            </div>
+            <p className="text-slate-500 text-xs mb-4">Pulls output VAT from sales invoices and input VAT from bills for the chosen period. Already-synced records are skipped.</p>
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Period Start *</label>
+                <DateInput value={vatSyncPeriod.period_start} onChange={(v) => setVatSyncPeriod((p) => ({ ...p, period_start: v }))} />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Period End *</label>
+                <DateInput value={vatSyncPeriod.period_end} onChange={(v) => setVatSyncPeriod((p) => ({ ...p, period_end: v }))} />
+              </div>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button onClick={() => setShowVatSyncModal(false)} className="btn-ghost flex-1">Cancel</button>
+              <button onClick={handleSyncVat} disabled={syncing} className="btn-primary flex-1 disabled:opacity-50 flex items-center justify-center gap-2">
+                {syncing ? <><RefreshCw size={14} className="animate-spin" /> Syncing…</> : <><RefreshCw size={14} /> Sync</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Compliance Calendar Tab ──────────────────────────────────────────── */}
+      {tab === 'compliance' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-white font-semibold">Tax Compliance Calendar</h2>
+              <p className="text-slate-500 text-xs mt-0.5">Track filing and payment obligations. VAT and PAYE obligations are auto-generated monthly by the system.</p>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={async () => { try { await taxApi.generateObligationsNow(); toast.success('Obligations generated'); loadObligations() } catch { toast.error('Failed') } }}
+                className="btn-ghost flex items-center gap-1.5 text-sm"><RefreshCw size={14} /> Generate Now</button>
+              <button onClick={openCreateObligation} className="btn-primary flex items-center gap-2"><Plus size={15} /> Add Obligation</button>
+            </div>
+          </div>
+
+          {/* Status summary tiles */}
+          {obligations.length > 0 && (() => {
+            const overdue = obligations.filter((o) => o.status === 'overdue').length
+            const pending = obligations.filter((o) => o.status === 'pending').length
+            const filed = obligations.filter((o) => o.status === 'filed').length
+            const paid = obligations.filter((o) => o.status === 'paid').length
+            return (
+              <div className="grid grid-cols-4 gap-3">
+                {[
+                  { label: 'Overdue', count: overdue, cls: 'text-red-400 bg-red-500/10 border-red-500/20' },
+                  { label: 'Pending', count: pending, cls: 'text-amber-400 bg-amber-500/10 border-amber-500/20' },
+                  { label: 'Filed', count: filed, cls: 'text-blue-400 bg-blue-500/10 border-blue-500/20' },
+                  { label: 'Paid', count: paid, cls: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' },
+                ].map(({ label, count, cls }) => (
+                  <div key={label} className={`p-4 rounded-xl border ${cls} text-center`}>
+                    <p className="text-2xl font-bold">{count}</p>
+                    <p className="text-xs mt-0.5 opacity-80">{label}</p>
+                  </div>
+                ))}
+              </div>
+            )
+          })()}
+
+          <div className="card overflow-hidden">
+            {loadingObligations ? (
+              <div className="p-8 text-center text-slate-500">Loading…</div>
+            ) : obligations.length === 0 ? (
+              <div className="p-12 text-center">
+                <Clock size={36} className="mx-auto text-slate-600 mb-3" />
+                <p className="text-slate-400 font-medium">No tax obligations tracked</p>
+                <p className="text-slate-500 text-xs mt-1">Click "Generate Now" to auto-create VAT and PAYE obligations, or add manually</p>
+              </div>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-surface-700">
+                    {['Obligation', 'Period', 'Due Date', 'Amount Due', 'Status', 'Days', ''].map((h) => (
+                      <th key={h} className="px-5 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-surface-700">
+                  {obligations.map((ob) => (
+                    <tr key={ob.id} className={`table-row ${ob.status === 'overdue' ? 'bg-red-500/5' : ''}`}>
+                      <td className="px-5 py-3.5">
+                        <p className="text-white font-medium">{ob.label}</p>
+                        <p className="text-xs text-slate-500 capitalize">{ob.obligation_type}</p>
+                      </td>
+                      <td className="px-5 py-3.5 text-slate-400 text-xs">
+                        {ob.period_year}{ob.period_month ? `/${String(ob.period_month).padStart(2, '0')}` : ''}
+                      </td>
+                      <td className="px-5 py-3.5 text-slate-300">{formatDate(ob.due_date)}</td>
+                      <td className="px-5 py-3.5 font-mono text-white">{ob.amount_due !== '0.0000' ? formatCurrency(ob.amount_due) : '—'}</td>
+                      <td className="px-5 py-3.5">
+                        <span className={
+                          ob.status === 'paid' ? 'badge-green' :
+                          ob.status === 'filed' ? 'badge-blue' :
+                          ob.status === 'overdue' ? 'badge-red' : 'badge-yellow'
+                        }>{ob.status}</span>
+                      </td>
+                      <td className="px-5 py-3.5 text-xs">
+                        <span className={ob.days_until_due < 0 ? 'text-red-400' : ob.days_until_due <= 7 ? 'text-amber-400' : 'text-slate-400'}>
+                          {ob.days_until_due < 0 ? `${Math.abs(ob.days_until_due)}d overdue` : ob.days_until_due === 0 ? 'Today' : `${ob.days_until_due}d left`}
+                        </span>
+                      </td>
+                      <td className="px-5 py-3.5">
+                        <div className="flex gap-1.5 justify-end">
+                          {ob.status === 'pending' || ob.status === 'overdue' ? (
+                            <>
+                              <button onClick={() => openObligationAction(ob.id, 'filed')}
+                                className="text-xs px-2 py-1 rounded bg-blue-500/15 text-blue-400 hover:bg-blue-500/25 transition-colors">File</button>
+                              <button onClick={() => openObligationAction(ob.id, 'paid')}
+                                className="text-xs px-2 py-1 rounded bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 transition-colors">Pay</button>
+                            </>
+                          ) : ob.status === 'filed' ? (
+                            <button onClick={() => openObligationAction(ob.id, 'paid')}
+                              className="text-xs px-2 py-1 rounded bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 transition-colors">Pay</button>
+                          ) : null}
+                          <button onClick={async () => { if (!confirm('Delete obligation?')) return; try { await taxApi.deleteObligation(ob.id); toast.success('Deleted'); loadObligations() } catch { toast.error('Failed') } }}
+                            className="p-1.5 text-slate-600 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"><Trash2 size={13} /></button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Capital Allowances Tab ────────────────────────────────────────────── */}
+      {tab === 'capital' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-white font-semibold">Capital Allowances Schedule</h2>
+              <p className="text-slate-500 text-xs mt-0.5">CITA Schedule 2 — track qualifying assets, initial allowances and annual wear-and-tear allowances</p>
+            </div>
+            <button onClick={openCreateCA} className="btn-primary flex items-center gap-2"><Plus size={15} /> Add Asset</button>
+          </div>
+
+          <div className="card overflow-hidden">
+            {loadingCA ? (
+              <div className="p-8 text-center text-slate-500">Loading…</div>
+            ) : capitalAllowances.length === 0 ? (
+              <div className="p-12 text-center">
+                <FileText size={36} className="mx-auto text-slate-600 mb-3" />
+                <p className="text-slate-400 font-medium">No capital allowance claims</p>
+                <p className="text-slate-500 text-xs mt-1">Add qualifying assets to compute initial and annual allowances per CITA Schedule 2</p>
+                <button onClick={openCreateCA} className="btn-primary mt-4 inline-flex items-center gap-2 text-sm"><Plus size={14} /> Add First Asset</button>
+              </div>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-surface-700">
+                    {['Asset', 'Class', 'Year', 'Cost', 'IA', 'AA', 'Total Allow.', 'Closing TWDV', ''].map((h) => (
+                      <th key={h} className="px-4 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-surface-700">
+                  {capitalAllowances.map((ca) => (
+                    <tr key={ca.id} className="table-row">
+                      <td className="px-4 py-3.5">
+                        <p className="text-white font-medium">{ca.asset_name}</p>
+                        {ca.is_acquisition_year && <span className="text-xs text-brand-400">New acquisition</span>}
+                      </td>
+                      <td className="px-4 py-3.5 text-slate-400 text-xs">{ca.asset_class_display}</td>
+                      <td className="px-4 py-3.5 text-slate-300">{ca.tax_year}</td>
+                      <td className="px-4 py-3.5 font-mono text-white">{formatCurrency(ca.cost)}</td>
+                      <td className="px-4 py-3.5 font-mono text-amber-400">{formatCurrency(ca.initial_allowance)}<span className="text-xs text-slate-500 ml-1">({ca.initial_allowance_rate}%)</span></td>
+                      <td className="px-4 py-3.5 font-mono text-blue-400">{formatCurrency(ca.annual_allowance)}<span className="text-xs text-slate-500 ml-1">({ca.annual_allowance_rate}%)</span></td>
+                      <td className="px-4 py-3.5 font-mono text-brand-400 font-semibold">{formatCurrency(ca.total_allowance)}</td>
+                      <td className="px-4 py-3.5 font-mono text-slate-300">{formatCurrency(ca.closing_tax_written_down_value)}</td>
+                      <td className="px-4 py-3.5">
+                        <div className="flex gap-1.5 justify-end">
+                          <button onClick={() => openEditCA(ca)} className="p-1.5 text-slate-500 hover:text-white hover:bg-surface-600 rounded-lg transition-colors"><Edit2 size={13} /></button>
+                          <button onClick={async () => { if (!confirm(`Delete "${ca.asset_name}"?`)) return; try { await taxApi.deleteCapitalAllowance(ca.id); toast.success('Deleted'); loadCapitalAllowances() } catch { toast.error('Failed') } }}
+                            className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"><Trash2 size={13} /></button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          {capitalAllowances.length > 0 && (
+            <div className="card p-4 bg-brand-500/5 border border-brand-500/20">
+              <p className="text-xs font-semibold text-brand-400 mb-2">Total Capital Allowances This Period</p>
+              <p className="text-2xl font-bold text-white">
+                {formatCurrency(String(capitalAllowances.reduce((s, ca) => s + parseFloat(ca.total_allowance), 0)))}
+              </p>
+              <p className="text-xs text-slate-500 mt-1">Deductible from assessable profit before CIT computation</p>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── Deferred Tax Tab ─────────────────────────────────────────────────── */}
+      {tab === 'deferred' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-white font-semibold">Deferred Tax (IAS 12)</h2>
+              <p className="text-slate-500 text-xs mt-0.5">Track deferred tax assets (DTA) and liabilities (DTL) arising from timing differences</p>
+            </div>
+            <button onClick={openCreateDT} className="btn-primary flex items-center gap-2"><Plus size={15} /> Add Item</button>
+          </div>
+
+          {deferredTax.length > 0 && (() => {
+            const dta = deferredTax.filter((d) => d.deferred_type === 'dta' && d.is_recognised).reduce((s, d) => s + parseFloat(d.deferred_tax_amount), 0)
+            const dtl = deferredTax.filter((d) => d.deferred_type === 'dtl' && d.is_recognised).reduce((s, d) => s + parseFloat(d.deferred_tax_amount), 0)
+            return (
+              <div className="grid grid-cols-3 gap-3">
+                <div className="card p-4 border-blue-500/20 bg-blue-500/5">
+                  <p className="text-xs text-blue-400 font-semibold">Deferred Tax Assets (DTA)</p>
+                  <p className="text-xl font-bold text-white mt-1">{formatCurrency(String(dta))}</p>
+                </div>
+                <div className="card p-4 border-red-500/20 bg-red-500/5">
+                  <p className="text-xs text-red-400 font-semibold">Deferred Tax Liabilities (DTL)</p>
+                  <p className="text-xl font-bold text-white mt-1">{formatCurrency(String(dtl))}</p>
+                </div>
+                <div className={`card p-4 ${dta > dtl ? 'border-emerald-500/20 bg-emerald-500/5' : 'border-amber-500/20 bg-amber-500/5'}`}>
+                  <p className={`text-xs font-semibold ${dta > dtl ? 'text-emerald-400' : 'text-amber-400'}`}>Net Position</p>
+                  <p className="text-xl font-bold text-white mt-1">{formatCurrency(String(Math.abs(dta - dtl)))}</p>
+                  <p className="text-xs text-slate-500">{dta >= dtl ? 'Net DTA' : 'Net DTL'}</p>
+                </div>
+              </div>
+            )
+          })()}
+
+          <div className="card overflow-hidden">
+            {loadingDT ? (
+              <div className="p-8 text-center text-slate-500">Loading…</div>
+            ) : deferredTax.length === 0 ? (
+              <div className="p-12 text-center">
+                <TrendingDown size={36} className="mx-auto text-slate-600 mb-3" />
+                <p className="text-slate-400 font-medium">No deferred tax items</p>
+                <p className="text-slate-500 text-xs mt-1">Record timing differences between accounting profit and taxable profit (IAS 12)</p>
+                <button onClick={openCreateDT} className="btn-primary mt-4 inline-flex items-center gap-2 text-sm"><Plus size={14} /> Add First Item</button>
+              </div>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-surface-700">
+                    {['Description', 'Category', 'Year', 'Timing Diff.', 'Tax Rate', 'Deferred Tax', 'Type', 'Recognised', ''].map((h) => (
+                      <th key={h} className="px-4 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-surface-700">
+                  {deferredTax.map((dt) => (
+                    <tr key={dt.id} className="table-row">
+                      <td className="px-4 py-3.5 text-white font-medium">{dt.description}</td>
+                      <td className="px-4 py-3.5 text-slate-400 text-xs">{dt.category_display}</td>
+                      <td className="px-4 py-3.5 text-slate-300">{dt.tax_year}</td>
+                      <td className="px-4 py-3.5 font-mono">
+                        <span className={parseFloat(dt.timing_difference) >= 0 ? 'text-emerald-400' : 'text-red-400'}>
+                          {formatCurrency(dt.timing_difference)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3.5"><span className="badge-orange">{dt.tax_rate}%</span></td>
+                      <td className="px-4 py-3.5 font-mono font-semibold">
+                        <span className={dt.deferred_type === 'dta' ? 'text-blue-400' : 'text-red-400'}>
+                          {formatCurrency(dt.deferred_tax_amount)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <span className={dt.deferred_type === 'dta' ? 'badge-blue' : 'badge-red'}>{dt.deferred_type_display}</span>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        {dt.is_recognised
+                          ? <CheckCircle size={14} className="text-emerald-400" />
+                          : <X size={14} className="text-slate-500" />}
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <div className="flex gap-1.5 justify-end">
+                          <button onClick={() => openEditDT(dt)} className="p-1.5 text-slate-500 hover:text-white hover:bg-surface-600 rounded-lg transition-colors"><Edit2 size={13} /></button>
+                          <button onClick={async () => { if (!confirm('Delete this item?')) return; try { await taxApi.deleteDeferredTax(dt.id); toast.success('Deleted'); loadDeferredTax() } catch { toast.error('Failed') } }}
+                            className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"><Trash2 size={13} /></button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── VAT ITC Tab (inside WHT section) — actually a separate tab ────────── */}
+      {/* Note: VAT ITC is exposed via a sub-section in the vat tab for now */}
+
+      {/* ── Transfer Pricing Tab ─────────────────────────────────────────────── */}
+      {tab === 'tp' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-white font-semibold">Transfer Pricing Register</h2>
+              <p className="text-slate-500 text-xs mt-0.5">FIRS TP Regulations 2018 — document related-party transactions. Mandatory disclosure above ₦300M aggregate value.</p>
+            </div>
+            <button onClick={openCreateTP} className="btn-primary flex items-center gap-2"><Plus size={15} /> Add Transaction</button>
+          </div>
+
+          {tpTransactions.some((t) => t.exceeds_threshold) && (
+            <div className="flex gap-3 p-4 rounded-xl bg-red-500/10 border border-red-500/30">
+              <AlertCircle size={16} className="text-red-400 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-semibold text-red-300">TP Disclosure Required</p>
+                <p className="text-xs text-red-400/80 mt-0.5">One or more transactions exceed ₦300M — FIRS Transfer Pricing disclosure (TP Form) is mandatory. Ensure documentation is completed and filed.</p>
+              </div>
+            </div>
+          )}
+
+          <div className="card overflow-hidden">
+            {loadingTP ? (
+              <div className="p-8 text-center text-slate-500">Loading…</div>
+            ) : tpTransactions.length === 0 ? (
+              <div className="p-12 text-center">
+                <Globe size={36} className="mx-auto text-slate-600 mb-3" />
+                <p className="text-slate-400 font-medium">No related-party transactions</p>
+                <p className="text-slate-500 text-xs mt-1">Record transactions with related parties (subsidiaries, affiliates, parent companies) for TP compliance</p>
+                <button onClick={openCreateTP} className="btn-primary mt-4 inline-flex items-center gap-2 text-sm"><Plus size={14} /> Add Transaction</button>
+              </div>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-surface-700">
+                    {['Related Party', 'Type', 'Year', 'Amount', 'TP Method', 'Documentation', 'Threshold', ''].map((h) => (
+                      <th key={h} className="px-4 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-surface-700">
+                  {tpTransactions.map((tp) => (
+                    <tr key={tp.id} className={`table-row ${tp.exceeds_threshold ? 'bg-red-500/5' : ''}`}>
+                      <td className="px-4 py-3.5">
+                        <p className="text-white font-medium">{tp.related_party_name}</p>
+                        <p className="text-xs text-slate-500">{tp.relationship} · {tp.country}</p>
+                      </td>
+                      <td className="px-4 py-3.5 text-slate-400 text-xs">{tp.transaction_type_display}</td>
+                      <td className="px-4 py-3.5 text-slate-300">{tp.tax_year}</td>
+                      <td className="px-4 py-3.5 font-mono text-white">{formatCurrency(tp.amount)} <span className="text-xs text-slate-500">{tp.currency}</span></td>
+                      <td className="px-4 py-3.5 text-xs">
+                        <span className={tp.tp_method === 'none' ? 'badge-red' : 'badge-blue'}>{tp.tp_method.toUpperCase()}</span>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <span className={
+                          tp.documentation_status === 'filed' ? 'badge-green' :
+                          tp.documentation_status === 'completed' ? 'badge-blue' :
+                          tp.documentation_status === 'in_progress' ? 'badge-yellow' : 'badge-red'
+                        } style={{ textTransform: 'capitalize' }}>{tp.documentation_status.replace('_', ' ')}</span>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        {tp.exceeds_threshold
+                          ? <span className="badge-red flex items-center gap-1"><AlertCircle size={10} /> Exceeds ₦300M</span>
+                          : <span className="text-slate-500 text-xs">Below threshold</span>}
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <div className="flex gap-1.5 justify-end">
+                          <button onClick={() => openEditTP(tp)} className="p-1.5 text-slate-500 hover:text-white hover:bg-surface-600 rounded-lg transition-colors"><Edit2 size={13} /></button>
+                          <button onClick={async () => { if (!confirm('Delete transaction?')) return; try { await taxApi.deleteTransferPricing(tp.id); toast.success('Deleted'); loadTransferPricing() } catch { toast.error('Failed') } }}
+                            className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"><Trash2 size={13} /></button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
         </div>
       )}
 
@@ -1121,6 +1923,331 @@ export default function TaxPage() {
           </div>
         </div>
       )}
+      {/* ── WHT Remit Modal ─────────────────────────────────────────────────── */}
+      {showRemitModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-surface-800 border border-surface-600 rounded-2xl p-6 w-full max-w-md shadow-2xl">
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-lg font-bold text-white">Remit WHT to FIRS</h2>
+              <button onClick={() => setShowRemitModal(false)} className="text-slate-400 hover:text-white"><X size={18} /></button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Remittance Reference *</label>
+                <input className="input" placeholder="e.g. FIRS/WHT/2024/001234" value={remitForm.reference} onChange={(e) => setRemitForm({ ...remitForm, reference: e.target.value })} />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Notes</label>
+                <textarea className="input resize-none" rows={2} placeholder="Optional" value={remitForm.notes} onChange={(e) => setRemitForm({ ...remitForm, notes: e.target.value })} />
+              </div>
+              <p className="text-xs text-slate-500">A WHT Certificate will be auto-generated and available for download after remittance.</p>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button onClick={() => setShowRemitModal(false)} className="btn-ghost flex-1">Cancel</button>
+              <button onClick={handleRemit} disabled={savingRemit || !remitForm.reference.trim()} className="btn-primary flex-1 disabled:opacity-50">
+                {savingRemit ? 'Remitting…' : 'Mark as Remitted'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Compliance Obligation Modal ──────────────────────────────────────── */}
+      {showObligationModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-surface-800 border border-surface-600 rounded-2xl p-6 w-full max-w-lg shadow-2xl overflow-y-auto max-h-[90vh]">
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-lg font-bold text-white">{editingObligationId ? 'Edit Obligation' : 'Add Tax Obligation'}</h2>
+              <button onClick={() => setShowObligationModal(false)} className="text-slate-400 hover:text-white"><X size={18} /></button>
+            </div>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Type *</label>
+                  <select className="input" value={obligationForm.obligation_type} onChange={(e) => setObligationForm({ ...obligationForm, obligation_type: e.target.value })}>
+                    {[['vat','VAT Return'],['paye','PAYE Remittance'],['cit','Companies Income Tax'],['pit','Personal Income Tax'],['wht','WHT Remittance'],['pension','Pension Contribution'],['custom','Custom']].map(([v,l]) => <option key={v} value={v}>{l}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Label *</label>
+                  <input className="input" placeholder="e.g. VAT Return – May 2024" value={obligationForm.label} onChange={(e) => setObligationForm({ ...obligationForm, label: e.target.value })} />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Period Year</label>
+                  <input type="number" className="input" placeholder="2024" value={obligationForm.period_year} onChange={(e) => setObligationForm({ ...obligationForm, period_year: e.target.value })} />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Period Month (1-12)</label>
+                  <input type="number" min="1" max="12" className="input" placeholder="Leave blank for annual" value={obligationForm.period_month} onChange={(e) => setObligationForm({ ...obligationForm, period_month: e.target.value })} />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Due Date *</label>
+                  <DateInput value={obligationForm.due_date} onChange={(v) => setObligationForm({ ...obligationForm, due_date: v })} />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Amount Due</label>
+                  <input type="number" min="0" className="input" placeholder="0" value={obligationForm.amount_due} onChange={(e) => setObligationForm({ ...obligationForm, amount_due: e.target.value })} />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Notes</label>
+                <textarea className="input resize-none" rows={2} value={obligationForm.notes} onChange={(e) => setObligationForm({ ...obligationForm, notes: e.target.value })} />
+              </div>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button onClick={() => setShowObligationModal(false)} className="btn-ghost flex-1">Cancel</button>
+              <button onClick={handleSaveObligation} disabled={savingObligation} className="btn-primary flex-1 disabled:opacity-50">
+                {savingObligation ? 'Saving…' : editingObligationId ? 'Save Changes' : 'Add Obligation'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Obligation Action Modal (File / Pay) ─────────────────────────────── */}
+      {showObligationActionModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-surface-800 border border-surface-600 rounded-2xl p-6 w-full max-w-md shadow-2xl">
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-lg font-bold text-white">{obligationAction === 'filed' ? 'Mark as Filed' : 'Mark as Paid'}</h2>
+              <button onClick={() => setShowObligationActionModal(false)} className="text-slate-400 hover:text-white"><X size={18} /></button>
+            </div>
+            <div className="space-y-4">
+              {obligationAction === 'filed' ? (
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Filed Date *</label>
+                  <DateInput value={actionForm.filed_date} onChange={(v) => setActionForm({ ...actionForm, filed_date: v })} />
+                </div>
+              ) : (
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Payment Reference *</label>
+                  <input className="input" placeholder="e.g. Bank teller / FIRS receipt number" value={actionForm.payment_reference} onChange={(e) => setActionForm({ ...actionForm, payment_reference: e.target.value })} />
+                </div>
+              )}
+              <div>
+                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Notes</label>
+                <textarea className="input resize-none" rows={2} value={actionForm.notes} onChange={(e) => setActionForm({ ...actionForm, notes: e.target.value })} />
+              </div>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button onClick={() => setShowObligationActionModal(false)} className="btn-ghost flex-1">Cancel</button>
+              <button onClick={handleObligationAction} disabled={savingAction} className="btn-primary flex-1 disabled:opacity-50">
+                {savingAction ? 'Saving…' : obligationAction === 'filed' ? 'Mark Filed' : 'Mark Paid'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Capital Allowance Modal ──────────────────────────────────────────── */}
+      {showCAModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-surface-800 border border-surface-600 rounded-2xl p-6 w-full max-w-lg shadow-2xl overflow-y-auto max-h-[90vh]">
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-lg font-bold text-white">{editingCAId ? 'Edit Asset' : 'Add Capital Asset'}</h2>
+              <button onClick={() => setShowCAModal(false)} className="text-slate-400 hover:text-white"><X size={18} /></button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Asset Name *</label>
+                <input className="input" placeholder="e.g. Toyota Hilux, Office Server" value={caForm.asset_name} onChange={(e) => setCAForm({ ...caForm, asset_name: e.target.value })} />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Asset Class *</label>
+                  <select className="input" value={caForm.asset_class} onChange={(e) => setCAForm({ ...caForm, asset_class: e.target.value })}>
+                    {[['industrial_building','Industrial Building'],['non_industrial_building','Non-Industrial Building'],['plant_machinery','Plant & Machinery'],['motor_vehicle','Motor Vehicle'],['furniture','Furniture & Fittings'],['computer','Computer & IT'],['other','Other']].map(([v,l]) => <option key={v} value={v}>{l}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Tax Year *</label>
+                  <input type="number" className="input" placeholder="2024" value={caForm.tax_year} onChange={(e) => setCAForm({ ...caForm, tax_year: e.target.value })} />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Cost (₦) *</label>
+                  <input type="number" min="0" className="input" placeholder="0" value={caForm.cost} onChange={(e) => setCAForm({ ...caForm, cost: e.target.value })} />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Opening TWDV (₦)</label>
+                  <input type="number" min="0" className="input" placeholder="0 for new assets" value={caForm.opening_tax_written_down_value} onChange={(e) => setCAForm({ ...caForm, opening_tax_written_down_value: e.target.value })} />
+                </div>
+              </div>
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input type="checkbox" className="w-4 h-4 accent-orange-500" checked={caForm.is_acquisition_year} onChange={(e) => setCAForm({ ...caForm, is_acquisition_year: e.target.checked })} />
+                <span className="text-sm text-slate-300">This is the acquisition year (initial allowance applies)</span>
+              </label>
+              <div>
+                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Notes</label>
+                <textarea className="input resize-none" rows={2} value={caForm.notes} onChange={(e) => setCAForm({ ...caForm, notes: e.target.value })} />
+              </div>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button onClick={() => setShowCAModal(false)} className="btn-ghost flex-1">Cancel</button>
+              <button onClick={handleSaveCA} disabled={savingCA} className="btn-primary flex-1 disabled:opacity-50">
+                {savingCA ? 'Saving…' : editingCAId ? 'Save Changes' : 'Add Asset'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Deferred Tax Modal ───────────────────────────────────────────────── */}
+      {showDTModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-surface-800 border border-surface-600 rounded-2xl p-6 w-full max-w-lg shadow-2xl overflow-y-auto max-h-[90vh]">
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-lg font-bold text-white">{editingDTId ? 'Edit Deferred Tax Item' : 'Add Deferred Tax Item'}</h2>
+              <button onClick={() => setShowDTModal(false)} className="text-slate-400 hover:text-white"><X size={18} /></button>
+            </div>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Category *</label>
+                  <select className="input" value={dtForm.category} onChange={(e) => setDTForm({ ...dtForm, category: e.target.value })}>
+                    {[['depreciation','Accelerated Depreciation'],['provision','Provision / Accrual'],['revenue','Revenue Recognition Timing'],['expense','Disallowed / Deferred Expense'],['other','Other']].map(([v,l]) => <option key={v} value={v}>{l}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Tax Year *</label>
+                  <input type="number" className="input" value={dtForm.tax_year} onChange={(e) => setDTForm({ ...dtForm, tax_year: e.target.value })} />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Description *</label>
+                <input className="input" placeholder="e.g. Accelerated depreciation on generator" value={dtForm.description} onChange={(e) => setDTForm({ ...dtForm, description: e.target.value })} />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Timing Difference (₦) *</label>
+                  <input type="number" className="input" placeholder="Positive = DTA, Negative = DTL" value={dtForm.timing_difference} onChange={(e) => setDTForm({ ...dtForm, timing_difference: e.target.value })} />
+                  <p className="text-xs text-slate-500 mt-1">Positive → DTA, Negative → DTL (auto-determined)</p>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Tax Rate (%) *</label>
+                  <input type="number" min="0" max="100" className="input" placeholder="30" value={dtForm.tax_rate} onChange={(e) => setDTForm({ ...dtForm, tax_rate: e.target.value })} />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Expected Reversal Year</label>
+                <input type="number" className="input" placeholder="Leave blank if unknown" value={dtForm.reversal_year} onChange={(e) => setDTForm({ ...dtForm, reversal_year: e.target.value })} />
+              </div>
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input type="checkbox" className="w-4 h-4 accent-orange-500" checked={dtForm.is_recognised} onChange={(e) => setDTForm({ ...dtForm, is_recognised: e.target.checked })} />
+                <span className="text-sm text-slate-300">Recognised in financial statements (IAS 12 criteria met)</span>
+              </label>
+              <div>
+                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Notes</label>
+                <textarea className="input resize-none" rows={2} value={dtForm.notes} onChange={(e) => setDTForm({ ...dtForm, notes: e.target.value })} />
+              </div>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button onClick={() => setShowDTModal(false)} className="btn-ghost flex-1">Cancel</button>
+              <button onClick={handleSaveDT} disabled={savingDT} className="btn-primary flex-1 disabled:opacity-50">
+                {savingDT ? 'Saving…' : editingDTId ? 'Save Changes' : 'Add Item'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Transfer Pricing Modal ───────────────────────────────────────────── */}
+      {showTPModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-surface-800 border border-surface-600 rounded-2xl p-6 w-full max-w-xl shadow-2xl overflow-y-auto max-h-[90vh]">
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-lg font-bold text-white">{editingTPId ? 'Edit TP Transaction' : 'Add Related-Party Transaction'}</h2>
+              <button onClick={() => setShowTPModal(false)} className="text-slate-400 hover:text-white"><X size={18} /></button>
+            </div>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Related Party Name *</label>
+                  <input className="input" placeholder="e.g. Acme Holdings Ltd" value={tpForm.related_party_name} onChange={(e) => setTPForm({ ...tpForm, related_party_name: e.target.value })} />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Relationship</label>
+                  <input className="input" placeholder="e.g. Parent company, Subsidiary" value={tpForm.relationship} onChange={(e) => setTPForm({ ...tpForm, relationship: e.target.value })} />
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Country (ISO)</label>
+                  <input className="input" maxLength={2} placeholder="NG" value={tpForm.country} onChange={(e) => setTPForm({ ...tpForm, country: e.target.value.toUpperCase() })} />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Tax Year *</label>
+                  <input type="number" className="input" value={tpForm.tax_year} onChange={(e) => setTPForm({ ...tpForm, tax_year: e.target.value })} />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Currency</label>
+                  <input className="input" maxLength={3} placeholder="NGN" value={tpForm.currency} onChange={(e) => setTPForm({ ...tpForm, currency: e.target.value.toUpperCase() })} />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Transaction Type *</label>
+                  <select className="input" value={tpForm.transaction_type} onChange={(e) => setTPForm({ ...tpForm, transaction_type: e.target.value })}>
+                    {[['sale_goods','Sale of Goods'],['purchase_goods','Purchase of Goods'],['services_rendered','Services Rendered'],['services_received','Services Received'],['loan_advanced','Loan Advanced'],['loan_received','Loan Received'],['royalties_paid','Royalties Paid'],['royalties_received','Royalties Received'],['mgmt_fee_paid','Mgmt Fee Paid'],['mgmt_fee_received','Mgmt Fee Received'],['dividend','Dividend'],['other','Other']].map(([v,l]) => <option key={v} value={v}>{l}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Amount *</label>
+                  <input type="number" min="0" className="input" placeholder="0" value={tpForm.amount} onChange={(e) => setTPForm({ ...tpForm, amount: e.target.value })} />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">TP Method</label>
+                  <select className="input" value={tpForm.tp_method} onChange={(e) => setTPForm({ ...tpForm, tp_method: e.target.value })}>
+                    {[['cup','CUP'],['rpm','RPM'],['cpm','CPM'],['tnmm','TNMM'],['psm','PSM'],['none','Not determined']].map(([v,l]) => <option key={v} value={v}>{l}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Arm's Length Price</label>
+                  <input type="number" min="0" className="input" placeholder="0" value={tpForm.arm_length_price} onChange={(e) => setTPForm({ ...tpForm, arm_length_price: e.target.value })} />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Documentation Status</label>
+                  <select className="input" value={tpForm.documentation_status} onChange={(e) => setTPForm({ ...tpForm, documentation_status: e.target.value })}>
+                    {[['not_prepared','Not Prepared'],['in_progress','In Progress'],['completed','Completed'],['filed','Filed with FIRS']].map(([v,l]) => <option key={v} value={v}>{l}</option>)}
+                  </select>
+                </div>
+                <div className="flex items-end pb-2">
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input type="checkbox" className="w-4 h-4 accent-orange-500" checked={tpForm.adjustment_required} onChange={(e) => setTPForm({ ...tpForm, adjustment_required: e.target.checked })} />
+                    <span className="text-sm text-slate-300">Price adjustment required</span>
+                  </label>
+                </div>
+              </div>
+              {tpForm.adjustment_required && (
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Adjustment Amount</label>
+                  <input type="number" min="0" className="input" value={tpForm.adjustment_amount} onChange={(e) => setTPForm({ ...tpForm, adjustment_amount: e.target.value })} />
+                </div>
+              )}
+              <div>
+                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Notes</label>
+                <textarea className="input resize-none" rows={2} value={tpForm.notes} onChange={(e) => setTPForm({ ...tpForm, notes: e.target.value })} />
+              </div>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button onClick={() => setShowTPModal(false)} className="btn-ghost flex-1">Cancel</button>
+              <button onClick={handleSaveTP} disabled={savingTP} className="btn-primary flex-1 disabled:opacity-50">
+                {savingTP ? 'Saving…' : editingTPId ? 'Save Changes' : 'Add Transaction'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Filing Guide Tab ─────────────────────────────────────────────────── */}
       {tab === 'filing' && (
         <div className="space-y-6 relative">

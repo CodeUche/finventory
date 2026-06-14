@@ -1,7 +1,13 @@
-from decimal import Decimal
 import calendar
+from datetime import date
+from decimal import Decimal
+
 from django.db import transaction
-from .models import Employee, EmployeePenalty, EmployeeLoan, PayrollRun, PayslipLine, Bonus, Attendance
+
+from .models import (
+    Attendance, Bonus, Employee, EmployeeLoan, EmployeePenalty,
+    EmployeeTaxProfile, PAYERemittance, PayrollRun, PayslipLine,
+)
 
 
 class PayrollService:
@@ -42,27 +48,43 @@ class PayrollService:
         return tax
 
     @classmethod
-    def calculate_employee_paye(cls, employee, extra_gross=Decimal('0')):
+    def calculate_employee_paye(cls, employee, extra_gross=Decimal('0'), tax_profile=None):
         """
         Calculate full payroll figures for one employee.
         extra_gross: bonus + overtime pay added on top of monthly salary.
+        tax_profile: optional EmployeeTaxProfile for individual relief overrides.
         """
         gross = employee.gross_salary + extra_gross
         pension_base = employee.basic_salary + employee.housing_allowance + employee.transport_allowance
         employee_pension = pension_base * cls.PENSION_RATE_EMPLOYEE
-        nhf = employee.basic_salary * cls.NHF_RATE
+
+        # Voluntary pension top-up from tax profile (additional pre-tax deductible)
+        if tax_profile and tax_profile.voluntary_pension:
+            employee_pension += Decimal(str(tax_profile.voluntary_pension))
+
+        # NHF: apply only if enrolled (default True), or opt-out via tax profile
+        nhf_enrolled = (tax_profile.nhf_enrolled if tax_profile else True)
+        nhf = (employee.basic_salary * cls.NHF_RATE) if nhf_enrolled else Decimal('0')
+
         nsitf = gross * cls.NSITF_RATE
+
+        # Life assurance premium deduction (monthly, pre-tax under PITA s.33(5))
+        life_assurance = Decimal(str(tax_profile.life_assurance_premium)) if tax_profile else Decimal('0')
 
         cra_flat_monthly = cls.CRA_FLAT_ANNUAL / 12
         cra_min_component = max(cra_flat_monthly, gross * cls.CRA_MIN_RATE)
         cra = cra_min_component + gross * cls.CRA_RATE
-        taxable_income = max(Decimal('0'), gross - employee_pension - nhf - cra)
+        taxable_income = max(Decimal('0'), gross - employee_pension - nhf - cra - life_assurance)
         annual_paye = cls.calculate_annual_paye(taxable_income * 12)
         monthly_paye = annual_paye / 12
 
-        # Minimum tax rule: PAYE cannot be less than 1% of gross (PITA s.37)
-        minimum_tax = gross * cls.MINIMUM_TAX_RATE
-        monthly_paye = max(monthly_paye, minimum_tax)
+        # Exempt employees (e.g., diplomatic, approved expatriate relief)
+        if tax_profile and tax_profile.paye_exempt:
+            monthly_paye = Decimal('0')
+        else:
+            # Minimum tax rule: PAYE cannot be less than 1% of gross (PITA s.37)
+            minimum_tax = gross * cls.MINIMUM_TAX_RATE
+            monthly_paye = max(monthly_paye, minimum_tax)
 
         employer_pension = pension_base * cls.PENSION_RATE_EMPLOYER
         total_deductions = employee_pension + nhf + monthly_paye
@@ -119,6 +141,14 @@ class PayrollService:
             Employee.objects.filter(organisation=org, is_active=True, termination_date__isnull=True)
         )
         PayslipLine.objects.filter(payroll_run=payroll_run).delete()
+
+        # Pre-load tax profiles keyed by employee_id
+        tax_profiles = {
+            tp.employee_id: tp
+            for tp in EmployeeTaxProfile.objects.filter(
+                organisation=org, employee_id__in=[e.id for e in employees]
+            )
+        }
 
         emp_ids = [e.id for e in employees]
 
@@ -200,8 +230,8 @@ class PayrollService:
 
             extra_gross = bonus_total + overtime_pay
 
-            # PAYE calc on (gross + bonus + overtime)
-            calc = cls.calculate_employee_paye(emp, extra_gross=extra_gross)
+            # PAYE calc on (gross + bonus + overtime), with individual relief overrides
+            calc = cls.calculate_employee_paye(emp, extra_gross=extra_gross, tax_profile=tax_profiles.get(emp.id))
 
             # Attendance deduction (absent days, applied after PAYE)
             absent_days = att_absent_by_emp.get(emp.id, Decimal('0'))
@@ -278,4 +308,21 @@ class PayrollService:
         payroll_run.total_overtime = totals['overtime']
         payroll_run.status = PayrollRun.PROCESSING
         payroll_run.save()
+
+        # Auto-create PAYE remittance obligation: due 10th of following month
+        if month == 12:
+            due_year, due_month = year + 1, 1
+        else:
+            due_year, due_month = year, month + 1
+        PAYERemittance.objects.update_or_create(
+            organisation=org,
+            period_year=year,
+            period_month=month,
+            defaults={
+                'payroll_run': payroll_run,
+                'amount_due': totals['paye'],
+                'status': PAYERemittance.PENDING,
+                'due_date': date(due_year, due_month, 10),
+            },
+        )
         return payroll_run
