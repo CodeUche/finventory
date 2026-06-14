@@ -15,12 +15,42 @@ scrape_configs:
       - targets: ["localhost:9090"]
 
   # ─── Django application metrics (django-prometheus /metrics) ─
-  - job_name: django
+  - job_name: django-local
     metrics_path: /metrics
     static_configs:
       - targets: ["host.docker.internal:8000"]
         labels:
           service: backend
+          env: local
+
+  # ─── Django production metrics (Railway) ─────────────────────
+  - job_name: django-production
+    metrics_path: /metrics
+    scheme: https
+    static_configs:
+      - targets: ["audity-backend-production-30f9.up.railway.app"]
+        labels:
+          service: backend
+          env: production
+
+  # ─── Uptime — Railway production health ──────────────────────
+  - job_name: blackbox-production
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+          - https://audity-backend-production-30f9.up.railway.app/api/v1/health/
+        labels:
+          service: uptime
+          env: production
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
 
   # ─── PostgreSQL metrics (postgres_exporter) ─────────────────
   - job_name: postgres
@@ -36,10 +66,10 @@ scrape_configs:
       module: [http_2xx]
     static_configs:
       - targets:
-          # Add any public URLs you want uptime monitoring for here.
           - http://host.docker.internal:8000/api/v1/health/
         labels:
           service: uptime
+          env: local
     relabel_configs:
       # Standard blackbox relabel: pass the target as the ?target= param and
       # point the actual scrape at the blackbox_exporter.

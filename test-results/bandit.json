@@ -1,6 +1,6 @@
 {
   "errors": [],
-  "generated_at": "2026-06-14T21:04:46Z",
+  "generated_at": "2026-06-14T22:01:13Z",
   "metrics": {
     "_totals": {
       "CONFIDENCE.HIGH": 70,
@@ -11,7 +11,7 @@
       "SEVERITY.LOW": 140,
       "SEVERITY.MEDIUM": 7,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 43645,
+      "loc": 43929,
       "nosec": 0,
       "skipped_tests": 0
     },
@@ -193,7 +193,7 @@
       "SEVERITY.LOW": 10,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 731,
+      "loc": 772,
       "nosec": 0,
       "skipped_tests": 0
     },
@@ -609,7 +609,7 @@
       "SEVERITY.LOW": 0,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 92,
+      "loc": 93,
       "nosec": 0,
       "skipped_tests": 0
     },
@@ -622,7 +622,7 @@
       "SEVERITY.LOW": 0,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 79,
+      "loc": 93,
       "nosec": 0,
       "skipped_tests": 0
     },
@@ -661,7 +661,7 @@
       "SEVERITY.LOW": 0,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 150,
+      "loc": 151,
       "nosec": 0,
       "skipped_tests": 0
     },
@@ -1701,7 +1701,7 @@
       "SEVERITY.LOW": 0,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 986,
+      "loc": 1015,
       "nosec": 0,
       "skipped_tests": 0
     },
@@ -2637,7 +2637,7 @@
       "SEVERITY.LOW": 0,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 157,
+      "loc": 183,
       "nosec": 0,
       "skipped_tests": 0
     },
@@ -3378,7 +3378,7 @@
       "SEVERITY.LOW": 0,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 146,
+      "loc": 147,
       "nosec": 0,
       "skipped_tests": 0
     },
@@ -3391,7 +3391,7 @@
       "SEVERITY.LOW": 0,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 483,
+      "loc": 498,
       "nosec": 0,
       "skipped_tests": 0
     },
@@ -3443,7 +3443,7 @@
       "SEVERITY.LOW": 6,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 974,
+      "loc": 975,
       "nosec": 0,
       "skipped_tests": 0
     },
@@ -4119,7 +4119,7 @@
       "SEVERITY.LOW": 0,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 144,
+      "loc": 183,
       "nosec": 0,
       "skipped_tests": 0
     },
@@ -4171,7 +4171,7 @@
       "SEVERITY.LOW": 0,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 495,
+      "loc": 603,
       "nosec": 0,
       "skipped_tests": 0
     },
@@ -4847,7 +4847,7 @@
       "SEVERITY.LOW": 1,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 21,
+      "loc": 23,
       "nosec": 0,
       "skipped_tests": 0
     },
@@ -4860,7 +4860,7 @@
       "SEVERITY.LOW": 0,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 68,
+      "loc": 74,
       "nosec": 0,
       "skipped_tests": 0
     },
@@ -4929,7 +4929,7 @@
       "test_name": "hardcoded_sql_expressions"
     },
     {
-      "code": "1193     \"\"\"\n1194     return hashlib.sha1(uuid_str.encode()).hexdigest()[:8]\n1195 \n",
+      "code": "1224     \"\"\"\n1225     return hashlib.sha1(uuid_str.encode()).hexdigest()[:8]\n1226 \n",
       "col_offset": 11,
       "end_col_offset": 42,
       "filename": "apps/einvoicing\\services.py",
@@ -4940,9 +4940,9 @@
       },
       "issue_severity": "HIGH",
       "issue_text": "Use of weak SHA1 hash for security. Consider usedforsecurity=False",
-      "line_number": 1194,
+      "line_number": 1225,
       "line_range": [
-        1194
+        1225
       ],
       "more_info": "https://bandit.readthedocs.io/en/1.9.4/plugins/b324_hashlib.html",
       "test_id": "B324",
