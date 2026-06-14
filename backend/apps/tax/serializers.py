@@ -13,6 +13,19 @@ class TaxClassSerializer(serializers.ModelSerializer):
         model = TaxClass
         fields = ["id", "name", "rate", "description", "is_active"]
         read_only_fields = ["id"]
+        validators = []  # UniqueTogetherValidator added dynamically by TenantAwareModel — exclude here to avoid org context issue
+
+    def validate(self, attrs):
+        # Enforce unique_together (organisation, name) at serializer level
+        request = self.context.get('request')
+        if request and hasattr(request, 'organisation') and request.organisation:
+            org = request.organisation
+            qs = TaxClass.objects.filter(organisation=org, name=attrs.get('name', ''))
+            if self.instance:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                raise serializers.ValidationError({'name': 'A VAT class with this name already exists.'})
+        return attrs
 
 
 class TaxBracketSerializer(serializers.ModelSerializer):

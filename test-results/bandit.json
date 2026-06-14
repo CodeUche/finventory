@@ -1,6 +1,6 @@
 {
   "errors": [],
-  "generated_at": "2026-06-14T17:46:31Z",
+  "generated_at": "2026-06-14T19:51:37Z",
   "metrics": {
     "_totals": {
       "CONFIDENCE.HIGH": 70,
@@ -11,7 +11,7 @@
       "SEVERITY.LOW": 139,
       "SEVERITY.MEDIUM": 7,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 41574,
+      "loc": 42855,
       "nosec": 0,
       "skipped_tests": 0
     },
@@ -2589,6 +2589,19 @@
       "nosec": 0,
       "skipped_tests": 0
     },
+    "apps/payroll\\migrations\\0009_employeetaxprofile_payeremittance.py": {
+      "CONFIDENCE.HIGH": 0,
+      "CONFIDENCE.LOW": 0,
+      "CONFIDENCE.MEDIUM": 0,
+      "CONFIDENCE.UNDEFINED": 0,
+      "SEVERITY.HIGH": 0,
+      "SEVERITY.LOW": 0,
+      "SEVERITY.MEDIUM": 0,
+      "SEVERITY.UNDEFINED": 0,
+      "loc": 59,
+      "nosec": 0,
+      "skipped_tests": 0
+    },
     "apps/payroll\\migrations\\__init__.py": {
       "CONFIDENCE.HIGH": 0,
       "CONFIDENCE.LOW": 0,
@@ -2611,7 +2624,7 @@
       "SEVERITY.LOW": 0,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 276,
+      "loc": 313,
       "nosec": 0,
       "skipped_tests": 0
     },
@@ -2624,7 +2637,7 @@
       "SEVERITY.LOW": 0,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 132,
+      "loc": 157,
       "nosec": 0,
       "skipped_tests": 0
     },
@@ -2637,7 +2650,7 @@
       "SEVERITY.LOW": 0,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 232,
+      "loc": 265,
       "nosec": 0,
       "skipped_tests": 0
     },
@@ -2663,7 +2676,7 @@
       "SEVERITY.LOW": 0,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 15,
+      "loc": 18,
       "nosec": 0,
       "skipped_tests": 0
     },
@@ -2676,7 +2689,7 @@
       "SEVERITY.LOW": 1,
       "SEVERITY.MEDIUM": 3,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 1082,
+      "loc": 1139,
       "nosec": 0,
       "skipped_tests": 0
     },
@@ -4019,6 +4032,45 @@
       "nosec": 0,
       "skipped_tests": 0
     },
+    "apps/tax\\migrations\\0003_whtcertificate_vattransaction.py": {
+      "CONFIDENCE.HIGH": 0,
+      "CONFIDENCE.LOW": 0,
+      "CONFIDENCE.MEDIUM": 0,
+      "CONFIDENCE.UNDEFINED": 0,
+      "SEVERITY.HIGH": 0,
+      "SEVERITY.LOW": 0,
+      "SEVERITY.MEDIUM": 0,
+      "SEVERITY.UNDEFINED": 0,
+      "loc": 55,
+      "nosec": 0,
+      "skipped_tests": 0
+    },
+    "apps/tax\\migrations\\0004_taxobligation.py": {
+      "CONFIDENCE.HIGH": 0,
+      "CONFIDENCE.LOW": 0,
+      "CONFIDENCE.MEDIUM": 0,
+      "CONFIDENCE.UNDEFINED": 0,
+      "SEVERITY.HIGH": 0,
+      "SEVERITY.LOW": 0,
+      "SEVERITY.MEDIUM": 0,
+      "SEVERITY.UNDEFINED": 0,
+      "loc": 49,
+      "nosec": 0,
+      "skipped_tests": 0
+    },
+    "apps/tax\\migrations\\0005_capital_allowances_deferred_tax_transfer_pricing.py": {
+      "CONFIDENCE.HIGH": 0,
+      "CONFIDENCE.LOW": 0,
+      "CONFIDENCE.MEDIUM": 0,
+      "CONFIDENCE.UNDEFINED": 0,
+      "SEVERITY.HIGH": 0,
+      "SEVERITY.LOW": 0,
+      "SEVERITY.MEDIUM": 0,
+      "SEVERITY.UNDEFINED": 0,
+      "loc": 119,
+      "nosec": 0,
+      "skipped_tests": 0
+    },
     "apps/tax\\migrations\\__init__.py": {
       "CONFIDENCE.HIGH": 0,
       "CONFIDENCE.LOW": 0,
@@ -4041,7 +4093,7 @@
       "SEVERITY.LOW": 0,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 186,
+      "loc": 429,
       "nosec": 0,
       "skipped_tests": 0
     },
@@ -4054,7 +4106,7 @@
       "SEVERITY.LOW": 0,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 63,
+      "loc": 155,
       "nosec": 0,
       "skipped_tests": 0
     },
@@ -4067,7 +4119,20 @@
       "SEVERITY.LOW": 0,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 120,
+      "loc": 144,
+      "nosec": 0,
+      "skipped_tests": 0
+    },
+    "apps/tax\\tasks.py": {
+      "CONFIDENCE.HIGH": 0,
+      "CONFIDENCE.LOW": 0,
+      "CONFIDENCE.MEDIUM": 0,
+      "CONFIDENCE.UNDEFINED": 0,
+      "SEVERITY.HIGH": 0,
+      "SEVERITY.LOW": 0,
+      "SEVERITY.MEDIUM": 0,
+      "SEVERITY.UNDEFINED": 0,
+      "loc": 100,
       "nosec": 0,
       "skipped_tests": 0
     },
@@ -4080,7 +4145,7 @@
       "SEVERITY.LOW": 0,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 11,
+      "loc": 22,
       "nosec": 0,
       "skipped_tests": 0
     },
@@ -4093,7 +4158,7 @@
       "SEVERITY.LOW": 0,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 133,
+      "loc": 495,
       "nosec": 0,
       "skipped_tests": 0
     },
@@ -4730,7 +4795,7 @@
       "SEVERITY.LOW": 5,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 375,
+      "loc": 387,
       "nosec": 0,
       "skipped_tests": 0
     },
@@ -4871,7 +4936,7 @@
       "test_name": "hashlib"
     },
     {
-      "code": "77             req = urllib.request.Request(url, headers={\"Authorization\": f\"Bearer {secret_key}\"})\n78             with urllib.request.urlopen(req, timeout=10) as resp:\n79                 data = _json.loads(resp.read())\n",
+      "code": "80             req = urllib.request.Request(url, headers={\"Authorization\": f\"Bearer {secret_key}\"})\n81             with urllib.request.urlopen(req, timeout=10) as resp:\n82                 data = _json.loads(resp.read())\n",
       "col_offset": 17,
       "end_col_offset": 56,
       "filename": "apps/payroll\\views.py",
@@ -4882,16 +4947,16 @@
       },
       "issue_severity": "MEDIUM",
       "issue_text": "Audit url open for permitted schemes. Allowing use of file:/ or custom schemes is often unexpected.",
-      "line_number": 78,
+      "line_number": 81,
       "line_range": [
-        78
+        81
       ],
       "more_info": "https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b310-urllib-urlopen",
       "test_id": "B310",
       "test_name": "blacklist"
     },
     {
-      "code": "429             )\n430             with urllib.request.urlopen(req, timeout=30) as resp:\n431                 return _json.loads(resp.read())\n",
+      "code": "432             )\n433             with urllib.request.urlopen(req, timeout=30) as resp:\n434                 return _json.loads(resp.read())\n",
       "col_offset": 17,
       "end_col_offset": 56,
       "filename": "apps/payroll\\views.py",
@@ -4902,16 +4967,16 @@
       },
       "issue_severity": "MEDIUM",
       "issue_text": "Audit url open for permitted schemes. Allowing use of file:/ or custom schemes is often unexpected.",
-      "line_number": 430,
+      "line_number": 433,
       "line_range": [
-        430
+        433
       ],
       "more_info": "https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b310-urllib-urlopen",
       "test_id": "B310",
       "test_name": "blacklist"
     },
     {
-      "code": "603             )\n604             with urllib.request.urlopen(req, timeout=30) as resp:\n605                 return _json.loads(resp.read())\n",
+      "code": "606             )\n607             with urllib.request.urlopen(req, timeout=30) as resp:\n608                 return _json.loads(resp.read())\n",
       "col_offset": 17,
       "end_col_offset": 56,
       "filename": "apps/payroll\\views.py",
@@ -4922,9 +4987,9 @@
       },
       "issue_severity": "MEDIUM",
       "issue_text": "Audit url open for permitted schemes. Allowing use of file:/ or custom schemes is often unexpected.",
-      "line_number": 604,
+      "line_number": 607,
       "line_range": [
-        604
+        607
       ],
       "more_info": "https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b310-urllib-urlopen",
       "test_id": "B310",

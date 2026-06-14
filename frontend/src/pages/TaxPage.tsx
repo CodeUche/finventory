@@ -119,6 +119,20 @@ export default function TaxPage() {
   const [remitForm, setRemitForm] = useState({ reference: '', notes: '' })
   const [savingRemit, setSavingRemit] = useState(false)
 
+  // ── WHT Transaction create ────────────────────────────────────────────────────
+  const [showWHTTxModal, setShowWHTTxModal] = useState(false)
+  const [whtTxForm, setWhtTxForm] = useState({
+    transaction_type: 'purchase',
+    wht_rate: '',
+    wht_rate_percent: '',
+    counterparty_name: '',
+    tin: '',
+    gross_amount: '',
+    transaction_date: new Date().toISOString().slice(0, 10),
+    notes: '',
+  })
+  const [savingWHTTx, setSavingWHTTx] = useState(false)
+
   // ── VAT ITC ──────────────────────────────────────────────────────────────────
   const [vatTransactions, setVatTransactions] = useState<VATTransaction[]>([])
   const [loadingVatTx, setLoadingVatTx] = useState(false)
@@ -440,6 +454,40 @@ export default function TaxPage() {
     } catch { toast.error('Failed to download certificate') }
   }
 
+  const openWHTTxModal = () => {
+    setWhtTxForm({ transaction_type: 'purchase', wht_rate: '', wht_rate_percent: '', counterparty_name: '', tin: '', gross_amount: '', transaction_date: new Date().toISOString().slice(0, 10), notes: '' })
+    setShowWHTTxModal(true)
+  }
+
+  const handleWHTRateSelect = (rateId: string) => {
+    const rate = whtRates.find((r) => r.id === rateId)
+    // Default to company_rate; user can override
+    setWhtTxForm((f) => ({ ...f, wht_rate: rateId, wht_rate_percent: rate ? rate.company_rate : '' }))
+  }
+
+  const handleCreateWHTTx = async () => {
+    if (!whtTxForm.counterparty_name.trim() || !whtTxForm.gross_amount || !whtTxForm.wht_rate || !whtTxForm.wht_rate_percent) {
+      toast.error('Counterparty, gross amount and WHT rate are required'); return
+    }
+    setSavingWHTTx(true)
+    try {
+      await whtApi.createTransaction({
+        transaction_type: whtTxForm.transaction_type,
+        wht_rate: whtTxForm.wht_rate,
+        wht_rate_percent: parseFloat(whtTxForm.wht_rate_percent),
+        counterparty_name: whtTxForm.counterparty_name,
+        tin: whtTxForm.tin,
+        gross_amount: parseFloat(whtTxForm.gross_amount),
+        transaction_date: whtTxForm.transaction_date,
+        notes: whtTxForm.notes,
+      })
+      toast.success('WHT transaction recorded')
+      setShowWHTTxModal(false)
+      loadWHT()
+    } catch { toast.error('Failed to create WHT transaction') }
+    finally { setSavingWHTTx(false) }
+  }
+
   // ── VAT ITC ───────────────────────────────────────────────────────────────────
 
   const handleSyncVat = async () => {
@@ -447,7 +495,7 @@ export default function TaxPage() {
     setSyncing(true)
     try {
       const { data } = await taxApi.syncVatFromPeriod(vatSyncPeriod)
-      toast.success(`Synced: ${data.created ?? 0} output, ${data.input_created ?? 0} input records`)
+      toast.success(`Synced: ${data.synced_output ?? 0} output, ${data.synced_input ?? 0} input records`)
       setShowVatSyncModal(false); loadVatTransactions()
     } catch { toast.error('Sync failed') }
     finally { setSyncing(false) }
@@ -1114,13 +1162,18 @@ export default function TaxPage() {
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="text-white font-semibold">WHT Transactions</h2>
-              <span className="text-xs text-slate-500">Transactions are auto-created when WHT is applied to invoices/bills</span>
+              <button onClick={openWHTTxModal} className="btn-primary flex items-center gap-2 text-sm">
+                <Plus size={14} /> New WHT Transaction
+              </button>
             </div>
             {whtTransactions.length === 0 ? (
               <div className="card p-10 text-center">
                 <Receipt size={32} className="mx-auto text-slate-600 mb-3" />
                 <p className="text-slate-400">No WHT transactions yet</p>
-                <p className="text-slate-500 text-xs mt-1">WHT transactions appear here when applied to sales or purchase invoices</p>
+                <p className="text-slate-500 text-xs mt-1">Record WHT deducted on payments to vendors, contractors, or service providers</p>
+                <button onClick={openWHTTxModal} className="btn-primary mt-4 inline-flex items-center gap-2 text-sm">
+                  <Plus size={14} /> Record First Transaction
+                </button>
               </div>
             ) : (
               <div className="card overflow-hidden">
@@ -1923,6 +1976,79 @@ export default function TaxPage() {
           </div>
         </div>
       )}
+      {/* ── WHT Transaction Create Modal ─────────────────────────────────────── */}
+      {showWHTTxModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-surface-800 border border-surface-600 rounded-2xl p-6 w-full max-w-lg shadow-2xl overflow-y-auto max-h-[90vh]">
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-lg font-bold text-white">Record WHT Transaction</h2>
+              <button onClick={() => setShowWHTTxModal(false)} className="text-slate-400 hover:text-white"><X size={18} /></button>
+            </div>
+            <p className="text-slate-500 text-xs mb-4">Record WHT deducted at source on payments to vendors, contractors, or service providers.</p>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Transaction Type *</label>
+                  <select className="input" value={whtTxForm.transaction_type} onChange={(e) => setWhtTxForm({ ...whtTxForm, transaction_type: e.target.value })}>
+                    <option value="purchase">Purchase (you withheld)</option>
+                    <option value="sale">Sale (customer withheld)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">WHT Rate Category *</label>
+                  <select className="input" value={whtTxForm.wht_rate} onChange={(e) => handleWHTRateSelect(e.target.value)}>
+                    <option value="">Select rate…</option>
+                    {whtRates.filter((r) => r.is_active).map((r) => (
+                      <option key={r.id} value={r.id}>{r.transaction_type} ({r.company_rate}% / {r.individual_rate}%)</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Applicable Rate (%) *</label>
+                  <input type="number" min="0" max="100" step="0.1" className="input" placeholder="e.g. 5 or 10"
+                    value={whtTxForm.wht_rate_percent} onChange={(e) => setWhtTxForm({ ...whtTxForm, wht_rate_percent: e.target.value })} />
+                  <p className="text-xs text-slate-600 mt-1">Auto-filled from company rate; change for individuals</p>
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Counterparty Name *</label>
+                <input className="input" placeholder="Vendor or customer name"
+                  value={whtTxForm.counterparty_name} onChange={(e) => setWhtTxForm({ ...whtTxForm, counterparty_name: e.target.value })} />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Counterparty TIN</label>
+                  <input className="input" placeholder="Tax ID (optional)"
+                    value={whtTxForm.tin} onChange={(e) => setWhtTxForm({ ...whtTxForm, tin: e.target.value })} />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Gross Amount *</label>
+                  <input type="number" min="0" className="input" placeholder="e.g. 500000"
+                    value={whtTxForm.gross_amount} onChange={(e) => setWhtTxForm({ ...whtTxForm, gross_amount: e.target.value })} />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Transaction Date *</label>
+                <DateInput value={whtTxForm.transaction_date} onChange={(v) => setWhtTxForm({ ...whtTxForm, transaction_date: v })} />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Notes</label>
+                <textarea className="input resize-none" rows={2} placeholder="Invoice reference, contract details, etc."
+                  value={whtTxForm.notes} onChange={(e) => setWhtTxForm({ ...whtTxForm, notes: e.target.value })} />
+              </div>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button onClick={() => setShowWHTTxModal(false)} className="btn-ghost flex-1">Cancel</button>
+              <button onClick={handleCreateWHTTx} disabled={savingWHTTx} className="btn-primary flex-1 disabled:opacity-50">
+                {savingWHTTx ? 'Saving…' : 'Record Transaction'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── WHT Remit Modal ─────────────────────────────────────────────────── */}
       {showRemitModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">

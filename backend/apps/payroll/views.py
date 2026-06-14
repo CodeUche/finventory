@@ -1294,7 +1294,7 @@ class PAYERemittanceViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     """GET/PATCH /payroll/paye-remittances/ — PAYE remittance tracker."""
     serializer_class = PAYERemittanceSerializer
     permission_classes = [IsAuthenticated, IsOwnerOrAdmin]
-    http_method_names = ['get', 'patch', 'head', 'options']  # no create/delete — auto-created by run_payroll
+    http_method_names = ['get', 'patch', 'post', 'head', 'options']  # no create/delete — auto-created by run_payroll
 
     def get_queryset(self):
         org = self._get_organisation()

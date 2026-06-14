@@ -1334,6 +1334,8 @@ export const whtApi = {
   updateRate: (id: string, data: object) => api.patch(`/tax/wht-rates/${id}/`, data),
   deleteRate: (id: string) => api.delete(`/tax/wht-rates/${id}/`),
   transactions: (params?: object) => api.get('/tax/wht-transactions/', { params }),
+  createTransaction: (data: object) => api.post('/tax/wht-transactions/', data),
+  deleteTransaction: (id: string) => api.delete(`/tax/wht-transactions/${id}/`),
 }
 
 export const auditLogApi = {
