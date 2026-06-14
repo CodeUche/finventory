@@ -15,7 +15,9 @@ COA_SEED = [
     ('1300', 'Prepaid Expenses', AccountType.ASSET),
     ('1500', 'Fixed Assets', AccountType.ASSET),
     ('1510', 'Accumulated Depreciation', AccountType.ASSET),
+    ('1600', 'Deferred Tax Asset', AccountType.ASSET),
     ('2001', 'Accounts Payable', AccountType.LIABILITY),
+    ('2800', 'Deferred Tax Liability', AccountType.LIABILITY),
     ('2100', 'VAT Payable', AccountType.LIABILITY),
     ('2200', 'PAYE Payable', AccountType.LIABILITY),
     ('2300', 'Pension Payable', AccountType.LIABILITY),
@@ -749,6 +751,51 @@ class AccountingService:
             source_type='payroll',
             source_ref=str(payroll_run.id),
         )
+
+    @staticmethod
+    def post_deferred_tax_journal(organisation, deferred_item, user=None):
+        """
+        IAS 12 deferred tax journal.
+        DTA (diff < 0): DR Deferred Tax Asset (1600) / CR Income Tax Expense (6700)
+        DTL (diff > 0): DR Income Tax Expense (6700) / CR Deferred Tax Liability (2800)
+        """
+        from django.utils import timezone as tz
+        zero = Decimal('0')
+        amount = deferred_item.deferred_tax_amount
+        if amount <= zero:
+            return
+
+        dta_acct = AccountingService._get_or_create_account(organisation, '1600', 'Deferred Tax Asset', AccountType.ASSET)
+        dtl_acct = AccountingService._get_or_create_account(organisation, '2800', 'Deferred Tax Liability', AccountType.LIABILITY)
+        tax_exp_acct = AccountingService._get_or_create_account(organisation, '6700', 'Other Expenses', AccountType.EXPENSE)
+
+        desc = f"Deferred Tax — {deferred_item.get_category_display()} {deferred_item.tax_year}"
+        ref = f"DTX-{deferred_item.id}"
+
+        if deferred_item.deferred_type == 'DTA':
+            lines = [
+                (dta_acct, amount, zero),       # DR DTA
+                (tax_exp_acct, zero, amount),   # CR Income Tax Expense
+            ]
+        else:  # DTL
+            lines = [
+                (tax_exp_acct, amount, zero),   # DR Income Tax Expense
+                (dtl_acct, zero, amount),       # CR DTL
+            ]
+
+        return AccountingService.post_journal_entry(
+            organisation, desc, tz.now().date(), lines, user,
+            ref=ref, source_type='deferred_tax', source_ref=str(deferred_item.id),
+        )
+
+    @staticmethod
+    def _get_or_create_account(organisation, code, name, account_type):
+        """Get or create a GL account by code for this organisation."""
+        acct, _ = Account.objects.get_or_create(
+            organisation=organisation, code=code,
+            defaults={'name': name, 'account_type': account_type, 'is_active': True},
+        )
+        return acct
 
     @staticmethod
     def get_gl_health(organisation) -> dict:

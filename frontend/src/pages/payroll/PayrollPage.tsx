@@ -257,6 +257,7 @@ export default function PayrollPage() {
   // ── Bonus state ─────────────────────────────────────────────────────────────
   const [bonuses, setBonuses] = useState<Bonus[]>([])
   const [loadingBonuses, setLoadingBonuses] = useState(false)
+  const [selectedPayslip, setSelectedPayslip] = useState<import('@/types').PayslipLine | null>(null)
   const [showBonusModal, setShowBonusModal] = useState(false)
   const [bonusForm, setBonusForm] = useState({
     employee: '', amount: '', bonus_type: 'performance', reason: '',
@@ -821,6 +822,11 @@ export default function PayrollPage() {
                                       <td className="py-2 flex items-center gap-1">
                                         {TRANSFER_STATUS_ICON[p.transfer_status as keyof typeof TRANSFER_STATUS_ICON] ?? null}
                                         <span className="text-slate-500 capitalize">{p.transfer_status ?? 'pending'}</span>
+                                      </td>
+                                      <td className="py-2">
+                                        <button onClick={() => setSelectedPayslip(p)} title="PAYE Bracket Detail" className="text-slate-500 hover:text-brand-400 transition-colors p-0.5">
+                                          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                                        </button>
                                       </td>
                                     </tr>
                                   ))}
@@ -1548,6 +1554,73 @@ export default function PayrollPage() {
                 <Send size={13} /> Submit
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {/* PAYE Bracket Breakdown Modal */}
+      {selectedPayslip && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-surface-800 border border-surface-600 rounded-2xl p-6 w-full max-w-lg shadow-2xl">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-lg font-bold text-white">PAYE Bracket Breakdown</h2>
+                <p className="text-xs text-slate-400 mt-0.5">{selectedPayslip.employee_name} — Monthly PAYE: <span className="text-red-400 font-mono font-semibold">₦{parseFloat(selectedPayslip.paye_tax).toLocaleString('en-NG', { minimumFractionDigits: 2 })}</span></p>
+              </div>
+              <button onClick={() => setSelectedPayslip(null)} className="text-slate-400 hover:text-white">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+            <div className="space-y-2 mb-4">
+              <div className="grid grid-cols-3 gap-3">
+                <div className="bg-surface-700 rounded-xl p-3">
+                  <p className="text-xs text-slate-400 mb-1">Monthly Gross</p>
+                  <p className="font-mono text-white font-semibold">₦{parseFloat(selectedPayslip.gross_salary).toLocaleString('en-NG', { minimumFractionDigits: 2 })}</p>
+                </div>
+                <div className="bg-surface-700 rounded-xl p-3">
+                  <p className="text-xs text-slate-400 mb-1">Monthly Taxable</p>
+                  <p className="font-mono text-amber-400 font-semibold">₦{parseFloat(selectedPayslip.taxable_income).toLocaleString('en-NG', { minimumFractionDigits: 2 })}</p>
+                </div>
+                <div className="bg-surface-700 rounded-xl p-3">
+                  <p className="text-xs text-slate-400 mb-1">Monthly PAYE</p>
+                  <p className="font-mono text-red-400 font-semibold">₦{parseFloat(selectedPayslip.paye_tax).toLocaleString('en-NG', { minimumFractionDigits: 2 })}</p>
+                </div>
+              </div>
+            </div>
+            {selectedPayslip.paye_bracket_breakdown && selectedPayslip.paye_bracket_breakdown.length > 0 ? (
+              <div className="overflow-hidden rounded-xl border border-surface-600">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-surface-700 text-xs text-slate-400 uppercase tracking-wider">
+                      <th className="py-2.5 px-3 text-left">Bracket</th>
+                      <th className="py-2.5 px-3 text-center">Rate</th>
+                      <th className="py-2.5 px-3 text-right">Annual Tax</th>
+                      <th className="py-2.5 px-3 text-right">Monthly Tax</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-surface-700">
+                    {selectedPayslip.paye_bracket_breakdown.map((b, i) => (
+                      <tr key={i} className="hover:bg-surface-700/50 transition-colors">
+                        <td className="py-2.5 px-3 text-slate-300 font-mono text-xs">{b.bracket}</td>
+                        <td className="py-2.5 px-3 text-center">
+                          <span className="bg-brand-500/10 text-brand-400 px-2 py-0.5 rounded-full text-xs font-semibold">{b.rate}</span>
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono text-slate-300">₦{b.tax_annual.toLocaleString('en-NG', { minimumFractionDigits: 2 })}</td>
+                        <td className="py-2.5 px-3 text-right font-mono text-red-400 font-semibold">₦{b.tax_monthly.toLocaleString('en-NG', { minimumFractionDigits: 2 })}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="bg-surface-700/50 border-t border-surface-600">
+                      <td colSpan={3} className="py-2.5 px-3 text-right text-xs font-semibold text-slate-300 uppercase">Total Monthly PAYE</td>
+                      <td className="py-2.5 px-3 text-right font-mono text-red-400 font-bold">₦{parseFloat(selectedPayslip.paye_tax).toLocaleString('en-NG', { minimumFractionDigits: 2 })}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            ) : (
+              <p className="text-center text-slate-500 py-6 text-sm">No bracket breakdown available — reload payroll run to refresh.</p>
+            )}
+            <p className="text-xs text-slate-500 mt-3 text-center">Based on Nigeria PITA progressive brackets. Annualised then divided by 12 for monthly PAYE.</p>
           </div>
         </div>
       )}

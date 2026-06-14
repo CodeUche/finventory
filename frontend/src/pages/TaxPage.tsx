@@ -7,7 +7,7 @@ import {
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { openExternal } from '@/lib/openExternal'
-import { taxApi, exciseApi, whtApi } from '@/services/api'
+import { taxApi, exciseApi, whtApi, api } from '@/services/api'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import type {
   TaxClass, TaxConfig, ExciseDuty, WHTRate, WHTTransaction,
@@ -140,6 +140,30 @@ export default function TaxPage() {
   const [vatSyncPeriod, setVatSyncPeriod] = useState({ period_start: '', period_end: '' })
   const [syncing, setSyncing] = useState(false)
   const [vatTxFilter, setVatTxFilter] = useState<'all' | 'input' | 'output'>('all')
+  const [exportingPDF, setExportingPDF] = useState(false)
+
+  const handleExportVatPDF = async () => {
+    if (!vatSyncPeriod.period_start || !vatSyncPeriod.period_end) {
+      toast.error('Set sync period dates first, then export PDF')
+      return
+    }
+    setExportingPDF(true)
+    try {
+      const params = new URLSearchParams({ period_start: vatSyncPeriod.period_start, period_end: vatSyncPeriod.period_end })
+      const resp = await api.get(`/tax/vat-transactions/export_pdf/?${params}`, { responseType: 'blob' })
+      const url = URL.createObjectURL(new Blob([resp.data], { type: 'application/pdf' }))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `VAT_Return_${vatSyncPeriod.period_start}_${vatSyncPeriod.period_end}.pdf`
+      a.click()
+      URL.revokeObjectURL(url)
+      toast.success('VAT Return PDF downloaded')
+    } catch {
+      toast.error('Failed to export VAT PDF')
+    } finally {
+      setExportingPDF(false)
+    }
+  }
 
   // ── Compliance calendar ───────────────────────────────────────────────────────
   const [obligations, setObligations] = useState<TaxObligation[]>([])
@@ -1232,6 +1256,10 @@ export default function TaxPage() {
               <p className="text-slate-500 text-xs mt-0.5">Track output VAT collected and input VAT paid for accurate net VAT computation</p>
             </div>
             <div className="flex gap-2">
+              <button onClick={handleExportVatPDF} disabled={exportingPDF} className="btn-ghost flex items-center gap-1.5 text-sm disabled:opacity-50">
+                {exportingPDF ? <RefreshCw size={14} className="animate-spin" /> : <Download size={14} />}
+                Export PDF
+              </button>
               <button onClick={() => setShowVatSyncModal(true)} className="btn-ghost flex items-center gap-1.5 text-sm">
                 <RefreshCw size={14} /> Sync from Period
               </button>

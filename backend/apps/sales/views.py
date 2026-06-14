@@ -175,6 +175,7 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
                 amount_tendered=d.get("amount_tendered"),
                 credit_applied=d.get("credit_applied"),
                 location=location,
+                wht_rate_id=d.get("wht_rate_id"),
             )
             try:
                 from apps.core.models import AuditLog as _AL

@@ -120,3 +120,4 @@ class RecordBillPaymentSerializer(serializers.Serializer):
     method = serializers.ChoiceField(choices=['cash', 'bank_transfer', 'cheque', 'pos'], default='cash')
     reference = serializers.CharField(required=False, allow_blank=True, default='', max_length=200)
     notes = serializers.CharField(required=False, allow_blank=True, default='', max_length=1000)
+    wht_rate_id = serializers.UUIDField(required=False, allow_null=True)

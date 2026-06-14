@@ -42,7 +42,7 @@ class BillService:
 
     @staticmethod
     @transaction.atomic
-    def record_payment(bill, amount, payment_date, method, reference, notes, user):
+    def record_payment(bill, amount, payment_date, method, reference, notes, user, wht_rate_id=None):
         if bill.status == Bill.VOIDED:
             raise ValueError("Cannot pay a voided bill")
         payment = BillPayment.objects.create(
@@ -69,6 +69,22 @@ class BillService:
             AccountingService.post_bill_payment_journal, bill.organisation, bill, payment, user,
             model_instance=bill,
         )
+
+        # Auto-create WHT transaction if rate specified (non-blocking)
+        if wht_rate_id:
+            supplier_name = bill.supplier.name if bill.supplier else "Unknown Supplier"
+            tin = getattr(bill.supplier, 'tin', '') or '' if bill.supplier else ''
+            from apps.tax.services import TaxService
+            TaxService.auto_create_wht_transaction(
+                organisation=bill.organisation,
+                wht_rate_id=wht_rate_id,
+                transaction_type='purchase',
+                gross_amount=amount,
+                counterparty_name=supplier_name,
+                transaction_date=payment_date,
+                tin=tin,
+                source_ref=getattr(bill, 'reference', '') or '',
+            )
 
         return payment
 

@@ -128,6 +128,7 @@ class CreateSaleSerializer(serializers.Serializer):
     amount_paid = serializers.DecimalField(max_digits=15, decimal_places=4, required=False, default=Decimal("0"), min_value=Decimal("0"))
     amount_tendered = serializers.DecimalField(max_digits=15, decimal_places=4, required=False, allow_null=True)
     credit_applied = serializers.DecimalField(max_digits=15, decimal_places=4, required=False, default=Decimal("0"), min_value=Decimal("0"))
+    wht_rate_id = serializers.UUIDField(required=False, allow_null=True)
 
 
 class RecordPaymentSerializer(serializers.Serializer):

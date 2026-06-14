@@ -65,12 +65,21 @@ api_v1_urlpatterns = [
 
 _admin_only = [IsAdminUser]
 
-urlpatterns = [
+urlpatterns = []
+
+# Only include Prometheus metrics if the package is installed
+try:
+    import django_prometheus  # noqa: F401
+    from django.urls import path as _path, include as _include
+    urlpatterns += [_path("", _include("django_prometheus.urls"))]
+except ImportError:
+    pass
+
+urlpatterns += [
     # Prometheus metrics endpoint (/metrics) — scraped by Prometheus for Grafana.
     # SECURITY: this is unauthenticated by design (Prometheus needs raw access).
     # In production, restrict it at the network/proxy layer (allow only the
     # Prometheus host) or behind a private network — do not expose it publicly.
-    path("", include("django_prometheus.urls")),
     # Obfuscated admin path — set ADMIN_URL env var in production
     path(settings.ADMIN_URL, admin.site.urls),
     path("api/v1/", include(api_v1_urlpatterns)),

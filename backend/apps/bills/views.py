@@ -156,7 +156,8 @@ class BillViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
         try:
             BillService.record_payment(
                 bill, d['amount'], d['payment_date'], d['method'],
-                d.get('reference', ''), d.get('notes', ''), request.user
+                d.get('reference', ''), d.get('notes', ''), request.user,
+                wht_rate_id=d.get('wht_rate_id'),
             )
         except ValueError as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)

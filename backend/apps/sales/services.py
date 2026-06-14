@@ -47,6 +47,7 @@ class SaleService:
         amount_tendered: Decimal = None,
         credit_applied: Decimal = None,
         location=None,
+        wht_rate_id=None,
     ) -> Invoice:
         """
         Create a confirmed sale invoice with stock deductions.
@@ -196,6 +197,22 @@ class SaleService:
             AccountingService.post_sale_journal, organisation, invoice, created_by,
             model_instance=invoice,
         )
+
+        # Auto-create WHT transaction if rate specified (non-blocking)
+        if wht_rate_id and not is_proforma:
+            counterparty = customer.name if customer else "Walk-in"
+            tin = getattr(customer, 'tax_id', '') or '' if customer else ''
+            from apps.tax.services import TaxService
+            TaxService.auto_create_wht_transaction(
+                organisation=organisation,
+                wht_rate_id=wht_rate_id,
+                transaction_type='sale',
+                gross_amount=invoice.total_amount,
+                counterparty_name=counterparty,
+                transaction_date=invoice.issue_date,
+                tin=tin,
+                source_ref=invoice.invoice_number,
+            )
 
         return invoice
 

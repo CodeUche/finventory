@@ -1,17 +1,17 @@
 {
   "errors": [],
-  "generated_at": "2026-06-14T19:51:37Z",
+  "generated_at": "2026-06-14T21:04:46Z",
   "metrics": {
     "_totals": {
       "CONFIDENCE.HIGH": 70,
       "CONFIDENCE.LOW": 1,
-      "CONFIDENCE.MEDIUM": 76,
+      "CONFIDENCE.MEDIUM": 77,
       "CONFIDENCE.UNDEFINED": 0,
       "SEVERITY.HIGH": 1,
-      "SEVERITY.LOW": 139,
+      "SEVERITY.LOW": 140,
       "SEVERITY.MEDIUM": 7,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 42855,
+      "loc": 43645,
       "nosec": 0,
       "skipped_tests": 0
     },
@@ -4106,7 +4106,7 @@
       "SEVERITY.LOW": 0,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 155,
+      "loc": 166,
       "nosec": 0,
       "skipped_tests": 0
     },
@@ -4133,6 +4133,19 @@
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
       "loc": 100,
+      "nosec": 0,
+      "skipped_tests": 0
+    },
+    "apps/tax\\tests.py": {
+      "CONFIDENCE.HIGH": 0,
+      "CONFIDENCE.LOW": 0,
+      "CONFIDENCE.MEDIUM": 1,
+      "CONFIDENCE.UNDEFINED": 0,
+      "SEVERITY.HIGH": 0,
+      "SEVERITY.LOW": 1,
+      "SEVERITY.MEDIUM": 0,
+      "SEVERITY.UNDEFINED": 0,
+      "loc": 779,
       "nosec": 0,
       "skipped_tests": 0
     },

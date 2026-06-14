@@ -426,6 +426,121 @@ class VATTransactionViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             "message": f"Synced {created_output} output + {created_input} input VAT transactions.",
         })
 
+    @action(detail=False, methods=["get"])
+    def export_pdf(self, request):
+        """
+        GET /api/v1/tax/vat-transactions/export_pdf/?period_start=YYYY-MM-DD&period_end=YYYY-MM-DD
+        Generate a VAT ITC Return PDF (Form VAT 002 equivalent).
+        """
+        from datetime import date as _date
+        from decimal import Decimal as _Dec
+        from django.http import HttpResponse
+        from django.db.models import Sum
+
+        try:
+            from reportlab.lib import colors
+            from reportlab.lib.pagesizes import A4
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.lib.units import mm
+            from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, HRFlowable
+        except ImportError:
+            return Response({"error": "ReportLab not installed."}, status=500)
+
+        p_start_str = request.query_params.get("period_start")
+        p_end_str = request.query_params.get("period_end")
+        if not p_start_str or not p_end_str:
+            return Response({"error": "period_start and period_end query params required."}, status=400)
+
+        try:
+            from datetime import datetime
+            p_start = datetime.strptime(p_start_str, "%Y-%m-%d").date()
+            p_end = datetime.strptime(p_end_str, "%Y-%m-%d").date()
+        except ValueError:
+            return Response({"error": "Invalid date format; use YYYY-MM-DD."}, status=400)
+
+        org = request.organisation
+        qs = VATTransaction.objects.filter(organisation=org, period_start__gte=p_start, period_end__lte=p_end)
+        output_qs = qs.filter(direction=VATTransaction.OUTPUT)
+        input_qs = qs.filter(direction=VATTransaction.INPUT)
+
+        total_output_net = output_qs.aggregate(s=Sum('net_amount'))['s'] or _Dec('0')
+        total_output_vat = output_qs.aggregate(s=Sum('vat_amount'))['s'] or _Dec('0')
+        total_input_net = input_qs.aggregate(s=Sum('net_amount'))['s'] or _Dec('0')
+        total_input_vat = input_qs.aggregate(s=Sum('vat_amount'))['s'] or _Dec('0')
+        net_payable = total_output_vat - total_input_vat
+
+        import io
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=15*mm, bottomMargin=15*mm, leftMargin=20*mm, rightMargin=20*mm)
+        styles = getSampleStyleSheet()
+        story = []
+
+        # Header
+        story.append(Paragraph(f"<b>VAT RETURN — {org.name}</b>", styles['Title']))
+        story.append(Paragraph(f"Period: {p_start.strftime('%d %b %Y')} to {p_end.strftime('%d %b %Y')}", styles['Normal']))
+        story.append(Paragraph(f"Generated: {_date.today().strftime('%d %b %Y')}", styles['Normal']))
+        story.append(Spacer(1, 8*mm))
+
+        # Summary box
+        summary_data = [
+            ["", "Net Amount (₦)", "VAT Amount (₦)"],
+            ["Output VAT (Sales)", f"{total_output_net:,.2f}", f"{total_output_vat:,.2f}"],
+            ["Input VAT (Purchases)", f"{total_input_net:,.2f}", f"{total_input_vat:,.2f}"],
+            ["Net VAT Payable / (Reclaimable)", "", f"{net_payable:,.2f}"],
+        ]
+        summary_table = Table(summary_data, colWidths=[80*mm, 45*mm, 45*mm])
+        summary_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1e3a5f')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#e8f0fe')),
+            ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+            ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -2), [colors.white, colors.HexColor('#f5f5f5')]),
+        ]))
+        story.append(summary_table)
+        story.append(Spacer(1, 8*mm))
+
+        def _tx_table(title, transactions):
+            story.append(Paragraph(f"<b>{title}</b>", styles['Heading3']))
+            if not transactions:
+                story.append(Paragraph("No transactions in this period.", styles['Normal']))
+                story.append(Spacer(1, 4*mm))
+                return
+            rows = [["Date", "Counterparty", "Source Ref", "Net (₦)", "VAT Rate %", "VAT (₦)"]]
+            for tx in transactions:
+                rows.append([
+                    tx.period_end.strftime('%d/%m/%Y') if tx.period_end else '',
+                    tx.counterparty_name[:30] if tx.counterparty_name else '—',
+                    tx.source_ref[:20] if tx.source_ref else '—',
+                    f"{tx.net_amount:,.2f}",
+                    f"{tx.vat_rate}%",
+                    f"{tx.vat_amount:,.2f}",
+                ])
+            t = Table(rows, colWidths=[22*mm, 52*mm, 28*mm, 28*mm, 20*mm, 25*mm])
+            t.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3b5998')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 8),
+                ('ALIGN', (3, 0), (-1, -1), 'RIGHT'),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f9f9f9')]),
+                ('GRID', (0, 0), (-1, -1), 0.3, colors.HexColor('#cccccc')),
+            ]))
+            story.append(t)
+            story.append(Spacer(1, 6*mm))
+
+        _tx_table("Output VAT Transactions (Sales)", list(output_qs.order_by('period_end')))
+        _tx_table("Input VAT Transactions (Purchases)", list(input_qs.order_by('period_end')))
+
+        doc.build(story)
+        buffer.seek(0)
+        filename = f"VAT_Return_{p_start_str}_{p_end_str}.pdf"
+        response = HttpResponse(buffer, content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
+
 
 class TaxObligationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     """
@@ -548,7 +663,15 @@ class DeferredTaxItemViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         return qs
 
     def perform_create(self, serializer):
-        serializer.save(organisation=self._get_organisation())
+        org = self._get_organisation()
+        instance = serializer.save(organisation=org)
+        # Auto-post deferred tax GL journal (non-blocking)
+        try:
+            from apps.accounting.services import AccountingService
+            AccountingService.post_deferred_tax_journal(org, instance, self.request.user)
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).error("post_deferred_tax_journal failed: %s", exc)
 
     @action(detail=False, methods=['get'])
     def balance_sheet_impact(self, request):

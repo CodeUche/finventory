@@ -639,6 +639,13 @@ export interface PayslipLine {
   transfer_status: 'pending' | 'initiated' | 'success' | 'failed' | 'skipped'
   transfer_reference: string
   transfer_error: string
+  paye_bracket_breakdown?: Array<{
+    bracket: string
+    rate: string
+    taxable_in_bracket_annual: number
+    tax_annual: number
+    tax_monthly: number
+  }>
 }
 
 export interface PayrollRun {

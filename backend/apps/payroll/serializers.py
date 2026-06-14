@@ -113,6 +113,7 @@ class PayslipLineSerializer(serializers.ModelSerializer):
     employee_bank_code = serializers.CharField(source='employee.bank_code', read_only=True)
     employee_account_number = serializers.CharField(source='employee.account_number', read_only=True)
     employee_account_name = serializers.CharField(source='employee.account_name', read_only=True)
+    paye_bracket_breakdown = serializers.SerializerMethodField()
 
     class Meta:
         model = PayslipLine
@@ -126,11 +127,37 @@ class PayslipLineSerializer(serializers.ModelSerializer):
             'employer_pension', 'penalty_deductions', 'loan_deductions', 'attendance_deduction',
             'total_deductions', 'net_salary', 'status',
             'transfer_status', 'transfer_reference', 'transfer_error',
+            'paye_bracket_breakdown',
         ]
         read_only_fields = ['id']
 
     def get_employee_name(self, obj):
         return f"{obj.employee.first_name} {obj.employee.last_name}"
+
+    def get_paye_bracket_breakdown(self, obj):
+        """Compute per-bracket PAYE detail from stored taxable_income (monthly → annualised)."""
+        from decimal import Decimal
+        from .services import PayrollService
+        annual_taxable = Decimal(str(obj.taxable_income or 0)) * 12
+        breakdown = []
+        for lower, upper, rate in PayrollService.PAYE_BRACKETS:
+            if annual_taxable <= lower:
+                break
+            bracket_upper = upper if upper is not None else annual_taxable
+            taxable_in_bracket = min(annual_taxable, bracket_upper) - lower
+            if taxable_in_bracket <= 0:
+                continue
+            annual_tax = (taxable_in_bracket * rate).quantize(Decimal('0.01'))
+            monthly_tax = (annual_tax / 12).quantize(Decimal('0.01'))
+            upper_label = f"{float(upper):,.0f}" if upper is not None else "∞"
+            breakdown.append({
+                "bracket": f"₦{float(lower):,.0f} – ₦{upper_label}",
+                "rate": f"{float(rate * 100):.0f}%",
+                "taxable_in_bracket_annual": float(taxable_in_bracket),
+                "tax_annual": float(annual_tax),
+                "tax_monthly": float(monthly_tax),
+            })
+        return breakdown
 
 
 class PayrollRunSerializer(serializers.ModelSerializer):

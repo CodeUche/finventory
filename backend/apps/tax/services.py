@@ -131,6 +131,48 @@ class TaxService:
         }
 
     @staticmethod
+    def auto_create_wht_transaction(
+        organisation,
+        wht_rate_id,
+        transaction_type: str,  # 'sale' or 'purchase'
+        gross_amount: Decimal,
+        counterparty_name: str,
+        transaction_date,
+        tin: str = "",
+        source_ref: str = "",
+    ) -> None:
+        """
+        Auto-create a WHTTransaction from a sale or bill payment.
+
+        transaction_type='sale'     → customer withheld from us (we are the payee)
+        transaction_type='purchase' → we withhold from vendor (we are the payer)
+
+        Non-blocking: errors are logged and swallowed so the parent transaction succeeds.
+        """
+        try:
+            from .models import WHTRate, WHTTransaction
+            rate = WHTRate.objects.get(id=wht_rate_id, organisation=organisation)
+            rate_pct = rate.company_rate  # default to company rate; caller may pass individual
+            wht_amount = (gross_amount * rate_pct / Decimal("100")).quantize(Decimal("0.01"))
+            net_amount = gross_amount - wht_amount
+            WHTTransaction.objects.create(
+                organisation=organisation,
+                transaction_type=transaction_type,
+                wht_rate=rate,
+                wht_rate_percent=rate_pct,
+                counterparty_name=counterparty_name,
+                tin=tin,
+                gross_amount=gross_amount,
+                wht_amount=wht_amount,
+                net_amount=net_amount,
+                transaction_date=transaction_date,
+                status=WHTTransaction.WITHHELD,
+                notes=f"Auto-created from {transaction_type} {source_ref}".strip(),
+            )
+        except Exception as exc:
+            logger.error("auto_create_wht_transaction failed: %s", exc)
+
+    @staticmethod
     @transaction.atomic
     def create_tax_return(organisation, config: TaxConfig, period_start, period_end) -> TaxReturn:
         """Create or update a draft tax return for the given period."""

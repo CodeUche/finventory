@@ -1026,6 +1026,37 @@ class EInvoicingService:
             "firs_status", "firs_qr_code", "updated_at",
         ])
 
+        # Auto-create VATTransaction for this e-invoice VAT (non-blocking)
+        try:
+            from decimal import Decimal as _D
+            from apps.tax.models import VATTransaction
+            if invoice.tax_amount and _D(str(invoice.tax_amount)) > _D('0'):
+                period_start = invoice.issue_date.replace(day=1)
+                import calendar
+                last_day = calendar.monthrange(invoice.issue_date.year, invoice.issue_date.month)[1]
+                period_end = invoice.issue_date.replace(day=last_day)
+                source_ref = invoice.firs_irn or invoice.invoice_number
+                if not VATTransaction.objects.filter(
+                    organisation=invoice.organisation,
+                    source_ref=source_ref,
+                    direction=VATTransaction.OUTPUT,
+                ).exists():
+                    VATTransaction.objects.create(
+                        organisation=invoice.organisation,
+                        direction=VATTransaction.OUTPUT,
+                        period_start=period_start,
+                        period_end=period_end,
+                        counterparty_name=invoice.customer.name if invoice.customer else '',
+                        counterparty_tin=getattr(invoice.customer, 'tax_id', '') or '' if invoice.customer else '',
+                        net_amount=_D(str(invoice.total_amount)) - _D(str(invoice.tax_amount or 0)),
+                        vat_amount=_D(str(invoice.tax_amount)),
+                        vat_rate=_D('7.5'),
+                        source_ref=source_ref,
+                        notes=f"E-Invoice {irn}",
+                    )
+        except Exception as _exc:
+            logger.error("VATTransaction auto-create from e-invoice failed: %s", _exc)
+
         logger.info(
             "DigiTax: IRN received invoice=%s irn=%s",
             invoice.invoice_number, irn,
