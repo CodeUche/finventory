@@ -9,6 +9,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { salesApi, urlToDataUrl, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatDate, getStatusColor, formatAmountInput, stripCommas } from '@/lib/utils'
+import AmountInput from '@/components/AmountInput'
 import { useAuthStore } from '@/store/authStore'
 import { useModuleAccess } from '@/hooks/useModuleAccess'
 import DateInput from '@/components/DateInput'
@@ -1151,12 +1152,10 @@ export default function SalesPage() {
                       <option value="cheque">Cheque</option>
                       <option value="credit_applied">Credit Applied</option>
                     </select>
-                    <input
-                      type="text"
-                      inputMode="decimal"
+                    <AmountInput
                       className="input flex-1"
                       value={payAmount}
-                      onChange={(e) => setPayAmount(formatAmountInput(e.target.value))}
+                      onChange={(v) => setPayAmount(v)}
                       placeholder="Amount"
                     />
                     <button onClick={handlePay} disabled={acting} className="btn-primary px-4">
@@ -1165,12 +1164,10 @@ export default function SalesPage() {
                   </div>
                   {payMethod === 'cash' && (
                     <div className="space-y-1.5">
-                      <input
-                        type="text"
-                        inputMode="decimal"
+                      <AmountInput
                         className="input w-full text-sm"
                         value={tenderedAmount}
-                        onChange={(e) => setTenderedAmount(formatAmountInput(e.target.value))}
+                        onChange={(v) => setTenderedAmount(v)}
                         placeholder="Amount tendered (optional)"
                       />
                       {tenderedAmount && parseFloat(stripCommas(tenderedAmount)) >= 0 && (

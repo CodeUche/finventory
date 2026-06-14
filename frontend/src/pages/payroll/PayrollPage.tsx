@@ -9,6 +9,7 @@ import toast from 'react-hot-toast'
 import { openExternal } from '@/lib/openExternal'
 import { payrollApi, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatDate } from '@/lib/utils'
+import AmountInput from '@/components/AmountInput'
 import { saveBlobFile } from '@/lib/saveBlobFile'
 import type { PayrollRun, PAYERemittance, EmployeeTaxProfile } from '@/types'
 import DateInput from '@/components/DateInput'
@@ -1179,7 +1180,7 @@ export default function PayrollPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="label">Amount (₦) *</label>
-                  <input type="number" min="0" className="input" placeholder="e.g. 50000" value={bonusForm.amount} onChange={(e) => setBonusForm(f => ({ ...f, amount: e.target.value }))} />
+                  <AmountInput className="input" placeholder="e.g. 50000" value={bonusForm.amount} onChange={(v) => setBonusForm(f => ({ ...f, amount: v }))} />
                 </div>
                 <div>
                   <label className="label">Bonus Type</label>
@@ -1433,7 +1434,7 @@ export default function PayrollPage() {
             <div className="space-y-4">
               <div>
                 <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Amount Paid (₦) *</label>
-                <input type="number" min="0" className="input" value={payeRemitForm.amount_paid} onChange={(e) => setPayeRemitForm({ ...payeRemitForm, amount_paid: e.target.value })} />
+                <AmountInput className="input" value={payeRemitForm.amount_paid} onChange={(v) => setPayeRemitForm({ ...payeRemitForm, amount_paid: v })} />
               </div>
               <div>
                 <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">FIRS Reference / Receipt *</label>
@@ -1485,12 +1486,12 @@ export default function PayrollPage() {
                 </div>
                 <div>
                   <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Voluntary Pension (₦/month)</label>
-                  <input type="number" min="0" className="input" placeholder="0" value={taxProfileForm.voluntary_pension} onChange={(e) => setTaxProfileForm({ ...taxProfileForm, voluntary_pension: e.target.value })} />
+                  <AmountInput className="input" placeholder="0" value={taxProfileForm.voluntary_pension} onChange={(v) => setTaxProfileForm({ ...taxProfileForm, voluntary_pension: v })} />
                   <p className="text-xs text-slate-500 mt-1">Added to the 8% statutory pension (increases pre-tax deduction)</p>
                 </div>
                 <div>
                   <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Life Assurance Premium (₦/month)</label>
-                  <input type="number" min="0" className="input" placeholder="0" value={taxProfileForm.life_assurance_premium} onChange={(e) => setTaxProfileForm({ ...taxProfileForm, life_assurance_premium: e.target.value })} />
+                  <AmountInput className="input" placeholder="0" value={taxProfileForm.life_assurance_premium} onChange={(v) => setTaxProfileForm({ ...taxProfileForm, life_assurance_premium: v })} />
                 </div>
                 <div className="flex gap-6">
                   <label className="flex items-center gap-3 cursor-pointer">

@@ -3,7 +3,8 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, Minus, Plus, Search, Trash2, User, AlertTriangle, Loader2, Info } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { customerApi, inventoryApi, salesApi } from '@/services/api'
-import { formatCurrency, formatAmountInput, stripCommas } from '@/lib/utils'
+import { formatCurrency, stripCommas } from '@/lib/utils'
+import AmountInput from '@/components/AmountInput'
 import DateInput from '@/components/DateInput'
 import type { Customer, Invoice, Product, Warehouse as WarehouseType } from '@/types'
 
@@ -338,10 +339,9 @@ export default function EditInvoicePage() {
                                 </div>
                               </td>
                               <td className="py-2.5 text-right">
-                                <input
-                                  type="text"
-                                  value={formatAmountInput(String(c.unit_price))}
-                                  onChange={(e) => updatePrice(c.product.id, e.target.value)}
+                                <AmountInput
+                                  value={String(c.unit_price)}
+                                  onChange={(v) => updatePrice(c.product.id, v)}
                                   className="input text-right w-28 text-sm py-1.5"
                                 />
                               </td>

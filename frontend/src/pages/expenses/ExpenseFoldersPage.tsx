@@ -7,7 +7,8 @@ import {
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { expenseApi } from '@/services/api'
-import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
+import { formatCurrency, formatDate, stripCommas } from '@/lib/utils'
+import AmountInput from '@/components/AmountInput'
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from '@/lib/categories'
 import { useAuthStore } from '@/store/authStore'
 import type { Expense, ExpenseGroup } from '@/types'
@@ -507,11 +508,11 @@ export default function ExpenseFoldersPage() {
               </div>
               <div>
                 <label className="label">Amount *</label>
-                <input
+                <AmountInput
                   className="input"
                   placeholder="0.00"
                   value={expForm.amount}
-                  onChange={(e) => setExpForm({ ...expForm, amount: formatAmountInput(e.target.value) })}
+                  onChange={(v) => setExpForm({ ...expForm, amount: v })}
                 />
               </div>
               <div className="grid grid-cols-2 gap-3">

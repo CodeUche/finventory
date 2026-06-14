@@ -8,6 +8,7 @@ import {
 import toast from 'react-hot-toast'
 import { expenseApi, budgetApi, salesApi, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
+import AmountInput from '@/components/AmountInput'
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from '@/lib/categories'
 import { useAuthStore } from '@/store/authStore'
 import type { Expense, ExpenseGroup, Invoice } from '@/types'
@@ -918,9 +919,9 @@ export default function ExpensesPage() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Amount *</label>
-                <input type="text" inputMode="decimal" className="input" placeholder="0.00"
+                <AmountInput className="input" placeholder="0.00"
                   value={editForm.amount}
-                  onChange={(e) => setEditForm({ ...editForm, amount: formatAmountInput(e.target.value) })} />
+                  onChange={(v) => setEditForm({ ...editForm, amount: v })} />
               </div>
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Date *</label>
@@ -990,18 +991,18 @@ export default function ExpensesPage() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Amount *</label>
-                <input type="text" inputMode="decimal" className="input" placeholder="0.00"
+                <AmountInput className="input" placeholder="0.00"
                   value={form.amount}
-                  onChange={(e) => setForm({ ...form, amount: formatAmountInput(e.target.value) })} />
+                  onChange={(v) => setForm({ ...form, amount: v })} />
               </div>
 
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">
                   Previous Price <span className="text-slate-600 font-normal normal-case">(optional)</span>
                 </label>
-                <input type="text" inputMode="decimal" className="input" placeholder="Old price"
+                <AmountInput className="input" placeholder="Old price"
                   value={form.previous_price}
-                  onChange={(e) => setForm({ ...form, previous_price: formatAmountInput(e.target.value) })} />
+                  onChange={(v) => setForm({ ...form, previous_price: v })} />
                 {form.previous_price && form.amount && parseFloat(stripCommas(form.previous_price)) > 0 && (
                   <p className={`text-xs mt-1 ${parseFloat(stripCommas(form.amount)) < parseFloat(stripCommas(form.previous_price)) ? 'text-emerald-400' : 'text-red-400'}`}>
                     {parseFloat(stripCommas(form.amount)) < parseFloat(stripCommas(form.previous_price))
@@ -1154,15 +1155,15 @@ export default function ExpensesPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="label">Amount * <FieldTooltip text="The money received (income) or spent (expense). Enter numbers only — no currency symbol needed." /></label>
-                  <input className="input" placeholder="0.00"
+                  <AmountInput className="input" placeholder="0.00"
                     value={folderExpForm.amount}
-                    onChange={(e) => setFolderExpForm({ ...folderExpForm, amount: formatAmountInput(e.target.value) })} />
+                    onChange={(v) => setFolderExpForm({ ...folderExpForm, amount: v })} />
                 </div>
                 <div>
                   <label className="label">Old Price (optional) <FieldTooltip text="The old amount before a price change. Optional — lets you track savings or cost increases over time." /></label>
-                  <input className="input" placeholder="Previous amount"
+                  <AmountInput className="input" placeholder="Previous amount"
                     value={folderExpForm.previous_price}
-                    onChange={(e) => setFolderExpForm({ ...folderExpForm, previous_price: formatAmountInput(e.target.value) })} />
+                    onChange={(v) => setFolderExpForm({ ...folderExpForm, previous_price: v })} />
                   {folderExpForm.previous_price && folderExpForm.amount && parseFloat(stripCommas(folderExpForm.previous_price)) > 0 && (
                     <p className={`text-xs mt-1 ${parseFloat(stripCommas(folderExpForm.amount)) < parseFloat(stripCommas(folderExpForm.previous_price)) ? 'text-emerald-400' : 'text-red-400'}`}>
                       {parseFloat(stripCommas(folderExpForm.amount)) < parseFloat(stripCommas(folderExpForm.previous_price))

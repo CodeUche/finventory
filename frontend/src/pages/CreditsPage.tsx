@@ -3,7 +3,8 @@ import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { CreditCard, Search, Plus, X, Loader2, TrendingDown, TrendingUp, AlertCircle } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { creditApi, customerApi } from '@/services/api'
-import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
+import { formatCurrency, formatDate, stripCommas } from '@/lib/utils'
+import AmountInput from '@/components/AmountInput'
 import type { CreditTransaction, Customer } from '@/types'
 import DateInput from '@/components/DateInput'
 
@@ -245,8 +246,8 @@ export default function CreditsPage() {
               </div>
               <div>
                 <label className="label">Amount *</label>
-                <input type="text" inputMode="decimal" className="input" placeholder="0.00"
-                  value={payForm.amount} onChange={(e) => setPayForm({ ...payForm, amount: formatAmountInput(e.target.value) })} />
+                <AmountInput className="input" placeholder="0.00"
+                  value={payForm.amount} onChange={(v) => setPayForm({ ...payForm, amount: v })} />
               </div>
               <div>
                 <label className="label">Due Date <span className="text-slate-500 font-normal">(optional)</span></label>

@@ -7,6 +7,7 @@ import {
 import toast from 'react-hot-toast'
 import { payrollApi, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatAmountInput, stripCommas, formatDate } from '@/lib/utils'
+import AmountInput from '@/components/AmountInput'
 import type { Employee, EmployeeDocument, EmployeePenalty, EmployeeLoan } from '@/types'
 import DateInput from '@/components/DateInput'
 import { FieldTooltip } from '@/components/FieldTooltip'
@@ -566,11 +567,11 @@ export default function EmployeesPage() {
             {formTab === 'salary' && (
               <div className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
-                  <div><label className="text-xs text-slate-400 mb-1 block flex items-center gap-1">Basic Salary *<FieldTooltip text="The employee's total monthly pay before any deductions like tax (PAYE) or pension." /></label><input type="text" inputMode="decimal" className="input" value={form.basic_salary} onChange={(e) => setForm({ ...form, basic_salary: formatAmountInput(e.target.value) })} /></div>
-                  <div><label className="text-xs text-slate-400 mb-1 block">Housing Allowance</label><input type="text" inputMode="decimal" className="input" value={form.housing_allowance} onChange={(e) => setForm({ ...form, housing_allowance: formatAmountInput(e.target.value) })} /></div>
-                  <div><label className="text-xs text-slate-400 mb-1 block">Transport Allowance</label><input type="text" inputMode="decimal" className="input" value={form.transport_allowance} onChange={(e) => setForm({ ...form, transport_allowance: formatAmountInput(e.target.value) })} /></div>
-                  <div><label className="text-xs text-slate-400 mb-1 block">Leave Allowance</label><input type="text" inputMode="decimal" className="input" value={form.leave_allowance} onChange={(e) => setForm({ ...form, leave_allowance: formatAmountInput(e.target.value) })} /></div>
-                  <div className="col-span-2"><label className="text-xs text-slate-400 mb-1 block">Other Allowances</label><input type="text" inputMode="decimal" className="input" value={form.other_allowances} onChange={(e) => setForm({ ...form, other_allowances: formatAmountInput(e.target.value) })} /></div>
+                  <div><label className="text-xs text-slate-400 mb-1 block flex items-center gap-1">Basic Salary *<FieldTooltip text="The employee's total monthly pay before any deductions like tax (PAYE) or pension." /></label><AmountInput className="input" value={form.basic_salary} onChange={(v) => setForm({ ...form, basic_salary: v })} /></div>
+                  <div><label className="text-xs text-slate-400 mb-1 block">Housing Allowance</label><AmountInput className="input" value={form.housing_allowance} onChange={(v) => setForm({ ...form, housing_allowance: v })} /></div>
+                  <div><label className="text-xs text-slate-400 mb-1 block">Transport Allowance</label><AmountInput className="input" value={form.transport_allowance} onChange={(v) => setForm({ ...form, transport_allowance: v })} /></div>
+                  <div><label className="text-xs text-slate-400 mb-1 block">Leave Allowance</label><AmountInput className="input" value={form.leave_allowance} onChange={(v) => setForm({ ...form, leave_allowance: v })} /></div>
+                  <div className="col-span-2"><label className="text-xs text-slate-400 mb-1 block">Other Allowances</label><AmountInput className="input" value={form.other_allowances} onChange={(v) => setForm({ ...form, other_allowances: v })} /></div>
                 </div>
                 <div className="p-3 bg-brand-500/10 border border-brand-500/20 rounded-xl">
                   <p className="text-xs text-slate-400">Computed Gross Salary</p>
@@ -641,7 +642,7 @@ export default function EmployeesPage() {
                     </div>
                     <div>
                       <label className="text-xs text-slate-400 mb-1 block">Amount (₦) *</label>
-                      <input type="text" inputMode="decimal" className="input" value={penaltyForm.amount} onChange={(e) => setPenaltyForm({ ...penaltyForm, amount: formatAmountInput(e.target.value) })} />
+                      <AmountInput className="input" value={penaltyForm.amount} onChange={(v) => setPenaltyForm({ ...penaltyForm, amount: v })} />
                     </div>
                     <div>
                       <label className="text-xs text-slate-400 mb-1 block">Penalty Date</label>
@@ -698,7 +699,7 @@ export default function EmployeesPage() {
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="text-xs text-slate-400 mb-1 block">Principal Amount (₦) *</label>
-                      <input type="text" inputMode="decimal" className="input" value={loanForm.principal_amount} onChange={(e) => setLoanForm({ ...loanForm, principal_amount: formatAmountInput(e.target.value) })} />
+                      <AmountInput className="input" value={loanForm.principal_amount} onChange={(v) => setLoanForm({ ...loanForm, principal_amount: v })} />
                     </div>
                     <div>
                       <label className="text-xs text-slate-400 mb-1 block">Interest Rate (%) <span className="text-slate-600">— 0 = interest-free</span></label>

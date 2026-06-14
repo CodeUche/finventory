@@ -4,6 +4,7 @@ import { Plus, X, PieChart, Loader2, ChevronDown, ChevronUp, HelpCircle, Refresh
 import toast from 'react-hot-toast'
 import { budgetApi, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatAmountInput, stripCommas } from '@/lib/utils'
+import AmountInput from '@/components/AmountInput'
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from '@/lib/categories'
 import type { Budget, BudgetLine } from '@/types'
 
@@ -366,14 +367,11 @@ export default function BudgetPage() {
               )}
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Unit Price</label>
-                <input
-                  type="text"
-                  inputMode="decimal"
+                <AmountInput
                   className="input"
                   placeholder="e.g. 5,000"
                   value={lineForm.unit_price}
-                  onChange={(e) => {
-                    const up = formatAmountInput(e.target.value)
+                  onChange={(up) => {
                     const qty = parseFloat(lineForm.quantity) || 1
                     const total = parseFloat(stripCommas(up)) * qty
                     setLineForm({ ...lineForm, unit_price: up, budgeted_amount: total > 0 ? formatAmountInput(String(total)) : lineForm.budgeted_amount })
@@ -398,13 +396,11 @@ export default function BudgetPage() {
               </div>
               <div className="col-span-2">
                 <label className="text-xs text-slate-400 mb-1 block">Budgeted Amount *</label>
-                <input
-                  type="text"
-                  inputMode="decimal"
+                <AmountInput
                   className="input"
                   placeholder="e.g. 500,000"
                   value={lineForm.budgeted_amount}
-                  onChange={(e) => setLineForm({ ...lineForm, budgeted_amount: formatAmountInput(e.target.value) })}
+                  onChange={(v) => setLineForm({ ...lineForm, budgeted_amount: v })}
                 />
                 {lineForm.unit_price && lineForm.quantity && (
                   <p className="text-xs text-slate-500 mt-1">

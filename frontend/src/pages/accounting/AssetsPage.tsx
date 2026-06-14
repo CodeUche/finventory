@@ -3,7 +3,8 @@ import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, X, Landmark, Loader2, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { accountingApi, bypassNextGets } from '@/services/api'
-import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
+import { formatCurrency, formatDate, stripCommas } from '@/lib/utils'
+import AmountInput from '@/components/AmountInput'
 import type { FixedAsset, Account } from '@/types'
 import DateInput from '@/components/DateInput'
 
@@ -256,7 +257,7 @@ export default function AssetsPage() {
               </div>
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Purchase Cost *</label>
-                <input type="text" inputMode="decimal" className="input" value={form.purchase_cost} onChange={(e) => setForm({ ...form, purchase_cost: formatAmountInput(e.target.value) })} />
+                <AmountInput className="input" value={form.purchase_cost} onChange={(v) => setForm({ ...form, purchase_cost: v })} />
               </div>
               {form.category === 'land' ? (
                 <div className="col-span-2 flex items-center gap-2 px-3 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs">
@@ -277,7 +278,7 @@ export default function AssetsPage() {
                   </div>
                   <div>
                     <label className="text-xs text-slate-400 mb-1 block">Residual Value</label>
-                    <input type="text" inputMode="decimal" className="input" value={form.residual_value} onChange={(e) => setForm({ ...form, residual_value: formatAmountInput(e.target.value) })} />
+                    <AmountInput className="input" value={form.residual_value} onChange={(v) => setForm({ ...form, residual_value: v })} />
                   </div>
                 </>
               )}

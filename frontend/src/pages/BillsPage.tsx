@@ -9,6 +9,7 @@ import ExportButton from '@/components/ExportButton'
 import toast from 'react-hot-toast'
 import { billApi, supplierApi, taxApi, expenseApi, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
+import AmountInput from '@/components/AmountInput'
 import type { Bill } from '@/types'
 import DateInput from '@/components/DateInput'
 import { FieldTooltip } from '@/components/FieldTooltip'
@@ -261,7 +262,7 @@ export default function BillsPage() {
   const updateLine = (i: number, field: keyof BillLineForm, value: string) => {
     setLines(lines.map((l, idx) => {
       if (idx !== i) return l
-      const updated = { ...l, [field]: field === 'unit_cost' ? formatAmountInput(value) : value }
+      const updated = { ...l, [field]: value }
       // Auto-fill description from category name when category selected and description is empty
       if (field === 'category_id' && value) {
         const cat = expenseCategories.find((c) => c.id === value)
@@ -562,7 +563,7 @@ export default function BillsPage() {
                         <input type="number" min="1" className="input py-1.5 text-sm" placeholder="Qty" value={line.quantity} onChange={(e) => updateLine(i, 'quantity', e.target.value)} />
                       </div>
                       <div className="col-span-4">
-                        <input type="text" inputMode="decimal" className="input py-1.5 text-sm" placeholder="Unit Cost" value={line.unit_cost} onChange={(e) => updateLine(i, 'unit_cost', e.target.value)} />
+                        <AmountInput className="input py-1.5 text-sm" placeholder="Unit Cost" value={line.unit_cost} onChange={(v) => updateLine(i, 'unit_cost', v)} />
                       </div>
                       <div className="col-span-1 flex justify-center">
                         <button onClick={() => setLines(lines.filter((_, idx) => idx !== i))} className="p-1 text-slate-500 hover:text-red-400 transition-colors"><Trash2 size={14} /></button>
@@ -627,7 +628,7 @@ export default function BillsPage() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Amount *</label>
-                <input type="text" inputMode="decimal" className="input" value={payForm.amount} onChange={(e) => setPayForm({ ...payForm, amount: formatAmountInput(e.target.value) })} />
+                <AmountInput className="input" value={payForm.amount} onChange={(v) => setPayForm({ ...payForm, amount: v })} />
               </div>
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Date</label>

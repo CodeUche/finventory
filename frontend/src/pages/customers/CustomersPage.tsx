@@ -6,6 +6,7 @@ import toast from 'react-hot-toast'
 import { customerApi, urlToDataUrl, bypassNextGets } from '@/services/api'
 import ExportButton from '@/components/ExportButton'
 import { formatCurrency, formatDate, getStatusColor, getCurrencySymbol } from '@/lib/utils'
+import AmountInput from '@/components/AmountInput'
 import DateInput from '@/components/DateInput'
 import { FieldTooltip } from '@/components/FieldTooltip'
 import { useAuthStore } from '@/store/authStore'
@@ -692,8 +693,8 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
               </div>
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Credit Limit<FieldTooltip text="The maximum amount this customer is allowed to owe you at any time. Set to 0 to block credit sales. The app warns you when they approach this limit." /></label>
-                <input type="number" className="input" value={editForm.credit_limit} min="0"
-                  onChange={(e) => setEditForm({ ...editForm, credit_limit: e.target.value })} />
+                <AmountInput className="input" value={editForm.credit_limit}
+                  onChange={(v) => setEditForm({ ...editForm, credit_limit: v })} />
               </div>
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Phone<FieldTooltip text="Customer's phone number. Shown on invoices and useful for follow-ups." /></label>
@@ -1109,13 +1110,11 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
 
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Credit Limit<FieldTooltip text="The maximum amount this customer is allowed to owe you at any time. Set to 0 to block credit sales. The app warns you when they approach this limit." /></label>
-                <input
-                  type="number"
+                <AmountInput
                   className="input"
                   placeholder="0"
                   value={form.credit_limit}
-                  onChange={(e) => setForm({ ...form, credit_limit: e.target.value })}
-                  min="0"
+                  onChange={(v) => setForm({ ...form, credit_limit: v })}
                 />
               </div>
 

@@ -6,7 +6,8 @@ import Pagination from '@/components/Pagination'
 import { AlertTriangle, Boxes, Plus, RefreshCw, ArrowLeftRight, Pencil, Trash2, Loader2, CheckSquare, Search } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { inventoryApi, bypassNextGets } from '@/services/api'
-import { formatAmountInput, stripCommas } from '@/lib/utils'
+import { stripCommas } from '@/lib/utils'
+import AmountInput from '@/components/AmountInput'
 import SortSelect from '@/components/SortSelect'
 import type { Product, StockItem, Warehouse } from '@/types'
 
@@ -616,15 +617,15 @@ export default function StockPage() {
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="text-xs text-slate-400 block mb-1">Cost Price</label>
-                      <input type="text" inputMode="decimal" className="input py-2 text-sm" placeholder="0.00"
+                      <AmountInput className="input py-2 text-sm" placeholder="0.00"
                         value={newProduct.cost_price}
-                        onChange={(e) => setNewProduct((p) => ({ ...p, cost_price: formatAmountInput(e.target.value) }))} />
+                        onChange={(v) => setNewProduct((p) => ({ ...p, cost_price: v }))} />
                     </div>
                     <div>
                       <label className="text-xs text-slate-400 block mb-1">Selling Price</label>
-                      <input type="text" inputMode="decimal" className="input py-2 text-sm" placeholder="0.00"
+                      <AmountInput className="input py-2 text-sm" placeholder="0.00"
                         value={newProduct.selling_price}
-                        onChange={(e) => setNewProduct((p) => ({ ...p, selling_price: formatAmountInput(e.target.value) }))} />
+                        onChange={(v) => setNewProduct((p) => ({ ...p, selling_price: v }))} />
                     </div>
                   </div>
                 </div>

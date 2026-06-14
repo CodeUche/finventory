@@ -4,6 +4,7 @@ import { Plus, X, RefreshCw, Loader2, Trash2, Play } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { recurringApi, customerApi, inventoryApi } from '@/services/api'
 import { formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
+import AmountInput from '@/components/AmountInput'
 import type { RecurringInvoice, Customer, Warehouse, Product } from '@/types'
 import DateInput from '@/components/DateInput'
 
@@ -127,7 +128,6 @@ export default function RecurringInvoicesPage() {
         const p = products.find((pr) => pr.id === value)
         if (p) updated.unit_price = formatAmountInput(p.selling_price)
       }
-      if (field === 'unit_price') updated.unit_price = formatAmountInput(value)
       return updated
     }))
   }
@@ -309,7 +309,7 @@ export default function RecurringInvoicesPage() {
                       <input type="number" min="1" className="input py-1.5 text-sm" placeholder="Qty" value={line.quantity} onChange={(e) => updateLine(i, 'quantity', e.target.value)} />
                     </div>
                     <div className="col-span-3">
-                      <input type="text" inputMode="decimal" className="input py-1.5 text-sm" placeholder="Price" value={line.unit_price} onChange={(e) => updateLine(i, 'unit_price', e.target.value)} />
+                      <AmountInput className="input py-1.5 text-sm" placeholder="Price" value={line.unit_price} onChange={(v) => updateLine(i, 'unit_price', v)} />
                     </div>
                     <div className="col-span-1 flex justify-center">
                       <button onClick={() => setLines(lines.filter((_, idx) => idx !== i))} className="p-1 text-slate-500 hover:text-red-400 transition-colors"><Trash2 size={14} /></button>

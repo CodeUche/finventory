@@ -4,6 +4,7 @@ import { Plus, X, BookMarked, Loader2, ChevronDown, ChevronUp, Trash2, Edit2, Ro
 import toast from 'react-hot-toast'
 import { accountingApi, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
+import AmountInput from '@/components/AmountInput'
 import type { JournalEntry, Account } from '@/types'
 import DateInput from '@/components/DateInput'
 
@@ -166,8 +167,7 @@ export default function JournalPage() {
   const updateLine = (i: number, field: keyof JournalLineForm, value: string) => {
     setLines(lines.map((l, idx) => {
       if (idx !== i) return l
-      const formatted = (field === 'debit' || field === 'credit') ? formatAmountInput(value) : value
-      const updated = { ...l, [field]: formatted }
+      const updated = { ...l, [field]: value }
       if (field === 'debit' && value) updated.credit = ''
       if (field === 'credit' && value) updated.debit = ''
       return updated
@@ -370,10 +370,10 @@ export default function JournalPage() {
                           <input className="input py-1.5 text-sm" placeholder="Note (optional)" value={line.description} onChange={(e) => updateLine(i, 'description', e.target.value)} />
                         </td>
                         <td className="px-2 py-1.5">
-                          <input type="text" inputMode="decimal" className="input py-1.5 text-sm" placeholder="0.00" value={line.debit} onChange={(e) => updateLine(i, 'debit', e.target.value)} />
+                          <AmountInput className="input py-1.5 text-sm" placeholder="0.00" value={line.debit} onChange={(v) => updateLine(i, 'debit', v)} />
                         </td>
                         <td className="px-2 py-1.5">
-                          <input type="text" inputMode="decimal" className="input py-1.5 text-sm" placeholder="0.00" value={line.credit} onChange={(e) => updateLine(i, 'credit', e.target.value)} />
+                          <AmountInput className="input py-1.5 text-sm" placeholder="0.00" value={line.credit} onChange={(v) => updateLine(i, 'credit', v)} />
                         </td>
                         <td className="px-2 py-1.5">
                           {lines.length > 2 && (

@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Minus, Plus, Search, ShoppingCart, Trash2, User, UserCheck, Warehouse, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { customerApi, inventoryApi, locationApi, salesApi } from '@/services/api'
-import { formatCurrency, formatAmountInput, stripCommas } from '@/lib/utils'
+import { formatCurrency, stripCommas } from '@/lib/utils'
+import AmountInput from '@/components/AmountInput'
 import { useNotifications } from '@/contexts/NotificationsContext'
 import { useAuthStore } from '@/store/authStore'
 import { FieldTooltip } from '@/components/FieldTooltip'
@@ -529,13 +530,11 @@ export default function NewSalePage() {
             {paymentMethod !== 'credit' && (
               <div>
                 <label className="text-xs text-slate-400 mb-1 flex items-center gap-1">Amount Tendered <FieldTooltip text="The amount of cash the customer physically gives you. If more than the total, the change due will be shown automatically." /></label>
-                <input
-                  type="text"
-                  inputMode="decimal"
+                <AmountInput
                   className="input"
                   placeholder={formatCurrency(effectiveBalanceDue)}
                   value={amountPaid}
-                  onChange={(e) => setAmountPaid(formatAmountInput(e.target.value))}
+                  onChange={(v) => setAmountPaid(v)}
                 />
               </div>
             )}

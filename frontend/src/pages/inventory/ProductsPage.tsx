@@ -8,6 +8,7 @@ import { Plus, Search, Package, AlertTriangle, X, Pencil, Loader2, TrendingUp, T
 import toast from 'react-hot-toast'
 import { inventoryApi, taxApi, salesApi, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatAmountInput, stripCommas, formatDate } from '@/lib/utils'
+import AmountInput from '@/components/AmountInput'
 import { useAuthStore } from '@/store/authStore'
 import type { Product, TaxClass, Organisation } from '@/types'
 import SortSelect from '@/components/SortSelect'
@@ -55,33 +56,31 @@ async function exportProductsPDF(products: Product[], org?: Organisation | null)
   autoTable(doc, {
     ...ts,
     startY: y,
-    head: [['SKU', 'Product', 'Type', 'Cost Price', 'Selling Price', 'Wholesale', 'Profit', 'Margin']],
+    tableWidth: 'auto',
+    head: [['SKU', 'Product', 'Type', 'Cost Price', 'Selling Price', 'Wholesale Price', 'Stock']],
     body: products.map(p => {
       const cost = parseFloat(p.cost_price) || 0
       const sell = parseFloat(p.selling_price) || 0
-      const profit = sell - cost
-      const margin = sell > 0 ? ((profit / sell) * 100).toFixed(1) + '%' : '0.0%'
       return [
         p.sku ?? '—', p.name, (p as any).product_type ?? 'physical',
         `NGN ${cost.toLocaleString('en-NG', { minimumFractionDigits: 2 })}`,
         `NGN ${sell.toLocaleString('en-NG', { minimumFractionDigits: 2 })}`,
         (p as any).wholesale_price && parseFloat((p as any).wholesale_price) > 0
           ? `NGN ${parseFloat((p as any).wholesale_price).toLocaleString('en-NG', { minimumFractionDigits: 2 })}` : '—',
-        `NGN ${profit.toLocaleString('en-NG', { minimumFractionDigits: 2 })}`,
-        margin,
+        p.total_stock ?? 0,
       ]
     }),
     columnStyles: {
-      0: { cellWidth: 24 },                              // SKU
-      1: { cellWidth: 80 },                              // Product (more room in landscape)
-      2: { cellWidth: 24 },                              // Type
-      3: { cellWidth: 36, halign: 'right' as const },   // Cost Price
-      4: { cellWidth: 36, halign: 'right' as const },   // Selling Price
-      5: { cellWidth: 36, halign: 'right' as const },   // Wholesale
-      6: { cellWidth: 36, halign: 'right' as const },   // Profit
-      7: { cellWidth: 22, halign: 'right' as const },   // Margin
+      0: { cellWidth: 'auto' },                            // SKU
+      1: { cellWidth: 'auto' },                            // Product
+      2: { cellWidth: 'auto' },                            // Type
+      3: { cellWidth: 'auto', halign: 'right' as const }, // Cost Price
+      4: { cellWidth: 'auto', halign: 'right' as const }, // Selling Price
+      5: { cellWidth: 'auto', halign: 'right' as const }, // Wholesale Price
+      6: { cellWidth: 'auto', halign: 'right' as const }, // Stock
     },
-    styles: { ...ts.styles, fontSize: 8, cellPadding: 3 },
+    styles: { ...ts.styles, fontSize: 8, cellPadding: 3, overflow: 'linebreak' },
+    margin: { left: 10, right: 10 },
   })
   const finalY = (doc as any).lastAutoTable.finalY + 4
   doc.setFontSize(TYPE.TINY.size); doc.setFont(pdfFont, 'normal'); doc.setTextColor(...MUTED)
@@ -92,15 +91,13 @@ async function exportProductsPDF(products: Product[], org?: Organisation | null)
 
 async function exportProductsCSV(products: Product[]) {
   const { saveBlobFile } = await import('@/lib/saveBlobFile')
-  const headers = ['SKU', 'Product', 'Type', 'Cost Price', 'Selling Price', 'Wholesale Price', 'Profit', 'Margin %']
+  const headers = ['SKU', 'Product', 'Type', 'Cost Price', 'Selling Price', 'Wholesale Price', 'Stock']
   const rows = products.map(p => {
     const cost = parseFloat(p.cost_price) || 0
     const sell = parseFloat(p.selling_price) || 0
-    const profit = sell - cost
-    const margin = sell > 0 ? ((profit / sell) * 100).toFixed(1) : '0.0'
     return [p.sku ?? '', p.name, (p as any).product_type ?? 'physical', cost, sell,
       (p as any).wholesale_price && parseFloat((p as any).wholesale_price) > 0 ? parseFloat((p as any).wholesale_price) : '',
-      profit, margin]
+      p.total_stock ?? 0]
   })
   const csv = [headers, ...rows].map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\n')
   await saveBlobFile(new Blob([csv], { type: 'text/csv' }), 'products-catalogue.csv')
@@ -109,17 +106,20 @@ async function exportProductsCSV(products: Product[]) {
 async function exportProductsExcel(products: Product[]) {
   const { saveBlobFile } = await import('@/lib/saveBlobFile')
   const XLSX = await import('xlsx')
-  const headers = ['SKU', 'Product', 'Type', 'Cost Price', 'Selling Price', 'Wholesale Price', 'Profit', 'Margin %']
+  const headers = ['SKU', 'Product', 'Type', 'Cost Price', 'Selling Price', 'Wholesale Price', 'Stock']
   const rows = products.map(p => {
     const cost = parseFloat(p.cost_price) || 0
     const sell = parseFloat(p.selling_price) || 0
-    const profit = sell - cost
-    const margin = sell > 0 ? ((profit / sell) * 100).toFixed(1) : '0.0'
     return [p.sku ?? '', p.name, (p as any).product_type ?? 'physical', cost, sell,
       (p as any).wholesale_price && parseFloat((p as any).wholesale_price) > 0 ? parseFloat((p as any).wholesale_price) : '',
-      profit, margin]
+      p.total_stock ?? 0]
   })
-  const ws = XLSX.utils.aoa_to_sheet([headers, ...rows])
+  const allRows = [headers, ...rows]
+  const ws = XLSX.utils.aoa_to_sheet(allRows)
+  // Auto-size each column to fit its widest cell
+  ws['!cols'] = headers.map((_, ci) => ({
+    wch: Math.max(...allRows.map(r => String(r[ci] ?? '').length)) + 2,
+  }))
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, ws, 'Products')
   const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' })
@@ -1023,17 +1023,17 @@ export default function ProductsPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="label">Cost Price * <FieldTooltip text="What you paid to buy or produce each unit. Used to calculate your profit margin. Never shown to customers." /></label>
-                  <input type="text" inputMode="decimal" className="input" value={form.cost_price} onChange={(e) => setForm((f) => ({ ...f, cost_price: formatAmountInput(e.target.value) }))} required placeholder="5,500.00" />
+                  <AmountInput className="input" value={form.cost_price} onChange={(v) => setForm((f) => ({ ...f, cost_price: v }))} required placeholder="5,500.00" />
                 </div>
                 <div>
                   <label className="label">Selling Price * <FieldTooltip text="The price you charge customers. This is what appears on invoices. Should always be higher than your cost price to make a profit." /></label>
-                  <input type="text" inputMode="decimal" className="input" value={form.selling_price} onChange={(e) => setForm((f) => ({ ...f, selling_price: formatAmountInput(e.target.value) }))} required placeholder="8,500.00" />
+                  <AmountInput className="input" value={form.selling_price} onChange={(v) => setForm((f) => ({ ...f, selling_price: v }))} required placeholder="8,500.00" />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="label">Wholesale Price <FieldTooltip text="Discounted price for bulk / wholesale buyers." /></label>
-                  <input type="text" inputMode="decimal" className="input" value={form.wholesale_price} onChange={(e) => setForm((f) => ({ ...f, wholesale_price: formatAmountInput(e.target.value) }))} placeholder="Optional" />
+                  <AmountInput className="input" value={form.wholesale_price} onChange={(v) => setForm((f) => ({ ...f, wholesale_price: v }))} placeholder="Optional" />
                 </div>
               </div>
               {showOwnerFeatures && (
@@ -1042,12 +1042,10 @@ export default function ProductsPage() {
                     <ShieldCheck size={13} className="text-brand-400" />
                     <label className="text-xs font-semibold text-brand-400 uppercase tracking-wide">Owner Cost Price</label>
                   </div>
-                  <input
-                    type="text"
-                    inputMode="decimal"
+                  <AmountInput
                     className="input"
                     value={form.owner_cost_price}
-                    onChange={(e) => setForm((f) => ({ ...f, owner_cost_price: formatAmountInput(e.target.value) }))}
+                    onChange={(v) => setForm((f) => ({ ...f, owner_cost_price: v }))}
                     placeholder="Your actual purchase cost (private)"
                   />
                   <p className="text-xs text-slate-500 mt-1.5">Only visible to you (owner). Used in owner profit analytics.</p>

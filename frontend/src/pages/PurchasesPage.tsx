@@ -5,6 +5,7 @@ import { Plus, Search, Truck, X, Loader2, UploadCloud, FileText, Edit2, Trash2, 
 import toast from 'react-hot-toast'
 import { purchaseApi, supplierApi, inventoryApi, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
+import AmountInput from '@/components/AmountInput'
 import type { Product, PurchaseOrder, PurchaseOrderItem } from '@/types'
 import DateInput from '@/components/DateInput'
 import YearFilter, { yearToDateParams } from '@/components/YearFilter'
@@ -692,11 +693,11 @@ export default function PurchasesPage() {
                             value={item.quantity}
                             onChange={(e) => updateItem(idx, 'quantity', e.target.value)}
                           />
-                          <input
-                            type="text" inputMode="decimal" placeholder="0.00"
+                          <AmountInput
+                            placeholder="0.00"
                             className="input text-xs py-1.5"
                             value={item.unit_cost}
-                            onChange={(e) => updateItem(idx, 'unit_cost', formatAmountInput(e.target.value))}
+                            onChange={(v) => updateItem(idx, 'unit_cost', v)}
                           />
                           <span className="text-xs text-slate-300 font-mono truncate">
                             {(parseFloat(item.quantity) || 0) * (parseFloat(stripCommas(item.unit_cost)) || 0) > 0

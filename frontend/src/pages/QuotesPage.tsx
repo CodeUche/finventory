@@ -4,6 +4,7 @@ import { Plus, X, ClipboardList, Loader2, FileText, ChevronDown, ChevronUp, Tras
 import toast from 'react-hot-toast'
 import { quoteApi, customerApi, inventoryApi, salesApi, urlToDataUrl, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
+import AmountInput from '@/components/AmountInput'
 import { useAuthStore } from '@/store/authStore'
 import { saveBlobFile } from '@/lib/saveBlobFile'
 import type { Quote, Customer, Warehouse, Product, Invoice } from '@/types'
@@ -425,7 +426,6 @@ export default function QuotesPage() {
         const p = products.find((pr) => pr.id === value)
         if (p) { updated.product_name = p.name; updated.unit_price = formatAmountInput(p.selling_price) }
       }
-      if (field === 'unit_price') updated.unit_price = formatAmountInput(value)
       return updated
     }))
   }
@@ -840,7 +840,7 @@ export default function QuotesPage() {
                       <input type="number" min="1" className="input py-1.5 text-sm" placeholder="Qty" value={line.quantity} onChange={(e) => updateLine(i, 'quantity', e.target.value)} />
                     </div>
                     <div className="col-span-3">
-                      <input type="text" inputMode="decimal" className="input py-1.5 text-sm" placeholder="Unit Price" value={line.unit_price} onChange={(e) => updateLine(i, 'unit_price', e.target.value)} />
+                      <AmountInput className="input py-1.5 text-sm" placeholder="Unit Price" value={line.unit_price} onChange={(v) => updateLine(i, 'unit_price', v)} />
                     </div>
                     <div className="col-span-2">
                       <input type="number" min="0" max="100" className="input py-1.5 text-sm" placeholder="Disc%" value={line.discount_percent} onChange={(e) => updateLine(i, 'discount_percent', e.target.value)} />
