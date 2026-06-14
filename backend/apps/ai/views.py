@@ -62,12 +62,15 @@ def _gather_financial_summary(organisation) -> dict:
     today = date.today()
     month_start = today.replace(day=1)
 
-    # ── Revenue (confirmed + credit invoices) ────────────────────────────────
+    # ── Revenue (all invoices that represent actual sales) ────────────────────
+    # Includes: paid, confirmed, partially_paid, credit, overdue.
+    # Excludes: proforma (not yet confirmed), voided, returned.
+    REVENUE_STATUSES = ["paid", "confirmed", "partially_paid", "credit", "overdue"]
     try:
         from apps.sales.models import Invoice
         invoices = Invoice.objects.filter(
             organisation=organisation,
-            status__in=["confirmed", "credit", "partially_paid"],
+            status__in=REVENUE_STATUSES,
         )
         revenue_mtd = invoices.filter(
             issue_date__gte=month_start
@@ -76,9 +79,10 @@ def _gather_financial_summary(organisation) -> dict:
         invoice_count = invoices.count()
         overdue_count = invoices.filter(
             due_date__lt=today,
-            status__in=["confirmed", "partially_paid"],
+            status__in=["confirmed", "partially_paid", "overdue"],
         ).count()
     except Exception:
+        logger.exception("AI: failed to gather invoice/revenue data")
         revenue_mtd = revenue_total = Decimal("0")
         invoice_count = overdue_count = 0
 
@@ -101,6 +105,7 @@ def _gather_financial_summary(organisation) -> dict:
             for r in top_exp_cats
         ]
     except Exception:
+        logger.exception("AI: failed to gather expense data")
         expense_mtd = expense_total = Decimal("0")
         top_expense_categories = []
 
@@ -116,6 +121,7 @@ def _gather_financial_summary(organisation) -> dict:
             organisation=organisation, is_active=True
         ).count()
     except Exception:
+        logger.exception("AI: failed to gather payroll data")
         payroll_net = payroll_gross = "0"
         employee_count = 0
 
@@ -131,6 +137,7 @@ def _gather_financial_summary(organisation) -> dict:
             payment_method__in=["bank_transfer", "pos"],
         ).aggregate(s=Sum("amount"))["s"] or Decimal("0")
     except Exception:
+        logger.exception("AI: failed to gather cash/payment data")
         cash_in = bank_in = Decimal("0")
 
     # ── Inventory ─────────────────────────────────────────────────────────────
@@ -142,6 +149,7 @@ def _gather_financial_summary(organisation) -> dict:
             quantity__lte=models_low_stock_threshold(organisation),
         ).count()
     except Exception:
+        logger.exception("AI: failed to gather inventory data")
         product_count = low_stock_count = 0
 
     # ── Bills / AP ────────────────────────────────────────────────────────────
@@ -157,6 +165,7 @@ def _gather_financial_summary(organisation) -> dict:
             due_date__lt=today,
         ).count()
     except Exception:
+        logger.exception("AI: failed to gather bills/AP data")
         bills_due = Decimal("0")
         overdue_bills = 0
 
@@ -172,6 +181,7 @@ def _gather_financial_summary(organisation) -> dict:
             outstanding_balance__gt=0,
         ).count()
     except Exception:
+        logger.exception("AI: failed to gather customer credit data")
         outstanding_credit = Decimal("0")
         credit_customer_count = 0
 
@@ -214,22 +224,40 @@ def _build_system_prompt(organisation, summary: dict) -> str:
         "You help business owners understand their finances in plain, friendly English.",
         "You are concise, insightful, and action-oriented — never use jargon without explaining it.",
         "",
-        f"Current financial snapshot ({summary['currency']}):",
+        f"LIVE FINANCIAL DATA for {org_name} (currency: {summary['currency']}):",
+        "",
+        "REVENUE & SALES:",
         f"- Revenue this month: {summary['currency']} {summary['revenue_this_month']}",
-        f"- Revenue all time: {summary['currency']} {summary['revenue_all_time']}",
+        f"- Revenue all time (total invoiced): {summary['currency']} {summary['revenue_all_time']}",
+        f"- Total invoices raised: {summary['invoice_count']}",
+        f"- Overdue invoices: {summary['overdue_invoices']}",
+        "",
+        "CASH COLLECTED (actual payments received):",
+        f"- Cash payments collected: {summary['currency']} {summary['cash_collected']}",
+        f"- Bank/POS transfers collected: {summary['currency']} {summary['bank_transfers_collected']}",
+        "",
+        "EXPENSES:",
         f"- Expenses this month: {summary['currency']} {summary['expense_this_month']}",
-        f"- Total invoices: {summary['invoice_count']} (overdue: {summary['overdue_invoices']})",
+        f"- Total expenses all time: {summary['currency']} {summary['expense_all_time']}",
+        "",
+        "PEOPLE & PAYROLL:",
         f"- Active employees: {summary['active_employees']}",
-        f"- Latest payroll gross/net: {summary['payroll_latest_gross']} / {summary['payroll_latest_net']}",
-        f"- Accounts payable (bills due): {summary['currency']} {summary['accounts_payable']} ({summary['overdue_bills']} overdue)",
-        f"- Customer credit outstanding: {summary['currency']} {summary['outstanding_credit_from_customers']} ({summary['customers_with_credit']} customers)",
-        f"- Products: {summary['product_count']}",
+        f"- Latest payroll gross: {summary['currency']} {summary['payroll_latest_gross']}",
+        f"- Latest payroll net (take-home): {summary['currency']} {summary['payroll_latest_net']}",
+        "",
+        "PAYABLES & CREDIT:",
+        f"- Accounts payable (bills owed to suppliers): {summary['currency']} {summary['accounts_payable']} ({summary['overdue_bills']} overdue bills)",
+        f"- Credit owed by customers: {summary['currency']} {summary['outstanding_credit_from_customers']} ({summary['customers_with_credit']} customers with outstanding balance)",
+        "",
+        "INVENTORY:",
+        f"- Total products in catalogue: {summary['product_count']}",
     ]
 
     if summary["top_expense_categories"]:
-        lines.append("- Top expense categories:")
+        lines.append("")
+        lines.append("TOP EXPENSE CATEGORIES:")
         for cat in summary["top_expense_categories"]:
-            lines.append(f"    • {_sanitize(cat['category'])}: {summary['currency']} {cat['amount']}")
+            lines.append(f"  • {_sanitize(cat['category'])}: {summary['currency']} {cat['amount']}")
 
     if custom_ctx:
         lines += ["", "Business context provided by the owner:", custom_ctx]

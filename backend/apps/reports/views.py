@@ -79,6 +79,7 @@ class BaseDateRangeView(APIView):
                 title=title,
                 subtitle=subtitle,
                 filename_base=filename_base,
+                org=self.get_organisation(),
             )
             if response is not None:
                 return response
