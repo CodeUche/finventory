@@ -141,6 +141,66 @@ class BillViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
         bill = BillService.create_bill(bill_data, items_data, org, request.user)
         return Response(BillSerializer(bill).data, status=status.HTTP_201_CREATED)
 
+    def update(self, request, *args, **kwargs):
+        org = self._get_organisation()
+        bill = self.get_object()
+        if bill.status not in (Bill.DRAFT, Bill.RECEIVED):
+            return Response(
+                {'error': 'Only draft or received bills can be edited.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        ser = CreateBillSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        d = ser.validated_data
+
+        if d.get('supplier'):
+            supplier = Supplier.objects.get(id=d['supplier'], organisation=org)
+        else:
+            vendor_name = d.get('vendor_name', '').strip()
+            supplier, _ = Supplier.objects.get_or_create(
+                organisation=org,
+                name=vendor_name,
+                defaults={'code': vendor_name[:50].upper().replace(' ', '-')},
+            )
+
+        folder = None
+        if d.get('folder'):
+            try:
+                folder = BillFolder.objects.get(id=d['folder'], organisation=org)
+            except BillFolder.DoesNotExist:
+                pass
+
+        items_data = []
+        for item in d['items']:
+            entry = {
+                'description': item['description'],
+                'quantity': item['quantity'],
+                'unit_cost': item['unit_cost'],
+            }
+            if item.get('expense_category_id'):
+                entry['expense_category_id'] = item['expense_category_id']
+            if item.get('category_label'):
+                entry['category_label'] = item['category_label']
+            if item.get('account_id'):
+                entry['account_id'] = item['account_id']
+            items_data.append(entry)
+
+        bill_data = {
+            'supplier': supplier,
+            'folder': folder,
+            'issue_date': d['issue_date'],
+            'due_date': d['due_date'],
+            'reference': d.get('reference', ''),
+            'tax_amount': Decimal(str(d.get('tax_amount', '0'))),
+            'notes': d.get('notes', ''),
+            'status': d.get('status', bill.status),
+        }
+        bill = BillService.update_bill(bill, bill_data, items_data, org)
+        return Response(BillSerializer(bill).data)
+
+    def partial_update(self, request, *args, **kwargs):
+        return self.update(request, *args, **kwargs)
+
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
         bill = self.get_object()

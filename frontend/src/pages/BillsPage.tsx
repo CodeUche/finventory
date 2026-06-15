@@ -186,7 +186,13 @@ export default function BillsPage() {
       notes: (b as any).notes ?? '',
       status: b.status,
     })
-    setLines([{ ...BLANK_LINE }])
+    const existingItems: typeof BLANK_LINE[] = ((b as any).items ?? []).map((item: any) => ({
+      description: item.description ?? '',
+      quantity: String(item.quantity ?? '1'),
+      unit_cost: formatAmountInput(String(item.unit_cost ?? '')),
+      category_label: item.expense_category_name ?? '',
+    }))
+    setLines(existingItems.length > 0 ? existingItems : [{ ...BLANK_LINE }])
     setShowModal(true)
   }
 

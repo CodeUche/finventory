@@ -52,6 +52,53 @@ class BillService:
 
     @staticmethod
     @transaction.atomic
+    def update_bill(bill, validated_data, items_data, organisation):
+        """Replace bill header fields and line items atomically."""
+        from apps.accounting.services import AccountingService
+        issue_date = validated_data.get('issue_date') or bill.issue_date
+        if AccountingService.is_period_locked(organisation, issue_date):
+            from django.core.exceptions import PermissionDenied
+            raise PermissionDenied(f"The period {issue_date.year}-{issue_date.month:02d} is locked.")
+
+        # Update header fields
+        for field, value in validated_data.items():
+            setattr(bill, field, value)
+
+        # Replace all line items
+        bill.items.all().delete()
+        subtotal = Decimal('0')
+        for item in items_data:
+            qty = item['quantity']
+            cost = item['unit_cost']
+            line = qty * cost
+            cat_id = item.get('expense_category_id')
+            label = (item.get('category_label') or '').strip()
+            if label:
+                cat, _ = ExpenseCategory.objects.get_or_create(
+                    organisation=organisation, name=label,
+                    defaults={'is_income': False},
+                )
+                cat_id = cat.id
+            BillItem.objects.create(
+                organisation=organisation,
+                bill=bill,
+                description=item['description'],
+                quantity=qty,
+                unit_cost=cost,
+                line_total=line,
+                expense_category_id=cat_id,
+                account_id=item.get('account_id'),
+            )
+            subtotal += line
+
+        bill.subtotal = subtotal
+        bill.total_amount = subtotal + (validated_data.get('tax_amount') or bill.tax_amount)
+        bill.amount_due = max(Decimal('0'), bill.total_amount - bill.amount_paid)
+        bill.save()
+        return bill
+
+    @staticmethod
+    @transaction.atomic
     def record_payment(bill, amount, payment_date, method, reference, notes, user, wht_rate_id=None):
         if bill.status == Bill.VOIDED:
             raise ValueError("Cannot pay a voided bill")
