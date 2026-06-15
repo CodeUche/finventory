@@ -141,7 +141,27 @@ class BillViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
         bill = BillService.create_bill(bill_data, items_data, org, request.user)
         return Response(BillSerializer(bill).data, status=status.HTTP_201_CREATED)
 
+    def partial_update(self, request, *args, **kwargs):
+        """PATCH with only header fields (folder, status, notes, etc.) — no items required."""
+        bill = self.get_object()
+        allowed = {'folder', 'status', 'notes', 'reference', 'issue_date', 'due_date', 'tax_amount'}
+        data = {k: v for k, v in request.data.items() if k in allowed}
+        org = self._get_organisation()
+        if 'folder' in data:
+            if data['folder']:
+                try:
+                    data['folder'] = BillFolder.objects.get(id=data['folder'], organisation=org)
+                except BillFolder.DoesNotExist:
+                    data['folder'] = None
+            else:
+                data['folder'] = None
+        for field, value in data.items():
+            setattr(bill, field, value)
+        bill.save()
+        return Response(BillSerializer(bill).data)
+
     def update(self, request, *args, **kwargs):
+        """PUT / full edit — requires complete CreateBillSerializer payload including items."""
         org = self._get_organisation()
         bill = self.get_object()
         if bill.status not in (Bill.DRAFT, Bill.RECEIVED):
@@ -197,9 +217,6 @@ class BillViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
         }
         bill = BillService.update_bill(bill, bill_data, items_data, org)
         return Response(BillSerializer(bill).data)
-
-    def partial_update(self, request, *args, **kwargs):
-        return self.update(request, *args, **kwargs)
 
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
