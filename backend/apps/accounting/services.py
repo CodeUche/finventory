@@ -276,11 +276,22 @@ class AccountingService:
         # ── 1100 Accounts Receivable ──────────────────────────────────────────
         try:
             from apps.customers.models import Customer
+            from apps.sales.models import Invoice
+            # Credit-sale AR: tracked on Customer.outstanding_balance
             ar = (
                 Customer.objects.filter(organisation=organisation)
                 .aggregate(t=Sum('outstanding_balance'))['t'] or zero
             )
-            balances['1100'] = ar
+            # Non-credit invoices with an outstanding balance (e.g. partial cash payments)
+            partial_qs = Invoice.objects.filter(
+                organisation=organisation,
+                status__in=['confirmed', 'partially_paid', 'overdue'],
+                amount_due__gt=0,
+            ).exclude(payment_method='credit')
+            if as_of:
+                partial_qs = partial_qs.filter(issue_date__lte=as_of)
+            partial_ar = partial_qs.aggregate(t=Sum('amount_due'))['t'] or zero
+            balances['1100'] = ar + partial_ar
         except Exception:
             pass
 
@@ -559,21 +570,36 @@ class AccountingService:
 
         # Determine payment method → which asset account to debit
         payment = SalePayment.objects.filter(invoice=invoice).first()
+        ar_acct = AccountMappingService.resolve(organisation, 'accounts_receivable')
+
         if payment:
             if payment.method == 'cash':
                 asset_account = AccountMappingService.resolve(organisation, 'cash_account')
             elif payment.method in ('bank_transfer', 'pos'):
                 asset_account = AccountMappingService.resolve(organisation, 'bank_account')
             else:
-                asset_account = AccountMappingService.resolve(organisation, 'accounts_receivable')
+                asset_account = ar_acct
         else:
-            asset_account = AccountMappingService.resolve(organisation, 'accounts_receivable')
+            asset_account = ar_acct
 
         revenue_acct = AccountMappingService.resolve(organisation, 'revenue_account')
-        lines = [
-            (asset_account, total, zero),
-            (revenue_acct, zero, revenue),
-        ]
+
+        # Partial cash/bank payment: split DR between cash/bank and AR
+        paid_amount = Decimal(str(payment.amount)) if payment else zero
+        remaining = Decimal(str(invoice.amount_due or 0))
+        is_partial_cash = payment and remaining > zero and asset_account.id != ar_acct.id
+
+        if is_partial_cash:
+            lines = [
+                (asset_account, paid_amount, zero),   # DR Cash/Bank (amount paid)
+                (ar_acct, remaining, zero),            # DR AR (remaining balance)
+                (revenue_acct, zero, revenue),         # CR Revenue
+            ]
+        else:
+            lines = [
+                (asset_account, total, zero),          # DR full amount to asset/AR
+                (revenue_acct, zero, revenue),
+            ]
         if tax > zero:
             vat_acct = AccountMappingService.resolve(organisation, 'vat_output_account')
             lines.append((vat_acct, zero, tax))

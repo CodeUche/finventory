@@ -48,6 +48,15 @@ class BillService:
         bill.total_amount = subtotal + bill.tax_amount
         bill.amount_due = bill.total_amount
         bill.save()
+
+        # Post AP GL entry for bills that arrive as received or approved (not draft)
+        if bill.status in (Bill.RECEIVED, Bill.APPROVED):
+            from apps.accounting.services import AccountingService, safe_post_gl
+            safe_post_gl(
+                AccountingService.post_bill_approved_journal, organisation, bill, user,
+                model_instance=bill,
+            )
+
         return bill
 
     @staticmethod
@@ -59,6 +68,9 @@ class BillService:
         if AccountingService.is_period_locked(organisation, issue_date):
             from django.core.exceptions import PermissionDenied
             raise PermissionDenied(f"The period {issue_date.year}-{issue_date.month:02d} is locked.")
+
+        # Capture old status before applying changes
+        old_status = bill.status
 
         # Update header fields
         for field, value in validated_data.items():
@@ -95,6 +107,15 @@ class BillService:
         bill.total_amount = subtotal + (validated_data.get('tax_amount') or bill.tax_amount)
         bill.amount_due = max(Decimal('0'), bill.total_amount - bill.amount_paid)
         bill.save()
+
+        # Post AP GL if bill moves from draft into received/approved for the first time
+        if old_status == Bill.DRAFT and bill.status in (Bill.RECEIVED, Bill.APPROVED):
+            from apps.accounting.services import AccountingService, safe_post_gl
+            safe_post_gl(
+                AccountingService.post_bill_approved_journal, organisation, bill, None,
+                model_instance=bill,
+            )
+
         return bill
 
     @staticmethod
