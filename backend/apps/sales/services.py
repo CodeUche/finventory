@@ -441,27 +441,25 @@ class SaleService:
 
             if invoice.amount_paid >= invoice.total_amount:
                 invoice.status = Invoice.Status.PAID
-                # Reduce customer outstanding balance
-                if invoice.customer and invoice.payment_method == Invoice.PaymentMethod.CREDIT:
-                    invoice.customer.outstanding_balance = max(
-                        invoice.customer.outstanding_balance - invoice.total_amount, Decimal("0")
-                    )
-                    invoice.customer.save(update_fields=["outstanding_balance"])
             elif invoice.amount_paid > 0:
                 invoice.status = Invoice.Status.PARTIALLY_PAID
 
             invoice.save(update_fields=["amount_paid", "amount_due", "status", "updated_at"])
 
-        # Auto-post credit payment journal (non-blocking)
-        if invoice.payment_method == Invoice.PaymentMethod.CREDIT:
-            from apps.accounting.services import AccountingService, safe_post_gl
-            safe_post_gl(
-                AccountingService.post_credit_payment_journal,
-                invoice.organisation, invoice.customer, amount, received_by,
-                description=f"Credit payment – {invoice.invoice_number}",
-                invoice=invoice,
-                model_instance=invoice,
-            )
+        # Post credit ledger entry + GL journal + reduce outstanding balance (non-blocking)
+        if invoice.payment_method == Invoice.PaymentMethod.CREDIT and invoice.customer:
+            try:
+                from apps.credits.services import CreditService
+                CreditService.record_payment(
+                    organisation=invoice.organisation,
+                    customer=invoice.customer,
+                    amount=amount,
+                    recorded_by=received_by,
+                    description=f"Credit payment – {invoice.invoice_number}",
+                )
+            except Exception as exc:
+                logger.warning("CreditService.record_payment failed for invoice %s: %s", invoice.invoice_number, exc)
+
         return payment
 
     @staticmethod

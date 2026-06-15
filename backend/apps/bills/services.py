@@ -2,6 +2,7 @@ import logging
 from decimal import Decimal
 from django.db import transaction
 from django.utils import timezone
+from apps.expenses.models import ExpenseCategory
 from .models import Bill, BillItem, BillPayment
 
 logger = logging.getLogger(__name__)
@@ -23,6 +24,15 @@ class BillService:
             qty = item['quantity']
             cost = item['unit_cost']
             line = qty * cost
+            # Resolve category: prefer category_label (get-or-create), fall back to ID
+            cat_id = item.get('expense_category_id')
+            label = (item.get('category_label') or '').strip()
+            if label:
+                cat, _ = ExpenseCategory.objects.get_or_create(
+                    organisation=organisation, name=label,
+                    defaults={'is_income': False},
+                )
+                cat_id = cat.id
             BillItem.objects.create(
                 organisation=organisation,
                 bill=bill,
@@ -30,7 +40,7 @@ class BillService:
                 quantity=qty,
                 unit_cost=cost,
                 line_total=line,
-                expense_category_id=item.get('expense_category_id'),
+                expense_category_id=cat_id,
                 account_id=item.get('account_id'),
             )
             subtotal += line

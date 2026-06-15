@@ -82,8 +82,11 @@ class BillItemInputSerializer(serializers.Serializer):
     description = serializers.CharField(max_length=500)
     quantity = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0.001"))
     unit_cost = serializers.DecimalField(max_digits=15, decimal_places=4, min_value=Decimal("0.01"))
-    # Optional FK references — resolved in the view/service
+    # Optional FK references — resolved in the view/service.
+    # category_label takes precedence over expense_category_id: the service will
+    # get_or_create the ExpenseCategory by name (same pattern as expenses).
     expense_category_id = serializers.UUIDField(required=False, allow_null=True)
+    category_label = serializers.CharField(required=False, allow_blank=True, allow_null=True, max_length=200)
     account_id = serializers.UUIDField(required=False, allow_null=True)
 
 

@@ -7,8 +7,9 @@ import YearFilter, { yearToDateParams } from '@/components/YearFilter'
 import MonthFilter, { monthToDateParams, type ArchiveMonth } from '@/components/MonthFilter'
 import ExportButton from '@/components/ExportButton'
 import toast from 'react-hot-toast'
-import { billApi, supplierApi, taxApi, expenseApi, bypassNextGets } from '@/services/api'
+import { billApi, supplierApi, taxApi, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
+import { EXPENSE_CATEGORIES } from '@/lib/categories'
 import AmountInput from '@/components/AmountInput'
 import type { Bill } from '@/types'
 import DateInput from '@/components/DateInput'
@@ -18,7 +19,6 @@ import Pagination from '@/components/Pagination'
 
 interface Supplier { id: string; name: string }
 interface TaxClassOption { id: string; name: string; rate: string }
-interface ExpenseCategory { id: string; name: string }
 interface BillFolderOption { id: string; name: string }
 
 const STATUS_BADGE: Record<string, string> = {
@@ -31,8 +31,8 @@ const STATUS_BADGE: Record<string, string> = {
   voided: 'badge-slate',
 }
 
-interface BillLineForm { description: string; quantity: string; unit_cost: string; category_id: string }
-const BLANK_LINE: BillLineForm = { description: '', quantity: '1', unit_cost: '', category_id: '' }
+interface BillLineForm { description: string; quantity: string; unit_cost: string; category_label: string }
+const BLANK_LINE: BillLineForm = { description: '', quantity: '1', unit_cost: '', category_label: '' }
 
 interface BillForm {
   supplier: string
@@ -75,7 +75,6 @@ export default function BillsPage() {
   const [bills, setBills] = useState<Bill[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [taxClasses, setTaxClasses] = useState<TaxClassOption[]>([])
-  const [expenseCategories, setExpenseCategories] = useState<ExpenseCategory[]>([])
   const [billFolders, setBillFolders] = useState<BillFolderOption[]>([])
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState('')
@@ -104,17 +103,15 @@ export default function BillsPage() {
       if (statusFilter) params.status = statusFilter
       if (search) params.search = search
       if (sortBy) params.ordering = sortBy
-      const [bRes, sRes, tRes, catRes, fRes] = await Promise.all([
+      const [bRes, sRes, tRes, fRes] = await Promise.all([
         billApi.list({ ...params, page_size: 5000 }),
         supplierApi.list(),
         taxApi.classes(),
-        expenseApi.categories(),
         billApi.folders(),
       ])
       setBills(bRes.data.results ?? bRes.data)
       setSuppliers(sRes.data.results ?? sRes.data)
       setTaxClasses(tRes.data.results ?? tRes.data)
-      setExpenseCategories(catRes.data.results ?? catRes.data)
       setBillFolders(fRes.data.results ?? fRes.data)
     } catch { toast.error('Failed to load bills') }
     finally { setLoading(false) }
@@ -213,7 +210,7 @@ export default function BillsPage() {
           description: l.description,
           quantity: parseFloat(l.quantity) || 1,
           unit_cost: parseFloat(stripCommas(l.unit_cost)) || 0,
-          ...(l.category_id ? { expense_category_id: l.category_id } : {}),
+          ...(l.category_label ? { category_label: l.category_label } : {}),
         })),
       }
       if (editingBillId) {
@@ -263,10 +260,9 @@ export default function BillsPage() {
     setLines(lines.map((l, idx) => {
       if (idx !== i) return l
       const updated = { ...l, [field]: value }
-      // Auto-fill description from category name when category selected and description is empty
-      if (field === 'category_id' && value) {
-        const cat = expenseCategories.find((c) => c.id === value)
-        if (cat && !l.description) updated.description = cat.name
+      // Auto-fill description from category label when selected and description is empty
+      if (field === 'category_label' && value && !l.description) {
+        updated.description = value
       }
       return updated
     }))
@@ -552,11 +548,11 @@ export default function BillsPage() {
                       <div className="col-span-5">
                         <select
                           className="input py-1.5 text-sm"
-                          value={line.category_id}
-                          onChange={(e) => updateLine(i, 'category_id', e.target.value)}
+                          value={line.category_label}
+                          onChange={(e) => updateLine(i, 'category_label', e.target.value)}
                         >
                           <option value="">— Category (optional) —</option>
-                          {expenseCategories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                          {EXPENSE_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
                         </select>
                       </div>
                       <div className="col-span-2">
