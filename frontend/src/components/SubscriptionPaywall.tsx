@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { Lock, RefreshCw, CheckCircle, LayoutGrid } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { useNavigate } from 'react-router-dom'
 import { subscriptionApi, bypassNextGets } from '@/services/api'
 import { openExternal } from '@/lib/openExternal'
 
@@ -52,10 +51,10 @@ interface SubscriptionData {
 interface Props {
   subscription: SubscriptionData | null
   onDismiss: () => void
+  onGoToBilling: () => void
 }
 
-export default function SubscriptionPaywall({ subscription, onDismiss }: Props) {
-  const navigate = useNavigate()
+export default function SubscriptionPaywall({ subscription, onDismiss, onGoToBilling }: Props) {
   const [loading, setLoading] = useState(false)
   const [verifying, setVerifying] = useState(false)
   const [polling, setPolling] = useState(false)
@@ -212,9 +211,9 @@ export default function SubscriptionPaywall({ subscription, onDismiss }: Props) 
               )}
             </button>
 
-            {/* Secondary: pick a different plan */}
+            {/* Secondary: pick a different plan — restricted billing-only access */}
             <button
-              onClick={() => { onDismiss(); navigate('/billing') }}
+              onClick={onGoToBilling}
               disabled={loading}
               className="w-full py-2.5 text-sm text-slate-300 border border-surface-600 rounded-xl hover:bg-surface-700/50 transition-colors flex items-center justify-center gap-2 disabled:opacity-40"
             >

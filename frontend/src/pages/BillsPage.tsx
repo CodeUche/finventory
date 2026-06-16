@@ -8,7 +8,7 @@ import MonthFilter, { monthToDateParams, type ArchiveMonth } from '@/components/
 import ExportButton from '@/components/ExportButton'
 import toast from 'react-hot-toast'
 import { billApi, supplierApi, taxApi, bypassNextGets } from '@/services/api'
-import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
+import { formatCurrency, formatDate, normalizeAmountStr, stripCommas } from '@/lib/utils'
 import { EXPENSE_CATEGORIES } from '@/lib/categories'
 import AmountInput from '@/components/AmountInput'
 import type { Bill } from '@/types'
@@ -189,7 +189,7 @@ export default function BillsPage() {
     const existingItems: typeof BLANK_LINE[] = ((b as any).items ?? []).map((item: any) => ({
       description: item.description ?? '',
       quantity: String(item.quantity ?? '1'),
-      unit_cost: formatAmountInput(String(item.unit_cost ?? '')),
+      unit_cost: normalizeAmountStr(String(item.unit_cost ?? '')),
       category_label: item.expense_category_name ?? '',
     }))
     setLines(existingItems.length > 0 ? existingItems : [{ ...BLANK_LINE }])
@@ -426,7 +426,7 @@ export default function BillsPage() {
                         <button onClick={() => handleApprove(b.id)} className="text-xs px-2.5 py-1 rounded-lg bg-brand-500/15 text-brand-400 hover:bg-brand-500/25 transition-colors">Approve</button>
                       )}
                       {(b.status === 'approved' || b.status === 'partially_paid' || b.status === 'overdue') && (
-                        <button onClick={() => { setPayBillId(b.id); setPayForm({ ...BLANK_PAY, amount: formatAmountInput(b.amount_due) }) }} className="text-xs px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 transition-colors">Pay</button>
+                        <button onClick={() => { setPayBillId(b.id); setPayForm({ ...BLANK_PAY, amount: normalizeAmountStr(b.amount_due) }) }} className="text-xs px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 transition-colors">Pay</button>
                       )}
                       {b.status !== 'voided' && b.status !== 'paid' && (
                         <button onClick={() => handleVoid(b.id)} className="p-1 text-slate-500 hover:text-red-400 transition-colors"><Trash2 size={13} /></button>

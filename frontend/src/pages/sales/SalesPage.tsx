@@ -8,7 +8,7 @@ import ExportButton from '@/components/ExportButton'
 import { Link, useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { salesApi, urlToDataUrl, bypassNextGets } from '@/services/api'
-import { formatCurrency, formatDate, getStatusColor, formatAmountInput, stripCommas } from '@/lib/utils'
+import { formatCurrency, formatDate, getStatusColor, normalizeAmountStr, stripCommas } from '@/lib/utils'
 import AmountInput from '@/components/AmountInput'
 import { useAuthStore } from '@/store/authStore'
 import { useModuleAccess } from '@/hooks/useModuleAccess'
@@ -553,7 +553,7 @@ export default function SalesPage() {
 
   const openDetail = async (inv: Invoice) => {
     setSelected(inv)
-    setPayAmount(formatAmountInput(inv.amount_due))
+    setPayAmount(normalizeAmountStr(inv.amount_due))
     setTenderedAmount('')
     try {
       const { data } = await salesApi.invoice(inv.id)

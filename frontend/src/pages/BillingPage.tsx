@@ -70,7 +70,7 @@ const MODULE_ROWS: ModuleRow[] = [
   { icon: Package,         label: 'Inventory Management',       tip: 'Products, stock levels, reorder alerts, batches and lots',                                                    free: 'Up to 20',   professional: true,               business: true,               enterprise: true },
   { icon: Wallet,          label: 'Expense Tracking',           tip: 'Record expenses by category, track savings vs prior period',                                                  free: '10/month',   professional: true,               business: true,               enterprise: true },
   { icon: Calculator,      label: 'Tax Engine',                 tip: 'Free: VAT only. Professional: VAT + Income Tax. Business & Enterprise: Full (WHT, Excise, Filing Guide)',   free: 'VAT only',   professional: 'VAT + Income Tax', business: 'Full',             enterprise: 'Full' },
-  { icon: BarChart3,       label: 'Reports & Analytics',        tip: 'P&L, revenue trends, top products, top customers, expense breakdown and balance sheet',                       free: 'Basic',      professional: 'Advanced',         business: 'Advanced',         enterprise: 'Advanced + Custom' },
+  { icon: BarChart3,       label: 'Reports & Analytics',        tip: 'P&L, revenue trends, top products, top customers, expense breakdown and balance sheet',                       free: false,        professional: 'Advanced',         business: 'Advanced',         enterprise: 'Advanced + Custom' },
   { icon: FileText,        label: 'Quotes & Estimates',         tip: 'Send price quotes before converting to invoices',                                                             free: false,        professional: true,               business: true,               enterprise: true },
   { icon: Clock,           label: 'Recurring Invoices',         tip: 'Auto-generate invoices on a schedule for retainer clients',                                                   free: false,        professional: true,               business: true,               enterprise: true },
   { icon: Truck,           label: 'Purchase Orders',            tip: 'Raise POs to suppliers and track delivery and receipt',                                                       free: false,        professional: true,               business: true,               enterprise: true },
@@ -187,6 +187,26 @@ export default function BillingPage() {
       toast.error(typeof msg === 'string' ? msg : msg?.message ?? 'Verification failed', { id: 'pay-verify' })
     }
   }, [organisation?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleDowngradeToFree = async () => {
+    if (!confirm('Downgrade to the Free plan? You will immediately lose access to paid features and your plan limits will be reduced.')) return
+    setSubscribing('free')
+    try {
+      const res = await subscriptionApi.downgradeFree()
+      setSubscription(res.data)
+      bypassNextGets()
+      setSubscriptionExpired(false)
+      window.dispatchEvent(new CustomEvent('audity:app-refresh'))
+      toast.success('Downgraded to Free plan.')
+      load()
+    } catch (err: any) {
+      const apiErr = err?.response?.data?.error
+      const msg = typeof apiErr === 'string' ? apiErr : (apiErr?.message ?? 'Downgrade failed')
+      toast.error(msg)
+    } finally {
+      setSubscribing(null)
+    }
+  }
 
   const handleSubscribe = async (plan: Plan) => {
     if (plan.price === '0.00' || parseFloat(plan.price) === 0) return
@@ -380,7 +400,21 @@ export default function BillingPage() {
             </div>
           </div>
           <div className="flex items-center gap-3 flex-wrap">
-            {currentPlanSlug !== 'business' && currentPlanSlug !== 'business-annual' && (
+            {/* Renew Plan — shown when past_due or active paid plan */}
+            {currentPlanSlug && currentPlanSlug !== 'free' && currentPlanSlug !== 'starter' && (
+              <button
+                onClick={() => {
+                  const currentPlan = plans.find((p) => p.slug === currentPlanSlug)
+                  if (currentPlan) handleSubscribe(currentPlan)
+                }}
+                disabled={subscribing !== null}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold bg-amber-500 hover:bg-amber-400 text-white transition-colors disabled:opacity-50"
+              >
+                {subscribing !== null ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                Renew Plan
+              </button>
+            )}
+            {currentPlanSlug !== 'business' && currentPlanSlug !== 'business-annual' && currentPlanSlug !== 'enterprise' && currentPlanSlug !== 'enterprise-annual' && (
               <a
                 href="#plans"
                 className="btn-primary text-sm flex items-center gap-1.5"
@@ -554,27 +588,29 @@ export default function BillingPage() {
 
                 <button
                   onClick={() => {
-                    if (isPartner && !isCurrent && !isFree && commissionBalance > 0 && useCredits) {
+                    if (isCurrent) return
+                    if (isFree) { handleDowngradeToFree(); return }
+                    if (isPartner && !isCurrent && commissionBalance > 0 && useCredits) {
                       handleRenewWithCredits(plan)
                     } else {
                       handleSubscribe(plan)
                     }
                   }}
-                  disabled={isCurrent || subscribing === plan.id || applyingCredit || isFree}
-                  className={`w-full flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-semibold transition-colors ${
+                  disabled={isCurrent || subscribing === plan.id || (isFree && subscribing === 'free') || applyingCredit}
+                  className={`w-full flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50 ${
                     isCurrent
                       ? 'bg-green-500/10 text-green-400 cursor-default'
                       : isFree
-                      ? 'bg-surface-700/40 text-slate-400 cursor-default'
-                      : 'btn-primary'
+                      ? 'bg-surface-700/40 text-slate-400 hover:bg-surface-600/60 hover:text-white'
+                      : 'bg-amber-500 hover:bg-amber-400 text-white'
                   }`}
                 >
-                  {(subscribing === plan.id || applyingCredit) ? (
+                  {(subscribing === plan.id || (isFree && subscribing === 'free') || applyingCredit) ? (
                     <Loader2 size={14} className="animate-spin" />
                   ) : isCurrent ? (
                     <><CheckCircle size={14} /> Current plan</>
                   ) : isFree ? (
-                    'Always free'
+                    'Downgrade to Free'
                   ) : isPartner && commissionBalance >= price && useCredits ? (
                     <><Coins size={14} /> Renew Free with Credits</>
                   ) : (

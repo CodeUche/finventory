@@ -230,6 +230,14 @@ class SubscriptionViewSet(viewsets.GenericViewSet):
         sub = SubscriptionService.cancel(request.organisation)
         return Response(SubscriptionSerializer(sub).data)
 
+    @action(detail=False, methods=["post"], url_path="downgrade-to-free")
+    def downgrade_to_free(self, request):
+        """POST /api/v1/subscriptions/downgrade-to-free/ — Switch to the free plan immediately."""
+        sub = SubscriptionService.activate_free_plan(request.organisation)
+        if sub is None:
+            return Response({"error": "Free plan not found. Contact support."}, status=400)
+        return Response(SubscriptionSerializer(sub).data)
+
     @action(detail=False, methods=["get"])
     def payments(self, request):
         """GET /api/v1/subscriptions/payments/ — Payment history."""

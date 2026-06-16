@@ -7,7 +7,7 @@ import {
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { expenseApi, budgetApi, salesApi, bypassNextGets } from '@/services/api'
-import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
+import { formatCurrency, formatDate, normalizeAmountStr, stripCommas } from '@/lib/utils'
 import AmountInput from '@/components/AmountInput'
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from '@/lib/categories'
 import { useAuthStore } from '@/store/authStore'
@@ -185,8 +185,8 @@ export default function ExpensesPage() {
     setEditId(e.id)
     setEditForm({
       category_label: e.category_name ?? '',
-      amount: formatAmountInput(String(e.amount)),
-      previous_price: (e as any).previous_price ? formatAmountInput(String((e as any).previous_price)) : '',
+      amount: normalizeAmountStr(String(e.amount)),
+      previous_price: (e as any).previous_price ? normalizeAmountStr(String((e as any).previous_price)) : '',
       is_income: e.is_income,
       description: e.description ?? '',
       expense_date: e.expense_date,

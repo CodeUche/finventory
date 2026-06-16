@@ -112,9 +112,10 @@ const navGroups: { label: string | null; items: { name: string; href: string; ic
 interface SidebarProps {
   open: boolean
   onClose: () => void
+  billingOnly?: boolean
 }
 
-export default function Sidebar({ open, onClose }: SidebarProps) {
+export default function Sidebar({ open, onClose, billingOnly = false }: SidebarProps) {
   const { user, organisation, tokens, logout, memberRole, modulePermissions, planModules, planName } = useAuthStore()
   const navigate = useNavigate()
 
@@ -208,15 +209,23 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
           // Single-item labeled groups render as a plain NavLink (no collapsible toggle)
           if (group.label && visibleItems.length === 1) {
             const item = visibleItems[0]
+            const isLocked = billingOnly && item.href !== '/billing'
             return (
               <div key={gi} className="pt-2">
-                <NavLink
-                  to={item.href}
-                  className={({ isActive }) => isActive ? 'sidebar-item-active' : 'sidebar-item'}
-                >
-                  <item.icon size={16} className="shrink-0" />
-                  <span className="truncate">{item.name}</span>
-                </NavLink>
+                {isLocked ? (
+                  <span className="sidebar-item opacity-30 cursor-not-allowed pointer-events-none select-none">
+                    <item.icon size={16} className="shrink-0" />
+                    <span className="truncate">{item.name}</span>
+                  </span>
+                ) : (
+                  <NavLink
+                    to={item.href}
+                    className={({ isActive }) => isActive ? 'sidebar-item-active' : 'sidebar-item'}
+                  >
+                    <item.icon size={16} className="shrink-0" />
+                    <span className="truncate">{item.name}</span>
+                  </NavLink>
+                )}
               </div>
             )
           }
@@ -225,37 +234,45 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
             <div key={gi}>
               {group.label && (
                 <button
-                  onClick={() => toggleGroup(group.label!)}
+                  onClick={() => !billingOnly && toggleGroup(group.label!)}
                   className="w-full flex items-center justify-between px-3 pt-4 pb-1 text-left group"
                 >
-                  <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest group-hover:text-slate-300 transition-colors">
+                  <span className={cn('text-[10px] font-semibold uppercase tracking-widest group-hover:text-slate-300 transition-colors', billingOnly ? 'text-slate-600' : 'text-slate-400')}>
                     {group.label}
                   </span>
-                  {isCollapsed
+                  {!billingOnly && (isCollapsed
                     ? <ChevronRight size={12} className="text-slate-400 group-hover:text-slate-300 transition-colors" />
                     : <ChevronDown size={12} className="text-slate-400 group-hover:text-slate-300 transition-colors" />
-                  }
+                  )}
                 </button>
               )}
-              {!isCollapsed && visibleItems.map((item) => (
-                <NavLink
-                  key={item.href}
-                  to={item.href}
-                  end={item.href === '/sales'}
-                  className={({ isActive }) =>
-                    isActive ? 'sidebar-item-active' : 'sidebar-item'
-                  }
-                >
-                  <item.icon size={16} className="shrink-0" />
-                  <span className="truncate">{item.name}</span>
-                </NavLink>
-              ))}
+              {!isCollapsed && visibleItems.map((item) => {
+                const isLocked = billingOnly && item.href !== '/billing'
+                return isLocked ? (
+                  <span key={item.href} className="sidebar-item opacity-30 cursor-not-allowed pointer-events-none select-none">
+                    <item.icon size={16} className="shrink-0" />
+                    <span className="truncate">{item.name}</span>
+                  </span>
+                ) : (
+                  <NavLink
+                    key={item.href}
+                    to={item.href}
+                    end={item.href === '/sales'}
+                    className={({ isActive }) =>
+                      isActive ? 'sidebar-item-active' : 'sidebar-item'
+                    }
+                  >
+                    <item.icon size={16} className="shrink-0" />
+                    <span className="truncate">{item.name}</span>
+                  </NavLink>
+                )
+              })}
             </div>
           )
         })}
 
-        {/* Owner-only analytics */}
-        {isOwnerOrAdmin && canSeeItem('owner_analytics') && (
+        {/* Owner-only analytics — hidden in billing-only mode */}
+        {!billingOnly && isOwnerOrAdmin && canSeeItem('owner_analytics') && (
           <div>
             <div className="px-3 pt-4 pb-1">
               <span className="text-[10px] font-semibold text-brand-600 uppercase tracking-widest">OWNER</span>

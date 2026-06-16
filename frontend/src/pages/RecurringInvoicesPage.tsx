@@ -3,7 +3,7 @@ import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, X, RefreshCw, Loader2, Trash2, Play } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { recurringApi, customerApi, inventoryApi } from '@/services/api'
-import { formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
+import { formatDate, normalizeAmountStr, stripCommas } from '@/lib/utils'
 import AmountInput from '@/components/AmountInput'
 import type { RecurringInvoice, Customer, Warehouse, Product } from '@/types'
 import DateInput from '@/components/DateInput'
@@ -126,7 +126,7 @@ export default function RecurringInvoicesPage() {
       const updated = { ...l, [field]: value }
       if (field === 'product') {
         const p = products.find((pr) => pr.id === value)
-        if (p) updated.unit_price = formatAmountInput(p.selling_price)
+        if (p) updated.unit_price = normalizeAmountStr(p.selling_price)
       }
       return updated
     }))

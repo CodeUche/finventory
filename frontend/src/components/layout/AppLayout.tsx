@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Outlet, useNavigate } from 'react-router-dom'
+import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import Sidebar from './Sidebar'
 import TopBar from './TopBar'
 import Breadcrumb from '@/components/Breadcrumb'
@@ -8,7 +8,7 @@ import { useAuthStore } from '@/store/authStore'
 import { setActiveCurrency } from '@/lib/utils'
 import { useNetworkStatus } from '@/hooks/useNetworkStatus'
 import { api, orgApi, subscriptionApi } from '@/services/api'
-import { Briefcase, LogOut, WifiOff } from 'lucide-react'
+import { Briefcase, LogOut, WifiOff, CreditCard } from 'lucide-react'
 import { offlineCache, timeAgo } from '@/lib/offlineCache'
 import type { AccessLevel, ModuleKey, ModulePermission, Organisation } from '@/types'
 import SubscriptionPaywall from '@/components/SubscriptionPaywall'
@@ -62,6 +62,8 @@ export default function AppLayout() {
   const subscriptionExpired = useAuthStore((s) => s.subscriptionExpired)
   const user = useAuthStore((s) => s.user)
   const [subscriptionData, setSubscriptionData] = useState<any>(null)
+  const [subscriptionBillingOnly, setSubscriptionBillingOnly] = useState(false)
+  const { pathname } = useLocation()
 
   // Keep formatCurrency in sync with the org's currency setting
   useEffect(() => {
@@ -186,9 +188,15 @@ export default function AppLayout() {
   const handlePaywallDismiss = () => {
     setSubscriptionExpired(false)
     setSubscriptionData(null)
+    setSubscriptionBillingOnly(false)
     // The audity:app-refresh event (dispatched by SubscriptionPaywall before calling
     // onDismiss) already incremented _appRefreshTick, which re-runs the subscription
     // useEffect with bypassNextGets() — no second fetch needed here.
+  }
+
+  const handleGoToBilling = () => {
+    setSubscriptionBillingOnly(true)
+    navigate('/billing')
   }
 
   return (
@@ -202,7 +210,7 @@ export default function AppLayout() {
       )}
 
       {/* Sidebar */}
-      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} billingOnly={subscriptionBillingOnly} />
 
       {/* Main content */}
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
@@ -260,7 +268,20 @@ export default function AppLayout() {
               orgs[0] as the active context.  Regular users always have
               organisation?.id set at login so orgListLoaded is initialised
               true and they see no spinner here. */}
-          {(orgListLoaded || organisation?.id) ? (
+          {subscriptionBillingOnly && pathname !== '/billing' ? (
+            <div className="flex flex-col items-center justify-center min-h-[60vh] gap-6 text-center">
+              <div className="w-16 h-16 rounded-full bg-amber-500/10 border border-amber-500/30 flex items-center justify-center">
+                <CreditCard size={28} className="text-amber-400" />
+              </div>
+              <div className="space-y-2 max-w-sm">
+                <h2 className="text-xl font-bold text-white">Subscription Required</h2>
+                <p className="text-slate-400 text-sm leading-relaxed">Your subscription has expired. Please complete payment on the Billing page to restore access to all modules.</p>
+              </div>
+              <button onClick={() => navigate('/billing')} className="btn-primary px-6 py-2.5">
+                Go to Billing
+              </button>
+            </div>
+          ) : (orgListLoaded || organisation?.id) ? (
             <Outlet />
           ) : (
             <div className="flex-1 flex items-center justify-center py-32">
@@ -271,8 +292,8 @@ export default function AppLayout() {
       </div>
 
       {/* Subscription paywall overlay */}
-      {subscriptionExpired && !user?.is_superuser && (
-        <SubscriptionPaywall subscription={subscriptionData} onDismiss={handlePaywallDismiss} />
+      {subscriptionExpired && !subscriptionBillingOnly && !user?.is_superuser && (
+        <SubscriptionPaywall subscription={subscriptionData} onDismiss={handlePaywallDismiss} onGoToBilling={handleGoToBilling} />
       )}
 
       {/* Floating support chat */}

@@ -3,7 +3,7 @@ import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, X, ClipboardList, Loader2, FileText, ChevronDown, ChevronUp, Trash2, FileDown, Mail, MessageCircle, CheckCircle, ExternalLink, RefreshCw } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { quoteApi, customerApi, inventoryApi, salesApi, urlToDataUrl, bypassNextGets } from '@/services/api'
-import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
+import { formatCurrency, formatDate, normalizeAmountStr, stripCommas } from '@/lib/utils'
 import AmountInput from '@/components/AmountInput'
 import { useAuthStore } from '@/store/authStore'
 import { saveBlobFile } from '@/lib/saveBlobFile'
@@ -424,7 +424,7 @@ export default function QuotesPage() {
       const updated = { ...l, [field]: value }
       if (field === 'product') {
         const p = products.find((pr) => pr.id === value)
-        if (p) { updated.product_name = p.name; updated.unit_price = formatAmountInput(p.selling_price) }
+        if (p) { updated.product_name = p.name; updated.unit_price = normalizeAmountStr(p.selling_price) }
       }
       return updated
     }))

@@ -781,6 +781,9 @@ api.interceptors.response.use(
         const toastId = `403-${forbiddenMsg.slice(0, 60)}`
         toast.error(forbiddenMsg, { id: toastId, duration: 6000 })
       }
+    } else if (status === 402) {
+      const msg = typeof errData === 'string' ? errData : errData?.message ?? 'Plan limit reached'
+      toast.error(msg, { id: 'plan-limit', duration: 8000 })
     } else if (errData?.message && status !== 401 && !isAuthUrl) {
       const toastId = `api-err-${status}-${original.url}`
       toast.error(errData.message, { id: toastId, duration: 4000 })
@@ -1357,6 +1360,7 @@ export const subscriptionApi = {
   recommendPlan: (answers: Record<string, string>) => api.post('/subscriptions/recommend-plan/', { answers }),
   checkPayment: (reference: string) => api.get('/subscriptions/check-payment/', { params: { reference } }),
   startTrial: (planId: string, orgId?: string) => api.post('/subscriptions/start-trial/', { plan_id: planId, ...(orgId ? { org_id: orgId } : {}) }),
+  downgradeFree: () => api.post('/subscriptions/downgrade-to-free/'),
 }
 
 export const aiApi = {

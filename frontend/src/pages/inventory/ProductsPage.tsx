@@ -371,7 +371,12 @@ export default function ProductsPage() {
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const safeAmt = (v: string | null | undefined) => formatAmountInput(v ?? '0')
+  const safeAmt = (v: string | null | undefined) => {
+    const num = parseFloat(v ?? '0')
+    if (isNaN(num)) return ''
+    const normalized = num % 1 === 0 ? String(Math.round(num)) : String(num)
+    return formatAmountInput(normalized)
+  }
 
   const openEdit = (p: Product) => {
     setEditId(p.id)

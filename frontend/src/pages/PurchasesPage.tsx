@@ -4,7 +4,7 @@ import { useSearchParams } from 'react-router-dom'
 import { Plus, Search, Truck, X, Loader2, UploadCloud, FileText, Edit2, Trash2, ChevronDown, ChevronRight, Package, RefreshCw } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { purchaseApi, supplierApi, inventoryApi, bypassNextGets } from '@/services/api'
-import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
+import { formatCurrency, formatDate, normalizeAmountStr, stripCommas } from '@/lib/utils'
 import AmountInput from '@/components/AmountInput'
 import type { Product, PurchaseOrder, PurchaseOrderItem } from '@/types'
 import DateInput from '@/components/DateInput'
@@ -164,7 +164,7 @@ export default function PurchasesPage() {
       const updated = { ...item, [field]: value }
       if (field === 'product_id' && value) {
         const product = products.find((p) => p.id === value)
-        if (product) updated.unit_cost = formatAmountInput(String(product.cost_price))
+        if (product) updated.unit_cost = normalizeAmountStr(String(product.cost_price))
       }
       return updated
     }))

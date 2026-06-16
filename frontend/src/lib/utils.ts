@@ -70,6 +70,14 @@ export function formatAmountInput(raw: string): string {
   return decPart !== undefined ? `${formatted}.${decPart}` : formatted
 }
 
+/** Normalize an API-sourced decimal string for display in an amount input — strips trailing zeros */
+export function normalizeAmountStr(v: string | null | undefined): string {
+  const num = parseFloat(v ?? '0')
+  if (isNaN(num)) return ''
+  const normalized = num % 1 === 0 ? String(Math.round(num)) : String(num)
+  return formatAmountInput(normalized)
+}
+
 export function getStatusColor(status: string): string {
   const map: Record<string, string> = {
     paid: 'badge-green',
