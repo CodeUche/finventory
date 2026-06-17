@@ -890,8 +890,8 @@ export const authApi = {
   mfaDisable: (code: string, currentPassword: string) => api.post('/auth/mfa/disable/', { code, current_password: currentPassword }),
   staffLogin: (username: string, orgSlug: string, password: string) =>
     api.post('/auth/staff-login/', { username, org_slug: orgSlug, password }),
-  changePassword: (currentPassword: string, newPassword: string) =>
-    api.post('/auth/change-password/', { current_password: currentPassword, new_password: newPassword }),
+  changePassword: (currentPassword: string, newPassword: string, confirmPassword?: string) =>
+    api.post('/auth/change-password/', { current_password: currentPassword, new_password: newPassword, confirm_password: confirmPassword ?? newPassword }),
 }
 
 export const orgApi = {

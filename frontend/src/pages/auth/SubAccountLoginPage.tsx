@@ -25,14 +25,29 @@ export default function SubAccountLoginPage() {
     if (newPassword !== confirmPassword) { toast.error('Passwords do not match'); return }
     setChangingPw(true)
     try {
-      await authApi.changePassword(form.password, newPassword)
+      await authApi.changePassword(form.password, newPassword, confirmPassword)
+      // The backend bumps token_version on password change, invalidating the old JWT.
+      // Re-login with the new password to get fresh tokens before navigating.
+      const { data } = await authApi.staffLogin(
+        form.username.trim().toLowerCase(),
+        form.org_slug.trim().toLowerCase(),
+        newPassword,
+      )
+      const orgs: any[] = data.organisations ?? []
+      const firstOrg = orgs[0] ?? null
+      initSession(data.user, { access: data.access, refresh: data.refresh }, firstOrg, orgs)
+      api.defaults.headers.common.Authorization = `Bearer ${data.access}`
+      if (firstOrg) api.defaults.headers.common['X-Organisation-ID'] = firstOrg.id
+      bypassNextGets()
       toast.success('Password updated. Welcome!')
-      setShowForceChange(false)
       navigate('/dashboard')
-    } catch {
-      toast.error('Failed to change password. Please try again.')
+    } catch (err: any) {
+      const apiErr = err?.response?.data?.error
+      const msg = typeof apiErr === 'string' ? apiErr : (apiErr?.message ?? 'Failed to change password. Please try again.')
+      toast.error(msg)
     } finally {
-      setChangingPw(false) }
+      setChangingPw(false)
+    }
   }
 
   const handleSubmit = async (e: React.FormEvent) => {

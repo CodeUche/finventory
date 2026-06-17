@@ -614,7 +614,7 @@ class LoginView(TokenObtainPairView):
                     {
                         "error": {
                             "code": "account_locked",
-                            "message": "Too many failed attempts. Please try again in 30 minutes.",
+                            "message": f"Too many failed attempts. Please try again in {LOCKOUT_MINUTES} minutes.",
                         }
                     },
                     status=status.HTTP_429_TOO_MANY_REQUESTS,
