@@ -6,10 +6,20 @@ import { api, authApi, bypassNextGets } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
 import { identifyUser } from '@/lib/analytics'
 import AuthShell from '@/components/auth/AuthShell'
+import type { AccessLevel, ModuleKey } from '@/types'
+
+function extractMembership(data: any): { role: string; perms: Partial<Record<ModuleKey, AccessLevel>> } | null {
+  if (!data?.membership?.role) return null
+  const perms: Partial<Record<ModuleKey, AccessLevel>> = {}
+  ;(data.membership.module_permissions ?? []).forEach((p: any) => {
+    perms[p.module as ModuleKey] = p.access_level as AccessLevel
+  })
+  return { role: data.membership.role, perms }
+}
 
 export default function SubAccountLoginPage() {
   const navigate = useNavigate()
-  const { initSession } = useAuthStore()
+  const { initSession, setMembership } = useAuthStore()
   const [form, setForm] = useState({ username: '', org_slug: '', password: '' })
   const [showPw, setShowPw] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -36,6 +46,8 @@ export default function SubAccountLoginPage() {
       const orgs: any[] = data.organisations ?? []
       const firstOrg = orgs[0] ?? null
       initSession(data.user, { access: data.access, refresh: data.refresh }, firstOrg, orgs)
+      const mem = extractMembership(data)
+      if (mem) setMembership(mem.role, mem.perms)
       api.defaults.headers.common.Authorization = `Bearer ${data.access}`
       if (firstOrg) api.defaults.headers.common['X-Organisation-ID'] = firstOrg.id
       bypassNextGets()
@@ -73,6 +85,8 @@ export default function SubAccountLoginPage() {
       // Atomic commit — single set() so ProtectedRoute never sees isAuthenticated=true
       // with organisation=null (the race condition that caused /onboarding redirects).
       initSession(data.user, { access: data.access, refresh: data.refresh }, firstOrg, orgs)
+      const mem = extractMembership(data)
+      if (mem) setMembership(mem.role, mem.perms)
       identifyUser(data.user, firstOrg)
       if (firstOrg) api.defaults.headers.common['X-Organisation-ID'] = firstOrg.id
       bypassNextGets(3000)

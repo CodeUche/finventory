@@ -1398,9 +1398,23 @@ class SubAccountLoginView(APIView):
         tokens = _issue_tokens(user)
         logger.info("Staff account authenticated: %s from %s", email, ip)
 
+        # Include membership + module permissions so the frontend can set role
+        # atomically at login — eliminates the memberRole=null loading window
+        # that caused "Failed to load X" errors and optimistic sidebar display.
+        membership = memberships.first()
+        from apps.tenancy.models import ModulePermission as _MP
+        module_perms = list(
+            _MP.objects.filter(membership=membership)
+            .values("module", "access_level")
+        )
+
         return Response({
             "access": tokens["access"],
             "refresh": tokens["refresh"],
             "user": UserProfileSerializer(user).data,
             "organisations": _get_user_organisations(user),
+            "membership": {
+                "role": membership.role,
+                "module_permissions": module_perms,
+            },
         })

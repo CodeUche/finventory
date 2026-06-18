@@ -126,9 +126,6 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
   // Returns true if the nav item should be visible.
   // Checks: ownerOnly → plan modules → sub-account RBAC permissions
   const canSeeItem = (mod?: ModuleKey, ownerOnly?: boolean, partnerOnly?: boolean) => {
-    // While membership is still loading (memberRole===null), show all non-ownerOnly items
-    // optimistically so the sidebar doesn't appear blank during cold-start recovery.
-    // Route guards (ModuleRoute) enforce actual access — the sidebar is just navigation UI.
     const membershipLoading = memberRole === null && !user?.is_superuser
     if (partnerOnly && (!FEATURES.PARTNER_CHANNEL || !user?.has_partner_profile)) return false
     if (partnerOnly && !user?.is_superuser && !planName?.startsWith('partner')) return false
@@ -136,7 +133,10 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
     if (user?.is_superuser) return true              // superusers always see everything
     // Plan-level gate: if the active plan restricts modules, only show allowed ones
     if (planModules !== null && !planModules.includes(mod)) return false
-    if (membershipLoading) return !ownerOnly         // show all plan-allowed items while loading
+    // While membership is loading, hide all module items — sub-accounts must not see
+    // modules they have no access to, even briefly. Sub-account login now pre-loads
+    // membership in the response so this window is typically zero for staff logins.
+    if (membershipLoading) return false
     if (ownerOnly && !isOwnerOrAdmin) return false   // explicitly owner-only items
     if (isOwnerOrAdmin) return true                   // owners/admins see all plan-allowed modules
     const level = modulePermissions?.[mod]
