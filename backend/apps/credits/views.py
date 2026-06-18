@@ -24,6 +24,10 @@ class CreditTransactionViewSet(TenantFilterMixin, viewsets.ReadOnlyModelViewSet)
     serializer_class = CreditTransactionSerializer
     permission_classes = [IsAuthenticated, IsAccountant]
     filterset_fields = ["customer", "transaction_type"]
+    search_fields = [
+        "customer__name", "payment_number", "description",
+        "bank_name", "account_name",
+    ]
     ordering_fields = ["created_at", "amount"]
 
     @action(detail=False, methods=["post"])
