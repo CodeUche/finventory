@@ -418,6 +418,10 @@ class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                 headers={
                     'Authorization': f'Bearer {secret_key}',
                     'Content-Type': 'application/json',
+                    # Without a User-Agent, Paystack's Cloudflare front-end blocks
+                    # requests from datacenter IPs (Railway) with a 403 "error code:
+                    # 1010" before they ever reach Paystack's own API.
+                    'User-Agent': 'Mozilla/5.0 (compatible; AudityBackend/1.0)',
                 },
                 method='POST',
             )
@@ -592,6 +596,10 @@ class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                 headers={
                     'Authorization': f'Bearer {secret_key}',
                     'Content-Type': 'application/json',
+                    # Without a User-Agent, Paystack's Cloudflare front-end blocks
+                    # requests from datacenter IPs (Railway) with a 403 "error code:
+                    # 1010" before they ever reach Paystack's own API.
+                    'User-Agent': 'Mozilla/5.0 (compatible; AudityBackend/1.0)',
                 },
                 method='POST',
             )

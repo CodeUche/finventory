@@ -36,7 +36,14 @@ def _resolve_via_paystack(account_number: str, bank_code: str) -> str:
         f"https://api.paystack.co/bank/resolve"
         f"?account_number={account_number}&bank_code={bank_code}"
     )
-    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {secret_key}"})
+    req = urllib.request.Request(url, headers={
+        "Authorization": f"Bearer {secret_key}",
+        # Paystack's API sits behind Cloudflare, which blocks requests with no
+        # User-Agent (or a non-browser-looking one) as bots — without this,
+        # every call from a datacenter IP (e.g. Railway) gets a Cloudflare
+        # error page (HTTP 403, "error code: 1010") instead of reaching Paystack.
+        "User-Agent": "Mozilla/5.0 (compatible; AudityBackend/1.0)",
+    })
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
             body = json.loads(resp.read().decode())
@@ -71,6 +78,7 @@ def _resolve_via_flutterwave(account_number: str, bank_code: str) -> str:
         headers={
             "Authorization": f"Bearer {secret_key}",
             "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (compatible; AudityBackend/1.0)",
         },
         method="POST",
     )
