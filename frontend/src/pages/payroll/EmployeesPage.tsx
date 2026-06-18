@@ -13,6 +13,8 @@ import DateInput from '@/components/DateInput'
 import { FieldTooltip } from '@/components/FieldTooltip'
 import { usePagination } from '@/hooks/usePagination'
 import Pagination from '@/components/Pagination'
+import { NIGERIAN_BANKS } from '@/lib/banks'
+import { useResolveBankAccount } from '@/hooks/useResolveBankAccount'
 
 interface EmployeeForm {
   first_name: string; last_name: string; email: string; phone: string
@@ -52,44 +54,6 @@ const DOC_TYPE_BADGE: Record<string, string> = {
   contract: 'badge-slate', other: 'badge-slate',
 }
 
-// Complete list of CBN-licensed banks in Nigeria with Paystack bank codes
-const NIGERIAN_BANKS = [
-  { name: 'Access Bank', code: '044' },
-  { name: 'Carbon (One Finance)', code: '565' },
-  { name: 'Citibank Nigeria', code: '023' },
-  { name: 'Ecobank Nigeria', code: '050' },
-  { name: 'Fidelity Bank', code: '070' },
-  { name: 'First Bank of Nigeria', code: '011' },
-  { name: 'First City Monument Bank (FCMB)', code: '214' },
-  { name: 'Globus Bank', code: '00103' },
-  { name: 'Guaranty Trust Bank (GTBank)', code: '058' },
-  { name: 'Jaiz Bank', code: '301' },
-  { name: 'Keystone Bank', code: '082' },
-  { name: 'Kuda Microfinance Bank', code: '090267' },
-  { name: 'Lotus Bank', code: '303' },
-  { name: 'Moniepoint MFB', code: '50515' },
-  { name: 'OPay Digital Services', code: '100004' },
-  { name: 'PalmPay', code: '999991' },
-  { name: 'Parallex Bank', code: '526' },
-  { name: 'Polaris Bank', code: '076' },
-  { name: 'Premium Trust Bank', code: '105' },
-  { name: 'Providus Bank', code: '101' },
-  { name: 'Rubies MFB', code: '125' },
-  { name: 'Sparkle MFB', code: '51310' },
-  { name: 'Stanbic IBTC Bank', code: '221' },
-  { name: 'Standard Chartered Bank', code: '068' },
-  { name: 'Sterling Bank', code: '232' },
-  { name: 'SunTrust Bank', code: '100' },
-  { name: 'Taj Bank', code: '302' },
-  { name: 'Titan Trust Bank', code: '102' },
-  { name: 'Union Bank of Nigeria', code: '032' },
-  { name: 'United Bank for Africa (UBA)', code: '033' },
-  { name: 'Unity Bank', code: '215' },
-  { name: 'VFD Microfinance Bank', code: '566' },
-  { name: 'Wema Bank', code: '035' },
-  { name: 'Zenith Bank', code: '057' },
-] as const
-
 // ── Loan calculation preview (mirrors backend logic) ───────────────────────────
 function calcLoanPreview(lf: LoanForm) {
   const principal = parseFloat(stripCommas(lf.principal_amount)) || 0
@@ -114,9 +78,25 @@ export default function EmployeesPage() {
   // Bank combobox state
   const [bankSearch, setBankSearch] = useState('')
   const [bankOpen, setBankOpen] = useState(false)
-  const [bankCode, setBankCode] = useState('')
-  const [resolving, setResolving] = useState(false)
   const bankRef = useRef<HTMLDivElement>(null)
+
+  // Bank account resolution (bank code + account number → account name)
+  const {
+    setAccountNumber: setResolveAccountNumber,
+    bankCode, setBankCode,
+    accountName: resolvedAccountName,
+    resolving,
+  } = useResolveBankAccount({
+    resolver: async (accountNumber, code) => {
+      const { data } = await payrollApi.resolveAccount(accountNumber, code)
+      return data
+    },
+  })
+
+  // Keep the hook's tracked account number in sync with the form field
+  useEffect(() => { setResolveAccountNumber(form.account_number) }, [form.account_number, setResolveAccountNumber])
+  // Push resolved account name into the form once available
+  useEffect(() => { if (resolvedAccountName) setForm((f) => ({ ...f, account_name: resolvedAccountName })) }, [resolvedAccountName])
 
   // Penalties state
   const [penalties, setPenalties] = useState<EmployeePenalty[]>([])
@@ -361,25 +341,6 @@ export default function EmployeesPage() {
       setLoans(data.results ?? data)
     } catch { toast.error('Failed to cancel') }
   }
-
-  // ── Bank combobox ────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (form.account_number.length !== 10 || !bankCode) return
-    let cancelled = false
-    const resolve = async () => {
-      setResolving(true)
-      try {
-        const { data } = await payrollApi.resolveAccount(form.account_number, bankCode)
-        if (!cancelled) setForm((f) => ({ ...f, account_name: data.account_name }))
-      } catch (err: any) {
-        if (!cancelled) toast.error(err?.response?.data?.error ?? 'Could not verify account — enter name manually', { duration: 4000 })
-      } finally {
-        if (!cancelled) setResolving(false)
-      }
-    }
-    resolve()
-    return () => { cancelled = true }
-  }, [form.account_number, bankCode])
 
   const selectBank = (bank: { name: string; code: string }) => {
     setForm((f) => ({ ...f, bank_name: bank.name }))

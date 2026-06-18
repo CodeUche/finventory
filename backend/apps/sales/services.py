@@ -48,6 +48,7 @@ class SaleService:
         credit_applied: Decimal = None,
         location=None,
         wht_rate_id=None,
+        defer_fulfillment: bool = False,
     ) -> Invoice:
         """
         Create a confirmed sale invoice with stock deductions.
@@ -58,6 +59,13 @@ class SaleService:
                     product_id, quantity, unit_price,
                     discount_percent (opt), batch_id (opt)
                 }
+            defer_fulfillment: When True, this is a "manual"/billed-ahead invoice —
+                stock deduction and GL posting are skipped at creation time (and the
+                stock-availability check inside InventoryService is bypassed because
+                it's never called). The invoice still gets its normal customer-facing
+                Status (confirmed/paid/credit/etc.) and payments/balance updates proceed
+                as usual. Call SaleService.fulfill_invoice() later to deduct stock and
+                post the GL journal.
 
         Returns:
             Confirmed Invoice with all related records created.
@@ -111,6 +119,7 @@ class SaleService:
             credit_applied=Decimal("0"),
             amount_paid=Decimal("0"),
             amount_due=Decimal("0"),
+            is_deferred=defer_fulfillment,
         )
 
         subtotal = Decimal("0")
@@ -124,7 +133,7 @@ class SaleService:
                 warehouse=warehouse,
                 item_data=item_data,
                 created_by=created_by,
-                skip_stock=is_proforma,
+                skip_stock=is_proforma or defer_fulfillment,
             )
             subtotal += line["subtotal"]
             total_discount += line["discount_amount"]
@@ -191,12 +200,14 @@ class SaleService:
                     payment.save(update_fields=["notes"])
                 invoice.save(update_fields=["amount_paid", "amount_due", "status"])
 
-        # Auto-post journal entry (non-blocking)
-        from apps.accounting.services import safe_post_gl
-        safe_post_gl(
-            AccountingService.post_sale_journal, organisation, invoice, created_by,
-            model_instance=invoice,
-        )
+        # Auto-post journal entry (non-blocking) — skipped for proforma and
+        # deferred-fulfillment invoices; fulfill_invoice() posts it later.
+        if not is_proforma and not defer_fulfillment:
+            from apps.accounting.services import safe_post_gl
+            safe_post_gl(
+                AccountingService.post_sale_journal, organisation, invoice, created_by,
+                model_instance=invoice,
+            )
 
         # Auto-create WHT transaction if rate specified (non-blocking)
         if wht_rate_id and not is_proforma:
@@ -463,10 +474,72 @@ class SaleService:
         return payment
 
     @staticmethod
+    @transaction.atomic
+    def fulfill_invoice(invoice: Invoice, actor) -> Invoice:
+        """
+        Fulfill a deferred-fulfillment invoice: deduct stock for each line item
+        and post the GL journal that were skipped at creation time.
+
+        Only valid for invoices created with defer_fulfillment=True that have
+        not already been fulfilled.
+        """
+        from apps.accounting.services import AccountingService
+
+        # Re-read with row lock to prevent concurrent double-fulfillment
+        invoice = Invoice.objects.select_for_update().get(pk=invoice.pk)
+
+        if not invoice.is_deferred:
+            raise ValueError("This invoice was not created with deferred fulfillment.")
+        if invoice.fulfilled_at is not None:
+            raise ValueError("This invoice has already been fulfilled.")
+
+        for item in invoice.items.select_related("product").all():
+            if item.product.product_type == "service":
+                continue
+            InventoryService.record_movement(
+                organisation=invoice.organisation,
+                product=item.product,
+                warehouse=invoice.warehouse,
+                quantity=-item.quantity,
+                movement_type="sale_out",
+                unit_cost=item.product.cost_price,
+                reference=invoice.invoice_number,
+                created_by=actor,
+            )
+
+        from apps.accounting.services import safe_post_gl
+        safe_post_gl(
+            AccountingService.post_sale_journal, invoice.organisation, invoice, actor,
+            model_instance=invoice,
+        )
+
+        invoice.fulfilled_at = timezone.now()
+        invoice.save(update_fields=["fulfilled_at", "updated_at"])
+
+        try:
+            from apps.core.models import AuditLog
+            AuditLog.log(
+                action=AuditLog.UPDATE,
+                user=actor,
+                organisation=invoice.organisation,
+                model_name='Invoice',
+                object_id=str(invoice.id),
+                object_repr=str(invoice),
+                changes={'fulfilled_at': {'old': None, 'new': str(invoice.fulfilled_at)}},
+            )
+        except Exception:
+            pass
+
+        logger.info("Invoice %s fulfilled by %s", invoice.invoice_number, actor)
+        return invoice
+
+    @staticmethod
     def void_invoice(invoice: Invoice, voided_by) -> Invoice:
         """Void an invoice and reverse stock movements."""
         if invoice.status == Invoice.Status.PAID:
             raise ValueError("Paid invoices cannot be voided without a return process.")
+
+        previous_status = invoice.status
 
         # Reverse all stock deductions (skip service items)
         for item in invoice.items.all():
@@ -485,7 +558,162 @@ class SaleService:
 
         invoice.status = Invoice.Status.VOIDED
         invoice.save(update_fields=["status", "updated_at"])
+
+        try:
+            from apps.core.models import AuditLog
+            AuditLog.log(
+                action=AuditLog.UPDATE,
+                user=voided_by,
+                organisation=invoice.organisation,
+                model_name='Invoice',
+                object_id=str(invoice.id),
+                object_repr=str(invoice),
+                changes={'status': {'old': previous_status, 'new': invoice.status}},
+            )
+        except Exception:
+            pass
+
         return invoice
+
+    @staticmethod
+    @transaction.atomic
+    def delete_invoice(invoice: Invoice, actor) -> None:
+        """
+        Permanently (soft-)delete an invoice, reversing its accounting and stock
+        effects so nothing is left dangling.
+
+        Caller is responsible for authorization — this method assumes the caller
+        has already verified the actor is allowed to do this (owner/superuser).
+
+        Effects, in order:
+            1. Snapshot everything (for the audit log) before mutating anything.
+            2. Reverse the GL journal entry, if one was posted for this invoice.
+            3. Restore stock, if stock was actually deducted for this invoice.
+            4. Reset the customer's outstanding balance contribution, if any.
+            5. Soft-delete the Invoice + its SaleItems + its SalePayments.
+            6. Write one audit log entry capturing the full snapshot.
+        """
+        from apps.accounting.services import AccountingService
+        from apps.accounting.models import JournalEntry
+        from apps.core.models import AuditLog
+
+        if invoice.is_deleted:
+            raise ValueError("This invoice has already been deleted.")
+
+        # ── 1. Build a full json-safe snapshot BEFORE making any changes ──────
+        def _jsonsafe(v):
+            if isinstance(v, Decimal):
+                return str(v)
+            if hasattr(v, "isoformat"):
+                return v.isoformat()
+            if v is None:
+                return None
+            return str(v) if not isinstance(v, (int, float, str, bool)) else v
+
+        items_snapshot = [
+            {
+                "product_id": _jsonsafe(item.product_id),
+                "quantity": _jsonsafe(item.quantity),
+                "unit_price": _jsonsafe(item.unit_price),
+            }
+            for item in invoice.items.all()
+        ]
+        payments_snapshot = [
+            {
+                "amount": _jsonsafe(p.amount),
+                "method": p.method,
+                "received_at": _jsonsafe(p.received_at),
+            }
+            for p in invoice.payments.all()
+        ]
+        linked_journal_entry = JournalEntry.objects.filter(
+            organisation=invoice.organisation,
+            source_type='sale',
+            source_ref=str(invoice.id),
+        ).first()
+
+        snapshot = {
+            "invoice_number": invoice.invoice_number,
+            "customer_id": _jsonsafe(invoice.customer_id),
+            "total_amount": _jsonsafe(invoice.total_amount),
+            "amount_paid": _jsonsafe(invoice.amount_paid),
+            "status": invoice.status,
+            "is_deferred": invoice.is_deferred,
+            "fulfilled_at": _jsonsafe(invoice.fulfilled_at),
+            "items": items_snapshot,
+            "payments": payments_snapshot,
+            "journal_entry_id": str(linked_journal_entry.id) if linked_journal_entry else None,
+            "journal_entry_reference": linked_journal_entry.reference if linked_journal_entry else None,
+        }
+
+        # Was GL actually posted for this invoice? (not deferred, not a still-open
+        # proforma, and an entry actually exists for it)
+        gl_was_posted = (not invoice.is_deferred) and linked_journal_entry is not None
+
+        # Was stock actually deducted for this invoice? Mirrors void_invoice's
+        # assumption (non-service items were deducted at creation/fulfillment time),
+        # but excludes deferred-and-not-yet-fulfilled invoices (nothing was deducted)
+        # and already-voided invoices (stock was already restored by void_invoice).
+        stock_was_deducted = (
+            invoice.status != Invoice.Status.VOIDED
+            and (not invoice.is_deferred or invoice.fulfilled_at is not None)
+        )
+
+        # ── 2. Reverse the GL journal entry ────────────────────────────────────
+        if gl_was_posted:
+            AccountingService.reverse_journal_entry(linked_journal_entry, actor)
+
+        # ── 3. Restore stock ────────────────────────────────────────────────────
+        if stock_was_deducted:
+            for item in invoice.items.select_related("product").all():
+                if item.product.product_type == "service":
+                    continue
+                InventoryService.record_movement(
+                    organisation=invoice.organisation,
+                    product=item.product,
+                    warehouse=invoice.warehouse,
+                    quantity=item.quantity,  # positive = restocking
+                    movement_type="return_in",
+                    unit_cost=item.cost_of_goods / item.quantity if item.quantity else item.product.cost_price,
+                    reference=f"DELETE-{invoice.invoice_number}",
+                    created_by=actor,
+                )
+
+        # ── 4. Reset customer outstanding balance contribution ─────────────────
+        if invoice.customer and invoice.payment_method == Invoice.PaymentMethod.CREDIT:
+            outstanding_contribution = invoice.amount_due
+            if outstanding_contribution and outstanding_contribution > Decimal("0"):
+                from apps.credits.services import CreditService
+                CreditService.record_payment(
+                    organisation=invoice.organisation,
+                    customer=invoice.customer,
+                    amount=outstanding_contribution,
+                    recorded_by=actor,
+                    description=f"Invoice deleted – {invoice.invoice_number}",
+                )
+
+        # ── 5. Soft-delete everything ───────────────────────────────────────────
+        for item in invoice.items.all():
+            item.delete()
+        for payment in invoice.payments.all():
+            payment.delete()
+        invoice.delete()
+
+        # ── 6. Audit log ─────────────────────────────────────────────────────────
+        try:
+            AuditLog.log(
+                action=AuditLog.DELETE,
+                user=actor,
+                organisation=invoice.organisation,
+                model_name='Invoice',
+                object_id=str(invoice.id),
+                object_repr=invoice.invoice_number,
+                changes=snapshot,
+            )
+        except Exception:
+            pass
+
+        logger.info("Invoice %s deleted by %s for org %s", invoice.invoice_number, actor, invoice.organisation.id)
 
     @staticmethod
     @transaction.atomic

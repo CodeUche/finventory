@@ -19,7 +19,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Optional
 
-from django.db.models import Count, F, Sum
+from django.db.models import Count, F, Max, Sum
 from django.db.models.functions import TruncDay, TruncMonth, TruncYear
 
 logger = logging.getLogger(__name__)
@@ -689,3 +689,294 @@ class ReportService:
             }
             for r in qs
         ]
+
+    # ─── Customer Balance (AR snapshot) ──────────────────────────────────────
+
+    @staticmethod
+    def customer_balance(organisation) -> list[dict]:
+        """
+        Point-in-time snapshot of every active customer's outstanding balance,
+        credit position, and last activity dates. Sorted by outstanding_balance
+        descending by default.
+        """
+        from apps.customers.models import Customer
+        from apps.sales.models import Invoice, SalePayment
+
+        customers = Customer.objects.filter(organisation=organisation, is_active=True)
+
+        last_invoice_map = dict(
+            Invoice.objects.filter(organisation=organisation, customer__in=customers)
+            .values("customer_id")
+            .annotate(last_date=Max("issue_date"))
+            .values_list("customer_id", "last_date")
+        )
+        last_payment_map = dict(
+            SalePayment.objects.filter(
+                organisation=organisation, invoice__customer__in=customers
+            )
+            .values("invoice__customer_id")
+            .annotate(last_date=Max("received_at"))
+            .values_list("invoice__customer_id", "last_date")
+        )
+
+        rows = [
+            {
+                "customer_id": str(c.id),
+                "customer_name": c.name,
+                "customer_code": c.code,
+                "outstanding_balance": c.outstanding_balance,
+                "credit_limit": c.credit_limit,
+                "available_credit": c.available_credit,
+                "last_invoice_date": last_invoice_map.get(c.id),
+                "last_payment_date": last_payment_map.get(c.id),
+            }
+            for c in customers
+        ]
+        return sorted(rows, key=lambda r: r["outstanding_balance"], reverse=True)
+
+    # ─── Payments by Customer ─────────────────────────────────────────────────
+
+    @staticmethod
+    def payments_by_customer(
+        organisation,
+        date_from: Optional[date],
+        date_to: Optional[date],
+    ) -> list[dict]:
+        """Group SalePayment (via Invoice.customer) by customer for the period."""
+        from apps.sales.models import SalePayment
+
+        qs = SalePayment.objects.filter(
+            organisation=organisation, invoice__customer__isnull=False
+        )
+        if date_from:
+            qs = qs.filter(received_at__date__gte=date_from)
+        if date_to:
+            qs = qs.filter(received_at__date__lte=date_to)
+
+        totals = (
+            qs.values(
+                "invoice__customer__id",
+                "invoice__customer__name",
+            )
+            .annotate(total_received=Sum("amount"), payment_count=Count("id"))
+            .order_by("-total_received")
+        )
+
+        method_rows = (
+            qs.values("invoice__customer__id", "method")
+            .annotate(total=Sum("amount"))
+        )
+        method_map: dict = {}
+        for r in method_rows:
+            cid = r["invoice__customer__id"]
+            method_map.setdefault(cid, {}).setdefault(r["method"], Decimal("0"))
+            method_map[cid][r["method"]] = r["total"] or Decimal("0")
+
+        methods = ["cash", "bank_transfer", "pos", "cheque", "credit_applied"]
+        result = []
+        for r in totals:
+            cid = r["invoice__customer__id"]
+            breakdown = {m: method_map.get(cid, {}).get(m, Decimal("0")) for m in methods}
+            result.append(
+                {
+                    "customer_id": str(cid),
+                    "customer_name": r["invoice__customer__name"],
+                    "total_received": r["total_received"],
+                    "payment_count": r["payment_count"],
+                    "breakdown": breakdown,
+                }
+            )
+        return result
+
+    @staticmethod
+    def customer_payments(
+        organisation,
+        customer_id: str,
+        date_from: Optional[date],
+        date_to: Optional[date],
+    ) -> list[dict]:
+        """Individual SalePayment rows for one customer in the period."""
+        from apps.sales.models import SalePayment
+
+        qs = SalePayment.objects.filter(
+            organisation=organisation, invoice__customer__id=customer_id
+        )
+        if date_from:
+            qs = qs.filter(received_at__date__gte=date_from)
+        if date_to:
+            qs = qs.filter(received_at__date__lte=date_to)
+        qs = qs.select_related("invoice").order_by("-received_at")
+
+        return [
+            {
+                "date": p.received_at,
+                "amount": p.amount,
+                "method": p.method,
+                "invoice_number": p.invoice.invoice_number,
+                "reference": p.reference,
+            }
+            for p in qs
+        ]
+
+    # ─── Account Statement (GL) ──────────────────────────────────────────────
+
+    @staticmethod
+    def account_statement(
+        organisation,
+        account_id: str,
+        date_from: Optional[date],
+        date_to: Optional[date],
+    ) -> dict:
+        """
+        Standard GL statement for one Account: opening balance, chronological
+        lines with running balance, and closing balance.
+
+        Normal balance side follows Account.balance: asset/expense/cogs types
+        are debit-normal (debits − credits); liability/equity/revenue types
+        are credit-normal (credits − debits).
+        """
+        from apps.accounting.models import Account, AccountType, JournalLine
+
+        account = Account.objects.get(organisation=organisation, id=account_id)
+        is_debit_normal = account.account_type in [
+            AccountType.ASSET, AccountType.EXPENSE, AccountType.COST_OF_GOODS,
+        ]
+
+        base_qs = JournalLine.objects.filter(
+            account=account,
+            journal_entry__organisation=organisation,
+            journal_entry__status="posted",
+        )
+
+        opening_qs = base_qs
+        if date_from:
+            opening_qs = opening_qs.filter(journal_entry__entry_date__lt=date_from)
+        else:
+            opening_qs = opening_qs.none()
+        opening_agg = opening_qs.aggregate(d=Sum("debit"), c=Sum("credit"))
+        opening_debit = opening_agg["d"] or Decimal("0")
+        opening_credit = opening_agg["c"] or Decimal("0")
+        opening_balance = (
+            opening_debit - opening_credit
+            if is_debit_normal
+            else opening_credit - opening_debit
+        )
+
+        period_qs = base_qs
+        period_qs = _date_filter(period_qs, "journal_entry__entry_date", date_from, date_to)
+        period_qs = period_qs.select_related("journal_entry").order_by(
+            "journal_entry__entry_date", "created_at"
+        )
+
+        running = opening_balance
+        lines = []
+        for line in period_qs:
+            delta = (
+                line.debit - line.credit
+                if is_debit_normal
+                else line.credit - line.debit
+            )
+            running += delta
+            lines.append(
+                {
+                    "date": line.journal_entry.entry_date,
+                    "journal_entry_reference": line.journal_entry.reference,
+                    "description": line.description or line.journal_entry.description,
+                    "debit": line.debit,
+                    "credit": line.credit,
+                    "running_balance": running,
+                }
+            )
+
+        return {
+            "account": {
+                "id": str(account.id),
+                "code": account.code,
+                "name": account.name,
+                "account_type": account.account_type,
+            },
+            "opening_balance": opening_balance,
+            "lines": lines,
+            "closing_balance": running,
+        }
+
+    # ─── Customer Details (master directory) ─────────────────────────────────
+
+    @staticmethod
+    def customer_details(organisation) -> list[dict]:
+        """Master customer directory with lifetime sales/payment totals."""
+        from apps.customers.models import Customer
+        from apps.sales.models import Invoice, SalePayment
+
+        customers = Customer.objects.filter(organisation=organisation)
+
+        sales_map = dict(
+            Invoice.objects.filter(organisation=organisation, customer__in=customers)
+            .values("customer_id")
+            .annotate(total=Sum("total_amount"))
+            .values_list("customer_id", "total")
+        )
+        payments_map = dict(
+            SalePayment.objects.filter(
+                organisation=organisation, invoice__customer__in=customers
+            )
+            .values("invoice__customer_id")
+            .annotate(total=Sum("amount"))
+            .values_list("invoice__customer_id", "total")
+        )
+
+        return [
+            {
+                "customer_id": str(c.id),
+                "code": c.code,
+                "name": c.name,
+                "customer_type": c.customer_type,
+                "email": c.email,
+                "phone": c.phone,
+                "outstanding_balance": c.outstanding_balance,
+                "credit_limit": c.credit_limit,
+                "total_sales": sales_map.get(c.id) or Decimal("0"),
+                "total_payments": payments_map.get(c.id) or Decimal("0"),
+            }
+            for c in customers
+        ]
+
+    # ─── Product Details (master directory) ──────────────────────────────────
+
+    @staticmethod
+    def product_details(organisation) -> list[dict]:
+        """Master product directory with current stock and margin %."""
+        from apps.inventory.models import Product, StockItem
+
+        products = Product.objects.filter(organisation=organisation).select_related("category")
+
+        stock_map = dict(
+            StockItem.objects.filter(organisation=organisation)
+            .values("product_id")
+            .annotate(total_qty=Sum("quantity_on_hand"))
+            .values_list("product_id", "total_qty")
+        )
+
+        rows = []
+        for p in products:
+            stock_qty = stock_map.get(p.id) or Decimal("0")
+            if p.selling_price and p.selling_price > 0:
+                margin_pct = (
+                    (p.selling_price - p.cost_price) / p.selling_price * 100
+                ).quantize(Decimal("0.01"))
+            else:
+                margin_pct = Decimal("0")
+            rows.append(
+                {
+                    "product_id": str(p.id),
+                    "sku": p.sku,
+                    "name": p.name,
+                    "category_name": p.category.name if p.category else "Uncategorised",
+                    "cost_price": p.cost_price,
+                    "selling_price": p.selling_price,
+                    "stock_quantity": stock_qty,
+                    "reorder_level": p.reorder_level,
+                    "margin_pct": margin_pct,
+                }
+            )
+        return rows

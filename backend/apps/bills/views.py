@@ -139,6 +139,22 @@ class BillViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
             'status': d.get('status', 'draft'),
         }
         bill = BillService.create_bill(bill_data, items_data, org, request.user)
+
+        try:
+            from apps.core.models import AuditLog
+            AuditLog.log(
+                action=AuditLog.CREATE,
+                user=request.user,
+                organisation=org,
+                model_name='Bill',
+                object_id=str(bill.id),
+                object_repr=str(bill),
+                changes={'total_amount': {'old': None, 'new': str(bill.total_amount)}, 'status': {'old': None, 'new': bill.status}},
+                request=request,
+            )
+        except Exception:
+            pass
+
         return Response(BillSerializer(bill).data, status=status.HTTP_201_CREATED)
 
     def partial_update(self, request, *args, **kwargs):
@@ -221,7 +237,24 @@ class BillViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
         bill = self.get_object()
+        previous_status = bill.status
         bill = BillService.approve_bill(bill, request.user)
+
+        try:
+            from apps.core.models import AuditLog
+            AuditLog.log(
+                action=AuditLog.UPDATE,
+                user=request.user,
+                organisation=self._get_organisation(),
+                model_name='Bill',
+                object_id=str(bill.id),
+                object_repr=str(bill),
+                changes={'status': {'old': previous_status, 'new': bill.status}},
+                request=request,
+            )
+        except Exception:
+            pass
+
         return Response(BillSerializer(bill).data)
 
     @action(detail=True, methods=['post'])
@@ -231,18 +264,55 @@ class BillViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
         ser.is_valid(raise_exception=True)
         d = ser.validated_data
         try:
-            BillService.record_payment(
+            payment = BillService.record_payment(
                 bill, d['amount'], d['payment_date'], d['method'],
                 d.get('reference', ''), d.get('notes', ''), request.user,
                 wht_rate_id=d.get('wht_rate_id'),
             )
         except ValueError as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            from apps.core.models import AuditLog
+            AuditLog.log(
+                action=AuditLog.UPDATE,
+                user=request.user,
+                organisation=self._get_organisation(),
+                model_name='Bill',
+                object_id=str(bill.id),
+                object_repr=str(bill),
+                changes={
+                    'amount_paid': {'old': None, 'new': str(bill.amount_paid)},
+                    'status': {'old': None, 'new': bill.status},
+                    'payment_amount': {'old': None, 'new': str(payment.amount)},
+                },
+                request=request,
+            )
+        except Exception:
+            pass
+
         return Response(BillSerializer(bill).data)
 
     @action(detail=True, methods=['post'])
     def void(self, request, pk=None):
         bill = self.get_object()
+        previous_status = bill.status
         bill.status = Bill.VOIDED
         bill.save()
+
+        try:
+            from apps.core.models import AuditLog
+            AuditLog.log(
+                action=AuditLog.UPDATE,
+                user=request.user,
+                organisation=self._get_organisation(),
+                model_name='Bill',
+                object_id=str(bill.id),
+                object_repr=str(bill),
+                changes={'status': {'old': previous_status, 'new': bill.status}},
+                request=request,
+            )
+        except Exception:
+            pass
+
         return Response(BillSerializer(bill).data)

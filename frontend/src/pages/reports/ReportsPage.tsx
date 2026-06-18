@@ -35,16 +35,17 @@ import {
 import {
   BarChart2, RefreshCw, TrendingDown, TrendingUp, Clock, Receipt,
   Download, ArrowDownCircle, ArrowUpCircle, Landmark, LayoutDashboard,
-  FileText, Users, DollarSign, PieChart as PieIcon, Activity,
+  FileText, Users, DollarSign, PieChart as PieIcon, Activity, BookOpen,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { reportApi, urlToDataUrl, bypassNextGets } from '@/services/api'
+import { reportApi, accountingApi, urlToDataUrl, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatNumber, formatDate, getCurrencySymbol } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
 import { saveBlobFile } from '@/lib/saveBlobFile'
 import PeriodSelector, { type PeriodValue } from '@/components/PeriodSelector'
 import ExportBar from '@/components/ExportBar'
 import ReportTable from '@/components/ReportTable'
+import SalesByCustomerDrilldownModal from '@/components/SalesByCustomerDrilldownModal'
 import type { PnL, SalesSummaryPoint, ARAgingReport, VATSummary } from '@/types'
 
 // ─── Tab definitions ──────────────────────────────────────────────────────────
@@ -56,6 +57,7 @@ const TABS = [
   { id: 'sales_analytics', label: 'Sales Analytics', icon: Users },
   { id: 'aging',           label: 'AR / AP Aging',   icon: Clock },
   { id: 'expenses',        label: 'Expenses',         icon: TrendingDown },
+  { id: 'customer_gl',     label: 'Customer & GL',   icon: BookOpen },
 ] as const
 
 type TabId = (typeof TABS)[number]['id']
@@ -86,11 +88,37 @@ const axisTickStyle      = { fill: '#94a3b8', fontSize: 11 }
 // ─── Local type helpers ───────────────────────────────────────────────────────
 
 interface TopProduct    { product_name: string; revenue: string; units_sold: string; cogs: string; gross_profit: string; product_sku?: string }
-interface TopCustomer  { customer_name: string; revenue: string; invoice_count: number; customer_code?: string }
+interface TopCustomer  { customer_name: string; revenue: string; invoice_count: number; customer_code?: string; customer_id?: string }
 interface ExpRow       { category_name: string; total: string; count: number }
 interface CashFlow     { cash_inflows: string; cash_outflows: string; net_cash_flow: string }
 interface PayMethod    { method: string; label: string; total: string; count: number }
 interface InventoryVal { total_inventory_value: string | number; items: { product: string; sku: string; warehouse: string; quantity: number; unit_cost: string; total_value: string }[] }
+
+interface CustomerBalanceRow {
+  customer_id: string; customer_name: string; customer_code?: string
+  outstanding_balance: string; credit_limit: string; available_credit: string
+  last_invoice_date: string | null; last_payment_date: string | null
+}
+interface CustomerDetailRow {
+  code: string; name: string; customer_type: string; email: string; phone: string
+  outstanding_balance: string; credit_limit: string; total_sales: string; total_payments: string
+}
+interface ProductDetailRow {
+  sku: string; name: string; category_name: string; cost_price: string; selling_price: string
+  stock_qty: number; reorder_level: number; margin_pct: string
+}
+interface PaymentsByCustomerRow {
+  customer_id: string; customer_name: string; total_received: string; payment_count: number
+  method_breakdown?: Record<string, string>
+}
+interface AccountOption { id: string; name: string; code?: string }
+interface AccountStatementLine {
+  date: string; journal_entry_reference: string; description: string
+  debit: string; credit: string; running_balance: string
+}
+interface AccountStatementData {
+  account: string; opening_balance: string; lines: AccountStatementLine[]; closing_balance: string
+}
 
 // ─── Utility functions ────────────────────────────────────────────────────────
 
@@ -187,6 +215,33 @@ export default function ReportsPage() {
   const [vatSummary,       setVatSummary]       = useState<VATSummary | null>(null)
   const [paymentMethods,   setPaymentMethods]   = useState<PayMethod[]>([])
   const [inventory,        setInventory]        = useState<InventoryVal | null>(null)
+
+  // ── Customer & GL tab state ───────────────────────────────────────────────
+  const [customerBalance,  setCustomerBalance]  = useState<CustomerBalanceRow[]>([])
+  const [customerDetails,  setCustomerDetails]  = useState<CustomerDetailRow[]>([])
+  const [productDetails,   setProductDetails]   = useState<ProductDetailRow[]>([])
+  const [paymentsByCust,   setPaymentsByCust]   = useState<PaymentsByCustomerRow[]>([])
+  const [cgLoading,        setCgLoading]        = useState(true)
+  const [expandedPayCust,  setExpandedPayCust]  = useState<string | null>(null)
+  const [custPaymentRows,  setCustPaymentRows]  = useState<{ date: string; amount: string; method: string; invoice_number: string; reference: string }[]>([])
+  const [custPaymentsLoading, setCustPaymentsLoading] = useState(false)
+
+  const [accounts,         setAccounts]         = useState<AccountOption[]>([])
+  const [selectedAccount,  setSelectedAccount]  = useState<string>('')
+  const [statementPeriod,  setStatementPeriod]  = useState<PeriodValue>({ period: 'month' })
+  const [statement,        setStatement]        = useState<AccountStatementData | null>(null)
+  const [statementLoading, setStatementLoading] = useState(false)
+
+  // Sales-by-customer drill-down modal (Task 2)
+  const [drilldownOpen,    setDrilldownOpen]    = useState(false)
+  const [drilldownCustId,  setDrilldownCustId]  = useState<string | null>(null)
+  const [drilldownCustName,setDrilldownCustName]= useState('')
+
+  const openDrilldown = (id: string | null | undefined, name: string) => {
+    setDrilldownCustId(id ?? 'walk-in')
+    setDrilldownCustName(name)
+    setDrilldownOpen(true)
+  }
 
   // ── VAT PDF export ────────────────────────────────────────────────────────────
   const downloadVATReport = async () => {
@@ -364,6 +419,74 @@ export default function ReportsPage() {
   useEffect(() => { load() }, [period])
   useDataRefresh(load)
 
+  // ── Customer & GL tab data fetch ──────────────────────────────────────────
+  const loadCustomerGl = async () => {
+    setCgLoading(true)
+    try {
+      const [balRes, custRes, prodRes, payRes] = await Promise.allSettled([
+        reportApi.customerBalance(),
+        reportApi.customerDetails(),
+        reportApi.productDetails(),
+        reportApi.paymentsByCustomer(periodToParams(period)),
+      ])
+      if (balRes.status  === 'fulfilled') setCustomerBalance(balRes.value.data.results ?? balRes.value.data)
+      if (custRes.status === 'fulfilled') setCustomerDetails(custRes.value.data.results ?? custRes.value.data)
+      if (prodRes.status === 'fulfilled') setProductDetails(prodRes.value.data.results ?? prodRes.value.data)
+      if (payRes.status  === 'fulfilled') setPaymentsByCust(payRes.value.data.results ?? payRes.value.data)
+    } catch { toast.error('Failed to load customer & GL reports') }
+    finally { setCgLoading(false) }
+  }
+
+  useEffect(() => {
+    if (tab === 'customer_gl') {
+      loadCustomerGl()
+      if (accounts.length === 0) {
+        accountingApi.accounts().then(res => {
+          setAccounts(res.data.results ?? res.data)
+        }).catch(() => toast.error('Failed to load accounts'))
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab])
+
+  const loadStatement = async () => {
+    if (!selectedAccount) return
+    setStatementLoading(true)
+    try {
+      const params = { account_id: selectedAccount, ...periodToParams(statementPeriod) }
+      const res = await reportApi.accountStatement(params)
+      setStatement(res.data)
+    } catch {
+      toast.error('Failed to load account statement')
+      setStatement(null)
+    } finally {
+      setStatementLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (tab === 'customer_gl' && selectedAccount) loadStatement()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, selectedAccount, statementPeriod])
+
+  const togglePaymentDrilldown = async (row: PaymentsByCustomerRow) => {
+    if (expandedPayCust === row.customer_id) {
+      setExpandedPayCust(null)
+      return
+    }
+    setExpandedPayCust(row.customer_id)
+    setCustPaymentsLoading(true)
+    try {
+      const res = await reportApi.customerPayments({ customer_id: row.customer_id, ...periodToParams(period) })
+      setCustPaymentRows(res.data.results ?? res.data)
+    } catch {
+      toast.error('Failed to load payment detail')
+      setCustPaymentRows([])
+    } finally {
+      setCustPaymentsLoading(false)
+    }
+  }
+
   // ── Derived chart data ────────────────────────────────────────────────────────
 
   const groupBy = groupByForPeriod(period.period)
@@ -479,6 +602,7 @@ export default function ReportsPage() {
   // ─────────────────────────────────────────────────────────────────────────────
 
   return (
+    <>
     <div className="space-y-5">
 
       {/* ── Header ──────────────────────────────────────────────────────────── */}
@@ -1074,6 +1198,8 @@ export default function ReportsPage() {
                     data={topCustomers.slice(0, 8).map(c => ({
                       name:    trunc(c.customer_name ?? 'Walk-in', 16),
                       Revenue: parseFloat(c.revenue),
+                      fullName: c.customer_name ?? 'Walk-in',
+                      customerId: c.customer_id ?? null,
                     }))}
                     margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
                   >
@@ -1084,7 +1210,11 @@ export default function ReportsPage() {
                       axisLine={false} tickLine={false} width={90} />
                     <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle}
                       itemStyle={tooltipItemStyle} formatter={(v: number) => formatCurrency(String(v))} />
-                    <Bar dataKey="Revenue" fill={accent} radius={[0, 4, 4, 0]} />
+                    <Bar
+                      dataKey="Revenue" fill={accent} radius={[0, 4, 4, 0]}
+                      style={{ cursor: 'pointer' }}
+                      onClick={(data: any) => openDrilldown(data?.customerId, data?.fullName ?? 'Walk-in')}
+                    />
                   </BarChart>
                 </ResponsiveContainer>
               )}
@@ -1167,21 +1297,31 @@ export default function ReportsPage() {
             />
           </div>
 
-          {/* Top Customers table */}
+          {/* Top Customers table — click a row to drill into that customer's invoices */}
           <div>
             <h3 className="text-base font-semibold text-white mb-3">Top Customers by Revenue</h3>
-            <ReportTable
-              headers={['Customer', 'Code', 'Invoice Count', 'Revenue']}
-              rows={topCustomers.map(c => [
-                c.customer_name ?? 'Walk-in',
-                c.customer_code ?? '—',
-                c.invoice_count,
-                formatCurrency(c.revenue),
-              ])}
-              loading={loading}
-              emptyMessage="No customer data for this period."
-              rightAlignCols={[2, 3]}
-            />
+            <p className="text-xs text-slate-500 mb-2">Click a row to view full invoice history for that customer.</p>
+            <div onClick={(e) => {
+              const tr = (e.target as HTMLElement).closest('tr')
+              if (!tr || !tr.parentElement) return
+              const rows = Array.from(tr.parentElement.children)
+              const idx = rows.indexOf(tr)
+              const c = topCustomers[idx]
+              if (c) openDrilldown(c.customer_id, c.customer_name ?? 'Walk-in')
+            }} className="cursor-pointer">
+              <ReportTable
+                headers={['Customer', 'Code', 'Invoice Count', 'Revenue']}
+                rows={topCustomers.map(c => [
+                  c.customer_name ?? 'Walk-in',
+                  c.customer_code ?? '—',
+                  c.invoice_count,
+                  formatCurrency(c.revenue),
+                ])}
+                loading={loading}
+                emptyMessage="No customer data for this period."
+                rightAlignCols={[2, 3]}
+              />
+            </div>
           </div>
         </div>
       )}
@@ -1446,7 +1586,193 @@ export default function ReportsPage() {
           />
         </div>
       )}
+
+      {/* ═══════════════════════════════════════════════════════════════════════
+          TAB: CUSTOMER & GL
+          — Customer balance, customer/product master directories,
+            payments-by-customer drill-down, GL account statement
+      ══════════════════════════════════════════════════════════════════════════ */}
+      {tab === 'customer_gl' && (
+        <div className="space-y-6">
+
+          {/* 1. Customer Balance */}
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-lg font-semibold text-white">Customer Balance</h2>
+              <ExportBar endpoint="/reports/customer-balance/" params={{}} filenameBase="customer_balance" />
+            </div>
+            <ReportTable
+              headers={['Customer', 'Code', 'Outstanding', 'Credit Limit', 'Available Credit', 'Last Invoice', 'Last Payment']}
+              rows={[...customerBalance]
+                .sort((a, b) => parseFloat(b.outstanding_balance) - parseFloat(a.outstanding_balance))
+                .map(r => [
+                  r.customer_name,
+                  r.customer_code ?? '—',
+                  formatCurrency(r.outstanding_balance),
+                  formatCurrency(r.credit_limit),
+                  formatCurrency(r.available_credit),
+                  r.last_invoice_date ? formatDate(r.last_invoice_date) : '—',
+                  r.last_payment_date ? formatDate(r.last_payment_date) : '—',
+                ])}
+              loading={cgLoading}
+              emptyMessage="No customer balance data."
+              rightAlignCols={[2, 3, 4]}
+            />
+          </div>
+
+          {/* 2. Customer Details (master directory) */}
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-lg font-semibold text-white">Customer Directory</h2>
+              <ExportBar endpoint="/reports/customer-details/" params={{}} filenameBase="customer_details" />
+            </div>
+            <ReportTable
+              headers={['Code', 'Name', 'Type', 'Email', 'Phone', 'Outstanding', 'Credit Limit', 'Total Sales', 'Total Payments']}
+              rows={customerDetails.map(r => [
+                r.code, r.name, r.customer_type, r.email || '—', r.phone || '—',
+                formatCurrency(r.outstanding_balance), formatCurrency(r.credit_limit),
+                formatCurrency(r.total_sales), formatCurrency(r.total_payments),
+              ])}
+              loading={cgLoading}
+              emptyMessage="No customer directory data."
+              rightAlignCols={[5, 6, 7, 8]}
+            />
+          </div>
+
+          {/* 3. Product Details (master directory) */}
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-lg font-semibold text-white">Product Directory</h2>
+              <ExportBar endpoint="/reports/product-details/" params={{}} filenameBase="product_details" />
+            </div>
+            <ReportTable
+              headers={['SKU', 'Name', 'Category', 'Cost Price', 'Selling Price', 'Stock Qty', 'Reorder Level', 'Margin %']}
+              rows={productDetails.map(r => [
+                r.sku, r.name, r.category_name || '—',
+                formatCurrency(r.cost_price), formatCurrency(r.selling_price),
+                formatNumber(r.stock_qty), r.reorder_level,
+                `${parseFloat(r.margin_pct).toFixed(1)}%`,
+              ])}
+              loading={cgLoading}
+              emptyMessage="No product directory data."
+              rightAlignCols={[3, 4, 5, 6, 7]}
+            />
+          </div>
+
+          {/* 4. Payments by Customer — click row to expand drill-down */}
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-lg font-semibold text-white">Payments by Customer</h2>
+              <ExportBar endpoint="/reports/payments-by-customer/" params={periodToParams(period)} filenameBase="payments_by_customer" />
+            </div>
+            <p className="text-xs text-slate-500 mb-2">Click a row to see individual payments for that customer.</p>
+            <div className="space-y-2">
+              <div onClick={(e) => {
+                const tr = (e.target as HTMLElement).closest('tr')
+                if (!tr || !tr.parentElement) return
+                const rows = Array.from(tr.parentElement.children)
+                const idx = rows.indexOf(tr)
+                const r = paymentsByCust[idx]
+                if (r) togglePaymentDrilldown(r)
+              }} className="cursor-pointer">
+                <ReportTable
+                  headers={['Customer', 'Total Received', 'Payment Count']}
+                  rows={paymentsByCust.map(r => [
+                    r.customer_name, formatCurrency(r.total_received), r.payment_count,
+                  ])}
+                  loading={cgLoading}
+                  emptyMessage="No payment data for this period."
+                  rightAlignCols={[1, 2]}
+                />
+              </div>
+
+              {expandedPayCust && (
+                <div className="card p-4">
+                  <h4 className="text-sm font-semibold text-white mb-3">
+                    Payment Detail — {paymentsByCust.find(r => r.customer_id === expandedPayCust)?.customer_name ?? 'Customer'}
+                  </h4>
+                  <ReportTable
+                    headers={['Date', 'Amount', 'Method', 'Invoice #', 'Reference']}
+                    rows={custPaymentRows.map(r => [
+                      formatDate(r.date), formatCurrency(r.amount), r.method, r.invoice_number || '—', r.reference || '—',
+                    ])}
+                    loading={custPaymentsLoading}
+                    emptyMessage="No payments found for this customer."
+                    rightAlignCols={[1]}
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* 5. Account Statement (GL) */}
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-lg font-semibold text-white">Account Statement (GL)</h2>
+              {selectedAccount && (
+                <ExportBar
+                  endpoint="/reports/account-statement/"
+                  params={{ account_id: selectedAccount, ...periodToParams(statementPeriod) }}
+                  filenameBase="account_statement"
+                />
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-2 mb-4">
+              <select
+                className="input w-64"
+                value={selectedAccount}
+                onChange={e => setSelectedAccount(e.target.value)}
+              >
+                <option value="">— Select an account —</option>
+                {accounts.map(a => (
+                  <option key={a.id} value={a.id}>{a.code ? `${a.code} — ${a.name}` : a.name}</option>
+                ))}
+              </select>
+              <PeriodSelector value={statementPeriod} onChange={setStatementPeriod} />
+            </div>
+
+            {!selectedAccount ? (
+              <div className="card p-8 text-center text-slate-500 text-sm">
+                Select an account above to view its statement.
+              </div>
+            ) : (
+              <>
+                {statement && (
+                  <div className="grid grid-cols-2 gap-4 mb-4">
+                    <div className="card p-4">
+                      <p className="text-xs text-slate-400 mb-1">Opening Balance</p>
+                      <p className="text-xl font-bold text-white">{formatCurrency(statement.opening_balance)}</p>
+                    </div>
+                    <div className="card p-4">
+                      <p className="text-xs text-slate-400 mb-1">Closing Balance</p>
+                      <p className="text-xl font-bold text-brand-400">{formatCurrency(statement.closing_balance)}</p>
+                    </div>
+                  </div>
+                )}
+                <ReportTable
+                  headers={['Date', 'Reference', 'Description', 'Debit', 'Credit', 'Running Balance']}
+                  rows={(statement?.lines ?? []).map(l => [
+                    formatDate(l.date), l.journal_entry_reference || '—', l.description || '—',
+                    formatCurrency(l.debit), formatCurrency(l.credit), formatCurrency(l.running_balance),
+                  ])}
+                  loading={statementLoading}
+                  emptyMessage="No GL activity for this account in the selected period."
+                  rightAlignCols={[3, 4, 5]}
+                />
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
+
+    <SalesByCustomerDrilldownModal
+      open={drilldownOpen}
+      onClose={() => setDrilldownOpen(false)}
+      customerId={drilldownCustId}
+      customerName={drilldownCustName}
+    />
+    </>
   )
 }
 

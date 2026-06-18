@@ -2,11 +2,16 @@ import { useEffect, useState } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { CreditCard, Search, Plus, X, Loader2, TrendingDown, TrendingUp, AlertCircle } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { creditApi, customerApi } from '@/services/api'
+import { creditApi, accountingApi, inventoryApi } from '@/services/api'
+import { orgApi } from '@/services/api'
 import { formatCurrency, formatDate, stripCommas } from '@/lib/utils'
 import AmountInput from '@/components/AmountInput'
-import type { CreditTransaction, Customer } from '@/types'
+import type { Account, CreditPaymentMode, CreditTransaction, Customer, Invoice, Warehouse } from '@/types'
 import DateInput from '@/components/DateInput'
+import { NIGERIAN_BANKS } from '@/lib/banks'
+import { useResolveBankAccount } from '@/hooks/useResolveBankAccount'
+import CustomerPickerModal from '@/components/CustomerPickerModal'
+import InvoicePickerModal from '@/components/InvoicePickerModal'
 
 const TYPE_COLORS: Record<string, string> = {
   debit: 'badge-red',
@@ -15,10 +20,31 @@ const TYPE_COLORS: Record<string, string> = {
   write_off: 'badge-slate',
 }
 
+const PAYMENT_MODES: { value: CreditPaymentMode; label: string }[] = [
+  { value: 'cash', label: 'Cash' },
+  { value: 'bank_transfer', label: 'Bank Transfer' },
+  { value: 'pos', label: 'POS' },
+  { value: 'cheque', label: 'Cheque' },
+  { value: 'credit_applied', label: 'Credit Applied' },
+  { value: 'other', label: 'Other' },
+]
+
 interface AgingBucket {
   label: string
   count: number
   total: string
+}
+
+const EMPTY_PAY_FORM = {
+  amount: '',
+  description: '',
+  due_date: '',
+  payment_mode: '' as CreditPaymentMode | '',
+  bank_name: '',
+  account_name: '',
+  debit_account_id: '',
+  credit_account_id: '',
+  location_id: '',
 }
 
 export default function CreditsPage() {
@@ -28,11 +54,33 @@ export default function CreditsPage() {
   const [typeFilter, setTypeFilter] = useState('')
 
   const [showPayModal, setShowPayModal] = useState(false)
-  const [customers, setCustomers] = useState<Customer[]>([])
-  const [payForm, setPayForm] = useState({ customer_id: '', amount: '', description: '', due_date: '' })
   const [saving, setSaving] = useState(false)
 
   const [aging, setAging] = useState<AgingBucket[] | null>(null)
+
+  // ─── Record Payment form state ─────────────────────────────────────────────
+  const [payForm, setPayForm] = useState(EMPTY_PAY_FORM)
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null)
+  const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null)
+  const [showCustomerPicker, setShowCustomerPicker] = useState(false)
+  const [showInvoicePicker, setShowInvoicePicker] = useState(false)
+  const [accounts, setAccounts] = useState<Account[]>([])
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([])
+
+  const {
+    accountNumber,
+    setAccountNumber,
+    bankCode,
+    setBankCode,
+    accountName: resolvedAccountName,
+    setAccountName: setResolvedAccountName,
+    resolving: resolvingAccount,
+  } = useResolveBankAccount({
+    resolver: async (accNum, code) => {
+      const { data } = await orgApi.resolveBankAccount(accNum, code)
+      return data.data
+    },
+  })
 
   const load = async () => {
     setLoading(true)
@@ -62,32 +110,86 @@ export default function CreditsPage() {
   useEffect(() => { loadAging() }, [])
   useDataRefresh(load)
 
+  const resetPayForm = () => {
+    setPayForm(EMPTY_PAY_FORM)
+    setSelectedCustomer(null)
+    setSelectedInvoice(null)
+    setAccountNumber('')
+    setBankCode('')
+    setResolvedAccountName('')
+  }
+
   const openPayModal = async () => {
+    resetPayForm()
     setShowPayModal(true)
-    if (customers.length === 0) {
+    if (accounts.length === 0) {
       try {
-        const { data } = await customerApi.list()
-        setCustomers(data.results ?? data)
+        const { data } = await accountingApi.accounts()
+        setAccounts(data.results ?? data)
+      } catch { /* ignore */ }
+    }
+    if (warehouses.length === 0) {
+      try {
+        const { data } = await inventoryApi.warehouses()
+        setWarehouses(data.results ?? data)
       } catch { /* ignore */ }
     }
   }
 
+  const handlePickCustomer = (customer: Customer) => {
+    setSelectedCustomer(customer)
+    setSelectedInvoice(null)
+  }
+
+  const handlePickInvoice = (invoice: Invoice) => {
+    setSelectedInvoice(invoice)
+  }
+
+  const handleBankSelect = (bankName: string) => {
+    const bank = NIGERIAN_BANKS.find((b) => b.name === bankName)
+    setPayForm({ ...payForm, bank_name: bankName })
+    setBankCode(bank?.code ?? '')
+    setResolvedAccountName('')
+  }
+
+  const handleAccountNumberChange = (v: string) => {
+    const digits = v.replace(/\D/g, '').slice(0, 10)
+    setAccountNumber(digits)
+  }
+
+  // ─── Outstanding balance preview ───────────────────────────────────────────
+  const previouslyOwed = selectedCustomer ? parseFloat(selectedCustomer.outstanding_balance || '0') : 0
+  const amountReceived = parseFloat(stripCommas(payForm.amount) || '0') || 0
+  const currentlyOwed = Math.max(previouslyOwed - amountReceived, 0)
+
   const handleRecordPayment = async () => {
-    if (!payForm.customer_id) { toast.error('Select a customer'); return }
-    if (!payForm.amount || parseFloat(stripCommas(payForm.amount)) <= 0) { toast.error('Enter a valid amount'); return }
+    if (!selectedCustomer) { toast.error('Choose a customer'); return }
+    if (!payForm.amount || amountReceived <= 0) { toast.error('Enter a valid amount'); return }
     setSaving(true)
     try {
       await creditApi.recordPayment({
-        ...payForm,
+        customer_id: selectedCustomer.id,
+        invoice: selectedInvoice?.id || undefined,
         amount: stripCommas(payForm.amount),
         due_date: payForm.due_date || undefined,
+        description: payForm.description,
+        payment_mode: payForm.payment_mode || undefined,
+        bank_name: payForm.bank_name || undefined,
+        bank_code: bankCode || undefined,
+        account_number: accountNumber || undefined,
+        account_name: resolvedAccountName || payForm.account_name || undefined,
+        debit_account_id: payForm.debit_account_id || undefined,
+        credit_account_id: payForm.credit_account_id || undefined,
+        location_id: payForm.location_id || undefined,
       })
       toast.success('Payment recorded')
       setShowPayModal(false)
-      setPayForm({ customer_id: '', amount: '', description: '', due_date: '' })
+      resetPayForm()
       load()
-    } catch {
-      toast.error('Failed to record payment')
+    } catch (err: any) {
+      const apiErr = err?.response?.data?.error
+      const msg = typeof apiErr === 'string' ? apiErr : (apiErr?.message ?? 'Failed to record payment')
+      toast.error(msg)
     } finally {
       setSaving(false)
     }
@@ -105,7 +207,7 @@ export default function CreditsPage() {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-white">Credits</h1>
+          <h1 className="text-2xl font-bold text-white">Payment Information</h1>
           <p className="text-slate-400 text-sm">{transactions.length} transactions</p>
         </div>
         <button className="btn-primary sm:ml-auto" onClick={openPayModal}>
@@ -185,7 +287,7 @@ export default function CreditsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-surface-700">
-                {['Date', 'Customer', 'Type', 'Amount', 'Balance After', 'Due Date', 'Description'].map((h) => (
+                {['Date', 'Payment #', 'Mode', 'Customer', 'Type', 'Amount', 'Balance After', 'Due Date', 'Description'].map((h) => (
                   <th key={h} className="px-5 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
                 ))}
               </tr>
@@ -194,13 +296,13 @@ export default function CreditsPage() {
               {loading ? (
                 Array.from({ length: 6 }).map((_, i) => (
                   <tr key={i} className="table-row">
-                    {Array.from({ length: 7 }).map((_, j) => (
+                    {Array.from({ length: 9 }).map((_, j) => (
                       <td key={j} className="px-5 py-3.5"><div className="h-4 bg-surface-700 rounded animate-pulse w-20" /></td>
                     ))}
                   </tr>
                 ))
               ) : transactions.length === 0 ? (
-                <tr><td colSpan={7} className="px-5 py-12 text-center">
+                <tr><td colSpan={9} className="px-5 py-12 text-center">
                   <CreditCard size={32} className="mx-auto mb-2 text-slate-600" />
                   <p className="text-slate-500">No credit transactions</p>
                 </td></tr>
@@ -208,6 +310,10 @@ export default function CreditsPage() {
                 transactions.map((t) => (
                   <tr key={t.id} className="table-row">
                     <td className="px-5 py-3.5 text-slate-400 whitespace-nowrap">{formatDate(t.created_at)}</td>
+                    <td className="px-5 py-3.5 text-slate-300 font-mono text-xs whitespace-nowrap">{t.payment_number || '—'}</td>
+                    <td className="px-5 py-3.5 text-slate-400 whitespace-nowrap">
+                      {t.payment_mode ? PAYMENT_MODES.find((m) => m.value === t.payment_mode)?.label ?? t.payment_mode : '—'}
+                    </td>
                     <td className="px-5 py-3.5 text-white font-medium">{t.customer_name}</td>
                     <td className="px-5 py-3.5">
                       <span className={TYPE_COLORS[t.transaction_type] ?? 'badge-slate'}>{t.transaction_type.replace('_', ' ').toUpperCase()}</span>
@@ -230,35 +336,166 @@ export default function CreditsPage() {
       {showPayModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setShowPayModal(false)} />
-          <div className="relative card w-full max-w-md p-6 space-y-5">
+          <div className="relative card w-full max-w-lg p-6 space-y-5 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-bold text-white">Record Payment</h2>
               <button onClick={() => setShowPayModal(false)} className="text-slate-400 hover:text-white"><X size={20} /></button>
             </div>
 
             <div className="space-y-4">
+              {/* Customer */}
               <div>
                 <label className="label">Customer *</label>
-                <select className="input" value={payForm.customer_id} onChange={(e) => setPayForm({ ...payForm, customer_id: e.target.value })}>
-                  <option value="">— Select customer —</option>
-                  {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                <div className="flex items-center gap-2">
+                  <div className="input flex-1 flex items-center text-slate-300">
+                    {selectedCustomer ? selectedCustomer.name : <span className="text-slate-500">No customer selected</span>}
+                  </div>
+                  <button type="button" className="btn-secondary shrink-0" onClick={() => setShowCustomerPicker(true)}>
+                    Choose
+                  </button>
+                </div>
+                {selectedCustomer && (
+                  <p className="text-xs text-slate-500 mt-1.5">
+                    Amount previously owed: <span className="text-red-400 font-medium">{formatCurrency(previouslyOwed)}</span>
+                  </p>
+                )}
+              </div>
+
+              {/* Invoice */}
+              <div>
+                <label className="label">Invoice <span className="text-slate-500 font-normal">(optional)</span></label>
+                <div className="flex items-center gap-2">
+                  <div className="input flex-1 flex items-center text-slate-300">
+                    {selectedInvoice ? selectedInvoice.invoice_number : <span className="text-slate-500">No invoice selected</span>}
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-secondary shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+                    onClick={() => setShowInvoicePicker(true)}
+                    disabled={!selectedCustomer}
+                  >
+                    Choose
+                  </button>
+                </div>
+              </div>
+
+              {/* Payment mode */}
+              <div>
+                <label className="label">Payment Mode</label>
+                <select
+                  className="input"
+                  value={payForm.payment_mode}
+                  onChange={(e) => setPayForm({ ...payForm, payment_mode: e.target.value as CreditPaymentMode })}
+                >
+                  <option value="">— Select mode —</option>
+                  {PAYMENT_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
                 </select>
               </div>
+
+              {/* Amount received */}
               <div>
-                <label className="label">Amount *</label>
+                <label className="label">Amount Received *</label>
                 <AmountInput className="input" placeholder="0.00"
                   value={payForm.amount} onChange={(v) => setPayForm({ ...payForm, amount: v })} />
               </div>
+
+              {/* Bank received from */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label">Bank Received From</label>
+                  <select className="input" value={payForm.bank_name} onChange={(e) => handleBankSelect(e.target.value)}>
+                    <option value="">— Select bank —</option>
+                    {NIGERIAN_BANKS.map((b) => <option key={b.code + b.name} value={b.name}>{b.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="label">Account Number</label>
+                  <input
+                    className="input font-mono"
+                    placeholder="10-digit NUBAN"
+                    inputMode="numeric"
+                    maxLength={10}
+                    value={accountNumber}
+                    onChange={(e) => handleAccountNumberChange(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              {/* Account name */}
               <div>
-                <label className="label">Due Date <span className="text-slate-500 font-normal">(optional)</span></label>
+                <label className="label flex items-center gap-2">
+                  Account Name
+                  {resolvingAccount && <Loader2 size={12} className="animate-spin text-brand-400" />}
+                </label>
+                <input
+                  className="input"
+                  placeholder={resolvingAccount ? 'Resolving…' : 'Auto-filled when account resolves'}
+                  value={resolvedAccountName || payForm.account_name}
+                  onChange={(e) => { setResolvedAccountName(''); setPayForm({ ...payForm, account_name: e.target.value }) }}
+                />
+              </div>
+
+              {/* Debit / Credit account */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label">Debit Account</label>
+                  <select className="input" value={payForm.debit_account_id}
+                    onChange={(e) => setPayForm({ ...payForm, debit_account_id: e.target.value })}>
+                    <option value="">— None —</option>
+                    {accounts.map((a) => <option key={a.id} value={a.id}>{a.code} · {a.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="label">Credit Account</label>
+                  <select className="input" value={payForm.credit_account_id}
+                    onChange={(e) => setPayForm({ ...payForm, credit_account_id: e.target.value })}>
+                    <option value="">— None —</option>
+                    {accounts.map((a) => <option key={a.id} value={a.id}>{a.code} · {a.name}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              {/* Payment number (auto-generated) */}
+              <div>
+                <label className="label">Payment Number</label>
+                <input className="input text-slate-500" disabled placeholder="(auto-generated)" value="" />
+              </div>
+
+              {/* Location/Warehouse */}
+              <div>
+                <label className="label">Location / Warehouse</label>
+                <select className="input" value={payForm.location_id}
+                  onChange={(e) => setPayForm({ ...payForm, location_id: e.target.value })}>
+                  <option value="">— None —</option>
+                  {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+                </select>
+              </div>
+
+              {/* Owed preview */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label">Amount Previously Owed</label>
+                  <div className="input text-slate-400 flex items-center">{formatCurrency(previouslyOwed)}</div>
+                </div>
+                <div>
+                  <label className="label">Amount Currently Owed</label>
+                  <div className="input text-slate-300 flex items-center">{formatCurrency(currentlyOwed)}</div>
+                </div>
+              </div>
+
+              {/* Date received */}
+              <div>
+                <label className="label">Date Received <span className="text-slate-500 font-normal">(optional)</span></label>
                 <DateInput
                   value={payForm.due_date}
                   onChange={(v) => setPayForm({ ...payForm, due_date: v })}
                   placeholder="DD/MM/YYYY"
                 />
               </div>
+
+              {/* Note */}
               <div>
-                <label className="label">Description</label>
+                <label className="label">Note</label>
                 <textarea className="input resize-none" rows={2} placeholder="Payment reference or note"
                   value={payForm.description} onChange={(e) => setPayForm({ ...payForm, description: e.target.value })} />
               </div>
@@ -274,6 +511,18 @@ export default function CreditsPage() {
           </div>
         </div>
       )}
+
+      <CustomerPickerModal
+        open={showCustomerPicker}
+        onClose={() => setShowCustomerPicker(false)}
+        onSelect={handlePickCustomer}
+      />
+      <InvoicePickerModal
+        open={showInvoicePicker}
+        onClose={() => setShowInvoicePicker(false)}
+        onSelect={handlePickInvoice}
+        customerId={selectedCustomer?.id ?? ''}
+      />
     </div>
   )
 }

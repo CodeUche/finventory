@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
-import { Plus, Receipt, Search, X, Loader2, CheckCircle, Ban, FileDown, Mail, MessageCircle, RotateCcw, Truck, Pencil, Trash2, CalendarClock, RefreshCw } from 'lucide-react'
+import { Plus, Receipt, Search, X, Loader2, CheckCircle, Ban, FileDown, Mail, MessageCircle, RotateCcw, Truck, Pencil, Trash2, CalendarClock, RefreshCw, PackageCheck, AlertTriangle } from 'lucide-react'
 import SortSelect from '@/components/SortSelect'
 import YearFilter, { yearToDateParams } from '@/components/YearFilter'
 import MonthFilter, { monthToDateParams, type ArchiveMonth } from '@/components/MonthFilter'
@@ -538,6 +538,9 @@ export default function SalesPage() {
   const [extendDueDate, setExtendDueDate] = useState('')
   const [extendReason, setExtendReason] = useState('')
   const [extendingDue, setExtendingDue] = useState(false)
+  // Reversal-based hard delete (owner/admin only)
+  const [hardDeleteTarget, setHardDeleteTarget] = useState<Invoice | null>(null)
+  const [hardDeleting, setHardDeleting] = useState(false)
 
   const load = async () => {
     setLoading(true)
@@ -591,6 +594,20 @@ export default function SalesPage() {
     finally { setActing(false) }
   }
 
+  const [fulfillingId, setFulfillingId] = useState<string | null>(null)
+  const handleFulfill = async (invoiceId: string) => {
+    setFulfillingId(invoiceId)
+    try {
+      const { data } = await salesApi.fulfillInvoice(invoiceId)
+      toast.success('Invoice marked fulfilled — stock deducted and GL posted')
+      setInvoices((prev) => prev.map((i) => (i.id === invoiceId ? data : i)))
+      if (selected?.id === invoiceId) { setSelected(data); setDetail(data) }
+    } catch (err: any) {
+      const apiErr = err?.response?.data?.error
+      toast.error(typeof apiErr === 'string' ? apiErr : (apiErr?.message ?? 'Failed to fulfill invoice'))
+    } finally { setFulfillingId(null) }
+  }
+
   const handleExtendDue = async () => {
     if (!selected || !extendDueDate) return
     setExtendingDue(true)
@@ -639,6 +656,25 @@ export default function SalesPage() {
       const apiErr = err?.response?.data?.error
       toast.error(typeof apiErr === 'string' ? apiErr : (apiErr?.message ?? 'Failed to delete invoice'))
     }
+  }
+
+  const openHardDeleteModal = (invToDelete: Invoice) => setHardDeleteTarget(invToDelete)
+  const closeHardDeleteModal = () => { if (!hardDeleting) setHardDeleteTarget(null) }
+
+  const handleHardDelete = async () => {
+    if (!hardDeleteTarget) return
+    setHardDeleting(true)
+    try {
+      await salesApi.deleteInvoiceReversed(hardDeleteTarget.id)
+      toast.success('Invoice deleted — stock restored and GL reversed')
+      setInvoices((prev) => prev.filter((i) => i.id !== hardDeleteTarget.id))
+      setHardDeleteTarget(null)
+      if (selected?.id === hardDeleteTarget.id) closeDetail()
+      load()
+    } catch (err: any) {
+      const apiErr = err?.response?.data?.error
+      toast.error(typeof apiErr === 'string' ? apiErr : (apiErr?.message ?? 'Failed to delete invoice'))
+    } finally { setHardDeleting(false) }
   }
 
   const handleExportPDF = async () => {
@@ -956,6 +992,11 @@ export default function SalesPage() {
                     <td className="px-5 py-3.5 text-red-400">{formatCurrency(inv.amount_due)}</td>
                     <td className="px-5 py-3.5">
                       <span className={getStatusColor(inv.status)}>{inv.status.replace('_', ' ')}</span>
+                      {inv.is_deferred && !inv.fulfilled_at && (
+                        <span className="ml-1.5 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide bg-amber-500/20 text-amber-300" title="Stock not yet deducted / GL not posted">
+                          Pending Fulfillment
+                        </span>
+                      )}
                       {/* FIRS compliance badge — only shown when the org is enrolled and the invoice has a FIRS status */}
                       {inv.firs_status && inv.firs_status !== 'not_enrolled' && (
                         <span className={`ml-1.5 px-1 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide ${
@@ -1011,6 +1052,25 @@ export default function SalesPage() {
                             title="Delete invoice"
                           >
                             <Trash2 size={14} />
+                          </button>
+                        )}
+                        {inv.is_deferred && !inv.fulfilled_at && (canEditSales || isOwnerOrAdmin) && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleFulfill(inv.id) }}
+                            disabled={fulfillingId === inv.id}
+                            className="btn-ghost p-1.5 text-amber-400 hover:text-amber-300 disabled:opacity-50"
+                            title="Mark Fulfilled — deduct stock & post GL"
+                          >
+                            {fulfillingId === inv.id ? <Loader2 size={14} className="animate-spin" /> : <PackageCheck size={14} />}
+                          </button>
+                        )}
+                        {isOwnerOrAdmin && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); openHardDeleteModal(inv) }}
+                            className="btn-ghost p-1.5 text-slate-400 hover:text-red-500"
+                            title="Delete invoice (reverses GL & stock)"
+                          >
+                            <AlertTriangle size={14} />
                           </button>
                         )}
                       </div>
@@ -1089,6 +1149,11 @@ export default function SalesPage() {
                 <div>
                   <p className="text-xs text-slate-500 mb-1">Status</p>
                   <span className={getStatusColor(inv?.status ?? '')}>{inv?.status.replace('_', ' ')}</span>
+                  {inv?.is_deferred && !inv?.fulfilled_at && (
+                    <span className="ml-1.5 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide bg-amber-500/20 text-amber-300">
+                      Pending Fulfillment
+                    </span>
+                  )}
                 </div>
                 <div>
                   <p className="text-xs text-slate-500 mb-1">Payment</p>
@@ -1187,6 +1252,16 @@ export default function SalesPage() {
             {/* Drawer footer */}
             {inv?.status !== 'voided' && (
               <div className="border-t border-surface-700 px-6 py-4 space-y-2">
+                {inv?.is_deferred && !inv?.fulfilled_at && (
+                  <button
+                    onClick={() => handleFulfill(inv.id)}
+                    disabled={fulfillingId === inv.id}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-amber-500/30 text-amber-400 hover:bg-amber-500/10 text-sm font-medium transition-colors disabled:opacity-50"
+                  >
+                    {fulfillingId === inv.id ? <Loader2 size={14} className="animate-spin" /> : <PackageCheck size={14} />}
+                    Mark Fulfilled
+                  </button>
+                )}
                 {inv?.status === 'proforma' && (
                   <button
                     onClick={handleConfirmProforma}
@@ -1226,6 +1301,14 @@ export default function SalesPage() {
                     className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-red-800/40 text-red-500 hover:bg-red-900/20 text-sm font-medium transition-colors"
                   >
                     <Trash2 size={14} /> Delete Invoice
+                  </button>
+                )}
+                {isOwnerOrAdmin && inv && (
+                  <button
+                    onClick={() => openHardDeleteModal(inv)}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-red-800/40 text-red-500 hover:bg-red-900/20 text-sm font-medium transition-colors"
+                  >
+                    <AlertTriangle size={14} /> Delete &amp; Reverse (Owner Only)
                   </button>
                 )}
               </div>
@@ -1525,6 +1608,51 @@ export default function SalesPage() {
             className="flex-1 w-full border-0 bg-white"
             title="Invoice Preview"
           />
+        </div>
+      )}
+
+      {/* ── Hard Delete (Reversal) Confirmation Modal ───────────────────────── */}
+      {hardDeleteTarget && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60" onClick={closeHardDeleteModal} />
+          <div className="relative bg-surface-900 border border-red-800/40 rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold text-red-400 flex items-center gap-2">
+                <AlertTriangle size={18} /> Delete Invoice Permanently
+              </h2>
+              <button onClick={closeHardDeleteModal} className="btn-ghost p-1.5"><X size={18} /></button>
+            </div>
+            <p className="text-sm text-slate-300">
+              This will permanently remove this invoice and reverse its effects: stock will be restored,
+              the GL journal entry will be reversed (not deleted), and the customer's outstanding balance
+              will be corrected. This cannot be undone from the UI.
+            </p>
+            <div className="bg-surface-800 rounded-xl p-4 space-y-1.5 text-sm">
+              <div className="flex justify-between">
+                <span className="text-slate-500">Invoice</span>
+                <span className="font-mono text-brand-400">{hardDeleteTarget.invoice_number}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Customer</span>
+                <span className="text-white">{hardDeleteTarget.customer_name ?? 'Walk-in'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Amount</span>
+                <span className="font-semibold text-white">{formatCurrency(hardDeleteTarget.total_amount)}</span>
+              </div>
+            </div>
+            <div className="flex gap-3 pt-1">
+              <button onClick={closeHardDeleteModal} disabled={hardDeleting} className="btn-ghost flex-1">Cancel</button>
+              <button
+                onClick={handleHardDelete}
+                disabled={hardDeleting}
+                className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white text-sm font-semibold transition-colors disabled:opacity-50"
+              >
+                {hardDeleting ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
+                Delete Invoice
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -521,3 +521,221 @@ class PaymentMethodsView(BaseDateRangeView):
             title="Payment Method Breakdown",
             filename_base="payment_methods",
         )
+
+
+# ─── Customer Balance ──────────────────────────────────────────────────────
+
+
+class CustomerBalanceView(BaseDateRangeView):
+    """GET /api/v1/reports/customer-balance/ — Outstanding balance snapshot per customer."""
+
+    _HEADERS = ["Customer", "Code", "Outstanding (₦)", "Credit Limit (₦)",
+                "Available Credit (₦)", "Last Invoice", "Last Payment"]
+
+    def get(self, request):
+        data = ReportService.customer_balance(self.get_organisation())
+
+        def _rows(d):
+            return [
+                [r["customer_name"], r["customer_code"] or "",
+                 r["outstanding_balance"], r["credit_limit"], r["available_credit"],
+                 str(r["last_invoice_date"]) if r["last_invoice_date"] else "",
+                 str(r["last_payment_date"]) if r["last_payment_date"] else ""]
+                for r in d
+            ]
+
+        return self._export_or_json(
+            request, data,
+            headers=self._HEADERS,
+            row_fn=_rows,
+            title="Customer Balance",
+            filename_base="customer_balance",
+        )
+
+
+# ─── Payments by Customer ─────────────────────────────────────────────────
+
+
+class PaymentsByCustomerView(BaseDateRangeView):
+    """GET /api/v1/reports/payments-by-customer/ — SalePayments grouped by customer."""
+
+    _HEADERS = ["Customer", "Total Received (₦)", "Payment Count"]
+
+    def get(self, request):
+        date_from, date_to = self.get_date_range(request)
+        data = ReportService.payments_by_customer(self.get_organisation(), date_from, date_to)
+
+        def _rows(d):
+            return [
+                [r["customer_name"], r["total_received"], r["payment_count"]]
+                for r in d
+            ]
+
+        return self._export_or_json(
+            request, data,
+            headers=self._HEADERS,
+            row_fn=_rows,
+            title="Payments by Customer",
+            filename_base="payments_by_customer",
+        )
+
+
+# ─── Customer Payments (drill-down) ───────────────────────────────────────
+
+
+class CustomerPaymentsView(BaseDateRangeView):
+    """GET /api/v1/reports/customer-payments/?customer_id=<uuid> — individual payments for one customer."""
+
+    _HEADERS = ["Date", "Amount (₦)", "Method", "Invoice #", "Reference"]
+
+    def get(self, request):
+        date_from, date_to = self.get_date_range(request)
+        customer_id = request.query_params.get("customer_id")
+        if not customer_id:
+            return Response({"error": "customer_id is required"}, status=400)
+
+        data = ReportService.customer_payments(
+            self.get_organisation(), customer_id, date_from, date_to
+        )
+
+        def _rows(d):
+            return [
+                [str(r["date"]), r["amount"], r["method"], r["invoice_number"], r["reference"]]
+                for r in d
+            ]
+
+        return self._export_or_json(
+            request, data,
+            headers=self._HEADERS,
+            row_fn=_rows,
+            title="Customer Payments",
+            filename_base="customer_payments",
+        )
+
+
+# ─── Account Statement (GL) ────────────────────────────────────────────────
+
+
+class AccountStatementView(BaseDateRangeView):
+    """GET /api/v1/reports/account-statement/?account_id=<uuid> — GL statement for one account."""
+
+    _HEADERS = ["Date", "Reference", "Description", "Debit (₦)", "Credit (₦)", "Running Balance (₦)"]
+
+    def get(self, request):
+        from apps.accounting.models import Account
+
+        date_from, date_to = self.get_date_range(request)
+        account_id = request.query_params.get("account_id")
+        if not account_id:
+            return Response({"error": "account_id is required"}, status=400)
+
+        try:
+            data = ReportService.account_statement(
+                self.get_organisation(), account_id, date_from, date_to
+            )
+        except Account.DoesNotExist:
+            return Response({"error": "Account not found"}, status=404)
+
+        def _rows(d):
+            return [
+                [str(r["date"]), r["journal_entry_reference"], r["description"],
+                 r["debit"], r["credit"], r["running_balance"]]
+                for r in d.get("lines", [])
+            ]
+
+        return self._export_or_json(
+            request, data,
+            headers=self._HEADERS,
+            row_fn=_rows,
+            title="Account Statement",
+            filename_base="account_statement",
+        )
+
+
+# ─── Customer Invoices (drill-down) ───────────────────────────────────────
+
+
+class CustomerInvoicesView(BaseDateRangeView):
+    """GET /api/v1/reports/customer-invoices/?customer_id=<uuid> — invoices for one customer."""
+
+    _HEADERS = ["Invoice #", "Date", "Status", "Total (₦)", "Paid (₦)", "Due (₦)"]
+
+    def get(self, request):
+        date_from, date_to = self.get_date_range(request)
+        customer_id = request.query_params.get("customer_id")
+        if not customer_id:
+            return Response({"error": "customer_id is required"}, status=400)
+
+        cid = None if customer_id == "walk-in" else customer_id
+        data = ReportService.customer_invoices(self.get_organisation(), cid, date_from, date_to)
+
+        def _rows(d):
+            return [
+                [r["invoice_number"], str(r["issue_date"]), r["status"],
+                 r["total_amount"], r["amount_paid"], r["amount_due"]]
+                for r in d
+            ]
+
+        return self._export_or_json(
+            request, data,
+            headers=self._HEADERS,
+            row_fn=_rows,
+            title="Customer Invoices",
+            filename_base="customer_invoices",
+        )
+
+
+# ─── Customer Details (master directory) ──────────────────────────────────
+
+
+class CustomerDetailsView(BaseDateRangeView):
+    """GET /api/v1/reports/customer-details/ — Master customer directory."""
+
+    _HEADERS = ["Code", "Name", "Type", "Email", "Phone",
+                "Outstanding (₦)", "Credit Limit (₦)", "Total Sales (₦)", "Total Payments (₦)"]
+
+    def get(self, request):
+        data = ReportService.customer_details(self.get_organisation())
+
+        def _rows(d):
+            return [
+                [r["code"], r["name"], r["customer_type"], r["email"], r["phone"],
+                 r["outstanding_balance"], r["credit_limit"], r["total_sales"], r["total_payments"]]
+                for r in d
+            ]
+
+        return self._export_or_json(
+            request, data,
+            headers=self._HEADERS,
+            row_fn=_rows,
+            title="Customer Details",
+            filename_base="customer_details",
+        )
+
+
+# ─── Product Details (master directory) ───────────────────────────────────
+
+
+class ProductDetailsView(BaseDateRangeView):
+    """GET /api/v1/reports/product-details/ — Master product directory."""
+
+    _HEADERS = ["SKU", "Name", "Category", "Cost Price (₦)", "Selling Price (₦)",
+                "Stock Qty", "Reorder Level", "Margin %"]
+
+    def get(self, request):
+        data = ReportService.product_details(self.get_organisation())
+
+        def _rows(d):
+            return [
+                [r["sku"], r["name"], r["category_name"], r["cost_price"], r["selling_price"],
+                 r["stock_quantity"], r["reorder_level"], r["margin_pct"]]
+                for r in d
+            ]
+
+        return self._export_or_json(
+            request, data,
+            headers=self._HEADERS,
+            row_fn=_rows,
+            title="Product Details",
+            filename_base="product_details",
+        )

@@ -183,6 +183,21 @@ class Invoice(TenantAwareModel):
         related_name="created_invoices",
     )
 
+    # ── Deferred fulfillment ───────────────────────────────────────────────
+    # A "manual" invoice can be billed/paid today while stock deduction +
+    # GL posting are deferred until the goods/services are actually
+    # fulfilled. Status (Invoice.Status) still reflects the customer-facing
+    # billing state (confirmed/paid/credit etc.) as normal — these two
+    # fields track fulfillment independently.
+    is_deferred = models.BooleanField(
+        default=False,
+        help_text="True if stock deduction + GL posting were deferred at creation time.",
+    )
+    fulfilled_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="When stock/GL were posted for a deferred invoice. Null = not yet fulfilled.",
+    )
+
     # GL auto-post tracking
     GL_STATUS = [
         ('pending', 'Pending'), ('posted', 'Posted'),

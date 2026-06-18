@@ -156,6 +156,10 @@ export interface Invoice {
   items: SaleItem[]
   payments: SalePayment[]
   created_at: string
+  /** True when this invoice was created with stock checks/GL posting deferred (bill now, fulfill later). */
+  is_deferred?: boolean
+  /** Timestamp when a deferred invoice's stock was deducted and GL posted; null while still pending fulfillment. */
+  fulfilled_at?: string | null
   // ── FIRS e-invoicing fields (read-only; populated by backend after clearance) ──
   firs_status?: FirsStatus
   /** FIRS Invoice Reference Number — assigned after clearance. */
@@ -239,16 +243,30 @@ export interface ExpenseGroup {
 }
 
 // ─── Credits ──────────────────────────────────────────────────────────────────
+export type CreditPaymentMode = 'cash' | 'bank_transfer' | 'pos' | 'cheque' | 'credit_applied' | 'other'
+
 export interface CreditTransaction {
   id: string
   customer: string
   customer_name: string
+  invoice?: string | null
   transaction_type: 'debit' | 'credit' | 'adjustment' | 'write_off'
   amount: string
+  balance_before?: string | null
   balance_after: string
   due_date: string | null
   description: string
   created_at: string
+  // Payment receipt detail — only populated for transaction_type=credit payments
+  payment_number?: string
+  payment_mode?: CreditPaymentMode | ''
+  bank_name?: string
+  bank_code?: string
+  account_number?: string
+  account_name?: string
+  debit_account?: string | null
+  credit_account?: string | null
+  location?: string | null
 }
 
 // ─── Purchases ────────────────────────────────────────────────────────────────

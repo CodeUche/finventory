@@ -18,6 +18,7 @@ Covers:
 
 import uuid
 from datetime import date
+from decimal import Decimal
 
 from django.urls import reverse
 from rest_framework import status
@@ -647,3 +648,338 @@ class TestQueryParamEdgeCases(BaseReportTestCase):
         self.client.credentials()  # clear org header
         resp = self.client.get(reverse("report-pnl"))
         self.assertNotEqual(resp.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+# ─── Fixture helpers for the new reports below ────────────────────────────────
+
+
+def _make_customer(org, name="Fixture Customer", code="CUST-001", **extra):
+    from apps.customers.models import Customer
+    return Customer.objects.create(organisation=org, name=name, code=code, **extra)
+
+
+def _make_warehouse(org, name="Main Warehouse"):
+    from apps.inventory.models import Warehouse
+    return Warehouse.objects.create(organisation=org, name=name, is_default=True)
+
+
+def _make_invoice(org, customer, warehouse, user, total_amount, amount_paid=None,
+                   amount_due=None, issue_date=None, status="confirmed"):
+    from apps.sales.models import Invoice
+    issue_date = issue_date or date.today()
+    amount_paid = amount_paid if amount_paid is not None else total_amount
+    amount_due = amount_due if amount_due is not None else (total_amount - amount_paid)
+    return Invoice.objects.create(
+        organisation=org,
+        invoice_number=Invoice.generate_number(org),
+        customer=customer,
+        status=status,
+        payment_method="cash",
+        issue_date=issue_date,
+        warehouse=warehouse,
+        created_by=user,
+        subtotal=total_amount,
+        discount_amount=0,
+        tax_amount=0,
+        total_amount=total_amount,
+        amount_paid=amount_paid,
+        amount_due=amount_due,
+    )
+
+
+def _make_payment(org, invoice, user, amount, method="cash"):
+    from apps.sales.models import SalePayment
+    return SalePayment.objects.create(
+        organisation=org, invoice=invoice, amount=amount,
+        method=method, received_by=user,
+    )
+
+
+def _make_product(org, sku="SKU-001", name="Fixture Product",
+                   cost_price=Decimal("60"), selling_price=Decimal("100")):
+    from apps.inventory.models import Product
+    return Product.objects.create(
+        organisation=org, sku=sku, name=name,
+        cost_price=cost_price, selling_price=selling_price,
+    )
+
+
+def _make_stock_item(org, product, warehouse, quantity):
+    from apps.inventory.models import StockItem
+    return StockItem.objects.create(
+        organisation=org, product=product, warehouse=warehouse,
+        quantity_on_hand=quantity,
+    )
+
+
+# ─── Customer Balance ──────────────────────────────────────────────────────
+
+
+class TestCustomerBalanceView(BaseReportTestCase):
+
+    def test_returns_200_list(self):
+        resp = self._get("report-customer-balance")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertIsInstance(resp.data, list)
+
+    def test_unauthenticated_returns_401(self):
+        resp = self._get_unauthenticated("report-customer-balance")
+        self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_format_excel(self):
+        resp = self._get("report-customer-balance", format="excel")
+        self.assertIn("spreadsheetml", resp["Content-Type"])
+
+    def test_format_pdf(self):
+        resp = self._get("report-customer-balance", format="pdf")
+        self.assertTrue(resp.content.startswith(b"%PDF"))
+
+    def test_correct_balance_and_credit_fields(self):
+        customer = _make_customer(
+            self.org, name="Balance Co", code="BAL-1",
+            outstanding_balance=Decimal("5000"), credit_limit=Decimal("20000"),
+        )
+        resp = self._get("report-customer-balance")
+        row = next(r for r in resp.data if r["customer_id"] == str(customer.id))
+        self.assertEqual(Decimal(str(row["outstanding_balance"])), Decimal("5000"))
+        self.assertEqual(Decimal(str(row["credit_limit"])), Decimal("20000"))
+        self.assertEqual(Decimal(str(row["available_credit"])), Decimal("15000"))
+
+    def test_sorted_by_outstanding_balance_descending(self):
+        _make_customer(self.org, name="Low", code="LOW-1", outstanding_balance=Decimal("100"))
+        _make_customer(self.org, name="High", code="HIGH-1", outstanding_balance=Decimal("9000"))
+        resp = self._get("report-customer-balance")
+        balances = [Decimal(str(r["outstanding_balance"])) for r in resp.data]
+        self.assertEqual(balances, sorted(balances, reverse=True))
+
+    def test_inactive_customers_excluded(self):
+        _make_customer(self.org, name="Inactive Co", code="INACT-1", is_active=False)
+        resp = self._get("report-customer-balance")
+        names = [r["customer_name"] for r in resp.data]
+        self.assertNotIn("Inactive Co", names)
+
+
+# ─── Payments by Customer ─────────────────────────────────────────────────
+
+
+class TestPaymentsByCustomerView(BaseReportTestCase):
+
+    def test_returns_200_list(self):
+        resp = self._get("report-payments-by-customer")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertIsInstance(resp.data, list)
+
+    def test_unauthenticated_returns_401(self):
+        resp = self._get_unauthenticated("report-payments-by-customer")
+        self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_format_excel(self):
+        resp = self._get("report-payments-by-customer", format="excel")
+        self.assertIn("spreadsheetml", resp["Content-Type"])
+
+    def test_totals_and_breakdown_correct(self):
+        warehouse = _make_warehouse(self.org, name="PBC Warehouse")
+        customer = _make_customer(self.org, name="PBC Customer", code="PBC-1")
+        invoice = _make_invoice(self.org, customer, warehouse, self.user, Decimal("1000"))
+        _make_payment(self.org, invoice, self.user, Decimal("600"), method="cash")
+        _make_payment(self.org, invoice, self.user, Decimal("400"), method="bank_transfer")
+
+        resp = self._get("report-payments-by-customer", period="all")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        row = next(r for r in resp.data if r["customer_id"] == str(customer.id))
+        self.assertEqual(Decimal(str(row["total_received"])), Decimal("1000"))
+        self.assertEqual(row["payment_count"], 2)
+        self.assertEqual(Decimal(str(row["breakdown"]["cash"])), Decimal("600"))
+        self.assertEqual(Decimal(str(row["breakdown"]["bank_transfer"])), Decimal("400"))
+
+
+# ─── Customer Payments (drill-down) ───────────────────────────────────────
+
+
+class TestCustomerPaymentsView(BaseReportTestCase):
+
+    def test_missing_customer_id_returns_400(self):
+        resp = self._get("report-customer-payments")
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_unauthenticated_returns_401(self):
+        resp = self._get_unauthenticated("report-customer-payments")
+        self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_returns_individual_payment_rows(self):
+        warehouse = _make_warehouse(self.org, name="CP Warehouse")
+        customer = _make_customer(self.org, name="CP Customer", code="CP-1")
+        invoice = _make_invoice(self.org, customer, warehouse, self.user, Decimal("500"))
+        _make_payment(self.org, invoice, self.user, Decimal("500"), method="pos")
+
+        resp = self._get("report-customer-payments", customer_id=str(customer.id), period="all")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(resp.data), 1)
+        self.assertEqual(resp.data[0]["invoice_number"], invoice.invoice_number)
+        self.assertEqual(Decimal(str(resp.data[0]["amount"])), Decimal("500"))
+        self.assertEqual(resp.data[0]["method"], "pos")
+
+
+# ─── Account Statement (GL) ────────────────────────────────────────────────
+
+
+class TestAccountStatementView(BaseReportTestCase):
+
+    def test_missing_account_id_returns_400(self):
+        resp = self._get("report-account-statement")
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_unauthenticated_returns_401(self):
+        resp = self._get_unauthenticated("report-account-statement")
+        self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_unknown_account_returns_404(self):
+        resp = self._get("report-account-statement", account_id=str(uuid.uuid4()))
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_closing_balance_equals_opening_plus_movement(self):
+        """closing_balance must equal opening_balance + sum(debits) - sum(credits)
+        for a debit-normal (asset) account, restricted to the requested period."""
+        from apps.accounting.models import Account
+        from apps.accounting.services import AccountingService
+
+        asset_account = Account.objects.create(
+            organisation=self.org, code="9101", name="Statement Asset", account_type="asset",
+        )
+        offset_account = Account.objects.create(
+            organisation=self.org, code="9102", name="Statement Offset", account_type="liability",
+        )
+
+        # Opening entry — before the reporting window.
+        AccountingService.post_journal_entry(
+            organisation=self.org,
+            description="Opening entry",
+            entry_date=date(2025, 1, 1),
+            lines=[
+                (asset_account, Decimal("1000"), Decimal("0")),
+                (offset_account, Decimal("0"), Decimal("1000")),
+            ],
+            created_by=self.user,
+        )
+        # In-period entries.
+        AccountingService.post_journal_entry(
+            organisation=self.org,
+            description="Period debit",
+            entry_date=date(2025, 2, 10),
+            lines=[
+                (asset_account, Decimal("300"), Decimal("0")),
+                (offset_account, Decimal("0"), Decimal("300")),
+            ],
+            created_by=self.user,
+        )
+        AccountingService.post_journal_entry(
+            organisation=self.org,
+            description="Period credit",
+            entry_date=date(2025, 2, 20),
+            lines=[
+                (offset_account, Decimal("120"), Decimal("0")),
+                (asset_account, Decimal("0"), Decimal("120")),
+            ],
+            created_by=self.user,
+        )
+
+        resp = self._get(
+            "report-account-statement",
+            account_id=str(asset_account.id),
+            period="custom", date_from="2025-02-01", date_to="2025-02-28",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+
+        opening = Decimal(str(resp.data["opening_balance"]))
+        closing = Decimal(str(resp.data["closing_balance"]))
+        lines = resp.data["lines"]
+        total_debit = sum(Decimal(str(l["debit"])) for l in lines)
+        total_credit = sum(Decimal(str(l["credit"])) for l in lines)
+
+        self.assertEqual(opening, Decimal("1000"))
+        self.assertEqual(closing, opening + total_debit - total_credit)
+        self.assertEqual(closing, Decimal("1180"))
+        # Running balance on the last line must equal the closing balance.
+        self.assertEqual(Decimal(str(lines[-1]["running_balance"])), closing)
+
+    def test_format_excel(self):
+        from apps.accounting.models import Account
+        account = Account.objects.create(
+            organisation=self.org, code="9103", name="Excel Statement Acct", account_type="asset",
+        )
+        resp = self._get("report-account-statement", account_id=str(account.id), format="excel")
+        self.assertIn("spreadsheetml", resp["Content-Type"])
+
+
+# ─── Customer Details (master directory) ──────────────────────────────────
+
+
+class TestCustomerDetailsView(BaseReportTestCase):
+
+    def test_returns_200_list(self):
+        resp = self._get("report-customer-details")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertIsInstance(resp.data, list)
+
+    def test_unauthenticated_returns_401(self):
+        resp = self._get_unauthenticated("report-customer-details")
+        self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_format_pdf(self):
+        resp = self._get("report-customer-details", format="pdf")
+        self.assertTrue(resp.content.startswith(b"%PDF"))
+
+    def test_lifetime_totals_correct(self):
+        warehouse = _make_warehouse(self.org, name="CD Warehouse")
+        customer = _make_customer(
+            self.org, name="Lifetime Co", code="LIFE-1",
+            email="lifetime@test.com", phone="08000000000",
+        )
+        inv1 = _make_invoice(self.org, customer, warehouse, self.user, Decimal("700"))
+        inv2 = _make_invoice(self.org, customer, warehouse, self.user, Decimal("300"))
+        _make_payment(self.org, inv1, self.user, Decimal("700"))
+        _make_payment(self.org, inv2, self.user, Decimal("300"))
+
+        resp = self._get("report-customer-details")
+        row = next(r for r in resp.data if r["customer_id"] == str(customer.id))
+        self.assertEqual(Decimal(str(row["total_sales"])), Decimal("1000"))
+        self.assertEqual(Decimal(str(row["total_payments"])), Decimal("1000"))
+        self.assertEqual(row["email"], "lifetime@test.com")
+
+
+# ─── Product Details (master directory) ───────────────────────────────────
+
+
+class TestProductDetailsView(BaseReportTestCase):
+
+    def test_returns_200_list(self):
+        resp = self._get("report-product-details")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertIsInstance(resp.data, list)
+
+    def test_unauthenticated_returns_401(self):
+        resp = self._get_unauthenticated("report-product-details")
+        self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_format_excel(self):
+        resp = self._get("report-product-details", format="excel")
+        self.assertIn("spreadsheetml", resp["Content-Type"])
+
+    def test_margin_and_stock_correct(self):
+        warehouse = _make_warehouse(self.org, name="PD Warehouse")
+        product = _make_product(
+            self.org, sku="PD-SKU-1", name="Margin Product",
+            cost_price=Decimal("60"), selling_price=Decimal("100"),
+        )
+        _make_stock_item(self.org, product, warehouse, Decimal("25"))
+
+        resp = self._get("report-product-details")
+        row = next(r for r in resp.data if r["product_id"] == str(product.id))
+        self.assertEqual(Decimal(str(row["margin_pct"])), Decimal("40.00"))
+        self.assertEqual(Decimal(str(row["stock_quantity"])), Decimal("25"))
+
+    def test_zero_selling_price_does_not_divide_by_zero(self):
+        _make_product(self.org, sku="PD-SKU-0", name="Free Item",
+                       cost_price=Decimal("0"), selling_price=Decimal("0"))
+        resp = self._get("report-product-details")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)

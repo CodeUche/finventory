@@ -176,6 +176,7 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
                 credit_applied=d.get("credit_applied"),
                 location=location,
                 wht_rate_id=d.get("wht_rate_id"),
+                defer_fulfillment=d.get("defer_fulfillment", False),
             )
             try:
                 from apps.core.models import AuditLog as _AL
@@ -472,6 +473,39 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
             return Response(InvoiceSerializer(invoice).data)
         except Exception:
             logger.exception("Error confirming proforma")
+            return Response({"error": "An unexpected error occurred. Please try again."}, status=422)
+
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsStaff])
+    def fulfill(self, request, pk=None):
+        """POST /api/v1/sales/invoices/{id}/fulfill/ — deduct stock + post GL for a deferred invoice."""
+        invoice = self.get_object()
+        try:
+            invoice = SaleService.fulfill_invoice(invoice, actor=request.user)
+            return Response(InvoiceSerializer(invoice).data)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=422)
+        except Exception:
+            logger.exception("Error fulfilling invoice")
+            return Response({"error": "An unexpected error occurred. Please try again."}, status=422)
+
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsOwnerOrAdmin])
+    def delete_invoice(self, request, pk=None):
+        """
+        POST /api/v1/sales/invoices/{id}/delete_invoice/ — Reversal-based hard delete.
+
+        Unlike DELETE (which only soft-deletes draft/proforma invoices), this
+        action can delete ANY invoice: it reverses GL postings, restores stock,
+        and resets customer balance contributions before soft-deleting the
+        invoice and its line items/payments. Owner/admin or superuser only.
+        """
+        invoice = self.get_object()
+        try:
+            SaleService.delete_invoice(invoice, actor=request.user)
+            return Response(status=204)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=422)
+        except Exception:
+            logger.exception("Error deleting invoice")
             return Response({"error": "An unexpected error occurred. Please try again."}, status=422)
 
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsStaff])

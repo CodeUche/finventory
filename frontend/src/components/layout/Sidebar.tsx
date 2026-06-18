@@ -57,7 +57,7 @@ const navGroups: { label: string | null; items: { name: string; href: string; ic
     label: 'CRM',
     items: [
       { name: 'Customers', href: '/customers', icon: Users, module: 'customers' },
-      { name: 'Credits', href: '/credits', icon: CreditCard, module: 'customers' },
+      { name: 'Payment Information', href: '/credits', icon: CreditCard, module: 'customers' },
     ],
   },
   {

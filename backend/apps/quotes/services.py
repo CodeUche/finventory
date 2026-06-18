@@ -69,7 +69,23 @@ class QuoteService:
             notes=quote.notes,
             issue_date=timezone.now().date(),
         )
+        previous_status = quote.status
         quote.status = Quote.CONVERTED
         quote.converted_invoice = invoice
         quote.save()
+
+        try:
+            from apps.core.models import AuditLog
+            AuditLog.log(
+                action=AuditLog.UPDATE,
+                user=user,
+                organisation=quote.organisation,
+                model_name='Quote',
+                object_id=str(quote.id),
+                object_repr=str(quote),
+                changes={'status': {'old': previous_status, 'new': quote.status}},
+            )
+        except Exception:
+            pass
+
         return invoice

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, X, ClipboardList, Loader2, FileText, ChevronDown, ChevronUp, Trash2, FileDown, Mail, MessageCircle, CheckCircle, ExternalLink, RefreshCw } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -114,7 +114,7 @@ async function buildQuotePDF(
     pdfStyle,
     nameColor,
     companyFontUnderline,
-    docTitle: 'QUOTE',
+    docTitle: 'QUOTATION',
     metaRows: [
       ['No.',         q.quote_number],
       ['Date',        formatDate(q.issue_date)],
@@ -131,7 +131,7 @@ async function buildQuotePDF(
   doc.setFillColor(...LIGHT); doc.setDrawColor(...RULE); doc.setLineWidth(0.25)
   doc.roundedRect(lBoxX, y, boxW, boxH, 2, 2, 'FD')
   doc.setFontSize(TYPE.H3.size); doc.setFont(pdfFont, 'bold'); doc.setTextColor(...BRAND)
-  doc.text('QUOTE FOR', lBoxX + 3, y + 5)
+  doc.text('QUOTATION FOR', lBoxX + 3, y + 5)
   doc.setFontSize(TYPE.H2.size); doc.setFont(pdfFont, 'bold'); doc.setTextColor(...DARK)
   doc.text(q.customer_name ?? 'Walk-in Customer', lBoxX + 3, y + 11)
   doc.setFontSize(TYPE.BODY.size); doc.setFont(pdfFont, 'normal'); doc.setTextColor(...MUTED)
@@ -207,7 +207,7 @@ async function buildQuotePDF(
 
   // Grand total row
   doc.setFontSize(TYPE.H3.size); doc.setFont(pdfFont, 'bold'); doc.setTextColor(...DARK)
-  doc.text('QUOTE TOTAL', tX + PAD, rowY)
+  doc.text('QUOTATION TOTAL', tX + PAD, rowY)
   doc.setFontSize(TYPE.H2.size); doc.setFont(pdfFont, 'bold'); doc.setTextColor(...BRAND)
   doc.text(formatCurrency(totalNum), tX + tW - PAD, rowY, { align: 'right' })
 
@@ -255,9 +255,9 @@ async function buildQuotePDF(
   }
 
   // ── Footer (every page) ────────────────────────────────────────────────────
-  addDocFooter(doc, { orgName, docTitle: 'QUOTE', docRef: q.quote_number, BRAND, pdfFont })
+  addDocFooter(doc, { orgName, docTitle: 'QUOTATION', docRef: q.quote_number, BRAND, pdfFont })
 
-  return { url: URL.createObjectURL(doc.output('blob')), filename: `Quote-${q.quote_number}.pdf`, quoteId: q.id }
+  return { url: URL.createObjectURL(doc.output('blob')), filename: `Quotation-${q.quote_number}.pdf`, quoteId: q.id }
 }
 
 type StatusFilter = 'all' | 'draft' | 'sent' | 'accepted' | 'rejected' | 'expired' | 'converted'
@@ -303,7 +303,6 @@ export default function QuotesPage() {
   const [quotes, setQuotes] = useState<Quote[]>([])
   const [customers, setCustomers] = useState<Customer[]>([])
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
-  const [products, setProducts] = useState<Product[]>([])
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [archiveYear, setArchiveYear] = useState<number | null>(null)
@@ -317,6 +316,12 @@ export default function QuotesPage() {
   const [lines, setLines] = useState<QuoteLineForm[]>([{ ...BLANK_LINE }])
   const [saving, setSaving] = useState(false)
   const [expandedRow, setExpandedRow] = useState<string | null>(null)
+
+  // Per-line product search (live debounced search instead of a static dropdown)
+  const [productQueries, setProductQueries] = useState<string[]>([''])
+  const [productResults, setProductResults] = useState<Product[][]>([[]])
+  const [openProductDrop, setOpenProductDrop] = useState<number | null>(null)
+  const lineSearchRefs = useRef<(HTMLDivElement | null)[]>([])
 
   // Converted invoice — shown as inline banner + drawer
   const [convertedInvoice, setConvertedInvoice] = useState<Invoice | null>(null)
@@ -334,17 +339,15 @@ export default function QuotesPage() {
     try {
       const params: Record<string, string> = { ...activeDateParams }
       if (statusFilter !== 'all') params.status = statusFilter
-      const [qRes, cRes, wRes, pRes] = await Promise.all([
+      const [qRes, cRes, wRes] = await Promise.all([
         quoteApi.list({ ...params, page_size: 5000 }),
         customerApi.list(),
         inventoryApi.warehouses(),
-        inventoryApi.products(),
       ])
       setQuotes(qRes.data.results ?? qRes.data)
       setCustomers(cRes.data.results ?? cRes.data)
       setWarehouses(wRes.data.results ?? wRes.data)
-      setProducts(pRes.data.results ?? pRes.data)
-    } catch { toast.error('Failed to load quotes') }
+    } catch { toast.error('Failed to load quotations') }
     finally { setLoading(false) }
   }
 
@@ -370,19 +373,21 @@ export default function QuotesPage() {
           discount_percent: parseFloat(l.discount_percent) || 0,
         })),
       })
-      toast.success('Quote created')
+      toast.success('Quotation created')
       setShowModal(false)
       setForm(BLANK_FORM)
       setLines([{ ...BLANK_LINE }])
+      setProductQueries([''])
+      setProductResults([[]])
       load()
-    } catch { toast.error('Failed to create quote') }
+    } catch { toast.error('Failed to create quotation') }
     finally { setSaving(false) }
   }
 
   const handleConvert = async (q: Quote) => {
-    if (q.status === 'rejected') { toast.error('This quote was rejected and cannot be converted'); return }
-    if (q.status === 'expired') { toast.error('This quote has expired. Please create a new quote'); return }
-    if (!confirm(`Convert quote ${q.quote_number} to invoice?`)) return
+    if (q.status === 'rejected') { toast.error('This quotation was rejected and cannot be converted'); return }
+    if (q.status === 'expired') { toast.error('This quotation has expired. Please create a new quotation'); return }
+    if (!confirm(`Convert quotation ${q.quote_number} to invoice?`)) return
     try {
       const { data } = await quoteApi.convert(q.id)
       load()
@@ -396,7 +401,7 @@ export default function QuotesPage() {
       }
     } catch (err: any) {
       const apiErr = err?.response?.data?.error
-      const msg = typeof apiErr === 'string' ? apiErr : (apiErr?.message ?? 'Failed to convert quote')
+      const msg = typeof apiErr === 'string' ? apiErr : (apiErr?.message ?? 'Failed to convert quotation')
       toast.error(msg)
     }
   }
@@ -404,31 +409,74 @@ export default function QuotesPage() {
   const handleSend = async (q: Quote) => {
     try {
       await quoteApi.send(q.id)
-      toast.success('Quote marked as sent')
+      toast.success('Quotation marked as sent')
       load()
-    } catch { toast.error('Failed to update quote') }
+    } catch { toast.error('Failed to update quotation') }
   }
 
   const handleReject = async (q: Quote) => {
-    if (!confirm(`Mark quote ${q.quote_number} as rejected?`)) return
+    if (!confirm(`Mark quotation ${q.quote_number} as rejected?`)) return
     try {
       await quoteApi.reject(q.id)
-      toast.success('Quote marked as rejected')
+      toast.success('Quotation marked as rejected')
       load()
-    } catch { toast.error('Failed to reject quote') }
+    } catch { toast.error('Failed to reject quotation') }
   }
 
   const updateLine = (i: number, field: keyof QuoteLineForm, value: string) => {
-    setLines(lines.map((l, idx) => {
-      if (idx !== i) return l
-      const updated = { ...l, [field]: value }
-      if (field === 'product') {
-        const p = products.find((pr) => pr.id === value)
-        if (p) { updated.product_name = p.name; updated.unit_price = normalizeAmountStr(p.selling_price) }
-      }
-      return updated
-    }))
+    setLines(lines.map((l, idx) => (idx === i ? { ...l, [field]: value } : l)))
   }
+
+  // Select a product from the per-line search dropdown — sets product_id + auto-fills unit price
+  const selectProduct = (i: number, p: Product) => {
+    setLines((prev) => prev.map((l, idx) =>
+      idx === i ? { ...l, product: p.id, product_name: p.name, unit_price: normalizeAmountStr(p.selling_price) } : l
+    ))
+    setProductQueries((prev) => prev.map((q, idx) => (idx === i ? p.name : q)))
+    setOpenProductDrop(null)
+  }
+
+  const addLine = () => {
+    setLines((prev) => [...prev, { ...BLANK_LINE }])
+    setProductQueries((prev) => [...prev, ''])
+    setProductResults((prev) => [...prev, []])
+  }
+
+  const removeLine = (i: number) => {
+    setLines((prev) => prev.filter((_, idx) => idx !== i))
+    setProductQueries((prev) => prev.filter((_, idx) => idx !== i))
+    setProductResults((prev) => prev.filter((_, idx) => idx !== i))
+  }
+
+  // Debounced per-line product search
+  useEffect(() => {
+    const timers = productQueries.map((q, i) => {
+      const trimmed = q.trim()
+      if (!trimmed) {
+        setProductResults((prev) => (prev[i]?.length ? prev.map((r, idx) => (idx === i ? [] : r)) : prev))
+        return null
+      }
+      return setTimeout(async () => {
+        try {
+          const { data } = await inventoryApi.products({ search: trimmed, is_active: true })
+          setProductResults((prev) => prev.map((r, idx) => (idx === i ? (data.results ?? data) : r)))
+        } catch { /* silent */ }
+      }, 250)
+    })
+    return () => { timers.forEach((t) => { if (t) clearTimeout(t) }) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [productQueries])
+
+  // Close product dropdowns when clicking outside any of them
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (openProductDrop === null) return
+      const ref = lineSearchRefs.current[openProductDrop]
+      if (ref && !ref.contains(e.target as Node)) setOpenProductDrop(null)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [openProductDrop])
 
   const handleExportPDF = async (q: Quote) => {
     setExporting(q.id)
@@ -476,7 +524,7 @@ export default function QuotesPage() {
       `  • ${item.product_name} ×${Number(item.quantity)} = ${formatCurrency(item.line_total)}`
     ).join('\n')
     const msg =
-      `*Quote ${q.quote_number}*\n` +
+      `*Quotation ${q.quote_number}*\n` +
       `From: ${organisation?.name ?? 'Audity'}\n` +
       `Customer: ${q.customer_name ?? 'Walk-in'}\n` +
       `Date: ${formatDate(q.issue_date)} · Valid Until: ${formatDate(q.valid_until)}\n\n` +
@@ -503,7 +551,7 @@ export default function QuotesPage() {
         r.readAsDataURL(blob)
       })
       await quoteApi.sendEmail(pdfPreview.quoteId, { to_email: emailTo.trim(), pdf_base64: base64 })
-      toast.success(`Quote sent to ${emailTo.trim()}`)
+      toast.success(`Quotation sent to ${emailTo.trim()}`)
       setShowEmailModal(false)
       setEmailTo('')
     } catch (err: any) {
@@ -526,8 +574,8 @@ export default function QuotesPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-white">Quotes / Estimates</h1>
-          <p className="text-slate-400 text-sm">{quotes.length} total quotes</p>
+          <h1 className="text-2xl font-bold text-white">Quotations</h1>
+          <p className="text-slate-400 text-sm">{quotes.length} total quotations</p>
           {statusFilter !== 'all' && <p className="text-slate-500 text-xs">{qTotal} matching filter</p>}
         </div>
         <div className="flex items-center gap-2 sm:ml-auto">
@@ -535,7 +583,7 @@ export default function QuotesPage() {
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
           </button>
           <button className="btn-primary" onClick={() => setShowModal(true)}>
-            <Plus size={16} /> New Quote
+            <Plus size={16} /> New Quotation
           </button>
         </div>
       </div>
@@ -545,7 +593,7 @@ export default function QuotesPage() {
         <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-green-500/10 border border-green-500/25">
           <CheckCircle size={16} className="text-green-400 shrink-0" />
           <p className="text-sm text-green-300 flex-1">
-            Quote converted — Invoice{' '}
+            Quotation converted — Invoice{' '}
             <span className="font-mono font-semibold text-white">{convertedInvoice.invoice_number}</span>{' '}
             created successfully.
           </p>
@@ -567,7 +615,7 @@ export default function QuotesPage() {
       {/* Summary cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { label: 'Total Quotes', value: quotes.length, color: 'text-white', bg: 'bg-brand-500/15' },
+          { label: 'Total Quotations', value: quotes.length, color: 'text-white', bg: 'bg-brand-500/15' },
           { label: 'Accepted', value: accepted, color: 'text-emerald-400', bg: 'bg-emerald-500/15' },
           { label: 'Expired', value: expired, color: 'text-red-400', bg: 'bg-red-500/15' },
           { label: 'Conversion Rate', value: `${convRate}%`, color: 'text-blue-400', bg: 'bg-blue-500/15' },
@@ -610,7 +658,7 @@ export default function QuotesPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-surface-700">
-                {['', 'Quote #', 'Customer', 'Issue Date', 'Valid Until', 'Amount', 'Status', 'Actions'].map((h) => (
+                {['', 'Quotation #', 'Customer', 'Issue Date', 'Valid Until', 'Amount', 'Status', 'Actions'].map((h) => (
                   <th key={h} className="px-4 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
                 ))}
               </tr>
@@ -630,7 +678,7 @@ export default function QuotesPage() {
                 <tr>
                   <td colSpan={8} className="px-4 py-12 text-center">
                     <ClipboardList size={32} className="mx-auto mb-2 text-slate-600" />
-                    <p className="text-slate-500">No quotes found</p>
+                    <p className="text-slate-500">No quotations found</p>
                   </td>
                 </tr>
               ) : pagedQuotes.map((q) => {
@@ -702,7 +750,7 @@ export default function QuotesPage() {
                           </div>
                           {q.notes && <p className="text-xs text-slate-500">Notes: {q.notes}</p>}
                           {isExpiringSoon && (
-                            <p className="text-xs text-amber-400 font-medium mt-1">⚠ Valid until date has passed — this quote may have auto-expired</p>
+                            <p className="text-xs text-amber-400 font-medium mt-1">⚠ Valid until date has passed — this quotation may have auto-expired</p>
                           )}
                         </div>
                       </td>
@@ -742,7 +790,7 @@ export default function QuotesPage() {
               </button>
             </div>
           </div>
-          <iframe src={pdfPreview.url} className="flex-1 w-full border-0 bg-white" title="Quote Preview" />
+          <iframe src={pdfPreview.url} className="flex-1 w-full border-0 bg-white" title="Quotation Preview" />
         </div>
       )}
 
@@ -752,7 +800,7 @@ export default function QuotesPage() {
           <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setShowEmailModal(false)} />
           <div className="relative card w-full max-w-md p-6 space-y-4">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-bold text-white">Send Quote by Email</h2>
+              <h2 className="text-lg font-bold text-white">Send Quotation by Email</h2>
               <button onClick={() => setShowEmailModal(false)} className="text-slate-400 hover:text-white"><X size={20} /></button>
             </div>
             <div>
@@ -780,26 +828,26 @@ export default function QuotesPage() {
         </div>
       )}
 
-      {/* New Quote Modal */}
+      {/* New Quotation Modal */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setShowModal(false)} />
           <div className="relative card w-full max-w-2xl p-6 space-y-5 overflow-y-auto max-h-[90vh]">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-bold text-white">New Quote</h2>
+              <h2 className="text-lg font-bold text-white">New Quotation</h2>
               <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-white"><X size={20} /></button>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">Customer (optional)<FieldTooltip text="Who this quote is for. Optional — you can prepare a general quote without naming a customer yet." /></label>
+                <label className="text-xs text-slate-400 mb-1 block">Customer (optional)<FieldTooltip text="Who this quotation is for. Optional — you can prepare a general quotation without naming a customer yet." /></label>
                 <select className="input" value={form.customer} onChange={(e) => setForm({ ...form, customer: e.target.value })}>
                   <option value="">Walk-in / No customer</option>
                   {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">Location *<FieldTooltip text="Which warehouse the quoted stock will come from." /></label>
+                <label className="text-xs text-slate-400 mb-1 block">Location *<FieldTooltip text="Which warehouse the quotation stock will come from." /></label>
                 <select className="input" value={form.warehouse} onChange={(e) => setForm({ ...form, warehouse: e.target.value })}>
                   <option value="">— Select —</option>
                   {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
@@ -815,11 +863,11 @@ export default function QuotesPage() {
                 </select>
               </div>
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">Issue Date<FieldTooltip text="The date you're creating this quote." /></label>
+                <label className="text-xs text-slate-400 mb-1 block">Issue Date<FieldTooltip text="The date you're creating this quotation." /></label>
                 <DateInput value={form.issue_date} onChange={(v) => setForm({ ...form, issue_date: v })} />
               </div>
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">Valid Until<FieldTooltip text="The expiry date of this quote — after this, the prices are no longer guaranteed. Typically 7–30 days ahead." /></label>
+                <label className="text-xs text-slate-400 mb-1 block">Valid Until<FieldTooltip text="The expiry date of this quotation — after this, the prices are no longer guaranteed. Typically 7–30 days ahead." /></label>
                 <DateInput value={form.valid_until} onChange={(v) => setForm({ ...form, valid_until: v })} />
               </div>
             </div>
@@ -827,14 +875,41 @@ export default function QuotesPage() {
             {/* Line items */}
             <div>
               <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Line Items</p>
+              <div className="grid grid-cols-12 gap-2 mb-1">
+                <span className="col-span-4 text-[11px] text-slate-400 uppercase">Product</span>
+                <span className="col-span-2 text-[11px] text-slate-400 uppercase">Qty</span>
+                <span className="col-span-3 text-[11px] text-slate-400 uppercase">Unit Price</span>
+                <span className="col-span-2 text-[11px] text-slate-400 uppercase">Disc %</span>
+              </div>
               <div className="space-y-2">
                 {lines.map((line, i) => (
                   <div key={i} className="grid grid-cols-12 gap-2 items-center">
-                    <div className="col-span-4">
-                      <select className="input py-1.5 text-sm" value={line.product} onChange={(e) => updateLine(i, 'product', e.target.value)}>
-                        <option value="">— Product —</option>
-                        {products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                      </select>
+                    <div className="col-span-4 relative" ref={(el) => { lineSearchRefs.current[i] = el }}>
+                      <input
+                        className="input py-1.5 text-sm"
+                        placeholder="Search product…"
+                        value={productQueries[i] ?? ''}
+                        onChange={(e) => {
+                          const v = e.target.value
+                          setProductQueries((prev) => prev.map((q, idx) => (idx === i ? v : q)))
+                          if (!v.trim()) updateLine(i, 'product', '')
+                        }}
+                        onFocus={() => setOpenProductDrop(i)}
+                      />
+                      {openProductDrop === i && (productResults[i]?.length ?? 0) > 0 && (
+                        <div className="absolute top-full mt-1 left-0 right-0 bg-surface-800 border border-surface-600 rounded-xl shadow-xl z-20 max-h-56 overflow-y-auto">
+                          {productResults[i].map((p) => (
+                            <button
+                              key={p.id}
+                              onMouseDown={() => selectProduct(i, p)}
+                              className="w-full flex items-center justify-between px-3 py-2 hover:bg-surface-700 transition-colors text-left"
+                            >
+                              <span className="text-sm text-white truncate">{p.name}</span>
+                              <span className="text-xs text-brand-400 font-semibold ml-2 shrink-0">{formatCurrency(p.selling_price)}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                     <div className="col-span-2">
                       <input type="number" min="1" className="input py-1.5 text-sm" placeholder="Qty" value={line.quantity} onChange={(e) => updateLine(i, 'quantity', e.target.value)} />
@@ -846,14 +921,14 @@ export default function QuotesPage() {
                       <input type="number" min="0" max="100" className="input py-1.5 text-sm" placeholder="Disc%" value={line.discount_percent} onChange={(e) => updateLine(i, 'discount_percent', e.target.value)} />
                     </div>
                     <div className="col-span-1 flex justify-center">
-                      <button onClick={() => setLines(lines.filter((_, idx) => idx !== i))} className="p-1 text-slate-500 hover:text-red-400 transition-colors">
+                      <button onClick={() => removeLine(i)} className="p-1 text-slate-500 hover:text-red-400 transition-colors">
                         <Trash2 size={14} />
                       </button>
                     </div>
                   </div>
                 ))}
               </div>
-              <button onClick={() => setLines([...lines, { ...BLANK_LINE }])} className="btn-ghost text-sm mt-2 flex items-center gap-1">
+              <button onClick={addLine} className="btn-ghost text-sm mt-2 flex items-center gap-1">
                 <Plus size={13} /> Add Line
               </button>
             </div>
@@ -870,7 +945,7 @@ export default function QuotesPage() {
             <div className="flex gap-3 pt-1">
               <button className="flex-1 py-2.5 rounded-xl border border-surface-600 text-slate-400 hover:text-white hover:border-surface-500 transition-colors text-sm" onClick={() => setShowModal(false)}>Cancel</button>
               <button className="btn-primary flex-1 py-2.5 justify-center disabled:opacity-50" onClick={handleCreate} disabled={saving}>
-                {saving ? <Loader2 size={16} className="animate-spin" /> : <><FileText size={15} /> Create Quote</>}
+                {saving ? <Loader2 size={16} className="animate-spin" /> : <><FileText size={15} /> Create Quotation</>}
               </button>
             </div>
           </div>

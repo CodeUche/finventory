@@ -92,6 +92,23 @@ class LoginTests(TestCase):
         self.assertIn("refresh", res.data)
         self.assertIn("user", res.data)
 
+    def test_login_writes_audit_log_with_ip(self):
+        from apps.core.models import AuditLog
+
+        res = self.client.post(
+            self.url,
+            {"email": "login@example.com", "password": "ValidPass123!"},
+            REMOTE_ADDR="203.0.113.5",
+        )
+        self.assertEqual(res.status_code, 200)
+
+        entry = AuditLog.objects.filter(
+            action=AuditLog.LOGIN, user_id=self.user.id
+        ).order_by("-created_at").first()
+        self.assertIsNotNone(entry)
+        self.assertTrue(entry.ip_address)
+        self.assertEqual(entry.user_email, self.user.email)
+
     def test_login_wrong_password(self):
         res = self.client.post(self.url, {
             "email": "login@example.com",

@@ -79,6 +79,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
             "location", "location_name",
             "subtotal", "discount_amount", "tax_amount", "total_amount",
             "credit_applied", "amount_paid", "amount_due", "notes", "sold_by",
+            "is_deferred", "fulfilled_at",
             "items", "payments", "created_at",
             # ── FIRS e-invoicing fields ───────────────────────────────────────────
             # All fields are read-only from the API consumer's perspective;
@@ -88,6 +89,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
         read_only_fields = [
             "id", "invoice_number", "subtotal", "discount_amount",
             "tax_amount", "total_amount", "credit_applied", "amount_paid", "amount_due", "created_at",
+            "is_deferred", "fulfilled_at",
             "firs_status", "firs_irn", "firs_invoice_number", "firs_csid", "firs_qr_code",
         ]
 
@@ -116,6 +118,7 @@ class CreateSaleSerializer(serializers.Serializer):
     issue_date = serializers.DateField(required=False)
     due_date = serializers.DateField(required=False, allow_null=True)
     is_proforma = serializers.BooleanField(required=False, default=False)
+    defer_fulfillment = serializers.BooleanField(required=False, default=False, write_only=True)
 
     def validate(self, attrs):
         issue_date = attrs.get('issue_date')

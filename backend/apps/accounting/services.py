@@ -560,6 +560,61 @@ class AccountingService:
         return entry
 
     @staticmethod
+    @transaction.atomic
+    def reverse_journal_entry(journal_entry: 'JournalEntry', actor=None) -> 'JournalEntry':
+        """
+        Create a reversing JournalEntry that mirrors `journal_entry`'s lines with
+        debit/credit swapped, netting every account back to its pre-entry balance
+        WITHOUT modifying or deleting the original entry/lines (immutable ledger).
+
+        Returns the new reversing JournalEntry.
+        """
+        from django.utils import timezone as _tz
+
+        original_lines = list(journal_entry.lines.all())
+        if not original_lines:
+            raise ValueError(f"Journal entry {journal_entry.reference} has no lines to reverse.")
+
+        reversing_entry = JournalEntry.objects.create(
+            organisation=journal_entry.organisation,
+            description=f"Reversal of {journal_entry.reference}: {journal_entry.description}",
+            entry_date=_tz.now().date(),
+            reference='',  # auto-assigned in save()
+            status='posted',
+            created_by=actor,
+            source_type='reversal',
+            source_ref=str(journal_entry.id),
+        )
+        for line in original_lines:
+            JournalLine.objects.create(
+                journal_entry=reversing_entry,
+                account=line.account,
+                debit=line.credit,   # swapped
+                credit=line.debit,   # swapped
+                description=f"Reversal: {line.description}" if line.description else "Reversal",
+            )
+
+        try:
+            from apps.core.models import AuditLog
+            AuditLog.log(
+                action=AuditLog.CREATE,
+                user=actor,
+                organisation=journal_entry.organisation,
+                model_name='JournalEntry',
+                object_id=str(reversing_entry.id),
+                object_repr=str(reversing_entry),
+                changes={
+                    'reference': reversing_entry.reference,
+                    'reverses': journal_entry.reference,
+                    'reverses_id': str(journal_entry.id),
+                },
+            )
+        except Exception:
+            pass  # Audit log is non-fatal
+
+        return reversing_entry
+
+    @staticmethod
     def post_sale_journal(organisation, invoice, user=None):
         """DR Cash/Bank/AR → CR Revenue + VAT; DR COGS → CR Inventory."""
         from apps.sales.models import SalePayment

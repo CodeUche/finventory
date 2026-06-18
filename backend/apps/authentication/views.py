@@ -1398,6 +1398,20 @@ class SubAccountLoginView(APIView):
         tokens = _issue_tokens(user)
         logger.info("Staff account authenticated: %s from %s", email, ip)
 
+        try:
+            from apps.core.models import AuditLog as _AL
+            _AL.log(
+                action=_AL.LOGIN,
+                user=user,
+                organisation=org,
+                model_name='User',
+                object_id=str(user.id),
+                object_repr=user.email,
+                request=request,
+            )
+        except Exception:
+            pass
+
         # Include membership + module permissions so the frontend can set role
         # atomically at login — eliminates the memberRole=null loading window
         # that caused "Failed to load X" errors and optimistic sidebar display.

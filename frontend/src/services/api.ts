@@ -984,6 +984,10 @@ export const salesApi = {
     api.post(`/sales/invoices/${invoiceId}/send_email/`, data),
   confirmProforma: (invoiceId: string) =>
     api.post(`/sales/invoices/${invoiceId}/confirm_proforma/`),
+  fulfillInvoice: (invoiceId: string) =>
+    api.post(`/sales/invoices/${invoiceId}/fulfill/`),
+  deleteInvoiceReversed: (invoiceId: string) =>
+    api.post(`/sales/invoices/${invoiceId}/delete_invoice/`),
   extendDueDate: (invoiceId: string, data: { new_due_date: string; reason?: string }) =>
     api.post(`/sales/invoices/${invoiceId}/extend_due_date/`, data),
   productHistory: (productId: string, params?: { date_from?: string; date_to?: string }) =>
@@ -1057,6 +1061,13 @@ export const reportApi = {
   salesByCustomer: (params?: object) => api.get('/reports/sales-by-customer/', { params }),
   salesByProduct: (params?: object) => api.get('/reports/sales-by-product/', { params }),
   paymentMethods: (params?: object) => api.get('/reports/payment-methods/', { params }),
+  customerBalance: (params?: object) => api.get('/reports/customer-balance/', { params }),
+  paymentsByCustomer: (params?: object) => api.get('/reports/payments-by-customer/', { params }),
+  customerPayments: (params: object) => api.get('/reports/customer-payments/', { params }),
+  accountStatement: (params: object) => api.get('/reports/account-statement/', { params }),
+  customerDetails: (params?: object) => api.get('/reports/customer-details/', { params }),
+  productDetails: (params?: object) => api.get('/reports/product-details/', { params }),
+  customerInvoices: (params: object) => api.get('/reports/customer-invoices/', { params }),
 
   /**
    * Download a report as Excel or PDF.

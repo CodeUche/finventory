@@ -63,6 +63,24 @@ class CreditService:
         except Exception as exc:
             logger.warning("post_credit_payment_journal failed for %s: %s", customer.name, exc)
 
+        try:
+            from apps.core.models import AuditLog
+            AuditLog.log(
+                action=AuditLog.CREATE,
+                user=recorded_by,
+                organisation=organisation,
+                model_name='CreditTransaction',
+                object_id=str(txn.id),
+                object_repr=str(txn),
+                changes={
+                    'amount': {'old': None, 'new': str(amount)},
+                    'payment_mode': {'old': None, 'new': getattr(txn, 'payment_mode', '') or ''},
+                    'customer': {'old': None, 'new': customer.name},
+                },
+            )
+        except Exception:
+            pass
+
         return txn
 
     @staticmethod

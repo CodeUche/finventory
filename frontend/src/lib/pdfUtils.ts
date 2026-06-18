@@ -112,13 +112,40 @@ export function applyDocHeader(doc: any, opts: DocHeaderOptions): number {
   doc.setLineHeightFactor(1.15)
 
   // ── Logo helper ──────────────────────────────────────────────────────────────
-  const LOGO_SIZE = 20
+  // Max bounding box the logo may occupy — actual render size is scaled down
+  // from this to preserve the source image's aspect ratio.
+  const LOGO_MAX_W = 36
+  const LOGO_MAX_H = 22
+  // Fallback used by layout math before the real size is known (e.g. when
+  // logoData is present but dimensions haven't been measured yet).
+  const LOGO_SIZE = LOGO_MAX_H
+  let logoRenderW = 0
+  let logoRenderH = 0
+  if (logoData) {
+    try {
+      const props = doc.getImageProperties(logoData)
+      const ratio = props.width / props.height
+      if (ratio >= LOGO_MAX_W / LOGO_MAX_H) {
+        logoRenderW = LOGO_MAX_W
+        logoRenderH = LOGO_MAX_W / ratio
+      } else {
+        logoRenderH = LOGO_MAX_H
+        logoRenderW = LOGO_MAX_H * ratio
+      }
+    } catch {
+      logoRenderW = LOGO_MAX_H
+      logoRenderH = LOGO_MAX_H
+    }
+  }
   const addLogoIfPresent = (x: number, top: number) => {
     if (!logoData) return
     const fmt = logoData.includes('image/png') ? 'PNG'
       : logoData.includes('image/webp') ? 'WEBP'
       : 'JPEG'
-    doc.addImage(logoData, fmt, x, top, LOGO_SIZE, LOGO_SIZE)
+    // Vertically center within the LOGO_MAX_H box so smaller/wider logos
+    // don't hug the top edge.
+    const yOffset = (LOGO_MAX_H - logoRenderH) / 2
+    doc.addImage(logoData, fmt, x, top + yOffset, logoRenderW, logoRenderH)
   }
 
   // ── Underline helper for company name ────────────────────────────────────────
@@ -136,7 +163,7 @@ export function applyDocHeader(doc: any, opts: DocHeaderOptions): number {
 
     // Logo
     addLogoIfPresent(margin, logoTop)
-    const nameX = logoData ? margin + LOGO_SIZE + 4 : margin
+    const nameX = logoData ? margin + logoRenderW + 4 : margin
 
     // Company name
     if (showCompanyName && displayName) {
@@ -180,7 +207,7 @@ export function applyDocHeader(doc: any, opts: DocHeaderOptions): number {
 
     const logoTop = 10
     addLogoIfPresent(margin, logoTop)
-    const nameX = logoData ? margin + LOGO_SIZE + 4 : margin
+    const nameX = logoData ? margin + logoRenderW + 4 : margin
 
     // Company name
     const nc: RGB = nameColor ?? DARK
@@ -233,7 +260,7 @@ export function applyDocHeader(doc: any, opts: DocHeaderOptions): number {
   } else if (tmpl === 'minimal') {
     const logoTop = 14
     addLogoIfPresent(margin, logoTop)
-    const nameX = logoData ? margin + LOGO_SIZE + 4 : margin
+    const nameX = logoData ? margin + logoRenderW + 4 : margin
 
     // Company name — DARK
     const nc: RGB = nameColor ?? DARK
@@ -287,7 +314,7 @@ export function applyDocHeader(doc: any, opts: DocHeaderOptions): number {
     // Logo
     const logoTop = 8
     addLogoIfPresent(margin, logoTop)
-    const nameX = logoData ? margin + LOGO_SIZE + 4 : margin
+    const nameX = logoData ? margin + logoRenderW + 4 : margin
 
     // Company name (left panel — white on brand bg)
     const nc: RGB = nameColor ?? WHITE

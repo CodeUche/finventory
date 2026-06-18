@@ -14,6 +14,8 @@ import {
   type TimeoutOption,
 } from '@/hooks/useInactivityTimeout'
 import type { PaymentGatewayConfig, FinancialPeriod, TeamMember, ModuleKey, AccessLevel, PartnerAccessRequest, PartnerClientLink } from '@/types'
+import { NIGERIAN_BANKS } from '@/lib/banks'
+import { useResolveBankAccount } from '@/hooks/useResolveBankAccount'
 
 const ALL_MODULES: { key: ModuleKey; label: string }[] = [
   { key: 'sales', label: 'Sales / Invoices' },
@@ -57,52 +59,6 @@ function getPlanMaxMembers(planName: string | null): number {
   if (planName.includes('professional')) return 3
   return 1 // free / unknown
 }
-
-// Full list of Nigerian banks (commercial, MFBs, mobile operators)
-const NIGERIAN_BANKS = [
-  // Commercial Banks
-  { name: 'Access Bank', code: '044' },
-  { name: 'Citibank Nigeria', code: '023' },
-  { name: 'Ecobank Nigeria', code: '050' },
-  { name: 'Fidelity Bank', code: '070' },
-  { name: 'First Bank of Nigeria', code: '011' },
-  { name: 'First City Monument Bank (FCMB)', code: '214' },
-  { name: 'Guaranty Trust Bank (GTBank)', code: '058' },
-  { name: 'Heritage Bank', code: '030' },
-  { name: 'Keystone Bank', code: '082' },
-  { name: 'Optimus Bank', code: '301' },
-  { name: 'Polaris Bank', code: '076' },
-  { name: 'Providus Bank', code: '101' },
-  { name: 'Stanbic IBTC Bank', code: '221' },
-  { name: 'Standard Chartered Bank', code: '068' },
-  { name: 'Sterling Bank', code: '232' },
-  { name: 'SunTrust Bank', code: '100' },
-  { name: 'Titan Trust Bank', code: '102' },
-  { name: 'Union Bank of Nigeria', code: '032' },
-  { name: 'United Bank for Africa (UBA)', code: '033' },
-  { name: 'Unity Bank', code: '215' },
-  { name: 'Wema Bank', code: '035' },
-  { name: 'Zenith Bank', code: '057' },
-  // Digital / Fintech Banks
-  { name: 'Carbon (OneFi)', code: '565' },
-  { name: 'JAIZ Bank', code: '301' },
-  { name: 'Kuda Microfinance Bank', code: '50211' },
-  { name: 'Moniepoint Microfinance Bank', code: '50515' },
-  { name: 'OPay (PayCom)', code: '100004' },
-  { name: 'PalmPay', code: '999991' },
-  { name: 'Sparkle Microfinance Bank', code: '51310' },
-  { name: 'VFD Microfinance Bank', code: '566' },
-  // Microfinance Banks
-  { name: 'AB Microfinance Bank', code: '309' },
-  { name: 'Accion MFB', code: '602' },
-  { name: 'Covenant MFB', code: '551' },
-  { name: 'LAPO Microfinance Bank', code: '501' },
-  { name: 'NPF Microfinance Bank', code: '552' },
-  // Mobile Money
-  { name: 'MTN Mobile Money (MoMo PSB)', code: '120001' },
-  { name: 'Airtel SmartCash PSB', code: '120004' },
-  { name: '9 Payment Service Bank (9PSB)', code: '120005' },
-].sort((a, b) => a.name.localeCompare(b.name))
 
 const TIMEOUT_OPTIONS: { value: TimeoutOption; label: string }[] = [
   { value: 'never', label: 'Never' },
@@ -211,24 +167,31 @@ export default function SettingsPage() {
   }, [organisation?.id, organisation?.invoice_template])
 
   // ─── Bank account resolve state ──────────────────────────────────────────────
-  const [resolvingAccount, setResolvingAccount] = useState(false)
+  const {
+    setAccountNumber: setResolveAccountNumber,
+    setBankCode: setResolveBankCode,
+    accountName: resolvedAccountName,
+    resolving: resolvingAccount,
+  } = useResolveBankAccount({
+    resolver: async (accountNumber, bankCode) => {
+      const { data } = await orgApi.resolveBankAccount(accountNumber, bankCode)
+      return data.data
+    },
+  })
 
-  const resolveAccountName = async (accountNumber: string, bankName: string) => {
+  // Push resolved account name into the company form once available
+  useEffect(() => {
+    if (resolvedAccountName) {
+      setCompany((c) => ({ ...c, bank_account_name: resolvedAccountName }))
+      toast.success('Account name resolved')
+    }
+  }, [resolvedAccountName])
+
+  const resolveAccountName = (accountNumber: string, bankName: string) => {
     const bank = NIGERIAN_BANKS.find(b => b.name === bankName)
     if (!bank || accountNumber.length < 10) return
-    setResolvingAccount(true)
-    try {
-      const { data } = await orgApi.resolveBankAccount(accountNumber, bank.code)
-      if (data?.data?.account_name) {
-        setCompany(c => ({ ...c, bank_account_name: data.data.account_name }))
-        toast.success('Account name resolved')
-      }
-      // silently ignore failed resolve — field is still manually editable
-    } catch {
-      // silently ignore — user can type account name manually
-    } finally {
-      setResolvingAccount(false)
-    }
+    setResolveBankCode(bank.code)
+    setResolveAccountNumber(accountNumber)
   }
 
   // ─── Financial Periods state ─────────────────────────────────────────────────

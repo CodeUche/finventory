@@ -162,18 +162,30 @@ class AuditLog(models.Model):
     changes = models.JSONField(default=dict)
     ip_address = models.GenericIPAddressField(null=True, blank=True)
     user_agent = models.TextField(blank=True)
+    is_owner_action = models.BooleanField(default=False, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
     class Meta:
         ordering = ['-created_at']
         app_label = 'core'
 
+    @property
+    def actor_label(self):
+        """Human-readable actor string, suffixed with '(Owner)' for owner/superuser actions."""
+        if self.is_owner_action and self.user_email:
+            return f"{self.user_email} (Owner)"
+        return self.user_email
+
     @classmethod
-    def log(cls, action, user=None, organisation=None, model_name='', object_id='', object_repr='', changes=None, request=None):
-        ip = None
-        ua = ''
-        if request:
-            ip = request.META.get('REMOTE_ADDR')
+    def log(cls, action, user=None, organisation=None, model_name='', object_id='', object_repr='', changes=None, request=None, ip_address=None, user_agent=None, is_owner_action=False):
+        ip = ip_address
+        ua = user_agent
+        if request and ip is None and ua is None:
+            try:
+                from apps.core.utils import get_client_ip
+                ip = get_client_ip(request) or None
+            except Exception:
+                ip = request.META.get('REMOTE_ADDR')
             ua = request.META.get('HTTP_USER_AGENT', '')
         cls.objects.create(
             organisation_id=organisation.id if organisation else None,
@@ -185,5 +197,6 @@ class AuditLog(models.Model):
             object_repr=str(object_repr),
             changes=changes or {},
             ip_address=ip,
-            user_agent=ua,
+            user_agent=ua or '',
+            is_owner_action=bool(is_owner_action) or (bool(getattr(user, 'is_superuser', False)) if user else False),
         )

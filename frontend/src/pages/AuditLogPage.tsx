@@ -1,6 +1,6 @@
-import { useEffect, useState, useCallback } from 'react'
+import { Fragment, useEffect, useState, useCallback, useMemo } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
-import { Shield, ChevronDown, ChevronRight, Search, X, Globe, RefreshCw } from 'lucide-react'
+import { Shield, ChevronDown, ChevronRight, ChevronUp, Search, X, Globe, RefreshCw } from 'lucide-react'
 import { auditLogApi, bypassNextGets } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
 import DateInput from '@/components/DateInput'
@@ -17,6 +17,9 @@ interface AuditEntry {
   object_repr: string
   changes: ChangeItem[]
   ip_address: string | null
+  user_agent: string | null
+  actor_label: string
+  is_owner_action: boolean
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -43,34 +46,10 @@ function prettyModel(raw: string) {
   return MODEL_LABELS[raw.toLowerCase()] ?? raw
 }
 
-function userInitials(email: string) {
-  const parts = email.split('@')[0].split(/[._-]/)
-  return parts.slice(0, 2).map((p) => p[0]?.toUpperCase() ?? '').join('') || '?'
-}
-
-function relativeTime(iso: string) {
-  const diff = Date.now() - new Date(iso).getTime()
-  const mins = Math.floor(diff / 60000)
-  if (mins < 1)  return 'Just now'
-  if (mins < 60) return `${mins}m ago`
-  const hrs = Math.floor(mins / 60)
-  if (hrs < 24)  return `${hrs}h ago`
-  const days = Math.floor(hrs / 24)
-  if (days < 7)  return `${days}d ago`
-  return new Date(iso).toLocaleDateString('en-NG', { day: '2-digit', month: 'short', year: 'numeric' })
-}
-
 function absoluteTime(iso: string) {
-  return new Date(iso).toLocaleString('en-NG', { dateStyle: 'medium', timeStyle: 'short' })
-}
-
-function dayLabel(iso: string) {
   const d = new Date(iso)
-  const today = new Date()
-  const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1)
-  if (d.toDateString() === today.toDateString()) return 'Today'
-  if (d.toDateString() === yesterday.toDateString()) return 'Yesterday'
-  return d.toLocaleDateString('en-NG', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
 
 function formatValue(v: unknown): string {
@@ -79,83 +58,39 @@ function formatValue(v: unknown): string {
   return String(v)
 }
 
-// ── Entry row ─────────────────────────────────────────────────────────────────
+function deviceLabel(ua: string | null): string {
+  if (!ua) return '—'
+  let browser = 'Unknown'
+  if (ua.includes('Edg/')) browser = 'Edge'
+  else if (ua.includes('Chrome/')) browser = 'Chrome'
+  else if (ua.includes('Firefox/')) browser = 'Firefox'
+  else if (ua.includes('Safari/')) browser = 'Safari'
 
-function EntryRow({ entry }: { entry: AuditEntry }) {
-  const [expanded, setExpanded] = useState(false)
-  const cfg = ACTION_CONFIG[entry.action] ?? ACTION_CONFIG.other
-  const hasChanges = entry.changes?.length > 0
+  let os = ''
+  if (ua.includes('Windows')) os = 'Windows'
+  else if (ua.includes('Mac OS') || ua.includes('Macintosh')) os = 'Mac'
+  else if (ua.includes('Android')) os = 'Android'
+  else if (ua.includes('iPhone') || ua.includes('iPad') || ua.includes('iOS')) os = 'iOS'
+  else if (ua.includes('Linux')) os = 'Linux'
 
-  return (
-    <div className="border-b border-surface-700 last:border-0">
-      <div
-        className={`flex items-start gap-3 px-5 py-3.5 ${hasChanges ? 'cursor-pointer hover:bg-surface-800/60' : ''} transition-colors`}
-        onClick={() => hasChanges && setExpanded((p) => !p)}
-      >
-        {/* Actor avatar */}
-        <div className="w-8 h-8 rounded-full bg-brand-500/20 flex items-center justify-center shrink-0 mt-0.5">
-          <span className="text-xs font-bold text-brand-300">{userInitials(entry.user_email || '?')}</span>
-        </div>
-
-        {/* Main content */}
-        <div className="flex-1 min-w-0">
-          <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
-            <span className="text-sm font-medium text-white">{entry.user_email || 'System'}</span>
-            <span className={`text-xs px-1.5 py-0.5 rounded font-semibold ${cfg.badge}`}>{cfg.label}</span>
-            <span className="text-sm text-slate-400">{prettyModel(entry.model)}</span>
-            {entry.object_repr && (
-              <span className="text-sm font-medium text-slate-300 truncate max-w-[220px]">"{entry.object_repr}"</span>
-            )}
-          </div>
-          <div className="flex items-center gap-3 mt-1 flex-wrap">
-            <span className="text-xs text-slate-500" title={absoluteTime(entry.timestamp)}>
-              {relativeTime(entry.timestamp)} · {absoluteTime(entry.timestamp)}
-            </span>
-            {entry.ip_address && (
-              <span className="flex items-center gap-1 text-xs text-slate-600">
-                <Globe size={10} /> {entry.ip_address}
-              </span>
-            )}
-            {hasChanges && (
-              <span className="text-xs text-slate-600">{entry.changes.length} field{entry.changes.length !== 1 ? 's' : ''} changed</span>
-            )}
-          </div>
-        </div>
-
-        {/* Expand toggle */}
-        {hasChanges && (
-          <div className="text-slate-500 shrink-0 mt-1">
-            {expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-          </div>
-        )}
-      </div>
-
-      {/* Change diff */}
-      {expanded && hasChanges && (
-        <div className="px-16 pb-4">
-          <table className="w-full text-xs border border-surface-700 rounded-lg overflow-hidden">
-            <thead>
-              <tr className="bg-surface-800">
-                <th className="px-3 py-2 text-left text-slate-400 font-semibold uppercase tracking-wider w-1/4">Field</th>
-                <th className="px-3 py-2 text-left text-slate-400 font-semibold uppercase tracking-wider w-[37.5%]">Before</th>
-                <th className="px-3 py-2 text-left text-slate-400 font-semibold uppercase tracking-wider w-[37.5%]">After</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-surface-700">
-              {entry.changes.map((c, i) => (
-                <tr key={i} className="bg-surface-900/40">
-                  <td className="px-3 py-2 font-mono text-slate-400 capitalize">{c.field.replace(/_/g, ' ')}</td>
-                  <td className="px-3 py-2 text-red-400/80 line-through">{formatValue(c.old)}</td>
-                  <td className="px-3 py-2 text-emerald-400">{formatValue(c.new)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  )
+  return os ? `${browser} / ${os}` : browser
 }
+
+function renderActorLabel(label: string) {
+  const match = label.match(/^(.*?)(\s*\(Owner\))$/)
+  if (match) {
+    return (
+      <>
+        <span>{match[1]}</span>
+        <span className="text-amber-400 font-semibold">{match[2]}</span>
+      </>
+    )
+  }
+  return <span>{label}</span>
+}
+
+type SortKey = 'timestamp' | 'actor_label'
+type SortDir = 'asc' | 'desc'
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 
@@ -175,6 +110,12 @@ export default function AuditLogPage() {
   const [actionFilter, setActionFilter] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo]     = useState('')
+  const [ipSearch, setIpSearch] = useState('')
+  const [authOnly, setAuthOnly] = useState(false)
+
+  const [sortKey, setSortKey] = useState<SortKey>('timestamp')
+  const [sortDir, setSortDir] = useState<SortDir>('desc')
+  const [expandedId, setExpandedId] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -185,6 +126,7 @@ export default function AuditLogPage() {
       if (actionFilter) params.action    = actionFilter
       if (dateFrom)     params.date_from = dateFrom
       if (dateTo)       params.date_to   = dateTo
+      if (ipSearch)     params.ip        = ipSearch
       const { data } = await auditLogApi.list(params)
       setEntries(data.results ?? data)
     } catch {
@@ -192,21 +134,47 @@ export default function AuditLogPage() {
     } finally {
       setLoading(false)
     }
-  }, [userSearch, modelFilter, actionFilter, dateFrom, dateTo])
+  }, [userSearch, modelFilter, actionFilter, dateFrom, dateTo, ipSearch])
 
   useEffect(() => { load() }, [load])
   useDataRefresh(load)
 
-  // Group entries by calendar day
-  const grouped: { day: string; items: AuditEntry[] }[] = []
-  for (const entry of entries) {
-    const day = dayLabel(entry.timestamp)
-    const last = grouped[grouped.length - 1]
-    if (last?.day === day) { last.items.push(entry) }
-    else { grouped.push({ day, items: [entry] }) }
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortKey(key)
+      setSortDir('asc')
+    }
   }
 
-  const hasFilters = userSearch || modelFilter || actionFilter || dateFrom || dateTo
+  const visibleEntries = useMemo(() => {
+    let list = entries
+    if (authOnly) {
+      list = list.filter((e) => e.action === 'login' || e.action === 'logout')
+    }
+    const sorted = [...list].sort((a, b) => {
+      let cmp = 0
+      if (sortKey === 'timestamp') {
+        cmp = new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+      } else {
+        cmp = (a.actor_label || '').localeCompare(b.actor_label || '')
+      }
+      return sortDir === 'asc' ? cmp : -cmp
+    })
+    return sorted
+  }, [entries, authOnly, sortKey, sortDir])
+
+  const hasFilters = userSearch || modelFilter || actionFilter || dateFrom || dateTo || ipSearch || authOnly
+
+  const clearFilters = () => {
+    setUserSearch(''); setModelFilter(''); setActionFilter(''); setDateFrom(''); setDateTo(''); setIpSearch(''); setAuthOnly(false)
+  }
+
+  const sortIcon = (key: SortKey) => {
+    if (sortKey !== key) return null
+    return sortDir === 'asc' ? <ChevronUp size={11} className="inline ml-1" /> : <ChevronDown size={11} className="inline ml-1" />
+  }
 
   return (
     <div className="space-y-6">
@@ -252,6 +220,17 @@ export default function AuditLogPage() {
           />
         </div>
 
+        {/* IP search */}
+        <div className="relative">
+          <Globe size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+          <input
+            className="input pl-8 w-40 font-mono"
+            placeholder="IP address…"
+            value={ipSearch}
+            onChange={(e) => setIpSearch(e.target.value)}
+          />
+        </div>
+
         <select className="input w-40" value={modelFilter} onChange={(e) => setModelFilter(e.target.value)}>
           <option value="">All modules</option>
           {MODEL_OPTIONS.map((m) => <option key={m} value={m}>{prettyModel(m)}</option>)}
@@ -270,9 +249,20 @@ export default function AuditLogPage() {
           <DateInput value={dateTo} onChange={setDateTo} placeholder="To" />
         </div>
 
+        <button
+          onClick={() => setAuthOnly((p) => !p)}
+          className={`text-xs px-3 py-2 rounded-lg border transition-colors ${
+            authOnly
+              ? 'bg-brand-500/15 border-brand-500/40 text-brand-300'
+              : 'border-surface-700 text-slate-400 hover:text-white hover:border-surface-600'
+          }`}
+        >
+          Login/Logout only
+        </button>
+
         {hasFilters && (
           <button
-            onClick={() => { setUserSearch(''); setModelFilter(''); setActionFilter(''); setDateFrom(''); setDateTo('') }}
+            onClick={clearFilters}
             className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors"
           >
             <X size={13} /> Clear
@@ -280,7 +270,7 @@ export default function AuditLogPage() {
         )}
       </div>
 
-      {/* Feed */}
+      {/* Table */}
       <div className="card p-0 overflow-hidden">
         {loading ? (
           <div className="divide-y divide-surface-700">
@@ -294,7 +284,7 @@ export default function AuditLogPage() {
               </div>
             ))}
           </div>
-        ) : entries.length === 0 ? (
+        ) : visibleEntries.length === 0 ? (
           <div className="px-5 py-16 text-center">
             <Shield size={32} className="mx-auto mb-3 text-slate-600" />
             <p className="text-slate-400 font-medium">No events found</p>
@@ -303,15 +293,101 @@ export default function AuditLogPage() {
             </p>
           </div>
         ) : (
-          grouped.map(({ day, items }) => (
-            <div key={day}>
-              {/* Day divider */}
-              <div className="px-5 py-2 bg-surface-800/60 border-b border-surface-700">
-                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{day}</span>
-              </div>
-              {items.map((entry) => <EntryRow key={entry.id} entry={entry} />)}
-            </div>
-          ))
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="bg-surface-800 border-b border-surface-700">
+                  <th
+                    className="px-3 py-2 text-left text-slate-400 font-semibold uppercase tracking-wider cursor-pointer hover:text-white select-none whitespace-nowrap"
+                    onClick={() => toggleSort('timestamp')}
+                  >
+                    Timestamp{sortIcon('timestamp')}
+                  </th>
+                  <th
+                    className="px-3 py-2 text-left text-slate-400 font-semibold uppercase tracking-wider cursor-pointer hover:text-white select-none whitespace-nowrap"
+                    onClick={() => toggleSort('actor_label')}
+                  >
+                    User{sortIcon('actor_label')}
+                  </th>
+                  <th className="px-3 py-2 text-left text-slate-400 font-semibold uppercase tracking-wider whitespace-nowrap">Action</th>
+                  <th className="px-3 py-2 text-left text-slate-400 font-semibold uppercase tracking-wider whitespace-nowrap">Model</th>
+                  <th className="px-3 py-2 text-left text-slate-400 font-semibold uppercase tracking-wider">Object</th>
+                  <th className="px-3 py-2 text-left text-slate-400 font-semibold uppercase tracking-wider whitespace-nowrap">IP Address</th>
+                  <th className="px-3 py-2 text-left text-slate-400 font-semibold uppercase tracking-wider whitespace-nowrap">Device</th>
+                  <th className="px-3 py-2 w-6"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-surface-700">
+                {visibleEntries.map((entry) => {
+                  const cfg = ACTION_CONFIG[entry.action] ?? ACTION_CONFIG.other
+                  const hasChanges = entry.changes?.length > 0
+                  const isExpanded = expandedId === entry.id
+                  const isExpandable = hasChanges || !!entry.user_agent || !!entry.ip_address
+                  return (
+                    <Fragment key={entry.id}>
+                      <tr
+                        className={`transition-colors ${isExpandable ? 'cursor-pointer' : ''} ${isExpanded ? 'bg-brand-500/10' : 'hover:bg-surface-800/60'}`}
+                        onClick={() => isExpandable && setExpandedId((p) => (p === entry.id ? null : entry.id))}
+                      >
+                        <td className="px-3 py-2 font-mono text-slate-300 whitespace-nowrap">{absoluteTime(entry.timestamp)}</td>
+                        <td className="px-3 py-2 text-slate-200 whitespace-nowrap">{renderActorLabel(entry.actor_label || entry.user_email || 'System')}</td>
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          <span className={`text-xs px-1.5 py-0.5 rounded font-semibold ${cfg.badge}`}>{cfg.label}</span>
+                        </td>
+                        <td className="px-3 py-2 text-slate-400 whitespace-nowrap">{prettyModel(entry.model)}</td>
+                        <td className="px-3 py-2 font-mono text-slate-300 truncate max-w-[220px]">{entry.object_repr || '—'}</td>
+                        <td className="px-3 py-2 font-mono text-slate-400 whitespace-nowrap">{entry.ip_address || '—'}</td>
+                        <td className="px-3 py-2 text-slate-400 whitespace-nowrap" title={entry.user_agent || undefined}>
+                          {deviceLabel(entry.user_agent)}
+                        </td>
+                        <td className="px-3 py-2 text-slate-500">
+                          {isExpandable && (isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />)}
+                        </td>
+                      </tr>
+                      {isExpanded && (
+                        <tr className="bg-surface-900/40">
+                          <td colSpan={8} className="px-6 py-4">
+                            <div className="space-y-3">
+                              {hasChanges && (
+                                <table className="w-full text-xs border border-surface-700 rounded-lg overflow-hidden">
+                                  <thead>
+                                    <tr className="bg-surface-800">
+                                      <th className="px-3 py-2 text-left text-slate-400 font-semibold uppercase tracking-wider w-1/4">Field</th>
+                                      <th className="px-3 py-2 text-left text-slate-400 font-semibold uppercase tracking-wider w-[37.5%]">Before</th>
+                                      <th className="px-3 py-2 text-left text-slate-400 font-semibold uppercase tracking-wider w-[37.5%]">After</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-surface-700">
+                                    {entry.changes.map((c, i) => (
+                                      <tr key={i} className="bg-surface-900/40">
+                                        <td className="px-3 py-2 font-mono text-slate-400 capitalize">{c.field.replace(/_/g, ' ')}</td>
+                                        <td className="px-3 py-2 text-red-400/80 line-through">{formatValue(c.old)}</td>
+                                        <td className="px-3 py-2 text-emerald-400">{formatValue(c.new)}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              )}
+                              <div className="flex flex-wrap gap-x-8 gap-y-1 text-xs text-slate-400">
+                                <div>
+                                  <span className="text-slate-500 uppercase tracking-wider mr-2">IP Address</span>
+                                  <span className="font-mono text-slate-300">{entry.ip_address || '—'}</span>
+                                </div>
+                                <div className="min-w-0">
+                                  <span className="text-slate-500 uppercase tracking-wider mr-2">User Agent</span>
+                                  <span className="font-mono text-slate-300 break-all">{entry.user_agent || '—'}</span>
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </div>

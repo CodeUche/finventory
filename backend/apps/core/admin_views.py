@@ -68,6 +68,11 @@ class AuditLogView(APIView):
         if user_search:
             qs = qs.filter(user_email__icontains=user_search)
 
+        # IP filter
+        ip_search = request.query_params.get('ip')
+        if ip_search:
+            qs = qs.filter(ip_address__icontains=ip_search)
+
         data = []
         for entry in qs[:500]:
             changes = entry.changes or {}
@@ -90,6 +95,9 @@ class AuditLogView(APIView):
                 'object_repr': entry.object_repr,
                 'changes': change_list,
                 'ip_address': entry.ip_address,
+                'user_agent': entry.user_agent,
+                'actor_label': entry.actor_label,
+                'is_owner_action': entry.is_owner_action,
             })
 
         return Response(data)
