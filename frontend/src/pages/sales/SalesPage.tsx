@@ -88,7 +88,7 @@ async function buildInvoicePDF(
 ): Promise<PdfPreview> {
   const { jsPDF } = await import('jspdf')
   const { default: autoTable } = await import('jspdf-autotable')
-  const { applyDocHeader, buildTableStyle, addDocFooter, COLORS, TYPE } = await import('@/lib/pdfUtils')
+  const { applyDocHeader, buildTableStyle, addDocFooter, pdfMoney, COLORS, TYPE } = await import('@/lib/pdfUtils')
 
   const doc = new jsPDF({ unit: 'mm', format: 'a4' })
   doc.setLineHeightFactor(1.15)
@@ -170,8 +170,8 @@ async function buildInvoicePDF(
   const ts = buildTableStyle(BRAND, pdfFont)
 
   // Dynamically size monetary columns so large numbers always fit
-  const itemAmounts = [...(inv.items ?? []).map(it => formatCurrency(it.line_total)), 'Amount']
-  const itemPrices  = [...(inv.items ?? []).map(it => formatCurrency(it.unit_price)), 'Unit Price']
+  const itemAmounts = [...(inv.items ?? []).map(it => pdfMoney(it.line_total)), 'Amount']
+  const itemPrices  = [...(inv.items ?? []).map(it => pdfMoney(it.unit_price)), 'Unit Price']
   const itemQtys    = [...(inv.items ?? []).map(it => String(Number(it.quantity))), 'Qty']
   doc.setFontSize(9)
   const amtColW   = Math.min(58, Math.max(26, Math.max(...itemAmounts.map(s => doc.getTextWidth(s))) + 8))
@@ -187,8 +187,8 @@ async function buildInvoicePDF(
       item.product_name,
       item.product_sku ?? '—',
       Number(item.quantity),
-      formatCurrency(item.unit_price),
-      formatCurrency(item.line_total),
+      pdfMoney(item.unit_price),
+      pdfMoney(item.line_total),
     ]),
     columnStyles: {
       0: { cellWidth: 8,        halign: 'center' as const },
@@ -219,16 +219,16 @@ async function buildInvoicePDF(
   const changeNum   = tenderedNum > amtPaidNum ? tenderedNum - amtPaidNum : 0
 
   const totalRows: Array<{ label: string; value: string; bold?: boolean; color?: [number,number,number] }> = []
-  totalRows.push({ label: 'Subtotal', value: formatCurrency(subtotalNum) })
-  if (discountNum > 0) totalRows.push({ label: 'Discount', value: `- ${formatCurrency(discountNum)}`, color: COLORS.AMBER })
-  if (taxNum > 0)      totalRows.push({ label: 'Tax / VAT', value: formatCurrency(taxNum) })
+  totalRows.push({ label: 'Subtotal', value: pdfMoney(subtotalNum) })
+  if (discountNum > 0) totalRows.push({ label: 'Discount', value: `- ${pdfMoney(discountNum)}`, color: COLORS.AMBER })
+  if (taxNum > 0)      totalRows.push({ label: 'Tax / VAT', value: pdfMoney(taxNum) })
   if (discountNum > 0 || taxNum > 0 || creditApplied > 0)
-    totalRows.push({ label: 'Invoice Total', value: formatCurrency(totalNum), bold: true })
+    totalRows.push({ label: 'Invoice Total', value: pdfMoney(totalNum), bold: true })
   if (creditApplied > 0)
-    totalRows.push({ label: 'Store Credit Applied', value: `- ${formatCurrency(creditApplied)}`, color: COLORS.GREEN })
+    totalRows.push({ label: 'Store Credit Applied', value: `- ${pdfMoney(creditApplied)}`, color: COLORS.GREEN })
   if (amtPaidNum > 0) {
-    totalRows.push({ label: 'Amount Tendered', value: formatCurrency(tenderedNum), color: COLORS.GREEN })
-    if (changeNum > 0) totalRows.push({ label: 'Change Given', value: formatCurrency(changeNum), color: COLORS.GREEN })
+    totalRows.push({ label: 'Amount Tendered', value: pdfMoney(tenderedNum), color: COLORS.GREEN })
+    if (changeNum > 0) totalRows.push({ label: 'Change Given', value: pdfMoney(changeNum), color: COLORS.GREEN })
   }
 
   const ROW_H = 5.5
@@ -258,7 +258,7 @@ async function buildInvoicePDF(
   doc.setFontSize(TYPE.H3.size); doc.setFont(pdfFont, 'bold'); doc.setTextColor(...DARK)
   doc.text('BALANCE DUE', tX + PAD, rowY)
   doc.setFontSize(TYPE.H2.size); doc.setFont(pdfFont, 'bold'); doc.setTextColor(...dueColor)
-  doc.text(formatCurrency(amtDue), tX + tW - PAD, rowY, { align: 'right' })
+  doc.text(pdfMoney(amtDue), tX + tW - PAD, rowY, { align: 'right' })
 
   const afterTotalsY = tY + totalsBoxH
 

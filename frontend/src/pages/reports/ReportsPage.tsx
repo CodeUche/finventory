@@ -249,7 +249,7 @@ export default function ReportsPage() {
     try {
       const { jsPDF } = await import('jspdf')
       const { default: autoTable } = await import('jspdf-autotable')
-      const { applyDocHeader, buildTableStyle, addDocFooter, COLORS, TYPE } = await import('@/lib/pdfUtils')
+      const { applyDocHeader, buildTableStyle, addDocFooter, pdfMoney, COLORS, TYPE } = await import('@/lib/pdfUtils')
 
       const doc    = new jsPDF({ unit: 'mm', format: 'a4' })
       doc.setLineHeightFactor(1.15)
@@ -312,9 +312,9 @@ export default function ReportsPage() {
       const ts         = buildTableStyle(BRAND, pFont)
       doc.setFontSize(9)
       const vatAmounts = [
-        formatCurrency(vatSummary.output_vat),
-        `(${formatCurrency(vatSummary.input_vat)})`,
-        formatCurrency(vatSummary.net_vat_payable),
+        pdfMoney(vatSummary.output_vat),
+        `(${pdfMoney(vatSummary.input_vat)})`,
+        pdfMoney(vatSummary.net_vat_payable),
         'Amount',
       ]
       const colW = Math.min(70, Math.max(36, Math.max(...vatAmounts.map(s => doc.getTextWidth(s))) + 16))
@@ -324,9 +324,9 @@ export default function ReportsPage() {
         startY: vatY,
         head:   [['Description', 'Amount']],
         body:   [
-          ['Output VAT (collected on sales)',    formatCurrency(vatSummary.output_vat)],
-          ['Input VAT (paid on approved bills)', `(${formatCurrency(vatSummary.input_vat)})`],
-          ['Net VAT Payable to FIRS',            formatCurrency(vatSummary.net_vat_payable)],
+          ['Output VAT (collected on sales)',    pdfMoney(vatSummary.output_vat)],
+          ['Input VAT (paid on approved bills)', `(${pdfMoney(vatSummary.input_vat)})`],
+          ['Net VAT Payable to FIRS',            pdfMoney(vatSummary.net_vat_payable)],
         ],
         styles:       { ...ts.styles, fontSize: 9, cellPadding: { top: 4, bottom: 4, left: 6, right: 6 } },
         columnStyles: {

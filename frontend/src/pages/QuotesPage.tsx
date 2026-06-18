@@ -65,7 +65,7 @@ async function buildQuotePDF(
 ): Promise<PdfPreview> {
   const { jsPDF } = await import('jspdf')
   const { default: autoTable } = await import('jspdf-autotable')
-  const { applyDocHeader, buildTableStyle, addDocFooter, COLORS, TYPE } = await import('@/lib/pdfUtils')
+  const { applyDocHeader, buildTableStyle, addDocFooter, pdfMoney, COLORS, TYPE } = await import('@/lib/pdfUtils')
 
   const doc = new jsPDF({ unit: 'mm', format: 'a4' })
   doc.setLineHeightFactor(1.15)
@@ -142,8 +142,8 @@ async function buildQuotePDF(
   // ── Items table ────────────────────────────────────────────────────────────
   const ts = buildTableStyle(BRAND, pdfFont)
 
-  const qAmounts = [...(q.items ?? []).map(it => formatCurrency(it.line_total)), 'Amount']
-  const qPrices  = [...(q.items ?? []).map(it => formatCurrency(it.unit_price)), 'Unit Price']
+  const qAmounts = [...(q.items ?? []).map(it => pdfMoney(it.line_total)), 'Amount']
+  const qPrices  = [...(q.items ?? []).map(it => pdfMoney(it.unit_price)), 'Unit Price']
   const qQtys    = [...(q.items ?? []).map(it => String(Number(it.quantity))), 'Qty']
   doc.setFontSize(9)
   const amtColW   = Math.min(58, Math.max(26, Math.max(...qAmounts.map(s => doc.getTextWidth(s))) + 8))
@@ -158,9 +158,9 @@ async function buildQuotePDF(
       i + 1,
       item.product_name,
       Number(item.quantity),
-      formatCurrency(item.unit_price),
+      pdfMoney(item.unit_price),
       parseFloat(item.discount_percent) > 0 ? `${item.discount_percent}%` : '—',
-      formatCurrency(item.line_total),
+      pdfMoney(item.line_total),
     ]),
     columnStyles: {
       0: { cellWidth: 8,         halign: 'center' as const },
@@ -183,9 +183,9 @@ async function buildQuotePDF(
   const totalNum    = parseFloat(q.total_amount ?? '0')
 
   const totalRows: Array<{ label: string; value: string; color?: [number,number,number] }> = []
-  totalRows.push({ label: 'Subtotal', value: formatCurrency(subtotalNum) })
-  if (discountNum > 0) totalRows.push({ label: 'Discount', value: `- ${formatCurrency(discountNum)}`, color: COLORS.AMBER })
-  if (taxNum > 0) totalRows.push({ label: 'Tax / VAT', value: formatCurrency(taxNum) })
+  totalRows.push({ label: 'Subtotal', value: pdfMoney(subtotalNum) })
+  if (discountNum > 0) totalRows.push({ label: 'Discount', value: `- ${pdfMoney(discountNum)}`, color: COLORS.AMBER })
+  if (taxNum > 0) totalRows.push({ label: 'Tax / VAT', value: pdfMoney(taxNum) })
 
   const ROW_H = 5.5
   const PAD   = 4
@@ -209,7 +209,7 @@ async function buildQuotePDF(
   doc.setFontSize(TYPE.H3.size); doc.setFont(pdfFont, 'bold'); doc.setTextColor(...DARK)
   doc.text('QUOTATION TOTAL', tX + PAD, rowY)
   doc.setFontSize(TYPE.H2.size); doc.setFont(pdfFont, 'bold'); doc.setTextColor(...BRAND)
-  doc.text(formatCurrency(totalNum), tX + tW - PAD, rowY, { align: 'right' })
+  doc.text(pdfMoney(totalNum), tX + tW - PAD, rowY, { align: 'right' })
 
   const afterTotalsY = tY + boxContentH + 6
 

@@ -10,7 +10,38 @@
  * functions (they are synchronous; async I/O must happen outside).
  */
 
+import { getActiveCurrency, getCurrencySymbol } from './utils'
+
 export type RGB = [number, number, number]
+
+// ── PDF-safe currency formatting ───────────────────────────────────────────────
+// jsPDF's standard fonts (helvetica/times/courier) use WinAnsi encoding, which
+// has no glyph for ₦ (U+20A6) — writing it into doc.text() renders a broken
+// replacement-glyph box instead of the symbol. The web UI's formatCurrency()
+// correctly shows ₦ (browsers render it via system fonts), but anything
+// written into a jsPDF document must use these PDF-safe equivalents instead.
+export function pdfCurrencySymbol(currency?: string): string {
+  const cur = currency ?? getActiveCurrency()
+  return cur === 'NGN' ? 'N' : getCurrencySymbol(cur)
+}
+
+export function pdfMoney(value: string | number, currency?: string): string {
+  const num = typeof value === 'string' ? parseFloat(value) : value
+  const symbol = pdfCurrencySymbol(currency)
+  if (isNaN(num)) return `${symbol}0.00`
+  const sign = num < 0 ? '-' : ''
+  const formatted = new Intl.NumberFormat('en', {
+    minimumFractionDigits: 2, maximumFractionDigits: 2,
+  }).format(Math.abs(num))
+  return `${sign}${symbol}${formatted}`
+}
+
+/** Formats a quantity for PDF/table display, dropping decimals for whole numbers (e.g. "3" not "3.00"). */
+export function pdfQty(value: string | number): string {
+  const num = typeof value === 'string' ? parseFloat(value) : value
+  if (isNaN(num)) return String(value)
+  return num % 1 === 0 ? String(num) : String(parseFloat(num.toFixed(2)))
+}
 
 // ── Design system color palette ────────────────────────────────────────────────
 export const COLORS = {

@@ -5,7 +5,7 @@ import { Plus, Search, Users, X, Pencil, Loader2, FileText, RefreshCw, Download,
 import toast from 'react-hot-toast'
 import { customerApi, urlToDataUrl, bypassNextGets } from '@/services/api'
 import ExportButton from '@/components/ExportButton'
-import { formatCurrency, formatDate, getStatusColor, getCurrencySymbol } from '@/lib/utils'
+import { formatCurrency, formatDate, getStatusColor } from '@/lib/utils'
 import AmountInput from '@/components/AmountInput'
 import DateInput from '@/components/DateInput'
 import { FieldTooltip } from '@/components/FieldTooltip'
@@ -184,11 +184,10 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
     if (!statementData || !selected) return
     const { jsPDF } = await import('jspdf')
     const { default: autoTable } = await import('jspdf-autotable')
-    const { applyDocHeader, buildTableStyle, addDocFooter, COLORS, TYPE } = await import('@/lib/pdfUtils')
+    const { applyDocHeader, buildTableStyle, addDocFooter, pdfMoney, pdfQty, COLORS, TYPE } = await import('@/lib/pdfUtils')
 
     const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' })
     doc.setLineHeightFactor(1.15)
-    const sym  = getCurrencySymbol()
     const pageW = doc.internal.pageSize.getWidth() // 297mm in landscape
 
     // ── Brand / font helpers ───────────────────────────────────────────────────
@@ -249,8 +248,7 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
     })
 
     // ── KPI summary cards — 3 equal-width cards side by side ──────────────────
-    const fmtMoney = (v: number) =>
-      `${sym}${v.toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    const fmtMoney = pdfMoney
     const kpis = [
       { label: 'Total Invoiced', value: fmtMoney(parseFloat(statementData.summary.total_invoiced)), color: DARK },
       { label: 'Total Paid',     value: fmtMoney(parseFloat(statementData.summary.total_paid)),     color: COLORS.GREEN },
@@ -298,7 +296,7 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
             ledger.push([
               formatDate(e.date), inv.invoice_number,
               `Invoice · ${inv.status.replace('_', ' ')}`,
-              item.product, item.qty,
+              item.product, pdfQty(item.qty),
               fmtMoney(parseFloat(item.unit_cost)),
               inv.sold_by || '—',
               fmtMoney(parseFloat(item.line_total)), '',
@@ -354,16 +352,16 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
       head: [['Trans Date', 'Trans Ref', 'Description', 'Product', 'Qty', 'Unit Cost', 'Sold By', 'Debit', 'Credit', 'Balance']],
       body: ledger,
       columnStyles: {
-        0: { cellWidth: 20 },
-        1: { cellWidth: 30, fontStyle: 'bold' as const },
+        0: { cellWidth: 22 },
+        1: { cellWidth: 28, fontStyle: 'bold' as const },
         2: { cellWidth: 32 },
-        3: { cellWidth: 36 },
-        4: { halign: 'right' as const, cellWidth: 10 },
+        3: { cellWidth: 34 },
+        4: { halign: 'right' as const, cellWidth: 14 },
         5: { halign: 'right' as const, cellWidth: 26 },
-        6: { cellWidth: 26 },
-        7: { halign: 'right' as const, cellWidth: 28 },
-        8: { halign: 'right' as const, cellWidth: 28 },
-        9: { halign: 'right' as const, cellWidth: 31, fontStyle: 'bold' as const },
+        6: { cellWidth: 24 },
+        7: { halign: 'right' as const, cellWidth: 27 },
+        8: { halign: 'right' as const, cellWidth: 27 },
+        9: { halign: 'right' as const, cellWidth: 33, fontStyle: 'bold' as const },
       },
       didParseCell: (data: any) => {
         if (grandTotalRowIndex.includes(data.row.index)) {

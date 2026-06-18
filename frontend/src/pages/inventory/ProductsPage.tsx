@@ -20,7 +20,7 @@ import jsPDF from 'jspdf'
 
 async function exportProductsPDF(products: Product[], org?: Organisation | null) {
   const { saveBlobFile } = await import('@/lib/saveBlobFile')
-  const { applyDocHeader, buildTableStyle, addDocFooter, COLORS, TYPE } = await import('@/lib/pdfUtils')
+  const { applyDocHeader, buildTableStyle, addDocFooter, pdfMoney, COLORS, TYPE } = await import('@/lib/pdfUtils')
   const toRgb = (hex?: string): [number, number, number] => {
     const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex ?? '')
     if (!m) return [249, 115, 22]
@@ -63,10 +63,10 @@ async function exportProductsPDF(products: Product[], org?: Organisation | null)
       const sell = parseFloat(p.selling_price) || 0
       return [
         p.sku ?? '—', p.name, (p as any).product_type ?? 'physical',
-        `NGN ${cost.toLocaleString('en-NG', { minimumFractionDigits: 2 })}`,
-        `NGN ${sell.toLocaleString('en-NG', { minimumFractionDigits: 2 })}`,
+        pdfMoney(cost),
+        pdfMoney(sell),
         (p as any).wholesale_price && parseFloat((p as any).wholesale_price) > 0
-          ? `NGN ${parseFloat((p as any).wholesale_price).toLocaleString('en-NG', { minimumFractionDigits: 2 })}` : '—',
+          ? pdfMoney(parseFloat((p as any).wholesale_price)) : '—',
         p.total_stock ?? 0,
       ]
     }),
@@ -142,7 +142,7 @@ interface SalesHistoryItem {
 
 async function exportHistoryPDF(items: SalesHistoryItem[], product: Product, org?: Organisation | null) {
   const { saveBlobFile } = await import('@/lib/saveBlobFile')
-  const { applyDocHeader, buildTableStyle, addDocFooter, COLORS, TYPE } = await import('@/lib/pdfUtils')
+  const { applyDocHeader, buildTableStyle, addDocFooter, pdfMoney, pdfQty, COLORS, TYPE } = await import('@/lib/pdfUtils')
   const hexToRgb = (hex?: string): [number,number,number] => {
     const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex ?? '')
     if (!m) return [249, 115, 22]; return [parseInt(m[1],16), parseInt(m[2],16), parseInt(m[3],16)]
@@ -210,9 +210,9 @@ async function exportHistoryPDF(items: SalesHistoryItem[], product: Product, org
       i.sold_by,
       i.warehouse,
       i.payment_method.replace('_', ' '),
-      i.quantity,
-      formatCurrency(i.unit_price),
-      formatCurrency(i.line_total),
+      pdfQty(i.quantity),
+      pdfMoney(i.unit_price),
+      pdfMoney(i.line_total),
       i.status,
     ]),
     styles: { ...ts.styles, fontSize: 7.5 },
