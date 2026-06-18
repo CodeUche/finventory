@@ -160,7 +160,6 @@ export default function NewSalePage() {
   const [applyCredit, setApplyCredit] = useState(false)
   const [notes, setNotes] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  const [deferFulfillment, setDeferFulfillment] = useState(false)
 
   const customerStoreCredit = parseFloat(selectedCustomer?.store_credit ?? '0')
   const creditApplied = applyCredit && customerStoreCredit > 0
@@ -192,7 +191,6 @@ export default function NewSalePage() {
       notes,
       sold_by: currentUserName,
       is_proforma: isProforma,
-      ...(deferFulfillment ? { defer_fulfillment: true } : {}),
       items: cart.map((c) => ({
         product_id: c.product.id,
         quantity: c.quantity,
@@ -252,31 +250,6 @@ export default function NewSalePage() {
           <h1 className="text-2xl font-bold text-white">New Sale</h1>
           <p className="text-slate-400 text-sm">POS — add products and record payment</p>
         </div>
-      </div>
-
-      {/* Defer fulfillment toggle */}
-      <div className="card p-4">
-        <label className="flex items-start gap-3 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={deferFulfillment}
-            onChange={(e) => setDeferFulfillment(e.target.checked)}
-            className="mt-0.5 accent-amber-500"
-          />
-          <div>
-            <p className="text-sm font-medium text-amber-300">
-              Create invoice without stock check (bill now, fulfill later)
-            </p>
-            <p className="text-xs text-slate-400 mt-0.5">
-              Use this when invoicing before goods are confirmed available — you'll mark it fulfilled once ready to ship.
-            </p>
-            {deferFulfillment && (
-              <span className="inline-flex items-center gap-1 mt-2 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide bg-amber-500/20 text-amber-300">
-                Pending Fulfillment
-              </span>
-            )}
-          </div>
-        </label>
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_380px] gap-6">

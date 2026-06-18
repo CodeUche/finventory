@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
-import { Plus, Receipt, Search, X, Loader2, CheckCircle, Ban, FileDown, Mail, MessageCircle, RotateCcw, Truck, Pencil, Trash2, CalendarClock, RefreshCw, PackageCheck, AlertTriangle } from 'lucide-react'
+import { Plus, Receipt, Search, X, Loader2, CheckCircle, Ban, FileDown, Mail, MessageCircle, RotateCcw, Truck, Pencil, Trash2, CalendarClock, RefreshCw, PackageCheck, AlertTriangle, FileText } from 'lucide-react'
 import SortSelect from '@/components/SortSelect'
 import YearFilter, { yearToDateParams } from '@/components/YearFilter'
 import MonthFilter, { monthToDateParams, type ArchiveMonth } from '@/components/MonthFilter'
@@ -920,6 +920,9 @@ export default function SalesPage() {
           <button onClick={() => { bypassNextGets(); load() }} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
           </button>
+          <Link to="/sales/invoices/new" className="btn-ghost border border-surface-600">
+            <FileText size={16} /> New Invoice
+          </Link>
           <Link to="/sales/new" className="btn-primary">
             <Plus size={16} /> New Sale
           </Link>
