@@ -29,6 +29,9 @@ class RecordCreditPaymentSerializer(serializers.Serializer):
     # Optional: when provided, also creates a matching SalePayment on the invoice
     invoice = serializers.UUIDField(required=False, allow_null=True)
 
+    # Optional manual override — if blank, the view auto-generates one
+    payment_number = serializers.CharField(required=False, default="", allow_blank=True)
+
     # Payment receipt detail (only meaningful when invoice is provided)
     payment_mode = serializers.ChoiceField(
         choices=CreditTransaction.PaymentMode.choices, required=False, default="", allow_blank=True

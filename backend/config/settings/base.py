@@ -35,6 +35,12 @@ ALLOWED_HOSTS: list[str] = config("ALLOWED_HOSTS", default="localhost,127.0.0.1"
 PAYSTACK_SECRET_KEY = config("PAYSTACK_SECRET_KEY", default="")
 PAYSTACK_PUBLIC_KEY = config("PAYSTACK_PUBLIC_KEY", default="")
 
+# Flutterwave secret key — used as an automatic fallback for NUBAN account name
+# resolution whenever Paystack's resolver fails or is unavailable (e.g. Paystack
+# test-mode/KYC restrictions blocking live bank resolution for some accounts).
+# Get yours at https://dashboard.flutterwave.com/settings/apis
+FLUTTERWAVE_SECRET_KEY = config("FLUTTERWAVE_SECRET_KEY", default="")
+
 # Frontend base URL (kept for reference; verify-email now uses backend URL directly)
 FRONTEND_URL = config("FRONTEND_URL", default="http://localhost:3000")
 # Backend public URL — used to build email verification links for desktop app

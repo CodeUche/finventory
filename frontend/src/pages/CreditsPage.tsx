@@ -42,6 +42,7 @@ const EMPTY_PAY_FORM = {
   payment_mode: '' as CreditPaymentMode | '',
   bank_name: '',
   account_name: '',
+  payment_number: '',
   debit_account_id: '',
   credit_account_id: '',
   location_id: '',
@@ -178,6 +179,7 @@ export default function CreditsPage() {
         bank_code: bankCode || undefined,
         account_number: accountNumber || undefined,
         account_name: resolvedAccountName || payForm.account_name || undefined,
+        payment_number: payForm.payment_number || undefined,
         debit_account_id: payForm.debit_account_id || undefined,
         credit_account_id: payForm.credit_account_id || undefined,
         location_id: payForm.location_id || undefined,
@@ -455,10 +457,15 @@ export default function CreditsPage() {
                 </div>
               </div>
 
-              {/* Payment number (auto-generated) */}
+              {/* Payment number — auto-generated if left blank, but manually editable */}
               <div>
                 <label className="label">Payment Number</label>
-                <input className="input text-slate-500" disabled placeholder="(auto-generated)" value="" />
+                <input
+                  className="input"
+                  placeholder="Leave blank to auto-generate"
+                  value={payForm.payment_number}
+                  onChange={(e) => setPayForm({ ...payForm, payment_number: e.target.value })}
+                />
               </div>
 
               {/* Location/Warehouse */}

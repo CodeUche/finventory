@@ -60,34 +60,25 @@ class EmployeeViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
 
     @action(detail=False, methods=["post"])
     def resolve_account(self, request):
-        """POST /api/v1/payroll/employees/resolve_account/ — Resolve NUBAN account name via Paystack."""
+        """POST /api/v1/payroll/employees/resolve_account/ — Resolve NUBAN account name.
+
+        Tries Paystack then automatically falls back to Flutterwave (see
+        apps.core.bank_resolve) so resolution doesn't depend on a single
+        provider's account status.
+        """
+        from apps.core.bank_resolve import BankResolveError, resolve_account_name
+
         account_number = request.data.get("account_number", "").strip()
         bank_code = request.data.get("bank_code", "").strip()
 
         if not account_number or not bank_code:
             return Response({"error": "account_number and bank_code are required"}, status=400)
 
-        secret_key = getattr(django_settings, "PAYSTACK_SECRET_KEY", "")
-        if not secret_key:
-            return Response(
-                {"error": "Account resolution is not configured. Add PAYSTACK_SECRET_KEY to your .env file."},
-                status=503,
-            )
-
         try:
-            params = urllib.parse.urlencode({"account_number": account_number, "bank_code": bank_code})
-            url = f"https://api.paystack.co/bank/resolve?{params}"
-            req = urllib.request.Request(url, headers={"Authorization": f"Bearer {secret_key}"})
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                data = _json.loads(resp.read())
-            return Response({"account_name": data["data"]["account_name"]})
-        except urllib.error.HTTPError:
-            return Response(
-                {"error": "Could not resolve account. Verify the account number and bank."},
-                status=400,
-            )
-        except Exception:
-            return Response({"error": "Account resolution service is currently unavailable."}, status=503)
+            account_name = resolve_account_name(account_number, bank_code)
+        except BankResolveError as exc:
+            return Response({"error": str(exc)}, status=400)
+        return Response({"account_name": account_name})
 
 
 class EmployeeDocumentViewSet(TenantFilterMixin, viewsets.ModelViewSet):

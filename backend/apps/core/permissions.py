@@ -68,6 +68,11 @@ class IsTenantMember(BasePermission):
 class IsOwnerOrAdmin(BasePermission):
     def has_permission(self, request, view):
         if request.user and request.user.is_superuser:
+            # Still resolve+attach the org so request.organisation is populated
+            # for any view/action that reads it directly instead of going
+            # through TenantFilterMixin.get_queryset(). Without this, superuser
+            # requests pass permission with request.organisation left as None.
+            _get_or_resolve_org(request)
             return True
         org = _get_or_resolve_org(request)
         return bool(org and has_minimum_role(request.user, org, "admin"))
@@ -76,6 +81,7 @@ class IsOwnerOrAdmin(BasePermission):
 class IsManager(BasePermission):
     def has_permission(self, request, view):
         if request.user and request.user.is_superuser:
+            _get_or_resolve_org(request)
             return True
         org = _get_or_resolve_org(request)
         return bool(org and has_minimum_role(request.user, org, "manager"))
@@ -84,6 +90,7 @@ class IsManager(BasePermission):
 class IsAccountant(BasePermission):
     def has_permission(self, request, view):
         if request.user and request.user.is_superuser:
+            _get_or_resolve_org(request)
             return True
         org = _get_or_resolve_org(request)
         return bool(org and has_minimum_role(request.user, org, "accountant"))
@@ -92,6 +99,7 @@ class IsAccountant(BasePermission):
 class IsStaff(BasePermission):
     def has_permission(self, request, view):
         if request.user and request.user.is_superuser:
+            _get_or_resolve_org(request)
             return True
         org = _get_or_resolve_org(request)
         return bool(org and has_minimum_role(request.user, org, "staff"))
@@ -122,6 +130,7 @@ class IsManagerOrSuperuser(BasePermission):
         if not request.user or not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
+            _get_or_resolve_org(request)
             return True
         org = _get_or_resolve_org(request)
         return bool(org and has_minimum_role(request.user, org, 'manager'))
@@ -163,6 +172,7 @@ def plan_requires(module_key: str):
 
         def has_permission(self, request, view):
             if request.user and request.user.is_superuser:
+                _get_or_resolve_org(request)
                 return True
             org = _get_or_resolve_org(request)
             if not org:
@@ -211,6 +221,7 @@ class SubscriptionActive(BasePermission):
             return True
         # Superusers bypass
         if request.user and request.user.is_superuser:
+            _get_or_resolve_org(request)
             return True
         org = _get_or_resolve_org(request)
         if org is None:
@@ -239,6 +250,7 @@ class PlanMemberLimitActive(BasePermission):
         if not request.user or not request.user.is_authenticated:
             return True  # Let auth classes handle unauthenticated requests
         if request.user.is_superuser:
+            _get_or_resolve_org(request)
             return True
         org = _get_or_resolve_org(request)
         if org is None:

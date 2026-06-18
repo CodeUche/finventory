@@ -56,7 +56,7 @@ class CreditTransactionViewSet(TenantFilterMixin, viewsets.ReadOnlyModelViewSet)
                 except Invoice.DoesNotExist:
                     return Response({"error": "Invoice not found."}, status=404)
 
-                payment_number = CreditTransaction.generate_payment_number(request.organisation)
+                payment_number = d.get("payment_number") or CreditTransaction.generate_payment_number(request.organisation)
                 payment_mode = d.get("payment_mode") or CreditTransaction.PaymentMode.CREDIT_APPLIED
                 # SalePayment.Method has no "other" choice — map it to the closest
                 # valid value so the FK side stays within its declared choices.
@@ -150,6 +150,39 @@ class CreditTransactionViewSet(TenantFilterMixin, viewsets.ReadOnlyModelViewSet)
                     description=d.get("description", ""),
                     due_date=d.get("due_date"),
                 )
+
+                txn.payment_number = d.get("payment_number") or CreditTransaction.generate_payment_number(request.organisation)
+                txn.payment_mode = d.get("payment_mode", "")
+                txn.bank_name = d.get("bank_name", "")
+                txn.bank_code = d.get("bank_code", "")
+                txn.account_number = d.get("account_number", "")
+                txn.account_name = d.get("account_name", "")
+                update_fields = [
+                    "payment_number", "payment_mode", "bank_name",
+                    "bank_code", "account_number", "account_name",
+                ]
+
+                debit_account_id = d.get("debit_account_id")
+                credit_account_id = d.get("credit_account_id")
+                if debit_account_id and credit_account_id:
+                    from apps.accounting.models import Account
+                    try:
+                        txn.debit_account = Account.objects.get(id=debit_account_id, organisation=request.organisation)
+                        txn.credit_account = Account.objects.get(id=credit_account_id, organisation=request.organisation)
+                        update_fields += ["debit_account", "credit_account"]
+                    except Account.DoesNotExist:
+                        logger.warning("record_payment: debit/credit account not found for org %s", request.organisation_id)
+
+                location_id = d.get("location_id")
+                if location_id:
+                    from apps.inventory.models import Warehouse
+                    try:
+                        txn.location = Warehouse.objects.get(id=location_id, organisation=request.organisation)
+                        update_fields.append("location")
+                    except Warehouse.DoesNotExist:
+                        logger.warning("record_payment: location not found for org %s", request.organisation_id)
+
+                txn.save(update_fields=update_fields)
 
         return Response(CreditTransactionSerializer(txn).data, status=201)
 

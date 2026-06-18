@@ -610,20 +610,20 @@ class OrganisationViewSet(viewsets.ModelViewSet):
         """
         GET /organisations/resolve_bank_account/?account_number=0123456789&bank_code=057
 
-        Proxies to Paystack's bank-account name resolution API.
+        Resolves a NUBAN account name, trying Paystack first and automatically
+        falling back to Flutterwave if Paystack fails or isn't configured —
+        see apps.core.bank_resolve for why a single provider isn't reliable
+        enough to depend on (KYC/live-mode restrictions, rate limits, etc.).
 
         Security controls:
-          - BankResolveRateThrottle: 20 calls/min per user (guards Paystack quota).
+          - BankResolveRateThrottle: 20 calls/min per user (guards provider quota).
           - Strict regex validation on account_number (exactly 10 digits — CBN NUBAN)
             and bank_code (3–6 digits — CBN assigned codes). This prevents SSRF /
-            parameter-injection attacks against the Paystack upstream.
-          - Paystack API key is never returned to the client; only the resolved
-            account name/status from Paystack's response is forwarded.
+            parameter-injection attacks against the upstream providers.
+          - Provider API keys are never returned to the client; only the resolved
+            account name is forwarded.
         """
-        import json as _json
-        import urllib.error
-        import urllib.request
-        from django.conf import settings
+        from apps.core.bank_resolve import BankResolveError, resolve_account_name
 
         account_number = request.query_params.get("account_number", "").strip()
         bank_code = request.query_params.get("bank_code", "").strip()
@@ -645,40 +645,17 @@ class OrganisationViewSet(viewsets.ModelViewSet):
                 status=400,
             )
 
-        paystack_key = getattr(settings, "PAYSTACK_SECRET_KEY", "").strip()
-        logger.debug("Paystack key prefix: %s*** len=%d", paystack_key[:8], len(paystack_key))
-        if not paystack_key:
-            return Response(
-                {"error": {"message": "Paystack API key not configured on server."}},
-                status=503,
-            )
-
-        # Build URL using validated, regex-matched values only (no raw user input
-        # injected into the URL string beyond the validated parts).
-        url = (
-            f"https://api.paystack.co/bank/resolve"
-            f"?account_number={account_number}&bank_code={bank_code}"
-        )
-        req = urllib.request.Request(
-            url,
-            headers={"Authorization": f"Bearer {paystack_key}"},
-        )
         try:
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                body = _json.loads(resp.read().decode())
-            return Response(body)
-        except urllib.error.HTTPError as e:
-            body = {}
-            try:
-                body = _json.loads(e.read().decode())
-            except Exception:
-                pass
-            msg = body.get("message") or f"Paystack returned HTTP {e.code}"
-            logger.warning("Paystack bank resolve HTTP %s: %s", e.code, msg)
-            return Response({"error": {"message": msg}}, status=502)
-        except Exception as e:
-            logger.warning("Paystack bank resolve error: %s", e)
-            return Response({"error": {"message": "Bank account lookup failed. Please try again."}}, status=502)
+            account_name = resolve_account_name(account_number, bank_code)
+        except BankResolveError as exc:
+            logger.warning("Bank resolve failed for %s/%s: %s", bank_code, account_number, exc)
+            return Response({"error": {"message": str(exc)}}, status=502)
+
+        return Response({
+            "status": True,
+            "message": "Account resolved",
+            "data": {"account_number": account_number, "account_name": account_name},
+        })
 
 
     # ── Partner Consent: Org-Owner Side ────────────────────────────────────────
