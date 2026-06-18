@@ -27,9 +27,18 @@ RUN groupadd -r finventory && useradd -r -g finventory finventory
 
 WORKDIR /app
 
-# Runtime system deps only
+# Runtime system deps: libpq5 for psycopg2, plus postgresql-client-18 (matching
+# the Railway Postgres server's major version) so the db-backup-cron service's
+# `pg_dump` command exists in PATH — pg_dump must match the server's major
+# version or dumps can fail/be incomplete.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq5 \
+    libpq5 curl ca-certificates gnupg lsb-release \
+    && install -d /usr/share/postgresql-common/pgdg \
+    && curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc --fail https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+    && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends postgresql-client-18 \
+    && apt-get purge -y --auto-remove curl gnupg lsb-release \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy installed packages from builder
