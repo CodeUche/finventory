@@ -814,7 +814,15 @@ export async function tauriFetch(url: string): Promise<Response> {
 export async function urlToDataUrl(url: string | null | undefined): Promise<string | null> {
   if (!url) return null
   try {
-    const res = await tauriFetch(url)
+    // Backend-relative paths (e.g. "/media/org_logos/...") resolve against
+    // the Tauri webview's own origin (tauri://localhost), not the API host —
+    // make them absolute against the API's origin first.
+    let resolved = url
+    if (/^\/(?!\/)/.test(url)) {
+      const apiOrigin = new URL(API_BASE, window.location.href).origin
+      resolved = apiOrigin + url
+    }
+    const res = await tauriFetch(resolved)
     if (!res.ok) return null          // 404/403/etc. → skip, don't convert error HTML
     const blob = await res.blob()
     return await new Promise<string>((resolve, reject) => {

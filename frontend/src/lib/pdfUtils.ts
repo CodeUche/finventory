@@ -375,7 +375,9 @@ export function buildTableStyle(
       lineWidth: 0.2,
       textColor: COLORS.DARK,
       valign: 'middle' as const,
-      overflow: 'ellipsize' as const,
+      // Wrap long content onto extra lines (row grows) instead of cutting
+      // it off — every exported document must show data in full.
+      overflow: 'linebreak' as const,
     },
     headStyles: {
       fillColor: BRAND,

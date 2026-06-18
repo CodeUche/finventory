@@ -10,9 +10,17 @@ let _activeCurrency = 'NGN'
 export function setActiveCurrency(c: string) { _activeCurrency = c }
 export function getActiveCurrency() { return _activeCurrency }
 
+// Intl's 'en' locale lacks narrow-symbol data for several currencies (NGN
+// notably renders as the literal code "NGN" instead of "₦") — hardcode the
+// symbols we actually need and only fall back to Intl for anything else.
+const CURRENCY_SYMBOLS: Record<string, string> = {
+  NGN: '₦', USD: '$', GBP: '£', EUR: '€', GHS: '₵', KES: 'KSh', ZAR: 'R', XOF: 'CFA',
+}
+
 /** Extract just the currency symbol (e.g. '₦', '$', '£') for the active or given currency. */
 export function getCurrencySymbol(currency?: string): string {
   const cur = currency ?? _activeCurrency
+  if (CURRENCY_SYMBOLS[cur]) return CURRENCY_SYMBOLS[cur]
   try {
     // Format 0, then strip digits, commas, spaces, dots — what's left is the symbol
     const formatted = new Intl.NumberFormat('en', {
@@ -28,16 +36,10 @@ export function formatCurrency(value: string | number, currency?: string): strin
   const cur = currency ?? _activeCurrency
   const num = typeof value === 'string' ? parseFloat(value) : value
   if (isNaN(num)) return `${getCurrencySymbol(cur)}0.00`
-  try {
-    return new Intl.NumberFormat('en', {
-      style: 'currency',
-      currency: cur,
-      minimumFractionDigits: 2,
-    }).format(num)
-  } catch {
-    // Fallback if currency code is invalid
-    return `${cur} ${num.toFixed(2)}`
-  }
+  const symbol = getCurrencySymbol(cur)
+  const sign = num < 0 ? '-' : ''
+  const formattedNum = new Intl.NumberFormat('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Math.abs(num))
+  return `${sign}${symbol}${formattedNum}`
 }
 
 export function formatNumber(value: string | number): string {
