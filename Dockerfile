@@ -65,12 +65,19 @@ EXPOSE 8000
 # Railway's "Start Command" setting — no `cd` needed since WORKDIR
 # is already /app/backend.
 # Use shell form (string) so Railway can also override with env vars.
-CMD python manage.py migrate --no-input && \
-    python manage.py collectstatic --no-input --clear 2>/dev/null; \
+#
+# Migrations run via migrate.py (not `manage.py migrate` directly) because
+# the app's runtime DB user (audity_app, set via APP_DATABASE_URL) lacks DDL
+# privileges on PostgreSQL 15+ — migrate.py temporarily swaps in the
+# superuser credentials from DATABASE_URL for the migration step only.
+# The `&&` before gunicorn is intentional: if migrations fail, the container
+# must exit rather than serve traffic against a stale/mismatched schema.
+CMD python migrate.py && \
+    (python manage.py collectstatic --no-input --clear 2>/dev/null || true) && \
     if [ -n "$DJANGO_SUPERUSER_EMAIL" ] && [ -n "$DJANGO_SUPERUSER_PASSWORD" ]; then \
       python manage.py createsuperuser --no-input \
         --email "$DJANGO_SUPERUSER_EMAIL" 2>/dev/null || true; \
-    fi; \
+    fi && \
     gunicorn config.wsgi:application --bind "0.0.0.0:${PORT:-8000}" \
     --workers 2 --worker-class sync \
     --worker-tmp-dir /dev/shm \
