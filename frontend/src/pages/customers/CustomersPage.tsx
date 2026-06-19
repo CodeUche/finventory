@@ -5,6 +5,7 @@ import { Plus, Search, Users, X, Pencil, Loader2, FileText, RefreshCw, Download,
 import toast from 'react-hot-toast'
 import { customerApi, urlToDataUrl, bypassNextGets } from '@/services/api'
 import ExportButton from '@/components/ExportButton'
+import SortSelect from '@/components/SortSelect'
 import { formatCurrency, formatDate, getStatusColor } from '@/lib/utils'
 import AmountInput from '@/components/AmountInput'
 import DateInput from '@/components/DateInput'
@@ -75,6 +76,8 @@ export default function CustomersPage() {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState('')
+  const [sortBy, setSortBy] = useState('name')
+  const [outstandingOnly, setOutstandingOnly] = useState(false)
 
   const [showModal, setShowModal] = useState(false)
   const [form, setForm] = useState<NewCustomerForm>(BLANK)
@@ -103,13 +106,18 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
   const load = async () => {
     setLoading(true)
     try {
-      const { data } = await customerApi.list({ search, customer_type: typeFilter || undefined })
+      const { data } = await customerApi.list({
+        search,
+        customer_type: typeFilter || undefined,
+        ordering: sortBy,
+        has_outstanding: outstandingOnly || undefined,
+      })
       setCustomers(data.results ?? data)
     } catch { toast.error('Failed to load customers') }
     finally { setLoading(false) }
   }
 
-  useEffect(() => { load() }, [search, typeFilter])
+  useEffect(() => { load() }, [search, typeFilter, sortBy, outstandingOnly])
   useDataRefresh(load)
 
   // Deep-link from Dashboard Quick Actions: /customers?new=1 opens the New Customer modal.
@@ -458,6 +466,26 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
             <option key={t} value={t}>{t}</option>
           ))}
         </select>
+        <select
+          className="input max-w-xs"
+          value={outstandingOnly ? 'outstanding' : ''}
+          onChange={(e) => setOutstandingOnly(e.target.value === 'outstanding')}
+        >
+          <option value="">All customers</option>
+          <option value="outstanding">Outstanding balance only</option>
+        </select>
+        <SortSelect
+          value={sortBy}
+          onChange={setSortBy}
+          options={[
+            { label: 'Name A–Z', value: 'name' },
+            { label: 'Name Z–A', value: '-name' },
+            { label: 'Outstanding ↓', value: '-outstanding_balance' },
+            { label: 'Outstanding ↑', value: 'outstanding_balance' },
+            { label: 'Newest first', value: '-created_at' },
+            { label: 'Oldest first', value: 'created_at' },
+          ]}
+        />
       </div>
 
       {/* Table */}

@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react'
 import toast from 'react-hot-toast'
-import { billApi, inventoryApi, orgApi, payrollApi, purchaseApi, salesApi } from '@/services/api'
+import { billApi, customerApi, inventoryApi, orgApi, payrollApi, purchaseApi, salesApi } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
 
 export interface StockAlert {
@@ -56,6 +56,12 @@ export interface CustomerDueAlert {
   days_until_due: number
 }
 
+export interface CustomerOutstandingAlert {
+  id: string
+  customer_name: string
+  outstanding_balance: string
+}
+
 export interface PartnerRequestAlert {
   id: string
   partner_email: string
@@ -82,6 +88,7 @@ interface NotificationsCtx {
   billDueAlerts: BillDueAlert[]
   payrollPendingAlerts: PayrollPendingAlert[]
   customerDueAlerts: CustomerDueAlert[]
+  customerOutstandingAlerts: CustomerOutstandingAlert[]
   partnerRequestAlerts: PartnerRequestAlert[]
   etaAlerts: EtaAlert[]
   count: number
@@ -92,6 +99,7 @@ interface NotificationsCtx {
   dismissBillDue: (id: string) => void
   dismissPayrollPending: (id: string) => void
   dismissCustomerDue: (id: string) => void
+  dismissCustomerOutstanding: (id: string) => void
   dismissPartnerRequest: (id: string) => void
   dismissEta: (id: string) => void
   quickReceive: (id: string) => Promise<void>
@@ -105,6 +113,7 @@ const Ctx = createContext<NotificationsCtx>({
   billDueAlerts: [],
   payrollPendingAlerts: [],
   customerDueAlerts: [],
+  customerOutstandingAlerts: [],
   partnerRequestAlerts: [],
   etaAlerts: [],
   count: 0,
@@ -115,6 +124,7 @@ const Ctx = createContext<NotificationsCtx>({
   dismissBillDue: () => {},
   dismissPayrollPending: () => {},
   dismissCustomerDue: () => {},
+  dismissCustomerOutstanding: () => {},
   dismissPartnerRequest: () => {},
   dismissEta: () => {},
   quickReceive: async () => {},
@@ -143,6 +153,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
   const [billDueAlerts, setBillDueAlerts] = useState<BillDueAlert[]>([])
   const [payrollPendingAlerts, setPayrollPendingAlerts] = useState<PayrollPendingAlert[]>([])
   const [customerDueAlerts, setCustomerDueAlerts] = useState<CustomerDueAlert[]>([])
+  const [customerOutstandingAlerts, setCustomerOutstandingAlerts] = useState<CustomerOutstandingAlert[]>([])
   const [partnerRequestAlerts, setPartnerRequestAlerts] = useState<PartnerRequestAlert[]>([])
   const [etaAlerts, setEtaAlerts] = useState<EtaAlert[]>([])
   const prevIdsRef    = useRef<Set<string>>(new Set())
@@ -156,7 +167,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
   const poll = useCallback(async () => {
     if (!isAuthenticated || !organisationId) return
     try {
-      const [stockData, overdueData, batchData, billDueData, payrollData, customerDueData, etaData] = await Promise.allSettled([
+      const [stockData, overdueData, batchData, billDueData, payrollData, customerDueData, etaData, customerOutstandingData] = await Promise.allSettled([
         inventoryApi.lowStock({ page_size: 20 }),
         salesApi.invoices({ status: 'overdue', page_size: 10 }),
         inventoryApi.batches({ page_size: 30 }),
@@ -165,6 +176,8 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
         // Invoices on credit / partially paid due within the next 7 days
         salesApi.invoices({ due_date_from: today, due_date_to: in7Days, page_size: 10 }),
         purchaseApi.etaAlerts(),
+        // Customers with any outstanding balance yet to pay (account-level, not tied to a single invoice's due date)
+        customerApi.list({ has_outstanding: true, ordering: '-outstanding_balance', page_size: 15 }),
       ])
 
       if (stockData.status === 'fulfilled') {
@@ -315,6 +328,19 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
         setCustomerDueAlerts(due)
       }
 
+      // Customers with an outstanding balance yet to pay (account-level)
+      if (customerOutstandingData.status === 'fulfilled') {
+        const custs = customerOutstandingData.value.data.results ?? customerOutstandingData.value.data
+        const outstanding: CustomerOutstandingAlert[] = (custs as any[])
+          .filter((c: any) => !dismissedRef.current.has(`co-${c.id}`))
+          .map((c: any) => ({
+            id: `co-${c.id}`,
+            customer_name: c.name,
+            outstanding_balance: c.outstanding_balance,
+          }))
+        setCustomerOutstandingAlerts(outstanding)
+      }
+
       // PO ETA alerts — arriving tomorrow, due today, overdue
       if (etaData.status === 'fulfilled') {
         const raw = etaData.value.data
@@ -349,6 +375,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     setBillDueAlerts([])
     setPayrollPendingAlerts([])
     setCustomerDueAlerts([])
+    setCustomerOutstandingAlerts([])
     setPartnerRequestAlerts([])
     setEtaAlerts([])
     prevIdsRef.current = new Set()
@@ -400,6 +427,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     setBillDueAlerts((prev) => { prev.forEach((a) => addDismissed(a.id)); return [] })
     setPayrollPendingAlerts((prev) => { prev.forEach((a) => addDismissed(a.id)); return [] })
     setCustomerDueAlerts((prev) => { prev.forEach((a) => addDismissed(a.id)); return [] })
+    setCustomerOutstandingAlerts((prev) => { prev.forEach((a) => addDismissed(a.id)); return [] })
     setPartnerRequestAlerts((prev) => { prev.forEach((a) => addDismissed(a.id)); return [] })
     setEtaAlerts((prev) => { prev.forEach((a) => addDismissed(a.id)); return [] })
     prevIdsRef.current = new Set()
@@ -428,6 +456,11 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
   const dismissCustomerDue = useCallback((id: string) => {
     addDismissed(id)
     setCustomerDueAlerts((prev) => prev.filter((a) => a.id !== id))
+  }, [addDismissed])
+
+  const dismissCustomerOutstanding = useCallback((id: string) => {
+    addDismissed(id)
+    setCustomerOutstandingAlerts((prev) => prev.filter((a) => a.id !== id))
   }, [addDismissed])
 
   const dismissPartnerRequest = useCallback((id: string) => {
@@ -459,14 +492,14 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
   const count =
     alerts.length + overdueAlerts.length + expiryAlerts.length +
     billDueAlerts.length + payrollPendingAlerts.length + customerDueAlerts.length +
-    partnerRequestAlerts.length + etaAlerts.length
+    customerOutstandingAlerts.length + partnerRequestAlerts.length + etaAlerts.length
 
   return (
     <Ctx.Provider value={{
       alerts, overdueAlerts, expiryAlerts, billDueAlerts, payrollPendingAlerts,
-      customerDueAlerts, partnerRequestAlerts, etaAlerts,
+      customerDueAlerts, customerOutstandingAlerts, partnerRequestAlerts, etaAlerts,
       count, dismiss, dismissAll, dismissOverdue, dismissExpiry,
-      dismissBillDue, dismissPayrollPending, dismissCustomerDue, dismissPartnerRequest,
+      dismissBillDue, dismissPayrollPending, dismissCustomerDue, dismissCustomerOutstanding, dismissPartnerRequest,
       dismissEta, quickReceive, refetch,
     }}>
       {children}

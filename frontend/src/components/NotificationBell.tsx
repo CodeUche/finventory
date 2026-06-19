@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { Bell, X, Package, AlertCircle, CalendarClock, Receipt, Users, Clock, ShieldCheck, Truck, CheckCircle2, CheckCircle, XCircle } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import { useNotifications, EtaAlert } from '@/contexts/NotificationsContext'
+import { useNotifications, EtaAlert, CustomerOutstandingAlert } from '@/contexts/NotificationsContext'
 import { orgApi } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
 import { formatCurrency, formatDate } from '@/lib/utils'
@@ -11,9 +11,9 @@ import toast from 'react-hot-toast'
 export default function NotificationBell() {
   const {
     alerts, overdueAlerts, expiryAlerts, billDueAlerts, payrollPendingAlerts, customerDueAlerts,
-    partnerRequestAlerts, etaAlerts,
+    customerOutstandingAlerts, partnerRequestAlerts, etaAlerts,
     count, dismiss, dismissAll, dismissOverdue, dismissExpiry, dismissBillDue, dismissPayrollPending,
-    dismissCustomerDue, dismissPartnerRequest, dismissEta, quickReceive,
+    dismissCustomerDue, dismissCustomerOutstanding, dismissPartnerRequest, dismissEta, quickReceive,
   } = useNotifications()
   const [open, setOpen] = useState(false)
   const [receivingId, setReceivingId] = useState<string | null>(null)
@@ -169,6 +169,33 @@ export default function NotificationBell() {
                           </div>
                           <button
                             onClick={(e) => { e.stopPropagation(); dismissCustomerDue(inv.id) }}
+                            className="shrink-0 p-0.5 text-slate-600 hover:text-slate-400 transition-colors"
+                          >
+                            <X size={12} />
+                          </button>
+                        </div>
+                      ))}
+                    </>
+                  )}
+
+                  {/* Customers with an outstanding balance yet to pay */}
+                  {customerOutstandingAlerts.length > 0 && (
+                    <>
+                      {customerOutstandingAlerts.map((c: CustomerOutstandingAlert) => (
+                        <div
+                          key={c.id}
+                          className="flex items-start gap-3 px-4 py-3 border-b border-surface-700/60 hover:bg-surface-700/30 transition-colors cursor-pointer"
+                          onClick={() => go('/customers')}
+                        >
+                          <div className="w-7 h-7 rounded-lg bg-amber-500/10 flex items-center justify-center shrink-0 mt-0.5">
+                            <Users size={13} className="text-amber-400" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-medium text-white truncate">{c.customer_name}</p>
+                            <p className="text-xs text-slate-500">{formatCurrency(c.outstanding_balance)} outstanding</p>
+                          </div>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); dismissCustomerOutstanding(c.id) }}
                             className="shrink-0 p-0.5 text-slate-600 hover:text-slate-400 transition-colors"
                           >
                             <X size={12} />

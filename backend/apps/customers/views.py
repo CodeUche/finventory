@@ -18,6 +18,10 @@ class CustomerFilter(django_filters.FilterSet):
     name = django_filters.CharFilter(lookup_expr="icontains")
     customer_type = django_filters.ChoiceFilter(choices=Customer.CustomerType.choices)
     is_active = django_filters.BooleanFilter()
+    has_outstanding = django_filters.BooleanFilter(method="filter_has_outstanding")
+
+    def filter_has_outstanding(self, queryset, name, value):
+        return queryset.filter(outstanding_balance__gt=0) if value else queryset
 
     class Meta:
         model = Customer

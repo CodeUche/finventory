@@ -62,6 +62,7 @@ class Customer(TenantAwareModel):
     class Meta(TenantAwareModel.Meta):
         unique_together = [["organisation", "code"]]
         indexes = [models.Index(fields=["organisation", "name"])]
+        ordering = ["name"]
 
     def __str__(self):
         return f"{self.code} – {self.name}"
