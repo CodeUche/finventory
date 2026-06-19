@@ -147,9 +147,11 @@ class AuditLog(models.Model):
 
     CREATE = 'create'; UPDATE = 'update'; DELETE = 'delete'
     LOGIN = 'login'; LOGOUT = 'logout'; EXPORT = 'export'; OTHER = 'other'
+    SUPPORT_ACCESS = 'support_access'
     ACTION_CHOICES = [
         (CREATE, 'Create'), (UPDATE, 'Update'), (DELETE, 'Delete'),
         (LOGIN, 'Login'), (LOGOUT, 'Logout'), (EXPORT, 'Export'), (OTHER, 'Other'),
+        (SUPPORT_ACCESS, 'Support Access'),
     ]
 
     organisation_id = models.UUIDField(null=True, blank=True, db_index=True)

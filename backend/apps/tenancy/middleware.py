@@ -54,6 +54,7 @@ class TenantMiddleware:
     def __call__(self, request):
         request.organisation = None
         request._raw_org_id = None
+        request._cross_tenant_superuser_access = False
 
         if not self._is_exempt(request.path):
             # Capture org ID now; validate after DRF auth in the view layer
@@ -61,7 +62,17 @@ class TenantMiddleware:
             if org_id:
                 request._raw_org_id = org_id
 
-        return self.get_response(request)
+        response = self.get_response(request)
+
+        # Surface support-access (superuser viewing an org they don't belong
+        # to) so the frontend can show a "Support Access" banner — this is
+        # set deep inside resolve_organisation(), which runs during the
+        # view's permission check, long after this line would normally run;
+        # request is mutable, so the flag set there is visible here.
+        if getattr(request, "_cross_tenant_superuser_access", False):
+            response["X-Support-Access"] = "true"
+
+        return response
 
     def _is_exempt(self, path: str) -> bool:
         return any(path.startswith(p) for p in EXEMPT_PATHS)
@@ -134,8 +145,31 @@ def resolve_organisation(request):
 
         try:
             org = Organisation.objects.get(id=org_id, is_active=True)
-            # Superusers can access any organisation without a membership record.
+            # Superusers can access any organisation without a membership record
+            # (platform-admin support access). Every such access is audit-logged
+            # and flagged on the request so the response carries the
+            # X-Support-Access header, which the frontend uses to show a
+            # "Support Access" banner — this must never be silent.
             if request.user.is_superuser:
+                is_member = request.user.memberships.filter(
+                    organisation=org, is_active=True,
+                ).exists()
+                if not is_member:
+                    request._cross_tenant_superuser_access = True
+                    try:
+                        from apps.core.models import AuditLog
+                        AuditLog.log(
+                            action=AuditLog.SUPPORT_ACCESS,
+                            user=request.user,
+                            organisation=org,
+                            model_name='Organisation',
+                            object_id=str(org.id),
+                            object_repr=org.name,
+                            request=request,
+                            is_owner_action=True,
+                        )
+                    except Exception:
+                        logger.exception("Failed to audit-log support access for org %s", org.id)
                 request.organisation = org
                 _sync_rls(org)
                 return org

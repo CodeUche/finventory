@@ -559,7 +559,14 @@ type ExtConfig = InternalAxiosRequestConfig & { _fromCache?: boolean; _dedupeKey
 api.interceptors.response.use(
   (res) => {
     const cfg = res.config as ExtConfig
+
     if (!cfg._fromCache) {
+      // Backend flags any superuser request resolved against an org the user
+      // isn't a member of (platform-admin "support access"). Surface it so
+      // the UI shows a persistent banner — this must never be silent. Cached
+      // responses are skipped (the outer guard) since they're fabricated
+      // locally and never carry real headers.
+      useAuthStore.getState().setSupportAccess(res.headers?.['x-support-access'] === 'true')
       const method = cfg.method?.toLowerCase() ?? ''
       const url = cfg.url ?? ''
 

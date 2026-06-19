@@ -46,6 +46,9 @@ interface AuthState {
   planName: string | null
   // Whether the current subscription is expired
   subscriptionExpired: boolean
+  // True when the backend flagged this request as a superuser viewing an org
+  // they aren't a member of — never persisted, recomputed from live responses.
+  supportAccess: boolean
   // Persisted base-64 data URLs for logo, stamp, and avatar — set when user uploads in Settings.
   // Avoids re-fetching from the server (which may be ephemeral on Railway without S3).
   logoDataUrl: string | null
@@ -65,6 +68,7 @@ interface AuthState {
   setPlanTaxEngine: (engine: string | null) => void
   setPlanName: (name: string | null) => void
   setSubscriptionExpired: (expired: boolean) => void
+  setSupportAccess: (active: boolean) => void
   setLogoDataUrl: (url: string | null) => void
   setStampDataUrl: (url: string | null) => void
   setAvatarDataUrl: (url: string | null) => void
@@ -93,12 +97,14 @@ export const useAuthStore = create<AuthState>()(
       logoDataUrl: null,
       stampDataUrl: null,
       avatarDataUrl: null,
+      supportAccess: false,
 
       setRememberMe: (val) => {
         if (val) localStorage.setItem(REMEMBER_FLAG_KEY, 'true')
         else localStorage.removeItem(REMEMBER_FLAG_KEY)
         set({ rememberMe: val })
       },
+      setSupportAccess: (active) => set((s) => s.supportAccess === active ? s : { supportAccess: active }),
 
       // Atomic login commit: sets user, tokens, isAuthenticated, org, and
       // orgInitialized all in one set() call.  Zustand notifies subscribers
@@ -176,6 +182,7 @@ export const useAuthStore = create<AuthState>()(
           rememberMe: false, memberRole: null, modulePermissions: {}, planModules: null,
           planTaxEngine: null, planName: null, subscriptionExpired: false,
           logoDataUrl: null, stampDataUrl: null, avatarDataUrl: null,
+          supportAccess: false,
         })
       },
     }),

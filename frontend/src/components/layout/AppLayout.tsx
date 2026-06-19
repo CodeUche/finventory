@@ -8,7 +8,7 @@ import { useAuthStore } from '@/store/authStore'
 import { setActiveCurrency } from '@/lib/utils'
 import { useNetworkStatus } from '@/hooks/useNetworkStatus'
 import { api, orgApi, subscriptionApi } from '@/services/api'
-import { Briefcase, LogOut, WifiOff, CreditCard } from 'lucide-react'
+import { Briefcase, LogOut, WifiOff, CreditCard, Shield } from 'lucide-react'
 import { offlineCache, timeAgo } from '@/lib/offlineCache'
 import type { AccessLevel, ModuleKey, ModulePermission, Organisation } from '@/types'
 import SubscriptionPaywall from '@/components/SubscriptionPaywall'
@@ -60,6 +60,7 @@ export default function AppLayout() {
   const setPlanName = useAuthStore((s) => s.setPlanName)
   const setSubscriptionExpired = useAuthStore((s) => s.setSubscriptionExpired)
   const subscriptionExpired = useAuthStore((s) => s.subscriptionExpired)
+  const supportAccess = useAuthStore((s) => s.supportAccess)
   const user = useAuthStore((s) => s.user)
   const [subscriptionData, setSubscriptionData] = useState<any>(null)
   const [subscriptionBillingOnly, setSubscriptionBillingOnly] = useState(false)
@@ -215,6 +216,13 @@ export default function AppLayout() {
       {/* Main content */}
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         <TopBar onMenuClick={() => setSidebarOpen(true)} />
+        {/* Support access banner — superuser viewing an org they aren't a member of */}
+        {supportAccess && (
+          <div className="flex items-center justify-center gap-2 px-4 py-2 bg-red-600 text-white text-xs font-semibold">
+            <Shield size={13} className="shrink-0" />
+            Support Access — viewing "{organisation?.name ?? 'this organisation'}" as platform admin. This access is audit-logged.
+          </div>
+        )}
         {/* Offline banner */}
         {!online && (
           <div className="flex items-center gap-2 px-4 py-2 bg-amber-500/15 border-b border-amber-500/30 text-amber-400 text-xs font-medium">

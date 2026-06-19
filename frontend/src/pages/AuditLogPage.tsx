@@ -11,7 +11,7 @@ interface AuditEntry {
   id: string
   timestamp: string
   user_email: string
-  action: 'create' | 'update' | 'delete' | 'login' | 'logout' | 'export' | 'other'
+  action: 'create' | 'update' | 'delete' | 'login' | 'logout' | 'export' | 'other' | 'support_access'
   model: string
   object_id: string
   object_repr: string
@@ -32,6 +32,7 @@ const ACTION_CONFIG: Record<string, { label: string; dot: string; badge: string 
   logout:  { label: 'Logged out',dot:'bg-slate-400',   badge: 'badge-slate'  },
   export:  { label: 'Exported', dot: 'bg-amber-400',   badge: 'badge-orange' },
   other:   { label: 'Action',   dot: 'bg-slate-500',   badge: 'badge-slate'  },
+  support_access: { label: 'Support Access', dot: 'bg-red-500', badge: 'badge-red' },
 }
 
 const MODEL_LABELS: Record<string, string> = {
@@ -238,7 +239,7 @@ export default function AuditLogPage() {
 
         <select className="input w-36" value={actionFilter} onChange={(e) => setActionFilter(e.target.value)}>
           <option value="">All actions</option>
-          {(['create','update','delete','login','logout','export'] as const).map((a) => (
+          {(['create','update','delete','login','logout','export','support_access'] as const).map((a) => (
             <option key={a} value={a}>{ACTION_CONFIG[a].label}</option>
           ))}
         </select>
