@@ -54,7 +54,7 @@ const navGroups: { label: string | null; items: { name: string; href: string; ic
     ],
   },
   {
-    label: 'CRM',
+    label: 'CUSTOMER & PAYMENTS',
     items: [
       { name: 'Customers', href: '/customers', icon: Users, module: 'customers' },
       { name: 'Payment Information', href: '/credits', icon: CreditCard, module: 'customers' },

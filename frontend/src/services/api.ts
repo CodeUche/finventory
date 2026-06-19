@@ -1367,6 +1367,7 @@ export const auditLogApi = {
 export const platformAdminApi = {
   stats: () => api.get('/platform/stats/'),
   users: () => api.get('/platform/users/'),
+  setUserActive: (id: string, isActive: boolean) => api.patch(`/platform/users/${id}/`, { is_active: isActive }),
 }
 
 export const subscriptionApi = {

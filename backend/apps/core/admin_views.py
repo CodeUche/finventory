@@ -193,7 +193,7 @@ class PlatformUsersView(APIView):
 
         qs = (
             User.objects
-            .prefetch_related('memberships__organisation')
+            .prefetch_related('memberships__organisation__owner')
             .order_by('-created_at')
         )
 
@@ -212,7 +212,14 @@ class PlatformUsersView(APIView):
                 'is_active': u.is_active,
                 'is_verified': u.is_verified,
                 'created_at': u.created_at.isoformat(),
-                'orgs': [{'name': m.organisation.name, 'role': m.role} for m in memberships],
+                'orgs': [
+                    {
+                        'name': m.organisation.name,
+                        'role': m.role,
+                        'owner_email': m.organisation.owner.email if m.organisation.owner else None,
+                    }
+                    for m in memberships
+                ],
             })
 
         if page is not None:

@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Shield, Users, Building2, RefreshCw, Loader2, CheckCircle, XCircle, TrendingUp, BookOpen } from 'lucide-react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Shield, Users, Building2, RefreshCw, Loader2, CheckCircle, XCircle, TrendingUp, BookOpen, Ban, RotateCcw } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { platformAdminApi, orgApi, bypassNextGets } from '@/services/api'
 import { formatCurrency } from '@/lib/utils'
@@ -14,7 +14,7 @@ interface OrgRow {
 interface PlatformUser {
   id: string; email: string; first_name: string; last_name: string
   is_superuser: boolean; is_active: boolean; is_verified: boolean
-  created_at: string; orgs: { name: string; role: string }[]
+  created_at: string; orgs: { name: string; role: string; owner_email: string | null }[]
 }
 interface Stats {
   total_orgs: number; active_orgs: number; total_users: number
@@ -36,6 +36,7 @@ export default function PlatformAdminPage() {
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState<'overview' | 'orgs' | 'users'>('overview')
   const [reseedingOrg, setReseedingOrg] = useState<string | null>(null)
+  const [togglingUser, setTogglingUser] = useState<string | null>(null)
 
   // Guard: redirect non-superusers
   useEffect(() => {
@@ -78,6 +79,103 @@ export default function PlatformAdminPage() {
       setReseedingOrg(null)
     }
   }
+
+  const handleToggleActive = async (target: PlatformUser) => {
+    if (target.id === user?.id) { toast.error("You can't deactivate your own account."); return }
+    const nextActive = !target.is_active
+    const verb = nextActive ? 'reactivate' : 'deactivate'
+    if (!confirm(`${nextActive ? 'Reactivate' : 'Deactivate'} ${target.email}?${!nextActive && target.orgs.some(o => o.role === 'owner') ? '\n\nThis cascades to all sub-accounts in their organisation(s).' : ''}`)) return
+    setTogglingUser(target.id)
+    try {
+      await platformAdminApi.setUserActive(target.id, nextActive)
+      setUsers((prev) => prev.map((u) => u.id === target.id ? { ...u, is_active: nextActive } : u))
+      toast.success(`${target.email} ${verb}d.`)
+    } catch {
+      toast.error(`Failed to ${verb} user`)
+    } finally {
+      setTogglingUser(null)
+    }
+  }
+
+  // Group sub-accounts under their organisation's owner so admins can tell
+  // real (owner) accounts apart from staff/sub-accounts added by them.
+  const userGroups = useMemo(() => {
+    const byEmail = new Map(users.map((u) => [u.email, u]))
+    const ownedIds = new Set(
+      users.filter((u) => u.orgs.some((o) => o.role === 'owner')).map((u) => u.id),
+    )
+    const subsByOwnerId = new Map<string, PlatformUser[]>()
+    const orphans: PlatformUser[] = []
+    for (const u of users) {
+      if (ownedIds.has(u.id)) continue
+      const ownerEmail = u.orgs.find((o) => o.owner_email)?.owner_email
+      const owner = ownerEmail ? byEmail.get(ownerEmail) : undefined
+      if (owner && ownedIds.has(owner.id)) {
+        const list = subsByOwnerId.get(owner.id) ?? []
+        list.push(u)
+        subsByOwnerId.set(owner.id, list)
+      } else {
+        orphans.push(u)
+      }
+    }
+    const groups = users
+      .filter((u) => ownedIds.has(u.id))
+      .map((owner) => ({ owner, subs: subsByOwnerId.get(owner.id) ?? [] }))
+    return { groups, orphans }
+  }, [users])
+
+  const renderUserRow = (u: PlatformUser, isSubAccount = false) => (
+    <tr key={u.id} className="table-row">
+      <td className="px-4 py-3.5">
+        <div className={isSubAccount ? 'flex items-start gap-1.5 pl-5' : ''}>
+          {isSubAccount && <span className="text-slate-600 text-sm mt-0.5 shrink-0">↳</span>}
+          <div>
+            <p className={isSubAccount ? 'text-slate-300 font-medium text-sm' : 'text-white font-medium'}>{u.first_name} {u.last_name}</p>
+            <p className="text-xs text-slate-500">{u.email}</p>
+          </div>
+        </div>
+      </td>
+      <td className="px-4 py-3.5">
+        {u.is_superuser ? <span className="badge-orange">Superuser</span> : <span className="text-slate-600">—</span>}
+      </td>
+      <td className="px-4 py-3.5">
+        {u.is_verified ? <CheckCircle size={15} className="text-emerald-400" /> : <XCircle size={15} className="text-slate-600" />}
+      </td>
+      <td className="px-4 py-3.5">
+        {u.is_active ? <CheckCircle size={15} className="text-emerald-400" /> : <XCircle size={15} className="text-red-400" />}
+      </td>
+      <td className="px-4 py-3.5">
+        <div className="space-y-0.5">
+          {u.orgs.map((o, i) => (
+            <p key={i} className="text-xs text-slate-400">{o.name} <span className="badge-slate text-xs py-0">{o.role}</span></p>
+          ))}
+          {u.orgs.length === 0 && <span className="text-slate-600 text-xs">No orgs</span>}
+        </div>
+      </td>
+      <td className="px-4 py-3.5 text-slate-400 text-xs">{new Date(u.created_at).toLocaleDateString()}</td>
+      <td className="px-4 py-3.5">
+        {u.id === user?.id ? (
+          <span className="text-slate-600 text-xs">You</span>
+        ) : (
+          <button
+            onClick={() => handleToggleActive(u)}
+            disabled={togglingUser === u.id}
+            title={u.is_active ? 'Deactivate this user' : 'Reactivate this user'}
+            className={`flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg transition-colors disabled:opacity-50 ${
+              u.is_active
+                ? 'bg-red-500/10 hover:bg-red-500/20 text-red-400'
+                : 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400'
+            }`}
+          >
+            {togglingUser === u.id
+              ? <Loader2 size={11} className="animate-spin" />
+              : u.is_active ? <Ban size={11} /> : <RotateCcw size={11} />}
+            {u.is_active ? 'Deactivate' : 'Reactivate'}
+          </button>
+        )}
+      </td>
+    </tr>
+  )
 
   if (!user?.is_superuser) return null
 
@@ -237,38 +335,19 @@ export default function PlatformAdminPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-surface-700">
-                      {['User', 'Superuser', 'Verified', 'Active', 'Organisations', 'Joined'].map((h) => (
+                      {['User', 'Superuser', 'Verified', 'Active', 'Organisations', 'Joined', 'Actions'].map((h) => (
                         <th key={h} className="px-4 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {users.map((u) => (
-                      <tr key={u.id} className="table-row">
-                        <td className="px-4 py-3.5">
-                          <p className="text-white font-medium">{u.first_name} {u.last_name}</p>
-                          <p className="text-xs text-slate-500">{u.email}</p>
-                        </td>
-                        <td className="px-4 py-3.5">
-                          {u.is_superuser ? <span className="badge-orange">Superuser</span> : <span className="text-slate-600">—</span>}
-                        </td>
-                        <td className="px-4 py-3.5">
-                          {u.is_verified ? <CheckCircle size={15} className="text-emerald-400" /> : <XCircle size={15} className="text-slate-600" />}
-                        </td>
-                        <td className="px-4 py-3.5">
-                          {u.is_active ? <CheckCircle size={15} className="text-emerald-400" /> : <XCircle size={15} className="text-red-400" />}
-                        </td>
-                        <td className="px-4 py-3.5">
-                          <div className="space-y-0.5">
-                            {u.orgs.map((o, i) => (
-                              <p key={i} className="text-xs text-slate-400">{o.name} <span className="badge-slate text-xs py-0">{o.role}</span></p>
-                            ))}
-                            {u.orgs.length === 0 && <span className="text-slate-600 text-xs">No orgs</span>}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3.5 text-slate-400 text-xs">{new Date(u.created_at).toLocaleDateString()}</td>
-                      </tr>
+                    {userGroups.groups.map(({ owner, subs }) => (
+                      <Fragment key={owner.id}>
+                        {renderUserRow(owner)}
+                        {subs.map((s) => renderUserRow(s, true))}
+                      </Fragment>
                     ))}
+                    {userGroups.orphans.map((u) => renderUserRow(u))}
                   </tbody>
                 </table>
               </div>
