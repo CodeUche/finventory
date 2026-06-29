@@ -63,18 +63,24 @@ class AuditLogView(APIView):
         if date_to:
             qs = qs.filter(created_at__date__lte=date_to)
 
-        # Add user search filter
+        # Add user search filter (require 2+ chars to avoid full-table wildcard scans)
         user_search = request.query_params.get('user')
-        if user_search:
-            qs = qs.filter(user_email__icontains=user_search)
+        if user_search and len(user_search.strip()) >= 2:
+            qs = qs.filter(user_email__icontains=user_search.strip())
 
         # IP filter
         ip_search = request.query_params.get('ip')
-        if ip_search:
-            qs = qs.filter(ip_address__icontains=ip_search)
+        if ip_search and len(ip_search.strip()) >= 2:
+            qs = qs.filter(ip_address__icontains=ip_search.strip())
+
+        try:
+            limit = min(int(request.query_params.get('limit', 500)), 500)
+        except (TypeError, ValueError):
+            limit = 500
+        limit = max(limit, 1)
 
         data = []
-        for entry in qs[:500]:
+        for entry in qs[:limit]:
             changes = entry.changes or {}
             # Build a clean field-level diff list
             change_list = []

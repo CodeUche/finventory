@@ -46,6 +46,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.permissions import IsOwnerOrAdmin
+from apps.core.throttles import WebhookRateThrottle
 from apps.einvoicing.models import FirsConfig, FirsSubmission
 from apps.einvoicing.serializers import (
     FirsConfigSerializer,
@@ -70,6 +71,7 @@ class DigiTaxWebhookView(APIView):
     permission_classes = [AllowAny]
     # Disable DRF's CSRF enforcement (webhook callers can't send CSRF tokens)
     authentication_classes = []
+    throttle_classes = [WebhookRateThrottle]
 
     def post(self, request) -> Response:
         """

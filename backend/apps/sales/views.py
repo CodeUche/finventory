@@ -734,22 +734,19 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
         total_revenue = zero
         company_cogs = zero
         owner_cogs = zero
+        product_map: dict = {}
 
+        # Single pass over item_qs (was iterated twice) — halves DB/CPU cost
+        # for orgs with large sales volumes while keeping identical arithmetic.
         for item in item_qs:
-            total_revenue += item.line_total
-            company_cogs += item.cost_of_goods
             qty = item.quantity
             owner_price = item.product.owner_cost_price or zero
-            owner_cogs += qty * owner_price
+            item_owner_cogs = qty * owner_price
 
-        company_gross = total_revenue - company_cogs
-        owner_gross = total_revenue - owner_cogs
-        company_margin = (company_gross / total_revenue * 100) if total_revenue else zero
-        owner_margin = (owner_gross / total_revenue * 100) if total_revenue else zero
+            total_revenue += item.line_total
+            company_cogs += item.cost_of_goods
+            owner_cogs += item_owner_cogs
 
-        # Top products by owner profit
-        product_map: dict = {}
-        for item in item_qs:
             pid = str(item.product_id)
             if pid not in product_map:
                 product_map[pid] = {
@@ -760,7 +757,14 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
                 }
             product_map[pid]["revenue"] += item.line_total
             product_map[pid]["company_cogs"] += item.cost_of_goods
-            product_map[pid]["owner_cogs"] += item.quantity * (item.product.owner_cost_price or zero)
+            product_map[pid]["owner_cogs"] += item_owner_cogs
+
+        company_gross = total_revenue - company_cogs
+        owner_gross = total_revenue - owner_cogs
+        company_margin = (company_gross / total_revenue * 100) if total_revenue else zero
+        owner_margin = (owner_gross / total_revenue * 100) if total_revenue else zero
+
+        # Top products by owner profit
 
         top_products = sorted(
             [

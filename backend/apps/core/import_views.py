@@ -66,6 +66,23 @@ CUSTOMER_TYPES = [
 
 CSV_ROW_LIMIT = 10_000
 
+# Per-organisation rolling daily cap across all import endpoints — stops a
+# single org from flooding the DB with repeated max-size CSV uploads.
+DAILY_IMPORT_ROW_QUOTA = 50_000
+
+
+def _check_import_quota(org, row_count):
+    """Return (allowed, rows_used_today). Increments usage if allowed."""
+    from django.core.cache import cache
+    from django.utils import timezone
+
+    key = f"import_quota:{org.id}:{timezone.now().date()}"
+    used = cache.get(key, 0)
+    if used + row_count > DAILY_IMPORT_ROW_QUOTA:
+        return False, used
+    cache.set(key, used + row_count, timeout=60 * 60 * 26)
+    return True, used
+
 # ---------------------------------------------------------------------------
 # Known column aliases for rule-based matching (before calling AI)
 # Format: { our_canonical_field: [list of known aliases, all lowercase] }
@@ -380,6 +397,13 @@ class ImportProductsView(APIView):
         except ValueError as e:
             return Response({"error": str(e)}, status=400)
 
+        ok, used = _check_import_quota(org, len(rows))
+        if not ok:
+            return Response(
+                {"error": f"Daily import quota exceeded ({DAILY_IMPORT_ROW_QUOTA:,} rows/day, {used:,} already used today). Try again tomorrow."},
+                status=429,
+            )
+
         # Parse optional column mapping supplied by the frontend
         mapping_raw = request.data.get("column_mapping", "{}")
         try:
@@ -547,6 +571,10 @@ class SuggestColumnMappingView(APIView):
     def post(self, request):
         from django.conf import settings
 
+        org = _get_or_resolve_org(request)
+        if not org:
+            return Response({"error": "Organisation not found"}, status=400)
+
         entity = (request.data.get("entity") or "products").lower()
         headers = request.data.get("headers") or []
 
@@ -600,6 +628,14 @@ class ImportCustomersView(APIView):
             headers, rows = _parse_csv(file_obj)
         except ValueError as e:
             return Response({"error": str(e)}, status=400)
+
+        ok, used = _check_import_quota(org, len(rows))
+        if not ok:
+            return Response(
+                {"error": f"Daily import quota exceeded ({DAILY_IMPORT_ROW_QUOTA:,} rows/day, {used:,} already used today). Try again tomorrow."},
+                status=429,
+            )
+
         missing_cols = [c for c in CUSTOMER_REQUIRED if c not in headers]
         if missing_cols:
             return Response(
@@ -681,6 +717,14 @@ class ImportAccountsView(APIView):
             headers, rows = _parse_csv(file_obj)
         except ValueError as e:
             return Response({"error": str(e)}, status=400)
+
+        ok, used = _check_import_quota(org, len(rows))
+        if not ok:
+            return Response(
+                {"error": f"Daily import quota exceeded ({DAILY_IMPORT_ROW_QUOTA:,} rows/day, {used:,} already used today). Try again tomorrow."},
+                status=429,
+            )
+
         missing_cols = [c for c in ACCOUNT_REQUIRED if c not in headers]
         if missing_cols:
             return Response(

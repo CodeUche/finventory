@@ -55,6 +55,14 @@ class BaseDateRangeView(APIView):
         period = request.query_params.get("period", "custom")
         return period_label(period, date_from, date_to)
 
+    def get_limit(self, request, default=10, max_limit=100) -> int:
+        """Parse and clamp the ?limit= query param to [1, max_limit]."""
+        try:
+            limit = int(request.query_params.get("limit", default))
+        except (TypeError, ValueError):
+            limit = default
+        return max(1, min(limit, max_limit))
+
     def _export_or_json(self, request, data, *, headers, row_fn, title, filename_base):
         """
         If ?format=excel|pdf, build an export file and return HttpResponse.
@@ -130,7 +138,7 @@ class TopProductsView(BaseDateRangeView):
 
     def get(self, request):
         date_from, date_to = self.get_date_range(request)
-        limit = int(request.query_params.get("limit", 10))
+        limit = self.get_limit(request)
         data = ReportService.top_products(self.get_organisation(), date_from, date_to, limit)
 
         def _rows(d):
@@ -159,7 +167,7 @@ class TopCustomersView(BaseDateRangeView):
 
     def get(self, request):
         date_from, date_to = self.get_date_range(request)
-        limit = int(request.query_params.get("limit", 10))
+        limit = self.get_limit(request)
         data = ReportService.top_customers(self.get_organisation(), date_from, date_to, limit)
 
         def _rows(d):
