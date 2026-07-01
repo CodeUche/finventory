@@ -76,7 +76,8 @@ function KpiTile({
 
 export default function PartnerDashboardPage() {
   const navigate = useNavigate()
-  const { setOrganisation, setOrganisations } = useAuthStore()
+  const { setOrganisation, setOrganisations, user } = useAuthStore()
+  const isSuperuser = user?.is_superuser === true
 
   const [profile, setProfile]               = useState<PartnerProfile | null>(null)
   const [clients, setClients]               = useState<PartnerClientLink[]>([])
@@ -172,7 +173,7 @@ export default function PartnerDashboardPage() {
   // ── Handlers ─────────────────────────────────────────────────────────────
 
   const handleRequestAccess = async () => {
-    if (subscriptionExpired) { navigate('/billing'); return }
+    if (subscriptionExpired && !isSuperuser) { navigate('/billing'); return }
     if (!reqOrgId.trim()) { toast.error('Enter an Organisation ID'); return }
     setRequesting(true)
     try {
@@ -194,7 +195,7 @@ export default function PartnerDashboardPage() {
   }
 
   const handleAcceptToken = async () => {
-    if (subscriptionExpired) { navigate('/billing'); return }
+    if (subscriptionExpired && !isSuperuser) { navigate('/billing'); return }
     if (!inviteToken.trim()) { toast.error('Paste the invite token'); return }
     setAcceptingToken(true)
     try {
@@ -316,13 +317,30 @@ export default function PartnerDashboardPage() {
 
         <div className="flex items-center gap-2 flex-wrap">
           {profile.referral_code && (
-            <button
-              onClick={() => { navigator.clipboard.writeText(profile.referral_code); toast.success('Referral code copied') }}
-              className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-purple-500/10 text-purple-400 hover:bg-purple-500/20 transition-colors"
-            >
-              <Copy size={11} />
-              {profile.referral_code}
-            </button>
+            <div className="flex items-center gap-1.5">
+              <div className="group relative flex items-center gap-1 text-xs text-slate-500">
+                <span className="font-medium text-slate-400">Referral Code</span>
+                <span className="cursor-help text-slate-600 hover:text-slate-400 transition-colors" title="">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>
+                  </svg>
+                </span>
+                {/* Tooltip */}
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-3 rounded-lg bg-surface-700 border border-surface-600 shadow-xl text-xs text-slate-300 leading-relaxed opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
+                  <p className="font-semibold text-white mb-1">Your Referral Code</p>
+                  <p>Share this code with businesses you want to bring onto Audity. When they sign up using your code, you earn commission on their subscription — automatically credited to your wallet.</p>
+                  <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-surface-700" />
+                </div>
+              </div>
+              <button
+                onClick={() => { navigator.clipboard.writeText(profile.referral_code); toast.success('Referral code copied') }}
+                className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-purple-500/10 text-purple-400 hover:bg-purple-500/20 transition-colors"
+                title="Click to copy"
+              >
+                <Copy size={11} />
+                {profile.referral_code}
+              </button>
+            </div>
           )}
           {profile.tier === 'starter' && !subscriptionExpired && (
             <button onClick={() => navigate('/billing')} className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-brand-500/15 text-brand-400 hover:bg-brand-500/25 transition-colors">
@@ -345,7 +363,7 @@ export default function PartnerDashboardPage() {
       </div>
 
       {/* ── Subscription expired paywall ── */}
-      {subscriptionExpired && (
+      {subscriptionExpired && !isSuperuser && (
         <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-5 flex flex-col sm:flex-row items-start sm:items-center gap-4">
           <div className="w-10 h-10 rounded-full bg-red-500/10 flex items-center justify-center shrink-0">
             <LockKeyhole size={18} className="text-red-400" />
@@ -412,7 +430,7 @@ export default function PartnerDashboardPage() {
             </div>
             <button
               onClick={() => { setAddClientOpen(true); setAddClientTab('request') }}
-              disabled={subscriptionExpired}
+              disabled={subscriptionExpired && !isSuperuser}
               className="btn-primary text-sm flex items-center gap-1.5 shrink-0"
             >
               <UserPlus size={13} /> Add Client
@@ -433,7 +451,7 @@ export default function PartnerDashboardPage() {
                   <button
                     onClick={() => { setAddClientOpen(true); setAddClientTab('request') }}
                     className="btn-primary text-sm mt-4 mx-auto"
-                    disabled={subscriptionExpired}
+                    disabled={subscriptionExpired && !isSuperuser}
                   >
                     <UserPlus size={13} /> Add your first client
                   </button>
@@ -517,7 +535,7 @@ export default function PartnerDashboardPage() {
         </div>
 
         {/* ── Access Requests panel ── */}
-        <div className={`lg:w-72 shrink-0 ${subscriptionExpired ? 'opacity-50 pointer-events-none' : ''}`}>
+        <div className={`lg:w-72 shrink-0 ${subscriptionExpired && !isSuperuser ? 'opacity-50 pointer-events-none' : ''}`}>
           <div className="card space-y-3">
             <button
               onClick={() => setReqPanelOpen((v) => !v)}

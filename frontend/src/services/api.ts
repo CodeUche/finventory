@@ -939,8 +939,8 @@ export const orgApi = {
   // Partner consent — org-owner side
   listPartnerRequests: (orgId: string) =>
     api.get(`/tenancy/organisations/${orgId}/partner-requests/`),
-  approvePartnerRequest: (orgId: string, reqId: string) =>
-    api.post(`/tenancy/organisations/${orgId}/partner-requests/${reqId}/approve/`),
+  approvePartnerRequest: (orgId: string, reqId: string, permissions?: Partial<Record<string, string>>) =>
+    api.post(`/tenancy/organisations/${orgId}/partner-requests/${reqId}/approve/`, permissions ? { permissions } : {}),
   rejectPartnerRequest: (orgId: string, reqId: string, reason?: string) =>
     api.post(`/tenancy/organisations/${orgId}/partner-requests/${reqId}/reject/`, { reason: reason ?? '' }),
   listPartnerAccess: (orgId: string) =>

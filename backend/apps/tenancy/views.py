@@ -714,7 +714,9 @@ class OrganisationViewSet(viewsets.ModelViewSet):
             link.save(update_fields=["is_active"])
 
         # Provision accountant membership for the partner user
-        _provision_partner_membership(partner_profile.user, org)
+        # Accept optional custom permissions dict from the request body
+        custom_permissions = request.data.get("permissions")
+        _provision_partner_membership(partner_profile.user, org, custom_permissions=custom_permissions)
 
         _audit_partner_event(request, org, "partner_access_approved",
                              f"Owner {request.user.email} approved access for {partner_profile.user.email}")
@@ -900,11 +902,12 @@ class OrganisationViewSet(viewsets.ModelViewSet):
 
 # ── Partner helper utilities ────────────────────────────────────────────────────
 
-def _provision_partner_membership(partner_user, org):
+def _provision_partner_membership(partner_user, org, custom_permissions=None):
     """
-    Create or reactivate an ACCOUNTANT membership for partner_user in org,
-    with the standard partner module permission matrix.
-    Extracted as a module-level function so OrganisationViewSet can call it.
+    Create or reactivate an ACCOUNTANT membership for partner_user in org.
+
+    custom_permissions: optional dict {module_key: access_level} sent by the
+    org owner via the approval modal. Falls back to the standard matrix if None.
     """
     from django.utils import timezone as tz
     EDIT_MODULES = {"reports", "accounting", "tax", "budget"}
@@ -928,11 +931,18 @@ def _provision_partner_membership(partner_user, org):
         membership.role = Membership.Role.ACCOUNTANT
         membership.save(update_fields=["is_active", "role"])
 
-    module_map = (
-        [(m, "edit") for m in EDIT_MODULES]
-        + [(m, "view") for m in VIEW_MODULES]
-        + [(m, "none") for m in NO_ACCESS_MODULES]
-    )
+    if custom_permissions and isinstance(custom_permissions, dict):
+        # Owner specified a custom matrix — apply it directly; force settings=none
+        perm_map = {k: v for k, v in custom_permissions.items()}
+        perm_map.setdefault("settings", "none")
+        module_map = list(perm_map.items())
+    else:
+        module_map = (
+            [(m, "edit") for m in EDIT_MODULES]
+            + [(m, "view") for m in VIEW_MODULES]
+            + [(m, "none") for m in NO_ACCESS_MODULES]
+        )
+
     for module, level in module_map:
         ModulePermission.objects.update_or_create(
             membership=membership,

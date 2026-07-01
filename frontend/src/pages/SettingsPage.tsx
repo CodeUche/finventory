@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { User, Building2, Shield, Loader2, Camera, CreditCard, CheckCircle, Mail, Lock, Unlock, LandmarkIcon, UsersRound, UserPlus, X, ChevronDown, ChevronUp, Bot, Layout, Copy, Trash2, ShieldCheck, Key, Clock, XCircle, Send, Globe, AlertTriangle, Wifi, WifiOff, RefreshCw, Activity, FileText, GitBranch, Upload } from 'lucide-react'
+import { User, Building2, Shield, Loader2, Camera, CreditCard, CheckCircle, Mail, Lock, Unlock, LandmarkIcon, UsersRound, UserPlus, X, ChevronDown, ChevronUp, ChevronRight, Bot, Layout, Copy, Trash2, ShieldCheck, Key, Clock, XCircle, Send, Globe, AlertTriangle, Wifi, WifiOff, RefreshCw, Activity, FileText, GitBranch, Upload, GraduationCap } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { authApi, orgApi, paymentGatewayApi, accountingApi, teamApi, urlToDataUrl, partnerApi, einvoicingApi } from '@/services/api'
 import ImportPage from '@/pages/ImportPage'
@@ -68,6 +68,29 @@ const TIMEOUT_OPTIONS: { value: TimeoutOption; label: string }[] = [
 ]
 
 type Tab = 'profile' | 'security' | 'payments' | 'email' | 'periods' | 'team' | 'invoice_templates' | 'ai' | 'access' | 'whitelabel' | 'firs' | 'gl_mapping' | 'import'
+type TabGroup = 'general' | 'access_security' | 'integrations' | 'finance_setup' | 'advanced'
+
+const MODULE_GROUPS_FOR_PARTNER: {
+  label: string
+  description: string
+  modules: ModuleKey[]
+  defaultLevel: AccessLevel
+}[] = [
+  { label: 'Sales & Revenue', description: 'Invoices, quotes and recurring billing', modules: ['sales', 'quotes', 'recurring'], defaultLevel: 'view' },
+  { label: 'Money Out', description: 'Bills, purchase orders and expenses', modules: ['bills', 'purchases', 'expenses'], defaultLevel: 'view' },
+  { label: 'People', description: 'Customers, suppliers and payroll records', modules: ['customers', 'suppliers', 'payroll'], defaultLevel: 'view' },
+  { label: 'Inventory', description: 'Stock, products and warehouse management', modules: ['inventory'], defaultLevel: 'view' },
+  { label: 'Finance', description: 'Accounting ledger, budgets, reports and tax', modules: ['accounting', 'budget', 'reports', 'tax'], defaultLevel: 'edit' },
+]
+
+const PARTNER_DEFAULT_PERMISSIONS: Partial<Record<ModuleKey, AccessLevel>> = {
+  sales: 'view', quotes: 'view', recurring: 'view',
+  bills: 'view', purchases: 'view', expenses: 'view',
+  customers: 'view', suppliers: 'view', payroll: 'view',
+  inventory: 'view',
+  accounting: 'edit', budget: 'edit', reports: 'edit', tax: 'edit',
+  settings: 'none',
+}
 
 export default function SettingsPage() {
   const navigate = useNavigate()
@@ -337,12 +360,20 @@ export default function SettingsPage() {
   const [glMappingSaving, setGlMappingSaving] = useState(false)
 
   // FIRS state lives in the FirsTab sub-component (see bottom of this file)
-  const [approvingReq, setApprovingReq] = useState<string | null>(null)
   const [rejectingReq, setRejectingReq] = useState<string | null>(null)
   const [revokingLink, setRevokingLink] = useState<string | null>(null)
   const [inviteEmail, setInviteEmail] = useState('')
   const [generatingInvite, setGeneratingInvite] = useState(false)
   const [generatedToken, setGeneratedToken] = useState<{ token: string; partner_email: string } | null>(null)
+
+  // Partner approval modal
+  const [approvalModal, setApprovalModal] = useState<{ req: PartnerAccessRequest } | null>(null)
+  const [approvalStep, setApprovalStep] = useState<1 | 2>(1)
+  const [approvalPerms, setApprovalPerms] = useState<Partial<Record<ModuleKey, AccessLevel>>>({ ...PARTNER_DEFAULT_PERMISSIONS })
+  const [approvalSubmitting, setApprovalSubmitting] = useState(false)
+
+  // Settings tab group state
+  const [activeGroup, setActiveGroup] = useState<TabGroup>('general')
 
   useEffect(() => {
     if (activeTab === 'payments') {
@@ -793,23 +824,6 @@ export default function SettingsPage() {
   }
 
   // ── Partner Access Handlers ─────────────────────────────────────────────────
-  const handleApprovePartner = async (reqId: string) => {
-    if (!organisation?.id) return
-    setApprovingReq(reqId)
-    try {
-      const { data } = await orgApi.approvePartnerRequest(organisation.id, reqId)
-      setPartnerRequests((prev) => prev.map((r) => r.id === reqId ? data : r))
-      const linkRes = await orgApi.listPartnerAccess(organisation.id)
-      setPartnerLinks(Array.isArray(linkRes.data) ? linkRes.data : linkRes.data.results ?? [])
-      toast.success('Partner access approved')
-    } catch (err: any) {
-      const msg = err?.response?.data?.error
-      toast.error(typeof msg === 'string' ? msg : msg?.message ?? 'Failed to approve')
-    } finally {
-      setApprovingReq(null)
-    }
-  }
-
   const handleRejectPartner = async (reqId: string) => {
     const reason = window.prompt('Reason for rejection (optional):') ?? ''
     if (!organisation?.id) return
@@ -859,32 +873,64 @@ export default function SettingsPage() {
   const activeNonOwners = teamMembers.filter((m) => m.is_active && m.role !== 'owner')
   const MAX_MEMBERS = getPlanMaxMembers(planName)
 
-  const allTabs: { id: Tab; label: string; icon: React.ElementType; ownerOnly?: boolean; requiresSettings?: boolean; requiresPlan?: string; comingSoon?: boolean }[] = [
+  // Partner/accountant users must never see Team or Accountant Access even with settings perm
+  const isPartnerAccountant = memberRole === 'accountant' && !user?.is_superuser
+
+  type TabDef = { id: Tab; label: string; icon: React.ElementType; ownerOnly?: boolean; requiresSettings?: boolean; requiresPlan?: string; partnerRestricted?: boolean }
+  const allTabs: TabDef[] = [
     { id: 'profile',           label: 'Profile',            icon: User },
-    { id: 'invoice_templates', label: 'Templates',           icon: Layout,     ownerOnly: true },
-    { id: 'team',              label: 'Team',                icon: UsersRound, ownerOnly: true },
-    { id: 'security',          label: 'Security',            icon: Shield },
-    { id: 'email',             label: 'Email',               icon: Mail,       ownerOnly: true },
-    { id: 'gl_mapping',        label: 'GL Mapping',          icon: GitBranch,  requiresSettings: true, requiresPlan: 'accounting' },
-    { id: 'periods',           label: 'Periods',             icon: Lock,       requiresSettings: true, requiresPlan: 'accounting' },
-    { id: 'ai',                label: 'AI',                  icon: Bot,        ownerOnly: true },
-    { id: 'access',            label: 'Accountant Access',   icon: ShieldCheck, ownerOnly: true },
-    { id: 'whitelabel',        label: 'White-label',         icon: Globe,      ownerOnly: true },
-    { id: 'import',            label: 'Migration',           icon: Upload,     requiresSettings: true },
-    // Coming Soon — always last
-    { id: 'firs',              label: 'FIRS',                icon: Shield,     ownerOnly: true, comingSoon: true },
-    { id: 'payments',          label: 'Payments',            icon: CreditCard, requiresSettings: true, comingSoon: true },
+    { id: 'invoice_templates', label: 'Templates',          icon: Layout,     ownerOnly: true },
+    { id: 'team',              label: 'Team',               icon: UsersRound, ownerOnly: true, partnerRestricted: true },
+    { id: 'security',          label: 'Security',           icon: Shield },
+    { id: 'email',             label: 'Email',              icon: Mail,       ownerOnly: true },
+    { id: 'gl_mapping',        label: 'GL Mapping',         icon: GitBranch,  requiresSettings: true, requiresPlan: 'accounting' },
+    { id: 'periods',           label: 'Periods',            icon: Lock,       requiresSettings: true, requiresPlan: 'accounting' },
+    { id: 'ai',                label: 'AI',                 icon: Bot,        ownerOnly: true },
+    { id: 'access',            label: 'Accountant Access',  icon: ShieldCheck, ownerOnly: true, partnerRestricted: true },
+    { id: 'whitelabel',        label: 'White-label',        icon: Globe,      ownerOnly: true },
+    { id: 'import',            label: 'Migration',          icon: Upload,     requiresSettings: true },
+    // FIRS and Payments hidden globally until further notice
   ]
   const tabs = allTabs.filter((t) => {
+    if (t.partnerRestricted && isPartnerAccountant) return false
     if (t.ownerOnly && !isOwner) return false
     if (t.requiresSettings && !hasSettingsPerm) return false
     if (t.requiresPlan && planModules !== null && !planModules.includes(t.requiresPlan) && !user?.is_superuser) return false
     return true
   })
 
+  // Tab → group mapping
+  const TAB_GROUP_MAP: Record<Tab, TabGroup> = {
+    profile: 'general', invoice_templates: 'general',
+    team: 'access_security', security: 'access_security', access: 'access_security',
+    email: 'integrations', ai: 'integrations',
+    gl_mapping: 'finance_setup', periods: 'finance_setup',
+    whitelabel: 'advanced', import: 'advanced',
+    // unused but needed for type completeness
+    firs: 'advanced', payments: 'advanced',
+  }
+
+  type GroupDef = { id: TabGroup; label: string; icon: React.ElementType }
+  const ALL_GROUPS: GroupDef[] = [
+    { id: 'general',         label: 'General',            icon: User },
+    { id: 'access_security', label: 'Access & Security',  icon: Shield },
+    { id: 'integrations',    label: 'Integrations',       icon: Mail },
+    { id: 'finance_setup',   label: 'Finance Setup',      icon: GitBranch },
+    { id: 'advanced',        label: 'Advanced',           icon: Globe },
+  ]
+
+  const visibleGroups = ALL_GROUPS.filter((g) =>
+    tabs.some((t) => TAB_GROUP_MAP[t.id] === g.id)
+  )
+  const childTabsForGroup = (gid: TabGroup) => tabs.filter((t) => TAB_GROUP_MAP[t.id] === gid)
+
   // If current tab is no longer visible (permissions changed), reset to profile
   const validTabIds = tabs.map((t) => t.id)
   const activeTab = validTabIds.includes(tab) ? tab : 'profile'
+
+  // Keep activeGroup in sync with activeTab
+  const derivedGroup = TAB_GROUP_MAP[activeTab] ?? 'general'
+  const effectiveGroup = visibleGroups.find((g) => g.id === activeGroup) ? activeGroup : derivedGroup
 
   return (
     <>
@@ -894,28 +940,46 @@ export default function SettingsPage() {
         <p className="text-slate-400 text-sm">Manage your account and organisation</p>
       </div>
 
-      {/* Tab bar */}
-      <div className="flex flex-wrap gap-1 p-1 bg-surface-800 border border-surface-700 rounded-xl w-fit max-w-full">
-        {tabs.map((t) => (
-          <button
-            key={t.id}
-            onClick={() => !t.comingSoon && setTab(t.id)}
-            title={t.comingSoon ? `${t.label} — Coming Soon` : t.label}
-            className={`relative flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-              t.comingSoon
-                ? 'cursor-not-allowed text-slate-400'
-                : activeTab === t.id
+      {/* Two-level settings navigation: Group → Child tabs */}
+      <div className="space-y-1.5">
+        {/* Group row */}
+        <div className="flex flex-wrap gap-1 p-1 bg-surface-800 border border-surface-700 rounded-xl w-fit max-w-full">
+          {visibleGroups.map((g) => (
+            <button
+              key={g.id}
+              onClick={() => {
+                setActiveGroup(g.id)
+                const first = childTabsForGroup(g.id)[0]
+                if (first) setTab(first.id)
+              }}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                effectiveGroup === g.id
                   ? 'bg-brand-500 text-white'
                   : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            <t.icon size={15} />
-            <span className="hidden sm:inline">{t.label}</span>
-            {t.comingSoon && (
-              <span className="hidden sm:inline text-[9px] bg-brand-500/70 text-always-white px-1.5 py-0.5 rounded font-semibold ml-0.5">Soon</span>
-            )}
-          </button>
-        ))}
+              }`}
+            >
+              <g.icon size={14} />
+              <span className="hidden sm:inline">{g.label}</span>
+            </button>
+          ))}
+        </div>
+        {/* Child tabs for active group */}
+        <div className="flex flex-wrap gap-1 pl-2">
+          {childTabsForGroup(effectiveGroup).map((t) => (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
+                activeTab === t.id
+                  ? 'bg-surface-700 border-brand-500/50 text-white'
+                  : 'border-transparent text-slate-400 hover:text-white hover:bg-surface-700/50'
+              }`}
+            >
+              <t.icon size={13} />
+              <span>{t.label}</span>
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* ── Profile + Company (merged) ── */}
@@ -2922,11 +2986,10 @@ export default function SettingsPage() {
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
                           <button
-                            onClick={() => handleApprovePartner(req.id)}
-                            disabled={approvingReq === req.id}
+                            onClick={() => { setApprovalModal({ req }); setApprovalStep(1); setApprovalPerms({ ...PARTNER_DEFAULT_PERMISSIONS }) }}
                             className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg bg-green-500/10 text-green-400 hover:bg-green-500/20 transition-colors font-medium"
                           >
-                            {approvingReq === req.id ? <Loader2 size={11} className="animate-spin" /> : <CheckCircle size={11} />} Approve
+                            <CheckCircle size={11} /> Approve
                           </button>
                           <button
                             onClick={() => handleRejectPartner(req.id)}
@@ -3043,6 +3106,148 @@ export default function SettingsPage() {
         </div>
       </div>
     )}
+      {/* ── Partner Approval Modal ───────────────────────────────────────── */}
+      {approvalModal && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => { if (!approvalSubmitting) setApprovalModal(null) }} />
+          <div className="relative card w-full max-w-lg p-6 space-y-5">
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-bold text-white flex items-center gap-2">
+                <ShieldCheck size={16} className="text-green-400" />
+                {approvalStep === 1 ? 'Review Access Request' : 'Set Permissions'}
+              </h2>
+              <button onClick={() => setApprovalModal(null)} disabled={approvalSubmitting} className="text-slate-400 hover:text-white">
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Step indicator */}
+            <div className="flex items-center gap-2 text-xs">
+              <span className={approvalStep === 1 ? 'text-white font-semibold' : 'text-slate-500'}>1. Request Info</span>
+              <ChevronRight size={12} className="text-slate-600" />
+              <span className={approvalStep === 2 ? 'text-white font-semibold' : 'text-slate-500'}>2. Permissions</span>
+            </div>
+
+            {approvalStep === 1 && (
+              <>
+                <div className="rounded-xl bg-surface-800 border border-surface-700 p-4 space-y-3">
+                  <div className="flex items-start gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-green-500/10 flex items-center justify-center shrink-0">
+                      <GraduationCap size={18} className="text-green-400" />
+                    </div>
+                    <div>
+                      <p className="text-white font-semibold">{approvalModal.req.partner_firm_name || approvalModal.req.partner_email}</p>
+                      <p className="text-xs text-slate-400">{approvalModal.req.partner_email}</p>
+                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-purple-500/15 text-purple-400 mt-1 inline-block capitalize">
+                        {approvalModal.req.partner_tier} tier
+                      </span>
+                    </div>
+                  </div>
+                  {approvalModal.req.request_message && (
+                    <div className="rounded-lg bg-surface-700/50 px-3 py-2 text-xs text-slate-300 italic">
+                      "{approvalModal.req.request_message}"
+                    </div>
+                  )}
+                </div>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Before approving, you can review and customise exactly what this accountant can see and do inside your organisation. Click <strong className="text-white">Set Permissions</strong> to continue.
+                </p>
+                <div className="flex items-center justify-end gap-2">
+                  <button onClick={() => setApprovalModal(null)} className="btn-ghost text-sm">Cancel</button>
+                  <button onClick={() => setApprovalStep(2)} className="btn-primary text-sm flex items-center gap-1.5">
+                    Set Permissions <ChevronRight size={14} />
+                  </button>
+                </div>
+              </>
+            )}
+
+            {approvalStep === 2 && (
+              <>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Choose what <strong className="text-white">{approvalModal.req.partner_firm_name || approvalModal.req.partner_email}</strong> can access in your organisation. You can revoke or adjust this at any time.
+                </p>
+
+                <div className="space-y-2">
+                  {MODULE_GROUPS_FOR_PARTNER.map((group) => {
+                    const currentLevel = (approvalPerms[group.modules[0]] ?? group.defaultLevel) as AccessLevel
+                    return (
+                      <div key={group.label} className="flex items-center justify-between gap-3 p-3 rounded-xl bg-surface-800 border border-surface-700">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-white">{group.label}</p>
+                          <p className="text-xs text-slate-500 mt-0.5">{group.description}</p>
+                        </div>
+                        <select
+                          value={currentLevel}
+                          onChange={(e) => {
+                            const lvl = e.target.value as AccessLevel
+                            setApprovalPerms((prev) => {
+                              const next = { ...prev }
+                              group.modules.forEach((m) => { next[m] = lvl })
+                              return next
+                            })
+                          }}
+                          className="input text-xs w-36 shrink-0"
+                        >
+                          {ACCESS_OPTIONS.map((opt) => (
+                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                {/* Summary sentence */}
+                <p className="text-xs text-slate-500 leading-relaxed bg-surface-800/60 rounded-lg px-3 py-2">
+                  This accountant will be able to{' '}
+                  {MODULE_GROUPS_FOR_PARTNER
+                    .filter((g) => (approvalPerms[g.modules[0]] ?? g.defaultLevel) !== 'none')
+                    .map((g) => {
+                      const lvl = approvalPerms[g.modules[0]] ?? g.defaultLevel
+                      const action = lvl === 'edit' ? 'fully manage' : lvl === 'write' ? 'enter & save in' : 'view'
+                      return `${action} ${g.label.toLowerCase()}`
+                    })
+                    .join(', ') || 'nothing'}.
+                </p>
+
+                <div className="flex items-center justify-between pt-1">
+                  <button onClick={() => setApprovalStep(1)} className="text-xs text-slate-400 hover:text-white flex items-center gap-1">
+                    ← Back
+                  </button>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => setApprovalModal(null)} disabled={approvalSubmitting} className="btn-ghost text-sm">Cancel</button>
+                    <button
+                      onClick={async () => {
+                        if (!organisation?.id || !approvalModal) return
+                        setApprovalSubmitting(true)
+                        try {
+                          const { data } = await orgApi.approvePartnerRequest(organisation.id, approvalModal.req.id, approvalPerms)
+                          setPartnerRequests((prev) => prev.map((r) => r.id === approvalModal.req.id ? data : r))
+                          const linkRes = await orgApi.listPartnerAccess(organisation.id)
+                          setPartnerLinks(Array.isArray(linkRes.data) ? linkRes.data : linkRes.data.results ?? [])
+                          toast.success('Partner access approved')
+                          setApprovalModal(null)
+                        } catch (err: any) {
+                          const msg = err?.response?.data?.error
+                          toast.error(typeof msg === 'string' ? msg : msg?.message ?? 'Failed to approve')
+                        } finally {
+                          setApprovalSubmitting(false)
+                        }
+                      }}
+                      disabled={approvalSubmitting}
+                      className="btn-primary text-sm flex items-center gap-1.5"
+                    >
+                      {approvalSubmitting ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle size={13} />}
+                      Grant Access
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* ── White-label Tab ──────────────────────────────────────────────── */}
       {activeTab === 'whitelabel' && (
         <WhiteLabelTab />
@@ -3074,8 +3279,8 @@ export default function SettingsPage() {
 // ── White-label Settings ──────────────────────────────────────────────────────
 
 function WhiteLabelTab() {
-  const { planName } = useAuthStore()
-  const isAgency = planName?.includes('agency') ?? false
+  const { planName, user } = useAuthStore()
+  const isAgency = user?.is_superuser || (planName?.includes('agency') ?? false)
 
   const [config, setConfig] = useState<any>(null)
   const [loading, setLoading] = useState(true)
