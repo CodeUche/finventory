@@ -73,6 +73,7 @@ EXPOSE 8000
 # The `&&` before gunicorn is intentional: if migrations fail, the container
 # must exit rather than serve traffic against a stale/mismatched schema.
 CMD python migrate.py && \
+    python manage.py setup_periodic_tasks && \
     (python manage.py collectstatic --no-input --clear 2>/dev/null || true) && \
     if [ -n "$DJANGO_SUPERUSER_EMAIL" ] && [ -n "$DJANGO_SUPERUSER_PASSWORD" ]; then \
       python manage.py createsuperuser --no-input \
