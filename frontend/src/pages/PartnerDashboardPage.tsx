@@ -136,7 +136,19 @@ export default function PartnerDashboardPage() {
     }
   }
 
-  useEffect(() => { load() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    // Restore partner's own org context if we navigated back from managing a client's books.
+    // handleManageBooks saves the own org to sessionStorage before switching X-Organisation-ID.
+    const saved = sessionStorage.getItem('audity_partner_own_org')
+    if (saved) {
+      try {
+        const ownOrg = JSON.parse(saved)
+        setOrganisation(ownOrg)
+      } catch {}
+      sessionStorage.removeItem('audity_partner_own_org')
+    }
+    load()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Derived data ──────────────────────────────────────────────────────────
 
@@ -209,6 +221,10 @@ export default function PartnerDashboardPage() {
         toast.error('Organisation not found — ask your client to check your membership.')
         return
       }
+      // Save own org before switching context so PartnerDashboardPage can
+      // restore it when the partner navigates back from the client's dashboard.
+      const ownOrg = useAuthStore.getState().organisation
+      if (ownOrg) sessionStorage.setItem('audity_partner_own_org', JSON.stringify(ownOrg))
       setOrganisations(orgs)
       setOrganisation(clientOrg)
       navigate('/dashboard')

@@ -1189,20 +1189,23 @@ class PartnerViewSet(viewsets.ViewSet):
                 "No partner profile found. Complete enrollment to get started."
             )
 
-        # Check subscription status.
-        # PartnerViewSet uses IsAuthenticated (not IsStaff), so the permission layer
-        # never calls resolve_organisation() and request.organisation stays None.
-        # Resolve it explicitly here so the subscription check has an org to read from.
+        # Check subscription on the partner's OWN organisation — never on
+        # request.organisation, which may be a client org the partner is currently
+        # managing (X-Organisation-ID was switched by the frontend's "Manage Books"
+        # flow). Using the request header org caused a spurious 403 whenever the
+        # partner navigated back to their dashboard after managing a client.
         try:
-            org = getattr(request, "organisation", None)
-            if org is None:
-                from .middleware import resolve_organisation
-                org = resolve_organisation(request)
-            sub = getattr(org, "subscription", None) if org else None
+            from .models import Organisation as _Org
+            partner_org = (
+                _Org.objects.filter(owner=request.user, is_active=True)
+                .select_related("subscription__plan")
+                .first()
+            )
+            sub = getattr(partner_org, "subscription", None) if partner_org else None
             plan_slug = sub.plan.slug if sub and sub.plan else ""
-            sub_status = sub.status if sub else ""
             is_partner_plan = plan_slug.startswith("partner-")
-            is_active = sub_status in ("active", "trialing")
+            # Use the model property — it checks trial_end datetime, not just status string
+            is_active = sub.is_active if sub else False
         except Exception:
             is_partner_plan = False
             is_active = False
