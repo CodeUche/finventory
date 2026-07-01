@@ -1,24 +1,8 @@
 [build]
 builder = "nixpacks"
-buildCommand = "pip install -r backend/requirements/production.txt"
 
 [deploy]
-# Release command runs migrations + periodic task setup before traffic is switched
-releaseCommand = "cd backend && python manage.py migrate --no-input && python manage.py setup_periodic_tasks && (python manage.py collectstatic --no-input --clear || echo 'collectstatic skipped')"
-startCommand = "cd backend && gunicorn config.wsgi:application --config gunicorn.conf.py"
 healthcheckPath = "/api/v1/health/"
 healthcheckTimeout = 30
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
-
-[[services]]
-name = "web"
-startCommand = "cd backend && gunicorn config.wsgi:application --config gunicorn.conf.py"
-
-[[services]]
-name = "worker"
-startCommand = "cd backend && celery -A config.celery worker --loglevel=info --concurrency=2"
-
-[[services]]
-name = "beat"
-startCommand = "cd backend && celery -A config.celery beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler"
