@@ -90,6 +90,22 @@ class CommissionService:
             period_end=today,
             status=CommissionLedger.Status.PENDING,
         )
+
+        # Keep denormalized totals in sync so the per-client commission column
+        # and profile lifetime total reflect real payment activity immediately.
+        from .models import PartnerClientLink
+        from django.db.models import F
+        if client_org:
+            PartnerClientLink.objects.filter(
+                partner=partner_profile,
+                organisation=client_org,
+                is_active=True,
+            ).update(commission_earned=F("commission_earned") + commission)
+
+        type(partner_profile).objects.filter(pk=partner_profile.pk).update(
+            total_commission_earned=F("total_commission_earned") + commission
+        )
+
         logger.info(
             "Commission %.4f NGN (%.2f%%) recorded for partner %s from client %s ref %s",
             commission, rate, partner_profile.id, client_org.id if client_org else "—", reference,
