@@ -173,21 +173,28 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
   const isPartnerAccountant = memberRole === 'accountant' && !user?.is_superuser
   const hasSettingsPerm = isOwnerOrAdmin || (modulePermissions?.['settings'] ?? 'none') !== 'none'
 
-  type SettingsTabDef = { id: string; label: string; icon: React.ElementType; ownerOnly?: boolean; partnerRestricted?: boolean; requiresSettings?: boolean; requiresPlan?: string }
+  type SettingsTabDef = {
+    id: string; label: string; icon: React.ElementType
+    ownerOnly?: boolean; partnerRestricted?: boolean
+    requiresSettings?: boolean; requiresPlan?: string
+    group: string
+  }
   const settingsTabs: SettingsTabDef[] = [
-    { id: 'profile',           label: 'Profile',           icon: User },
-    { id: 'invoice_templates', label: 'Templates',         icon: Layout,      ownerOnly: true },
-    { id: 'team',              label: 'Team',              icon: UsersRound,  ownerOnly: true, partnerRestricted: true },
-    { id: 'security',          label: 'Security',          icon: Shield,      partnerRestricted: true },
-    { id: 'email',             label: 'Email',             icon: Mail,        ownerOnly: true },
-    { id: 'bank',              label: 'Banking',           icon: Landmark,    ownerOnly: true },
-    { id: 'gl_mapping',        label: 'GL Mapping',        icon: GitBranch,   requiresSettings: true, requiresPlan: 'accounting' },
-    { id: 'periods',           label: 'Periods',           icon: Lock,        requiresSettings: true, requiresPlan: 'accounting' },
-    { id: 'ai',                label: 'AI',                icon: Bot,         ownerOnly: true },
-    { id: 'access',            label: 'Accountant Access', icon: ShieldCheck, ownerOnly: true, partnerRestricted: true },
-    { id: 'whitelabel',        label: 'White-label',       icon: Globe,       ownerOnly: true },
-    { id: 'import',            label: 'Migration',         icon: Upload,      requiresSettings: true },
+    { id: 'profile',           label: 'Profile',           icon: User,       group: 'ACCOUNT' },
+    { id: 'security',          label: 'Security',          icon: Shield,     group: 'ACCOUNT',       partnerRestricted: true },
+    { id: 'invoice_templates', label: 'Templates',         icon: Layout,     group: 'WORKSPACE',     ownerOnly: true },
+    { id: 'team',              label: 'Team',              icon: UsersRound, group: 'WORKSPACE',     ownerOnly: true, partnerRestricted: true },
+    { id: 'access',            label: 'Accountant Access', icon: ShieldCheck,group: 'WORKSPACE',     ownerOnly: true, partnerRestricted: true },
+    { id: 'email',             label: 'Email',             icon: Mail,       group: 'COMMUNICATIONS',ownerOnly: true },
+    { id: 'bank',              label: 'Banking',           icon: Landmark,   group: 'FINANCE',       ownerOnly: true },
+    { id: 'gl_mapping',        label: 'GL Mapping',        icon: GitBranch,  group: 'FINANCE',       requiresSettings: true, requiresPlan: 'accounting' },
+    { id: 'periods',           label: 'Periods',           icon: Lock,       group: 'FINANCE',       requiresSettings: true, requiresPlan: 'accounting' },
+    { id: 'ai',                label: 'AI',                icon: Bot,        group: 'ADVANCED',      ownerOnly: true },
+    { id: 'whitelabel',        label: 'White-label',       icon: Globe,      group: 'ADVANCED',      ownerOnly: true },
+    { id: 'import',            label: 'Migration',         icon: Upload,     group: 'ADVANCED',      requiresSettings: true },
   ]
+  const SETTINGS_GROUPS = ['ACCOUNT', 'WORKSPACE', 'COMMUNICATIONS', 'FINANCE', 'ADVANCED']
+
   const visibleSettingsTabs = settingsTabs.filter((t) => {
     if (t.partnerRestricted && isPartnerAccountant) return false
     if (t.ownerOnly && !isOwnerOrAdmin) return false
@@ -197,6 +204,13 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
   })
 
   const [settingsOpen, setSettingsOpen] = useState(() => pathname === '/settings')
+  const [settingsGroupsOpen, setSettingsGroupsOpen] = useState<Record<string, boolean>>(() => {
+    // auto-expand the group that contains the current active tab
+    const activeGroup = settingsTabs.find((t) => t.id === (new URLSearchParams(search).get('tab') ?? 'profile'))?.group ?? 'ACCOUNT'
+    return Object.fromEntries(SETTINGS_GROUPS.map((g) => [g, g === activeGroup]))
+  })
+  const toggleSettingsGroup = (g: string) =>
+    setSettingsGroupsOpen((prev) => ({ ...prev, [g]: !prev[g] }))
 
   return (
     <aside
@@ -317,9 +331,10 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
           </div>
         )}
 
-        {/* Settings sub-nav — collapsible */}
+        {/* Settings sub-nav — collapsible with sub-groups */}
         {!billingOnly && (
           <div>
+            {/* Top-level SETTINGS toggle */}
             <button
               onClick={() => setSettingsOpen((v) => !v)}
               className="w-full flex items-center justify-between px-3 pt-4 pb-1 text-left group"
@@ -332,17 +347,48 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
                 : <ChevronRight size={12} className="text-slate-400 group-hover:text-slate-300 transition-colors" />
               }
             </button>
-            {settingsOpen && visibleSettingsTabs.map((t) => {
-              const isActive = pathname === '/settings' && activeSettingsTab === t.id
+
+            {/* Sub-groups */}
+            {settingsOpen && SETTINGS_GROUPS.map((groupLabel) => {
+              const groupTabs = visibleSettingsTabs.filter((t) => t.group === groupLabel)
+              if (groupTabs.length === 0) return null
+              const isGroupOpen = settingsGroupsOpen[groupLabel] ?? false
               return (
-                <Link
-                  key={t.id}
-                  to={`/settings?tab=${t.id}`}
-                  className={isActive ? 'sidebar-item-active' : 'sidebar-item'}
-                >
-                  <t.icon size={16} className="shrink-0" />
-                  <span className="truncate">{t.label}</span>
-                </Link>
+                <div key={groupLabel} className="pl-2">
+                  {/* Sub-group header */}
+                  <button
+                    onClick={() => toggleSettingsGroup(groupLabel)}
+                    className="w-full flex items-center justify-between px-2 py-1.5 text-left group/sg rounded-lg hover:bg-surface-700/40 transition-colors"
+                  >
+                    <span className="text-[9px] font-semibold uppercase tracking-widest text-slate-500 group-hover/sg:text-slate-400 transition-colors">
+                      {groupLabel}
+                    </span>
+                    {isGroupOpen
+                      ? <ChevronDown size={10} className="text-slate-600 group-hover/sg:text-slate-400 transition-colors" />
+                      : <ChevronRight size={10} className="text-slate-600 group-hover/sg:text-slate-400 transition-colors" />
+                    }
+                  </button>
+
+                  {/* Sub-group items */}
+                  {isGroupOpen && groupTabs.map((t) => {
+                    const isActive = pathname === '/settings' && activeSettingsTab === t.id
+                    return (
+                      <Link
+                        key={t.id}
+                        to={`/settings?tab=${t.id}`}
+                        className={cn(
+                          'flex items-center gap-2.5 pl-4 pr-3 py-2 rounded-xl text-sm transition-colors',
+                          isActive
+                            ? 'bg-brand-500/15 text-brand-300 font-medium border-l-2 border-brand-500 ml-1'
+                            : 'text-slate-400 hover:text-slate-200 hover:bg-surface-700/50 ml-1',
+                        )}
+                      >
+                        <t.icon size={14} className="shrink-0" />
+                        <span className="truncate">{t.label}</span>
+                      </Link>
+                    )
+                  })}
+                </div>
               )
             })}
           </div>
