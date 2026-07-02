@@ -1,9 +1,9 @@
-import { Menu, Search, X, Package, Receipt, Users, Sun, Moon } from 'lucide-react'
+import { Menu, Search, X, Package, Receipt, Users, Sun, Moon, LogOut } from 'lucide-react'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { useAuthStore } from '@/store/authStore'
-import { orgApi, inventoryApi, salesApi, customerApi } from '@/services/api'
+import { orgApi, inventoryApi, salesApi, customerApi, authApi } from '@/services/api'
 import { setActiveCurrency, formatCurrency } from '@/lib/utils'
 import NotificationBell from '@/components/NotificationBell'
 import { getStoredTheme, setTheme, type Theme } from '@/hooks/useTheme'
@@ -26,7 +26,7 @@ interface TopBarProps {
 }
 
 export default function TopBar({ onMenuClick }: TopBarProps) {
-  const { organisation, updateOrganisation } = useAuthStore()
+  const { organisation, updateOrganisation, tokens, logout } = useAuthStore()
   const navigate = useNavigate()
   const [currentTheme, setCurrentTheme] = useState<Theme>(getStoredTheme)
 
@@ -34,6 +34,15 @@ export default function TopBar({ onMenuClick }: TopBarProps) {
     const next: Theme = currentTheme === 'dark' ? 'light' : 'dark'
     setTheme(next)
     setCurrentTheme(next)
+  }
+
+  const handleLogout = async () => {
+    try {
+      if (tokens?.refresh) await authApi.logout(tokens.refresh)
+    } finally {
+      logout()
+      navigate('/login')
+    }
   }
 
   const [query, setQuery] = useState('')
@@ -290,6 +299,15 @@ export default function TopBar({ onMenuClick }: TopBarProps) {
 
         {/* Real-time notifications bell */}
         <NotificationBell />
+
+        {/* Sign out shortcut */}
+        <button
+          onClick={handleLogout}
+          className="btn-ghost p-2 text-slate-400 hover:text-red-400 transition-colors"
+          title="Sign out"
+        >
+          <LogOut size={17} />
+        </button>
 
         {/* Currency selector */}
         {organisation && (

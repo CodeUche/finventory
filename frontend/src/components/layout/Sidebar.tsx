@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { NavLink, useNavigate, useLocation } from 'react-router-dom'
+import { NavLink, Link, useNavigate, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard, Package, Boxes, Plus, Layers,
   Users, Receipt, BarChart3, LogOut, X, FileText, RefreshCw,
@@ -7,6 +7,7 @@ import {
   BookMarked, Landmark, UsersRound, Banknote, ArrowDownCircle,
   PieChart, Scale, Shield, ClipboardList, ChevronDown, ChevronRight, ShieldCheck,
   MapPin, ClipboardCheck, GraduationCap, Briefcase, ShoppingCart,
+  User, Layout, Mail, Lock, Bot, Globe, Upload, GitBranch,
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { authApi } from '@/services/api'
@@ -121,7 +122,7 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
 
   // null = membership not yet loaded; treat as restricted (not full access) until confirmed
   const isOwnerOrAdmin = user?.is_superuser === true || memberRole === 'owner' || memberRole === 'admin'
-  const { pathname } = useLocation()
+  const { pathname, search } = useLocation()
 
   // Returns true if the nav item should be visible.
   // Checks: ownerOnly → plan modules → sub-account RBAC permissions
@@ -167,6 +168,35 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
       navigate('/login')
     }
   }
+
+  const activeSettingsTab = new URLSearchParams(search).get('tab') ?? 'profile'
+  const isPartnerAccountant = memberRole === 'accountant' && !user?.is_superuser
+  const hasSettingsPerm = isOwnerOrAdmin || (modulePermissions?.['settings'] ?? 'none') !== 'none'
+
+  type SettingsTabDef = { id: string; label: string; icon: React.ElementType; ownerOnly?: boolean; partnerRestricted?: boolean; requiresSettings?: boolean; requiresPlan?: string }
+  const settingsTabs: SettingsTabDef[] = [
+    { id: 'profile',           label: 'Profile',           icon: User },
+    { id: 'invoice_templates', label: 'Templates',         icon: Layout,      ownerOnly: true },
+    { id: 'team',              label: 'Team',              icon: UsersRound,  ownerOnly: true, partnerRestricted: true },
+    { id: 'security',          label: 'Security',          icon: Shield,      partnerRestricted: true },
+    { id: 'email',             label: 'Email',             icon: Mail,        ownerOnly: true },
+    { id: 'bank',              label: 'Banking',           icon: Landmark,    ownerOnly: true },
+    { id: 'gl_mapping',        label: 'GL Mapping',        icon: GitBranch,   requiresSettings: true, requiresPlan: 'accounting' },
+    { id: 'periods',           label: 'Periods',           icon: Lock,        requiresSettings: true, requiresPlan: 'accounting' },
+    { id: 'ai',                label: 'AI',                icon: Bot,         ownerOnly: true },
+    { id: 'access',            label: 'Accountant Access', icon: ShieldCheck, ownerOnly: true, partnerRestricted: true },
+    { id: 'whitelabel',        label: 'White-label',       icon: Globe,       ownerOnly: true },
+    { id: 'import',            label: 'Migration',         icon: Upload,      requiresSettings: true },
+  ]
+  const visibleSettingsTabs = settingsTabs.filter((t) => {
+    if (t.partnerRestricted && isPartnerAccountant) return false
+    if (t.ownerOnly && !isOwnerOrAdmin) return false
+    if (t.requiresSettings && !hasSettingsPerm) return false
+    if (t.requiresPlan && planModules !== null && !planModules.includes(t.requiresPlan) && !user?.is_superuser) return false
+    return true
+  })
+
+  const [settingsOpen, setSettingsOpen] = useState(() => pathname === '/settings')
 
   return (
     <aside
@@ -286,6 +316,37 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
             </NavLink>
           </div>
         )}
+
+        {/* Settings sub-nav — collapsible */}
+        {!billingOnly && (
+          <div>
+            <button
+              onClick={() => setSettingsOpen((v) => !v)}
+              className="w-full flex items-center justify-between px-3 pt-4 pb-1 text-left group"
+            >
+              <span className={cn('text-[10px] font-semibold uppercase tracking-widest group-hover:text-slate-300 transition-colors', pathname === '/settings' ? 'text-brand-400' : 'text-slate-400')}>
+                SETTINGS
+              </span>
+              {settingsOpen
+                ? <ChevronDown size={12} className="text-slate-400 group-hover:text-slate-300 transition-colors" />
+                : <ChevronRight size={12} className="text-slate-400 group-hover:text-slate-300 transition-colors" />
+              }
+            </button>
+            {settingsOpen && visibleSettingsTabs.map((t) => {
+              const isActive = pathname === '/settings' && activeSettingsTab === t.id
+              return (
+                <Link
+                  key={t.id}
+                  to={`/settings?tab=${t.id}`}
+                  className={isActive ? 'sidebar-item-active' : 'sidebar-item'}
+                >
+                  <t.icon size={16} className="shrink-0" />
+                  <span className="truncate">{t.label}</span>
+                </Link>
+              )
+            })}
+          </div>
+        )}
       </nav>
 
       {/* Settings + User + Logout */}
@@ -300,15 +361,6 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
             <span className="text-red-400">Platform Admin</span>
           </NavLink>
         )}
-        {/* Settings: always show for owners/admins; for sub-accounts show only if they have profile/security access (always) */}
-        <NavLink
-          to="/settings"
-          className={({ isActive }) => isActive ? 'sidebar-item-active' : 'sidebar-item'}
-        >
-          <Shield size={16} className="shrink-0" />
-          Settings
-        </NavLink>
-
         <button
           onClick={() => navigate('/settings')}
           className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-surface-700/50 rounded-xl transition-colors"
