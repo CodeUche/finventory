@@ -105,6 +105,12 @@ class Organisation(SoftDeleteModel):
         max_length=100, blank=True,
         help_text="Default Pension Fund Administrator (PFA) for remittance guidance"
     )
+    # WHT small-payer exemption: organisations with annual turnover ≤ ₦25m are exempt from
+    # deducting WHT on transactions ≤ ₦2m/month (WHT 2024 Regulations, s.14)
+    annual_turnover = models.DecimalField(
+        max_digits=20, decimal_places=2, null=True, blank=True,
+        help_text="Declared annual turnover (NGN). Used for WHT small-payer exemption threshold."
+    )
     # AI assistant custom context (per-org training)
     ai_custom_context = models.TextField(
         blank=True,

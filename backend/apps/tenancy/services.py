@@ -112,6 +112,9 @@ class OrganisationService:
         # Seed country-specific default tax configuration (non-fatal)
         OrganisationService._seed_tax_config(org)
 
+        # Seed WHT 2024 Regulation rates for Nigerian orgs (non-fatal)
+        OrganisationService._seed_wht_rates(org)
+
         logger.info("Organisation created: %s (owner=%s)", org.id, owner.id)
         return org
 
@@ -326,6 +329,49 @@ class OrganisationService:
             logger.info("Tax config seeded for org %s (country=%s)", org.id, org.country)
         except Exception as exc:
             logger.warning("Could not seed tax config for org %s: %s", org.id, exc)
+
+    # WHT 2024 Regulation (Deduction of Tax at Source Regulations 2024, eff. 1 Jan 2025)
+    # Rates: (transaction_type, company_rate_pct, individual_rate_pct)
+    _WHT_2024_RATES_NG = [
+        ("Rent",                                   10, 10),
+        ("Dividends",                               10, 10),
+        ("Interest",                                10, 10),
+        ("Royalties",                               10, 10),
+        ("Consulting / Professional Fees",          5,  5),
+        ("Technical Fees",                          5,  5),
+        ("Management Fees",                         5,  5),
+        ("Construction (Contract)",                 5,  5),
+        ("Agency / Brokerage",                      5,  5),
+        ("Architect / Surveyor / Engineer Fees",    5,  5),
+        ("Commission (Sales/Marketing)",            5,  5),
+        ("Legal / Audit Fees",                      5,  5),
+        ("Director Fees",                           10, 10),
+        ("Hire of Equipment / Vehicles",            5,  5),
+        ("Supply of Goods (>₦2m/month)",            2,  5),
+        ("Supply of Services (>₦2m/month)",         2,  5),
+        ("Inland Freight",                          5,  5),
+    ]
+
+    @staticmethod
+    def _seed_wht_rates(org: Organisation) -> None:
+        """Seed Nigeria WHT 2024 Regulation rates on org creation (NG only, idempotent)."""
+        if org.country != "NG":
+            return
+        try:
+            from apps.tax.models import WHTRate
+            for (transaction_type, company_rate, individual_rate) in OrganisationService._WHT_2024_RATES_NG:
+                WHTRate.objects.get_or_create(
+                    organisation=org,
+                    transaction_type=transaction_type,
+                    defaults={
+                        "company_rate": company_rate,
+                        "individual_rate": individual_rate,
+                        "is_active": True,
+                    },
+                )
+            logger.info("WHT 2024 rates seeded for org %s", org.id)
+        except Exception as exc:
+            logger.warning("Could not seed WHT rates for org %s: %s", org.id, exc)
 
     @staticmethod
     def invite_member(organisation, email: str, role: str, invited_by, module_permissions: dict = None) -> Invitation:

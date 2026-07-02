@@ -83,7 +83,7 @@ class ProgressiveTaxStrategy:
         config,
         brackets: list,
     ) -> tuple[Decimal, list[BracketResult]]:
-        total_tax = Decimal("0")
+        raw_total = Decimal("0")
         bracket_results = []
 
         for bracket in brackets:
@@ -92,19 +92,16 @@ class ProgressiveTaxStrategy:
             rate = Decimal(str(bracket.rate)) / Decimal("100")
 
             if net_income <= lower:
-                # Income doesn't reach this bracket
                 break
 
-            # Income falling within this bracket
             if upper is not None:
                 taxable_in_bracket = min(net_income, upper) - lower
             else:
                 taxable_in_bracket = net_income - lower
 
-            tax_in_bracket = (taxable_in_bracket * rate).quantize(
-                Decimal("0.01"), rounding=ROUND_HALF_UP
-            )
-            total_tax += tax_in_bracket
+            # Keep raw (unrounded) per-bracket; round once at the total (M-1 fix)
+            tax_in_bracket_raw = taxable_in_bracket * rate
+            raw_total += tax_in_bracket_raw
 
             bracket_results.append(
                 BracketResult(
@@ -112,10 +109,11 @@ class ProgressiveTaxStrategy:
                     upper=upper,
                     rate=bracket.rate,
                     taxable_in_bracket=taxable_in_bracket,
-                    tax_in_bracket=tax_in_bracket,
+                    tax_in_bracket=tax_in_bracket_raw.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
                 )
             )
 
+        total_tax = raw_total.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         return total_tax, bracket_results
 
 
@@ -186,7 +184,7 @@ class TaxEngine:
         tax_payable, bracket_results = strategy.calculate(net_income, config, brackets)
 
         effective_rate = (
-            (tax_payable / income * Decimal("100")).quantize(Decimal("0.01"))
+            (tax_payable / income * Decimal("100")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
             if income > 0
             else Decimal("0")
         )

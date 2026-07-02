@@ -32,17 +32,23 @@ class TaxClass(TenantAwareModel):
     """
     Product-level VAT / sales tax rate.
 
-    Assigned to products; rate applied at point of sale.
-    Examples:
-        Standard Rate (7.5% VAT in Nigeria)
-        Zero Rated (0%)
-        Exempt
+    NTA 2025: treatment distinguishes standard, zero-rated, and exempt supplies.
+    Input VAT on exempt supplies is NOT recoverable; on zero-rated supplies it IS.
     """
+
+    class Treatment(models.TextChoices):
+        STANDARD  = 'standard',   'Standard Rate'
+        ZERO_RATED = 'zero_rated', 'Zero-Rated'
+        EXEMPT    = 'exempt',     'Exempt'
 
     name = models.CharField(max_length=100)
     rate = models.DecimalField(
         max_digits=5, decimal_places=2,
         help_text="Tax rate as percentage (e.g., 7.5 for 7.5%)"
+    )
+    treatment = models.CharField(
+        max_length=20, choices=Treatment.choices, default=Treatment.STANDARD,
+        help_text="VAT treatment: standard (7.5%), zero-rated (0% but input recoverable), exempt (0%, input NOT recoverable)"
     )
     description = models.TextField(blank=True)
     is_active = models.BooleanField(default=True)
@@ -92,6 +98,14 @@ class TaxConfig(TenantAwareModel):
     class Meta(TenantAwareModel.Meta):
         unique_together = [["organisation", "name", "tax_year"]]
         verbose_name = "Tax Configuration"
+        constraints = [
+            # H-4: only one active config per (org, tax_type, year) — prevents nondeterministic selection
+            models.UniqueConstraint(
+                fields=["organisation", "tax_type", "tax_year"],
+                condition=models.Q(is_active=True),
+                name="unique_active_taxconfig_per_type_year",
+            )
+        ]
 
     def __str__(self):
         return f"{self.name} ({self.tax_year})"

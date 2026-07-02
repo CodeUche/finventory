@@ -36,6 +36,8 @@ class Employee(TenantAwareModel):
     transport_allowance = MoneyField(default=0)
     leave_allowance = MoneyField(default=0)
     other_allowances = MoneyField(default=0)
+    # NTA 2025: Rent Relief — employee's declared annual rent paid (used to compute pre-tax relief)
+    annual_rent = MoneyField(default=0)
     is_active = models.BooleanField(default=True)
 
     class Meta:
@@ -307,11 +309,11 @@ class Attendance(TenantAwareModel):
 
 class EmployeeTaxProfile(TenantAwareModel):
     """
-    Individual-level tax relief overrides for an employee.
-    Used to adjust taxable income beyond the standard CRA formula.
+    Individual-level tax relief overrides for an employee (NTA 2025 rules).
     """
     employee = models.OneToOneField(Employee, on_delete=models.CASCADE, related_name='tax_profile')
-    nhf_enrolled = models.BooleanField(default=True, help_text="Employee pays NHF (2.5% of basic)")
+    # NHF is voluntary for private-sector employees — must explicitly opt in (NHF Act)
+    nhf_enrolled = models.BooleanField(default=False, help_text="Employee has opted into NHF (2.5% of basic, voluntary)")
     voluntary_pension = MoneyField(default=0, help_text="Additional voluntary pension contributions per month")
     life_assurance_premium = MoneyField(default=0, help_text="Monthly life assurance premium (pre-tax deductible)")
     paye_exempt = models.BooleanField(default=False, help_text="If True, no PAYE is deducted (e.g., expatriate relief, diplomatic exemption)")

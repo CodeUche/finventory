@@ -13,6 +13,7 @@ COA_SEED = [
     ('1100', 'Accounts Receivable', AccountType.ASSET),
     ('1200', 'Inventory', AccountType.ASSET),
     ('1300', 'Prepaid Expenses', AccountType.ASSET),
+    ('1400', 'VAT Receivable (Input VAT)', AccountType.ASSET),   # C3: recoverable input VAT
     ('1500', 'Fixed Assets', AccountType.ASSET),
     ('1510', 'Accumulated Depreciation', AccountType.ASSET),
     ('1600', 'Deferred Tax Asset', AccountType.ASSET),
@@ -516,6 +517,15 @@ class AccountingService:
             logger.warning("post_journal_entry: all lines are zero, skipping. ref=%s", ref)
             return None
 
+        # E2: validate debits == credits before committing (raise, don't silently post)
+        total_debits  = sum(Decimal(str(d)) for _, d, _ in non_zero_lines)
+        total_credits = sum(Decimal(str(c)) for _, _, c in non_zero_lines)
+        if abs(total_debits - total_credits) > Decimal('0.01'):
+            raise ValueError(
+                f"Journal entry imbalanced: debits={total_debits}, credits={total_credits} "
+                f"(ref={ref}, source={source_type}/{source_ref})"
+            )
+
         with transaction.atomic():
             entry = JournalEntry.objects.create(
                 organisation=organisation,
@@ -711,16 +721,22 @@ class AccountingService:
 
     @staticmethod
     def post_bill_approved_journal(organisation, bill, user=None):
-        """DR Expense → CR Accounts Payable."""
-        zero = Decimal('0')
-        total = Decimal(str(bill.total_amount))
+        """DR Expense (net) + DR 1400 Input VAT → CR Accounts Payable (C3 fix)."""
+        zero     = Decimal('0')
+        total    = Decimal(str(bill.total_amount))
+        vat      = Decimal(str(bill.tax_amount or 0))
+        net_cost = total - vat
 
-        expense_acct = AccountMappingService.resolve(organisation, 'general_expense_account')
-        ap_acct = AccountMappingService.resolve(organisation, 'accounts_payable')
+        expense_acct  = AccountMappingService.resolve(organisation, 'general_expense_account')
+        ap_acct       = AccountMappingService.resolve(organisation, 'accounts_payable')
+        input_vat_acct = AccountingService._get_or_create_account(
+            organisation, '1400', 'VAT Receivable (Input VAT)', AccountType.ASSET
+        )
 
         lines = [
-            (expense_acct, total, zero),
-            (ap_acct, zero, total),
+            (expense_acct,   net_cost, zero),   # DR Expense (VAT-exclusive)
+            (input_vat_acct, vat,      zero),   # DR Input VAT Receivable
+            (ap_acct,        zero,     total),  # CR Accounts Payable (gross)
         ]
         return AccountingService.post_journal_entry(
             organisation, f"Bill approved {bill.bill_number}", bill.issue_date,
@@ -789,39 +805,62 @@ class AccountingService:
 
     @staticmethod
     def post_payroll_journal(organisation, payroll_run, user=None):
-        """DR Salaries → CR PAYE + Pension + NHF + NSITF + Bank (net pay)."""
-        zero = Decimal('0')
-        gross = Decimal(str(payroll_run.total_gross or 0))
-        paye = Decimal(str(payroll_run.total_paye or 0))
-        pension = Decimal(str(payroll_run.total_pension_employee or 0)) + Decimal(str(payroll_run.total_pension_employer or 0))
-        nhf = Decimal(str(payroll_run.total_nhf or 0))
-        nsitf = Decimal(str(payroll_run.total_nsitf or 0))
-        net = Decimal(str(payroll_run.total_net or 0))
+        """
+        Balanced payroll GL journal (E1 fix):
 
-        salary_acct = AccountMappingService.resolve(organisation, 'salary_expense_account')
-        paye_acct = AccountMappingService.resolve(organisation, 'paye_account')
+        DR Salaries & Wages Expense       = total_gross
+        DR Employer Pension Expense        = total_pension_employer
+        DR NSITF Expense                   = total_nsitf
+        ─────────────────────────────────────────────────────
+        CR PAYE Payable                    = total_paye
+        CR Pension Payable (emp + empr)    = total_pension_employee + total_pension_employer
+        CR NHF Payable                     = total_nhf
+        CR NSITF Payable                   = total_nsitf
+        CR Bank / Net Pay                  = total_net
+        """
+        zero            = Decimal('0')
+        gross           = Decimal(str(payroll_run.total_gross or 0))
+        paye            = Decimal(str(payroll_run.total_paye or 0))
+        pension_emp     = Decimal(str(payroll_run.total_pension_employee or 0))
+        pension_empr    = Decimal(str(payroll_run.total_pension_employer or 0))
+        total_pension   = pension_emp + pension_empr
+        nhf             = Decimal(str(payroll_run.total_nhf or 0))
+        nsitf           = Decimal(str(payroll_run.total_nsitf or 0))
+        net             = Decimal(str(payroll_run.total_net or 0))
+
+        salary_acct  = AccountMappingService.resolve(organisation, 'salary_expense_account')
+        paye_acct    = AccountMappingService.resolve(organisation, 'paye_account')
         pension_acct = AccountMappingService.resolve(organisation, 'pension_account')
-        bank_acct = AccountMappingService.resolve(organisation, 'bank_account')
+        bank_acct    = AccountMappingService.resolve(organisation, 'bank_account')
+
+        # Employer-cost accounts (fall back gracefully if not mapped)
+        try:
+            nsitf_acct = AccountMappingService.resolve(organisation, 'nsitf_account')
+        except Exception:
+            nsitf_acct = AccountingService._get_or_create_account(
+                organisation, '2500', 'NSITF Payable', AccountType.LIABILITY
+            )
+        try:
+            nhf_acct = AccountMappingService.resolve(organisation, 'nhf_account')
+        except Exception:
+            nhf_acct = AccountingService._get_or_create_account(
+                organisation, '2600', 'NHF Payable', AccountType.LIABILITY
+            )
 
         lines = [
-            (salary_acct, gross, zero),    # DR Salaries & Wages
-            (paye_acct, zero, paye),       # CR PAYE Payable
-            (pension_acct, zero, pension), # CR Pension Payable
-            (bank_acct, zero, net),        # CR Bank (net pay out)
+            # ── Debit side ──────────────────────────────────────────────────
+            (salary_acct,  gross,        zero),    # DR Salaries & Wages (employee cost)
+            (salary_acct,  pension_empr, zero),    # DR Employer Pension Expense
+            (salary_acct,  nsitf,        zero),    # DR NSITF Expense (employer-borne)
+            # ── Credit side ─────────────────────────────────────────────────
+            (paye_acct,    zero, paye),            # CR PAYE Payable
+            (pension_acct, zero, total_pension),   # CR Pension Payable (employee + employer)
+            (bank_acct,    zero, net),             # CR Bank / Net Pay
         ]
-        # NHF and NSITF — use bank account as fallback if wht/other not mapped
         if nhf > zero:
-            try:
-                nhf_acct = AccountMappingService.resolve(organisation, 'wht_account')
-            except Exception:
-                nhf_acct = bank_acct
-            lines.append((nhf_acct, zero, nhf))
+            lines.append((nhf_acct, zero, nhf))   # CR NHF Payable
         if nsitf > zero:
-            try:
-                nsitf_acct = AccountMappingService.resolve(organisation, 'wht_account')
-            except Exception:
-                nsitf_acct = bank_acct
-            lines.append((nsitf_acct, zero, nsitf))
+            lines.append((nsitf_acct, zero, nsitf))  # CR NSITF Payable
 
         return AccountingService.post_journal_entry(
             organisation,

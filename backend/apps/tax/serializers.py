@@ -11,12 +11,11 @@ from .models import (
 class TaxClassSerializer(serializers.ModelSerializer):
     class Meta:
         model = TaxClass
-        fields = ["id", "name", "rate", "description", "is_active"]
+        fields = ["id", "name", "rate", "treatment", "description", "is_active"]
         read_only_fields = ["id"]
-        validators = []  # UniqueTogetherValidator added dynamically by TenantAwareModel — exclude here to avoid org context issue
+        validators = []
 
     def validate(self, attrs):
-        # Enforce unique_together (organisation, name) at serializer level
         request = self.context.get('request')
         if request and hasattr(request, 'organisation') and request.organisation:
             org = request.organisation
@@ -33,6 +32,49 @@ class TaxBracketSerializer(serializers.ModelSerializer):
         model = TaxBracket
         fields = ["id", "lower_bound", "upper_bound", "rate", "cumulative_tax_below"]
         read_only_fields = ["id"]
+
+    def validate(self, attrs):
+        lb = attrs.get('lower_bound', Decimal('0'))
+        ub = attrs.get('upper_bound')
+        rate = attrs.get('rate', Decimal('0'))
+        if ub is not None and ub <= lb:
+            raise serializers.ValidationError(
+                f"upper_bound ({ub}) must be greater than lower_bound ({lb}). "
+                "For the top bracket leave upper_bound blank (null)."
+            )
+        if rate < 0 or rate > 100:
+            raise serializers.ValidationError("rate must be between 0 and 100.")
+        return attrs
+
+
+def _validate_bracket_set(brackets_data: list) -> None:
+    """
+    Cross-bracket validation for the PUT /tax/configs/{id}/brackets/ endpoint.
+    Rejects: overlaps, gaps between consecutive brackets, upper_bound=0, unsorted input.
+    """
+    if not brackets_data:
+        return
+    sorted_b = sorted(brackets_data, key=lambda b: b.get('lower_bound', Decimal('0')))
+    for i, b in enumerate(sorted_b):
+        lb = b.get('lower_bound', Decimal('0'))
+        ub = b.get('upper_bound')
+        is_last = (i == len(sorted_b) - 1)
+        if not is_last and ub is None:
+            raise serializers.ValidationError(
+                f"Bracket starting at {lb}: upper_bound can only be null on the last (top) bracket."
+            )
+        if ub is not None and ub == 0:
+            raise serializers.ValidationError(
+                f"Bracket starting at {lb}: upper_bound=0 is invalid. "
+                "Use null for an unbounded top bracket."
+            )
+        if i > 0:
+            prev_ub = sorted_b[i - 1].get('upper_bound')
+            if prev_ub is not None and lb != prev_ub:
+                raise serializers.ValidationError(
+                    f"Gap or overlap between brackets: previous upper_bound={prev_ub}, "
+                    f"this lower_bound={lb}. Brackets must be contiguous with no gaps or overlaps."
+                )
 
 
 class TaxConfigSerializer(serializers.ModelSerializer):
@@ -69,7 +111,9 @@ class IncomeTaxCalculateSerializer(serializers.Serializer):
     allowances = serializers.DecimalField(max_digits=15, decimal_places=2, required=False)
     tax_type = serializers.ChoiceField(choices=['income', 'corporate'], required=False, default='income')
     gross_turnover = serializers.DecimalField(max_digits=15, decimal_places=2, required=False, min_value=Decimal("0"),
-                                              help_text="CIT only: gross turnover for 0.5% minimum tax floor")
+                                              help_text="CIT only: gross turnover for small-company exemption and 0.5% minimum tax floor")
+    fixed_assets = serializers.DecimalField(max_digits=15, decimal_places=2, required=False, min_value=Decimal("0"),
+                                            help_text="CIT only: total fixed assets for small-company exemption (≤₦250m threshold)")
 
 
 class VATReportSerializer(serializers.Serializer):
@@ -102,8 +146,16 @@ class WHTTransactionSerializer(serializers.ModelSerializer):
             'gross_amount', 'wht_rate_percent', 'wht_amount', 'net_amount',
             'transaction_date', 'status', 'notes', 'has_certificate',
         ]
-        # wht_amount and net_amount are auto-calculated in the view from gross × rate
         read_only_fields = ['id', 'wht_amount', 'net_amount', 'has_certificate']
+
+    def validate_wht_rate(self, value):
+        if value is None:
+            return value
+        request = self.context.get('request')
+        if request and hasattr(request, 'organisation') and request.organisation:
+            if value.organisation_id != request.organisation.id:
+                raise serializers.ValidationError("WHT rate does not belong to this organisation.")
+        return value
 
     def get_has_certificate(self, obj):
         return hasattr(obj, 'certificate')

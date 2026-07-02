@@ -13,25 +13,24 @@ from .models import (
 class PayrollService:
     PENSION_RATE_EMPLOYEE = Decimal('0.08')    # 8%
     PENSION_RATE_EMPLOYER = Decimal('0.10')    # 10%
-    NHF_RATE = Decimal('0.025')               # 2.5% of basic salary
+    NHF_RATE = Decimal('0.025')               # 2.5% of basic salary (voluntary — NHF Act)
     NSITF_RATE = Decimal('0.01')              # 1% of gross (employer-borne)
-    CRA_FLAT_ANNUAL = Decimal('200000')
-    CRA_MIN_RATE = Decimal('0.01')
-    CRA_RATE = Decimal('0.20')
-    MINIMUM_TAX_RATE = Decimal('0.01')        # 1% of gross — PAYE floor per PITA
+    RENT_RELIEF_RATE = Decimal('0.20')        # NTA 2025: 20% of annual rent paid
+    RENT_RELIEF_CAP = Decimal('500000')       # NTA 2025: capped at ₦500,000 per annum
 
     # Standard working hours per month (8 hrs × 26 days)
     MONTHLY_WORKING_HOURS = Decimal('208')
     OVERTIME_MULTIPLIER = Decimal('1.5')
 
-    # PAYE progressive tax brackets (annual taxable income)
+    # NTA 2025 Fourth Schedule — PAYE bands (annual chargeable income), effective 1 Jan 2026.
+    # Replaces repealed PITA schedule (7–24%).
     PAYE_BRACKETS = [
-        (Decimal('0'), Decimal('300000'), Decimal('0.07')),
-        (Decimal('300000'), Decimal('600000'), Decimal('0.11')),
-        (Decimal('600000'), Decimal('1100000'), Decimal('0.15')),
-        (Decimal('1100000'), Decimal('1600000'), Decimal('0.19')),
-        (Decimal('1600000'), Decimal('3200000'), Decimal('0.21')),
-        (Decimal('3200000'), None, Decimal('0.24')),
+        (Decimal('0'),        Decimal('800000'),   Decimal('0.00')),   # 0%
+        (Decimal('800000'),   Decimal('3000000'),  Decimal('0.15')),   # 15%
+        (Decimal('3000000'),  Decimal('12000000'), Decimal('0.18')),   # 18%
+        (Decimal('12000000'), Decimal('25000000'), Decimal('0.21')),   # 21%
+        (Decimal('25000000'), Decimal('50000000'), Decimal('0.23')),   # 23%
+        (Decimal('50000000'), None,                Decimal('0.25')),   # 25%
     ]
 
     @classmethod
@@ -50,7 +49,7 @@ class PayrollService:
     @classmethod
     def calculate_employee_paye(cls, employee, extra_gross=Decimal('0'), tax_profile=None):
         """
-        Calculate full payroll figures for one employee.
+        Calculate full payroll figures for one employee (NTA 2025 rules, effective 1 Jan 2026).
         extra_gross: bonus + overtime pay added on top of monthly salary.
         tax_profile: optional EmployeeTaxProfile for individual relief overrides.
         """
@@ -62,29 +61,33 @@ class PayrollService:
         if tax_profile and tax_profile.voluntary_pension:
             employee_pension += Decimal(str(tax_profile.voluntary_pension))
 
-        # NHF: apply only if enrolled (default True), or opt-out via tax profile
-        nhf_enrolled = (tax_profile.nhf_enrolled if tax_profile else True)
+        # NHF: voluntary for private-sector employees (NHF Act; default opt-in=False)
+        nhf_enrolled = (tax_profile.nhf_enrolled if tax_profile else False)
         nhf = (employee.basic_salary * cls.NHF_RATE) if nhf_enrolled else Decimal('0')
 
         nsitf = gross * cls.NSITF_RATE
 
-        # Life assurance premium deduction (monthly, pre-tax under PITA s.33(5))
+        # Life assurance premium deduction (still deductible under NTA 2025)
         life_assurance = Decimal(str(tax_profile.life_assurance_premium)) if tax_profile else Decimal('0')
 
-        cra_flat_monthly = cls.CRA_FLAT_ANNUAL / 12
-        cra_min_component = max(cra_flat_monthly, gross * cls.CRA_MIN_RATE)
-        cra = cra_min_component + gross * cls.CRA_RATE
-        taxable_income = max(Decimal('0'), gross - employee_pension - nhf - cra - life_assurance)
-        annual_paye = cls.calculate_annual_paye(taxable_income * 12)
-        monthly_paye = annual_paye / 12
+        # NTA 2025: Rent Relief replaces CRA — 20% of annual rent paid, capped ₦500,000
+        annual_rent = Decimal(str(employee.annual_rent)) if hasattr(employee, 'annual_rent') and employee.annual_rent else Decimal('0')
+        annual_rent_relief = min(annual_rent * cls.RENT_RELIEF_RATE, cls.RENT_RELIEF_CAP)
+        monthly_rent_relief = annual_rent_relief / 12
 
-        # Exempt employees (e.g., diplomatic, approved expatriate relief)
+        taxable_income = max(
+            Decimal('0'),
+            gross - employee_pension - nhf - monthly_rent_relief - life_assurance,
+        )
+        annual_paye = cls.calculate_annual_paye(taxable_income * 12)
+        # Quantize once at the annual total, then divide — no per-bracket rounding drift
+        annual_paye = annual_paye.quantize(Decimal('0.01'), rounding='ROUND_HALF_UP')
+        monthly_paye = (annual_paye / 12).quantize(Decimal('0.01'), rounding='ROUND_HALF_UP')
+
+        # Exempt employees (diplomatic, approved expatriate relief)
         if tax_profile and tax_profile.paye_exempt:
             monthly_paye = Decimal('0')
-        else:
-            # Minimum tax rule: PAYE cannot be less than 1% of gross (PITA s.37)
-            minimum_tax = gross * cls.MINIMUM_TAX_RATE
-            monthly_paye = max(monthly_paye, minimum_tax)
+        # NTA 2025 abolished individual minimum tax — income ≤ ₦800k/yr is simply 0%
 
         employer_pension = pension_base * cls.PENSION_RATE_EMPLOYER
         total_deductions = employee_pension + nhf + monthly_paye
@@ -100,7 +103,7 @@ class PayrollService:
             'employee_pension': employee_pension,
             'nhf': nhf,
             'nsitf': nsitf,
-            'consolidated_relief_allowance': cra,
+            'rent_relief': monthly_rent_relief,
             'taxable_income': taxable_income,
             'paye_tax': monthly_paye,
             'employer_pension': employer_pension,

@@ -535,7 +535,7 @@ class SaleService:
 
     @staticmethod
     def void_invoice(invoice: Invoice, voided_by) -> Invoice:
-        """Void an invoice and reverse stock movements."""
+        """Void a confirmed/draft invoice: reverse stock and post a reversing GL journal."""
         if invoice.status == Invoice.Status.PAID:
             raise ValueError("Paid invoices cannot be voided without a return process.")
 
@@ -549,9 +549,9 @@ class SaleService:
                 organisation=invoice.organisation,
                 product=item.product,
                 warehouse=invoice.warehouse,
-                quantity=item.quantity,  # positive = restocking
+                quantity=item.quantity,
                 movement_type="return_in",
-                unit_cost=item.cost_of_goods / item.quantity,
+                unit_cost=item.cost_of_goods / item.quantity if item.quantity else Decimal("0"),
                 reference=f"VOID-{invoice.invoice_number}",
                 created_by=voided_by,
             )
@@ -559,15 +559,40 @@ class SaleService:
         invoice.status = Invoice.Status.VOIDED
         invoice.save(update_fields=["status", "updated_at"])
 
+        # Post a reversing GL journal to undo the original sale posting (C5/M-2 fix)
+        try:
+            from apps.accounting.services import AccountingService, AccountMappingService
+            zero     = Decimal("0")
+            net_rev  = Decimal(str(invoice.subtotal))
+            vat_amt  = Decimal(str(invoice.tax_amount or 0))
+            total    = Decimal(str(invoice.total_amount))
+            revenue_acct = AccountMappingService.resolve(invoice.organisation, 'revenue_account')
+            vat_acct     = AccountMappingService.resolve(invoice.organisation, 'vat_payable_account')
+            ar_acct      = AccountMappingService.resolve(invoice.organisation, 'accounts_receivable')
+            # Reversal: DR AR (removes the receivable) ... CR Revenue + VAT Payable
+            lines = [
+                (ar_acct,      zero,    total),   # CR AR (removes receivable)
+                (revenue_acct, net_rev, zero),    # DR Revenue (reverses income)
+                (vat_acct,     vat_amt, zero),    # DR VAT Payable (reverses liability)
+            ]
+            AccountingService.post_journal_entry(
+                invoice.organisation,
+                f"Void invoice {invoice.invoice_number}",
+                invoice.issue_date,
+                lines, voided_by,
+                ref=f"VOID-{invoice.invoice_number}",
+                source_type='invoice_void',
+                source_ref=str(invoice.id),
+            )
+        except Exception as exc:
+            logger.error("Void invoice GL reversal failed for %s: %s", invoice.invoice_number, exc)
+
         try:
             from apps.core.models import AuditLog
             AuditLog.log(
-                action=AuditLog.UPDATE,
-                user=voided_by,
-                organisation=invoice.organisation,
-                model_name='Invoice',
-                object_id=str(invoice.id),
-                object_repr=str(invoice),
+                action=AuditLog.UPDATE, user=voided_by,
+                organisation=invoice.organisation, model_name='Invoice',
+                object_id=str(invoice.id), object_repr=str(invoice),
                 changes={'status': {'old': previous_status, 'new': invoice.status}},
             )
         except Exception:
@@ -738,6 +763,7 @@ class SaleService:
         return_date = return_date or tz.now().date()
 
         total_refund = Decimal("0")
+        total_tax_refund = Decimal("0")
         return_items_to_create = []
 
         for item_data in items:
@@ -754,11 +780,20 @@ class SaleService:
                     f"remaining returnable: {remaining_returnable})"
                 )
 
-            # Proportional refund based on the remaining line value
+            # Proportional refund (VAT-inclusive) based on remaining line value
             remaining_line_value = sale_item.line_total * remaining_returnable / sale_item.quantity
             refund = round_money(remaining_line_value * qty / remaining_returnable)
+
+            # Split out the VAT portion to reverse output VAT in the GL and VAT report
+            if sale_item.line_total > 0:
+                tax_ratio = (sale_item.tax_amount or Decimal("0")) / sale_item.line_total
+            else:
+                tax_ratio = Decimal("0")
+            tax_refund = round_money(refund * tax_ratio)
+
             total_refund += refund
-            return_items_to_create.append((sale_item, qty, refund))
+            total_tax_refund += tax_refund
+            return_items_to_create.append((sale_item, qty, refund, tax_refund))
 
         sale_return = SaleReturn.objects.create(
             organisation=organisation,
@@ -772,7 +807,7 @@ class SaleService:
             processed_by=processed_by,
         )
 
-        for sale_item, qty, refund in return_items_to_create:
+        for sale_item, qty, refund, tax_refund in return_items_to_create:
             SaleReturnItem.objects.create(
                 organisation=organisation,
                 sale_return=sale_return,
@@ -781,12 +816,11 @@ class SaleService:
                 quantity_returned=qty,
                 unit_price=sale_item.unit_price,
                 refund_amount=refund,
+                tax_refund=tax_refund,
             )
-            # Track cumulative returned quantity on the line item
             SaleItem.objects.filter(pk=sale_item.pk).update(
                 quantity_returned=sale_item.quantity_returned + qty
             )
-            # Restock physical products if requested
             if restocked and sale_item.product.product_type != "service":
                 unit_cost = (
                     sale_item.cost_of_goods / sale_item.quantity
@@ -804,17 +838,13 @@ class SaleService:
                     created_by=processed_by,
                 )
 
-        # Update invoice status only when ALL items are fully returned (full reversal).
-        # A partial return is a credit note against the original invoice — best accounting
-        # practice (Xero / QuickBooks behaviour) leaves the invoice at its current status
-        # (paid, confirmed, etc.) and lets the SaleReturn credit note carry the partial value.
         all_items = list(invoice.items.all())
-        total_sold     = sum(Decimal(str(i.quantity))                         for i in all_items)
-        total_returned = sum(Decimal(str(i.quantity_returned or 0))           for i in all_items)
+        total_sold     = sum(Decimal(str(i.quantity))           for i in all_items)
+        total_returned = sum(Decimal(str(i.quantity_returned or 0)) for i in all_items)
         if total_sold > 0 and total_returned >= total_sold:
             Invoice.objects.filter(pk=invoice.pk).update(status=Invoice.Status.RETURNED)
 
-        # Update customer outstanding balance if credit sale and record in ledger
+        # Update AR if credit sale
         if invoice.customer and invoice.payment_method == Invoice.PaymentMethod.CREDIT:
             from apps.credits.services import CreditService
             CreditService.record_payment(
@@ -825,8 +855,34 @@ class SaleService:
                 description=f"Sales return – {sale_return.return_number}",
             )
 
+        # Post reversing GL journal: DR Revenue (net), DR VAT Payable, CR AR/Cash
+        try:
+            from apps.accounting.services import AccountingService, AccountMappingService
+            zero = Decimal("0")
+            net_refund = total_refund - total_tax_refund
+            revenue_acct = AccountMappingService.resolve(organisation, 'revenue_account')
+            vat_acct     = AccountMappingService.resolve(organisation, 'vat_payable_account')
+            ar_acct      = AccountMappingService.resolve(organisation, 'accounts_receivable')
+            lines = [
+                (revenue_acct, net_refund,       zero),           # DR Revenue (reversal)
+                (vat_acct,     total_tax_refund,  zero),          # DR VAT Payable (reversal)
+                (ar_acct,      zero,              total_refund),  # CR AR / customer
+            ]
+            AccountingService.post_journal_entry(
+                organisation,
+                f"Credit note {sale_return.return_number}",
+                return_date,
+                lines,
+                processed_by,
+                ref=sale_return.return_number,
+                source_type='sale_return',
+                source_ref=str(sale_return.id),
+            )
+        except Exception as exc:
+            logger.error("Credit note GL journal failed for %s: %s", sale_return.return_number, exc)
+
         logger.info(
-            "Return %s processed for invoice %s — refund %s",
-            sale_return.return_number, invoice.invoice_number, total_refund,
+            "Return %s processed for invoice %s — refund %s (VAT %s)",
+            sale_return.return_number, invoice.invoice_number, total_refund, total_tax_refund,
         )
         return sale_return

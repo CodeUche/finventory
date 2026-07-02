@@ -168,15 +168,18 @@ class TaxConfigTests(TestCase):
         self.assertEqual(Decimal(str(res.data["tax_payable"])), Decimal("43000.00"))
 
     def test_calculate_corporate_minimum_tax_floor(self):
-        """CIT minimum tax floor: 0.5% of gross turnover if higher than computed tax."""
+        """CIT minimum tax floor: 0.5% of gross turnover for large companies (>₦100m) if higher than CIT."""
         TaxConfig.objects.create(
             organisation=self.org, name="NG CIT 2025", tax_type="corporate",
             country="NG", tax_year=2025, is_progressive=False, flat_rate=Decimal("30"),
         )
-        # Taxable profit = 0 → CIT = 0; gross turnover 10M → min tax = 50000
+        # NTA 2025: small company (≤₦100m turnover AND ≤₦250m assets) is CIT-exempt.
+        # Use ₦200M turnover + ₦300M assets → large company → min tax floor applies.
+        # Taxable profit = 0 → CIT = 0; gross turnover 200M → min tax = 200M × 0.5% = 1,000,000
         res = self.client.post("/api/v1/tax/configs/calculate_income_tax/", {
             "income": 0, "tax_year": 2025, "tax_type": "corporate",
-            "gross_turnover": 10000000,
+            "gross_turnover": 200000000,
+            "fixed_assets": 300000000,
         }, format="json")
         self.assertEqual(res.status_code, 200)
         self.assertGreater(Decimal(str(res.data["tax_payable"])), Decimal("0"))
@@ -198,8 +201,9 @@ class WHTRateTests(TestCase):
         self.client = _auth_client(self.user, self.org)
 
     def test_create_wht_rate(self):
+        # Use a custom type not in the seeded WHT 2024 Regulation schedule
         res = self.client.post("/api/v1/tax/wht-rates/", {
-            "transaction_type": "Rent", "company_rate": "10", "individual_rate": "10",
+            "transaction_type": "Custom Test Rate", "company_rate": "10", "individual_rate": "10",
         })
         self.assertEqual(res.status_code, 201)
 

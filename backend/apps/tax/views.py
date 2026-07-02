@@ -32,6 +32,7 @@ from .serializers import (
     WHTCertificateSerializer,
     WHTRateSerializer,
     WHTTransactionSerializer,
+    _validate_bracket_set,
 )
 from .services import TaxService
 
@@ -71,6 +72,7 @@ class TaxConfigViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                 allowances=d.get("allowances"),
                 tax_type=d.get("tax_type"),
                 gross_turnover=d.get("gross_turnover"),
+                fixed_assets=d.get("fixed_assets"),
             )
             return Response(result)
         except ValueError as e:
@@ -100,6 +102,7 @@ class TaxConfigViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         config = self.get_object()
         serializer = TaxBracketSerializer(data=request.data, many=True)
         serializer.is_valid(raise_exception=True)
+        _validate_bracket_set(serializer.validated_data)
         config.brackets.all().delete()
         TaxBracket.objects.bulk_create([
             TaxBracket(config=config, **b) for b in serializer.validated_data

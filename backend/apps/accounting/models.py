@@ -84,20 +84,24 @@ class JournalEntry(TenantAwareModel):
             else:
                 num = 1
             self.reference = f"JE-{num:05d}"
-        # Immutability: posted entries cannot have financial fields modified
+        # Immutability: posted entries cannot be modified (E2 fix)
         if self.pk:
             original = JournalEntry.objects.filter(pk=self.pk).values('status').first()
             if original and original['status'] == 'posted':
                 update_fields = kwargs.get('update_fields')
+                ALLOWED_FIELDS = {'gl_post_status', 'gl_post_error', 'reconciled_at', 'updated_at'}
                 if update_fields:
-                    ALLOWED_FIELDS = {'gl_post_status', 'gl_post_error', 'reconciled_at', 'updated_at'}
                     forbidden = set(update_fields) - ALLOWED_FIELDS
                     if forbidden:
                         raise PermissionError(
-                            f"Cannot modify posted journal entry fields: {forbidden}"
+                            f"Cannot modify posted journal entry: {forbidden}. Use a reversing entry."
                         )
-                # If no update_fields, we only allow this from JournalEntry.save() itself
-                # (e.g. setting the reference). Full saves on posted entries are blocked.
+                else:
+                    # Full save on a posted entry — only allow if only status itself is being set
+                    # (the initial create path). Any subsequent full save is blocked.
+                    raise PermissionError(
+                        "Cannot overwrite a posted journal entry. Use a reversing entry instead."
+                    )
         super().save(*args, **kwargs)
 
     def clean(self):
@@ -125,6 +129,22 @@ class JournalLine(TimeStampedModel):
             raise ValidationError("A journal line cannot have both debit and credit")
         if self.debit == 0 and self.credit == 0:
             raise ValidationError("A journal line must have either a debit or credit amount")
+
+    def save(self, *args, **kwargs):
+        # Only block modifications (not inserts) on posted entries.
+        # _state.adding is True when Django is about to INSERT (new object), False for UPDATE.
+        if not self._state.adding and self.journal_entry_id:
+            status = JournalEntry.objects.filter(pk=self.journal_entry_id).values_list('status', flat=True).first()
+            if status == JournalEntry.POSTED:
+                raise PermissionError("Cannot modify a line on a posted journal entry. Use a reversing entry.")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.journal_entry_id:
+            status = JournalEntry.objects.filter(pk=self.journal_entry_id).values_list('status', flat=True).first()
+            if status == JournalEntry.POSTED:
+                raise PermissionError("Cannot delete a line from a posted journal entry. Use a reversing entry.")
+        super().delete(*args, **kwargs)
 
 
 class FixedAsset(TenantAwareModel):

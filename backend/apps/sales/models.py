@@ -176,6 +176,10 @@ class Invoice(TenantAwareModel):
         max_length=500, blank=True,
         help_text="Free-text payment terms sent to FIRS (e.g. 'Net 30').",
     )
+    transmitted_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="Timestamp when invoice was transmitted to FIRS for clearance.",
+    )
 
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -391,14 +395,15 @@ class SaleReturn(TenantAwareModel):
 
 
 class SaleReturnItem(TenantAwareModel):
-    """One line item in a sales return."""
+    """One line item in a sales return / credit note."""
 
     sale_return = models.ForeignKey(SaleReturn, on_delete=models.CASCADE, related_name="items")
     original_item = models.ForeignKey(SaleItem, on_delete=models.PROTECT, related_name="return_items")
     product = models.ForeignKey("inventory.Product", on_delete=models.PROTECT)
     quantity_returned = models.DecimalField(max_digits=12, decimal_places=2)
     unit_price = MoneyField()
-    refund_amount = MoneyField()
+    refund_amount = MoneyField()          # VAT-inclusive refund to the customer
+    tax_refund = MoneyField(default=0)    # VAT portion of refund_amount (reverses output VAT)
 
     class Meta(TenantAwareModel.Meta):
         pass

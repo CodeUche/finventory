@@ -19,61 +19,135 @@ logger = logging.getLogger(__name__)
 
 class TaxService:
 
+    # NTA 2025: small-company thresholds for CIT exemption
+    SMALL_COMPANY_TURNOVER_LIMIT = Decimal("100000000")   # ₦100 million
+    SMALL_COMPANY_ASSET_LIMIT    = Decimal("250000000")   # ₦250 million fixed assets
+    DEVELOPMENT_LEVY_RATE        = Decimal("0.04")        # 4% of assessable profit (NTA 2025)
+
+    @staticmethod
+    def _get_or_create_config_for_year(organisation, tax_type: str, year: int):
+        """
+        Return the active TaxConfig for (org, type, year).
+        If none exists but a prior year config does, clone it forward so the service
+        never fails simply because a new calendar year started (B3 — yearly rollover).
+        """
+        config = TaxConfig.objects.filter(
+            organisation=organisation,
+            tax_type=tax_type,
+            tax_year=year,
+            is_active=True,
+        ).order_by('id').first()
+
+        if config:
+            return config
+
+        # Try to clone the most recent prior-year config
+        prior = TaxConfig.objects.filter(
+            organisation=organisation,
+            tax_type=tax_type,
+            is_active=True,
+            tax_year__lt=year,
+        ).order_by('-tax_year', 'id').first()
+
+        if not prior:
+            return None
+
+        from .models import TaxBracket
+        new_config = TaxConfig.objects.create(
+            organisation=organisation,
+            name=prior.name,
+            tax_type=prior.tax_type,
+            tax_year=year,
+            flat_rate=prior.flat_rate,
+            personal_allowance=prior.personal_allowance,
+            is_active=True,
+            description=f"Auto-rolled forward from {prior.tax_year}",
+        )
+        for bracket in TaxBracket.objects.filter(config=prior):
+            TaxBracket.objects.create(
+                organisation=organisation,
+                config=new_config,
+                lower_bound=bracket.lower_bound,
+                upper_bound=bracket.upper_bound,
+                rate=bracket.rate,
+            )
+        logger.info("TaxConfig rolled forward: %s → year %s", prior, year)
+        return new_config
+
     @staticmethod
     def calculate_income_tax(
         organisation, income: Decimal, tax_year: int = None,
         allowances: Decimal = None, tax_type: str = None,
         gross_turnover: Decimal = None,
+        fixed_assets: Decimal = None,
     ) -> dict:
         """
-        Calculate income tax for the organisation using the active tax config.
+        Calculate income tax for the organisation using the active tax config (NTA 2025).
 
-        For CIT: pass gross_turnover to enforce the 0.5% minimum tax floor.
-        For PIT: the 1% of gross income minimum tax floor is always applied.
-
-        Returns a full breakdown suitable for tax return generation.
+        NTA 2025 changes vs old law:
+        - PIT minimum tax abolished (income ≤ ₦800k/yr is the 0% band; no separate floor)
+        - CIT minimum tax abolished for small companies (≤₦100m turnover + ≤₦250m assets → 0%)
+        - Development Levy 4% of assessable profit added for non-small companies
+        - CIT 0.5% minimum-tax floor retained only for large companies (gross_turnover supplied)
         """
         year = tax_year or timezone.now().year
-        allowed_types = [tax_type] if tax_type in ['income', 'corporate'] else [TaxConfig.TaxType.INCOME, TaxConfig.TaxType.CORPORATE]
-        config = TaxConfig.objects.filter(
-            organisation=organisation,
-            tax_type__in=allowed_types,
-            tax_year=year,
-            is_active=True,
-        ).first()
 
+        # Require explicit tax_type when both income and corporate configs may exist (H-4 fix)
+        if tax_type in ('income', 'corporate'):
+            resolved_type = tax_type
+        else:
+            resolved_type = TaxConfig.TaxType.INCOME
+
+        config = TaxService._get_or_create_config_for_year(organisation, resolved_type, year)
         if not config:
-            raise ValueError(f"No active income tax configuration found for {year}.")
+            raise ValueError(f"No active {resolved_type} tax configuration found for {year}.")
 
         result = TaxEngine.calculate(income=income, config=config, allowances=allowances)
         tax_payable = result.tax_payable
+        development_levy = Decimal('0')
+        small_company_exempt = False
         minimum_tax_applied = False
         minimum_tax_amount = Decimal('0')
 
-        # PIT minimum tax: 1% of gross income (PITA s.37; Finance Act 2020)
-        if config.tax_type == TaxConfig.TaxType.INCOME:
-            pit_minimum = income * Decimal('0.01')
-            if tax_payable < pit_minimum:
-                tax_payable = pit_minimum
-                minimum_tax_applied = True
-                minimum_tax_amount = pit_minimum
+        if config.tax_type == TaxConfig.TaxType.CORPORATE:
+            # NTA 2025: small companies (≤₦100m turnover AND ≤₦250m fixed assets) are CIT-exempt
+            turnover = Decimal(str(gross_turnover)) if gross_turnover else Decimal('0')
+            assets   = Decimal(str(fixed_assets))   if fixed_assets   else Decimal('0')
+            is_small = (
+                turnover > 0
+                and turnover  <= TaxService.SMALL_COMPANY_TURNOVER_LIMIT
+                and (assets == 0 or assets <= TaxService.SMALL_COMPANY_ASSET_LIMIT)
+            )
+            if is_small:
+                tax_payable = Decimal('0')
+                small_company_exempt = True
+            else:
+                # 4% Development Levy on assessable profit (replaces old TET/NITDA/PTF levies)
+                development_levy = (income * TaxService.DEVELOPMENT_LEVY_RATE).quantize(
+                    Decimal('0.01'), rounding='ROUND_HALF_UP'
+                )
+                # CIT 0.5% minimum-tax floor (large companies only)
+                if turnover > 0:
+                    cit_minimum = turnover * Decimal('0.005')
+                    if tax_payable < cit_minimum:
+                        tax_payable = cit_minimum
+                        minimum_tax_applied = True
+                        minimum_tax_amount = cit_minimum
 
-        # CIT minimum tax: 0.5% of gross turnover (CITA s.33; Finance Act 2020)
-        elif config.tax_type == TaxConfig.TaxType.CORPORATE and gross_turnover:
-            cit_minimum = Decimal(str(gross_turnover)) * Decimal('0.005')
-            if tax_payable < cit_minimum:
-                tax_payable = cit_minimum
-                minimum_tax_applied = True
-                minimum_tax_amount = cit_minimum
-
-        effective_rate = (tax_payable / income * 100) if income > 0 else Decimal('0')
+        total_tax = tax_payable + development_levy
+        effective_rate = (total_tax / income * 100).quantize(
+            Decimal('0.01'), rounding='ROUND_HALF_UP'
+        ) if income > 0 else Decimal('0')
 
         return {
             "gross_income": result.gross_income,
             "total_allowances": result.total_allowances,
             "net_taxable_income": result.net_taxable_income,
             "tax_payable": tax_payable,
+            "development_levy": development_levy,
+            "total_tax": total_tax,
             "effective_rate": effective_rate,
+            "small_company_exempt": small_company_exempt,
             "minimum_tax_applied": minimum_tax_applied,
             "minimum_tax_amount": minimum_tax_amount if minimum_tax_applied else None,
             "brackets": [
@@ -96,29 +170,56 @@ class TaxService:
 
         Returns VAT output (collected on sales) and VAT input (paid on purchases — future).
         """
-        # VAT output (collected from customers)
-        sales_vat = SaleItem.objects.filter(
+        from django.db.models import F
+
+        # VAT output: sum tax_amount on confirmed/paid sales lines
+        sales_agg = SaleItem.objects.filter(
             organisation=organisation,
             invoice__issue_date__gte=period_start,
             invoice__issue_date__lte=period_end,
             invoice__status__in=["paid", "confirmed", "partially_paid", "credit"],
         ).aggregate(
             total_vat=Sum("tax_amount"),
-            total_net=Sum("line_total"),
+            total_gross=Sum("line_total"),       # line_total includes VAT
+            total_tax_on_lines=Sum("tax_amount"),
         )
+        output_vat = sales_agg["total_vat"] or Decimal("0")
+        # Net sales = gross line totals minus the VAT embedded in them (M-3 fix)
+        total_gross = sales_agg["total_gross"] or Decimal("0")
+        net_sales   = total_gross - output_vat
 
-        output_vat = sales_vat["total_vat"] or Decimal("0")
-        net_sales = sales_vat["total_net"] or Decimal("0")
+        # Deduct output VAT on sales returns in the period (C2/H-1 fix)
+        from apps.sales.models import SaleReturnItem
+        returned_vat = SaleReturnItem.objects.filter(
+            organisation=organisation,
+            sale_return__return_date__gte=period_start,
+            sale_return__return_date__lte=period_end,
+            tax_refund__isnull=False,
+        ).aggregate(total=Sum("tax_refund"))["total"] or Decimal("0")
+        output_vat = max(Decimal("0"), output_vat - returned_vat)
 
-        # VAT input (from supplier bills approved/paid in the period)
+        # VAT input: only claim on standard/zero-rated bills (exclude exempt-treatment tax classes)
         from apps.bills.models import Bill
-        bills_vat = Bill.objects.filter(
+        bills_qs = Bill.objects.filter(
             organisation=organisation,
             issue_date__gte=period_start,
             issue_date__lte=period_end,
             status__in=[Bill.APPROVED, Bill.PAID, Bill.PARTIALLY_PAID],
-        ).aggregate(total_vat=Sum("tax_amount"))
-        input_vat = bills_vat["total_vat"] or Decimal("0")
+        )
+        # If TaxClass.treatment field exists, exclude input VAT on exempt-treatment bills
+        try:
+            from apps.tax.models import TaxClass
+            exempt_bill_ids = list(
+                bills_qs.filter(tax_class__treatment='exempt').values_list('id', flat=True)
+            )
+            recoverable_bills = bills_qs.exclude(id__in=exempt_bill_ids)
+        except Exception:
+            recoverable_bills = bills_qs
+
+        input_vat = recoverable_bills.aggregate(
+            total_vat=Sum("tax_amount")
+        )["total_vat"] or Decimal("0")
+
         net_vat_payable = output_vat - input_vat
 
         return {
@@ -126,9 +227,50 @@ class TaxService:
             "period_end": period_end,
             "vat_output": output_vat,
             "vat_input": input_vat,
+            "vat_on_returns": returned_vat,
             "net_vat_payable": net_vat_payable,
-            "total_net_sales": net_sales,
+            "total_net_sales": net_sales,  # net of VAT (M-3 fix)
         }
+
+    # WHT 2024 small-payer exemption thresholds (Deduction of Tax at Source Regulations 2024)
+    _WHT_SMALL_PAYER_TURNOVER_LIMIT = Decimal("25000000")   # ₦25m annual turnover
+    _WHT_SMALL_PAYER_MONTHLY_LIMIT  = Decimal("2000000")    # ₦2m/month per transaction
+
+    @staticmethod
+    def _apply_wht_exemptions(
+        organisation,
+        rate_pct: Decimal,
+        gross_amount: Decimal,
+        tin: str,
+        transaction_date,
+    ) -> tuple[Decimal, str]:
+        """
+        Apply WHT 2024 Regulation adjustments and return (effective_rate, note).
+
+        Rules applied (NG only):
+        1. TIN-doubling: if counterparty has no TIN, double the rate (s.14 WHT Regs 2024).
+        2. Small-payer exemption: payer with annual turnover ≤ ₦25m AND transaction ≤ ₦2m/month
+           is exempt from deducting WHT — returns rate=0.
+        """
+        notes = []
+        if organisation.country != "NG":
+            return rate_pct, ""
+
+        # Small-payer exemption check (payer's own annual revenue)
+        payer_annual_turnover = getattr(organisation, "annual_turnover", None)
+        if (
+            payer_annual_turnover is not None
+            and payer_annual_turnover <= TaxService._WHT_SMALL_PAYER_TURNOVER_LIMIT
+            and gross_amount <= TaxService._WHT_SMALL_PAYER_MONTHLY_LIMIT
+        ):
+            return Decimal("0"), "WHT exempt: small payer (≤₦25m turnover, ≤₦2m transaction)"
+
+        # TIN-doubling
+        if not tin or not tin.strip():
+            rate_pct = rate_pct * 2
+            notes.append("TIN-doubling applied (no counterparty TIN)")
+
+        return rate_pct, "; ".join(notes)
 
     @staticmethod
     def auto_create_wht_transaction(
@@ -147,14 +289,20 @@ class TaxService:
         transaction_type='sale'     → customer withheld from us (we are the payee)
         transaction_type='purchase' → we withhold from vendor (we are the payer)
 
+        Applies WHT 2024 Regulation: TIN-doubling (no TIN → rate×2) and small-payer exemption.
         Non-blocking: errors are logged and swallowed so the parent transaction succeeds.
         """
         try:
             from .models import WHTRate, WHTTransaction
             rate = WHTRate.objects.get(id=wht_rate_id, organisation=organisation)
-            rate_pct = rate.company_rate  # default to company rate; caller may pass individual
+            rate_pct = rate.company_rate
+            rate_pct, exemption_note = TaxService._apply_wht_exemptions(
+                organisation, rate_pct, gross_amount, tin, transaction_date
+            )
             wht_amount = (gross_amount * rate_pct / Decimal("100")).quantize(Decimal("0.01"))
             net_amount = gross_amount - wht_amount
+            base_note = f"Auto-created from {transaction_type} {source_ref}".strip()
+            notes = f"{base_note}. {exemption_note}".strip(". ") if exemption_note else base_note
             WHTTransaction.objects.create(
                 organisation=organisation,
                 transaction_type=transaction_type,
@@ -167,7 +315,7 @@ class TaxService:
                 net_amount=net_amount,
                 transaction_date=transaction_date,
                 status=WHTTransaction.WITHHELD,
-                notes=f"Auto-created from {transaction_type} {source_ref}".strip(),
+                notes=notes,
             )
         except Exception as exc:
             logger.error("auto_create_wht_transaction failed: %s", exc)
@@ -175,21 +323,26 @@ class TaxService:
     @staticmethod
     @transaction.atomic
     def create_tax_return(organisation, config: TaxConfig, period_start, period_end) -> TaxReturn:
-        """Create or update a draft tax return for the given period."""
-        # Calculate totals from the financial data
+        """Create or update a draft tax return for the given period (NTA 2025 compliant)."""
         from apps.expenses.models import Expense
         from apps.sales.models import Invoice
-        from django.db.models import Sum
+        from django.db.models import F, Sum
 
-        # Total sales revenue
-        revenue = Invoice.objects.filter(
+        # Revenue = net sales (VAT-exclusive) — B2/C-1 fix: exclude output VAT from the base
+        revenue_agg = Invoice.objects.filter(
             organisation=organisation,
             issue_date__gte=period_start,
             issue_date__lte=period_end,
             status__in=["paid", "confirmed", "partially_paid"],
-        ).aggregate(total=Sum("total_amount"))["total"] or Decimal("0")
+        ).aggregate(
+            gross=Sum("total_amount"),
+            vat=Sum("tax_amount"),
+        )
+        gross_revenue = revenue_agg["gross"] or Decimal("0")
+        output_vat    = revenue_agg["vat"]   or Decimal("0")
+        net_revenue   = gross_revenue - output_vat  # VAT-exclusive revenue
 
-        # Total expenses (COGS + operating)
+        # Total expenses (COGS + operating) — exclude bills to avoid double-counting
         expenses = Expense.objects.filter(
             organisation=organisation,
             expense_date__gte=period_start,
@@ -197,8 +350,25 @@ class TaxService:
             is_income=False,
         ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
 
-        taxable_income = max(revenue - expenses, Decimal("0"))
+        taxable_income = max(net_revenue - expenses, Decimal("0"))
         result = TaxEngine.calculate(income=taxable_income, config=config)
+
+        # B1: CIT small-company exemption
+        development_levy = Decimal("0")
+        tax_payable = result.tax_payable
+        if config.tax_type == TaxConfig.TaxType.CORPORATE:
+            is_small = (
+                net_revenue > 0
+                and net_revenue <= TaxService.SMALL_COMPANY_TURNOVER_LIMIT
+            )
+            if is_small:
+                tax_payable = Decimal("0")
+            else:
+                development_levy = (taxable_income * TaxService.DEVELOPMENT_LEVY_RATE).quantize(
+                    Decimal("0.01"), rounding="ROUND_HALF_UP"
+                )
+
+        total_tax = tax_payable + development_levy
 
         tax_return, _ = TaxReturn.objects.update_or_create(
             organisation=organisation,
@@ -208,12 +378,13 @@ class TaxService:
             defaults={
                 "period_type": TaxReturn.PeriodType.ANNUAL,
                 "status": TaxReturn.Status.DRAFT,
-                "total_taxable_income": revenue,
+                # H-3 fix: store actual net taxable income, not gross revenue
+                "total_taxable_income": taxable_income,
                 "total_allowances": result.total_allowances,
                 "net_taxable_income": result.net_taxable_income,
-                "tax_payable": result.tax_payable,
+                "tax_payable": total_tax,
                 "tax_paid": Decimal("0"),
-                "tax_due": result.tax_payable,
+                "tax_due": total_tax,
             },
         )
         return tax_return

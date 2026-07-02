@@ -54,6 +54,15 @@ class ProductSerializer(serializers.ModelSerializer):
         except Exception:
             return 0
 
+    def validate_tax_class(self, value):
+        if value is None:
+            return value
+        request = self.context.get('request')
+        if request and hasattr(request, 'organisation') and request.organisation:
+            if value.organisation_id != request.organisation.id:
+                raise serializers.ValidationError("Tax class does not belong to this organisation.")
+        return value
+
     def get_total_stock(self, obj):
         return sum(
             s.quantity_on_hand for s in obj.stock_items.filter(organisation=obj.organisation)
