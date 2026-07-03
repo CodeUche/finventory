@@ -2003,12 +2003,20 @@ class WhiteLabelViewSet(viewsets.ViewSet):
         try:
             profile = request.user.partner_profile
         except PartnerProfile.DoesNotExist:
-            from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied("Partner profile not found.")
+            if request.user.is_superuser:
+                profile, _ = PartnerProfile.objects.get_or_create(
+                    user=request.user,
+                    defaults={"tier": PartnerProfile.Tier.AGENCY},
+                )
+            else:
+                from rest_framework.exceptions import PermissionDenied
+                raise PermissionDenied("Partner profile not found.")
         config, _ = WhiteLabelConfig.objects.get_or_create(partner_profile=profile)
         return config
 
     def _assert_agency(self, request):
+        if request.user.is_superuser:
+            return
         from rest_framework.exceptions import PermissionDenied
         org = getattr(request, "organisation", None)
         sub = getattr(org, "subscription", None) if org else None

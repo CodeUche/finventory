@@ -236,3 +236,22 @@ class ChangePasswordSerializer(serializers.Serializer):
         if attrs["new_password"] != attrs["confirm_password"]:
             raise serializers.ValidationError({"confirm_password": "Passwords do not match."})
         return attrs
+
+
+class OfflineVerifierRequestSerializer(serializers.Serializer):
+    """
+    Request body for POST /api/v1/auth/offline-verifier/.
+
+    The password is required even though the request already carries a valid
+    access token: it proves the caller knows the credential *right now*.
+    A stolen access token alone must never be enough to mint an offline
+    verifier for the victim's account.
+    """
+
+    password = serializers.CharField(
+        write_only=True, max_length=128,
+        style={"input_type": "password"},
+    )
+    device_label = serializers.CharField(
+        required=False, allow_blank=True, max_length=100,
+    )

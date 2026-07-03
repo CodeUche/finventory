@@ -761,3 +761,279 @@ class ProtectedRouteConditionsTests(TestCase):
         self.assertTrue(onboarding_done,
                         f"ProtectedRoute would send to /onboarding. "
                         f"is_superuser={u['is_superuser']}, first_org={first_org}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Offline re-authentication (desktop)
+# The Tauri app clears auth state on every launch, so after an offline restart
+# the user is locked out even though their data is cached locally.  These
+# tests cover the verifier issuance / status / revocation endpoints and the
+# invalidation hooks in the password-change and password-reset flows.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class OfflineVerifierIssueTests(TestCase):
+    """POST /api/v1/auth/offline-verifier/ — issuance and rotation."""
+
+    PASSWORD = "ValidPass123!"
+
+    def setUp(self):
+        self.client = APIClient()
+        self.url = reverse("auth-offline-verifier")
+        cache.clear()
+        self.user = User.objects.create_user(
+            email="offline@example.com",
+            password=self.PASSWORD,
+            first_name="Off",
+            last_name="Line",
+            is_verified=True,
+        )
+        self.client.force_authenticate(self.user)
+
+    def _issue(self, password=None, **extra):
+        return self.client.post(self.url, {"password": password or self.PASSWORD, **extra})
+
+    def test_issue_requires_authentication(self):
+        """A verifier grants offline entry — anonymous callers must get 401."""
+        self.client.force_authenticate(user=None)
+        res = self._issue()
+        self.assertEqual(res.status_code, 401)
+
+    def test_issue_requires_password_field(self):
+        res = self.client.post(self.url, {})
+        self.assertEqual(res.status_code, 400)
+
+    def test_issue_with_wrong_password_rejected(self):
+        """A stolen access token alone must not be enough to mint a verifier."""
+        res = self._issue(password="WrongPassword!")
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("invalid_password", str(res.data))
+        # No record must be created on a failed attempt
+        from apps.authentication.models import OfflineVerifier
+        self.assertFalse(OfflineVerifier.objects.filter(user=self.user).exists())
+
+    def test_issue_returns_full_verifier_payload(self):
+        res = self._issue()
+        self.assertEqual(res.status_code, 200, res.data)
+        v = res.data["verifier"]
+        for field in ("algorithm", "iterations", "salt", "hash", "user_id",
+                      "email", "mfa_enabled", "token_version", "issued_at",
+                      "expires_at", "organisations"):
+            self.assertIn(field, v, f"Missing verifier field: {field}")
+        self.assertEqual(v["algorithm"], "pbkdf2_sha256")
+        self.assertEqual(v["user_id"], str(self.user.pk))
+        self.assertEqual(v["email"], "offline@example.com")
+
+    def test_issued_hash_matches_independent_recompute(self):
+        """The client must be able to re-derive the hash offline from
+        (password, salt, iterations) — verify the server's derivation is
+        exactly standard PBKDF2-HMAC-SHA256."""
+        import hashlib
+        res = self._issue()
+        v = res.data["verifier"]
+        recomputed = hashlib.pbkdf2_hmac(
+            "sha256",
+            self.PASSWORD.encode(),
+            base64.b64decode(v["salt"]),
+            v["iterations"],
+        )
+        self.assertEqual(base64.b64encode(recomputed).decode(), v["hash"])
+
+    def test_issued_hash_is_not_the_primary_password_hash(self):
+        """The verifier must be an independent derivation with its own salt —
+        never the raw hash from authentication_user."""
+        res = self._issue()
+        v = res.data["verifier"]
+        self.user.refresh_from_db()
+        self.assertNotIn(v["hash"], self.user.password)
+        self.assertNotIn(v["salt"], self.user.password)
+
+    def test_secret_material_never_stored_server_side(self):
+        """A DB breach must not yield a second crackable copy of the password:
+        the model row holds metadata only."""
+        from apps.authentication.models import OfflineVerifier
+        res = self._issue()
+        v = res.data["verifier"]
+        record = OfflineVerifier.objects.get(user=self.user)
+        field_names = {f.name for f in record._meta.get_fields()}
+        self.assertNotIn("hash", field_names)
+        self.assertNotIn("salt", field_names)
+        # And nothing on the row contains the secret values
+        for f in ("device_label",):
+            self.assertNotIn(v["hash"], getattr(record, f))
+            self.assertNotIn(v["salt"], getattr(record, f))
+
+    def test_reissue_rotates_salt_and_hash(self):
+        """Re-issuing must produce fresh secret material and keep exactly one
+        row per user (old expiry windows must not survive rotation)."""
+        from apps.authentication.models import OfflineVerifier
+        first = self._issue().data["verifier"]
+        second = self._issue().data["verifier"]
+        self.assertNotEqual(first["salt"], second["salt"])
+        self.assertNotEqual(first["hash"], second["hash"])
+        self.assertEqual(OfflineVerifier.objects.filter(user=self.user).count(), 1)
+
+    def test_expiry_is_fourteen_days_out(self):
+        from datetime import datetime, timedelta, timezone as dt_tz
+        res = self._issue()
+        expires = datetime.fromisoformat(res.data["verifier"]["expires_at"])
+        delta = expires - datetime.now(dt_tz.utc)
+        self.assertGreater(delta, timedelta(days=13))
+        self.assertLessEqual(delta, timedelta(days=14))
+
+    def test_device_label_is_stored_for_auditing(self):
+        from apps.authentication.models import OfflineVerifier
+        res = self._issue(device_label="Ade's ThinkPad")
+        self.assertEqual(res.status_code, 200)
+        record = OfflineVerifier.objects.get(user=self.user)
+        self.assertEqual(record.device_label, "Ade's ThinkPad")
+
+    def test_organisations_snapshot_included_for_member(self):
+        """The offline grace session needs tenant context without a network
+        call, so the issuance response snapshots org memberships."""
+        OrganisationService.create_organisation(
+            name="Offline Org", owner=self.user,
+            extra={"currency": "NGN", "country": "NG"},
+        )
+        res = self._issue()
+        orgs = res.data["verifier"]["organisations"]
+        self.assertIsInstance(orgs, list)
+        self.assertGreater(len(orgs), 0)
+
+
+class OfflineVerifierStatusAndRevokeTests(TestCase):
+    """GET /offline-verifier/status/ and DELETE /offline-verifier/."""
+
+    PASSWORD = "ValidPass123!"
+
+    def setUp(self):
+        self.client = APIClient()
+        self.issue_url = reverse("auth-offline-verifier")
+        self.status_url = reverse("auth-offline-verifier-status")
+        cache.clear()
+        self.user = User.objects.create_user(
+            email="offline-status@example.com",
+            password=self.PASSWORD,
+            is_verified=True,
+        )
+        self.client.force_authenticate(self.user)
+
+    def _issue(self):
+        return self.client.post(self.issue_url, {"password": self.PASSWORD})
+
+    def test_status_requires_authentication(self):
+        self.client.force_authenticate(user=None)
+        res = self.client.get(self.status_url)
+        self.assertEqual(res.status_code, 401)
+
+    def test_status_not_issued(self):
+        res = self.client.get(self.status_url)
+        self.assertEqual(res.status_code, 200)
+        self.assertFalse(res.data["active"])
+        self.assertEqual(res.data["reason"], "not_issued")
+        self.assertIn("token_version", res.data)
+
+    def test_status_active_after_issue(self):
+        self._issue()
+        res = self.client.get(self.status_url)
+        self.assertTrue(res.data["active"])
+        self.assertIsNone(res.data["reason"])
+
+    def test_revoke_marks_inactive(self):
+        self._issue()
+        res = self.client.delete(self.issue_url)
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(res.data["revoked"])
+        status_res = self.client.get(self.status_url)
+        self.assertFalse(status_res.data["active"])
+        self.assertEqual(status_res.data["reason"], "revoked")
+
+    def test_revoke_is_idempotent(self):
+        """Revoking with no verifier (or twice) must not error — the client
+        may call this defensively on logout."""
+        res = self.client.delete(self.issue_url)
+        self.assertEqual(res.status_code, 200)
+        self.assertFalse(res.data["revoked"])
+
+    def test_expired_verifier_reports_expired(self):
+        from datetime import timedelta
+        from django.utils import timezone
+        from apps.authentication.models import OfflineVerifier
+        self._issue()
+        OfflineVerifier.objects.filter(user=self.user).update(
+            expires_at=timezone.now() - timedelta(seconds=1)
+        )
+        res = self.client.get(self.status_url)
+        self.assertFalse(res.data["active"])
+        self.assertEqual(res.data["reason"], "expired")
+
+    def test_status_reports_current_token_version(self):
+        """The client compares this against the version embedded in its cached
+        verifier to detect password changes made on another device."""
+        self._issue()
+        self.user.token_version = 5
+        self.user.save(update_fields=["token_version"])
+        res = self.client.get(self.status_url)
+        self.assertEqual(res.data["token_version"], 5)
+        # And the verifier itself is now stale
+        self.assertFalse(res.data["active"])
+        self.assertEqual(res.data["reason"], "password_changed")
+
+
+class OfflineVerifierInvalidationTests(TestCase):
+    """Password change / reset must invalidate the verifier server-side."""
+
+    PASSWORD = "OldPass123456!"
+
+    def setUp(self):
+        self.client = APIClient()
+        self.issue_url = reverse("auth-offline-verifier")
+        cache.clear()
+        self.user = User.objects.create_user(
+            email="offline-inval@example.com",
+            password=self.PASSWORD,
+            first_name="Inval",
+            last_name="User",
+            is_verified=True,
+        )
+        self.client.force_authenticate(self.user)
+        self.client.post(self.issue_url, {"password": self.PASSWORD})
+
+    def _get_record(self):
+        from apps.authentication.models import OfflineVerifier
+        return OfflineVerifier.objects.get(user=self.user)
+
+    def test_password_change_revokes_verifier(self):
+        res = self.client.post(reverse("auth-change-password"), {
+            "current_password": self.PASSWORD,
+            "new_password": "NewStrongPass456!",
+            "confirm_password": "NewStrongPass456!",
+        })
+        self.assertEqual(res.status_code, 200, res.data)
+        record = self._get_record()
+        self.assertTrue(record.revoked)
+        self.assertFalse(record.is_active)
+
+    def test_password_change_makes_verifier_stale_via_token_version(self):
+        """Even without the explicit revoke, the token_version bump alone must
+        mark the verifier stale — defence in depth."""
+        self.client.post(reverse("auth-change-password"), {
+            "current_password": self.PASSWORD,
+            "new_password": "NewStrongPass456!",
+            "confirm_password": "NewStrongPass456!",
+        })
+        record = self._get_record()
+        self.assertTrue(record.is_stale)
+
+    def test_password_reset_revokes_verifier(self):
+        code = PasswordResetOTP.generate(self.user)
+        anon = APIClient()
+        res = anon.post(reverse("auth-password-reset-confirm"), {
+            "email": "offline-inval@example.com",
+            "code": code,
+            "new_password": "NewStrongPass456!",
+            "confirm_password": "NewStrongPass456!",
+        })
+        self.assertEqual(res.status_code, 200, res.data)
+        record = self._get_record()
+        self.assertTrue(record.revoked)
+        self.assertFalse(record.is_active)

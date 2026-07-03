@@ -9,6 +9,8 @@ from .views import (
     MFADisableView,
     MFASetupView,
     MFAVerifyView,
+    OfflineVerifierStatusView,
+    OfflineVerifierView,
     OrgDebugView,
     PasswordResetConfirmView,
     PasswordResetRequestView,
@@ -41,6 +43,9 @@ urlpatterns = [
     path("ping/", PingView.as_view(), name="auth-ping"),
     # Org-header diagnostic (JWT auth, no org required)
     path("org-debug/", OrgDebugView.as_view(), name="auth-org-debug"),
+    # Offline re-authentication (desktop) — issue/rotate, status check, revoke
+    path("offline-verifier/", OfflineVerifierView.as_view(), name="auth-offline-verifier"),
+    path("offline-verifier/status/", OfflineVerifierStatusView.as_view(), name="auth-offline-verifier-status"),
     # MFA
     path("mfa/setup/", MFASetupView.as_view(), name="auth-mfa-setup"),
     path("mfa/confirm-setup/", MFAConfirmSetupView.as_view(), name="auth-mfa-confirm-setup"),

@@ -160,3 +160,143 @@ class PasswordResetOTP(models.Model):
             self.save(update_fields=["used"])
             return True
         return False
+
+
+class OfflineVerifier(models.Model):
+    """
+    Server-issued credential verifier for offline desktop re-authentication.
+
+    Problem: the Tauri desktop app clears auth state on every launch, so a
+    user who restarts the app while offline is locked out even though all
+    their data is cached locally (IndexedDB + mutation queue).  The fix:
+    after a successful ONLINE login the client requests a verifier — a
+    PBKDF2-SHA256 hash of the password with a fresh server-generated salt —
+    stores it encrypted on-device, and checks typed passwords against it to
+    grant a limited "offline grace session" (enforced client-side).
+
+    Security decisions:
+        - The derived hash is returned to the client ONCE and NEVER stored
+          server-side.  A DB breach therefore does not yield a second
+          crackable copy of the password (the primary Argon2 hash in
+          authentication_user remains the only server-side secret).
+        - PBKDF2-SHA256 (not Argon2) because the client must re-derive the
+          hash offline: WebCrypto's SubtleCrypto supports PBKDF2 natively in
+          the Tauri webview, while Argon2 would require shipping WASM.
+          600,000 iterations follows the OWASP recommendation for
+          PBKDF2-HMAC-SHA256.
+        - The salt is generated server-side per issuance (secrets.token_bytes)
+          and is unrelated to the salt inside the user's primary password
+          hash — the verifier cannot be correlated with the user table.
+        - `token_version_at_issue` snapshots User.token_version.  Both the
+          password-change and password-reset flows increment token_version,
+          so a verifier issued before a password change is detectable as
+          stale by comparing versions — even if the explicit revoke hook
+          were ever skipped, staleness is still caught.
+        - 14-day expiry bounds how long a stolen (encrypted) verifier blob
+          stays useful; the client must re-issue on a fresh online login.
+    """
+
+    ALGORITHM = "pbkdf2_sha256"
+    ITERATIONS = 600_000       # OWASP recommendation for PBKDF2-HMAC-SHA256
+    SALT_BYTES = 16
+    VALIDITY_DAYS = 14
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.OneToOneField(
+        "authentication.User",
+        on_delete=models.CASCADE,
+        related_name="offline_verifier",
+    )
+    device_label = models.CharField(
+        max_length=100, blank=True, default="",
+        help_text="Optional client-supplied device name for security auditing.",
+    )
+    token_version_at_issue = models.PositiveIntegerField(
+        default=0,
+        help_text="User.token_version at issuance; a mismatch means the password changed since.",
+    )
+    issued_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    revoked = models.BooleanField(default=False)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Offline verifier"
+        verbose_name_plural = "Offline verifiers"
+
+    def __str__(self):
+        return f"OfflineVerifier<{self.user_id}>"
+
+    # ── Lifecycle ─────────────────────────────────────────────────────────────
+
+    @classmethod
+    def issue(cls, user, raw_password: str, device_label: str = ""):
+        """
+        Derive a fresh verifier for `user` and persist the metadata record.
+
+        Returns (record, secret_payload) where secret_payload carries the
+        base64 salt + derived hash.  The caller must hand the payload to the
+        client immediately — it cannot be reconstructed later because the
+        hash is intentionally not persisted.
+        """
+        import base64
+        import hashlib
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        salt = secrets.token_bytes(cls.SALT_BYTES)
+        derived = hashlib.pbkdf2_hmac(
+            "sha256", raw_password.encode("utf-8"), salt, cls.ITERATIONS
+        )
+
+        # One verifier per user: re-issuing rotates (deletes) any prior record
+        # so a stale row can never resurrect an old expiry window.
+        cls.objects.filter(user=user).delete()
+        record = cls.objects.create(
+            user=user,
+            device_label=(device_label or "")[:100],
+            token_version_at_issue=user.token_version or 0,
+            expires_at=timezone.now() + timedelta(days=cls.VALIDITY_DAYS),
+        )
+        secret_payload = {
+            "algorithm": cls.ALGORITHM,
+            "iterations": cls.ITERATIONS,
+            "salt": base64.b64encode(salt).decode(),
+            "hash": base64.b64encode(derived).decode(),
+        }
+        return record, secret_payload
+
+    @classmethod
+    def revoke_for_user(cls, user) -> int:
+        """Mark the user's verifier revoked (idempotent). Returns rows updated."""
+        from django.utils import timezone
+        return cls.objects.filter(user=user, revoked=False).update(
+            revoked=True, revoked_at=timezone.now()
+        )
+
+    # ── State inspection ──────────────────────────────────────────────────────
+
+    @property
+    def is_expired(self) -> bool:
+        from django.utils import timezone
+        return timezone.now() >= self.expires_at
+
+    @property
+    def is_stale(self) -> bool:
+        """True when the password changed after issuance (token_version bumped)."""
+        return (self.user.token_version or 0) != self.token_version_at_issue
+
+    @property
+    def is_active(self) -> bool:
+        return not self.revoked and not self.is_stale and not self.is_expired
+
+    def inactive_reason(self):
+        """Machine-readable reason for the status endpoint, or None when active."""
+        if self.revoked:
+            return "revoked"
+        if self.is_stale:
+            return "password_changed"
+        if self.is_expired:
+            return "expired"
+        return None

@@ -283,6 +283,7 @@ REST_FRAMEWORK = {
         "resend_verification": "3/hour",      # ResendVerificationRateThrottle
         "check_verification": "30/minute",    # CheckVerificationRateThrottle
         "mfa_verify": "10/minute",            # MFAVerifyRateThrottle
+        "offline_verifier": "5/hour",         # OfflineVerifierRateThrottle — offline re-auth issuance
         # ── Business endpoints ─────────────────────────────────────────────
         "bank_resolve": "20/minute",   # BankResolveRateThrottle — Paystack proxy
         "invitation": "10/hour",       # InvitationRateThrottle — team management

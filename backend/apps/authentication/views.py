@@ -25,6 +25,7 @@ from apps.core.throttles import (
     CheckVerificationRateThrottle,
     LoginRateThrottle,
     MFAVerifyRateThrottle,
+    OfflineVerifierRateThrottle,
     PasswordChangeRateThrottle,
     PasswordResetConfirmRateThrottle,
     PasswordResetRequestRateThrottle,
@@ -35,10 +36,11 @@ from apps.core.throttles import (
 )
 from apps.core.utils import get_client_ip
 
-from .models import PasswordResetOTP
+from .models import OfflineVerifier, PasswordResetOTP
 from .serializers import (
     ChangePasswordSerializer,
     CustomTokenObtainPairSerializer,
+    OfflineVerifierRequestSerializer,
     RegisterSerializer,
     UserProfileSerializer,
 )
@@ -1037,6 +1039,114 @@ class MFADisableView(APIView):
         return Response({"message": "MFA disabled successfully."})
 
 
+# ─── Offline re-authentication (desktop) ──────────────────────────────────────────────
+
+class OfflineVerifierView(APIView):
+    """
+    POST   /api/v1/auth/offline-verifier/  — issue (or rotate) the verifier
+    DELETE /api/v1/auth/offline-verifier/  — revoke it (idempotent)
+
+    Enables offline re-authentication for the Tauri desktop app: the client
+    calls POST right after a successful online login, stores the returned
+    PBKDF2 verifier encrypted on-device, and can then check a typed password
+    against it while offline to grant a limited "offline grace session".
+
+    Security:
+      - Requires a valid (15-minute) access token AND the account password in
+        the body — a stolen access token alone cannot mint a verifier.
+      - Password attempts through this endpoint are rate-limited to 5/hour
+        per user (OfflineVerifierRateThrottle), so it cannot be used as a
+        password-guessing oracle.
+      - The derived hash uses its own random salt and is never persisted
+        server-side — only issuance metadata (expiry, token_version snapshot)
+        is stored for the status/revocation checks.
+    """
+
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [OfflineVerifierRateThrottle]
+
+    def post(self, request):
+        serializer = OfflineVerifierRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        user = request.user
+        # Re-prove the credential right now — same rationale as MFADisableView:
+        # holding a session must not be enough for a security-sensitive action.
+        if not user.check_password(serializer.validated_data["password"]):
+            return Response(
+                {"error": {"code": "invalid_password", "message": "Password is incorrect."}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        record, secret_payload = OfflineVerifier.issue(
+            user,
+            serializer.validated_data["password"],
+            serializer.validated_data.get("device_label", ""),
+        )
+        logger.info("Offline verifier issued for user: %s from %s", user.email, get_client_ip(request))
+
+        # The salt + hash appear ONLY in this response — they are not stored,
+        # so a lost response cannot be re-fetched; the client must re-issue.
+        return Response({
+            "verifier": {
+                **secret_payload,
+                "user_id": str(user.pk),
+                "email": user.email,
+                "mfa_enabled": user.mfa_enabled,
+                "token_version": user.token_version or 0,
+                "issued_at": record.issued_at.isoformat(),
+                "expires_at": record.expires_at.isoformat(),
+                # Org membership snapshot so the offline grace session can
+                # restore tenant context without any network call.
+                "organisations": _get_user_organisations(user),
+            }
+        })
+
+    def delete(self, request):
+        revoked = OfflineVerifier.revoke_for_user(request.user)
+        if revoked:
+            logger.info("Offline verifier revoked for user: %s", request.user.email)
+        return Response({"message": "Offline verifier revoked.", "revoked": bool(revoked)})
+
+
+class OfflineVerifierStatusView(APIView):
+    """
+    GET /api/v1/auth/offline-verifier/status/
+
+    Called by the desktop client on reconnect to decide whether its locally
+    cached verifier is still trustworthy.  Returns the server's current
+    token_version so the client can also compare it against the version
+    embedded in its cached verifier (a mismatch means the password changed
+    on another device while this one was offline — the client must purge
+    the verifier and force a fresh online login).
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        base = {"token_version": user.token_version or 0}
+        # Query the table directly rather than via the reverse one-to-one
+        # accessor: revoke/rotate use queryset .update()/.delete(), which the
+        # per-instance relation cache would not see.
+        verifier = OfflineVerifier.objects.filter(user=user).first()
+        if verifier is None:
+            return Response({
+                **base,
+                "active": False,
+                "reason": "not_issued",
+                "issued_at": None,
+                "expires_at": None,
+            })
+        return Response({
+            **base,
+            "active": verifier.is_active,
+            "reason": verifier.inactive_reason(),
+            "issued_at": verifier.issued_at.isoformat(),
+            "expires_at": verifier.expires_at.isoformat(),
+        })
+
+
 # ─── Standard views (unchanged) ───────────────────────────────────────────────
 
 class LogoutView(APIView):
@@ -1145,6 +1255,15 @@ class ChangePasswordView(APIView):
             user.must_change_password = False
             update_fields.append("must_change_password")
         user.save(update_fields=update_fields)
+
+        # Invalidate any offline verifier.  The token_version bump above is the
+        # primary invalidation signal (the verifier snapshots it at issuance);
+        # the explicit revoke is belt-and-braces so the status endpoint reports
+        # a definitive reason even before the client compares versions.
+        try:
+            OfflineVerifier.revoke_for_user(user)
+        except Exception as _ov_err:
+            logger.warning("Offline verifier revoke failed for %s: %s", user.email, _ov_err)
 
         logger.info("Password changed for user: %s", user.email)
         return Response({"message": "Password changed successfully. Please log in again."})
@@ -1275,6 +1394,13 @@ class PasswordResetConfirmView(APIView):
         user.failed_login_attempts = 0
         user.locked_until = None
         user.save(update_fields=["password", "token_version", "failed_login_attempts", "locked_until"])
+
+        # Same invalidation as ChangePasswordView: token_version bump is the
+        # primary signal; explicit revoke keeps the status endpoint definitive.
+        try:
+            OfflineVerifier.revoke_for_user(user)
+        except Exception as _ov_err:
+            logger.warning("Offline verifier revoke failed for %s: %s", email, _ov_err)
 
         logger.info("Password reset successful for: %s", email)
         return Response({"message": "Password reset successfully. You can now log in."})

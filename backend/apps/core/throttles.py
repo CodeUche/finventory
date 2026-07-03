@@ -60,6 +60,18 @@ class MFAVerifyRateThrottle(AnonRateThrottle):
     scope = "mfa_verify"
 
 
+class OfflineVerifierRateThrottle(UserRateThrottle):
+    """
+    5 offline-verifier issuances per hour per authenticated user.
+
+    Issuance requires re-entering the account password, so this throttle is
+    the brute-force guard for an attacker holding only a stolen access
+    token — 5 guesses/hour makes online password guessing through this
+    endpoint useless, mirroring the login lockout philosophy.
+    """
+    scope = "offline_verifier"
+
+
 # ── Business endpoints ─────────────────────────────────────────────────────────
 
 class BankResolveRateThrottle(UserRateThrottle):
