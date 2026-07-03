@@ -1,0 +1,10 @@
+version: 2
+
+secret:
+  # Test fixtures use dummy email+password pairs (e.g. "offline@example.com" /
+  # "ValidPass123!") that trip the "authentication tuple" detector but unlock
+  # nothing. Docs contain placeholder credentials in API examples.
+  ignored_paths:
+    - "**/tests.py"
+    - "**/test_*.py"
+    - "backend/OFFLINE_AUTH_HANDOFF.md"
