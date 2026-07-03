@@ -77,6 +77,18 @@ export default defineConfig(({ mode }) => {
     // Sourcemaps only in explicit debug/dev mode — never in production builds.
     // `tauri build` does not set TAURI_DEBUG, so distributed installers are safe.
     sourcemap: process.env.TAURI_DEBUG !== undefined,
+    rollupOptions: {
+      output: {
+        // Keep the heavy libraries out of the entry chunk. Combined with the
+        // React.lazy route splitting in App.tsx this takes the entry bundle
+        // from ~4.9 MB to a fraction — pages pull these chunks on demand.
+        manualChunks: {
+          'vendor-react': ['react', 'react-dom', 'react-router-dom'],
+          'vendor-charts': ['recharts'],
+          'vendor-pdf': ['jspdf', 'jspdf-autotable'],
+        },
+      },
+    },
   },
 
   test: {

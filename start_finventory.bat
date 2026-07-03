@@ -11,19 +11,26 @@ IF %errorlevel% NEQ 0 (
 
 echo [Finventory] Starting services...
 
-REM ── Wait for Docker Desktop to be ready (up to 90 seconds) ──────────────────
+REM ── Launch Docker Desktop if daemon is not already running ───────────────────
+docker info >nul 2>&1
+if %errorlevel% neq 0 (
+    echo [Finventory] Docker not running — launching Docker Desktop...
+    start "" "C:\Program Files\Docker\Docker\Docker Desktop.exe"
+)
+
+REM ── Wait for Docker Desktop to be ready (up to 120 seconds) ─────────────────
 set /a attempts=0
 :WAIT_DOCKER
 docker info >nul 2>&1
 if %errorlevel% neq 0 (
     set /a attempts+=1
-    if %attempts% geq 18 (
-        echo [Finventory] ERROR: Docker Desktop did not start within 90 seconds.
-        echo              Make sure Docker Desktop is set to start on login.
+    if %attempts% geq 24 (
+        echo [Finventory] ERROR: Docker Desktop did not start within 120 seconds.
+        echo              Try opening Docker Desktop manually, then run this script again.
         timeout /t 10 /nobreak >nul
         exit /b 1
     )
-    echo [Finventory] Waiting for Docker Desktop... (%attempts%/18)
+    echo [Finventory] Waiting for Docker Desktop... (%attempts%/24)
     timeout /t 5 /nobreak >nul
     goto WAIT_DOCKER
 )

@@ -61,9 +61,10 @@ if ('serviceWorker' in navigator) {
 // is not enough — the store is already loaded in memory. We must also call
 // logout() to reset the in-memory state before the first React render.
 (function clearSessionOnStartup() {
-  // Always clear the in-memory auth state on every app launch.
-  // Saved credentials (audity-saved-creds) are kept for auto-fill on the login form.
-  // "Remember me" only pre-fills credentials — it does NOT maintain a persistent session.
+  // Always clear the in-memory auth state on every app launch — every launch
+  // requires a fresh sign-in. (The old "saved credentials for auto-fill" and
+  // "Remember me" mechanisms were removed; authStore purges the legacy
+  // audity-saved-creds key at module load.)
   useAuthStore.getState().logout()
 })()
 

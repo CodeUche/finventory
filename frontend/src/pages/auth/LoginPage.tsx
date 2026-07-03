@@ -1,19 +1,28 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Eye, EyeOff, Loader2, AlertCircle, ShieldCheck } from 'lucide-react'
+import { Eye, EyeOff, Loader2, AlertCircle, ShieldCheck, WifiOff } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { api, authApi, bypassNextGets } from '@/services/api'
 import { offlineCache } from '@/lib/offlineCache'
 import { useAuthStore } from '@/store/authStore'
 import { identifyUser } from '@/lib/analytics'
+import { tryOfflineLogin, storeVerifier, hasVerifierStored } from '@/lib/offlineVerifier'
 import AuthShell from '@/components/auth/AuthShell'
 
 export default function LoginPage() {
   const navigate = useNavigate()
-  const { initSession, setOrganisation, rememberMe, setRememberMe } = useAuthStore()
+  const { initSession, setOrganisation, startOfflineSession } = useAuthStore()
   const [form, setForm] = useState({ email: '', password: '' })
   const [showPw, setShowPw] = useState(false)
   const [loading, setLoading] = useState(false)
+  // True while running the ~0.5 s PBKDF2 derivation for offline login
+  const [offlineChecking, setOfflineChecking] = useState(false)
+  // True if a verifier blob is stored (shown as a hint on the login form)
+  const [offlineAvailable, setOfflineAvailable] = useState(false)
+
+  useEffect(() => {
+    setOfflineAvailable(hasVerifierStored())
+  }, [])
 
   // Email-not-verified banner
   const [showVerifyBanner, setShowVerifyBanner] = useState(false)
@@ -134,6 +143,31 @@ export default function LoginPage() {
     }
   }
 
+  // Issue (or rotate) the offline verifier after a successful login.
+  // Called with the plaintext password the user just typed — it must never
+  // be stored after this call returns.  Non-fatal: a failure just means
+  // offline login won't be available until the next successful online login.
+  const issueOfflineVerifier = async (password: string) => {
+    try {
+      const deviceLabel = (() => {
+        try {
+          const ua = navigator.userAgent
+          if (ua.includes('Windows')) return 'Windows Desktop'
+          if (ua.includes('Mac')) return 'Mac Desktop'
+          if (ua.includes('Linux')) return 'Linux Desktop'
+        } catch { /* ignore */ }
+        return 'Audity Desktop'
+      })()
+      const { data } = await authApi.issueOfflineVerifier(password, deviceLabel)
+      if (data?.verifier) {
+        await storeVerifier(data.verifier)
+        setOfflineAvailable(true)
+      }
+    } catch {
+      // Non-fatal: rate-limited, MFA, or network issue — skip silently
+    }
+  }
+
   const handleMFASubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!mfaToken) return
@@ -158,8 +192,9 @@ export default function LoginPage() {
     e.preventDefault()
     setLoading(true)
     setShowVerifyBanner(false)
+    const { email, password } = form
     try {
-      const { data } = await authApi.login(form.email, form.password)
+      const { data } = await authApi.login(email, password)
 
       // MFA required — switch to OTP step
       if (data.mfa_required) {
@@ -169,13 +204,37 @@ export default function LoginPage() {
       }
 
       await finishLogin(
-        data.user || { email: form.email, first_name: '', last_name: '', id: '', phone: '', is_verified: true },
+        data.user || { email, first_name: '', last_name: '', id: '', phone: '', is_verified: true },
         { access: data.access, refresh: data.refresh },
         data.organisations,
       )
+      // Fire-and-forget: issue/rotate the offline verifier while the user is
+      // navigating to the dashboard.  The password is passed here and nowhere
+      // else — never stored after this function returns.
+      issueOfflineVerifier(password)
     } catch (err: any) {
       if (!err.response) {
-        toast.error('Cannot connect to server. Make sure the backend is running on port 8000.')
+        // Network unreachable — try offline PBKDF2 verification (~0.5 s)
+        setOfflineChecking(true)
+        const result = await tryOfflineLogin(email, password)
+        setOfflineChecking(false)
+        if (result.ok) {
+          startOfflineSession(result.blob)
+          toast('Signed in offline. Your changes will sync when you reconnect.', {
+            icon: '📡',
+            duration: 5000,
+          })
+          navigate('/dashboard')
+        } else if (result.reason === 'no_verifier') {
+          toast.error('Cannot connect to server. Connect to the internet and try again.')
+        } else if (result.reason === 'expired') {
+          toast.error('Your offline access has expired. Please connect to the internet to sign in.')
+        } else if (result.reason === 'too_many_attempts') {
+          toast.error('Too many offline attempts. Please connect to the internet to sign in.')
+        } else {
+          const left = result.remaining ?? 0
+          toast.error(`Incorrect password. ${left} offline attempt${left === 1 ? '' : 's'} remaining.`)
+        }
       } else {
         const url: string = err.config?.url ?? ''
         const status: number = err.response?.status ?? 0
@@ -316,18 +375,23 @@ export default function LoginPage() {
             </div>
           </div>
 
-          <label className="au-check">
-            <input
-              type="checkbox"
-              checked={rememberMe}
-              onChange={(e) => setRememberMe(e.target.checked)}
-            />
-            Remember me on this device
-          </label>
+          {offlineAvailable && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7, margin: '8px 0 0', opacity: 0.75 }}>
+              <WifiOff size={13} style={{ color: '#94a3b8', flex: 'none' }} />
+              <span style={{ fontSize: 12, color: '#94a3b8' }}>
+                Offline access available — works without internet if server is unreachable.
+              </span>
+            </div>
+          )}
 
-          <button type="submit" disabled={loading} className="au-btn" style={{ marginTop: 18 }}>
-            {loading ? <Loader2 size={18} className="animate-spin" /> : null}
-            {loading ? 'Signing in…' : 'Sign in'}
+          <button
+            type="submit"
+            disabled={loading || offlineChecking}
+            className="au-btn"
+            style={{ marginTop: 18 }}
+          >
+            {(loading || offlineChecking) ? <Loader2 size={18} className="animate-spin" /> : null}
+            {offlineChecking ? 'Verifying offline…' : loading ? 'Signing in…' : 'Sign in'}
           </button>
 
           <p className="au-foot">

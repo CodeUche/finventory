@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import type { User, AuthTokens, Organisation, AccessLevel, ModuleKey } from '@/types'
+import type { OfflineVerifierBlob } from '@/lib/offlineVerifier'
 
 export const REMEMBER_FLAG_KEY = 'audity-remember-me'
 // Purge any legacy plaintext password that may have been stored by older builds
@@ -8,18 +9,41 @@ localStorage.removeItem('audity-saved-creds')
 
 // Media data URLs are stored in a SEPARATE key so they survive logout() and the
 // startup guard in main.tsx (both wipe 'finventory-auth' but never this key).
-const MEDIA_KEY = 'audity-media'
-function readMediaCache(): { logoDataUrl?: string | null; stampDataUrl?: string | null; avatarDataUrl?: string | null } {
-  try { return JSON.parse(localStorage.getItem(MEDIA_KEY) ?? '{}') } catch { return {} }
-}
-function writeMediaCache(patch: Partial<{ logoDataUrl: string | null; stampDataUrl: string | null; avatarDataUrl: string | null }>) {
+//
+// SECURITY: keys are scoped PER ORGANISATION. The old unscoped 'audity-media'
+// key leaked the previous org's logo/stamp/avatar to the next user who logged
+// in on the same machine (and the stamp could land on their generated PDFs).
+const LEGACY_MEDIA_KEY = 'audity-media'
+const mediaKey = (orgId: string) => `audity-media:${orgId}`
+
+type MediaCache = { logoDataUrl?: string | null; stampDataUrl?: string | null; avatarDataUrl?: string | null }
+
+function readMediaCache(orgId: string | null | undefined): MediaCache {
+  if (!orgId) return {}
   try {
-    const cur = readMediaCache()
+    const scoped = localStorage.getItem(mediaKey(orgId))
+    if (scoped) return JSON.parse(scoped)
+    // One-time migration: adopt the legacy unscoped blob for the first org that
+    // logs in after this build, then delete it so it can never leak cross-org.
+    // (Pre-migration builds had a single org per machine in practice.)
+    const legacy = localStorage.getItem(LEGACY_MEDIA_KEY)
+    if (legacy) {
+      localStorage.setItem(mediaKey(orgId), legacy)
+      localStorage.removeItem(LEGACY_MEDIA_KEY)
+      return JSON.parse(legacy)
+    }
+    return {}
+  } catch { return {} }
+}
+function writeMediaCache(orgId: string | null | undefined, patch: Partial<{ logoDataUrl: string | null; stampDataUrl: string | null; avatarDataUrl: string | null }>) {
+  if (!orgId) return
+  try {
+    const cur = readMediaCache(orgId)
     const next: Record<string, string | null> = { ...cur }
     for (const [k, v] of Object.entries(patch)) {
       if (v == null) delete next[k]; else next[k] = v
     }
-    localStorage.setItem(MEDIA_KEY, JSON.stringify(next))
+    localStorage.setItem(mediaKey(orgId), JSON.stringify(next))
   } catch { /* storage quota — skip */ }
 }
 
@@ -49,6 +73,9 @@ interface AuthState {
   // True when the backend flagged this request as a superuser viewing an org
   // they aren't a member of — never persisted, recomputed from live responses.
   supportAccess: boolean
+  // True when authenticated via offline PBKDF2 verifier, not real JWTs.
+  // The session has no access tokens; all API writes are queued.
+  isOfflineSession: boolean
   // Persisted base-64 data URLs for logo, stamp, and avatar — set when user uploads in Settings.
   // Avoids re-fetching from the server (which may be ephemeral on Railway without S3).
   logoDataUrl: string | null
@@ -59,6 +86,7 @@ interface AuthState {
   // Zustand set() call so ProtectedRoute never sees isAuthenticated=true with
   // organisation=null (the race that caused the /onboarding redirect).
   initSession: (user: User, tokens: AuthTokens, org: Organisation | null, orgs: Organisation[]) => void
+  startOfflineSession: (blob: OfflineVerifierBlob) => void
   setAuth: (user: User, tokens: AuthTokens) => void
   setOrganisation: (org: Organisation | null) => void
   setOrganisations: (orgs: Organisation[]) => void
@@ -80,7 +108,7 @@ interface AuthState {
 
 export const useAuthStore = create<AuthState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       user: null,
       tokens: null,
       organisation: null,
@@ -98,6 +126,7 @@ export const useAuthStore = create<AuthState>()(
       stampDataUrl: null,
       avatarDataUrl: null,
       supportAccess: false,
+      isOfflineSession: false,
 
       setRememberMe: (val) => {
         if (val) localStorage.setItem(REMEMBER_FLAG_KEY, 'true')
@@ -111,7 +140,7 @@ export const useAuthStore = create<AuthState>()(
       // exactly once, so ProtectedRoute never sees the transient state where
       // isAuthenticated=true but organisation=null that caused /onboarding redirects.
       initSession: (user, tokens, org, orgs) => {
-        const media = readMediaCache()
+        const media = readMediaCache(org?.id)
         set({
           user, tokens, isAuthenticated: true,
           organisation: org, organisations: orgs,
@@ -123,19 +152,54 @@ export const useAuthStore = create<AuthState>()(
         })
       },
 
-      setAuth: (user, tokens) => {
-        const media = readMediaCache()
+      // Offline grace session: authenticated via PBKDF2 verifier, no real JWTs.
+      // Restores org context from the verifier snapshot so the dashboard renders.
+      // All API writes are queued; reads come from offlineCache.
+      startOfflineSession: (blob) => {
+        const firstOrg = blob.organisations[0] ?? null
+        const media    = readMediaCache(firstOrg?.id ?? null)
         set({
-          user, tokens, isAuthenticated: true,
-          memberRole: null, modulePermissions: {},
+          isAuthenticated: true,
+          isOfflineSession: true,
+          orgInitialized: true,
+          user: {
+            id: blob.user_id,
+            email: blob.email,
+            first_name: '',
+            last_name: '',
+            phone: '',
+            is_verified: true,
+            mfa_enabled: blob.mfa_enabled,
+          } as User,
+          tokens: null,
+          organisation: firstOrg as Organisation | null,
+          organisations: blob.organisations as Organisation[],
+          memberRole: null,
+          modulePermissions: {},
           logoDataUrl: media.logoDataUrl ?? null,
           stampDataUrl: media.stampDataUrl ?? null,
           avatarDataUrl: media.avatarDataUrl ?? null,
         })
       },
 
+      setAuth: (user, tokens) => {
+        // No org context here — media loads in initSession/setOrganisation,
+        // which know WHICH org's cached media is safe to show.
+        set({
+          user, tokens, isAuthenticated: true,
+          memberRole: null, modulePermissions: {},
+        })
+      },
+
       setOrganisation: (org) => {
-        set({ organisation: org })
+        // Load the media cached for THIS org (never another org's).
+        const media = readMediaCache(org?.id)
+        set({
+          organisation: org,
+          logoDataUrl: media.logoDataUrl ?? null,
+          stampDataUrl: media.stampDataUrl ?? null,
+          avatarDataUrl: media.avatarDataUrl ?? null,
+        })
       },
 
       setOrganisations: (organisations) => set({ organisations }),
@@ -150,9 +214,9 @@ export const useAuthStore = create<AuthState>()(
 
       setSubscriptionExpired: (expired) => set({ subscriptionExpired: expired }),
 
-      setLogoDataUrl: (url) => { set({ logoDataUrl: url }); writeMediaCache({ logoDataUrl: url }) },
-      setStampDataUrl: (url) => { set({ stampDataUrl: url }); writeMediaCache({ stampDataUrl: url }) },
-      setAvatarDataUrl: (url) => { set({ avatarDataUrl: url }); writeMediaCache({ avatarDataUrl: url }) },
+      setLogoDataUrl: (url) => { set({ logoDataUrl: url }); writeMediaCache(get().organisation?.id, { logoDataUrl: url }) },
+      setStampDataUrl: (url) => { set({ stampDataUrl: url }); writeMediaCache(get().organisation?.id, { stampDataUrl: url }) },
+      setAvatarDataUrl: (url) => { set({ avatarDataUrl: url }); writeMediaCache(get().organisation?.id, { avatarDataUrl: url }) },
 
       updateUser: (partial) =>
         set((s) => ({ user: s.user ? { ...s.user, ...partial } : s.user })),
@@ -172,13 +236,22 @@ export const useAuthStore = create<AuthState>()(
         localStorage.removeItem(REMEMBER_FLAG_KEY)
         localStorage.removeItem('finventory-auth')
         sessionStorage.removeItem('finventory-auth') // belt-and-suspenders
+        // Wipe offline verifier blob so no offline login is possible after logout.
+        // Also attempt server-side revocation (best-effort — non-fatal if offline).
+        import('@/lib/offlineVerifier').then(async ({ deleteVerifier }) => {
+          await deleteVerifier()
+          try {
+            const { authApi } = await import('@/services/api')
+            await authApi.revokeOfflineVerifier()
+          } catch { /* non-fatal: server will expire it in 14 days */ }
+        }).catch(() => {})
         // Clear offline cache so the next user doesn't see stale org data
         import('@/lib/offlineCache').then(({ offlineCache }) => offlineCache.clearAll()).catch(() => {})
         // Clear PostHog identity so the next user starts a fresh session
         import('@/lib/analytics').then(({ resetAnalytics }) => resetAnalytics()).catch(() => {})
         set({
           user: null, tokens: null, organisation: null, isAuthenticated: false,
-          orgInitialized: false,
+          orgInitialized: false, isOfflineSession: false,
           rememberMe: false, memberRole: null, modulePermissions: {}, planModules: null,
           planTaxEngine: null, planName: null, subscriptionExpired: false,
           logoDataUrl: null, stampDataUrl: null, avatarDataUrl: null,

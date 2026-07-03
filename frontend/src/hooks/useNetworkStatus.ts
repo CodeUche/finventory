@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import toast from 'react-hot-toast'
 import { syncEngine } from '@/lib/syncEngine'
+import { useAuthStore } from '@/store/authStore'
 
 /**
  * Returns `true` when the browser reports network connectivity.
@@ -26,6 +27,29 @@ export function useNetworkStatus(): boolean {
     const handleOnline = async () => {
       setOnline(true)
       toast.dismiss('offline-status')
+
+      const authState = useAuthStore.getState()
+
+      // If the user was in an offline grace session, end it: they must sign in
+      // properly now that the server is reachable.
+      if (authState.isAuthenticated && authState.isOfflineSession) {
+        toast('Back online — please sign in again to continue.', { icon: '🔌', duration: 5000 })
+        authState.logout()
+        return
+      }
+
+      // Check whether the server-side offline verifier was revoked while offline
+      // (e.g. password changed on another device).  Purge the local blob if so.
+      if (authState.isAuthenticated) {
+        try {
+          const { authApi } = await import('@/services/api')
+          const { data } = await authApi.getOfflineVerifierStatus()
+          if (!data.active) {
+            const { deleteVerifier } = await import('@/lib/offlineVerifier')
+            await deleteVerifier()
+          }
+        } catch { /* non-fatal — keep existing blob */ }
+      }
 
       const pending = await syncEngine.pendingCount()
       if (pending === 0) {

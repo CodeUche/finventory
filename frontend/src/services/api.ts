@@ -180,34 +180,58 @@ function buildTauriAdapter(): AxiosAdapter {
       ? (config.data instanceof FormData ? config.data : config.data as string)
       : undefined
 
-    // Try Tauri IPC fetch first (routes through Rust reqwest, no CORS).
-    // Only catch IPC-level errors (plugin not available / scope mismatch).
-    // AxiosErrors thrown by responseToAxios for non-2xx MUST propagate directly —
-    // they are real HTTP errors, not IPC failures.
-    let ipcResponse: Response | null = null
+    // ── Timeout enforcement ──────────────────────────────────────────────────
+    // Axios timeouts are implemented BY adapters — replacing the default adapter
+    // silently discarded `timeout: 10000`, so stalled requests hung forever and
+    // the offline machinery never triggered (no error was ever thrown).
+    // AbortController covers both the Tauri IPC path and the native fetch fallback.
+    const timeoutMs = typeof config.timeout === 'number' && config.timeout > 0 ? config.timeout : 10_000
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs)
+    const timeoutError = () =>
+      new AxiosError(`timeout of ${timeoutMs}ms exceeded`, 'ECONNABORTED', config, null, undefined)
+
     try {
-      ipcResponse = await tauriHttpFetch(url, { method, headers, body } as RequestInit)
-    } catch (ipcErr) {
-      // Tauri IPC threw — try native fetch as fallback.
-      // Two sub-cases:
-      //   A) native fetch succeeds → IPC scope/config issue → show connection warning
-      //   B) native fetch also fails → device is truly offline → throw AxiosError with
-      //      config attached so the error interceptor can serve cached data / queue the
-      //      mutation optimistically. A plain TypeError from fetch() does NOT have
-      //      error.config, which would silently bypass all offline handling.
-      if (import.meta.env.DEV) console.error('[Audity] tauriHttpFetch threw:', String(ipcErr))
+      // Try Tauri IPC fetch first (routes through Rust reqwest, no CORS).
+      // Only catch IPC-level errors (plugin not available / scope mismatch).
+      // AxiosErrors thrown by responseToAxios for non-2xx MUST propagate directly —
+      // they are real HTTP errors, not IPC failures.
+      let ipcResponse: Response | null = null
       try {
-        const resp = await fetch(url, { method, headers, body } as RequestInit)
-        // Case A: IPC issue but network is reachable — warn and continue
-        toast.error('Connection error — check your internet and try again.', { id: 'ipc-err', duration: 6000 })
-        return responseToAxios(resp, config)
-      } catch {
-        // Case B: truly offline — throw AxiosError so interceptors handle it correctly
-        throw new AxiosError('Network Error', 'ERR_NETWORK', config, null, undefined)
+        ipcResponse = await tauriHttpFetch(url, { method, headers, body, signal: ctrl.signal } as RequestInit)
+      } catch (ipcErr) {
+        // Timed out — throw with no error.response so the interceptor routes it
+        // through the network-failure path (cache fallback / offline queue).
+        // Intent: a server that won't answer within the deadline is effectively offline.
+        if (ctrl.signal.aborted) throw timeoutError()
+        // Tauri IPC threw — try native fetch as fallback.
+        // Two sub-cases:
+        //   A) native fetch succeeds → IPC scope/config issue → show connection warning
+        //   B) native fetch also fails → device is truly offline → throw AxiosError with
+        //      config attached so the error interceptor can serve cached data / queue the
+        //      mutation optimistically. A plain TypeError from fetch() does NOT have
+        //      error.config, which would silently bypass all offline handling.
+        if (import.meta.env.DEV) console.error('[Audity] tauriHttpFetch threw:', String(ipcErr))
+        try {
+          const resp = await fetch(url, { method, headers, body, signal: ctrl.signal } as RequestInit)
+          // Case A: IPC issue but network is reachable — warn and continue
+          toast.error('Connection error — check your internet and try again.', { id: 'ipc-err', duration: 6000 })
+          return await responseToAxios(resp, config)
+        } catch (fallbackErr) {
+          // Real HTTP errors from responseToAxios (401/403/500…) must propagate
+          // as-is — converting them to ERR_NETWORK would misroute them into the
+          // offline path instead of the auth-refresh / error-toast handlers.
+          if (fallbackErr instanceof AxiosError) throw fallbackErr
+          if (ctrl.signal.aborted) throw timeoutError()
+          // Case B: truly offline — throw AxiosError so interceptors handle it correctly
+          throw new AxiosError('Network Error', 'ERR_NETWORK', config, null, undefined)
+        }
       }
+      // IPC succeeded — convert and return (throws AxiosError for non-2xx, propagates up)
+      return await responseToAxios(ipcResponse, config)
+    } finally {
+      clearTimeout(timer)
     }
-    // IPC succeeded — convert and return (throws AxiosError for non-2xx, propagates up)
-    return responseToAxios(ipcResponse, config)
   }
 }
 
@@ -274,7 +298,12 @@ async function _mergeLocalStore(orgId: string, url: string, cacheData: unknown):
     const paged = cacheData as { results?: unknown[]; count?: number }
     if (Array.isArray(paged?.results)) {
       const mergedResults = merge(paged.results)
-      return { ...paged, results: mergedResults, count: mergedResults.length }
+      // Preserve the server's TOTAL count (across all pages), adjusted only by
+      // the optimistic records added to this page. Overwriting it with the page
+      // length corrupted pagination totals after offline merges.
+      const delta = mergedResults.length - paged.results.length
+      const baseCount = typeof paged.count === 'number' ? paged.count : paged.results.length
+      return { ...paged, results: mergedResults, count: Math.max(0, baseCount + delta) }
     }
   } catch { /* non-fatal */ }
   return cacheData
@@ -371,7 +400,11 @@ async function _patchCacheList(
       const paged = entry.data as { results?: unknown[]; count?: number }
       if (Array.isArray(paged?.results)) {
         const newResults = update(paged.results)
-        newData = { ...paged, results: newResults, count: newResults.length }
+        // Preserve the server's TOTAL count, adjusted by this patch's delta —
+        // page length is NOT the total when the list spans multiple pages.
+        const delta = newResults.length - paged.results.length
+        const baseCount = typeof paged.count === 'number' ? paged.count : paged.results.length
+        newData = { ...paged, results: newResults, count: Math.max(0, baseCount + delta) }
       } else {
         return
       }
@@ -907,6 +940,12 @@ export const authApi = {
     api.post('/auth/staff-login/', { username, org_slug: orgSlug, password }),
   changePassword: (currentPassword: string, newPassword: string, confirmPassword?: string) =>
     api.post('/auth/change-password/', { current_password: currentPassword, new_password: newPassword, confirm_password: confirmPassword ?? newPassword }),
+  issueOfflineVerifier: (password: string, deviceLabel?: string) =>
+    api.post('/auth/offline-verifier/', { password, ...(deviceLabel ? { device_label: deviceLabel } : {}) }),
+  getOfflineVerifierStatus: () =>
+    api.get('/auth/offline-verifier/status/'),
+  revokeOfflineVerifier: () =>
+    api.delete('/auth/offline-verifier/'),
 }
 
 export const orgApi = {

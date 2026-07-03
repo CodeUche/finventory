@@ -4,55 +4,70 @@ import { useAuthStore } from '@/store/authStore'
 import { trackPageview } from '@/lib/analytics'
 import type { ModuleKey } from '@/types'
 import AppLayout from '@/components/layout/AppLayout'
+// Eager: first screens a user sees — keeping them in the entry chunk avoids a
+// lazy-load spinner on login and immediately after it.
 import LoginPage from '@/pages/auth/LoginPage'
-import SubAccountLoginPage from '@/pages/auth/SubAccountLoginPage'
-import RegisterPage from '@/pages/auth/RegisterPage'
-import OnboardingPage from '@/pages/auth/OnboardingPage'
-import ForgotPasswordPage from '@/pages/auth/ForgotPasswordPage'
-import VerifyEmailPage from '@/pages/auth/VerifyEmailPage'
 import DashboardPage from '@/pages/dashboard/DashboardPage'
-import ProductsPage from '@/pages/inventory/ProductsPage'
-import StockPage from '@/pages/inventory/StockPage'
-import WarehousesPage from '@/pages/inventory/WarehousesPage'
-import BatchesPage from '@/pages/inventory/BatchesPage'
-import SalesPage from '@/pages/sales/SalesPage'
-import NewSalePage from '@/pages/sales/NewSalePage'
-import NewInvoicePage from '@/pages/sales/NewInvoicePage'
-import EditInvoicePage from '@/pages/sales/EditInvoicePage'
-import ImportPage from '@/pages/ImportPage'
-import QuotesPage from '@/pages/QuotesPage'
-import RecurringInvoicesPage from '@/pages/RecurringInvoicesPage'
-import CustomersPage from '@/pages/customers/CustomersPage'
-import ExpensesPage from '@/pages/expenses/ExpensesPage'
-import CreditsPage from '@/pages/CreditsPage'
-import PurchasesPage from '@/pages/PurchasesPage'
-import BillsPage from '@/pages/BillsPage'
-import BillFoldersPage from '@/pages/bills/BillFoldersPage'
-import SuppliersPage from '@/pages/SuppliersPage'
-import ChartOfAccountsPage from '@/pages/accounting/ChartOfAccountsPage'
-import JournalPage from '@/pages/accounting/JournalPage'
-import AssetsPage from '@/pages/accounting/AssetsPage'
-import BankReconciliationPage from '@/pages/accounting/BankReconciliationPage'
-import GLHealthPage from '@/pages/accounting/GLHealthPage'
-import EmployeesPage from '@/pages/payroll/EmployeesPage'
-import PayrollPage from '@/pages/payroll/PayrollPage'
-import BudgetPage from '@/pages/BudgetPage'
-import ReportsPage from '@/pages/reports/ReportsPage'
-import BalanceSheetPage from '@/pages/reports/BalanceSheetPage'
-import SalesByCustomerPage from '@/pages/reports/SalesByCustomerPage'
-import SalesByProductPage from '@/pages/reports/SalesByProductPage'
-import OwnerAnalyticsPage from '@/pages/dashboard/OwnerAnalyticsPage'
-import TaxPage from '@/pages/TaxPage'
-import AuditLogPage from '@/pages/AuditLogPage'
-import SettingsPage from '@/pages/SettingsPage'
-import PlatformAdminPage from '@/pages/PlatformAdminPage'
-import BillingPage from '@/pages/BillingPage'
-import LocationsPage from '@/pages/LocationsPage'
-import StockReportsPage from '@/pages/inventory/StockReportsPage'
-import PartnerDashboardPage from '@/pages/PartnerDashboardPage'
-import PartnerReportPage from '@/pages/PartnerReportPage'
-import PartnerInvoicesPage from '@/pages/PartnerInvoicesPage'
-import AcceptInvitePage from '@/pages/auth/AcceptInvitePage'
+
+// Lazy: everything else loads on first navigation. This splits the former
+// ~4.9 MB single bundle into per-route chunks — critical for the cloud build
+// on slow connections, harmless for the Tauri desktop build (local disk).
+const SubAccountLoginPage = React.lazy(() => import('@/pages/auth/SubAccountLoginPage'))
+const RegisterPage = React.lazy(() => import('@/pages/auth/RegisterPage'))
+const OnboardingPage = React.lazy(() => import('@/pages/auth/OnboardingPage'))
+const ForgotPasswordPage = React.lazy(() => import('@/pages/auth/ForgotPasswordPage'))
+const VerifyEmailPage = React.lazy(() => import('@/pages/auth/VerifyEmailPage'))
+const ProductsPage = React.lazy(() => import('@/pages/inventory/ProductsPage'))
+const StockPage = React.lazy(() => import('@/pages/inventory/StockPage'))
+const WarehousesPage = React.lazy(() => import('@/pages/inventory/WarehousesPage'))
+const BatchesPage = React.lazy(() => import('@/pages/inventory/BatchesPage'))
+const SalesPage = React.lazy(() => import('@/pages/sales/SalesPage'))
+const NewSalePage = React.lazy(() => import('@/pages/sales/NewSalePage'))
+const NewInvoicePage = React.lazy(() => import('@/pages/sales/NewInvoicePage'))
+const EditInvoicePage = React.lazy(() => import('@/pages/sales/EditInvoicePage'))
+const ImportPage = React.lazy(() => import('@/pages/ImportPage'))
+const QuotesPage = React.lazy(() => import('@/pages/QuotesPage'))
+const RecurringInvoicesPage = React.lazy(() => import('@/pages/RecurringInvoicesPage'))
+const CustomersPage = React.lazy(() => import('@/pages/customers/CustomersPage'))
+const ExpensesPage = React.lazy(() => import('@/pages/expenses/ExpensesPage'))
+const CreditsPage = React.lazy(() => import('@/pages/CreditsPage'))
+const PurchasesPage = React.lazy(() => import('@/pages/PurchasesPage'))
+const BillsPage = React.lazy(() => import('@/pages/BillsPage'))
+const BillFoldersPage = React.lazy(() => import('@/pages/bills/BillFoldersPage'))
+const SuppliersPage = React.lazy(() => import('@/pages/SuppliersPage'))
+const ChartOfAccountsPage = React.lazy(() => import('@/pages/accounting/ChartOfAccountsPage'))
+const JournalPage = React.lazy(() => import('@/pages/accounting/JournalPage'))
+const AssetsPage = React.lazy(() => import('@/pages/accounting/AssetsPage'))
+const BankReconciliationPage = React.lazy(() => import('@/pages/accounting/BankReconciliationPage'))
+const GLHealthPage = React.lazy(() => import('@/pages/accounting/GLHealthPage'))
+const EmployeesPage = React.lazy(() => import('@/pages/payroll/EmployeesPage'))
+const PayrollPage = React.lazy(() => import('@/pages/payroll/PayrollPage'))
+const BudgetPage = React.lazy(() => import('@/pages/BudgetPage'))
+const ReportsPage = React.lazy(() => import('@/pages/reports/ReportsPage'))
+const BalanceSheetPage = React.lazy(() => import('@/pages/reports/BalanceSheetPage'))
+const SalesByCustomerPage = React.lazy(() => import('@/pages/reports/SalesByCustomerPage'))
+const SalesByProductPage = React.lazy(() => import('@/pages/reports/SalesByProductPage'))
+const OwnerAnalyticsPage = React.lazy(() => import('@/pages/dashboard/OwnerAnalyticsPage'))
+const TaxPage = React.lazy(() => import('@/pages/TaxPage'))
+const AuditLogPage = React.lazy(() => import('@/pages/AuditLogPage'))
+const SettingsPage = React.lazy(() => import('@/pages/SettingsPage'))
+const PlatformAdminPage = React.lazy(() => import('@/pages/PlatformAdminPage'))
+const BillingPage = React.lazy(() => import('@/pages/BillingPage'))
+const LocationsPage = React.lazy(() => import('@/pages/LocationsPage'))
+const StockReportsPage = React.lazy(() => import('@/pages/inventory/StockReportsPage'))
+const PartnerDashboardPage = React.lazy(() => import('@/pages/PartnerDashboardPage'))
+const PartnerReportPage = React.lazy(() => import('@/pages/PartnerReportPage'))
+const PartnerInvoicesPage = React.lazy(() => import('@/pages/PartnerInvoicesPage'))
+const AcceptInvitePage = React.lazy(() => import('@/pages/auth/AcceptInvitePage'))
+
+// Full-screen fallback while a lazy route chunk downloads
+function RouteLoading() {
+  return (
+    <div className="flex h-screen items-center justify-center bg-surface-950">
+      <div className="w-8 h-8 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
+    </div>
+  )
+}
 
 // Inner class-based boundary — must be a class to use getDerivedStateFromError
 class ErrorBoundaryInner extends React.Component<
@@ -213,6 +228,7 @@ export default function App() {
   return (
     <ErrorBoundary>
     <RouteAnalytics />
+    <React.Suspense fallback={<RouteLoading />}>
     <Routes>
       {/* Public */}
       <Route path="/login" element={<LoginPage />} />
@@ -303,6 +319,7 @@ export default function App() {
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Route>
     </Routes>
+    </React.Suspense>
     </ErrorBoundary>
   )
 }

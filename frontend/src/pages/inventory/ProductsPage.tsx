@@ -578,14 +578,20 @@ export default function ProductsPage() {
   }
 
   const toggleSelect = (id: string) =>
-    setSelectedIds((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+    setSelectedIds((prev) => {
+      const n = new Set(prev)
+      if (n.has(id)) n.delete(id)
+      else n.add(id)
+      return n
+    })
 
   const toggleSelectAll = () => {
     const pageIds = paged.map((p) => p.id)
     const allSelected = pageIds.every((id) => selectedIds.has(id))
     setSelectedIds((prev) => {
       const n = new Set(prev)
-      allSelected ? pageIds.forEach((id) => n.delete(id)) : pageIds.forEach((id) => n.add(id))
+      if (allSelected) pageIds.forEach((id) => n.delete(id))
+      else pageIds.forEach((id) => n.add(id))
       return n
     })
   }
