@@ -123,7 +123,7 @@ class PayslipLineSerializer(serializers.ModelSerializer):
             'basic_salary', 'housing_allowance', 'transport_allowance', 'leave_allowance',
             'other_allowances', 'gross_salary', 'bonus_amount', 'overtime_amount',
             'employee_pension', 'nhf', 'nsitf',
-            'consolidated_relief_allowance', 'taxable_income', 'paye_tax',
+            'consolidated_relief_allowance', 'rent_relief', 'taxable_income', 'paye_tax',
             'employer_pension', 'penalty_deductions', 'loan_deductions', 'attendance_deduction',
             'total_deductions', 'net_salary', 'status',
             'transfer_status', 'transfer_reference', 'transfer_error',

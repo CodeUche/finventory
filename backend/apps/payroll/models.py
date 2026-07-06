@@ -145,7 +145,8 @@ class PayslipLine(TenantAwareModel):
     nhf = MoneyField(default=0)                # 2.5% of basic (National Housing Fund)
     nsitf = MoneyField(default=0)              # 1% of gross (National Social Insurance Trust Fund)
     # Tax computation
-    consolidated_relief_allowance = MoneyField(default=0)
+    consolidated_relief_allowance = MoneyField(default=0)  # pre-NTA-2025 CRA (kept for historical payslips)
+    rent_relief = MoneyField(default=0)  # NTA 2025: monthly share of 20% annual rent, capped ₦500k/yr
     taxable_income = MoneyField(default=0)
     paye_tax = MoneyField(default=0)
     # Employer contributions (not deducted from employee)
