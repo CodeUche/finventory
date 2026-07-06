@@ -103,7 +103,26 @@ interface AuthState {
   updateUser: (user: Partial<User>) => void
   updateOrganisation: (org: Partial<Organisation>) => void
   updateTokens: (tokens: Partial<AuthTokens>) => void
+  // Ends the auth session but PRESERVES offline capability: the encrypted
+  // offline verifier, the offline read cache, and queued mutations all survive.
+  // For the startup guard, session expiry, and the inactivity lock — the device
+  // owner hasn't changed, they just need to re-authenticate (online OR offline).
+  clearSession: () => void
+  // Full logout: clearSession + wipes the offline verifier (local + server),
+  // the offline cache, and analytics identity. Only for the explicit
+  // user-initiated "Log out" action — after this, offline unlock is impossible
+  // until the next online login.
   logout: () => void
+}
+
+// State reset shared by clearSession() and logout().
+const CLEARED_SESSION_STATE = {
+  user: null, tokens: null, organisation: null, isAuthenticated: false,
+  orgInitialized: false, isOfflineSession: false,
+  rememberMe: false, memberRole: null, modulePermissions: {}, planModules: null,
+  planTaxEngine: null, planName: null, subscriptionExpired: false,
+  logoDataUrl: null, stampDataUrl: null, avatarDataUrl: null,
+  supportAccess: false,
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -143,6 +162,9 @@ export const useAuthStore = create<AuthState>()(
         const media = readMediaCache(org?.id)
         set({
           user, tokens, isAuthenticated: true,
+          // A real-token login always ends any offline grace session — without
+          // this, the api layer would keep queueing mutations after re-login.
+          isOfflineSession: false,
           organisation: org, organisations: orgs,
           orgInitialized: true,
           memberRole: null, modulePermissions: {},
@@ -186,7 +208,7 @@ export const useAuthStore = create<AuthState>()(
         // No org context here — media loads in initSession/setOrganisation,
         // which know WHICH org's cached media is safe to show.
         set({
-          user, tokens, isAuthenticated: true,
+          user, tokens, isAuthenticated: true, isOfflineSession: false,
           memberRole: null, modulePermissions: {},
         })
       },
@@ -232,11 +254,26 @@ export const useAuthStore = create<AuthState>()(
           return { tokens: updated }
         }),
 
+      clearSession: () => {
+        localStorage.removeItem(REMEMBER_FLAG_KEY)
+        localStorage.removeItem('finventory-auth')
+        sessionStorage.removeItem('finventory-auth') // belt-and-suspenders
+        // Deliberately KEEPS on disk: the encrypted offline verifier (so the
+        // user can unlock offline), the password-wrapped refresh token (so an
+        // unlocked session can silently resume), the offline read cache, and
+        // the sync queue (queued sales must never be lost). This is the whole
+        // offline-first contract. In-MEMORY secrets do get dropped — the next
+        // session must re-derive them from the typed password.
+        import('@/lib/offlineResume').then(({ clearResumeMemory }) => clearResumeMemory()).catch(() => {})
+        set({ ...CLEARED_SESSION_STATE })
+      },
+
       logout: () => {
         localStorage.removeItem(REMEMBER_FLAG_KEY)
         localStorage.removeItem('finventory-auth')
         sessionStorage.removeItem('finventory-auth') // belt-and-suspenders
         // Wipe offline verifier blob so no offline login is possible after logout.
+        // deleteVerifier also removes the password-wrapped refresh token blob.
         // Also attempt server-side revocation (best-effort — non-fatal if offline).
         import('@/lib/offlineVerifier').then(async ({ deleteVerifier }) => {
           await deleteVerifier()
@@ -245,18 +282,16 @@ export const useAuthStore = create<AuthState>()(
             await authApi.revokeOfflineVerifier()
           } catch { /* non-fatal: server will expire it in 14 days */ }
         }).catch(() => {})
-        // Clear offline cache so the next user doesn't see stale org data
+        // Drop the in-memory resume secrets (wrap key + decrypted refresh token)
+        import('@/lib/offlineResume').then(({ clearResumeMemory }) => clearResumeMemory()).catch(() => {})
+        // Clear offline cache so the next user doesn't see stale org data.
+        // The sync queue is NOT wiped — queued sales are real business data.
+        // flush() is org-scoped, so another user logging in can never replay
+        // this org's queue into their own tenant.
         import('@/lib/offlineCache').then(({ offlineCache }) => offlineCache.clearAll()).catch(() => {})
         // Clear PostHog identity so the next user starts a fresh session
         import('@/lib/analytics').then(({ resetAnalytics }) => resetAnalytics()).catch(() => {})
-        set({
-          user: null, tokens: null, organisation: null, isAuthenticated: false,
-          orgInitialized: false, isOfflineSession: false,
-          rememberMe: false, memberRole: null, modulePermissions: {}, planModules: null,
-          planTaxEngine: null, planName: null, subscriptionExpired: false,
-          logoDataUrl: null, stampDataUrl: null, avatarDataUrl: null,
-          supportAccess: false,
-        })
+        set({ ...CLEARED_SESSION_STATE })
       },
     }),
     {

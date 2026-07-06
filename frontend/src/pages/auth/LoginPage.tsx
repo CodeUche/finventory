@@ -7,6 +7,7 @@ import { offlineCache } from '@/lib/offlineCache'
 import { useAuthStore } from '@/store/authStore'
 import { identifyUser } from '@/lib/analytics'
 import { tryOfflineLogin, storeVerifier, hasVerifierStored } from '@/lib/offlineVerifier'
+import { stashRefreshAtLogin, unlockRefreshOffline } from '@/lib/offlineResume'
 import AuthShell from '@/components/auth/AuthShell'
 
 export default function LoginPage() {
@@ -212,11 +213,21 @@ export default function LoginPage() {
       // navigating to the dashboard.  The password is passed here and nowhere
       // else — never stored after this function returns.
       issueOfflineVerifier(password)
+      // Also wrap the refresh token under the password (~0.5 s PBKDF2 in the
+      // background) so a future offline-started session can silently
+      // reconnect and sync without asking the user to sign in again.
+      stashRefreshAtLogin(email, password).catch(() => {})
     } catch (err: any) {
       if (!err.response) {
         // Network unreachable — try offline PBKDF2 verification (~0.5 s)
         setOfflineChecking(true)
         const result = await tryOfflineLogin(email, password)
+        if (result.ok) {
+          // Same password also unwraps the stored refresh token into memory
+          // (second PBKDF2, ~0.5 s) so this session can silently resume and
+          // sync the moment connectivity returns. Non-fatal if absent.
+          await unlockRefreshOffline(email, password)
+        }
         setOfflineChecking(false)
         if (result.ok) {
           startOfflineSession(result.blob)

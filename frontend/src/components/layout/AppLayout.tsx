@@ -8,8 +8,11 @@ import { useAuthStore } from '@/store/authStore'
 import { setActiveCurrency } from '@/lib/utils'
 import { useNetworkStatus } from '@/hooks/useNetworkStatus'
 import { api, orgApi, subscriptionApi } from '@/services/api'
-import { Briefcase, LogOut, WifiOff, CreditCard, Shield } from 'lucide-react'
+import { Briefcase, LogOut, Wifi, WifiOff, CreditCard, Shield } from 'lucide-react'
 import { offlineCache, timeAgo } from '@/lib/offlineCache'
+import { syncEngine } from '@/lib/syncEngine'
+import { flushQueuedMutations } from '@/lib/syncFlush'
+import { warmOfflineCache } from '@/lib/cacheWarm'
 import type { AccessLevel, ModuleKey, ModulePermission, Organisation } from '@/types'
 import SubscriptionPaywall from '@/components/SubscriptionPaywall'
 import SupportChat from '@/components/SupportChat'
@@ -53,6 +56,8 @@ export default function AppLayout() {
   const navigate = useNavigate()
   const organisation = useAuthStore((s) => s.organisation)
   const organisations = useAuthStore((s) => s.organisations)
+  const isOfflineSession = useAuthStore((s) => s.isOfflineSession)
+  const memberRole = useAuthStore((s) => s.memberRole)
   const setOrganisation = useAuthStore((s) => s.setOrganisation)
   const setMembership = useAuthStore((s) => s.setMembership)
   const setPlanModules = useAuthStore((s) => s.setPlanModules)
@@ -64,7 +69,61 @@ export default function AppLayout() {
   const user = useAuthStore((s) => s.user)
   const [subscriptionData, setSubscriptionData] = useState<any>(null)
   const [subscriptionBillingOnly, setSubscriptionBillingOnly] = useState(false)
+  // True once the subscription/plan fetch has settled (or is skipped for
+  // superusers) — the cache warm waits for it so plan gating is accurate.
+  const [planLoaded, setPlanLoaded] = useState(false)
+  // Live count of queued offline mutations (pending + syncing) for the
+  // "back online — sign in to sync" banner during an offline grace session.
+  const [queuedCount, setQueuedCount] = useState(0)
   const { pathname } = useLocation()
+
+  // ── Post-login / org-switch sync flush ─────────────────────────────────────
+  // THE fix for the sync-drop bug: queued offline mutations used to sync only
+  // on a literal 'online' browser event. After an offline grace session ended
+  // (re-login) no such event ever fired again, so queued sales sat unsynced
+  // forever. AppLayout mounts fresh after every successful login (normal, MFA,
+  // staff) — flushing here covers them all. Also re-fires on org switch,
+  // because flush is scoped to the active organisation.
+  // The helper self-guards: no-ops without tokens, during an offline grace
+  // session, when offline, or when the queue is empty.
+  useEffect(() => {
+    if (!organisation?.id) return
+    flushQueuedMutations()
+  }, [organisation?.id, isOfflineSession])
+
+  // Track the offline queue size for the reconnect banner.
+  useEffect(() => {
+    let mounted = true
+    const countOf = (items: Awaited<ReturnType<typeof syncEngine.snapshot>>) =>
+      items.filter((i) => i.status !== 'conflict').length
+    syncEngine.snapshot().then((items) => { if (mounted) setQueuedCount(countOf(items)) }).catch(() => {})
+    const unsubscribe = syncEngine.subscribe((items) => setQueuedCount(countOf(items)))
+    return () => { mounted = false; unsubscribe() }
+  }, [])
+
+  // Show the re-auth banner only if the grace session is STILL tokenless a
+  // beat after reconnecting — the silent resume (password-wrapped refresh
+  // token) usually upgrades the session within ~1 s, and flashing a "sign
+  // in" banner during that window would just be noise.
+  const [showReauthBanner, setShowReauthBanner] = useState(false)
+  useEffect(() => {
+    if (!(online && isOfflineSession)) { setShowReauthBanner(false); return }
+    const timer = setTimeout(() => setShowReauthBanner(true), 2500)
+    return () => clearTimeout(timer)
+  }, [online, isOfflineSession])
+
+  // ── Offline cache warm ──────────────────────────────────────────────────────
+  // Once membership + plan are known (so permission gating is accurate), warm
+  // the offline cache with every entity collection this user can read. The 3 s
+  // delay keeps the first paint snappy; the warm itself runs 3 requests at a
+  // time in the background. Re-triggers on reconnect (`online`) — aborted
+  // warms resume, completed ones no-op via the per-org guard in cacheWarm.
+  useEffect(() => {
+    if (!organisation?.id || !memberRole || !planLoaded || !online) return
+    const orgId = organisation.id
+    const timer = setTimeout(() => { warmOfflineCache(orgId).catch(() => {}) }, 3000)
+    return () => clearTimeout(timer)
+  }, [organisation?.id, memberRole, planLoaded, online])
 
   // Keep formatCurrency in sync with the org's currency setting
   useEffect(() => {
@@ -167,7 +226,8 @@ export default function AppLayout() {
   // `online` is in deps so this retries when connectivity is restored after a
   // cold-start timeout (same reasoning as the org-list effect above).
   useEffect(() => {
-    if (!organisation?.id || user?.is_superuser) return
+    if (!organisation?.id) return
+    if (user?.is_superuser) { setPlanLoaded(true); return }
     subscriptionApi.current().then(({ data }) => {
       const modules: string[] | null = data?.plan?.features?.modules ?? null
       setPlanModules(modules)
@@ -179,9 +239,11 @@ export default function AppLayout() {
       } else {
         setSubscriptionExpired(false)
       }
+      setPlanLoaded(true)
     }).catch((err) => {
       // Network error: keep existing plan state so plan-gated features stay accessible offline
       if (err?.response) { setPlanModules(null); setPlanTaxEngine(null); setPlanName(null) }
+      setPlanLoaded(true)
     })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [organisation?.id, user?.is_superuser, setPlanModules, setPlanTaxEngine, setPlanName, setSubscriptionExpired, online, _appRefreshTick])
@@ -234,6 +296,31 @@ export default function AppLayout() {
                 : 'Cached data will appear as you navigate. '}
               New entries are queued and sync automatically when reconnected.
             </span>
+          </div>
+        )}
+        {/* Reconnected during an offline grace session AND the silent resume
+            didn't kick in (no stored refresh pass, 7+ days offline, or the
+            password changed on another device): non-blocking re-auth banner.
+            The trader keeps working on cached data (writes still queue);
+            syncing needs real tokens, which need a fresh sign-in. */}
+        {showReauthBanner && (
+          <div className="flex items-center justify-between gap-3 px-4 py-2 bg-sky-500/15 border-b border-sky-500/30 text-sky-300 text-xs font-medium">
+            <span className="flex items-center gap-2 min-w-0">
+              <Wifi size={13} className="shrink-0" />
+              <span>
+                Back online — sign in to sync
+                {queuedCount > 0
+                  ? <> your <strong>{queuedCount}</strong> offline change{queuedCount === 1 ? '' : 's'}</>
+                  : ' your account'}.
+                You can keep working; nothing will be lost.
+              </span>
+            </span>
+            <button
+              onClick={() => navigate('/login')}
+              className="shrink-0 px-3 py-1 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 text-sky-200 font-semibold transition-colors"
+            >
+              Sign in now
+            </button>
           </div>
         )}
         {/* Client view amber banner — hidden until PARTNER_CHANNEL feature is enabled */}

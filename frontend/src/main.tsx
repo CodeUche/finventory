@@ -58,14 +58,18 @@ if ('serviceWorker' in navigator) {
 // ── Session guard ──────────────────────────────────────────────────────────
 // Zustand's persist middleware rehydrates SYNCHRONOUSLY from localStorage the
 // moment the authStore module is imported above. Simply clearing localStorage
-// is not enough — the store is already loaded in memory. We must also call
-// logout() to reset the in-memory state before the first React render.
+// is not enough — the store is already loaded in memory. We must also reset
+// the in-memory state before the first React render.
 (function clearSessionOnStartup() {
-  // Always clear the in-memory auth state on every app launch — every launch
-  // requires a fresh sign-in. (The old "saved credentials for auto-fill" and
+  // Every launch requires a fresh sign-in, so clear the auth session — but use
+  // clearSession(), NOT logout(). logout() wipes the offline verifier and the
+  // offline cache, which would make offline unlock impossible after a restart
+  // and destroy all cached data. A trader reopening the app inside a market
+  // with no internet must still be able to unlock with their password and see
+  // their products/customers/sales. (The old "saved credentials" and
   // "Remember me" mechanisms were removed; authStore purges the legacy
   // audity-saved-creds key at module load.)
-  useAuthStore.getState().logout()
+  useAuthStore.getState().clearSession()
 })()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

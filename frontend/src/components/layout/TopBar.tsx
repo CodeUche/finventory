@@ -6,6 +6,7 @@ import { useAuthStore } from '@/store/authStore'
 import { orgApi, inventoryApi, salesApi, customerApi, authApi } from '@/services/api'
 import { setActiveCurrency, formatCurrency } from '@/lib/utils'
 import NotificationBell from '@/components/NotificationBell'
+import { SyncStatusBadge } from '@/components/SyncStatusBadge'
 import { getStoredTheme, setTheme, type Theme } from '@/hooks/useTheme'
 
 const CURRENCIES = [
@@ -296,6 +297,9 @@ export default function TopBar({ onMenuClick }: TopBarProps) {
         >
           {currentTheme === 'dark' ? <Sun size={17} /> : <Moon size={17} />}
         </button>
+
+        {/* Offline sync queue status (hidden when the queue is empty) */}
+        <SyncStatusBadge />
 
         {/* Real-time notifications bell */}
         <NotificationBell />

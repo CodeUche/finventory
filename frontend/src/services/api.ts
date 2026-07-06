@@ -498,7 +498,13 @@ api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
   const isRetry = (config.headers as Record<string, string>)?.['X-Offline-Retry'] === '1'
   const isMutation = ['post', 'put', 'patch', 'delete'].includes(config.method?.toLowerCase() ?? '')
   const isAuthUrl = (config.url ?? '').includes('/auth/')
-  if ((!navigator.onLine || _effectivelyOffline) && isMutation && !isRetry && !isAuthUrl) {
+  // An offline grace session (PBKDF2 unlock) has NO tokens — any request that
+  // reaches the network 401s and the refresh handler would tear the session
+  // down. So while isOfflineSession is true the app stays in cache/queue mode
+  // even if connectivity has returned; only /auth/* (the re-login) goes out.
+  const isOfflineGraceSession = useAuthStore.getState().isOfflineSession
+  const treatAsOffline = !navigator.onLine || _effectivelyOffline || (isOfflineGraceSession && !isAuthUrl)
+  if (treatAsOffline && isMutation && !isRetry && !isAuthUrl) {
     config.adapter = _buildOfflineMutationAdapter(config)
     return config
   }
@@ -545,7 +551,8 @@ api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
   }
 
   // ── Offline cache: serve cached GET responses when network is unavailable ──
-  if ((!navigator.onLine || _effectivelyOffline) && !isMutation) {
+  // (or when running an offline grace session — see treatAsOffline above)
+  if (treatAsOffline && !isMutation) {
     const cacheUrl = (config.url ?? '') + (config.params ? '?' + new URLSearchParams(config.params as Record<string, string>).toString() : '')
     config.adapter = async (): Promise<AxiosResponse> => {
       const orgId = getStoredOrgId() ?? 'anonymous'
@@ -728,10 +735,12 @@ api.interceptors.response.use(
 
       const auth = getStoredAuth()
       if (!auth.refresh) {
-        // No refresh token — reset flag, drain queue, clear state
+        // No refresh token — reset flag, drain queue, clear state.
+        // clearSession (not logout): an expired session must not destroy the
+        // offline verifier/cache — the user re-authenticates and continues.
         isRefreshing = false
         processQueue(error, null)
-        useAuthStore.getState().logout()
+        useAuthStore.getState().clearSession()
         return Promise.reject(error)
       }
 
@@ -746,6 +755,9 @@ api.interceptors.response.use(
         }
         // Write rotated tokens back into Zustand persisted state
         useAuthStore.getState().updateTokens({ access: newAuth.access, refresh: newAuth.refresh })
+        // Re-wrap the stored offline-resume copy: BLACKLIST_AFTER_ROTATION
+        // means the previously wrapped refresh token just died server-side.
+        import('@/lib/offlineResume').then(({ onTokensRotated }) => onTokensRotated(newAuth.refresh)).catch(() => {})
         api.defaults.headers.common.Authorization = `Bearer ${data.access}`
         processQueue(null, data.access)
         original.headers.Authorization = `Bearer ${data.access}`
@@ -753,7 +765,8 @@ api.interceptors.response.use(
       } catch (refreshError) {
         processQueue(refreshError as AxiosError, null)
         toast.error('Your session expired — please sign in again.', { id: 'session-expired', duration: 5000 })
-        useAuthStore.getState().logout()
+        // clearSession (not logout) — see the no-refresh-token branch above.
+        useAuthStore.getState().clearSession()
         return Promise.reject(refreshError)
       } finally {
         isRefreshing = false

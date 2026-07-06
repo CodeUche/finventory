@@ -159,8 +159,15 @@ export const syncEngine = {
   },
 
   /**
-   * Flush all pending items to the server.
+   * Flush all pending items for the CURRENT organisation to the server.
    * Processes in chronological order. Resolves temp IDs on successful POSTs.
+   *
+   * Org scoping: the request interceptor injects the CURRENT session's
+   * Authorization + X-Organisation-ID headers when replaying, so an item
+   * queued under org A must never be flushed while org B is active — it
+   * would be written into B's tenant. Items for other orgs stay pending
+   * and flush when that org becomes active again (AppLayout re-flushes on
+   * every org switch).
    */
   async flush(): Promise<{ succeeded: number; conflicts: number }> {
     if (_isFlushing) return { succeeded: 0, conflicts: 0 }
@@ -173,11 +180,22 @@ export const syncEngine = {
       const { useAuthStore } = await import('@/store/authStore')
       const orgId = useAuthStore.getState().organisation?.id ?? 'unknown'
 
-      // Process pending items in order
+      // Process pending items in order — current org only (legacy items queued
+      // before orgId stamping existed carry 'unknown' and are included).
       const all = await _load()
-      const pending = all.filter((i) => i.status === 'pending').sort((a, b) => a.timestamp - b.timestamp)
+      const pending = all
+        .filter((i) => i.status === 'pending' && (i.orgId === orgId || i.orgId === 'unknown'))
+        .sort((a, b) => a.timestamp - b.timestamp)
 
-      for (const item of pending) {
+      for (const staleItem of pending) {
+        // Re-read from the DB: an earlier iteration's temp-ID resolution may
+        // have rewritten this item's URL/body (_rewriteTempId). Using the
+        // snapshot from flush start would replay the stale temp URL — the
+        // server 404s and a perfectly good chained mutation becomes a conflict.
+        const fresh = (await _load()).find((i) => i.id === staleItem.id)
+        if (!fresh || fresh.status !== 'pending') continue // dismissed mid-flush
+        const item = fresh
+
         // Mark as syncing
         await _save({ ...item, status: 'syncing' })
         await _notify()
@@ -220,7 +238,22 @@ export const syncEngine = {
           window.dispatchEvent(new CustomEvent('audity:data-changed'))
         } catch (err: unknown) {
           const axiosErr = err as { response?: { status?: number }; message?: string }
-          const status = axiosErr?.response?.status ?? 0
+          const isNetworkFailure = !axiosErr?.response
+
+          // Network failure (no HTTP response): connectivity dropped mid-flush.
+          // This is NOT a conflict and must NOT consume the retry budget —
+          // flaky market internet would otherwise strand queued sales in
+          // 'conflict' state after 3 flaky reconnect attempts. Put the item
+          // back to pending untouched and STOP: every later item would also
+          // fail (and burn its 10 s timeout each). The next 'online' event or
+          // login re-triggers the flush.
+          if (isNetworkFailure) {
+            await _save({ ...item, status: 'pending', lastError: axiosErr?.message ?? 'Network unreachable' })
+            await _notify()
+            break
+          }
+
+          const status = axiosErr.response?.status ?? 0
           const isConflict = status >= 400 && status < 500
           const newRetries = item.retries + 1
           const giveUp = isConflict || newRetries >= MAX_RETRIES
@@ -232,7 +265,7 @@ export const syncEngine = {
             await _save({ ...item, status: 'conflict', retries: newRetries, lastError: errMsg })
             conflicts++
           } else {
-            // Will retry on next flush
+            // 5xx — server hiccup, will retry on next flush
             await _save({ ...item, status: 'pending', retries: newRetries, lastError: axiosErr?.message })
           }
           await _notify()

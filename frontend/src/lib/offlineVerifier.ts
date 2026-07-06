@@ -129,6 +129,10 @@ export function isVerifierExpired(blob: OfflineVerifierBlob): boolean {
 
 export async function deleteVerifier(): Promise<void> {
   localStorage.removeItem(ENCRYPTED_BLOB_KEY)
+  // The password-wrapped refresh token (offlineResume.ts) is only reachable
+  // through the same unlock path — whenever the verifier is destroyed
+  // (logout, attempt exhaustion, server-side revocation), it goes too.
+  localStorage.removeItem('audity-offline-refresh')
   clearAttempts()
 }
 

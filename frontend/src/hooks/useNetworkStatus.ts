@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import toast from 'react-hot-toast'
 import { syncEngine } from '@/lib/syncEngine'
+import { flushQueuedMutations } from '@/lib/syncFlush'
 import { useAuthStore } from '@/store/authStore'
 
 /**
@@ -30,16 +31,33 @@ export function useNetworkStatus(): boolean {
 
       const authState = useAuthStore.getState()
 
-      // If the user was in an offline grace session, end it: they must sign in
-      // properly now that the server is reachable.
+      // Offline grace session (PBKDF2 unlock, no tokens): do NOT log out — a
+      // trader mid-sale must not lose their screen because the internet
+      // flickered back. First try a SILENT resume: the password typed at
+      // unlock also decrypted the stored refresh token, so we can usually
+      // trade it for fresh JWTs and upgrade the session in place — no banner,
+      // no re-login. Only when that fails (no stored token, 7+ days offline,
+      // password changed elsewhere) does the non-blocking "sign in to sync"
+      // banner appear; the flush then fires after the next online login.
       if (authState.isAuthenticated && authState.isOfflineSession) {
-        toast('Back online — please sign in again to continue.', { icon: '🔌', duration: 5000 })
-        authState.logout()
+        const { trySilentResume } = await import('@/lib/offlineResume')
+        const resumed = await trySilentResume()
+        if (resumed) {
+          toast.success('Back online — reconnected.', { id: 'offline-reauth', duration: 3000 })
+          await flushQueuedMutations()
+        } else {
+          toast('Back online — sign in when ready to sync your offline changes.', {
+            id: 'offline-reauth',
+            icon: '🔌',
+            duration: 6000,
+          })
+        }
         return
       }
 
       // Check whether the server-side offline verifier was revoked while offline
-      // (e.g. password changed on another device).  Purge the local blob if so.
+      // (e.g. password changed on another device). Purge the local blob if so.
+      // Real-token sessions only — an offline grace session has no tokens to ask with.
       if (authState.isAuthenticated) {
         try {
           const { authApi } = await import('@/services/api')
@@ -56,20 +74,7 @@ export function useNetworkStatus(): boolean {
         toast.success('Back online', { duration: 2500 })
         return
       }
-
-      const flushToast = toast.loading(`Syncing ${pending} queued operation${pending > 1 ? 's' : ''}…`)
-      try {
-        const { succeeded, conflicts } = await syncEngine.flush()
-        toast.dismiss(flushToast)
-        if (conflicts === 0) {
-          toast.success(`Synced ${succeeded} operation${succeeded > 1 ? 's' : ''} successfully.`)
-        } else {
-          toast.error(`Sync complete — ${succeeded} succeeded, ${conflicts} conflict${conflicts > 1 ? 's' : ''} need attention.`, { duration: 6000 })
-        }
-      } catch {
-        toast.dismiss(flushToast)
-        toast.error('Sync failed — please refresh and try again.')
-      }
+      await flushQueuedMutations()
     }
 
     window.addEventListener('offline', handleOffline)

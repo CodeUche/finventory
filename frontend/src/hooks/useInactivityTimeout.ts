@@ -31,7 +31,7 @@ export function setTimeoutPreference(opt: TimeoutOption) {
 }
 
 export function useInactivityTimeout() {
-  const { isAuthenticated, logout } = useAuthStore()
+  const { isAuthenticated, clearSession } = useAuthStore()
   const navigate = useNavigate()
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -42,10 +42,13 @@ export function useInactivityTimeout() {
     } catch { /* ignore network errors */ }
     localStorage.removeItem(LAST_ACTIVE_KEY)
     localStorage.removeItem(SESSION_START_KEY)
-    logout()
+    // clearSession, NOT logout: the inactivity lock must keep the offline
+    // verifier + cached data + sync queue — the device owner hasn't changed,
+    // they stepped away from the stall. They can re-auth offline if needed.
+    clearSession()
     toast(message, { icon: '🔒', duration: 5000 })
     navigate('/login')
-  }, [logout, navigate])
+  }, [clearSession, navigate])
 
   const reset = useCallback(() => {
     if (!isAuthenticated) return
