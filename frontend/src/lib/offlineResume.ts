@@ -166,10 +166,22 @@ export async function trySilentResume(): Promise<boolean> {
     if (!data?.access) return false
     const rotated: string = data.refresh ?? currentRefresh
     onTokensRotated(rotated)
-    // Commit a real session using the org context the grace session already
-    // has (from the verifier snapshot). AppLayout then refreshes org,
-    // membership, and plan from the network via the app-refresh event.
+    // Commit a real session first (flips isOfflineSession→false and lands the
+    // tokens, so the profile GET below leaves offline/cache mode). The org
+    // context comes from the verifier snapshot; the synthetic user already
+    // carries is_superuser etc. from the blob, so the sidebar is correct even
+    // if the profile fetch below fails.
     s.initSession(s.user, { access: data.access, refresh: rotated }, s.organisation, s.organisations)
+    // Backfill the authoritative user profile (avatar, exact names, and any
+    // identity flags that changed since the verifier was issued). Non-fatal.
+    try {
+      const { authApi } = await import('@/services/api')
+      const { data: profile } = await authApi.profile()
+      if (profile && typeof profile === 'object') {
+        useAuthStore.getState().updateUser(profile)
+      }
+    } catch { /* non-fatal — blob identity + AppLayout refresh still apply */ }
+    // AppLayout re-fetches org, membership, and plan from the network.
     window.dispatchEvent(new CustomEvent('audity:app-refresh'))
     return true
   } catch (err) {

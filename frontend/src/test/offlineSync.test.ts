@@ -356,3 +356,75 @@ describe('clearSession vs logout — offline artifact lifecycle', () => {
     expect(await syncEngine.pendingCount()).toBe(1)
   })
 })
+
+// ── 8: offline identity restoration (sidebar correctness for all user types) ──
+
+describe('startOfflineSession restores identity + RBAC from the verifier blob', () => {
+  const orgWith = (extra: Record<string, unknown>) => ({
+    ...orgA, is_active: true, onboarding_completed: true, ...extra,
+  })
+
+  it('restores is_superuser so a superuser sees an unrestricted sidebar offline', () => {
+    const blob = {
+      algorithm: 'pbkdf2_sha256', iterations: 600_000, salt: 'c2FsdA==', hash: 'aGFzaA==',
+      user_id: 'u1', email: 'admin@example.com', mfa_enabled: false, token_version: 1,
+      is_superuser: true,
+      issued_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 14 * 86400_000).toISOString(),
+      organisations: [orgWith({ role: 'owner', plan_modules: ['sales'] })],
+    } as unknown as OfflineVerifierBlob
+    useAuthStore.getState().startOfflineSession(blob)
+
+    const s = useAuthStore.getState()
+    expect(s.user?.is_superuser).toBe(true)
+    expect(s.memberRole).toBe('owner')
+    // Superusers are never plan-restricted, even if the org snapshot carries a plan list
+    expect(s.planModules).toBeNull()
+  })
+
+  it('restores a sub-account role + module permissions + plan offline', () => {
+    const blob = {
+      algorithm: 'pbkdf2_sha256', iterations: 600_000, salt: 'c2FsdA==', hash: 'aGFzaA==',
+      user_id: 'u2', email: 'staff@example.com', mfa_enabled: false, token_version: 1,
+      is_superuser: false, is_sub_account: true,
+      issued_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 14 * 86400_000).toISOString(),
+      organisations: [orgWith({
+        role: 'staff',
+        module_permissions: [
+          { module: 'sales', access_level: 'write' },
+          { module: 'customers', access_level: 'view' },
+        ],
+        plan_modules: ['sales', 'customers', 'inventory'],
+        plan_name: 'professional',
+      })],
+    } as unknown as OfflineVerifierBlob
+    useAuthStore.getState().startOfflineSession(blob)
+
+    const s = useAuthStore.getState()
+    expect(s.user?.is_superuser).toBe(false)
+    expect(s.memberRole).toBe('staff')
+    expect(s.modulePermissions).toEqual({ sales: 'write', customers: 'view' })
+    expect(s.planModules).toEqual(['sales', 'customers', 'inventory'])
+    expect(s.planName).toBe('professional')
+  })
+
+  it('degrades safely for an older blob with no identity fields', () => {
+    const blob = {
+      algorithm: 'pbkdf2_sha256', iterations: 600_000, salt: 'c2FsdA==', hash: 'aGFzaA==',
+      user_id: 'u3', email: 'legacy@example.com', mfa_enabled: false, token_version: 1,
+      issued_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 14 * 86400_000).toISOString(),
+      organisations: [{ ...orgA, is_active: true, onboarding_completed: true }],
+    } as unknown as OfflineVerifierBlob
+    useAuthStore.getState().startOfflineSession(blob)
+
+    const s = useAuthStore.getState()
+    // No identity in the blob → not superuser, role null (sidebar fills from the
+    // online fetch on reconnect); must not crash or fabricate access.
+    expect(s.user?.is_superuser).toBe(false)
+    expect(s.memberRole).toBeNull()
+    expect(s.modulePermissions).toEqual({})
+    expect(s.planModules).toBeNull()
+  })
+})

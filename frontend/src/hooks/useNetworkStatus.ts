@@ -45,13 +45,11 @@ export function useNetworkStatus(): boolean {
         if (resumed) {
           toast.success('Back online — reconnected.', { id: 'offline-reauth', duration: 3000 })
           await flushQueuedMutations()
-        } else {
-          toast('Back online — sign in when ready to sync your offline changes.', {
-            id: 'offline-reauth',
-            icon: '🔌',
-            duration: 6000,
-          })
         }
+        // If resume wasn't possible (no stored refresh token, 7+ days offline,
+        // or password changed elsewhere), AppLayout shows a single persistent
+        // "sign in to sync" banner — no toast here, to avoid the duplicate
+        // messaging the user saw (banner + toast + error all at once).
         return
       }
 

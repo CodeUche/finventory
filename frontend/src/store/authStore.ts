@@ -175,11 +175,24 @@ export const useAuthStore = create<AuthState>()(
       },
 
       // Offline grace session: authenticated via PBKDF2 verifier, no real JWTs.
-      // Restores org context from the verifier snapshot so the dashboard renders.
+      // Restores org context AND the user's identity + RBAC from the verifier
+      // snapshot so the sidebar renders correctly for EVERY user type with no
+      // network. (Blobs issued before the identity-snapshot change omit these
+      // fields; the sidebar then fills in from its online fetch on reconnect.)
       // All API writes are queued; reads come from offlineCache.
       startOfflineSession: (blob) => {
         const firstOrg = blob.organisations[0] ?? null
         const media    = readMediaCache(firstOrg?.id ?? null)
+        const isSuper  = blob.is_superuser === true
+
+        // Map the active org's module_permissions list → { module: level }.
+        const perms: Partial<Record<ModuleKey, AccessLevel>> = {}
+        for (const p of firstOrg?.module_permissions ?? []) {
+          perms[p.module as ModuleKey] = p.access_level as AccessLevel
+        }
+        // Superusers and owners/admins are unrestricted (mirrors online logic).
+        const role = firstOrg?.role ?? (isSuper ? 'owner' : null)
+
         set({
           isAuthenticated: true,
           isOfflineSession: true,
@@ -187,17 +200,26 @@ export const useAuthStore = create<AuthState>()(
           user: {
             id: blob.user_id,
             email: blob.email,
-            first_name: '',
-            last_name: '',
-            phone: '',
+            first_name: blob.first_name ?? '',
+            last_name: blob.last_name ?? '',
+            phone: blob.phone ?? '',
             is_verified: true,
+            is_superuser: isSuper,
+            is_staff: blob.is_staff === true,
+            is_sub_account: blob.is_sub_account === true,
+            has_partner_profile: blob.has_partner_profile === true,
             mfa_enabled: blob.mfa_enabled,
           } as User,
           tokens: null,
           organisation: firstOrg as Organisation | null,
           organisations: blob.organisations as Organisation[],
-          memberRole: null,
-          modulePermissions: {},
+          memberRole: role,
+          modulePermissions: perms,
+          // Superusers are never plan-restricted (planModules stays null).
+          planModules: isSuper ? null : (firstOrg?.plan_modules ?? null),
+          planTaxEngine: firstOrg?.plan_tax_engine ?? null,
+          planName: firstOrg?.plan_name ?? null,
+          subscriptionExpired: firstOrg?.subscription_expired ?? false,
           logoDataUrl: media.logoDataUrl ?? null,
           stampDataUrl: media.stampDataUrl ?? null,
           avatarDataUrl: media.avatarDataUrl ?? null,

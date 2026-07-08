@@ -34,6 +34,16 @@ export interface OfflineVerifierBlob {
   hash: string          // base64-encoded 32 bytes
   user_id: string
   email: string
+  // Identity snapshot — lets the offline sidebar / permission gates work with
+  // no network. Without is_superuser here, a superuser's offline (or silently
+  // resumed) session is treated as a permission-less sub-account.
+  first_name?: string
+  last_name?: string
+  phone?: string
+  is_superuser?: boolean
+  is_staff?: boolean
+  is_sub_account?: boolean
+  has_partner_profile?: boolean
   mfa_enabled: boolean
   token_version: number
   issued_at: string
@@ -41,6 +51,15 @@ export interface OfflineVerifierBlob {
   organisations: Array<Pick<Organisation, 'id' | 'name' | 'slug' | 'account_type' | 'currency' | 'country'> & {
     is_active: boolean
     onboarding_completed: boolean
+    // Per-org RBAC + plan snapshot (present on blobs issued after the
+    // identity-snapshot change; older blobs omit them → sidebar falls back to
+    // its online fetch on reconnect).
+    role?: string | null
+    module_permissions?: Array<{ module: string; access_level: string }>
+    plan_modules?: string[] | null
+    plan_tax_engine?: string | null
+    plan_name?: string | null
+    subscription_expired?: boolean
   }>
 }
 

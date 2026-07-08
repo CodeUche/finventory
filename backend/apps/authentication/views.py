@@ -280,6 +280,99 @@ def _get_user_organisations(user):
     return orgs
 
 
+def _augment_orgs_with_membership(user, orgs):
+    """Attach each org's RBAC + plan snapshot to the org dicts.
+
+    Consumed by the OFFLINE VERIFIER blob only. An offline grace session has no
+    network, so without this snapshot the desktop sidebar can't know the user's
+    role or module permissions and hides every module (memberRole stays null ⇒
+    the sidebar's ``membershipLoading`` guard blanks it for EVERY user, not just
+    superusers). Snapshotting role + permissions + plan here lets the offline
+    session render the sidebar exactly as it would online.
+
+    Best-effort: any failure leaves that field absent and the sidebar falls back
+    to its online fetch once connectivity returns.
+    """
+    try:
+        from apps.tenancy.models import Membership
+        memberships = {
+            str(m.organisation_id): m
+            for m in Membership.objects.filter(
+                user=user, is_active=True
+            ).prefetch_related("module_permissions")
+        }
+    except Exception:
+        memberships = {}
+
+    for org in orgs:
+        oid = str(org.get("id"))
+        m = memberships.get(oid)
+        if m is not None:
+            org["role"] = m.role
+            try:
+                org["module_permissions"] = [
+                    {"module": mp.module, "access_level": mp.access_level}
+                    for mp in m.module_permissions.all()
+                ]
+            except Exception:
+                org["module_permissions"] = []
+        elif user.is_superuser:
+            # Superusers get owner-level access even without a membership row.
+            org["role"] = "owner"
+            org["module_permissions"] = []
+        else:
+            org["role"] = None
+            org["module_permissions"] = []
+
+        # Plan snapshot — superusers are never plan-restricted (plan_modules
+        # stays null). For everyone else, snapshot the active plan's module
+        # allowlist so the offline sidebar's plan gate matches online.
+        org["plan_modules"] = None
+        org["plan_tax_engine"] = None
+        org["plan_name"] = None
+        org["subscription_expired"] = False
+        if not user.is_superuser:
+            try:
+                from apps.tenancy.models import Organisation
+                org_obj = Organisation.objects.filter(id=oid).first()
+                sub = getattr(org_obj, "subscription", None) if org_obj else None
+                if sub is not None:
+                    feats = sub.plan.features or {}
+                    org["plan_modules"] = feats.get("modules")
+                    org["plan_tax_engine"] = feats.get("tax_engine")
+                    org["plan_name"] = (sub.plan.name or "").lower() or None
+                    org["subscription_expired"] = not sub.is_active
+            except Exception:
+                pass
+
+    return orgs
+
+
+def _get_user_identity(user):
+    """User-level identity flags for the offline verifier blob.
+
+    These live on the User row (no RLS), and the desktop sidebar / permission
+    gates key off them — most importantly ``is_superuser``, without which a
+    superuser's offline (or silently-resumed) session is treated as a
+    permission-less sub-account and shown an empty sidebar.
+    """
+    try:
+        has_partner = bool(
+            hasattr(user, "partner_profile") and user.partner_profile.is_active
+        )
+    except Exception:
+        has_partner = False
+    return {
+        "first_name": user.first_name or "",
+        "last_name": user.last_name or "",
+        "phone": getattr(user, "phone", "") or "",
+        "is_superuser": bool(user.is_superuser),
+        "is_staff": bool(user.is_staff),
+        "is_sub_account": bool(getattr(user, "is_sub_account", False)),
+        "has_partner_profile": has_partner,
+    }
+
+
 def _send_verification_email(user, request=None):
     """Sign the user's PK and email a time-limited verification link.
 
@@ -1092,13 +1185,20 @@ class OfflineVerifierView(APIView):
                 **secret_payload,
                 "user_id": str(user.pk),
                 "email": user.email,
+                # Identity flags so the offline sidebar / permission gates work
+                # without a network call (esp. is_superuser — otherwise a
+                # superuser's offline session shows an empty sidebar).
+                **_get_user_identity(user),
                 "mfa_enabled": user.mfa_enabled,
                 "token_version": user.token_version or 0,
                 "issued_at": record.issued_at.isoformat(),
                 "expires_at": record.expires_at.isoformat(),
-                # Org membership snapshot so the offline grace session can
-                # restore tenant context without any network call.
-                "organisations": _get_user_organisations(user),
+                # Org snapshot (tenant context + per-org role, permissions, and
+                # plan) so the offline grace session renders the sidebar with
+                # correct RBAC for every user type, not just superusers.
+                "organisations": _augment_orgs_with_membership(
+                    user, _get_user_organisations(user)
+                ),
             }
         })
 

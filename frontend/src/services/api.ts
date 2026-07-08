@@ -671,14 +671,17 @@ api.interceptors.response.use(
             return { data: merged, status: 200, statusText: 'OK (cached)', headers: {}, config: original } as AxiosResponse
           }
         } catch { /* non-fatal */ }
-        // No cache — if already offline, return empty data silently instead of
-        // rejecting. This prevents every page from toasting "Failed to load X"
-        // when the amber offline banner is already showing.
+        // No cache — return empty data silently instead of rejecting when we're
+        // in any offline-ish mode: truly offline, OR an offline grace session
+        // (which deliberately serves from cache even when online, until the
+        // user re-authenticates). Otherwise a fresh offline unlock with an empty
+        // cache would surface "Connection failed: No cached data available
+        // offline" on every dashboard request.
         // Mark _fromCache=true so the success interceptor does NOT write this
         // empty placeholder into IndexedDB — otherwise the 5-min fresh-cache gate
         // would serve { results: [] } for 5 minutes after connectivity is restored,
         // breaking membership parsing and keeping the sidebar blank.
-        if (_effectivelyOffline) {
+        if (_effectivelyOffline || useAuthStore.getState().isOfflineSession) {
           (original as ExtConfig)._fromCache = true
           return { data: { results: [] }, status: 200, statusText: 'OK (offline)', headers: {}, config: original } as AxiosResponse
         }
@@ -705,7 +708,10 @@ api.interceptors.response.use(
 
       // Only show "Connection failed" on the first failure — once the amber
       // offline banner is visible, further network error toasts are noise.
-      if (!_effectivelyOffline) {
+      // Also suppressed during an offline grace session (the blue "sign in to
+      // sync" banner already explains the state; a cache miss there is expected,
+      // not a connection failure).
+      if (!_effectivelyOffline && !useAuthStore.getState().isOfflineSession) {
         toast.error(`Connection failed: ${error.message ?? 'Network error'}`, {
           id: 'offline-network-err',
           duration: 6000,
