@@ -203,13 +203,26 @@ html.light .table-row:hover {
   background-color: #f8fafc;
 }
 
+/* ── Muted text: WARM WHITE in dark, DARK & readable in light ────────────────
+   The slate-300..600 utilities carry almost all "secondary/label/caption" text
+   (~2,100 usages). Tailwind's defaults render as a cold, dim grey that's hard
+   to read on the deep-navy dark surfaces and too light on white. We remap the
+   text-only utilities per theme (color-only — bg-/border-slate are untouched):
+     • dark  → a warm off-white ramp (cream-tinted, R>G>B) that stays legible
+               yet preserves the hierarchy below headings (white / slate-100).
+     • light → darker slate so captions read clearly on white.                */
+html.dark .text-slate-300 { color: #ECE7DD; }  /* emphasized secondary */
+html.dark .text-slate-400 { color: #DAD4C6; }  /* main labels / captions (warm white) */
+html.dark .text-slate-500 { color: #C2BAAA; }  /* hints / timestamps */
+html.dark .text-slate-600 { color: #A69E8B; }  /* least-emphasis muted */
+
 html.light .text-slate-100 { color: #0f172a; }
 html.light .text-slate-200 { color: #1e293b; }
-html.light .text-slate-300 { color: #1e293b; }  /* was #334155 — bumped darker */
-html.light .text-slate-400 { color: #334155; }  /* was #64748b — much darker  */
-html.light .text-slate-500 { color: #475569; }  /* was #94a3b8 — big fix      */
-html.light .text-slate-600 { color: #334155; }  /* was #64748b — darker       */
-html.light .text-slate-700 { color: #1e293b; }
+html.light .text-slate-300 { color: #172033; }  /* darker */
+html.light .text-slate-400 { color: #1e293b; }  /* was #334155 — darker & more visible */
+html.light .text-slate-500 { color: #334155; }  /* was #475569 — darker */
+html.light .text-slate-600 { color: #1e293b; }  /* was #334155 — darker */
+html.light .text-slate-700 { color: #172033; }
 html.light .text-white     { color: #0f172a; }
 
 /* bg-brand-500 / bg-brand-600 are always dark (navy in light mode).
