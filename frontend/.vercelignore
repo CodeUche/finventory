@@ -1,0 +1,13 @@
+# Vercel only needs the web sources — it runs `npm install` + `build:cloud`.
+# Exclude everything heavy/irrelevant to the browser build so uploads are small.
+node_modules
+dist
+dist-ssr
+src-tauri
+android
+ios
+*.log
+.vscode
+.idea
+coverage
+test-results
