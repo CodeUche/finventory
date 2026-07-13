@@ -178,12 +178,20 @@ def plan_requires(module_key: str):
             if not org:
                 return False
             sub = getattr(org, "subscription", None)
-            # No subscription yet — allow (SubscriptionActive handles expiry)
+            # No subscription yet — allow (prevents lockout during onboarding
+            # before plans are seeded).
             if sub is None:
                 return True
-            # Inactive/expired subscription — let SubscriptionActive handle it
+            # Inactive/expired subscription — deny access to this plan-gated
+            # (paid) module. Billing/subscription endpoints are NOT plan-gated,
+            # so the user can still pay or downgrade to recover. This is the
+            # server-side enforcement of expiry; the frontend paywall mirrors it.
             if not sub.is_active:
-                return True
+                self.message = (
+                    "Your subscription has expired. Renew or switch plans to "
+                    "regain access to this feature."
+                )
+                return False
             modules = sub.plan.features.get("modules") if sub.plan.features else None
             # If the plan has no modules list at all, treat as unrestricted (legacy
             # / development plans without explicit module config should not lock out

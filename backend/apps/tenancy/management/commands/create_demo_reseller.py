@@ -32,6 +32,11 @@ class Command(BaseCommand):
         parser.add_argument("--last-name", default="Reviewer")
         parser.add_argument("--org", default="Demo Accounting Firm")
         parser.add_argument("--months", type=int, default=1)
+        parser.add_argument(
+            "--no-expiry", action="store_true",
+            help="Grant a permanent (non-expiring) ACTIVE subscription instead of a trial. "
+                 "Access stays until manually revoked (revoke_demo_reseller).",
+        )
 
     @transaction.atomic
     def handle(self, *args, **opts):
@@ -82,26 +87,37 @@ class Command(BaseCommand):
                 extra={"country": "NG", "currency": "NGN", "email": email},
             )
 
-        # 3. Partner-agency plan on a TRIALING subscription, expiring in exactly N months.
+        # 3. Partner-agency subscription.
+        #    --no-expiry  → permanent ACTIVE plan (never expires; is_active always True).
+        #    otherwise    → TRIALING, expiring in exactly N months.
         now = timezone.now()
-        expires = now + relativedelta(months=months)
+        no_expiry = opts["no_expiry"]
+        if no_expiry:
+            sub_status = Subscription.Status.ACTIVE
+            trial_end = None
+            period_end = None
+        else:
+            sub_status = Subscription.Status.TRIALING
+            trial_end = now + relativedelta(months=months)
+            period_end = trial_end
+
         sub = getattr(org, "subscription", None)
         if sub is None:
             sub = Subscription.objects.create(
                 plan=plan,
-                status=Subscription.Status.TRIALING,
-                trial_end=expires,
+                status=sub_status,
+                trial_end=trial_end,
                 current_period_start=now,
-                current_period_end=expires,
+                current_period_end=period_end,
             )
             org.subscription = sub
             org.save(update_fields=["subscription"])
         else:
             sub.plan = plan
-            sub.status = Subscription.Status.TRIALING
-            sub.trial_end = expires
+            sub.status = sub_status
+            sub.trial_end = trial_end
             sub.current_period_start = now
-            sub.current_period_end = expires
+            sub.current_period_end = period_end
             sub.canceled_at = None
             sub.save()
 
@@ -119,8 +135,12 @@ class Command(BaseCommand):
         self.stdout.write(f"  Password:         {opts['password']}")
         self.stdout.write(f"  Organisation:     {org.name} ({org.id})")
         self.stdout.write(f"  Role:             owner (superuser={user.is_superuser}, staff={user.is_staff})")
-        self.stdout.write(f"  Plan:             {plan.name} [{plan.slug}] — TRIALING")
+        self.stdout.write(f"  Plan:             {plan.name} [{plan.slug}] — {sub_status}")
         self.stdout.write(f"  Partner agency:   provisioned (tier=agency)")
         self.stdout.write(f"  Access starts:    {now.isoformat()}")
-        self.stdout.write(f"  Auto-expires:     {expires.isoformat()}  ({months} month(s))")
-        self.stdout.write(self.style.WARNING("  After expiry: writes blocked + billing-only paywall (access cut off)."))
+        if no_expiry:
+            self.stdout.write(self.style.SUCCESS("  Expiry:           NONE — permanent access until revoked."))
+            self.stdout.write("  Revoke with:      python manage.py revoke_demo_reseller --email " + email)
+        else:
+            self.stdout.write(f"  Auto-expires:     {period_end.isoformat()}  ({months} month(s))")
+            self.stdout.write(self.style.WARNING("  After expiry: writes blocked + billing-only paywall (access cut off)."))
