@@ -83,18 +83,27 @@ export default function StockPage() {
       const stockRes = await inventoryApi.stock(params)
       const data: StockItem[] = stockRes.data.results ?? stockRes.data
       setItems(data)
-    } catch { if (!silent) toast.error('Failed to load stock') }
+    } catch (err: any) {
+      // A network/offline failure is already communicated by the amber offline
+      // banner — never toast for it. Toasting here (with no id) was what stacked
+      // a wall of "Failed to load stock" notifications every time connectivity
+      // flip-flopped. Use a stable id so even a genuine error can't pile up.
+      const isNetworkErr = !err?.response
+      if (!silent && !isNetworkErr) toast.error('Failed to load stock', { id: 'stock-load-err' })
+    }
     finally { if (!silent) setLoading(false) }
   }
 
-  const load = async () => {
+  const load = async (silent = false) => {
     if (bulkInProgress.current) return
     try {
       const wRes = await inventoryApi.warehouses()
       const wList: Warehouse[] = wRes.data.results ?? wRes.data
       setWarehouses(wList)
-    } catch { toast.error('Failed to load warehouses') }
-    await loadStock(warehouseFilter)
+    } catch (err: any) {
+      if (!silent && err?.response) toast.error('Failed to load warehouses', { id: 'wh-load-err' })
+    }
+    await loadStock(warehouseFilter, silent)
     // Fetch low stock count independently so a failure doesn't break the main load
     try {
       const lowRes = await inventoryApi.lowStock()
@@ -109,7 +118,11 @@ export default function StockPage() {
   }
 
   useEffect(() => { load() }, [])
-  useDataRefresh(load)
+  // Background auto-refresh (offline mutation synced / connectivity toggled) must
+  // be SILENT: no loading skeleton flash, no error toast. Otherwise a flaky
+  // connection that fires 'audity:data-changed' repeatedly makes the table
+  // strobe between skeleton and empty and stacks error toasts non-stop.
+  useDataRefresh(() => load(true))
 
   const openAdjust = async () => {
     setAdjustRowLocked(false)

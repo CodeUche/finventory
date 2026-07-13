@@ -3,9 +3,11 @@
 import logging
 import datetime
 import django_filters
+from django.core.exceptions import PermissionDenied, ValidationError as DjangoValidationError
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
@@ -1043,6 +1045,12 @@ class RecurringInvoiceViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                 items=items_data,
                 payment_method=ri.payment_method if hasattr(ri, 'payment_method') else 'cash',
                 notes=ri.notes if hasattr(ri, 'notes') else '',
+                # Recurring invoices are billed ahead (subscription-style): create the
+                # invoice now regardless of on-hand stock. Stock deduction + GL posting
+                # are deferred until the goods are actually fulfilled (call
+                # SaleService.fulfill_invoice later). This prevents "Insufficient stock"
+                # from blocking generation of an otherwise valid recurring invoice.
+                defer_fulfillment=True,
             )
 
             # Advance next_run_date
@@ -1070,9 +1078,16 @@ class RecurringInvoiceViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                 pass
 
             return Response({'message': 'Invoice generated', 'invoice_id': str(invoice.id), 'invoice_number': invoice.invoice_number})
-        except Exception:
+        except (ValueError, DjangoValidationError, DRFValidationError, PermissionDenied) as e:
+            # Expected business-rule failures (e.g. insufficient stock, locked
+            # period, invalid product). Surface the real message so the user can
+            # act on it instead of seeing a generic "unexpected error".
+            logger.warning("generate_now rejected: %s", e)
+            detail = e.messages[0] if hasattr(e, "messages") and e.messages else str(e)
+            return Response({'error': detail or 'Could not generate invoice'}, status=400)
+        except Exception as e:
             logger.exception("generate_now failed")
-            return Response({'error': "An unexpected error occurred. Please try again."}, status=400)
+            return Response({'error': f"[{type(e).__name__}] {e}"}, status=400)
 
 
 

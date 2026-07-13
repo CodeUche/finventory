@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import Sidebar from './Sidebar'
 import TopBar from './TopBar'
+import AppBackdrop from '@/components/AppBackdrop'
 import Breadcrumb from '@/components/Breadcrumb'
 import { useInactivityTimeout } from '@/hooks/useInactivityTimeout'
 import { useAuthStore } from '@/store/authStore'
@@ -263,7 +264,10 @@ export default function AppLayout() {
   }
 
   return (
-    <div className="flex h-screen bg-surface-950 overflow-hidden">
+    <div className="app-shell relative flex h-screen overflow-hidden">
+      {/* Decorative "Compass" backdrop (behind everything) */}
+      <AppBackdrop />
+
       {/* Mobile overlay */}
       {sidebarOpen && (
         <div
@@ -272,11 +276,11 @@ export default function AppLayout() {
         />
       )}
 
-      {/* Sidebar */}
+      {/* Sidebar (already positioned at z-30 — paints above the backdrop) */}
       <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} billingOnly={subscriptionBillingOnly} />
 
       {/* Main content */}
-      <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
+      <div className="relative z-10 flex flex-col flex-1 min-w-0 overflow-hidden">
         <TopBar onMenuClick={() => setSidebarOpen(true)} />
         {/* Support access banner — superuser viewing an org they aren't a member of */}
         {supportAccess && (

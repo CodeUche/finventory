@@ -658,6 +658,18 @@ api.interceptors.response.use(
       const isRetry = (original.headers as Record<string, string>)?.['X-Offline-Retry'] === '1'
       const isMut = ['post', 'put', 'patch', 'delete'].includes(method)
 
+      // Resolve (not reject) any in-flight dedup waiters for this URL with the
+      // fabricated offline response. These early returns bypass the success
+      // interceptor, so without this the deferred registered in the request
+      // interceptor is never settled — the next identical GET joins a dead
+      // promise and hangs forever (skeleton stuck / repeated re-fetch churn).
+      const _settleDedupe = (resp: AxiosResponse) => {
+        if (original._dedupeKey) {
+          _inflightGets.get(original._dedupeKey)?.resolve(resp)
+          _inflightGets.delete(original._dedupeKey)
+        }
+      }
+
       if (!isMut) {
         // GET: try cache fallback, then silent empty response when already offline
         const params = original.params
@@ -668,7 +680,9 @@ api.interceptors.response.use(
           if (entry) {
             _signalOffline()
             const merged = await _mergeLocalStore(orgId, url, entry.data)
-            return { data: merged, status: 200, statusText: 'OK (cached)', headers: {}, config: original } as AxiosResponse
+            const cachedResp = { data: merged, status: 200, statusText: 'OK (cached)', headers: {}, config: original } as AxiosResponse
+            _settleDedupe(cachedResp)
+            return cachedResp
           }
         } catch { /* non-fatal */ }
         // No cache — return empty data silently instead of rejecting when we're
@@ -683,7 +697,9 @@ api.interceptors.response.use(
         // breaking membership parsing and keeping the sidebar blank.
         if (_effectivelyOffline || useAuthStore.getState().isOfflineSession) {
           (original as ExtConfig)._fromCache = true
-          return { data: { results: [] }, status: 200, statusText: 'OK (offline)', headers: {}, config: original } as AxiosResponse
+          const emptyResp = { data: { results: [] }, status: 200, statusText: 'OK (offline)', headers: {}, config: original } as AxiosResponse
+          _settleDedupe(emptyResp)
+          return emptyResp
         }
       } else if (!isRetry && !url.includes('/auth/')) {
         // Mutation failed on the wire — treat optimistically (same as request interceptor).

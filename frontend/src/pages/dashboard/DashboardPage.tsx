@@ -28,7 +28,7 @@ import {
 } from 'recharts'
 import {
   TrendingUp, TrendingDown, Package, AlertTriangle, DollarSign,
-  Zap, ArrowUpRight, ShoppingCart, Clock, Sparkles, RefreshCw,
+  Zap, ArrowUpRight, ShoppingCart, Clock, RefreshCw,
   Upload, Receipt, UserPlus, Plus, Scale, Wallet, FileText,
   BarChart2, Activity,
 } from 'lucide-react'
@@ -685,8 +685,7 @@ export default function DashboardPage() {
             className="flex items-center gap-2 px-3 py-2 bg-brand-500/15 border border-brand-500/30 hover:bg-brand-500/25 rounded-xl transition-colors"
             title="Ask Audity AI about your finances"
           >
-            <Sparkles size={14} className="text-brand-400" />
-            <span className="text-xs text-brand-400 font-medium hidden sm:inline">Explain My Money</span>
+            <span className="text-xs text-brand-400 font-medium">Explain My Money</span>
           </button>
 
           <button
