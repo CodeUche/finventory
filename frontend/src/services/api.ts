@@ -63,7 +63,13 @@ function _startProbe() {
     if (!_effectivelyOffline) { _stopProbe(); return }
     try {
       const base = (import.meta.env.VITE_API_BASE_URL ?? '/api/v1').replace(/\/+$/, '')
-      await tauriHttpFetch(`${base}/auth/ping/`, { method: 'GET' } as RequestInit)
+      // Use the Tauri IPC fetch in the desktop app; native fetch in a browser
+      // (where tauriHttpFetch would always throw and the probe could never
+      // recover from a transient offline blip).
+      const isTauriRuntime = typeof window !== 'undefined' &&
+        ('__TAURI_INTERNALS__' in window || '__TAURI__' in window)
+      const ping = isTauriRuntime ? tauriHttpFetch : fetch
+      await ping(`${base}/auth/ping/`, { method: 'GET' } as RequestInit)
       _signalOnline()
     } catch {
       // Still offline — keep probing
@@ -192,6 +198,28 @@ function buildTauriAdapter(): AxiosAdapter {
       new AxiosError(`timeout of ${timeoutMs}ms exceeded`, 'ECONNABORTED', config, null, undefined)
 
     try {
+      // ── Pure web-browser context (no Tauri IPC available) ────────────────────
+      // When the app runs as a normal web page (e.g. the hosted review build)
+      // there is no __TAURI_INTERNALS__, so tauriHttpFetch would always throw and
+      // fall into the "Connection error" warning path on every single request.
+      // Detect that once and go straight to native fetch — cleanly, with no
+      // spurious toast. This branch is NEVER taken inside the desktop app, so the
+      // existing Tauri behaviour below is completely unchanged.
+      const isTauriRuntime = typeof window !== 'undefined' &&
+        ('__TAURI_INTERNALS__' in window || '__TAURI__' in window)
+      if (!isTauriRuntime) {
+        try {
+          const resp = await fetch(url, { method, headers, body, signal: ctrl.signal } as RequestInit)
+          return await responseToAxios(resp, config)
+        } catch (webErr) {
+          // Real HTTP errors (401/403/500…) from responseToAxios propagate as-is.
+          if (webErr instanceof AxiosError) throw webErr
+          if (ctrl.signal.aborted) throw timeoutError()
+          // Truly unreachable — AxiosError with config so interceptors can handle it.
+          throw new AxiosError('Network Error', 'ERR_NETWORK', config, null, undefined)
+        }
+      }
+
       // Try Tauri IPC fetch first (routes through Rust reqwest, no CORS).
       // Only catch IPC-level errors (plugin not available / scope mismatch).
       // AxiosErrors thrown by responseToAxios for non-2xx MUST propagate directly —
