@@ -238,7 +238,13 @@ export default function AppLayout() {
         setSubscriptionExpired(true)
         setSubscriptionData(data)
       } else {
+        // Subscription is active again (e.g. downgraded to Free after an expired
+        // trial). Clear BOTH gates: without also clearing billing-only mode the
+        // sidebar stays locked to /billing and the Free-plan modules remain
+        // grayed out even though the user now has access to them.
         setSubscriptionExpired(false)
+        setSubscriptionData(null)
+        setSubscriptionBillingOnly(false)
       }
       setPlanLoaded(true)
     }).catch((err) => {
