@@ -5,6 +5,7 @@ import toast from 'react-hot-toast'
 import { customerApi, inventoryApi, locationApi, salesApi } from '@/services/api'
 import { formatCurrency, normalizeAmountStr, stripCommas } from '@/lib/utils'
 import AmountInput from '@/components/AmountInput'
+import EditableTotal from '@/components/EditableTotal'
 import DateInput from '@/components/DateInput'
 import { useNotifications } from '@/contexts/NotificationsContext'
 import { useAuthStore } from '@/store/authStore'
@@ -465,9 +466,17 @@ export default function NewInvoicePage() {
                   <span>− {formatCurrency(discountTotal)}</span>
                 </div>
               )}
-              <div className="border-t border-surface-700 pt-2 flex justify-between text-white font-semibold text-base">
-                <span>Invoice Total</span>
-                <span>{formatCurrency(grandTotal)}</span>
+              <div className="border-t border-surface-700 pt-2 text-base">
+                <EditableTotal
+                  total={grandTotal}
+                  valueClass="text-white font-semibold"
+                  lines={lines.map((l) => ({
+                    quantity: parseFloat(l.quantity) || 0,
+                    unitPrice: parseFloat(stripCommas(l.unit_price)) || 0,
+                    discountPercent: parseFloat(l.discount_percent) || 0,
+                  }))}
+                  onApply={(prices) => setLines((prev) => prev.map((l, i) => ({ ...l, unit_price: String(prices[i]) })))}
+                />
               </div>
               {recordPaymentNow && tenderedNum > 0 && (
                 <>

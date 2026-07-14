@@ -5,6 +5,7 @@ import toast from 'react-hot-toast'
 import { customerApi, inventoryApi, salesApi } from '@/services/api'
 import { formatCurrency, stripCommas } from '@/lib/utils'
 import AmountInput from '@/components/AmountInput'
+import EditableTotal from '@/components/EditableTotal'
 import DateInput from '@/components/DateInput'
 import type { Customer, Invoice, Product, Warehouse as WarehouseType } from '@/types'
 
@@ -102,6 +103,13 @@ export default function EditInvoicePage() {
 
   const updateQty = (id: string, delta: number) =>
     setCart((prev) => prev.map((c) => c.product.id === id ? { ...c, quantity: Math.max(1, c.quantity + delta) } : c))
+
+  // Direct multi-digit entry (steppers are hopeless for qty 25, 144, …)
+  const updateQtyDirect = (id: string, raw: string) => {
+    const digits = raw.replace(/[^0-9]/g, '')
+    const q = digits === '' ? 1 : Math.max(1, parseInt(digits, 10))
+    setCart((prev) => prev.map((c) => c.product.id === id ? { ...c, quantity: q } : c))
+  }
 
   const updatePrice = (id: string, price: string) =>
     setCart((prev) => prev.map((c) => c.product.id === id ? { ...c, unit_price: parseFloat(stripCommas(price)) || 0 } : c))
@@ -334,7 +342,12 @@ export default function EditInvoicePage() {
                               <td className="py-2.5 text-center">
                                 <div className="flex items-center justify-center gap-1">
                                   <button onClick={() => updateQty(c.product.id, -1)} className="p-1 rounded hover:bg-surface-600 text-slate-400"><Minus size={12} /></button>
-                                  <span className="text-white w-6 text-center">{c.quantity}</span>
+                                  <input
+                                    className="w-12 bg-transparent text-white text-center text-sm border border-surface-600 rounded-md py-0.5 focus:outline-none focus:border-brand-500"
+                                    inputMode="numeric"
+                                    value={c.quantity}
+                                    onChange={(e) => updateQtyDirect(c.product.id, e.target.value)}
+                                  />
                                   <button onClick={() => updateQty(c.product.id, 1)} className="p-1 rounded hover:bg-surface-600 text-slate-400"><Plus size={12} /></button>
                                 </div>
                               </td>
@@ -376,9 +389,13 @@ export default function EditInvoicePage() {
                   {discountTotal > 0 && (
                     <div className="flex justify-between text-sm"><span className="text-slate-400">Discounts</span><span className="text-red-400">− {formatCurrency(discountTotal)}</span></div>
                   )}
-                  <div className="flex justify-between font-bold text-base border-t border-surface-700 pt-2">
-                    <span className="text-slate-300">Total</span>
-                    <span className="text-emerald-400">{formatCurrency(grandTotal)}</span>
+                  <div className="font-bold text-base border-t border-surface-700 pt-2">
+                    <EditableTotal
+                      total={grandTotal}
+                      valueClass="text-emerald-400"
+                      lines={cart.map((c) => ({ quantity: c.quantity, unitPrice: c.unit_price, discountPercent: c.discount_percent }))}
+                      onApply={(prices) => setCart((prev) => prev.map((c, i) => ({ ...c, unit_price: prices[i] })))}
+                    />
                   </div>
                 </div>
               )}
