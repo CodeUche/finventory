@@ -453,3 +453,26 @@ html.light .force-dark .text-emerald-400 { color: #34d399 !important; }
 /* Always-white text — use on icons/labels placed on permanently-dark surfaces
    (bg-brand-500, dark FABs, badges) so they stay visible in both themes.   */
 .text-always-white { color: #ffffff !important; }
+
+/* ── Legal document prose (Terms / Privacy / DPA pages) ─────────────────────── */
+.legal-content { font-size: 15px; line-height: 1.7; color: #cbd5e1; }
+.legal-content h2 { font-size: 17px; font-weight: 700; color: #f1f5f9; margin: 2rem 0 .75rem; }
+.legal-content h2:first-child { margin-top: 0; }
+.legal-content h3 { font-size: 15px; font-weight: 600; color: #e2e8f0; margin: 1.3rem 0 .5rem; }
+.legal-content p { margin-bottom: .9rem; }
+.legal-content strong { color: #f1f5f9; font-weight: 600; }
+.legal-content ul { margin: 0 0 1rem 1.4rem; list-style: disc; }
+.legal-content li { margin-bottom: .45rem; }
+.legal-content .lead-caps { font-size: 13px; letter-spacing: .04em; }
+.legal-content table { width: 100%; border-collapse: collapse; margin: 1rem 0 1.4rem; font-size: 13.5px; display: block; overflow-x: auto; }
+.legal-content th, .legal-content td { border: 1px solid #1E2F56; padding: .55rem .7rem; text-align: left; vertical-align: top; }
+.legal-content th { background: #13244B; color: #e2e8f0; font-weight: 600; }
+.legal-content .note { margin-top: 1.5rem; padding: .9rem 1.1rem; border-radius: 10px; background: rgba(212,160,23,.08); border: 1px solid rgba(212,160,23,.25); color: #E7D9AE; font-size: 13.5px; }
+
+html.light .legal-content { color: #334155; }
+html.light .legal-content h2 { color: #0f172a; }
+html.light .legal-content h3 { color: #1e293b; }
+html.light .legal-content strong { color: #0f172a; }
+html.light .legal-content th, html.light .legal-content td { border-color: #e2e8f0; }
+html.light .legal-content th { background: #f1f5f9; color: #1e293b; }
+html.light .legal-content .note { background: #fff8e6; border-color: #f0d68a; color: #6b5312; }

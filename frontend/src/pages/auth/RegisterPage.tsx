@@ -25,6 +25,7 @@ export default function RegisterPage() {
     password: '', password_confirm: '',
   })
   const [showPw, setShowPw] = useState(false)
+  const [agreed, setAgreed] = useState(false)
   const [loading, setLoading] = useState(false)
   const [pwFocused, setPwFocused] = useState(false)
   const [registered, setRegistered] = useState(false)
@@ -87,9 +88,13 @@ export default function RegisterPage() {
       toast.error('Passwords do not match.')
       return
     }
+    if (!agreed) {
+      toast.error('Please accept the Terms, Privacy Policy, and Data Processing Agreement to continue.')
+      return
+    }
     setLoading(true)
     try {
-      const { data } = await authApi.register(form)
+      const { data } = await authApi.register({ ...form, terms_accepted: true })
       setPollingToken(data.polling_token ?? null)
       setRegistered(true)
     } catch (err: any) {
@@ -243,7 +248,22 @@ export default function RegisterPage() {
             )}
           </div>
 
-          <button type="submit" disabled={loading} className="au-btn" style={{ marginTop: 8 }}>
+          <label className="au-check" style={{ alignItems: 'flex-start', marginTop: 6, lineHeight: 1.5 }}>
+            <input
+              type="checkbox"
+              checked={agreed}
+              onChange={(e) => setAgreed(e.target.checked)}
+              style={{ marginTop: 2 }}
+            />
+            <span>
+              I have read and agree to the{' '}
+              <a href="/legal/terms" target="_blank" rel="noopener" className="au-link">Terms &amp; Conditions</a>,{' '}
+              <a href="/legal/privacy" target="_blank" rel="noopener" className="au-link">Privacy Policy</a>, and{' '}
+              <a href="/legal/dpa" target="_blank" rel="noopener" className="au-link">Data Processing Agreement</a>.
+            </span>
+          </label>
+
+          <button type="submit" disabled={loading || !agreed} className="au-btn" style={{ marginTop: 8 }}>
             {loading ? <Loader2 size={18} className="animate-spin" /> : null}
             {loading ? 'Creating account…' : 'Create account'}
           </button>

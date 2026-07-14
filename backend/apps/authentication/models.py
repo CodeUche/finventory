@@ -72,6 +72,15 @@ class User(AbstractBaseUser, PermissionsMixin):
         help_text="Forces a password change on next login. Set True for new sub-accounts.",
     )
 
+    # Legal — records acceptance of the current Terms / Privacy / DPA version.
+    terms_accepted_version = models.CharField(
+        max_length=20,
+        blank=True,
+        default="",
+        help_text="Version (date) of the legal terms this user has accepted. Empty = not yet accepted.",
+    )
+    terms_accepted_at = models.DateTimeField(null=True, blank=True)
+
     # MFA (TOTP)
     mfa_enabled = models.BooleanField(default=False)
     mfa_secret = EncryptedCharField(max_length=500, blank=True, default='')

@@ -17,6 +17,9 @@ const RegisterPage = React.lazy(() => import('@/pages/auth/RegisterPage'))
 const OnboardingPage = React.lazy(() => import('@/pages/auth/OnboardingPage'))
 const ForgotPasswordPage = React.lazy(() => import('@/pages/auth/ForgotPasswordPage'))
 const VerifyEmailPage = React.lazy(() => import('@/pages/auth/VerifyEmailPage'))
+const TermsPage = React.lazy(() => import('@/pages/legal/TermsPage'))
+const PrivacyPage = React.lazy(() => import('@/pages/legal/PrivacyPage'))
+const DpaPage = React.lazy(() => import('@/pages/legal/DpaPage'))
 const ProductsPage = React.lazy(() => import('@/pages/inventory/ProductsPage'))
 const StockPage = React.lazy(() => import('@/pages/inventory/StockPage'))
 const WarehousesPage = React.lazy(() => import('@/pages/inventory/WarehousesPage'))
@@ -236,6 +239,9 @@ export default function App() {
       <Route path="/onboarding" element={<OnboardingPage />} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/verify-email" element={<VerifyEmailPage />} />
+      <Route path="/legal/terms" element={<TermsPage />} />
+      <Route path="/legal/privacy" element={<PrivacyPage />} />
+      <Route path="/legal/dpa" element={<DpaPage />} />
       <Route path="/staff-login" element={<SubAccountLoginPage />} />
       <Route path="/accept-invite/:token" element={<AcceptInvitePage mode="accept" />} />
       <Route path="/reject-invite/:token" element={<AcceptInvitePage mode="reject" />} />

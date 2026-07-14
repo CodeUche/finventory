@@ -439,6 +439,19 @@ class RegisterView(APIView):
 
     def post(self, request):
         email = (request.data.get("email") or "").lower().strip()
+
+        # Legal — acceptance of the current Terms / Privacy / DPA is mandatory to
+        # register (clickwrap). The frontend blocks the button too; this enforces
+        # it server-side so acceptance is always recorded. Accept JSON booleans
+        # and truthy strings; treat "false"/"0"/missing as not accepted.
+        _terms = request.data.get("terms_accepted")
+        terms_accepted = _terms is True or str(_terms).strip().lower() in ("true", "1", "yes", "on")
+        if not terms_accepted:
+            return Response(
+                {"error": {"code": "terms_required", "message": "You must accept the Terms & Conditions, Privacy Policy, and Data Processing Agreement to create an account."}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         # Guard: reject immediately if a verified or active user already owns this email.
         # Only orphaned (unverified, no memberships) accounts are cleaned up to allow
         # the same person to retry a failed registration attempt.
@@ -462,6 +475,11 @@ class RegisterView(APIView):
         serializer = RegisterSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()  # is_verified=False by default
+
+        # Record clickwrap acceptance of the current legal version.
+        user.terms_accepted_version = settings.LEGAL_TERMS_VERSION
+        user.terms_accepted_at = timezone.now()
+        user.save(update_fields=["terms_accepted_version", "terms_accepted_at"])
 
         # Store referral code on user for post-verification linking
         referral_code = (request.data.get("referral_code") or "").strip().upper()
@@ -492,6 +510,26 @@ class RegisterView(APIView):
             },
             status=status.HTTP_201_CREATED,
         )
+
+
+class AcceptTermsView(APIView):
+    """
+    POST /api/v1/auth/accept-terms/
+
+    Records the current user's acceptance of the current legal version
+    (Terms / Privacy / DPA). Used by the in-app re-acceptance gate when a user
+    hasn't yet accepted the current version. Returns the updated profile.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        user.terms_accepted_version = settings.LEGAL_TERMS_VERSION
+        user.terms_accepted_at = timezone.now()
+        user.save(update_fields=["terms_accepted_version", "terms_accepted_at"])
+        logger.info("User %s accepted legal terms version %s", user.email, settings.LEGAL_TERMS_VERSION)
+        return Response(UserProfileSerializer(user, context={"request": request}).data)
 
 
 class VerifyEmailView(APIView):

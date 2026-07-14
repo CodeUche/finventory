@@ -13,6 +13,11 @@ export interface User {
   mfa_enabled?: boolean
   has_partner_profile?: boolean
   avatar?: string
+  /** Legal version (date) this user has accepted; compared to current_terms_version to gate access. */
+  terms_accepted_version?: string
+  terms_accepted_at?: string | null
+  /** The current legal version the backend requires; drives the re-acceptance gate. */
+  current_terms_version?: string
 }
 
 export interface AuthTokens {

@@ -27,6 +27,7 @@ class RegisterTests(TestCase):
             "password_confirm": "StrongPass123!",
             "first_name": "Test",
             "last_name": "User",
+            "terms_accepted": True,
         }
         base.update(overrides)
         return base
@@ -36,7 +37,15 @@ class RegisterTests(TestCase):
         self.assertEqual(res.status_code, 201)
         # Registration now returns a message, NOT tokens — user must verify email first
         self.assertIn("message", res.data)
-        self.assertTrue(User.objects.filter(email="test@example.com").exists())
+        user = User.objects.get(email="test@example.com")
+        # Clickwrap acceptance of the current legal version is recorded.
+        self.assertTrue(user.terms_accepted_version)
+        self.assertIsNotNone(user.terms_accepted_at)
+
+    def test_register_without_terms_rejected(self):
+        res = self.client.post(self.url, self._payload(terms_accepted=False))
+        self.assertEqual(res.status_code, 400)
+        self.assertFalse(User.objects.filter(email="test@example.com").exists())
 
     def test_register_duplicate_email(self):
         # Create a fully-established user (with an active membership) to verify

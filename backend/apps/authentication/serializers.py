@@ -205,9 +205,14 @@ class UserProfileSerializer(serializers.ModelSerializer):
     """Read/update current user profile."""
 
     has_partner_profile = serializers.SerializerMethodField()
+    current_terms_version = serializers.SerializerMethodField()
 
     def get_has_partner_profile(self, obj):
         return hasattr(obj, 'partner_profile') and obj.partner_profile.is_active
+
+    def get_current_terms_version(self, obj):
+        from django.conf import settings
+        return getattr(settings, "LEGAL_TERMS_VERSION", "")
 
     class Meta:
         model = User
@@ -216,8 +221,9 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "avatar", "is_verified", "is_superuser", "is_staff", "is_sub_account",
             "must_change_password", "mfa_enabled",
             "has_partner_profile", "created_at",
+            "terms_accepted_version", "terms_accepted_at", "current_terms_version",
         ]
-        read_only_fields = ["id", "email", "is_verified", "is_superuser", "is_staff", "is_sub_account", "must_change_password", "mfa_enabled", "has_partner_profile", "created_at"]
+        read_only_fields = ["id", "email", "is_verified", "is_superuser", "is_staff", "is_sub_account", "must_change_password", "mfa_enabled", "has_partner_profile", "created_at", "terms_accepted_version", "terms_accepted_at", "current_terms_version"]
         extra_kwargs = {
             "first_name": {"max_length": 150, "required": False, "allow_blank": True},
             "last_name": {"max_length": 150, "required": False, "allow_blank": True},

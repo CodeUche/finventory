@@ -87,6 +87,12 @@ export default function AuthShell({ children, headline, lead }: Props) {
 
         <main className="au-right">{children}</main>
       </div>
+
+      <footer style={{ position: 'relative', zIndex: 1, textAlign: 'center', padding: '8px 20px 28px', fontSize: 12.5 }}>
+        <a href="/legal/terms" target="_blank" rel="noopener" className="au-link" style={{ margin: '0 10px' }}>Terms</a>
+        <a href="/legal/privacy" target="_blank" rel="noopener" className="au-link" style={{ margin: '0 10px' }}>Privacy</a>
+        <a href="/legal/dpa" target="_blank" rel="noopener" className="au-link" style={{ margin: '0 10px' }}>Data Processing</a>
+      </footer>
     </div>
   )
 }

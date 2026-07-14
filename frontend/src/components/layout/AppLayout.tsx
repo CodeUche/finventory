@@ -3,6 +3,7 @@ import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import Sidebar from './Sidebar'
 import TopBar from './TopBar'
 import AppBackdrop from '@/components/AppBackdrop'
+import TermsGateModal from '@/components/TermsGateModal'
 import Breadcrumb from '@/components/Breadcrumb'
 import { useInactivityTimeout } from '@/hooks/useInactivityTimeout'
 import { useAuthStore } from '@/store/authStore'
@@ -400,6 +401,9 @@ export default function AppLayout() {
       {subscriptionExpired && !subscriptionBillingOnly && !user?.is_superuser && (
         <SubscriptionPaywall subscription={subscriptionData} onDismiss={handlePaywallDismiss} onGoToBilling={handleGoToBilling} />
       )}
+
+      {/* Legal re-acceptance gate (hard gate — must accept the current terms version) */}
+      <TermsGateModal />
 
       {/* Floating support chat */}
       <SupportChat />

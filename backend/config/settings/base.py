@@ -29,6 +29,11 @@ SECRET_KEY = config("SECRET_KEY", default="change-me-in-production-never-commit-
 DEBUG = config("DEBUG", default=False, cast=bool)
 ALLOWED_HOSTS: list[str] = config("ALLOWED_HOSTS", default="localhost,127.0.0.1", cast=Csv())
 
+# Current version (the "Last updated" date) of the Terms, Privacy Policy, and DPA.
+# Bump this when the legal documents materially change to re-prompt all users
+# for acceptance (see AcceptTermsView + the frontend re-acceptance gate).
+LEGAL_TERMS_VERSION = config("LEGAL_TERMS_VERSION", default="2026-07-13")
+
 # ─── Third-party API keys ──────────────────────────────────────────────────────
 # Paystack secret key — used for NUBAN account name resolution on the employee form.
 # Get yours at https://dashboard.paystack.com/#/settings/developers

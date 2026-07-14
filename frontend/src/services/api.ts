@@ -984,6 +984,7 @@ export const authApi = {
   logout: (refresh: string) => api.post('/auth/logout/', { refresh }),
   profile: () => api.get('/auth/profile/'),
   updateProfile: (data: object) => api.patch('/auth/profile/', data),
+  acceptTerms: () => api.post('/auth/accept-terms/'),
   uploadAvatar: (file: File) => uploadFileDirect('/auth/upload_avatar/', file),
   requestPasswordReset: (email: string) =>
     api.post('/auth/password-reset/', { email }),
