@@ -433,11 +433,20 @@ class ImportProductsView(APIView):
             key = name.strip().lower()
             if key in warehouse_cache:
                 return warehouse_cache[key]
-            wh, wh_new = Warehouse.objects.get_or_create(
-                organisation=org,
-                name__iexact=name,
-                defaults={"name": name.strip(), "organisation": org, "is_active": True},
-            )
+            # Include soft-deleted rows (see the product lookup below) so a
+            # previously deleted warehouse is revived rather than hitting the
+            # (organisation, name) unique constraint on re-import.
+            existing = Warehouse.all_objects.filter(organisation=org, name__iexact=name).first()
+            if existing is not None:
+                if existing.is_deleted:
+                    existing.is_deleted = False
+                    existing.deleted_at = None
+                    existing.is_active = True
+                    existing.save()
+                wh, wh_new = existing, False
+            else:
+                wh = Warehouse.objects.create(organisation=org, name=name.strip(), is_active=True)
+                wh_new = True
             warehouse_cache[key] = (wh, wh_new)
             return wh, wh_new
 
@@ -487,27 +496,38 @@ class ImportProductsView(APIView):
                     defaults={"name": row["category"], "organisation": org},
                 )
 
-            obj, was_created = Product.objects.update_or_create(
-                organisation=org,
-                sku=sku,
-                defaults={
-                    "name": name,
-                    "product_type": product_type,
-                    "selling_price": selling_price,
-                    "cost_price": cost_price,
-                    "wholesale_price": wholesale_price,
-                    "brand": row.get("brand", ""),
-                    "unit_of_measure": unit,
-                    "reorder_level": reorder_level,
-                    "barcode": row.get("barcode", ""),
-                    "description": row.get("description", ""),
-                    "category": category,
-                },
-            )
-            if was_created:
-                created += 1
-            else:
+            defaults = {
+                "name": name,
+                "product_type": product_type,
+                "selling_price": selling_price,
+                "cost_price": cost_price,
+                "wholesale_price": wholesale_price,
+                "brand": row.get("brand", ""),
+                "unit_of_measure": unit,
+                "reorder_level": reorder_level,
+                "barcode": row.get("barcode", ""),
+                "description": row.get("description", ""),
+                "category": category,
+            }
+            # Look up including soft-deleted rows. The (organisation, sku) unique
+            # constraint is enforced at the DB level regardless of is_deleted, so a
+            # previously "deleted" product still occupies that SKU. Reviving it on
+            # re-import avoids a duplicate-key IntegrityError (products deleted then
+            # re-imported).
+            existing = Product.all_objects.filter(organisation=org, sku=sku).first()
+            if existing is not None:
+                for _k, _v in defaults.items():
+                    setattr(existing, _k, _v)
+                if existing.is_deleted:
+                    existing.is_deleted = False
+                    existing.deleted_at = None
+                existing.save()
+                obj, was_created = existing, False
                 updated += 1
+            else:
+                obj = Product.objects.create(organisation=org, sku=sku, **defaults)
+                was_created = True
+                created += 1
 
             # Warehouse + opening stock
             if product_type == "physical":
