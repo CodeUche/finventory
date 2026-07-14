@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { api } from '@/services/api'
+import { api, bypassNextGets } from '@/services/api'
 import { Upload, Download, CheckCircle, XCircle, AlertTriangle, FileText, Users, BookOpen, Loader2, Maximize2, X, Sparkles, ChevronDown, ChevronUp } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { importApi } from '@/services/api'
@@ -195,6 +195,14 @@ export default function ImportPage() {
         toast.success(`Import complete: ${data.created} created, ${data.updated} updated${stockMsg}${whMsg}`)
       } else {
         toast(`Import done with ${data.errors.length} error(s)`, { icon: '⚠️' })
+      }
+      // Import wrote new records server-side. Invalidate the GET cache and tell
+      // any open list views (Products, Stock, Warehouses, …) to re-fetch so the
+      // imported data shows immediately. The long bypass window covers the user
+      // navigating to those pages a few seconds after the import finishes.
+      if ((data.created ?? 0) > 0 || (data.updated ?? 0) > 0) {
+        bypassNextGets(20000)
+        window.dispatchEvent(new CustomEvent('audity:data-changed'))
       }
     } catch (err: any) {
       const msg = err?.response?.data?.error

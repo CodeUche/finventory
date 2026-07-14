@@ -374,6 +374,11 @@ html.light .text-brand-500   { color: #081F44; }   /* navy (light theme) */
 html.light .label { color: #334155; }
 
 /* select element text colour */
+/* Native <select> dropdown options — dark by default so the popup is readable
+   in dark mode (WebView2 otherwise renders a light popup and the option text
+   inherits the select's light colour → invisible, e.g. the import column
+   mapping). The html.light rule below has higher specificity for light mode. */
+select option { background-color: #13244B; color: #f1f5f9; }
 html.light select { color: #0f172a; }
 html.light select option { color: #0f172a; background-color: #ffffff; }
 
