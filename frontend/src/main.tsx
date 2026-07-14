@@ -13,6 +13,22 @@ import './index.css'
 // Apply stored theme before first render to avoid flash
 initTheme()
 
+// Recover from stale lazy-chunk loads. On the web build, a new deployment
+// replaces the hashed asset filenames; a still-open older session that then
+// navigates to a code-split route (e.g. Accounting → Journal / Fixed Assets)
+// requests a chunk hash that no longer exists → Vite fires 'vite:preloadError'
+// and the route shows "Failed to fetch dynamically imported module". Reloading
+// pulls the current index + chunks. Debounced so it can never loop. (Harmless
+// in the desktop app, where chunks are bundled locally and this never fires.)
+window.addEventListener('vite:preloadError', () => {
+  const KEY = 'au-preload-reload-at'
+  const last = Number(sessionStorage.getItem(KEY) || 0)
+  if (Date.now() - last > 10000) {
+    sessionStorage.setItem(KEY, String(Date.now()))
+    window.location.reload()
+  }
+})
+
 // Initialise PostHog product analytics (no-op if VITE_POSTHOG_KEY is unset).
 initAnalytics()
 
