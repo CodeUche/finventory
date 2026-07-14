@@ -7,6 +7,7 @@ import { NotificationsProvider } from './contexts/NotificationsContext'
 import { initTheme } from './hooks/useTheme'
 import { useAuthStore } from './store/authStore'
 import { initAnalytics } from './lib/analytics'
+import { checkForUpdates } from './lib/updater'
 import './index.css'
 
 // Apply stored theme before first render to avoid flash
@@ -95,3 +96,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     </BrowserRouter>
   </React.StrictMode>,
 )
+
+// Desktop auto-update check (no-op on web). Deferred so it never competes with
+// first paint / login, and fully guarded so a failure can't break startup.
+setTimeout(() => { void checkForUpdates() }, 5000)

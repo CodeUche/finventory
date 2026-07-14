@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Audity",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "identifier": "com.audity.app",
   "build": {
     "frontendDist": "../dist",
@@ -28,6 +28,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -40,6 +41,14 @@
         "installMode": "perMachine",
         "installerHooks": "./nsis/installer-hooks.nsh"
       }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDY1QTJFMDU5RjMxMDBGNkYKUldSdkR4RHpXZUNpWmUzYjV0UFNUOUVFR3hrb3ZnQVBpSGl6RllieHV6R24yUEY5UFc2cmY0V1MK",
+      "endpoints": [
+        "https://get-audity.vercel.app/latest.json"
+      ]
     }
   }
 }
