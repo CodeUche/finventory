@@ -814,9 +814,23 @@ api.interceptors.response.use(
         return api(original)
       } catch (refreshError) {
         processQueue(refreshError as AxiosError, null)
-        toast.error('Your session expired — please sign in again.', { id: 'session-expired', duration: 5000 })
-        // clearSession (not logout) — see the no-refresh-token branch above.
-        useAuthStore.getState().clearSession()
+        // Only end the session when the SERVER rejected the refresh token
+        // (4xx = invalid/blacklisted/expired). A network failure or timeout —
+        // e.g. the machine just woke from sleep, or the serverless backend is
+        // cold-starting — must NOT log the user out: their refresh token is
+        // still perfectly valid and the next attempt will succeed. This was
+        // silently signing out users who "left the app for a few minutes"
+        // regardless of their inactivity-timeout preference.
+        const rStatus = (refreshError as AxiosError)?.response?.status
+        if (rStatus && rStatus >= 400 && rStatus < 500) {
+          toast.error('Your session expired — please sign in again.', { id: 'session-expired', duration: 5000 })
+          // clearSession (not logout) — see the no-refresh-token branch above.
+          useAuthStore.getState().clearSession()
+        } else {
+          // Transient failure: keep the session; allow a future retry to refresh.
+          original._retry = false
+          _signalOffline()
+        }
         return Promise.reject(refreshError)
       } finally {
         isRefreshing = false

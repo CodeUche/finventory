@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
-import { CreditCard, Search, Plus, X, Loader2, TrendingDown, TrendingUp, AlertCircle } from 'lucide-react'
+import { CreditCard, Search, Plus, X, Loader2, TrendingDown, TrendingUp, AlertCircle, ChevronDown, ChevronRight, Users } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { creditApi, accountingApi, inventoryApi } from '@/services/api'
 import { orgApi } from '@/services/api'
@@ -173,7 +173,7 @@ export default function CreditsPage() {
         invoice: selectedInvoice?.id || undefined,
         amount: stripCommas(payForm.amount),
         due_date: payForm.due_date || undefined,
-        description: payForm.description,
+        description: payForm.description || undefined,
         payment_mode: payForm.payment_mode || undefined,
         bank_name: payForm.bank_name || undefined,
         bank_code: bankCode || undefined,
@@ -196,6 +196,36 @@ export default function CreditsPage() {
       setSaving(false)
     }
   }
+
+  // ─── Grouped view: customer → invoice → transactions ───────────────────────
+  const [expandedCustomers, setExpandedCustomers] = useState<Record<string, boolean>>({})
+  const [expandedInvoices, setExpandedInvoices] = useState<Record<string, boolean>>({})
+
+  const invoiceKeyOf = (t: CreditTransaction): string => {
+    const m = /INV[-A-Za-z0-9]*(?:-[A-Za-z0-9]+)*/.exec(t.description || '')
+    if (m) return m[0]
+    return t.invoice ? `Invoice ${String(t.invoice).slice(0, 8)}` : 'General / no invoice'
+  }
+
+  const customerGroups = (() => {
+    const byCustomer = new Map<string, CreditTransaction[]>()
+    for (const t of transactions) {
+      const key = t.customer_name || 'Unknown customer'
+      if (!byCustomer.has(key)) byCustomer.set(key, [])
+      byCustomer.get(key)!.push(t)
+    }
+    return Array.from(byCustomer.entries()).map(([customer, txns]) => {
+      const byInvoice = new Map<string, CreditTransaction[]>()
+      for (const t of txns) {
+        const k = invoiceKeyOf(t)
+        if (!byInvoice.has(k)) byInvoice.set(k, [])
+        byInvoice.get(k)!.push(t)
+      }
+      const owed = txns.filter((t) => t.transaction_type === 'debit').reduce((a, t) => a + parseFloat(t.amount), 0)
+      const paid = txns.filter((t) => t.transaction_type === 'credit').reduce((a, t) => a + parseFloat(t.amount), 0)
+      return { customer, txns, owed, paid, invoices: Array.from(byInvoice.entries()) }
+    })
+  })()
 
   const totalOutstanding = transactions
     .filter((t) => t.transaction_type === 'debit')
@@ -309,25 +339,78 @@ export default function CreditsPage() {
                   <p className="text-slate-500">No credit transactions</p>
                 </td></tr>
               ) : (
-                transactions.map((t) => (
-                  <tr key={t.id} className="table-row">
-                    <td className="px-5 py-3.5 text-slate-400 whitespace-nowrap">{formatDate(t.created_at)}</td>
-                    <td className="px-5 py-3.5 text-slate-300 font-mono text-xs whitespace-nowrap">{t.payment_number || '—'}</td>
-                    <td className="px-5 py-3.5 text-slate-400 whitespace-nowrap">
-                      {t.payment_mode ? PAYMENT_MODES.find((m) => m.value === t.payment_mode)?.label ?? t.payment_mode : '—'}
-                    </td>
-                    <td className="px-5 py-3.5 text-white font-medium">{t.customer_name}</td>
-                    <td className="px-5 py-3.5">
-                      <span className={TYPE_COLORS[t.transaction_type] ?? 'badge-slate'}>{t.transaction_type.replace('_', ' ').toUpperCase()}</span>
-                    </td>
-                    <td className={`px-5 py-3.5 font-semibold ${t.transaction_type === 'credit' ? 'text-emerald-400' : 'text-red-400'}`}>
-                      {t.transaction_type === 'credit' ? '+' : '−'} {formatCurrency(t.amount)}
-                    </td>
-                    <td className="px-5 py-3.5 text-slate-300">{formatCurrency(t.balance_after)}</td>
-                    <td className="px-5 py-3.5 text-slate-400">{t.due_date ? formatDate(t.due_date) : '—'}</td>
-                    <td className="px-5 py-3.5 text-slate-400 max-w-xs truncate">{t.description || '—'}</td>
-                  </tr>
-                ))
+                customerGroups.map((g) => {
+                  const custOpen = expandedCustomers[g.customer] ?? false
+                  return (
+                    <Fragment key={g.customer}>
+                      {/* Customer parent row */}
+                      <tr
+                        className="table-row cursor-pointer bg-surface-800/60 hover:bg-surface-700/50"
+                        onClick={() => setExpandedCustomers((p) => ({ ...p, [g.customer]: !custOpen }))}
+                      >
+                        <td className="px-5 py-3.5" colSpan={4}>
+                          <span className="flex items-center gap-2.5 font-semibold text-white">
+                            {custOpen ? <ChevronDown size={15} className="text-brand-400 shrink-0" /> : <ChevronRight size={15} className="text-slate-500 shrink-0" />}
+                            <Users size={14} className="text-slate-500 shrink-0" />
+                            {g.customer}
+                            <span className="text-xs font-normal text-slate-500">· {g.txns.length} transaction{g.txns.length !== 1 ? 's' : ''} · {g.invoices.length} invoice group{g.invoices.length !== 1 ? 's' : ''}</span>
+                          </span>
+                        </td>
+                        <td className="px-5 py-3.5" colSpan={2}>
+                          <span className="text-xs text-slate-500">Owed </span>
+                          <span className="font-semibold text-red-400">{formatCurrency(g.owed)}</span>
+                          <span className="text-xs text-slate-500 ml-3">Paid </span>
+                          <span className="font-semibold text-emerald-400">{formatCurrency(g.paid)}</span>
+                        </td>
+                        <td className="px-5 py-3.5" colSpan={3}>
+                          <span className="text-xs text-slate-500">Net </span>
+                          <span className={`font-semibold ${g.owed - g.paid > 0 ? 'text-red-400' : 'text-emerald-400'}`}>{formatCurrency(Math.abs(g.owed - g.paid))}</span>
+                        </td>
+                      </tr>
+                      {custOpen && g.invoices.map(([invKey, txns]) => {
+                        const ik = `${g.customer}::${invKey}`
+                        const invOpen = expandedInvoices[ik] ?? true
+                        return (
+                          <Fragment key={ik}>
+                            {/* Invoice child row */}
+                            <tr
+                              className="table-row cursor-pointer bg-surface-800/30"
+                              onClick={() => setExpandedInvoices((p) => ({ ...p, [ik]: !invOpen }))}
+                            >
+                              <td className="px-5 py-2.5" colSpan={9}>
+                                <span className="flex items-center gap-2 pl-6 text-sm font-medium text-brand-400">
+                                  {invOpen ? <ChevronDown size={13} className="shrink-0" /> : <ChevronRight size={13} className="shrink-0" />}
+                                  {invKey}
+                                  <span className="text-xs font-normal text-slate-500">· {txns.length} entr{txns.length !== 1 ? 'ies' : 'y'}</span>
+                                </span>
+                              </td>
+                            </tr>
+                            {/* Transaction grandchild rows */}
+                            {invOpen && txns.map((t) => (
+                              <tr key={t.id} className="table-row">
+                                <td className="px-5 py-3.5 text-slate-400 whitespace-nowrap"><span className="pl-10 inline-block">{formatDate(t.created_at)}</span></td>
+                                <td className="px-5 py-3.5 text-slate-300 font-mono text-xs whitespace-nowrap">{t.payment_number || '—'}</td>
+                                <td className="px-5 py-3.5 text-slate-400 whitespace-nowrap">
+                                  {t.payment_mode ? PAYMENT_MODES.find((m) => m.value === t.payment_mode)?.label ?? t.payment_mode : '—'}
+                                </td>
+                                <td className="px-5 py-3.5 text-slate-400">{t.customer_name}</td>
+                                <td className="px-5 py-3.5">
+                                  <span className={TYPE_COLORS[t.transaction_type] ?? 'badge-slate'}>{t.transaction_type.replace('_', ' ').toUpperCase()}</span>
+                                </td>
+                                <td className={`px-5 py-3.5 font-semibold ${t.transaction_type === 'credit' ? 'text-emerald-400' : 'text-red-400'}`}>
+                                  {t.transaction_type === 'credit' ? '+' : '−'} {formatCurrency(t.amount)}
+                                </td>
+                                <td className="px-5 py-3.5 text-slate-300">{formatCurrency(t.balance_after)}</td>
+                                <td className="px-5 py-3.5 text-slate-400">{t.due_date ? formatDate(t.due_date) : '—'}</td>
+                                <td className="px-5 py-3.5 text-slate-400 max-w-xs truncate">{t.description || '—'}</td>
+                              </tr>
+                            ))}
+                          </Fragment>
+                        )
+                      })}
+                    </Fragment>
+                  )
+                })
               )}
             </tbody>
           </table>
@@ -340,7 +423,7 @@ export default function CreditsPage() {
           <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setShowPayModal(false)} />
           <div className="relative card w-full max-w-lg p-6 space-y-5 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-bold text-white">Record Payment</h2>
+              <div><h2 className="text-lg font-bold text-white">Record Payment</h2><p className="text-xs text-slate-500 mt-0.5">Fields marked <span className="text-brand-400">*</span> are required — everything else is optional.</p></div>
               <button onClick={() => setShowPayModal(false)} className="text-slate-400 hover:text-white"><X size={20} /></button>
             </div>
 
@@ -383,7 +466,7 @@ export default function CreditsPage() {
 
               {/* Payment mode */}
               <div>
-                <label className="label">Payment Mode</label>
+                <label className="label">Payment Mode <span className="text-slate-500 font-normal">(optional)</span></label>
                 <select
                   className="input"
                   value={payForm.payment_mode}
@@ -404,14 +487,14 @@ export default function CreditsPage() {
               {/* Bank received from */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="label">Bank Received From</label>
+                  <label className="label">Bank Received From <span className="text-slate-500 font-normal">(optional)</span></label>
                   <select className="input" value={payForm.bank_name} onChange={(e) => handleBankSelect(e.target.value)}>
                     <option value="">— Select bank —</option>
                     {NIGERIAN_BANKS.map((b) => <option key={b.code + b.name} value={b.name}>{b.name}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label className="label">Account Number</label>
+                  <label className="label">Account Number <span className="text-slate-500 font-normal">(optional)</span></label>
                   <input
                     className="input font-mono"
                     placeholder="10-digit NUBAN"
@@ -426,7 +509,7 @@ export default function CreditsPage() {
               {/* Account name */}
               <div>
                 <label className="label flex items-center gap-2">
-                  Account Name
+                  Account Name <span className="text-slate-500 font-normal">(optional)</span>
                   {resolvingAccount && <Loader2 size={12} className="animate-spin text-brand-400" />}
                 </label>
                 <input
@@ -440,7 +523,7 @@ export default function CreditsPage() {
               {/* Debit / Credit account */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="label">Debit Account</label>
+                  <label className="label">Debit Account <span className="text-slate-500 font-normal">(optional)</span></label>
                   <select className="input" value={payForm.debit_account_id}
                     onChange={(e) => setPayForm({ ...payForm, debit_account_id: e.target.value })}>
                     <option value="">— None —</option>
@@ -448,7 +531,7 @@ export default function CreditsPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="label">Credit Account</label>
+                  <label className="label">Credit Account <span className="text-slate-500 font-normal">(optional)</span></label>
                   <select className="input" value={payForm.credit_account_id}
                     onChange={(e) => setPayForm({ ...payForm, credit_account_id: e.target.value })}>
                     <option value="">— None —</option>
@@ -459,7 +542,7 @@ export default function CreditsPage() {
 
               {/* Payment number — auto-generated if left blank, but manually editable */}
               <div>
-                <label className="label">Payment Number</label>
+                <label className="label">Payment Number <span className="text-slate-500 font-normal">(optional)</span></label>
                 <input
                   className="input"
                   placeholder="Leave blank to auto-generate"
@@ -470,7 +553,7 @@ export default function CreditsPage() {
 
               {/* Location/Warehouse */}
               <div>
-                <label className="label">Location / Warehouse</label>
+                <label className="label">Location / Warehouse <span className="text-slate-500 font-normal">(optional)</span></label>
                 <select className="input" value={payForm.location_id}
                   onChange={(e) => setPayForm({ ...payForm, location_id: e.target.value })}>
                   <option value="">— None —</option>
@@ -502,7 +585,7 @@ export default function CreditsPage() {
 
               {/* Note */}
               <div>
-                <label className="label">Note</label>
+                <label className="label">Note <span className="text-slate-500 font-normal">(optional)</span></label>
                 <textarea className="input resize-none" rows={2} placeholder="Payment reference or note"
                   value={payForm.description} onChange={(e) => setPayForm({ ...payForm, description: e.target.value })} />
               </div>

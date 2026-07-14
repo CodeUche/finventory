@@ -11,6 +11,22 @@
  */
 
 import { getActiveCurrency, getCurrencySymbol } from './utils'
+import { urlToDataUrl } from '@/services/api'
+import { useAuthStore } from '@/store/authStore'
+
+/**
+ * Resolve the organisation logo for PDF embedding — single source of truth for
+ * ALL exported documents. Prefers the cached base-64 `logoDataUrl` from the
+ * auth store (always available, survives offline / media-fetch failures),
+ * falling back to fetching the org's logo URL. Returns null when no logo.
+ */
+export async function resolveOrgLogo(orgLogo?: string | null): Promise<string | null> {
+  const stored = useAuthStore.getState().logoDataUrl
+  if (stored) return stored
+  if (!orgLogo) return null
+  if (orgLogo.startsWith('data:')) return orgLogo
+  try { return await urlToDataUrl(orgLogo) } catch { return null }
+}
 
 export type RGB = [number, number, number]
 

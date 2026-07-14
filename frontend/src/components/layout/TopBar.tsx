@@ -215,7 +215,10 @@ export default function TopBar({ onMenuClick }: TopBarProps) {
   }
 
   return (
-    <header className="h-16 flex items-center gap-4 px-4 lg:px-6 border-b border-surface-700 bg-surface-900/50 backdrop-blur-sm shrink-0">
+    /* relative z-40: the TopBar must sit ABOVE page content so its dropdowns
+       (notifications, search) fully cover page elements and their click-away
+       overlays actually receive outside clicks. Modals (z-50) still win. */
+    <header className="relative z-40 h-16 flex items-center gap-4 px-4 lg:px-6 border-b border-surface-700 bg-surface-900/50 backdrop-blur-sm shrink-0">
       <button onClick={onMenuClick} className="btn-ghost lg:hidden p-2">
         <Menu size={20} />
       </button>

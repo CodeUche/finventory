@@ -459,6 +459,18 @@ html.light .force-dark .text-emerald-400 { color: #34d399 !important; }
    (bg-brand-500, dark FABs, badges) so they stay visible in both themes.   */
 .text-always-white { color: #ffffff !important; }
 
+/* ── Mini (collapsed) sidebar — desktop only ─────────────────────────────────
+   aside[data-mini="true"] shrinks to an icon rail: labels, group headers, the
+   org badge, settings tree, and footer text hide; nav icons center. Mobile
+   (< lg) keeps the full-width overlay sidebar regardless of mini state.     */
+@media (min-width: 1024px) {
+  aside[data-mini="true"] .side-mini-hide { display: none !important; }
+  aside[data-mini="true"] .sidebar-item span,
+  aside[data-mini="true"] .sidebar-item-active span { display: none; }
+  aside[data-mini="true"] .sidebar-item,
+  aside[data-mini="true"] .sidebar-item-active { justify-content: center; padding-left: 0.5rem; padding-right: 0.5rem; }
+}
+
 /* ── Legal document prose (Terms / Privacy / DPA pages) ─────────────────────── */
 .legal-content { font-size: 15px; line-height: 1.7; color: #cbd5e1; }
 .legal-content h2 { font-size: 17px; font-weight: 700; color: #f1f5f9; margin: 2rem 0 .75rem; }

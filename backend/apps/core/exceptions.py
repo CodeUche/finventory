@@ -73,10 +73,16 @@ def custom_exception_handler(exc, context):
     if isinstance(detail, dict):
         parts = []
         for field, errors in detail.items():
+            # Prefix each error with a human-readable field name so users know
+            # WHICH field failed ("Description: This field may not be blank.")
+            # instead of an anonymous "This field may not be blank."
+            label = str(field).replace("_", " ").strip().title()
+            generic = field in ("non_field_errors", "detail", "")
             if isinstance(errors, list):
-                parts.extend(str(e) for e in errors)
+                msgs = " ".join(str(e) for e in errors)
             else:
-                parts.append(str(errors))
+                msgs = str(errors)
+            parts.append(msgs if generic else f"{label}: {msgs}")
         message = " ".join(parts)
     elif isinstance(detail, list):
         message = " ".join(str(e) for e in detail)

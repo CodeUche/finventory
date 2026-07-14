@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, Search, Users, X, Pencil, Loader2, FileText, RefreshCw, Download, Trash2, MinusCircle, ChevronRight, Maximize2, Minimize2 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { customerApi, urlToDataUrl, bypassNextGets } from '@/services/api'
+import { customerApi, bypassNextGets } from '@/services/api'
 import ExportButton from '@/components/ExportButton'
 import SortSelect from '@/components/SortSelect'
 import { formatCurrency, formatDate, getStatusColor } from '@/lib/utils'
@@ -103,8 +103,8 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
   const [debitForm, setDebitForm] = useState({ amount: '', reference: '', description: '', debit_date: new Date().toISOString().split('T')[0] })
   const [savingDebit, setSavingDebit] = useState(false)
 
-  const load = async () => {
-    setLoading(true)
+  const load = async (silent = false) => {
+    if (!silent) setLoading(true)
     try {
       const { data } = await customerApi.list({
         search,
@@ -113,12 +113,19 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
         has_outstanding: outstandingOnly || undefined,
       })
       setCustomers(data.results ?? data)
-    } catch { toast.error('Failed to load customers') }
-    finally { setLoading(false) }
+    } catch (err: any) {
+      // Silent background refreshes must not toast; network blips shouldn't
+      // spam either — only real HTTP errors surface (deduped by id).
+      if (!silent && err?.response) toast.error('Failed to load customers', { id: 'cust-load-err' })
+    }
+    finally { if (!silent) setLoading(false) }
   }
 
   useEffect(() => { load() }, [search, typeFilter, sortBy, outstandingOnly])
-  useDataRefresh(load)
+  // Background auto-refresh must be SILENT — repeated 'audity:data-changed'
+  // events (offline sync retries, connectivity flaps) otherwise strobe the
+  // table between skeleton and content so the list "never displays".
+  useDataRefresh(() => load(true))
 
   // Deep-link from Dashboard Quick Actions: /customers?new=1 opens the New Customer modal.
   const [searchParams, setSearchParams] = useSearchParams()
@@ -192,7 +199,7 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
     if (!statementData || !selected) return
     const { jsPDF } = await import('jspdf')
     const { default: autoTable } = await import('jspdf-autotable')
-    const { applyDocHeader, buildTableStyle, addDocFooter, pdfMoney, pdfQty, COLORS, TYPE } = await import('@/lib/pdfUtils')
+    const { applyDocHeader, buildTableStyle, addDocFooter, pdfMoney, pdfQty, COLORS, TYPE, resolveOrgLogo } = await import('@/lib/pdfUtils')
 
     const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' })
     doc.setLineHeightFactor(1.15)
@@ -211,8 +218,8 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
     const RULE   = COLORS.RULE
     const tmpl   = organisation?.invoice_template ?? 'classic'
 
-    let logoData: string | null = null
-    if (organisation?.logo) logoData = await urlToDataUrl(organisation.logo)
+    // Same logo source as invoices: cached data-URL first, then the org URL.
+    const logoData: string | null = await resolveOrgLogo(organisation?.logo)
 
     const pdfFont = organisation?.company_name_font?.toLowerCase().includes('times') ||
       ['Georgia','Playfair Display','Merriweather','Lora','Libre Baskerville','EB Garamond',

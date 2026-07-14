@@ -38,7 +38,7 @@ import {
   FileText, Users, DollarSign, PieChart as PieIcon, Activity, BookOpen,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { reportApi, accountingApi, urlToDataUrl, bypassNextGets } from '@/services/api'
+import { reportApi, accountingApi, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatNumber, formatDate, getCurrencySymbol } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
 import { saveBlobFile } from '@/lib/saveBlobFile'
@@ -249,7 +249,7 @@ export default function ReportsPage() {
     try {
       const { jsPDF } = await import('jspdf')
       const { default: autoTable } = await import('jspdf-autotable')
-      const { applyDocHeader, buildTableStyle, addDocFooter, pdfMoney, COLORS, TYPE } = await import('@/lib/pdfUtils')
+      const { applyDocHeader, buildTableStyle, addDocFooter, pdfMoney, COLORS, TYPE, resolveOrgLogo } = await import('@/lib/pdfUtils')
 
       const doc    = new jsPDF({ unit: 'mm', format: 'a4' })
       doc.setLineHeightFactor(1.15)
@@ -267,7 +267,7 @@ export default function ReportsPage() {
       const RULE  = COLORS.RULE
       const tmpl  = organisation?.invoice_template ?? 'classic'
 
-      const vatLogoData = await urlToDataUrl(organisation?.logo)
+      const vatLogoData = await resolveOrgLogo(organisation?.logo)
 
       const pFont = ['times', 'Georgia', 'Playfair Display', 'Merriweather', 'Lora',
         'Libre Baskerville', 'EB Garamond', 'Crimson Text', 'Cinzel', 'Cormorant Garamond',

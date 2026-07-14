@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, X, BookOpen, Edit2, Trash2, Loader2, Download, RefreshCw, ChevronRight, AlertTriangle, ChevronDown } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { accountingApi, bypassNextGets, urlToDataUrl } from '@/services/api'
+import { accountingApi, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { saveBlobFile } from '@/lib/saveBlobFile'
 import DateInput from '@/components/DateInput'
@@ -491,7 +491,7 @@ export default function ChartOfAccountsPage() {
         const exportPDF = async () => {
           const { default: jsPDF } = await import('jspdf')
           const { default: autoTable } = await import('jspdf-autotable')
-          const { applyDocHeader, buildTableStyle, addDocFooter, COLORS } = await import('@/lib/pdfUtils')
+          const { applyDocHeader, buildTableStyle, addDocFooter, COLORS, resolveOrgLogo } = await import('@/lib/pdfUtils')
 
           const toRgb = (hex?: string): [number,number,number] => {
             const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex ?? '')
@@ -514,8 +514,7 @@ export default function ChartOfAccountsPage() {
           const displayName = organisation?.show_company_name_on_pdf === false
             ? '' : (organisation?.invoice_company_name?.trim() || organisation?.name || 'Audity')
 
-          let logoData: string | null = null
-          if (organisation?.logo) { try { logoData = await urlToDataUrl(organisation.logo) } catch { /* skip */ } }
+          const logoData: string | null = await resolveOrgLogo(organisation?.logo)
 
           const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
           doc.setLineHeightFactor(1.15)

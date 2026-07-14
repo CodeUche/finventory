@@ -8,6 +8,7 @@ import {
   PieChart, Scale, Shield, ClipboardList, ChevronDown, ChevronRight, ShieldCheck,
   MapPin, ClipboardCheck, GraduationCap, Briefcase, ShoppingCart,
   User, Layout, Mail, Lock, Bot, Globe, Upload, GitBranch,
+  ChevronLeft,
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { authApi } from '@/services/api'
@@ -203,6 +204,16 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
     return true
   })
 
+  // ─── Mini (collapsed) sidebar — desktop only, persisted ────────────────────
+  const [mini, setMini] = useState<boolean>(() => {
+    try { return localStorage.getItem('audity-sidebar-mini') === '1' } catch { return false }
+  })
+  const toggleMini = () => setMini((v) => {
+    const next = !v
+    try { localStorage.setItem('audity-sidebar-mini', next ? '1' : '0') } catch { /* ignore */ }
+    return next
+  })
+
   const [settingsOpen, setSettingsOpen] = useState(() => pathname === '/settings')
   const [settingsGroupsOpen, setSettingsGroupsOpen] = useState<Record<string, boolean>>(() => {
     // auto-expand the group that contains the current active tab
@@ -214,8 +225,10 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
 
   return (
     <aside
+      data-mini={mini ? 'true' : 'false'}
       className={cn(
         'fixed inset-y-0 left-0 z-30 w-64 flex flex-col',
+        mini && 'lg:w-[76px]',
         'bg-surface-900 border-r border-surface-700',
         'transition-transform duration-300 ease-in-out',
         'lg:relative lg:translate-x-0',
@@ -223,16 +236,26 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
       )}
     >
       {/* Logo */}
-      <div className="flex items-center justify-between px-5 py-4 border-b border-surface-700 shrink-0">
-        <img src="/audity-logo-dark.svg" alt="Audity" className="h-9 w-auto" draggable={false} />
+      <div className={cn('flex items-center justify-between py-4 border-b border-surface-700 shrink-0', mini ? 'lg:px-2 lg:justify-center px-5' : 'px-5')}>
+        <img src={mini ? '/audity-icon-dark.svg' : '/audity-logo-dark.svg'} alt="Audity" className={mini ? 'h-8 w-8 rounded-lg hidden lg:block' : 'h-9 w-auto'} draggable={false} />
+        {mini && <img src="/audity-logo-dark.svg" alt="Audity" className="h-9 w-auto lg:hidden" draggable={false} />}
         <button onClick={onClose} className="lg:hidden btn-ghost p-1">
           <X size={18} />
         </button>
       </div>
 
+      {/* Desktop collapse/expand toggle */}
+      <button
+        onClick={toggleMini}
+        title={mini ? 'Expand sidebar' : 'Collapse sidebar'}
+        className="hidden lg:flex items-center justify-center gap-2 mx-3 mt-2 py-1.5 rounded-lg text-slate-500 hover:text-white hover:bg-surface-700/50 transition-colors text-xs shrink-0"
+      >
+        {mini ? <ChevronRight size={15} /> : <><ChevronLeft size={15} /><span>Collapse</span></>}
+      </button>
+
       {/* Org badge */}
       {organisation && (
-        <div className="mx-3 mt-3 px-3 py-2 rounded-xl shrink-0 border bg-brand-500/10 border-brand-500/20">
+        <div className="side-mini-hide mx-3 mt-3 px-3 py-2 rounded-xl shrink-0 border bg-brand-500/10 border-brand-500/20">
           <div className="flex items-center gap-1.5">
             <p className="text-xs text-slate-400 truncate flex-1">{organisation.name}</p>
             {FEATURES.PARTNER_CHANNEL && organisation.managing_firm_name && (
@@ -264,6 +287,7 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
                 ) : (
                   <NavLink
                     to={item.href}
+                    title={item.name}
                     className={({ isActive }) => isActive ? 'sidebar-item-active' : 'sidebar-item'}
                   >
                     <item.icon size={16} className="shrink-0" />
@@ -279,7 +303,7 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
               {group.label && (
                 <button
                   onClick={() => !billingOnly && toggleGroup(group.label!)}
-                  className="w-full flex items-center justify-between px-3 pt-4 pb-1 text-left group"
+                  className="side-mini-hide w-full flex items-center justify-between px-3 pt-4 pb-1 text-left group"
                 >
                   <span className={cn('text-[10px] font-semibold uppercase tracking-widest group-hover:text-slate-300 transition-colors', billingOnly ? 'text-slate-600' : 'text-slate-400')}>
                     {group.label}
@@ -301,6 +325,7 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
                   <NavLink
                     key={item.href}
                     to={item.href}
+                    title={item.name}
                     end={item.href === '/sales'}
                     className={({ isActive }) =>
                       isActive ? 'sidebar-item-active' : 'sidebar-item'
@@ -318,7 +343,7 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
         {/* Owner-only analytics — hidden in billing-only mode */}
         {!billingOnly && isOwnerOrAdmin && canSeeItem('owner_analytics') && (
           <div>
-            <div className="px-3 pt-4 pb-1">
+            <div className="side-mini-hide px-3 pt-4 pb-1">
               <span className="text-[10px] font-semibold text-brand-600 uppercase tracking-widest">OWNER</span>
             </div>
             <NavLink
@@ -337,7 +362,7 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
             {/* Top-level SETTINGS toggle */}
             <button
               onClick={() => setSettingsOpen((v) => !v)}
-              className="w-full flex items-center justify-between px-3 pt-4 pb-1 text-left group"
+              className="side-mini-hide w-full flex items-center justify-between px-3 pt-4 pb-1 text-left group"
             >
               <span className={cn('text-[10px] font-semibold uppercase tracking-widest group-hover:text-slate-300 transition-colors', pathname === '/settings' ? 'text-brand-400' : 'text-slate-400')}>
                 SETTINGS
@@ -349,7 +374,7 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
             </button>
 
             {/* Sub-groups */}
-            {settingsOpen && SETTINGS_GROUPS.map((groupLabel) => {
+            {settingsOpen && !mini && SETTINGS_GROUPS.map((groupLabel) => {
               const groupTabs = visibleSettingsTabs.filter((t) => t.group === groupLabel)
               if (groupTabs.length === 0) return null
               const isGroupOpen = settingsGroupsOpen[groupLabel] ?? false
@@ -414,7 +439,7 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
           <div className="w-8 h-8 bg-brand-500 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0">
             {user?.first_name?.[0]}{user?.last_name?.[0]}
           </div>
-          <div className="min-w-0 text-left">
+          <div className="side-mini-hide min-w-0 text-left">
             <p className="text-sm font-medium text-white truncate">
               {user?.first_name} {user?.last_name}
             </p>
@@ -424,7 +449,7 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
 
         <button onClick={handleLogout} className="sidebar-item w-full text-red-400 hover:text-red-300 hover:bg-red-500/10">
           <LogOut size={16} />
-          Sign out
+          <span>Sign out</span>
         </button>
       </div>
     </aside>

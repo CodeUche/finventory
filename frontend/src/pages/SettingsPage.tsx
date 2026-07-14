@@ -910,7 +910,9 @@ export default function SettingsPage() {
 
       {/* ── Profile + Company (merged) ── */}
       {activeTab === 'profile' && (
-        <div className="space-y-6 max-w-3xl">
+        /* Profile and Organisation cards sit SIDE BY SIDE on large screens
+           (stacked on smaller ones) so both are visible without scrolling. */
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start max-w-7xl">
         {/* Personal Info card */}
         <div className="card p-6 space-y-6">
           {/* Avatar */}

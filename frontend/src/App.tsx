@@ -127,7 +127,7 @@ function ErrorBoundary({ children }: { children: React.ReactNode }) {
 }
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, user, organisation, orgInitialized } = useAuthStore()
+  const { isAuthenticated, user, organisation, organisations, orgInitialized } = useAuthStore()
   if (!isAuthenticated) return <Navigate to="/login" replace />
 
   // orgInitialized is only set to true by initSession() after finishLogin() has
@@ -143,7 +143,13 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
     )
   }
 
-  const onboardingDone = user?.is_superuser || user?.is_sub_account || !!organisation?.id
+  // A user is only sent to /onboarding when they have NO organisation at all.
+  // `organisations.length > 0` (persisted list) proves onboarding was already
+  // completed — even if the ACTIVE organisation is momentarily null (e.g. a
+  // transient re-auth or a mid-session store race), never bounce an existing
+  // user back into the signup/onboarding flow; AppLayout re-selects the org.
+  const onboardingDone =
+    user?.is_superuser || user?.is_sub_account || !!organisation?.id || organisations.length > 0
   if (!onboardingDone) return <Navigate to="/onboarding" replace />
   return <>{children}</>
 }
