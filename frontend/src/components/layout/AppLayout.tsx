@@ -158,7 +158,13 @@ export default function AppLayout() {
       }
       // Re-select the previously active org if we still have access to it,
       // otherwise fall back to the first org in the list.
-      const fresh = orgs.find((o: any) => o.id === organisation?.id) ?? orgs[0]
+      // Superuser exception: their org list is ALL platform orgs (paginated),
+      // so "not found in the page" does NOT mean "lost access". Snapping to
+      // orgs[0] silently teleported platform admins into another customer's
+      // org (e.g. after approving a partner request). Keep their persisted
+      // context instead — a superuser can access any org, so it's always valid.
+      const fresh = orgs.find((o: any) => o.id === organisation?.id)
+        ?? ((user?.is_superuser && organisation) ? organisation : orgs[0])
       // Never downgrade onboarding_completed from true to false — the backend may
       // not have persisted the flag yet (race with markOnboardingComplete), and
       // overwriting with false would immediately kick the user back to /onboarding.

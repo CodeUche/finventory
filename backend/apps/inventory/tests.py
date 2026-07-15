@@ -229,11 +229,13 @@ class ProductListQueryCountTests(TestCase):
         self.client = _auth_client(self.user, self.org)
         self.wh = _make_warehouse(self.org)
 
-        from apps.inventory.models import StockItem
+        from apps.inventory.models import Category, StockItem
+        cat = Category.objects.create(organisation=self.org, name="Spirits")
         for i in range(30):
             p = Product.objects.create(
                 organisation=self.org, sku=f"NP1-{i:03d}", name=f"NP1 Product {i}",
                 selling_price=Decimal("100.00"), cost_price=Decimal("60.00"),
+                category=cat,
             )
             if i % 2 == 0:  # half the products have stock rows
                 StockItem.objects.create(
@@ -264,7 +266,25 @@ class ProductListQueryCountTests(TestCase):
             expected = Decimal(str(i + 1)) if i % 2 == 0 else Decimal("0")
             got = Decimal(str(by_sku[f"NP1-{i:03d}"]["total_stock"]))
             self.assertEqual(got, expected, f"total_stock wrong for NP1-{i:03d}")
-            self.assertEqual(Decimal(str(by_sku[f"NP1-{i:03d}"]["quantity_incoming"])), Decimal("0"))
+
+    def test_list_payload_is_slim_but_detail_is_full(self):
+        """List drops heavyweight fields (payload fix); detail keeps them all."""
+        res = self.client.get("/api/v1/inventory/products/?page_size=5")
+        rows = res.data["results"] if isinstance(res.data, dict) else res.data
+        row = rows[0]
+        for field in ("id", "sku", "name", "selling_price", "cost_price",
+                      "total_stock", "product_type", "is_active", "tax_class",
+                      "category_name", "volume_ml", "alcohol_percentage"):
+            self.assertIn(field, row, f"list must keep '{field}'")
+        for field in ("description", "barcode", "wholesale_price", "max_stock_level",
+                      "reorder_quantity", "quantity_in_pack", "quantity_incoming",
+                      "created_at", "updated_at"):
+            self.assertNotIn(field, row, f"list should not ship '{field}'")
+
+        detail = self.client.get(f"/api/v1/inventory/products/{row['id']}/").data
+        for field in ("description", "barcode", "wholesale_price", "quantity_in_pack",
+                      "quantity_incoming", "created_at", "updated_at"):
+            self.assertIn(field, detail, f"detail must keep '{field}'")
 
     def test_stock_list_query_count_is_bounded(self):
         from django.db import connection

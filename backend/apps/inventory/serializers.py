@@ -113,6 +113,30 @@ class ProductSerializer(serializers.ModelSerializer):
         return data
 
 
+class ProductListSerializer(ProductSerializer):
+    """
+    Slim serializer for the products LIST endpoint only.
+
+    Excludes heavyweight / list-unused fields (description is the payload
+    whale; timestamps and pack/reorder details are only needed by the edit
+    form, which hydrates from the detail endpoint). The detail endpoint keeps
+    the full ProductSerializer, so single-product reads are unchanged.
+    Cut ~50% off list payloads that were breaching the client timeout for
+    large catalogues.
+    """
+
+    class Meta(ProductSerializer.Meta):
+        fields = [
+            "id", "sku", "name", "category", "category_name",
+            "brand", "unit_of_measure", "product_type",
+            "alcohol_percentage", "volume_ml",
+            "cost_price", "owner_cost_price", "selling_price",
+            "reorder_level", "is_active", "is_taxable", "tax_class",
+            "total_stock",
+        ]
+        read_only_fields = ["id", "total_stock"]
+
+
 class BatchSerializer(serializers.ModelSerializer):
     is_expired = serializers.BooleanField(read_only=True)
     product_name = serializers.CharField(source="product.name", read_only=True)

@@ -86,6 +86,13 @@ class ProductViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     search_fields = ["name", "sku", "barcode", "brand"]
     ordering_fields = ["name", "selling_price", "created_at"]
 
+    def get_serializer_class(self):
+        # LIST gets the slim payload; detail/create/update keep the full one.
+        if self.action == "list":
+            from .serializers import ProductListSerializer
+            return ProductListSerializer
+        return super().get_serializer_class()
+
     def get_queryset(self):
         """
         Annotate per-product aggregates as subqueries so the serializer never
@@ -114,14 +121,16 @@ class ProductViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             .annotate(t=Sum(F("quantity_ordered") - F("quantity_received")))
             .values("t")[:1]
         )
-        return (
-            super()
-            .get_queryset()
-            .annotate(
-                _total_stock=Coalesce(Subquery(stock_sq, output_field=dec), Value(0, output_field=dec)),
+        qs = super().get_queryset().annotate(
+            _total_stock=Coalesce(Subquery(stock_sq, output_field=dec), Value(0, output_field=dec)),
+        )
+        # quantity_incoming is not in the slim list payload — skip its subquery
+        # on list requests entirely.
+        if self.action != "list":
+            qs = qs.annotate(
                 _quantity_incoming=Coalesce(Subquery(incoming_sq, output_field=dec), Value(0, output_field=dec)),
             )
-        )
+        return qs
 
     def create(self, request, *args, **kwargs):
         from django.db import transaction

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { useModuleAccess } from '@/hooks/useModuleAccess'
@@ -295,6 +295,11 @@ export default function ProductsPage() {
   const [search, setSearch] = useState('')
   const [showModal, setShowModal] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
+  // True once the edit form has been hydrated from the DETAIL endpoint. The
+  // products LIST is slim (no description/barcode/wholesale/max_stock/pack), so
+  // saving an un-hydrated form must not send those fields or it would blank them.
+  const [editHydrated, setEditHydrated] = useState(false)
+  const editReqRef = useRef<string>('')
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({ ...BLANK })
   const [taxClasses, setTaxClasses] = useState<TaxClass[]>([])
@@ -403,6 +408,22 @@ export default function ProductsPage() {
       category: (p as any).category ?? '',
     })
     loadModalDeps()
+    // Hydrate the slim-list gaps from the detail endpoint (full serializer).
+    // Row data renders instantly; these fields land a moment later.
+    setEditHydrated(false)
+    editReqRef.current = p.id
+    inventoryApi.product(p.id).then(({ data }) => {
+      if (editReqRef.current !== p.id) return  // user opened a different product meanwhile
+      setForm((f) => ({
+        ...f,
+        description: data.description ?? '',
+        barcode: data.barcode ?? '',
+        wholesale_price: safeAmt(data.wholesale_price),
+        max_stock_level: String(data.max_stock_level ?? ''),
+        quantity_in_pack: String(data.quantity_in_pack ?? '1'),
+      }))
+      setEditHydrated(true)
+    }).catch(() => { /* offline — form keeps row data; save will omit slim gaps */ })
     // Fetch current warehouse for this product (largest stock qty wins)
     setEditWarehouse('')
     setEditOrigWarehouse('')
@@ -450,6 +471,13 @@ export default function ProductsPage() {
     // Send null for tax_class when empty, or when is_taxable is false
     if (!payload.is_taxable) payload.tax_class = null
     else if (!payload.tax_class) payload.tax_class = null
+    // Editing without detail hydration (offline): never send the fields the slim
+    // list doesn't carry — sending their empty defaults would wipe real data.
+    if (editId && !editHydrated) {
+      for (const k of ['description', 'barcode', 'wholesale_price', 'max_stock_level', 'quantity_in_pack']) {
+        delete payload[k]
+      }
+    }
     try {
       if (editId) {
         await inventoryApi.updateProduct(editId, payload)
