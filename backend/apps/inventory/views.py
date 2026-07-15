@@ -86,9 +86,17 @@ class ProductViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     search_fields = ["name", "sku", "barcode", "brand"]
     ordering_fields = ["name", "selling_price", "created_at"]
 
+    def _slim_requested(self) -> bool:
+        # Slim list is OPT-IN (?slim=1) for backward compatibility: installed
+        # desktop builds older than the hydrating edit-form still prefill from
+        # the list payload — serving them a slim list would blank fields on
+        # their next edit-save. Old clients never send the param → full payload.
+        return self.request.query_params.get("slim") == "1"
+
     def get_serializer_class(self):
-        # LIST gets the slim payload; detail/create/update keep the full one.
-        if self.action == "list":
+        # LIST gets the slim payload when the client asks for it;
+        # detail/create/update always keep the full serializer.
+        if self.action == "list" and self._slim_requested():
             from .serializers import ProductListSerializer
             return ProductListSerializer
         return super().get_serializer_class()
@@ -125,8 +133,8 @@ class ProductViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             _total_stock=Coalesce(Subquery(stock_sq, output_field=dec), Value(0, output_field=dec)),
         )
         # quantity_incoming is not in the slim list payload — skip its subquery
-        # on list requests entirely.
-        if self.action != "list":
+        # only when the slim list was requested.
+        if not (self.action == "list" and self._slim_requested()):
             qs = qs.annotate(
                 _quantity_incoming=Coalesce(Subquery(incoming_sq, output_field=dec), Value(0, output_field=dec)),
             )

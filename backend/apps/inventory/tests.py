@@ -248,7 +248,7 @@ class ProductListQueryCountTests(TestCase):
         from django.test.utils import CaptureQueriesContext
 
         with CaptureQueriesContext(connection) as ctx:
-            res = self.client.get("/api/v1/inventory/products/?page_size=9999")
+            res = self.client.get("/api/v1/inventory/products/?page_size=9999&slim=1")
         self.assertEqual(res.status_code, 200)
         rows = res.data["results"] if isinstance(res.data, dict) else res.data
         self.assertEqual(len(rows), 30)
@@ -267,9 +267,18 @@ class ProductListQueryCountTests(TestCase):
             got = Decimal(str(by_sku[f"NP1-{i:03d}"]["total_stock"]))
             self.assertEqual(got, expected, f"total_stock wrong for NP1-{i:03d}")
 
-    def test_list_payload_is_slim_but_detail_is_full(self):
-        """List drops heavyweight fields (payload fix); detail keeps them all."""
+    def test_plain_list_stays_full_for_old_clients(self):
+        """Without ?slim=1 (old installed clients) the list keeps EVERY field —
+        old edit forms prefill from the list, so slimming it would wipe data."""
         res = self.client.get("/api/v1/inventory/products/?page_size=5")
+        rows = res.data["results"] if isinstance(res.data, dict) else res.data
+        for field in ("description", "barcode", "wholesale_price", "max_stock_level",
+                      "quantity_in_pack", "quantity_incoming", "created_at", "updated_at"):
+            self.assertIn(field, rows[0], f"plain list must keep '{field}' for old clients")
+
+    def test_list_payload_is_slim_but_detail_is_full(self):
+        """With ?slim=1 the list drops heavyweight fields; detail keeps them all."""
+        res = self.client.get("/api/v1/inventory/products/?page_size=5&slim=1")
         rows = res.data["results"] if isinstance(res.data, dict) else res.data
         row = rows[0]
         for field in ("id", "sku", "name", "selling_price", "cost_price",

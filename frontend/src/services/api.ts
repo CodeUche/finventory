@@ -1077,7 +1077,10 @@ export const teamApi = {
 }
 
 export const inventoryApi = {
-  products: (params?: object) => api.get('/inventory/products/', { params }),
+  products: (params?: object) =>
+    // slim=1 → backend sends the lightweight list payload (this build hydrates
+    // the edit form from the detail endpoint, so the slim list is safe for it).
+    api.get('/inventory/products/', { params: { slim: '1', ...(params ?? {}) } }),
   product: (id: string) => api.get(`/inventory/products/${id}/`),
   createProduct: (data: object) => api.post('/inventory/products/', data),
   updateProduct: (id: string, data: object) => api.patch(`/inventory/products/${id}/`, data),
