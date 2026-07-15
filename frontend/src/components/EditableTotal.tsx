@@ -13,6 +13,7 @@ import { Pencil, Check, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { allocateTotal, type AllocLine } from '@/lib/totalAllocator'
 import { formatCurrency, formatAmountInput, stripCommas } from '@/lib/utils'
+import AmountInput from '@/components/AmountInput'
 
 interface Props {
   /** Current grand total (display) */
@@ -34,7 +35,11 @@ export default function EditableTotal({ total, lines, onApply, valueClass = 'tex
       toast.error('Add line items before adjusting the total.')
       return
     }
-    setDraft(formatAmountInput(String(total.toFixed(2))))
+    // No fake decimals: "23,480,000" not "23,480,000.00" — only show cents
+    // when the total actually has them.
+    const kobo = Math.round(total * 100)
+    const clean = kobo % 100 === 0 ? String(kobo / 100) : (kobo / 100).toFixed(2)
+    setDraft(formatAmountInput(clean))
     setEditing(true)
   }
 
@@ -61,13 +66,22 @@ export default function EditableTotal({ total, lines, onApply, valueClass = 'tex
           <button
             type="button"
             onClick={start}
+            tabIndex={-1}
             title="Edit total — unit prices will be recalculated to match"
             className="p-1 rounded-md text-slate-500 hover:text-brand-400 hover:bg-brand-500/10 transition-colors"
           >
             <Pencil size={13} />
           </button>
         </span>
-        <span className={valueClass}>{formatCurrency(total)}</span>
+        {/* The figure itself is clickable — tap the amount to edit it. */}
+        <button
+          type="button"
+          onClick={start}
+          title="Click to edit the total"
+          className={`${valueClass} cursor-text rounded-md px-1 -mx-1 underline decoration-dotted decoration-1 underline-offset-4 decoration-slate-600 hover:decoration-brand-400 hover:bg-brand-500/5 transition-colors`}
+        >
+          {formatCurrency(total)}
+        </button>
       </div>
     )
   }
@@ -77,12 +91,11 @@ export default function EditableTotal({ total, lines, onApply, valueClass = 'tex
       <div className="flex justify-between items-center gap-3 font-bold">
         <span className="text-white shrink-0">Total</span>
         <div className="flex items-center gap-1.5 flex-1 justify-end">
-          <input
+          <AmountInput
             className="input py-1.5 text-right font-bold max-w-[180px]"
             autoFocus
-            inputMode="decimal"
             value={draft}
-            onChange={(e) => setDraft(formatAmountInput(e.target.value))}
+            onChange={setDraft}
             onKeyDown={(e) => { if (e.key === 'Enter') apply(); if (e.key === 'Escape') setEditing(false) }}
           />
           <button type="button" onClick={apply} title="Apply — recalculate unit prices"

@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Bell, X, Package, AlertCircle, CalendarClock, Receipt, Users, Clock, ShieldCheck, Truck, CheckCircle2, CheckCircle, XCircle } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useNotifications, EtaAlert, CustomerOutstandingAlert } from '@/contexts/NotificationsContext'
@@ -21,6 +21,25 @@ export default function NotificationBell() {
   const { organisation } = useAuthStore()
   const navigate = useNavigate()
   const ref = useRef<HTMLDivElement>(null)
+
+  // Close on ANY click/tap outside the bell or its panel. A document-level
+  // capture listener is used instead of a backdrop div: the TopBar's
+  // backdrop-blur makes it the containing block for `fixed` children, so a
+  // "fixed inset-0" backdrop only ever covered the TopBar strip — clicks on
+  // the page below never reached it. Escape closes too.
+  useEffect(() => {
+    if (!open) return
+    const onPointerDown = (e: PointerEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
+    document.addEventListener('pointerdown', onPointerDown, true)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
 
   const handleQuickReceive = async (id: string) => {
     setReceivingId(id)
@@ -78,8 +97,6 @@ export default function NotificationBell() {
 
       {open && (
         <>
-          <div className="fixed inset-0 z-[199]" onClick={() => setOpen(false)} />
-
           <div className="absolute right-0 top-full mt-2 w-80 bg-surface-800 border border-surface-700 rounded-2xl shadow-2xl z-[200] overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b border-surface-700">
               <span className="text-sm font-semibold text-white">
