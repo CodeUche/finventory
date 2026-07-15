@@ -36,9 +36,15 @@ class ExpenseGroupSerializer(serializers.ModelSerializer):
         return obj.children.count()
 
     def get_expense_count(self, obj):
+        annotated = getattr(obj, '_expenses_count', None)
+        if annotated is not None:
+            return annotated
         return obj.expenses.count()
 
     def get_total_amount(self, obj):
+        annotated = getattr(obj, '_total_amount', None)
+        if annotated is not None:
+            return str(annotated)
         result = obj.expenses.aggregate(total=Sum('amount'))
         return str(result['total'] or 0)
 

@@ -19,9 +19,15 @@ class BillFolderSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at']
 
     def get_children_count(self, obj):
+        annotated = getattr(obj, '_children_count', None)
+        if annotated is not None:
+            return annotated
         return obj.children.filter(is_deleted=False).count() if hasattr(obj, 'children') else 0
 
     def get_bills_count(self, obj):
+        annotated = getattr(obj, '_bills_count', None)
+        if annotated is not None:
+            return annotated
         return obj.bills.filter(is_deleted=False).count() if hasattr(obj, 'bills') else 0
 
     def get_ancestors(self, obj):

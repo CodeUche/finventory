@@ -211,3 +211,71 @@ class WarehouseTests(TestCase):
         _make_warehouse(self.org)
         res = self.client.get("/api/v1/inventory/warehouses/")
         self.assertEqual(res.status_code, 200)
+
+
+class ProductListQueryCountTests(TestCase):
+    """
+    Regression guard for the products-list N+1 (real users with large catalogs
+    saw 6s+ responses that overran the client timeout → "cannot see inventory").
+
+    The list endpoint must run a BOUNDED number of queries regardless of how
+    many products exist, and the annotated fast-path values must match the
+    per-object slow-path computation exactly.
+    """
+
+    def setUp(self):
+        self.user = _make_user("nplusone@example.com")
+        self.org = _make_org(self.user, name="NPlusOne Org")
+        self.client = _auth_client(self.user, self.org)
+        self.wh = _make_warehouse(self.org)
+
+        from apps.inventory.models import StockItem
+        for i in range(30):
+            p = Product.objects.create(
+                organisation=self.org, sku=f"NP1-{i:03d}", name=f"NP1 Product {i}",
+                selling_price=Decimal("100.00"), cost_price=Decimal("60.00"),
+            )
+            if i % 2 == 0:  # half the products have stock rows
+                StockItem.objects.create(
+                    organisation=self.org, product=p, warehouse=self.wh,
+                    quantity_on_hand=Decimal(str(i + 1)),
+                )
+
+    def test_list_query_count_is_bounded_and_values_correct(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        with CaptureQueriesContext(connection) as ctx:
+            res = self.client.get("/api/v1/inventory/products/?page_size=9999")
+        self.assertEqual(res.status_code, 200)
+        rows = res.data["results"] if isinstance(res.data, dict) else res.data
+        self.assertEqual(len(rows), 30)
+
+        # Before the fix this was 2 queries PER PRODUCT (60+ for 30 products).
+        # Annotated, the whole request must stay under a fixed ceiling.
+        self.assertLess(
+            len(ctx.captured_queries), 20,
+            f"products list ran {len(ctx.captured_queries)} queries — N+1 regression",
+        )
+
+        # Correctness: annotated total_stock equals the actual stock per product.
+        by_sku = {r["sku"]: r for r in rows}
+        for i in range(30):
+            expected = Decimal(str(i + 1)) if i % 2 == 0 else Decimal("0")
+            got = Decimal(str(by_sku[f"NP1-{i:03d}"]["total_stock"]))
+            self.assertEqual(got, expected, f"total_stock wrong for NP1-{i:03d}")
+            self.assertEqual(Decimal(str(by_sku[f"NP1-{i:03d}"]["quantity_incoming"])), Decimal("0"))
+
+    def test_stock_list_query_count_is_bounded(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        with CaptureQueriesContext(connection) as ctx:
+            res = self.client.get("/api/v1/inventory/stock/")
+        self.assertEqual(res.status_code, 200)
+        rows = res.data["results"] if isinstance(res.data, dict) else res.data
+        self.assertGreaterEqual(len(rows), 15)
+        self.assertLess(
+            len(ctx.captured_queries), 20,
+            f"stock list ran {len(ctx.captured_queries)} queries — N+1 regression",
+        )

@@ -942,6 +942,9 @@ class InvoiceFolderViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         return InvoiceFolderSerializer
 
     def get_queryset(self):
+        from django.db.models import Count, IntegerField, OuterRef, Subquery, Value
+        from django.db.models.functions import Coalesce
+
         org = self._get_organisation()
         qs = InvoiceFolder.objects.filter(organisation=org)
         parent = self.request.query_params.get('parent')
@@ -949,7 +952,15 @@ class InvoiceFolderViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             qs = qs.filter(parent__isnull=True)
         elif parent:
             qs = qs.filter(parent_id=parent)
-        return qs
+        # Per-row counts as subqueries — avoids 2 queries per folder (N+1).
+        children_sq = (InvoiceFolder.objects.filter(parent=OuterRef('pk'))
+                       .values('parent').annotate(c=Count('id')).values('c')[:1])
+        invoices_sq = (Invoice.objects.filter(folder=OuterRef('pk'))
+                       .values('folder').annotate(c=Count('id')).values('c')[:1])
+        return qs.annotate(
+            _children_count=Coalesce(Subquery(children_sq, output_field=IntegerField()), Value(0, output_field=IntegerField())),
+            _invoices_count=Coalesce(Subquery(invoices_sq, output_field=IntegerField()), Value(0, output_field=IntegerField())),
+        )
 
     def perform_create(self, serializer):
         serializer.save(organisation=self._get_organisation())

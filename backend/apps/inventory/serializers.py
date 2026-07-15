@@ -41,6 +41,12 @@ class ProductSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "total_stock", "quantity_incoming", "created_at", "updated_at"]
 
     def get_quantity_incoming(self, obj):
+        # Fast path: ProductViewSet.get_queryset annotates _quantity_incoming so
+        # list views cost zero extra queries. The fallback below keeps other
+        # callers (e.g. nested serialization without the annotation) correct.
+        annotated = getattr(obj, "_quantity_incoming", None)
+        if annotated is not None:
+            return float(annotated) if annotated > 0 else 0
         try:
             from apps.purchases.models import PurchaseOrderItem
             from django.db.models import F, Sum
@@ -64,28 +70,44 @@ class ProductSerializer(serializers.ModelSerializer):
         return value
 
     def get_total_stock(self, obj):
+        # Fast path: annotated by ProductViewSet.get_queryset (see there).
+        annotated = getattr(obj, "_total_stock", None)
+        if annotated is not None:
+            return annotated
         return sum(
             s.quantity_on_hand for s in obj.stock_items.filter(organisation=obj.organisation)
         )
 
-    def to_representation(self, instance):
-        data = super().to_representation(instance)
+    def _can_view_cost(self, instance) -> bool:
+        """
+        Same visibility rule as before, but resolved ONCE per request instead of
+        once per product (the old per-row Membership.get + lazy organisation
+        fetch cost 2 queries per product — the other half of the list N+1).
+        Uses organisation_id (already on the row) to avoid fetching the org.
+        """
+        cached = getattr(self, "_cost_visibility_cache", None)
+        if cached is not None and cached[0] == instance.organisation_id:
+            return cached[1]
+
         request = self.context.get("request")
+        allowed = False
         if request and request.user and request.user.is_authenticated:
             try:
                 from apps.tenancy.models import Membership
                 membership = Membership.objects.get(
-                    organisation=instance.organisation,
+                    organisation_id=instance.organisation_id,
                     user=request.user,
                     is_active=True,
                 )
-                if membership.role not in _OWNER_ROLES and not request.user.is_superuser:
-                    data.pop("owner_cost_price", None)
-                    data.pop("cost_price", None)
+                allowed = membership.role in _OWNER_ROLES or request.user.is_superuser
             except Membership.DoesNotExist:
-                data.pop("owner_cost_price", None)
-                data.pop("cost_price", None)
-        else:
+                allowed = False
+        self._cost_visibility_cache = (instance.organisation_id, allowed)
+        return allowed
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        if not self._can_view_cost(instance):
             data.pop("owner_cost_price", None)
             data.pop("cost_price", None)
         return data
@@ -151,6 +173,10 @@ class StockItemSerializer(serializers.ModelSerializer):
         return 'ok'
 
     def get_quantity_incoming(self, obj):
+        # Fast path: annotated by StockItemViewSet.get_queryset (N+1 fix).
+        annotated = getattr(obj, "_quantity_incoming", None)
+        if annotated is not None:
+            return float(annotated) if annotated > 0 else 0
         from apps.purchases.models import PurchaseOrderItem
         from django.db.models import F, Sum
         result = PurchaseOrderItem.objects.filter(
@@ -162,6 +188,12 @@ class StockItemSerializer(serializers.ModelSerializer):
         return float(incoming) if incoming > 0 else 0
 
     def get_incoming_eta(self, obj):
+        # Fast path: annotated by StockItemViewSet.get_queryset (N+1 fix).
+        # hasattr (not None-check) because a legitimate annotated value can be
+        # None when no dated PO exists.
+        if hasattr(obj, "_incoming_eta"):
+            eta = obj._incoming_eta
+            return eta.isoformat() if eta else None
         from apps.purchases.models import PurchaseOrder
         from django.db.models import Min
         result = PurchaseOrder.objects.filter(

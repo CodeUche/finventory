@@ -64,6 +64,22 @@ class ExpenseCategoryViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     serializer_class = ExpenseCategorySerializer
     permission_classes = [IsAuthenticated, IsAccountant]
 
+    def get_queryset(self):
+        # Per-row count/total as subqueries — avoids 2 queries per category (N+1).
+        from django.db.models import Count, DecimalField, IntegerField, OuterRef, Subquery, Sum, Value
+        from django.db.models.functions import Coalesce
+        from .models import Expense
+
+        dec = DecimalField(max_digits=15, decimal_places=2)
+        count_sq = (Expense.objects.filter(category=OuterRef('pk'))
+                    .values('category').annotate(c=Count('id')).values('c')[:1])
+        total_sq = (Expense.objects.filter(category=OuterRef('pk'))
+                    .values('category').annotate(t=Sum('amount')).values('t')[:1])
+        return super().get_queryset().annotate(
+            _expenses_count=Coalesce(Subquery(count_sq, output_field=IntegerField()), Value(0, output_field=IntegerField())),
+            _total_amount=Coalesce(Subquery(total_sq, output_field=dec), Value(0, output_field=dec)),
+        )
+
 
 class ExpenseViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
     export_filename = 'expenses'

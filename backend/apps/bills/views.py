@@ -20,6 +20,10 @@ class BillFolderViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, IsStaff, _PlanBills]
 
     def get_queryset(self):
+        from django.db.models import Count, IntegerField, OuterRef, Subquery, Value
+        from django.db.models.functions import Coalesce
+        from .models import Bill
+
         org = self._get_organisation()
         qs = BillFolder.objects.filter(organisation=org)
         parent = self.request.query_params.get('parent')
@@ -27,7 +31,15 @@ class BillFolderViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             qs = qs.filter(parent__isnull=True)
         elif parent:
             qs = qs.filter(parent_id=parent)
-        return qs
+        # Per-row counts as subqueries — avoids 2 queries per folder (N+1).
+        children_sq = (BillFolder.objects.filter(parent=OuterRef('pk'))
+                       .values('parent').annotate(c=Count('id')).values('c')[:1])
+        bills_sq = (Bill.objects.filter(folder=OuterRef('pk'))
+                    .values('folder').annotate(c=Count('id')).values('c')[:1])
+        return qs.annotate(
+            _children_count=Coalesce(Subquery(children_sq, output_field=IntegerField()), Value(0, output_field=IntegerField())),
+            _bills_count=Coalesce(Subquery(bills_sq, output_field=IntegerField()), Value(0, output_field=IntegerField())),
+        )
 
     def perform_create(self, serializer):
         serializer.save(organisation=self._get_organisation())

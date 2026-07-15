@@ -86,6 +86,43 @@ class ProductViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     search_fields = ["name", "sku", "barcode", "brand"]
     ordering_fields = ["name", "selling_price", "created_at"]
 
+    def get_queryset(self):
+        """
+        Annotate per-product aggregates as subqueries so the serializer never
+        issues per-object queries. Without this, listing N products cost 2N+1
+        queries (total_stock + quantity_incoming each) — multi-second responses
+        for large catalogues that overran the client's request timeout and made
+        the app fall back to offline mode ("cannot see my inventory").
+        """
+        from django.db.models import DecimalField, F, OuterRef, Subquery, Sum, Value
+        from django.db.models.functions import Coalesce
+        from apps.purchases.models import PurchaseOrderItem
+
+        dec = DecimalField(max_digits=15, decimal_places=2)
+        stock_sq = (
+            StockItem.objects.filter(product=OuterRef("pk"))
+            .values("product")
+            .annotate(t=Sum("quantity_on_hand"))
+            .values("t")[:1]
+        )
+        incoming_sq = (
+            PurchaseOrderItem.objects.filter(
+                product=OuterRef("pk"),
+                purchase_order__status__in=["draft", "sent", "partially_received"],
+            )
+            .values("product")
+            .annotate(t=Sum(F("quantity_ordered") - F("quantity_received")))
+            .values("t")[:1]
+        )
+        return (
+            super()
+            .get_queryset()
+            .annotate(
+                _total_stock=Coalesce(Subquery(stock_sq, output_field=dec), Value(0, output_field=dec)),
+                _quantity_incoming=Coalesce(Subquery(incoming_sq, output_field=dec), Value(0, output_field=dec)),
+            )
+        )
+
     def create(self, request, *args, **kwargs):
         from django.db import transaction
         from apps.subscriptions.services import SubscriptionService
@@ -598,6 +635,46 @@ class StockItemViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     filterset_fields = ["product", "warehouse"]
     search_fields = ["product__name", "product__sku"]
     http_method_names = ["get", "delete", "head", "options"]
+
+    def get_queryset(self):
+        """
+        Annotate per-row aggregates (incoming qty + earliest PO ETA) as
+        subqueries — same N+1 elimination as ProductViewSet: without this the
+        stock list ran 2 queries per row and multi-second responses for large
+        catalogues pushed the client into its offline fallback.
+        """
+        from django.db.models import DateField, DecimalField, F, Min, OuterRef, Subquery, Sum, Value
+        from django.db.models.functions import Coalesce
+        from apps.purchases.models import PurchaseOrder, PurchaseOrderItem
+
+        dec = DecimalField(max_digits=15, decimal_places=2)
+        incoming_sq = (
+            PurchaseOrderItem.objects.filter(
+                product=OuterRef("product_id"),
+                purchase_order__status__in=["draft", "sent", "partially_received"],
+            )
+            .values("product")
+            .annotate(t=Sum(F("quantity_ordered") - F("quantity_received")))
+            .values("t")[:1]
+        )
+        eta_sq = (
+            PurchaseOrder.objects.filter(
+                items__product=OuterRef("product_id"),
+                status__in=["draft", "sent", "partially_received"],
+                expected_date__isnull=False,
+            )
+            .values("organisation")
+            .annotate(e=Min("expected_date"))
+            .values("e")[:1]
+        )
+        return (
+            super()
+            .get_queryset()
+            .annotate(
+                _quantity_incoming=Coalesce(Subquery(incoming_sq, output_field=dec), Value(0, output_field=dec)),
+                _incoming_eta=Subquery(eta_sq, output_field=DateField()),
+            )
+        )
     # Disable pagination — the list() override appends phantom rows after the
     # queryset is fetched, so server-side pagination silently drops real rows on
     # pages 2+.  The stock page always needs the full catalogue in one response.
