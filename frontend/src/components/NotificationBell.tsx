@@ -84,6 +84,8 @@ export default function NotificationBell() {
   return (
     <div ref={ref} className="relative">
       <button
+        aria-label="Notifications"
+        title="Notifications"
         onClick={() => setOpen((v) => !v)}
         className={cn('btn-ghost relative p-2 text-slate-300 hover:text-white', open && 'bg-surface-700')}
       >

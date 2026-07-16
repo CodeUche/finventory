@@ -219,7 +219,7 @@ export default function TopBar({ onMenuClick }: TopBarProps) {
        (notifications, search) fully cover page elements and their click-away
        overlays actually receive outside clicks. Modals (z-50) still win. */
     <header className="relative z-40 h-16 flex items-center gap-4 px-4 lg:px-6 border-b border-surface-700 bg-surface-900/50 backdrop-blur-sm shrink-0">
-      <button onClick={onMenuClick} className="btn-ghost lg:hidden p-2">
+      <button onClick={onMenuClick} aria-label="Open menu" className="btn-ghost lg:hidden p-2">
         <Menu size={20} />
       </button>
 
@@ -296,6 +296,7 @@ export default function TopBar({ onMenuClick }: TopBarProps) {
         <button
           onClick={toggleTheme}
           className="btn-ghost p-2"
+          aria-label="Toggle theme"
           title={currentTheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
         >
           {currentTheme === 'dark' ? <Sun size={17} /> : <Moon size={17} />}
@@ -311,6 +312,7 @@ export default function TopBar({ onMenuClick }: TopBarProps) {
         <button
           onClick={handleLogout}
           className="btn-ghost p-2 text-slate-400 hover:text-red-400 transition-colors"
+          aria-label="Sign out"
           title="Sign out"
         >
           <LogOut size={17} />

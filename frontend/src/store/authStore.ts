@@ -324,9 +324,25 @@ export const useAuthStore = create<AuthState>()(
       // so using localStorage + explicit logout() is the only safe approach.
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({
-        // tokens intentionally excluded — kept in memory only.
-        // main.tsx calls logout() on every launch which clears localStorage anyway,
-        // so persisting tokens adds disk exposure with zero UX benefit.
+        // DESKTOP: tokens intentionally excluded — kept in memory only; every
+        // launch requires a fresh sign-in (main.tsx clears the session), and
+        // offline unlock re-derives credentials from the user's password.
+        // WEB: tokens ARE persisted — main.tsx re-runs on every F5/refresh, so
+        // memory-only tokens meant every reload dumped the user at /login
+        // ("I keep getting logged out" in the browser). Persisting them here is
+        // the standard SaaS-SPA model; sessions stay bounded by refresh-token
+        // expiry, token_version bumps, and the inactivity timeout.
+        ...(typeof window !== 'undefined' &&
+        !('__TAURI_INTERNALS__' in window) && !('__TAURI__' in window)
+          ? {
+              tokens: state.tokens,
+              // Web reloads resume the session in place, so the org bootstrap
+              // flags must survive too — ProtectedRoute otherwise spins forever
+              // waiting for a login flow that never re-runs on refresh.
+              organisations: state.organisations,
+              orgInitialized: state.orgInitialized,
+            }
+          : {}),
         user: state.user,
         organisation: state.organisation,
         isAuthenticated: state.isAuthenticated,

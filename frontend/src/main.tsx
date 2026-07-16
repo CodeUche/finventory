@@ -78,15 +78,21 @@ if ('serviceWorker' in navigator) {
 // is not enough — the store is already loaded in memory. We must also reset
 // the in-memory state before the first React render.
 (function clearSessionOnStartup() {
-  // Every launch requires a fresh sign-in, so clear the auth session — but use
-  // clearSession(), NOT logout(). logout() wipes the offline verifier and the
-  // offline cache, which would make offline unlock impossible after a restart
-  // and destroy all cached data. A trader reopening the app inside a market
-  // with no internet must still be able to unlock with their password and see
-  // their products/customers/sales. (The old "saved credentials" and
-  // "Remember me" mechanisms were removed; authStore purges the legacy
-  // audity-saved-creds key at module load.)
-  useAuthStore.getState().clearSession()
+  // DESKTOP ONLY: every app launch requires a fresh sign-in, so clear the auth
+  // session — but use clearSession(), NOT logout(). logout() wipes the offline
+  // verifier and the offline cache, which would make offline unlock impossible
+  // after a restart and destroy all cached data. A trader reopening the app
+  // inside a market with no internet must still be able to unlock with their
+  // password and see their products/customers/sales.
+  //
+  // On the WEB this must NOT run: main.tsx re-executes on every F5/refresh/
+  // direct link, so clearing here logged web users out on every reload —
+  // "I keep getting logged out" in the browser. Web sessions are still bounded
+  // by JWT refresh expiry and the inactivity timeout.
+  const isTauriRuntime =
+    typeof window !== 'undefined' &&
+    ('__TAURI_INTERNALS__' in window || '__TAURI__' in window)
+  if (isTauriRuntime) useAuthStore.getState().clearSession()
 })()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
