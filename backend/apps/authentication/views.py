@@ -425,6 +425,35 @@ def _send_verification_email(user, request=None):
         raise
 
 
+def _audit_session_event(user, request, action) -> None:
+    """Record a login/logout in the audit trail, scoped to the user's org(s).
+
+    Owner-facing audit views filter by organisation, so an org-less row is
+    invisible to them — attach one row per active membership (usually one).
+    Pure superusers with no memberships get a single org-less row, which the
+    platform-admin view can still see. Never raises.
+    """
+    try:
+        from apps.core.models import AuditLog
+        label = 'Signed in' if action == AuditLog.LOGIN else 'Signed out'
+        memberships = list(
+            user.memberships.filter(is_active=True).select_related('organisation')[:10]
+        )
+        if not memberships:
+            AuditLog.log(action=action, user=user, organisation=None,
+                         model_name='Session', object_id=str(user.id),
+                         object_repr=label, request=request)
+            return
+        for m in memberships:
+            org = m.organisation
+            AuditLog.log(action=action, user=user, organisation=org,
+                         model_name='Session', object_id=str(user.id),
+                         object_repr=label, request=request,
+                         is_owner_action=(org.owner_id == user.id))
+    except Exception:
+        logger.warning('session audit failed for %s', getattr(user, 'email', '?'), exc_info=True)
+
+
 class RegisterView(APIView):
     """
     POST /api/v1/auth/register/
@@ -839,19 +868,8 @@ class LoginView(TokenObtainPairView):
                     logger.warning("LoginView: JWT decode failed (%s), using DB path", _je)
 
                 response.data["organisations"] = _jwt_orgs or _get_user_organisations(user)
-                try:
-                    from apps.core.models import AuditLog as _AL
-                    _AL.log(
-                        action=_AL.LOGIN,
-                        user=user,
-                        organisation=None,
-                        model_name='User',
-                        object_id=str(user.id),
-                        object_repr=user.email,
-                        request=request,
-                    )
-                except Exception:
-                    pass
+                from apps.core.models import AuditLog as _AL
+                _audit_session_event(user, request, _AL.LOGIN)
             else:
                 # Failure — increment counter, lock if threshold reached
                 user.failed_login_attempts += 1
@@ -1050,6 +1068,8 @@ class MFAVerifyView(APIView):
         totp = pyotp.TOTP(user.mfa_secret)
         if totp.verify(code, valid_window=1):
             logger.info("MFA TOTP verified for: %s", user.email)
+            from apps.core.models import AuditLog as _AL
+            _audit_session_event(user, request, _AL.LOGIN)
             return Response({
                 "user": UserProfileSerializer(user).data,
                 "tokens": _issue_tokens(user),
@@ -1309,19 +1329,8 @@ class LogoutView(APIView):
             logger.info("User logged out: %s", request.user.email)
         except Exception as e:
             logger.warning("Logout error for %s: %s", request.user.email, e)
-        try:
-            from apps.core.models import AuditLog as _AL
-            _AL.log(
-                action=_AL.LOGOUT,
-                user=request.user,
-                organisation=None,
-                model_name='User',
-                object_id=str(request.user.id),
-                object_repr=request.user.email,
-                request=request,
-            )
-        except Exception:
-            pass
+        from apps.core.models import AuditLog as _AL
+        _audit_session_event(request.user, request, _AL.LOGOUT)
         return Response({"message": "Logged out successfully."})
 
 

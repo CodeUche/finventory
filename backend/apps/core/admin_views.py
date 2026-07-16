@@ -73,14 +73,64 @@ class AuditLogView(APIView):
         if ip_search and len(ip_search.strip()) >= 2:
             qs = qs.filter(ip_address__icontains=ip_search.strip())
 
-        try:
-            limit = min(int(request.query_params.get('limit', 500)), 500)
-        except (TypeError, ValueError):
-            limit = 500
-        limit = max(limit, 1)
+        # ── CSV export (?export=csv) — streams the filtered set (capped) ──────
+        if request.query_params.get('export') == 'csv':
+            import csv
+            from django.http import StreamingHttpResponse
+
+            # Auditing the audit: record who exported the trail.
+            AuditLog.log(action=AuditLog.EXPORT, user=request.user, organisation=org,
+                         model_name='audit-log', object_repr='Audit log CSV export',
+                         request=request,
+                         is_owner_action=bool(org and org.owner_id == request.user.id))
+
+            def rows():
+                header = ['timestamp', 'user', 'action', 'model', 'object_id',
+                          'object', 'ip_address', 'owner_action']
+                buf = __import__('io').StringIO()
+                w = csv.writer(buf)
+                w.writerow(header)
+                yield buf.getvalue()
+                for e in qs.iterator(chunk_size=500):
+                    buf.seek(0); buf.truncate(0)
+                    w.writerow([
+                        e.created_at.isoformat(), e.user_email, e.action,
+                        e.model_name, e.object_id, e.object_repr,
+                        e.ip_address or '', 'yes' if e.is_owner_action else 'no',
+                    ])
+                    yield buf.getvalue()
+
+            from django.utils import timezone as _tz
+            resp = StreamingHttpResponse(rows(), content_type='text/csv')
+            resp['Content-Disposition'] = (
+                f'attachment; filename="audit-log-{_tz.now().date().isoformat()}.csv"'
+            )
+            return resp
+
+        # ── Pagination (?page=N&page_size=M). Legacy clients that send only
+        #    `limit` keep the old flat-list response shape. ────────────────────
+        paginated = 'page' in request.query_params
+        if paginated:
+            try:
+                page_size = min(max(int(request.query_params.get('page_size', 50)), 1), 200)
+            except (TypeError, ValueError):
+                page_size = 50
+            try:
+                page = max(int(request.query_params.get('page', 1)), 1)
+            except (TypeError, ValueError):
+                page = 1
+            total = qs.count()
+            start = (page - 1) * page_size
+            entries = qs[start:start + page_size]
+        else:
+            try:
+                limit = min(int(request.query_params.get('limit', 500)), 500)
+            except (TypeError, ValueError):
+                limit = 500
+            entries = qs[:max(limit, 1)]
 
         data = []
-        for entry in qs[:limit]:
+        for entry in entries:
             changes = entry.changes or {}
             # Build a clean field-level diff list
             change_list = []
@@ -106,6 +156,15 @@ class AuditLogView(APIView):
                 'is_owner_action': entry.is_owner_action,
             })
 
+        if paginated:
+            import math
+            return Response({
+                'results': data,
+                'count': total,
+                'page': page,
+                'page_size': page_size,
+                'pages': max(math.ceil(total / page_size), 1),
+            })
         return Response(data)
 
 

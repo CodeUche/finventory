@@ -68,6 +68,7 @@ export default function AppLayout() {
   const setSubscriptionExpired = useAuthStore((s) => s.setSubscriptionExpired)
   const subscriptionExpired = useAuthStore((s) => s.subscriptionExpired)
   const supportAccess = useAuthStore((s) => s.supportAccess)
+  const setSupportAccess = useAuthStore((s) => s.setSupportAccess)
   const user = useAuthStore((s) => s.user)
   const [subscriptionData, setSubscriptionData] = useState<any>(null)
   const [subscriptionBillingOnly, setSubscriptionBillingOnly] = useState(false)
@@ -295,11 +296,30 @@ export default function AppLayout() {
       {/* Main content */}
       <div className="relative z-10 flex flex-col flex-1 min-w-0 overflow-hidden">
         <TopBar onMenuClick={() => setSidebarOpen(true)} />
-        {/* Support access banner — superuser viewing an org they aren't a member of */}
-        {supportAccess && (
-          <div className="flex items-center justify-center gap-2 px-4 py-2 bg-red-600 text-white text-xs font-semibold">
-            <Shield size={13} className="shrink-0" />
-            Support Access — viewing "{organisation?.name ?? 'this organisation'}" as platform admin. This access is audit-logged.
+        {/* Support access banner — superuser viewing an org they aren't a member of.
+            Derived LIVE (not only from the transient supportAccess flag): after a
+            refresh the flag is gone but the persisted org context can still be a
+            foreign org, which left platform admins stranded in a customer's books
+            with no indicator and no way back. */}
+        {(supportAccess ||
+          (user?.is_superuser && organisation && organisations.length > 0 &&
+            !organisations.some((o) => o.id === organisation.id))) && (
+          <div className="flex items-center justify-between gap-2 px-4 py-2 bg-red-600 text-white text-xs font-semibold">
+            <span className="flex items-center gap-2 min-w-0">
+              <Shield size={13} className="shrink-0" />
+              <span className="truncate">
+                Support Access — viewing "{organisation?.name ?? 'this organisation'}" as platform admin. This access is audit-logged.
+              </span>
+            </span>
+            <button
+              onClick={() => {
+                const own = organisations.find((o) => !o.managing_firm_name) ?? organisations[0]
+                if (own) { setSupportAccess(false); setOrganisation(own); navigate('/dashboard') }
+              }}
+              className="shrink-0 flex items-center gap-1.5 px-3 py-1 rounded-lg bg-white/15 hover:bg-white/25 transition-colors"
+            >
+              <LogOut size={12} /> Return to my organisation
+            </button>
           </div>
         )}
         {/* Offline banner */}

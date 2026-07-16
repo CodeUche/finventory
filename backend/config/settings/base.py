@@ -152,6 +152,8 @@ MIDDLEWARE = [
     # handled client-side instead (frontend `$pageview` + identified users).
     # The middleware class still exists in apps/core/posthog_middleware.py if a
     # scoped (writes-only) version is ever wanted.
+    # Universal audit recorder — must run AFTER auth + tenant resolution.
+    "apps.core.middleware.AuditTrailMiddleware",
     # Prometheus response timing — MUST be the very last middleware.
     "django_prometheus.middleware.PrometheusAfterMiddleware",
 ]

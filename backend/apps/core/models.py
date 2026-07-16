@@ -182,6 +182,11 @@ class AuditLog(models.Model):
     def log(cls, action, user=None, organisation=None, model_name='', object_id='', object_repr='', changes=None, request=None, ip_address=None, user_agent=None, is_owner_action=False):
         ip = ip_address
         ua = user_agent
+        if request is not None:
+            # Mark the request so AuditTrailMiddleware doesn't double-log an
+            # action that a view has already recorded with richer detail.
+            try: setattr(request, '_audit_logged', True)
+            except Exception: pass
         if request and ip is None and ua is None:
             try:
                 from apps.core.utils import get_client_ip

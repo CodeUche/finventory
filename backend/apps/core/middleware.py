@@ -123,3 +123,101 @@ def _set_user(user_id: str) -> None:
     except Exception as exc:
         import logging
         logging.getLogger(__name__).warning("RLS _set_user failed (user=%s): %s", user_id, exc)
+
+
+class AuditTrailMiddleware:
+    """Universal audit recorder: logs every successful mutating API request.
+
+    Coverage-by-default — every module (present and future) is captured without
+    per-view instrumentation. Views that already call AuditLog.log(request=…)
+    with richer detail set `request._audit_logged`, and are skipped here.
+    GET requests are ignored except explicit exports (…/export…), which are
+    recorded with the EXPORT action. Never raises; auditing must not break the
+    request it describes.
+    """
+
+    # Session/auth plumbing — either logged explicitly or pure noise.
+    SKIP_PREFIXES = (
+        '/api/v1/auth/',
+        '/api/v1/tenancy/white-label/',
+    )
+    MUTATING = {'POST': 'create', 'PUT': 'update', 'PATCH': 'update', 'DELETE': 'delete'}
+    # Response fields worth using as a human-readable label, in priority order.
+    REPR_FIELDS = ('name', 'invoice_number', 'template_name', 'title', 'reference',
+                   'payment_number', 'email', 'sku', 'first_name')
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        response = self.get_response(request)
+        try:
+            self._maybe_log(request, response)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning('audit trail middleware failed', exc_info=True)
+        return response
+
+    def _maybe_log(self, request, response):
+        path = request.path
+        if not path.startswith('/api/v1/'):
+            return
+        if getattr(request, '_audit_logged', False):
+            return
+        user = getattr(request, 'user', None)
+        if user is None or not getattr(user, 'is_authenticated', False):
+            return
+        if not (200 <= response.status_code < 400):
+            return
+
+        method = request.method
+        is_export = method == 'GET' and ('export' in path.rstrip('/').rsplit('/', 1)[-1].lower())
+        if method not in self.MUTATING and not is_export:
+            return
+        if any(path.startswith(pref) for pref in self.SKIP_PREFIXES):
+            return
+
+        from apps.core.models import AuditLog
+        action = AuditLog.EXPORT if is_export else {
+            'POST': AuditLog.CREATE, 'PUT': AuditLog.UPDATE,
+            'PATCH': AuditLog.UPDATE, 'DELETE': AuditLog.DELETE,
+        }[method]
+
+        # Derive resource / object id / sub-action from the URL:
+        #   /api/v1/sales/invoices/<uuid>/fulfill/ → model "sales/invoices",
+        #   object <uuid>, repr suffix "fulfill".
+        segs = [s for s in path[len('/api/v1/'):].split('/') if s]
+        uuid_re = __import__('re').compile(r'^[0-9a-fA-F-]{8,36}$')
+        object_id = ''
+        resource_parts, extra = [], []
+        for seg in segs:
+            if uuid_re.match(seg) and any(c.isdigit() for c in seg):
+                object_id = seg
+            elif object_id:
+                extra.append(seg)
+            else:
+                resource_parts.append(seg)
+        model_name = '/'.join(resource_parts[:2]) or 'api'
+        sub_action = '/'.join(extra)
+
+        # Label from the response body when available.
+        object_repr = ''
+        data = getattr(response, 'data', None)
+        if isinstance(data, dict):
+            for f in self.REPR_FIELDS:
+                v = data.get(f)
+                if isinstance(v, str) and v.strip():
+                    object_repr = v.strip()[:200]
+                    break
+            if not object_id and isinstance(data.get('id'), (str, int)):
+                object_id = str(data['id'])
+        if sub_action:
+            object_repr = f'{object_repr} [{sub_action}]'.strip() if object_repr else f'[{sub_action}]'
+
+        organisation = getattr(request, 'organisation', None)
+        AuditLog.log(
+            action=action, user=user, organisation=organisation,
+            model_name=model_name, object_id=object_id, object_repr=object_repr,
+            request=request,
+            is_owner_action=bool(organisation and getattr(organisation, 'owner_id', None) == user.id),
+        )

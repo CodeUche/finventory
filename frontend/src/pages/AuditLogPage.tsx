@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState, useCallback, useMemo } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
-import { Shield, ChevronDown, ChevronRight, ChevronUp, Search, X, Globe, RefreshCw } from 'lucide-react'
+import { Shield, ChevronDown, ChevronRight, ChevronUp, ChevronLeft, Search, X, Globe, RefreshCw, FileDown } from 'lucide-react'
 import { auditLogApi, bypassNextGets } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
 import DateInput from '@/components/DateInput'
@@ -104,6 +104,10 @@ const MODEL_OPTIONS = [
 export default function AuditLogPage() {
   const { user } = useAuthStore()
   const [entries, setEntries] = useState<AuditEntry[]>([])
+  const [page, setPage] = useState(1)
+  const [pages, setPages] = useState(1)
+  const [count, setCount] = useState(0)
+  const [exporting, setExporting] = useState(false)
   const [loading, setLoading] = useState(true)
 
   const [userSearch, setUserSearch]   = useState('')
@@ -128,14 +132,44 @@ export default function AuditLogPage() {
       if (dateFrom)     params.date_from = dateFrom
       if (dateTo)       params.date_to   = dateTo
       if (ipSearch)     params.ip        = ipSearch
+      params.page = String(page)
+      params.page_size = '50'
       const { data } = await auditLogApi.list(params)
       setEntries(data.results ?? data)
+      setPages(data.pages ?? 1)
+      setCount(data.count ?? (data.results ?? data).length)
     } catch {
       setEntries([])
     } finally {
       setLoading(false)
     }
-  }, [userSearch, modelFilter, actionFilter, dateFrom, dateTo, ipSearch])
+  }, [userSearch, modelFilter, actionFilter, dateFrom, dateTo, ipSearch, page])
+
+  // Any filter change returns to page 1
+  useEffect(() => { setPage(1) }, [userSearch, modelFilter, actionFilter, dateFrom, dateTo, ipSearch])
+
+  const handleExport = async () => {
+    setExporting(true)
+    try {
+      const params: Record<string, string> = { export: 'csv' }
+      if (userSearch)   params.user      = userSearch
+      if (modelFilter)  params.model     = modelFilter
+      if (actionFilter) params.action    = actionFilter
+      if (dateFrom)     params.date_from = dateFrom
+      if (dateTo)       params.date_to   = dateTo
+      if (ipSearch)     params.ip        = ipSearch
+      const { data } = await auditLogApi.list(params)
+      // CSV arrives as text — normalise to a Blob for the save dialog/download
+      const blob = data instanceof Blob ? data : new Blob([typeof data === 'string' ? data : String(data)], { type: 'text/csv' })
+      const { saveBlobFile } = await import('@/lib/saveBlobFile')
+      await saveBlobFile(blob, `audit-log-${new Date().toISOString().slice(0, 10)}.csv`)
+    } catch {
+      const { default: toast } = await import('react-hot-toast')
+      toast.error('Export failed. Please try again.')
+    } finally {
+      setExporting(false)
+    }
+  }
 
   useEffect(() => { load() }, [load])
   useDataRefresh(load)
@@ -186,9 +220,18 @@ export default function AuditLogPage() {
           <p className="text-slate-400 text-sm mt-0.5">Every action in your workspace — who did what, when, and what changed</p>
         </div>
         <div className="flex items-center gap-2 self-start">
-          {entries.length > 0 && (
-            <span className="text-xs text-slate-500">{entries.length} event{entries.length !== 1 ? 's' : ''}</span>
+          {count > 0 && (
+            <span className="text-xs text-slate-500">{count.toLocaleString()} event{count !== 1 ? 's' : ''}</span>
           )}
+          <button
+            onClick={handleExport}
+            disabled={exporting || loading}
+            className="btn-ghost px-3 py-2 text-slate-400 hover:text-white text-xs flex items-center gap-1.5 disabled:opacity-50"
+            title="Export the filtered log as CSV"
+          >
+            <FileDown size={14} className={exporting ? 'animate-pulse' : ''} />
+            {exporting ? 'Exporting…' : 'Export CSV'}
+          </button>
           <button onClick={() => { bypassNextGets(); load() }} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
           </button>
@@ -388,6 +431,27 @@ export default function AuditLogPage() {
                 })}
               </tbody>
             </table>
+          </div>
+        )}
+        {pages > 1 && (
+          <div className="flex items-center justify-between px-5 py-3 border-t border-surface-700 text-xs text-slate-400">
+            <span>Page {page} of {pages} · {count.toLocaleString()} events</span>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page <= 1 || loading}
+                className="btn-ghost px-2.5 py-1.5 disabled:opacity-40 flex items-center gap-1"
+              >
+                <ChevronLeft size={13} /> Prev
+              </button>
+              <button
+                onClick={() => setPage((p) => Math.min(pages, p + 1))}
+                disabled={page >= pages || loading}
+                className="btn-ghost px-2.5 py-1.5 disabled:opacity-40 flex items-center gap-1"
+              >
+                Next <ChevronRight size={13} />
+              </button>
+            </div>
           </div>
         )}
       </div>
