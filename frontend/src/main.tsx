@@ -41,16 +41,43 @@ initAnalytics()
     const host = window.location.hostname
     // Skip on localhost / Tauri (no white-label for internal builds)
     if (host === 'localhost' || host === 'tauri.localhost' || host === '127.0.0.1') return
+
+    const apply = (data: any) => {
+      if (!data) return
+      // Apply CSS custom properties so all themed components pick them up
+      if (data.primary_color) document.documentElement.style.setProperty('--brand-color', data.primary_color)
+      if (data.brand_name) document.title = data.brand_name
+      // Store for login page logo / tagline rendering
+      ;(window as any).__WL__ = data
+    }
+
+    // 24h cache: branding changes rarely, so ask once per day instead of on
+    // every page load. This also keeps offices behind one shared IP from
+    // tripping the anonymous rate limit when many staff open the app at once.
+    const CACHE_KEY = 'audity-wl-cache'
+    const DAY_MS = 24 * 60 * 60 * 1000
+    let cached: { host: string; data: unknown; at: number } | null = null
+    try { cached = JSON.parse(localStorage.getItem(CACHE_KEY) ?? 'null') } catch { /* corrupt → refetch */ }
+    if (cached && cached.host === host && Date.now() - cached.at < DAY_MS) {
+      apply(cached.data)
+      return
+    }
+
     const base = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/api\/v1\/?$/, '')
     const res = await fetch(`${base}/api/v1/tenancy/white-label/?domain=${encodeURIComponent(host)}`)
-    if (!res.ok) return
-    const data = await res.json()
-    if (!data) return
-    // Apply CSS custom properties so all themed components pick them up
-    if (data.primary_color) document.documentElement.style.setProperty('--brand-color', data.primary_color)
-    if (data.brand_name) document.title = data.brand_name
-    // Store for login page logo / tagline rendering
-    ;(window as any).__WL__ = data
+    if (!res.ok) {
+      // Throttled/unavailable — fall back to the last known answer (even stale).
+      if (cached && cached.host === host) apply(cached.data)
+      return
+    }
+    // The endpoint answers 200 with an empty body (or null) on non-white-label
+    // domains — parse defensively so that answer is cached too, otherwise the
+    // most common case (no branding) would refetch on every single page load.
+    const raw = await res.text()
+    let data: unknown = null
+    try { data = raw ? JSON.parse(raw) : null } catch { data = null }
+    try { localStorage.setItem(CACHE_KEY, JSON.stringify({ host, data, at: Date.now() })) } catch { /* private mode — skip */ }
+    apply(data)
   } catch { /* non-fatal — main Audity brand used as fallback */ }
 })()
 
