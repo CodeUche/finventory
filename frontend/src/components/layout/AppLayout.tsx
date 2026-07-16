@@ -360,8 +360,13 @@ export default function AppLayout() {
             </button>
           </div>
         )}
-        {/* Client view amber banner — hidden until PARTNER_CHANNEL feature is enabled */}
-        {FEATURES.PARTNER_CHANNEL && organisation?.managing_firm_name && (
+        {/* Client view amber banner — PARTNERS ONLY. Shows when viewing an org
+            you are NOT a member of (a client's books). The org's own owner and
+            staff must never see it: their org being managed by a firm is a fact,
+            not a "view" they can exit — the Exit button had nowhere to go and the
+            banner survived refreshes forever. */}
+        {FEATURES.PARTNER_CHANNEL && organisation?.managing_firm_name &&
+          !organisations.some((o) => o.id === organisation.id) && (
           <div className="flex items-center justify-between px-4 py-2 bg-amber-500/15 border-b border-amber-500/30 text-amber-400 text-xs font-medium">
             <span className="flex items-center gap-1.5">
               <Briefcase size={13} />

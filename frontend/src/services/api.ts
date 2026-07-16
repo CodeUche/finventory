@@ -526,13 +526,20 @@ api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
   const isRetry = (config.headers as Record<string, string>)?.['X-Offline-Retry'] === '1'
   const isMutation = ['post', 'put', 'patch', 'delete'].includes(config.method?.toLowerCase() ?? '')
   const isAuthUrl = (config.url ?? '').includes('/auth/')
+  // Account-level actions must NEVER be queued for later replay: creating an
+  // organisation, billing/subscription changes, partner links, legal acceptance.
+  // These aren't shop-floor data entry — replaying e.g. a queued "create
+  // tenancy" hours later silently creates a duplicate organisation. If the
+  // network is down they should FAIL VISIBLY instead.
+  const NEVER_QUEUE = ['/tenancy/', '/subscriptions/', '/platform/', '/audit-log/']
+  const isAccountLevel = NEVER_QUEUE.some((p) => (config.url ?? '').includes(p))
   // An offline grace session (PBKDF2 unlock) has NO tokens — any request that
   // reaches the network 401s and the refresh handler would tear the session
   // down. So while isOfflineSession is true the app stays in cache/queue mode
   // even if connectivity has returned; only /auth/* (the re-login) goes out.
   const isOfflineGraceSession = useAuthStore.getState().isOfflineSession
   const treatAsOffline = !navigator.onLine || _effectivelyOffline || (isOfflineGraceSession && !isAuthUrl)
-  if (treatAsOffline && isMutation && !isRetry && !isAuthUrl) {
+  if (treatAsOffline && isMutation && !isRetry && !isAuthUrl && !isAccountLevel) {
     config.adapter = _buildOfflineMutationAdapter(config)
     return config
   }
@@ -729,10 +736,14 @@ api.interceptors.response.use(
           _settleDedupe(emptyResp)
           return emptyResp
         }
-      } else if (!isRetry && !url.includes('/auth/')) {
+      } else if (!isRetry && !url.includes('/auth/') &&
+                 !['/tenancy/', '/subscriptions/', '/platform/', '/audit-log/'].some((p) => url.includes(p))) {
         // Mutation failed on the wire — treat optimistically (same as request interceptor).
         // Auth endpoints are excluded: a timed-out login must throw so LoginPage shows
         // the correct "cannot connect" error rather than receiving undefined tokens.
+        // Account-level endpoints (tenancy/subscriptions/…) are excluded too:
+        // replaying a queued "create organisation" later duplicates orgs — they
+        // must fail visibly instead (matches the request-interceptor gate).
         _signalOffline()
         const adapter = _buildOfflineMutationAdapter(original)
         // adapter is async — call it directly to get the response
