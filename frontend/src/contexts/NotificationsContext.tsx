@@ -387,7 +387,9 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     poll()
     // Poll every 5 minutes — notification data (low stock, overdue invoices,
     // expiring batches) changes slowly. 30s was 6 API calls/30s = 720/hour.
-    const POLL_MS = 5 * 60 * 1000
+    // 60s baseline. Near-instant delivery comes from the focus + data-changed
+    // listeners below, which re-poll the moment the user acts or returns.
+    const POLL_MS = 60 * 1000
     let intervalId: ReturnType<typeof setInterval> | null = setInterval(poll, POLL_MS)
 
     // Pause polling when the tab/window is hidden, resume when visible
@@ -402,9 +404,17 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     }
     document.addEventListener('visibilitychange', onVisibilityChange)
 
+    // Re-poll immediately after any mutation completes (sale recorded, request
+    // sent/accepted, …) so alerts land without waiting for the next interval.
+    const onDataChanged = () => poll()
+    window.addEventListener('audity:data-changed', onDataChanged)
+    window.addEventListener('focus', onDataChanged)
+
     return () => {
       if (intervalId) clearInterval(intervalId)
       document.removeEventListener('visibilitychange', onVisibilityChange)
+      window.removeEventListener('audity:data-changed', onDataChanged)
+      window.removeEventListener('focus', onDataChanged)
     }
   }, [isAuthenticated, organisationId, poll])
 

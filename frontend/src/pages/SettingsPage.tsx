@@ -454,6 +454,20 @@ export default function SettingsPage() {
     }
   }, [tab])
 
+  // Auto-refresh partner access requests every 15s while the Access tab is
+  // open, so an incoming request/acceptance appears without a manual reload.
+  useEffect(() => {
+    if (tab !== 'access' || !organisation?.id) return
+    const id = setInterval(async () => {
+      if (document.hidden) return
+      try {
+        const { data } = await orgApi.listPartnerRequests(organisation.id)
+        setPartnerRequests(Array.isArray(data) ? data : data.results ?? [])
+      } catch { /* transient — next tick retries */ }
+    }, 15000)
+    return () => clearInterval(id)
+  }, [tab, organisation?.id])
+
   // ─── Handlers ───────────────────────────────────────────────────────────────
   const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]

@@ -137,6 +137,20 @@ export default function PartnerDashboardPage() {
     }
   }
 
+  // Access requests are the time-sensitive part of this page: refresh just
+  // that list every 15s while the dashboard is open so approvals/acceptances
+  // show up near-instantly (the full load stays on-demand).
+  useEffect(() => {
+    const id = setInterval(async () => {
+      if (document.hidden) return
+      try {
+        const { data } = await partnerApi.listAccessRequests()
+        setAccessRequests(data.results ?? data)
+      } catch { /* transient — next tick retries */ }
+    }, 15000)
+    return () => clearInterval(id)
+  }, [])
+
   useEffect(() => {
     // Restore partner's own org context if we navigated back from managing a client's books.
     // handleManageBooks saves the own org to sessionStorage before switching X-Organisation-ID.

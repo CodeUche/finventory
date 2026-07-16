@@ -351,16 +351,19 @@ export default function AppLayout() {
             </span>
             <button
               onClick={async () => {
+                // Return to the user's OWN books: the persisted `organisations`
+                // list holds only orgs they are a member of. Never pick from the
+                // server list first — for superusers that list contains EVERY
+                // org on the platform, so "first unmanaged org" landed them in
+                // some other customer's organisation.
+                const own = organisations.find((o) => !o.managing_firm_name) ?? organisations[0]
+                if (own) { setOrganisation(own); navigate('/dashboard'); return }
                 try {
                   const { data } = await orgApi.list()
                   const orgs: Organisation[] = data.results ?? data
-                  const own = orgs.find((o) => !o.managing_firm_name)
-                  if (own) { setOrganisation(own); navigate('/dashboard') }
-                } catch {
-                  // fallback: try in-memory list
-                  const own = organisations.find((o) => !o.managing_firm_name)
-                  if (own) { setOrganisation(own); navigate('/dashboard') }
-                }
+                  const fallback = orgs.find((o) => !o.managing_firm_name)
+                  if (fallback) { setOrganisation(fallback); navigate('/dashboard') }
+                } catch { /* stay put — better than jumping to a random org */ }
               }}
               className="flex items-center gap-1 hover:text-white transition-colors ml-4"
             >

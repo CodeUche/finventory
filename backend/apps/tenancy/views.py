@@ -1204,18 +1204,27 @@ class PartnerViewSet(viewsets.ViewSet):
         # managing (X-Organisation-ID was switched by the frontend's "Manage Books"
         # flow). Using the request header org caused a spurious 403 whenever the
         # partner navigated back to their dashboard after managing a client.
+        # Superusers (platform admins) are exempt from the partner-plan gate.
+        if request.user.is_superuser:
+            return profile
+
+        is_partner_plan = False
+        is_active = False
         try:
             from .models import Organisation as _Org
-            partner_org = (
-                _Org.objects.filter(owner=request.user, is_active=True)
-                .select_related("subscription__plan")
-                .first()
-            )
-            sub = getattr(partner_org, "subscription", None) if partner_org else None
-            plan_slug = sub.plan.slug if sub and sub.plan else ""
-            is_partner_plan = plan_slug.startswith("partner-")
-            # Use the model property — it checks trial_end datetime, not just status string
-            is_active = sub.is_active if sub else False
+            # Check EVERY org the user owns — .first() picked an arbitrary org,
+            # so a user whose first-listed org wasn't the partner one was
+            # wrongly told their partner subscription had expired.
+            for partner_org in _Org.objects.filter(
+                owner=request.user, is_active=True
+            ).select_related("subscription__plan"):
+                sub = getattr(partner_org, "subscription", None)
+                plan_slug = sub.plan.slug if sub and sub.plan else ""
+                # Use the model property — it checks trial_end datetime, not just status string
+                if plan_slug.startswith("partner-") and sub.is_active:
+                    is_partner_plan = True
+                    is_active = True
+                    break
         except Exception:
             is_partner_plan = False
             is_active = False
