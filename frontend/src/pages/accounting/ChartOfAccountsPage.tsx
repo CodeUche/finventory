@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, X, BookOpen, Edit2, Trash2, Loader2, Download, RefreshCw, ChevronRight, AlertTriangle, ChevronDown } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -66,7 +67,7 @@ export default function ChartOfAccountsPage() {
   useDataRefresh(load)
 
   const handleSeed = async () => {
-    if (!confirm('Seed default Chart of Accounts? This will add standard Nigerian accounting accounts.')) return
+    if (!(await confirmDialog('Seed default Chart of Accounts? This will add standard Nigerian accounting accounts.'))) return
     setSeeding(true)
     try {
       await accountingApi.seedCoa()
@@ -99,7 +100,7 @@ export default function ChartOfAccountsPage() {
 
   const handleDelete = async (a: Account) => {
     if (a.is_system) { toast.error('Cannot delete system accounts'); return }
-    if (!confirm(`Delete account "${a.name}"?`)) return
+    if (!(await confirmDialog(`Delete account "${a.name}"?`))) return
     try { await accountingApi.deleteAccount(a.id); toast.success('Account deleted'); load() }
     catch { toast.error('Cannot delete — account may have transactions') }
   }

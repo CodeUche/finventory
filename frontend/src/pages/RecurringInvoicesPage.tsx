@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, X, RefreshCw, Loader2, Trash2, Play } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -115,7 +116,7 @@ export default function RecurringInvoicesPage() {
   }
 
   const handleDelete = async (r: RecurringInvoice) => {
-    if (!confirm(`Delete "${r.template_name}"?`)) return
+    if (!(await confirmDialog(`Delete "${r.template_name}"?`))) return
     try { await recurringApi.delete(r.id); toast.success('Deleted'); load() }
     catch { toast.error('Failed to delete') }
   }

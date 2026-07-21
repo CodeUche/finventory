@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { confirmDialog } from '@/lib/dialog'
 import {
   FileText, Plus, Send, CheckCircle, Trash2, Loader2,
   X, AlertCircle,
@@ -253,7 +254,7 @@ export default function PartnerInvoicesPage() {
   }
 
   const handleVoid = async (inv: PartnerInvoice) => {
-    if (!confirm(`Void invoice ${inv.invoice_number}?`)) return
+    if (!(await confirmDialog(`Void invoice ${inv.invoice_number}?`))) return
     setActionLoading(inv.id)
     try {
       await partnerApi.voidInvoice(inv.id)

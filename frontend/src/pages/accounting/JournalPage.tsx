@@ -1,4 +1,5 @@
 import { useEffect, useState, Fragment } from 'react'
+import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, X, BookMarked, Loader2, ChevronDown, ChevronUp, Trash2, Edit2, RotateCcw, RefreshCw } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -124,7 +125,7 @@ export default function JournalPage() {
   }
 
   const handlePost = async (id: string) => {
-    if (!confirm('Post this journal entry? It will be locked and cannot be edited.')) return
+    if (!(await confirmDialog('Post this journal entry? It will be locked and cannot be edited.'))) return
     setActionLoading(id + '-post')
     try {
       await accountingApi.postJournalEntry(id)
@@ -146,7 +147,7 @@ export default function JournalPage() {
   }
 
   const handleDelete = async (e: JournalEntry) => {
-    if (!confirm(`Delete draft entry "${e.reference}"? This cannot be undone.`)) return
+    if (!(await confirmDialog(`Delete draft entry "${e.reference}"? This cannot be undone.`))) return
     setActionLoading(e.id + '-delete')
     try { await accountingApi.deleteJournalEntry(e.id); toast.success('Entry deleted'); load() }
     catch { toast.error('Cannot delete — entry may be in use') }
@@ -154,7 +155,7 @@ export default function JournalPage() {
   }
 
   const handleReverse = async (e: JournalEntry) => {
-    if (!confirm(`Create a reversing entry for "${e.reference}"?\n\nThis will create a new draft entry with all debits and credits flipped. You can review and post it.`)) return
+    if (!(await confirmDialog(`Create a reversing entry for "${e.reference}"?\n\nThis will create a new draft entry with all debits and credits flipped. You can review and post it.`))) return
     setActionLoading(e.id + '-reverse')
     try {
       await accountingApi.reverseJournalEntry(e.id)

@@ -5,6 +5,7 @@ import { Toaster } from 'react-hot-toast'
 import App from './App'
 import { NotificationsProvider } from './contexts/NotificationsContext'
 import { initTheme } from './hooks/useTheme'
+import { DialogHost } from '@/lib/dialog'
 import { useAuthStore } from './store/authStore'
 import { initAnalytics } from './lib/analytics'
 import { checkForUpdates } from './lib/updater'
@@ -127,6 +128,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <BrowserRouter>
       <NotificationsProvider>
         <App />
+        <DialogHost />
         <Toaster
           position="top-right"
           toastOptions={{

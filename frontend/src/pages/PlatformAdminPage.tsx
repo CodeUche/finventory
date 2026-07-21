@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
+import { confirmDialog } from '@/lib/dialog'
 import { Shield, Users, Building2, RefreshCw, Loader2, CheckCircle, XCircle, TrendingUp, BookOpen, Ban, RotateCcw } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { platformAdminApi, orgApi, bypassNextGets } from '@/services/api'
@@ -68,7 +69,7 @@ export default function PlatformAdminPage() {
   useEffect(() => { load() }, [])
 
   const handleReseedCoa = async (org: OrgRow) => {
-    if (!confirm(`Reseed chart of accounts for "${org.name}"?\n\nThis is safe and idempotent — it only adds missing accounts, never overwrites existing ones.`)) return
+    if (!(await confirmDialog(`Reseed chart of accounts for "${org.name}"?\n\nThis is safe and idempotent — it only adds missing accounts, never overwrites existing ones.`))) return
     setReseedingOrg(org.id)
     try {
       const { data } = await orgApi.reseedCoa(org.id)
@@ -84,7 +85,7 @@ export default function PlatformAdminPage() {
     if (target.id === user?.id) { toast.error("You can't deactivate your own account."); return }
     const nextActive = !target.is_active
     const verb = nextActive ? 'reactivate' : 'deactivate'
-    if (!confirm(`${nextActive ? 'Reactivate' : 'Deactivate'} ${target.email}?${!nextActive && target.orgs.some(o => o.role === 'owner') ? '\n\nThis cascades to all sub-accounts in their organisation(s).' : ''}`)) return
+    if (!(await confirmDialog(`${nextActive ? 'Reactivate' : 'Deactivate'} ${target.email}?${!nextActive && target.orgs.some(o => o.role === 'owner') ? '\n\nThis cascades to all sub-accounts in their organisation(s).' : ''}`))) return
     setTogglingUser(target.id)
     try {
       await platformAdminApi.setUserActive(target.id, nextActive)

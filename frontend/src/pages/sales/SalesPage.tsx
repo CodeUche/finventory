@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, Receipt, Search, X, Loader2, CheckCircle, Ban, FileDown, Mail, MessageCircle, RotateCcw, Truck, Pencil, Trash2, CalendarClock, RefreshCw, PackageCheck, AlertTriangle, FileText } from 'lucide-react'
 import SortSelect from '@/components/SortSelect'
@@ -584,7 +585,7 @@ export default function SalesPage() {
 
   const handleVoid = async () => {
     if (!selected) return
-    if (!confirm('Void this invoice? This cannot be undone.')) return
+    if (!(await confirmDialog('Void this invoice? This cannot be undone.'))) return
     setActing(true)
     try {
       await salesApi.void(selected.id)
@@ -646,7 +647,7 @@ export default function SalesPage() {
 
   const handleDeleteInvoice = async () => {
     if (!selected) return
-    if (!confirm(`Delete invoice ${selected.invoice_number}? This cannot be undone.`)) return
+    if (!(await confirmDialog(`Delete invoice ${selected.invoice_number}? This cannot be undone.`))) return
     try {
       await salesApi.deleteInvoice(selected.id)
       toast.success('Invoice deleted')
@@ -835,7 +836,7 @@ export default function SalesPage() {
 
   const handleConfirmProforma = async () => {
     if (!selected) return
-    if (!confirm('Convert this proforma to a confirmed invoice? Stock will be deducted.')) return
+    if (!(await confirmDialog('Convert this proforma to a confirmed invoice? Stock will be deducted.'))) return
     setActing(true)
     try {
       await salesApi.confirmProforma(selected.id)
@@ -1041,7 +1042,7 @@ export default function SalesPage() {
                           <button
                             onClick={async (e) => {
                               e.stopPropagation()
-                              if (!confirm(`Delete invoice ${inv.invoice_number}?`)) return
+                              if (!(await confirmDialog(`Delete invoice ${inv.invoice_number}?`))) return
                               try {
                                 await salesApi.deleteInvoice(inv.id)
                                 toast.success('Invoice deleted')

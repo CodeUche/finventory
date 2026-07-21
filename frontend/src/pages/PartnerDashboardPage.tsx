@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from 'react'
+import { confirmDialog } from '@/lib/dialog'
 import { useNavigate } from 'react-router-dom'
 import {
   GraduationCap, Users, TrendingUp, Trash2, Loader2, Building2,
@@ -251,7 +252,7 @@ export default function PartnerDashboardPage() {
   }
 
   const handleRemove = async (c: PartnerClientLink) => {
-    if (!confirm(`Remove ${c.org_name || 'this client'}? Your access to their organisation will be revoked.`)) return
+    if (!(await confirmDialog(`Remove ${c.org_name || 'this client'}? Your access to their organisation will be revoked.`))) return
     setRemoving(c.id)
     try {
       await partnerApi.removeClient(c.id)
@@ -265,7 +266,7 @@ export default function PartnerDashboardPage() {
   }
 
   const handleWithdraw = async (req: PartnerAccessRequest) => {
-    if (!confirm(`Withdraw this access request to ${req.org_name}?`)) return
+    if (!(await confirmDialog(`Withdraw this access request to ${req.org_name}?`))) return
     setWithdrawing(req.id)
     try {
       await partnerApi.withdrawRequest(req.id)

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Layers, Plus, Search, Trash2, X } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -124,7 +125,7 @@ export default function BatchesPage() {
   }
 
   const handleDelete = async (id: string, batchNum: string) => {
-    if (!confirm(`Delete batch "${batchNum}"? This cannot be undone.`)) return
+    if (!(await confirmDialog(`Delete batch "${batchNum}"? This cannot be undone.`))) return
     try {
       await inventoryApi.deleteBatch(id)
       toast.success('Batch deleted')

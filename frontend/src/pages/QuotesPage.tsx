@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, X, ClipboardList, Loader2, FileText, ChevronDown, ChevronUp, Trash2, FileDown, Mail, MessageCircle, CheckCircle, ExternalLink, RefreshCw } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -387,7 +388,7 @@ export default function QuotesPage() {
   const handleConvert = async (q: Quote) => {
     if (q.status === 'rejected') { toast.error('This quotation was rejected and cannot be converted'); return }
     if (q.status === 'expired') { toast.error('This quotation has expired. Please create a new quotation'); return }
-    if (!confirm(`Convert quotation ${q.quote_number} to invoice?`)) return
+    if (!(await confirmDialog(`Convert quotation ${q.quote_number} to invoice?`))) return
     try {
       const { data } = await quoteApi.convert(q.id)
       load()
@@ -415,7 +416,7 @@ export default function QuotesPage() {
   }
 
   const handleReject = async (q: Quote) => {
-    if (!confirm(`Mark quotation ${q.quote_number} as rejected?`)) return
+    if (!(await confirmDialog(`Mark quotation ${q.quote_number} as rejected?`))) return
     try {
       await quoteApi.reject(q.id)
       toast.success('Quotation marked as rejected')

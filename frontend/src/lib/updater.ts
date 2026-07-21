@@ -9,6 +9,7 @@
  * user → download + install → relaunch.
  */
 import toast from 'react-hot-toast'
+import { confirmDialog } from '@/lib/dialog'
 
 function isTauriRuntime(): boolean {
   return typeof window !== 'undefined' &&
@@ -22,10 +23,10 @@ export async function checkForUpdates(): Promise<void> {
     const update = await check()
     if (!update) return
 
-    const proceed = window.confirm(
+    const proceed = (await confirmDialog(
       `A new version of Audity (${update.version}) is available.\n\n` +
       `Update now? Audity will restart automatically when it's done.`,
-    )
+    ))
     if (!proceed) return
 
     const id = toast.loading('Downloading update…')

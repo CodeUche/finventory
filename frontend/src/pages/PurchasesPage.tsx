@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
+import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { useSearchParams } from 'react-router-dom'
 import { Plus, Search, Truck, X, Loader2, UploadCloud, FileText, Edit2, Trash2, ChevronDown, ChevronRight, Package, RefreshCw } from 'lucide-react'
@@ -235,7 +236,7 @@ export default function PurchasesPage() {
   }
 
   const handleDelete = async (id: string) => {
-    if (!window.confirm('Delete this purchase order? This cannot be undone.')) return
+    if (!(await confirmDialog('Delete this purchase order? This cannot be undone.'))) return
     setDeletingId(id)
     try {
       await purchaseApi.delete(id)
@@ -253,7 +254,7 @@ export default function PurchasesPage() {
 
   const handleRemoveReceipt = async () => {
     if (!editOrder) return
-    if (!window.confirm('Remove the attached receipt?')) return
+    if (!(await confirmDialog('Remove the attached receipt?'))) return
     try {
       await purchaseApi.removeReceipt(editOrder.id)
       setEditOrder({ ...editOrder, receipt: null })

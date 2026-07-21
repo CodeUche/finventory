@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import {
@@ -124,7 +125,7 @@ export default function BillFoldersPage() {
 
   const handleDeleteFolder = async (f: BillFolder, e: React.MouseEvent) => {
     e.stopPropagation()
-    if (!confirm(`Delete folder "${f.name}"? Bills inside will be unassigned.`)) return
+    if (!(await confirmDialog(`Delete folder "${f.name}"? Bills inside will be unassigned.`))) return
     try {
       await billApi.deleteFolder(f.id)
       toast.success('Folder deleted')

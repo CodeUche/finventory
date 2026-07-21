@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Edit2, Plus, Trash2, Warehouse, ChevronDown, ChevronUp, Package, Loader2 } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -95,7 +96,7 @@ export default function WarehousesPage() {
 
   const handleDelete = async (id: string, name: string, e: React.MouseEvent) => {
     e.stopPropagation()
-    if (!confirm(`Delete warehouse "${name}"? This cannot be undone.`)) return
+    if (!(await confirmDialog(`Delete warehouse "${name}"? This cannot be undone.`))) return
     try {
       await inventoryApi.deleteWarehouse(id)
       toast.success('Warehouse deleted')

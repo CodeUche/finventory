@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { usePagination } from '@/hooks/usePagination'
@@ -156,7 +157,7 @@ export default function StockPage() {
   const handleDeleteStockItem = async (s: StockItem) => {
     const qty = parseFloat(s.quantity_on_hand)
     const qtyText = qty > 0 ? `\n\nCurrent quantity (${qty.toFixed(0)} units) will be zeroed out and the record removed.` : '\n\nThis record has 0 units on hand.'
-    if (!confirm(`Remove stock record for "${s.product_name}" at ${s.warehouse_name}?${qtyText}`)) return
+    if (!(await confirmDialog(`Remove stock record for "${s.product_name}" at ${s.warehouse_name}?${qtyText}`))) return
     setDeletingStockId(s.id)
     try {
       await inventoryApi.deleteStockItem(s.id)

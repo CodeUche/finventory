@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import {
   ChevronDown, ChevronUp, Banknote, Loader2, ExternalLink, Send, CheckCircle,
@@ -354,7 +355,7 @@ export default function PayrollPage() {
   // ── Runs handlers ────────────────────────────────────────────────────────────
 
   const handleRunPayroll = async () => {
-    if (!confirm(`Run payroll for ${MONTHS[selectedMonth - 1]} ${selectedYear}?\n\nThis will compute salaries, bonuses, attendance deductions and statutory deductions for all active employees.`)) return
+    if (!(await confirmDialog(`Run payroll for ${MONTHS[selectedMonth - 1]} ${selectedYear}?\n\nThis will compute salaries, bonuses, attendance deductions and statutory deductions for all active employees.`))) return
     setRunning(true)
     try {
       await payrollApi.runPayroll({ period_year: selectedYear, period_month: selectedMonth })
@@ -391,7 +392,7 @@ export default function PayrollPage() {
   }
 
   const handleApprove = async (id: string) => {
-    if (!confirm('Approve and finalise this payroll run?')) return
+    if (!(await confirmDialog('Approve and finalise this payroll run?'))) return
     setApprovingId(id)
     try {
       await payrollApi.approvePayroll(id)
@@ -531,7 +532,7 @@ export default function PayrollPage() {
   }
 
   const handleDeleteBonus = async (id: string) => {
-    if (!confirm('Remove this bonus?')) return
+    if (!(await confirmDialog('Remove this bonus?'))) return
     try {
       await payrollApi.deleteBonus(id)
       toast.success('Bonus removed')

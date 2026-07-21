@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { confirmDialog } from '@/lib/dialog'
 import { useSearchParams } from 'react-router-dom'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, Search, Users, X, Pencil, Loader2, FileText, RefreshCw, Download, Trash2, MinusCircle, ChevronRight, Maximize2, Minimize2 } from 'lucide-react'
@@ -177,7 +178,7 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
   }
 
   const handleDelete = async (c: Customer) => {
-    if (!confirm(`Delete customer "${c.name}"? This cannot be undone.`)) return
+    if (!(await confirmDialog(`Delete customer "${c.name}"? This cannot be undone.`))) return
     try {
       await customerApi.delete(c.id)
       toast.success('Customer deleted')

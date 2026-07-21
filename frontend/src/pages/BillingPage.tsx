@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import { confirmDialog } from '@/lib/dialog'
 import { CheckCircle, X as XIcon, Loader2, CreditCard, Zap, Building2, Star, ExternalLink, RefreshCw, Package, ShoppingCart, FileText, Receipt, Users, Truck, BarChart3, Calculator, Briefcase, Wallet, Clock, DollarSign, Shield, ChevronDown, ChevronUp, GraduationCap, LayoutDashboard, FileBarChart2, Layers, Coins } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useNavigate } from 'react-router-dom'
@@ -189,7 +190,7 @@ export default function BillingPage() {
   }, [organisation?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDowngradeToFree = async () => {
-    if (!confirm('Downgrade to the Free plan? You will immediately lose access to paid features and your plan limits will be reduced.')) return
+    if (!(await confirmDialog('Downgrade to the Free plan? You will immediately lose access to paid features and your plan limits will be reduced.'))) return
     setSubscribing('free')
     try {
       const res = await subscriptionApi.downgradeFree()
@@ -319,7 +320,7 @@ export default function BillingPage() {
   }
 
   const handleCancel = async () => {
-    if (!confirm('Cancel your subscription? You will retain access until the end of your current billing period.')) return
+    if (!(await confirmDialog('Cancel your subscription? You will retain access until the end of your current billing period.'))) return
     setCanceling(true)
     try {
       const res = await subscriptionApi.cancel()

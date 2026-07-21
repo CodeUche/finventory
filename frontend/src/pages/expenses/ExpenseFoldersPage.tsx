@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { useSearchParams } from 'react-router-dom'
 import {
@@ -137,7 +138,7 @@ export default function ExpenseFoldersPage() {
   const handleDeleteFolder = async (g: ExpenseGroup) => {
     const hasContent = g.children_count > 0 || g.expense_count > 0
     const warn = hasContent ? ` It contains ${g.children_count} sub-folder(s) and ${g.expense_count} item(s) which will also be deleted.` : ''
-    if (!confirm(`Delete folder "${g.name}"?${warn}`)) return
+    if (!(await confirmDialog(`Delete folder "${g.name}"?${warn}`))) return
     try {
       await expenseApi.deleteGroup(g.id)
       toast.success('Folder deleted')

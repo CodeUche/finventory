@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, X, Receipt, Loader2, Search, Trash2, Edit2, Folder, RefreshCw } from 'lucide-react'
 import { Link, useSearchParams } from 'react-router-dom'
@@ -244,7 +245,7 @@ export default function BillsPage() {
   }
 
   const handleVoid = async (id: string) => {
-    if (!confirm('Void this bill?')) return
+    if (!(await confirmDialog('Void this bill?'))) return
     try { await billApi.void(id); toast.success('Bill voided'); load() }
     catch { toast.error('Failed to void bill') }
   }

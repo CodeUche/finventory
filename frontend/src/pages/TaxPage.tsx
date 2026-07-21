@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import {
   Building2, Calculator, ChevronDown, ChevronUp, CheckCircle, Clock,
@@ -334,7 +335,7 @@ export default function TaxPage() {
     finally { setSavingClass(false) }
   }
   const handleDeleteClass = async (id: string, name: string) => {
-    if (!confirm(`Delete VAT class "${name}"?`)) return
+    if (!(await confirmDialog(`Delete VAT class "${name}"?`))) return
     try { await taxApi.deleteClass(id); toast.success('Deleted'); loadClasses() }
     catch { toast.error('Cannot delete VAT class — it may be assigned to products') }
   }
@@ -376,7 +377,7 @@ export default function TaxPage() {
     finally { setSavingConfig(false) }
   }
   const handleDeleteConfig = async (id: string, name: string) => {
-    if (!confirm(`Delete tax config "${name}"? All brackets will be removed.`)) return
+    if (!(await confirmDialog(`Delete tax config "${name}"? All brackets will be removed.`))) return
     try { await taxApi.deleteConfig(id); toast.success('Deleted'); loadConfigs() }
     catch { toast.error('Failed to delete tax config') }
   }
@@ -1115,7 +1116,7 @@ export default function TaxPage() {
                         <div className="flex gap-2 justify-end">
                           <button onClick={() => { setEditingExciseId(e.id); setExciseForm({ name: e.name, product_category: e.product_category, duty_type: e.duty_type, rate: e.rate, effective_date: e.effective_date, notes: e.notes }); setShowExciseModal(true) }}
                             className="p-1.5 text-slate-500 hover:text-white hover:bg-surface-600 rounded-lg transition-colors"><Edit2 size={14} /></button>
-                          <button onClick={async () => { if (!confirm(`Delete excise duty "${e.name}"?`)) return; try { await exciseApi.delete(e.id); toast.success('Deleted'); loadExcise() } catch { toast.error('Failed to delete') } }}
+                          <button onClick={async () => { if (!(await confirmDialog(`Delete excise duty "${e.name}"?`))) return; try { await exciseApi.delete(e.id); toast.success('Deleted'); loadExcise() } catch { toast.error('Failed to delete') } }}
                             className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"><Trash2 size={14} /></button>
                         </div>
                       </td>
@@ -1170,7 +1171,7 @@ export default function TaxPage() {
                           <div className="flex gap-2 justify-end">
                             <button onClick={() => { setEditingWHTId(r.id); setWhtForm({ transaction_type: r.transaction_type, company_rate: r.company_rate, individual_rate: r.individual_rate }); setShowWHTModal(true) }}
                               className="p-1.5 text-slate-500 hover:text-white hover:bg-surface-600 rounded-lg transition-colors"><Edit2 size={14} /></button>
-                            <button onClick={async () => { if (!confirm(`Delete WHT rate "${r.transaction_type}"?`)) return; try { await whtApi.deleteRate(r.id); toast.success('Deleted'); loadWHT() } catch { toast.error('Failed to delete') } }}
+                            <button onClick={async () => { if (!(await confirmDialog(`Delete WHT rate "${r.transaction_type}"?`))) return; try { await whtApi.deleteRate(r.id); toast.success('Deleted'); loadWHT() } catch { toast.error('Failed to delete') } }}
                               className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"><Trash2 size={14} /></button>
                           </div>
                         </td>
@@ -1458,7 +1459,7 @@ export default function TaxPage() {
                             <button onClick={() => openObligationAction(ob.id, 'paid')}
                               className="text-xs px-2 py-1 rounded bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 transition-colors">Pay</button>
                           ) : null}
-                          <button onClick={async () => { if (!confirm('Delete obligation?')) return; try { await taxApi.deleteObligation(ob.id); toast.success('Deleted'); loadObligations() } catch { toast.error('Failed') } }}
+                          <button onClick={async () => { if (!(await confirmDialog('Delete obligation?'))) return; try { await taxApi.deleteObligation(ob.id); toast.success('Deleted'); loadObligations() } catch { toast.error('Failed') } }}
                             className="p-1.5 text-slate-600 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"><Trash2 size={13} /></button>
                         </div>
                       </td>
@@ -1518,7 +1519,7 @@ export default function TaxPage() {
                       <td className="px-4 py-3.5">
                         <div className="flex gap-1.5 justify-end">
                           <button onClick={() => openEditCA(ca)} className="p-1.5 text-slate-500 hover:text-white hover:bg-surface-600 rounded-lg transition-colors"><Edit2 size={13} /></button>
-                          <button onClick={async () => { if (!confirm(`Delete "${ca.asset_name}"?`)) return; try { await taxApi.deleteCapitalAllowance(ca.id); toast.success('Deleted'); loadCapitalAllowances() } catch { toast.error('Failed') } }}
+                          <button onClick={async () => { if (!(await confirmDialog(`Delete "${ca.asset_name}"?`))) return; try { await taxApi.deleteCapitalAllowance(ca.id); toast.success('Deleted'); loadCapitalAllowances() } catch { toast.error('Failed') } }}
                             className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"><Trash2 size={13} /></button>
                         </div>
                       </td>
@@ -1621,7 +1622,7 @@ export default function TaxPage() {
                       <td className="px-4 py-3.5">
                         <div className="flex gap-1.5 justify-end">
                           <button onClick={() => openEditDT(dt)} className="p-1.5 text-slate-500 hover:text-white hover:bg-surface-600 rounded-lg transition-colors"><Edit2 size={13} /></button>
-                          <button onClick={async () => { if (!confirm('Delete this item?')) return; try { await taxApi.deleteDeferredTax(dt.id); toast.success('Deleted'); loadDeferredTax() } catch { toast.error('Failed') } }}
+                          <button onClick={async () => { if (!(await confirmDialog('Delete this item?'))) return; try { await taxApi.deleteDeferredTax(dt.id); toast.success('Deleted'); loadDeferredTax() } catch { toast.error('Failed') } }}
                             className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"><Trash2 size={13} /></button>
                         </div>
                       </td>
@@ -1705,7 +1706,7 @@ export default function TaxPage() {
                       <td className="px-4 py-3.5">
                         <div className="flex gap-1.5 justify-end">
                           <button onClick={() => openEditTP(tp)} className="p-1.5 text-slate-500 hover:text-white hover:bg-surface-600 rounded-lg transition-colors"><Edit2 size={13} /></button>
-                          <button onClick={async () => { if (!confirm('Delete transaction?')) return; try { await taxApi.deleteTransferPricing(tp.id); toast.success('Deleted'); loadTransferPricing() } catch { toast.error('Failed') } }}
+                          <button onClick={async () => { if (!(await confirmDialog('Delete transaction?'))) return; try { await taxApi.deleteTransferPricing(tp.id); toast.success('Deleted'); loadTransferPricing() } catch { toast.error('Failed') } }}
                             className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"><Trash2 size={13} /></button>
                         </div>
                       </td>

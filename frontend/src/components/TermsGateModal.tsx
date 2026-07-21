@@ -9,6 +9,7 @@
  * Superusers (internal admins) are exempt.
  */
 import { useEffect, useState } from 'react'
+import { confirmDialog } from '@/lib/dialog'
 import { Loader2, ShieldCheck } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { authApi } from '@/services/api'
@@ -52,8 +53,8 @@ export default function TermsGateModal() {
     }
   }
 
-  const reject = () => {
-    if (confirm('You must accept the updated terms to continue using Audity. Reject and sign out?')) {
+  const reject = async () => {
+    if ((await confirmDialog('You must accept the updated terms to continue using Audity. Reject and sign out?'))) {
       logout()
     }
   }

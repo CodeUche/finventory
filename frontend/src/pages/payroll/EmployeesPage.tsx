@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import {
   Plus, X, UsersRound, Loader2, Search, Edit2, ChevronDown, CheckCircle2,
@@ -247,7 +248,7 @@ export default function EmployeesPage() {
   }
 
   const handleDeletePenalty = async (id: string) => {
-    if (!confirm('Delete this penalty?')) return
+    if (!(await confirmDialog('Delete this penalty?'))) return
     try {
       await payrollApi.deletePenalty(id)
       setPenalties((p) => p.filter((x) => x.id !== id))
@@ -308,7 +309,7 @@ export default function EmployeesPage() {
   }
 
   const handleDeleteDoc = async (id: string) => {
-    if (!confirm('Delete this document?')) return
+    if (!(await confirmDialog('Delete this document?'))) return
     try {
       await payrollApi.deleteDocument(id)
       setDocuments((d) => d.filter((x) => x.id !== id))
@@ -333,7 +334,7 @@ export default function EmployeesPage() {
   }
 
   const handleCancelLoan = async (id: string) => {
-    if (!confirm('Cancel this loan? No further deductions will be made.')) return
+    if (!(await confirmDialog('Cancel this loan? No further deductions will be made.'))) return
     try {
       await payrollApi.cancelLoan(id)
       toast.success('Loan cancelled')
@@ -350,7 +351,7 @@ export default function EmployeesPage() {
   const filteredBanks = NIGERIAN_BANKS.filter((b) => b.name.toLowerCase().includes(bankSearch.toLowerCase()))
 
   const handleDeactivate = async (e: Employee) => {
-    if (!confirm(`Deactivate ${e.full_name}?`)) return
+    if (!(await confirmDialog(`Deactivate ${e.full_name}?`))) return
     try {
       await payrollApi.updateEmployee(e.id, { is_active: false })
       toast.success('Employee deactivated'); load()
@@ -358,7 +359,7 @@ export default function EmployeesPage() {
   }
 
   const handleDelete = async (e: Employee) => {
-    if (!confirm(`Permanently delete ${e.full_name}? This will remove all their records and cannot be undone.`)) return
+    if (!(await confirmDialog(`Permanently delete ${e.full_name}? This will remove all their records and cannot be undone.`))) return
     try {
       await payrollApi.deleteEmployee(e.id)
       toast.success('Employee deleted'); load()

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, X, Landmark, Loader2, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -58,7 +59,7 @@ export default function AssetsPage() {
   const handleRunDepreciation = async () => {
     const now = new Date()
     const payload = { year: now.getFullYear(), month: now.getMonth() + 1 }
-    if (!confirm(`Run depreciation for ${now.toLocaleString('default', { month: 'long' })} ${now.getFullYear()}?`)) return
+    if (!(await confirmDialog(`Run depreciation for ${now.toLocaleString('default', { month: 'long' })} ${now.getFullYear()}?`))) return
     setRunningDep(true)
     try {
       const { data } = await accountingApi.runDepreciation(payload)

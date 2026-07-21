@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { confirmDialog } from '@/lib/dialog'
 import { useSearchParams } from 'react-router-dom'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { useModuleAccess } from '@/hooks/useModuleAccess'
@@ -625,7 +626,7 @@ export default function ProductsPage() {
   }
 
   const handleBulkDelete = async () => {
-    if (!confirm(`Delete ${selectedIds.size} selected product(s)? This cannot be undone.\n\nProducts used on invoices or purchase orders will be skipped.`)) return
+    if (!(await confirmDialog(`Delete ${selectedIds.size} selected product(s)? This cannot be undone.\n\nProducts used on invoices or purchase orders will be skipped.`))) return
     setBulkDeleting(true)
     let deleted = 0, failed = 0
     for (const id of selectedIds) {
@@ -642,7 +643,7 @@ export default function ProductsPage() {
   }
 
   const handleDelete = async (p: Product) => {
-    if (!confirm(`Delete "${p.name}"? This cannot be undone.\n\nStock levels and batch records for this product will be removed. Products that appear on invoices or purchase orders cannot be deleted.`)) return
+    if (!(await confirmDialog(`Delete "${p.name}"? This cannot be undone.\n\nStock levels and batch records for this product will be removed. Products that appear on invoices or purchase orders cannot be deleted.`))) return
     setDeletingId(p.id)
     try {
       await inventoryApi.deleteProduct(p.id)

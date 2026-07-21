@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, Search, Truck, X, Pencil, Loader2, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -161,7 +162,7 @@ export default function SuppliersPage() {
                         </button>
                         <button
                           onClick={async () => {
-                            if (!confirm(`Delete supplier "${s.name}"?`)) return
+                            if (!(await confirmDialog(`Delete supplier "${s.name}"?`))) return
                             try { await supplierApi.delete(s.id); toast.success('Supplier deleted'); load() }
                             catch { toast.error('Cannot delete supplier — may have linked purchase orders') }
                           }}
