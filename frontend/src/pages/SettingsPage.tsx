@@ -4,6 +4,7 @@ import { User, Building2, Shield, Loader2, Camera, CreditCard, CheckCircle, Mail
 import toast from 'react-hot-toast'
 import { authApi, orgApi, paymentGatewayApi, accountingApi, teamApi, urlToDataUrl, partnerApi, einvoicingApi } from '@/services/api'
 import ImportPage from '@/pages/ImportPage'
+import PromptModal from '@/components/PromptModal'
 import type { FirsConfig, FirsStats, FirsSubmission, SandboxProgress, GoLiveChecklist } from '@/types'
 import type { AxiosError } from 'axios'
 import { useAuthStore } from '@/store/authStore'
@@ -360,6 +361,7 @@ export default function SettingsPage() {
 
   // FIRS state lives in the FirsTab sub-component (see bottom of this file)
   const [rejectingReq, setRejectingReq] = useState<string | null>(null)
+  const [rejectTargetReq, setRejectTargetReq] = useState<string | null>(null)
   const [revokingLink, setRevokingLink] = useState<string | null>(null)
   const [inviteEmail, setInviteEmail] = useState('')
   const [generatingInvite, setGeneratingInvite] = useState(false)
@@ -834,14 +836,19 @@ export default function SettingsPage() {
   }
 
   // ── Partner Access Handlers ─────────────────────────────────────────────────
-  const handleRejectPartner = async (reqId: string) => {
-    const reason = window.prompt('Reason for rejection (optional):') ?? ''
-    if (!organisation?.id) return
+  // Opens a themed modal (not the native window.prompt, which renders as an
+  // unstyled "tauri.localhost says" box in the desktop WebView).
+  const handleRejectPartner = (reqId: string) => setRejectTargetReq(reqId)
+
+  const confirmRejectPartner = async (reason: string) => {
+    const reqId = rejectTargetReq
+    if (!reqId || !organisation?.id) { setRejectTargetReq(null); return }
     setRejectingReq(reqId)
     try {
       const { data } = await orgApi.rejectPartnerRequest(organisation.id, reqId, reason)
       setPartnerRequests((prev) => prev.map((r) => r.id === reqId ? data : r))
       toast.success('Request rejected')
+      setRejectTargetReq(null)
     } catch (err: any) {
       const msg = err?.response?.data?.error
       toast.error(typeof msg === 'string' ? msg : msg?.message ?? 'Failed to reject')
@@ -3212,6 +3219,21 @@ export default function SettingsPage() {
       {activeTab === 'import' && (
         <ImportPage />
       )}
+
+      {/* Themed rejection-reason prompt (replaces native window.prompt) */}
+      <PromptModal
+        open={rejectTargetReq !== null}
+        title="Reject partner request"
+        description="The accountant will be notified their request was declined."
+        label="Reason (optional)"
+        placeholder="e.g. We already work with another firm…"
+        confirmText="Reject request"
+        confirmClass="btn-danger"
+        optional
+        busy={rejectingReq !== null}
+        onConfirm={confirmRejectPartner}
+        onCancel={() => setRejectTargetReq(null)}
+      />
     </>
   )
 }
