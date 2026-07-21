@@ -1,0 +1,159 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 1,
+  "title": "Audity — Overview",
+  "uid": "audity-overview",
+  "tags": ["audity", "overview"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "time": { "from": "now-24h", "to": "now" },
+  "refresh": "1m",
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Backend up",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 5, "w": 4, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] }
+        }, "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "targets": [
+        { "refId": "A", "expr": "min(up{job=\"django-production\"})" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Database up",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 5, "w": 4, "x": 4, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] }
+        }, "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "targets": [
+        { "refId": "A", "expr": "max(pg_up)" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Request rate",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 5, "w": 4, "x": 8, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "reqps", "decimals": 2, "color": { "mode": "fixed", "fixedColor": "blue" } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(django_http_requests_total_by_method_total{env=\"production\"}[5m]))" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "5xx error rate",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 5, "w": 4, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit", "decimals": 2,
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 0.01 },
+            { "color": "red", "value": 0.05 }
+          ] }
+        }, "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(django_http_responses_total_by_status_total{env=\"production\",status=~\"5..\"}[5m])) / clamp_min(sum(rate(django_http_responses_total_by_status_total{env=\"production\"}[5m])), 1)" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "p95 latency",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 5, "w": 4, "x": 16, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s", "decimals": 3,
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 1 },
+            { "color": "red", "value": 2 }
+          ] }
+        }, "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.95, sum by (le) (rate(django_http_requests_latency_seconds_by_view_method_bucket{env=\"production\"}[5m])))" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Actions (range)",
+      "datasource": { "type": "postgres", "uid": "audit-postgres" },
+      "gridPos": { "h": 5, "w": 4, "x": 20, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "purple" } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "targets": [
+        { "refId": "A", "format": "table", "rawSql": "SELECT count(*) AS \"Actions\" FROM core_auditlog WHERE $__timeFilter(created_at)" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Request rate & errors (production)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(django_http_requests_total_by_method_total{env=\"production\"}[5m]))", "legendFormat": "requests" },
+        { "refId": "B", "expr": "sum(rate(django_http_responses_total_by_status_total{env=\"production\",status=~\"5..\"}[5m]))", "legendFormat": "5xx" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Business actions over time",
+      "datasource": { "type": "postgres", "uid": "audit-postgres" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "fillOpacity": 60, "lineWidth": 0, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "format": "time_series", "rawSql": "SELECT $__timeGroupAlias(created_at, $__interval), action AS metric, count(*) AS \"actions\" FROM core_auditlog WHERE $__timeFilter(created_at) GROUP BY 1, action ORDER BY 1" }
+      ]
+    },
+    {
+      "type": "bargauge",
+      "title": "Top features used (range)",
+      "datasource": { "type": "postgres", "uid": "audit-postgres" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 13 },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "continuous-BlPu" } }, "overrides": [] },
+      "options": { "displayMode": "gradient", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"], "values": true }, "showUnfilled": true },
+      "targets": [
+        { "refId": "A", "format": "table", "rawSql": "SELECT model_name AS feature, count(*) AS hits FROM core_auditlog WHERE $__timeFilter(created_at) AND model_name <> '' GROUP BY model_name ORDER BY hits DESC LIMIT 10" }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Most active organisations (range)",
+      "datasource": { "type": "postgres", "uid": "audit-postgres" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 13 },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "showHeader": true, "sortBy": [{ "displayName": "Actions", "desc": true }] },
+      "targets": [
+        { "refId": "A", "format": "table", "rawSql": "SELECT organisation_id::text AS \"Organisation\", count(*) AS \"Actions\", count(DISTINCT user_id) AS \"Users\" FROM core_auditlog WHERE $__timeFilter(created_at) AND organisation_id IS NOT NULL GROUP BY organisation_id ORDER BY 2 DESC LIMIT 15" }
+      ]
+    }
+  ]
+}

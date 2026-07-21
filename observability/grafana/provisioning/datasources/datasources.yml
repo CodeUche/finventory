@@ -17,3 +17,41 @@ datasources:
     url: http://loki:3100
     jsonData:
       maxLines: 1000
+
+  # ── Audit Postgres — reads core_auditlog for the Business Activity dashboards ──
+  # Points at the PRODUCTION Railway Postgres (public TCP proxy endpoint).
+  # Values come from the grafana container's env (see docker-compose.yml + .env).
+  # The role MUST bypass RLS or audit queries can silently return 0 rows — use the
+  # grafana_ro role documented in README.md.
+  - name: Audit Postgres
+    type: postgres
+    access: proxy
+    uid: audit-postgres
+    url: ${AUDIT_DB_HOST}:${AUDIT_DB_PORT}
+    user: ${AUDIT_DB_USER}
+    editable: false
+    secureJsonData:
+      password: ${AUDIT_DB_PASSWORD}
+    jsonData:
+      database: ${AUDIT_DB_NAME}
+      sslmode: require
+      postgresVersion: 1500
+      timescaledb: false
+
+  # ── Loki Cloud — Grafana Cloud Loki holding PRODUCTION logs (pushed by
+  #    Locomotive running on Railway). Creds come from the grafana container env.
+  - name: Loki Cloud
+    type: loki
+    access: proxy
+    uid: loki-cloud
+    url: ${GRAFANA_CLOUD_LOKI_URL}
+    basicAuth: true
+    basicAuthUser: ${GRAFANA_CLOUD_LOKI_USER}
+    editable: false
+    jsonData:
+      maxLines: 1000
+      # This machine intercepts TLS (its CA isn't in the container trust store),
+      # so verifying the grafana.net cert fails. Endpoint is trusted → skip verify.
+      tlsSkipVerify: true
+    secureJsonData:
+      basicAuthPassword: ${GRAFANA_CLOUD_LOKI_TOKEN}
