@@ -155,8 +155,10 @@ groups:
         annotations:
           summary: "No requests reaching the production backend for 10 minutes."
           description: "Request rate is ~0 — the backend may be unreachable or scraping is broken."
-        noDataState: OK
-        execErrState: OK
+        # Fire on missing data / eval errors too: if scraping breaks the series
+        # disappears, and this alert is meant to catch exactly that.
+        noDataState: Alerting
+        execErrState: Alerting
         data:
           - refId: A
             relativeTimeRange: { from: 600, to: 0 }

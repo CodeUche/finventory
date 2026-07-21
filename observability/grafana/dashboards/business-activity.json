@@ -17,10 +17,10 @@
         "label": "Organisation",
         "type": "query",
         "datasource": { "type": "postgres", "uid": "audit-postgres" },
-        "query": "SELECT DISTINCT organisation_id::text FROM core_auditlog WHERE organisation_id IS NOT NULL ORDER BY 1",
+        "query": "SELECT DISTINCT organisation_id::text FROM core_auditlog WHERE organisation_id IS NOT NULL AND created_at > now() - interval '90 days' ORDER BY 1",
         "includeAll": true,
         "multi": true,
-        "refresh": 2,
+        "refresh": 1,
         "current": { "text": "All", "value": "$__all" }
       },
       {
@@ -28,10 +28,10 @@
         "label": "Action",
         "type": "query",
         "datasource": { "type": "postgres", "uid": "audit-postgres" },
-        "query": "SELECT DISTINCT action FROM core_auditlog ORDER BY 1",
+        "query": "SELECT DISTINCT action FROM core_auditlog WHERE created_at > now() - interval '90 days' ORDER BY 1",
         "includeAll": true,
         "multi": true,
-        "refresh": 2,
+        "refresh": 1,
         "current": { "text": "All", "value": "$__all" }
       },
       {
@@ -39,10 +39,10 @@
         "label": "Feature (model)",
         "type": "query",
         "datasource": { "type": "postgres", "uid": "audit-postgres" },
-        "query": "SELECT DISTINCT model_name FROM core_auditlog WHERE model_name <> '' ORDER BY 1",
+        "query": "SELECT DISTINCT model_name FROM core_auditlog WHERE model_name <> '' AND created_at > now() - interval '90 days' ORDER BY 1",
         "includeAll": true,
         "multi": true,
-        "refresh": 2,
+        "refresh": 1,
         "current": { "text": "All", "value": "$__all" }
       }
     ]

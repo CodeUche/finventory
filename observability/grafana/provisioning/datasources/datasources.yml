@@ -34,7 +34,7 @@ datasources:
       password: ${AUDIT_DB_PASSWORD}
     jsonData:
       database: ${AUDIT_DB_NAME}
-      sslmode: require
+      sslmode: ${AUDIT_DB_SSLMODE}
       postgresVersion: 1500
       timescaledb: false
 
@@ -50,8 +50,8 @@ datasources:
     editable: false
     jsonData:
       maxLines: 1000
-      # This machine intercepts TLS (its CA isn't in the container trust store),
-      # so verifying the grafana.net cert fails. Endpoint is trusted → skip verify.
-      tlsSkipVerify: true
+      # Secure by default (verify certs). Set LOKI_TLS_SKIP_VERIFY=true in .env ONLY
+      # on a machine that intercepts TLS (its CA isn't in the container trust store).
+      tlsSkipVerify: ${LOKI_TLS_SKIP_VERIFY}
     secureJsonData:
       basicAuthPassword: ${GRAFANA_CLOUD_LOKI_TOKEN}

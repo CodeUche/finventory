@@ -117,6 +117,7 @@ services:
       AUDIT_DB_NAME: ${AUDIT_DB_NAME:-finventory}
       AUDIT_DB_USER: ${AUDIT_DB_USER:-finv_app}
       AUDIT_DB_PASSWORD: ${AUDIT_DB_PASSWORD:-postgres}
+      AUDIT_DB_SSLMODE: ${AUDIT_DB_SSLMODE:-require}
       # ── Alert email delivery (optional): fill these to receive alert notifications.
       GF_SMTP_ENABLED: ${GF_SMTP_ENABLED:-false}
       GF_SMTP_HOST: ${GF_SMTP_HOST:-}
@@ -129,6 +130,8 @@ services:
       GRAFANA_CLOUD_LOKI_URL: ${GRAFANA_CLOUD_LOKI_URL:-}
       GRAFANA_CLOUD_LOKI_USER: ${GRAFANA_CLOUD_LOKI_USER:-}
       GRAFANA_CLOUD_LOKI_TOKEN: ${GRAFANA_CLOUD_LOKI_TOKEN:-}
+      # Verify TLS by default; set true in .env only on TLS-intercepting machines.
+      LOKI_TLS_SKIP_VERIFY: ${LOKI_TLS_SKIP_VERIFY:-false}
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
