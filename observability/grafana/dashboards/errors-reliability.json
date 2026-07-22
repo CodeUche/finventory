@@ -1,0 +1,168 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 1,
+  "title": "Audity — Errors & Reliability",
+  "uid": "audity-errors-reliability",
+  "tags": ["audity", "errors", "reliability"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "30s",
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "5xx error rate",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit", "decimals": 2,
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 0.01 },
+            { "color": "red", "value": 0.05 }
+          ] }
+        }, "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area" },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(django_http_responses_total_by_status_total{env=\"production\",status=~\"5..\"}[5m])) / clamp_min(sum(rate(django_http_responses_total_by_status_total{env=\"production\"}[5m])), 1)" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "4xx client error rate",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit", "decimals": 2,
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 0.05 },
+            { "color": "red", "value": 0.2 }
+          ] }
+        }, "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area" },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(django_http_responses_total_by_status_total{env=\"production\",status=~\"4..\"}[5m])) / clamp_min(sum(rate(django_http_responses_total_by_status_total{env=\"production\"}[5m])), 1)" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "p95 latency",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s", "decimals": 3,
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 1 },
+            { "color": "red", "value": 2 }
+          ] }
+        }, "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area" },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.95, sum by (le) (rate(django_http_requests_latency_seconds_by_view_method_bucket{env=\"production\"}[5m])))" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "5xx requests / sec",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "reqps", "decimals": 3, "color": { "mode": "fixed", "fixedColor": "red" } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(django_http_responses_total_by_status_total{env=\"production\",status=~\"5..\"}[5m]))" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Responses by status code",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "drawStyle": "line", "fillOpacity": 20, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum by (status) (rate(django_http_responses_total_by_status_total{env=\"production\"}[5m]))", "legendFormat": "{{status}}" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Error rate (4xx vs 5xx)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "drawStyle": "line", "fillOpacity": 15 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(django_http_responses_total_by_status_total{env=\"production\",status=~\"4..\"}[5m]))", "legendFormat": "4xx" },
+        { "refId": "B", "expr": "sum(rate(django_http_responses_total_by_status_total{env=\"production\",status=~\"5..\"}[5m]))", "legendFormat": "5xx" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Top failing endpoints (5xx by view)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 12 },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "topk(10, sum by (view) (rate(django_http_responses_total_by_status_view_method_total{env=\"production\",status=~\"5..\"}[5m])))", "legendFormat": "{{view}}" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Slowest endpoints (p95 latency by view)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 12 },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 5 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "topk(10, histogram_quantile(0.95, sum by (le, view) (rate(django_http_requests_latency_seconds_by_view_method_bucket{env=\"production\"}[5m]))))", "legendFormat": "{{view}}" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "DB rollbacks & deadlocks / sec",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 21 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(pg_stat_database_xact_rollback[5m]))", "legendFormat": "rollbacks" },
+        { "refId": "B", "expr": "sum(rate(pg_stat_database_deadlocks[5m]))", "legendFormat": "deadlocks" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Prod log lines / sec by level",
+      "datasource": { "type": "loki", "uid": "loki-cloud" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 21 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "fillOpacity": 70, "lineWidth": 0, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum by (level) (count_over_time({environment_name=\"production\"}[$__auto]))", "legendFormat": "{{level}}" }
+      ]
+    },
+    {
+      "type": "text",
+      "title": "About this dashboard",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 29 },
+      "options": {
+        "mode": "markdown",
+        "content": "**Scope: production** (`env=\"production\"`).\n\n- HTTP/latency panels come from django-prometheus on the Railway backend.\n- **Log panels show live Railway logs** — shipped by the **Locomotive** sidecar → **Grafana Cloud Loki** (`Loki Cloud` datasource). Labels: `service_name`, `environment_name`, `level`.\n- **Deeper exception traces live in Sentry** — set `SENTRY_DSN` in the backend for full stack traces.\n- Failed requests are **not** in the audit log; this dashboard is the source of truth for \"what breaks\"."
+      }
+    },
+    {
+      "type": "logs",
+      "title": "Prod error / warning log stream",
+      "datasource": { "type": "loki", "uid": "loki-cloud" },
+      "gridPos": { "h": 5, "w": 18, "x": 6, "y": 29 },
+      "options": { "showTime": true, "wrapLogMessage": true, "enableLogDetails": true, "dedupStrategy": "none", "sortOrder": "Descending" },
+      "targets": [
+        { "refId": "A", "expr": "{environment_name=\"production\"} |~ \"(?i)(error|critical|warning|traceback|exception| 5\\\\d\\\\d )\"" }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+# Grafana unified alerting — contact point for Audity alerts.
+# Email delivery requires the GF_SMTP_* env vars on the grafana service (see .env).
+# ${ALERT_EMAIL_TO} is interpolated from the grafana container's environment.
+#
+# To notify Slack instead/as well, uncomment the slack receiver and set the webhook.
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: audity-default
+    receivers:
+      - uid: audity-email
+        type: email
+        disableResolveMessage: false
+        settings:
+          addresses: ${ALERT_EMAIL_TO}
+          singleEmail: false
+      # - uid: audity-slack
+      #   type: slack
+      #   settings:
+      #     url: https://hooks.slack.com/services/XXX/YYY/ZZZ
+      #     title: '{{ template "slack.default.title" . }}'

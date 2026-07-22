@@ -9,3 +9,8 @@ modules:
       method: GET
       follow_redirects: true
       preferred_ip_protocol: ip4
+      # The host intercepts TLS (its CA isn't in the container trust store), which
+      # makes the HTTPS health probe fail cert verification. The endpoint is a
+      # trusted public URL, so skip verification for the uptime probe.
+      tls_config:
+        insecure_skip_verify: true

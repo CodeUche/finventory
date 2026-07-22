@@ -27,6 +27,11 @@ scrape_configs:
   - job_name: django-production
     metrics_path: /metrics
     scheme: https
+    # The host machine intercepts TLS (corporate/AV proxy injects its own CA),
+    # so the container can't verify the public Railway cert. Metrics scraping
+    # over an already-trusted public endpoint — skipping verification is fine here.
+    tls_config:
+      insecure_skip_verify: true
     static_configs:
       - targets: ["audity-backend-production-30f9.up.railway.app"]
         labels:
@@ -53,7 +58,11 @@ scrape_configs:
         replacement: blackbox-exporter:9115
 
   # ─── PostgreSQL metrics (postgres_exporter) ─────────────────
+  # Longer interval/timeout: the exporter queries the prod DB over Railway's
+  # public TCP proxy, so collector round-trips are slower than a local DB.
   - job_name: postgres
+    scrape_interval: 30s
+    scrape_timeout: 25s
     static_configs:
       - targets: ["postgres-exporter:9187"]
         labels:

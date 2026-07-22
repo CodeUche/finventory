@@ -1,0 +1,11 @@
+# Grafana unified alerting — notification policy tree for Audity.
+# Routes every alert to the "audity-default" contact point (see contactpoints.yml).
+apiVersion: 1
+
+policies:
+  - orgId: 1
+    receiver: audity-default
+    group_by: ["grafana_folder", "alertname"]
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 4h

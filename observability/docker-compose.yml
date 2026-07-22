@@ -47,12 +47,22 @@ services:
     restart: unless-stopped
     <<: *host-gateway
     environment:
-      # Points at the host's Postgres (the main docker-compose db on :5432).
-      # Split URI/USER/PASS form avoids URL-encoding issues with special chars in
-      # the password (#, +, * etc.).
-      DATA_SOURCE_URI: "host.docker.internal:5432/${DB_NAME:-finventory}?sslmode=disable"
-      DATA_SOURCE_USER: "${DB_USER:-finv_app}"
-      DATA_SOURCE_PASS: "${DB_PASSWORD:-postgres}"
+      # Monitors the PRODUCTION Railway Postgres so pg_up / connections / cache-hit
+      # panels + the "Database down" alert reflect prod. Split URI/USER/PASS form
+      # avoids URL-encoding issues with special chars in the password (#, +, * etc.).
+      # Railway requires SSL → sslmode=require. Falls back to the local host DB if
+      # AUDIT_DB_* is unset.
+      DATA_SOURCE_URI: "${AUDIT_DB_HOST:-host.docker.internal}:${AUDIT_DB_PORT:-5432}/${AUDIT_DB_NAME:-finventory}?sslmode=${AUDIT_DB_SSLMODE:-require}"
+      DATA_SOURCE_USER: "${AUDIT_DB_USER:-finv_app}"
+      DATA_SOURCE_PASS: "${AUDIT_DB_PASSWORD:-postgres}"
+    # Disable collectors that are slow over the public proxy and/or incompatible
+    # with Postgres 18 (pg_stat_bgwriter columns moved; pg_ls_waldir needs perms).
+    # The dashboards only use pg_up + pg_stat_database + database size/activity.
+    command:
+      - "--no-collector.wal"
+      - "--no-collector.stat_bgwriter"
+      - "--no-collector.replication"
+      - "--no-collector.replication_slot"
     ports:
       - "9187:9187"
 
@@ -100,6 +110,28 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: ${GF_ADMIN_PASSWORD:-admin}
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_ANALYTICS_REPORTING_ENABLED: "false"
+      # ── Audit Postgres datasource (Business Activity dashboards) → prod Railway DB.
+      #    Interpolated into grafana/provisioning/datasources/datasources.yml.
+      AUDIT_DB_HOST: ${AUDIT_DB_HOST:-host.docker.internal}
+      AUDIT_DB_PORT: ${AUDIT_DB_PORT:-5432}
+      AUDIT_DB_NAME: ${AUDIT_DB_NAME:-finventory}
+      AUDIT_DB_USER: ${AUDIT_DB_USER:-finv_app}
+      AUDIT_DB_PASSWORD: ${AUDIT_DB_PASSWORD:-postgres}
+      AUDIT_DB_SSLMODE: ${AUDIT_DB_SSLMODE:-require}
+      # ── Alert email delivery (optional): fill these to receive alert notifications.
+      GF_SMTP_ENABLED: ${GF_SMTP_ENABLED:-false}
+      GF_SMTP_HOST: ${GF_SMTP_HOST:-}
+      GF_SMTP_USER: ${GF_SMTP_USER:-}
+      GF_SMTP_PASSWORD: ${GF_SMTP_PASSWORD:-}
+      GF_SMTP_FROM_ADDRESS: ${GF_SMTP_FROM_ADDRESS:-alerts@audity.app}
+      GF_SMTP_FROM_NAME: ${GF_SMTP_FROM_NAME:-Audity Grafana}
+      ALERT_EMAIL_TO: ${ALERT_EMAIL_TO:-alerts@audity.app}
+      # ── Grafana Cloud Loki (production logs) — interpolated into datasources.yml.
+      GRAFANA_CLOUD_LOKI_URL: ${GRAFANA_CLOUD_LOKI_URL:-}
+      GRAFANA_CLOUD_LOKI_USER: ${GRAFANA_CLOUD_LOKI_USER:-}
+      GRAFANA_CLOUD_LOKI_TOKEN: ${GRAFANA_CLOUD_LOKI_TOKEN:-}
+      # Verify TLS by default; set true in .env only on TLS-intercepting machines.
+      LOKI_TLS_SKIP_VERIFY: ${LOKI_TLS_SKIP_VERIFY:-false}
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
