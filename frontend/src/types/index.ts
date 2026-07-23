@@ -486,11 +486,38 @@ export interface Account {
   code: string
   name: string
   account_type: 'asset' | 'liability' | 'equity' | 'revenue' | 'expense' | 'cogs'
+  account_group?: string
+  sub_type?: string | null
+  sub_type_name?: string
   parent: string | null
+  parent_code?: string
+  parent_name?: string
   description: string
+  normal_balance?: 'debit' | 'credit' | ''
   is_active: boolean
+  allow_posting?: boolean
+  is_control_account?: boolean
+  opening_balance?: string | null
+  opening_balance_date?: string | null
+  attachment?: string | null
   is_system: boolean
   balance: string
+}
+
+export interface AccountSubType {
+  id: string
+  name: string
+  account_group: string
+  base_account_type: string
+  is_active: boolean
+  is_system: boolean
+}
+
+export interface AccountTaxonomyGroup {
+  group: string
+  statement: 'pl' | 'bs'
+  base_account_type: string
+  sub_types: { id: string; name: string; base_account_type: string }[]
 }
 
 export interface LedgerLine {
@@ -529,6 +556,17 @@ export interface JournalEntry {
   status: 'draft' | 'posted'
   created_at: string
   lines: JournalLine[]
+  total_debit?: string | number
+  total_credit?: string | number
+  created_by_name?: string
+  approval_status?: 'none' | 'pending' | 'approved' | 'rejected'
+  approved_by_name?: string
+  approved_at?: string | null
+  approval_note?: string
+  attachment?: string | null
+  signature?: string
+  signed_by_name?: string
+  signed_at?: string | null
 }
 
 export interface DepreciationEntry {

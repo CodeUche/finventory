@@ -1,7 +1,7 @@
 """Supplier model."""
 
 from django.db import models
-from apps.core.models import TenantAwareModel
+from apps.core.models import TenantAwareModel, MoneyField
 
 
 class Supplier(TenantAwareModel):
@@ -16,6 +16,8 @@ class Supplier(TenantAwareModel):
     tax_id = models.CharField(max_length=100, blank=True)
     payment_terms_days = models.PositiveSmallIntegerField(default=30)
     notes = models.TextField(blank=True)
+    # Take-on opening payable owed to this supplier at migration into Audity.
+    opening_balance = MoneyField(default=0)
     is_active = models.BooleanField(default=True)
 
     class Meta(TenantAwareModel.Meta):

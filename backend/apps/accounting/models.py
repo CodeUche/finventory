@@ -13,13 +13,88 @@ class AccountType(models.TextChoices):
     COST_OF_GOODS = 'cogs', 'Cost of Goods Sold'
 
 
+DEBIT_NORMAL_TYPES = (AccountType.ASSET, AccountType.EXPENSE, AccountType.COST_OF_GOODS)
+
+
+def normal_balance_for_type(account_type) -> str:
+    """Debit-normal for assets/expenses/COGS, credit-normal for the rest."""
+    return 'debit' if account_type in DEBIT_NORMAL_TYPES else 'credit'
+
+
+# ── Account classification taxonomy (client COA spec) ────────────────────────
+# Groups are the user-facing "Account Type" headers under two statements. Each
+# group maps to one of the six base AccountType values (which drives all
+# debit/credit-normal and statement logic) and carries a default sub-type list.
+# statement: 'pl' = Profit & Loss, 'bs' = Balance Sheet.
+ACCOUNT_GROUP_SPEC = {
+    # Profit & Loss
+    'Income':                 ('revenue',   'pl', ['Sales Income', 'Other Income']),
+    'Cost of Sales':          ('cogs',      'pl', ['Cost Of Production', 'Cost of Distribution', 'Damage & Waste']),
+    'Indirect Cost':          ('expense',   'pl', ['Sales & Marketing', 'Distribution Cost', 'Salaries & Wages']),
+    'Expenses':               ('expense',   'pl', ['Office Expenses', 'Admin Expenses', 'Finance Expenses',
+                                                   'Overhead Expenses', 'Depreciation Expenses', 'Tax Expenses']),
+    # Balance Sheet
+    'Asset':                  ('asset',     'bs', ['Accum. Depreciation', 'Current Asset', 'Other Asset', 'Fixed Asset',
+                                                   'Other Current Asset', 'Inventory', 'Receivables', 'Receivable Retainage']),
+    'Cash & Cash Equivalent': ('asset',     'bs', ['Bank', 'Cash', 'Credit Card', 'Loan', 'Mobile Money']),
+    'Liabilities':            ('liability', 'bs', ['Short Term Liabilities', 'Long Term Liabilities', 'Other Liabilities',
+                                                   'Payables', 'Payable Retainage']),
+    'Equity':                 ('equity',    'bs', ['Retained Earnings', "Equity Doesn't Close", 'Equity Get Close',
+                                                   'Take-On Suspense/Beginning Balance']),
+}
+
+ACCOUNT_GROUP_CHOICES = [(g, g) for g in ACCOUNT_GROUP_SPEC]
+
+# Reverse lookup: base account_type -> default display group (used for backfill/UI).
+DEFAULT_GROUP_FOR_TYPE = {
+    'revenue': 'Income', 'cogs': 'Cost of Sales', 'expense': 'Expenses',
+    'asset': 'Asset', 'liability': 'Liabilities', 'equity': 'Equity',
+}
+
+
+class AccountSubType(TenantAwareModel):
+    """User-manageable account sub-types (the 'Add Sub Account Type' screen).
+
+    Each sub-type belongs to a group header (e.g. 'Cash & Cash Equivalent') and
+    resolves to one of the six base AccountType values used by all ledger logic.
+    Seeded with the client's default taxonomy on org creation; users may add,
+    rename, deactivate their own.
+    """
+    name = models.CharField(max_length=100)
+    account_group = models.CharField(max_length=40, choices=ACCOUNT_GROUP_CHOICES)
+    base_account_type = models.CharField(max_length=20, choices=AccountType.choices)
+    is_active = models.BooleanField(default=True)
+    is_system = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ['account_group', 'name']
+        unique_together = [('organisation', 'account_group', 'name')]
+
+    def __str__(self):
+        return f"{self.account_group} · {self.name}"
+
+
 class Account(TenantAwareModel):
     code = models.CharField(max_length=20)
     name = models.CharField(max_length=200)
     account_type = models.CharField(max_length=20, choices=AccountType.choices)
+    # Richer classification (client COA spec). account_type stays the base
+    # source-of-truth for ledger math; group + sub_type are presentation/grouping.
+    account_group = models.CharField(max_length=40, choices=ACCOUNT_GROUP_CHOICES, blank=True)
+    sub_type = models.ForeignKey('AccountSubType', null=True, blank=True, on_delete=models.SET_NULL, related_name='accounts')
     parent = models.ForeignKey('self', null=True, blank=True, on_delete=models.SET_NULL, related_name='children')
     description = models.TextField(blank=True)
+    normal_balance = models.CharField(max_length=6, choices=[('debit', 'Debit'), ('credit', 'Credit')], blank=True)
     is_active = models.BooleanField(default=True)
+    # Control accounts (AR/AP/Inventory) accumulate from subledgers; disallow
+    # direct manual journal posting to them. Auto-posting is always exempt.
+    allow_posting = models.BooleanField(default=True)
+    is_control_account = models.BooleanField(default=False)
+    # Opening / take-on balance captured at migration into Audity.
+    opening_balance = MoneyField(null=True, blank=True)
+    opening_balance_date = models.DateField(null=True, blank=True)
+    # Supporting document attached to the account (e.g. bank statement, agreement).
+    attachment = models.FileField(upload_to='account_attachments/', null=True, blank=True)
     is_system = models.BooleanField(default=False)  # system accounts cannot be deleted
 
     class Meta:
@@ -28,6 +103,15 @@ class Account(TenantAwareModel):
 
     def __str__(self):
         return f"{self.code} - {self.name}"
+
+    @property
+    def effective_normal_balance(self) -> str:
+        return self.normal_balance or normal_balance_for_type(self.account_type)
+
+    def clean(self):
+        # Prevent an account being its own parent / trivial cycles.
+        if self.parent_id and self.parent_id == self.pk:
+            raise ValidationError("An account cannot be its own parent.")
 
     @property
     def balance(self):
@@ -53,6 +137,21 @@ class JournalEntry(TenantAwareModel):
     # Idempotency: uniquely identifies the business event that triggered this entry
     source_type = models.CharField(max_length=40, blank=True, default='')
     source_ref = models.CharField(max_length=100, blank=True, default='')
+    # Workflow approval (manual journals): draft → pending → approved/rejected.
+    PENDING = 'pending'; APPROVED = 'approved'; REJECTED = 'rejected'
+    APPROVAL_CHOICES = [
+        ('none', 'Not Required'), (PENDING, 'Pending Approval'),
+        (APPROVED, 'Approved'), (REJECTED, 'Rejected'),
+    ]
+    approval_status = models.CharField(max_length=10, choices=APPROVAL_CHOICES, default='none')
+    approved_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='journal_entries_approved')
+    approved_at = models.DateTimeField(null=True, blank=True)
+    approval_note = models.CharField(max_length=500, blank=True, default='')
+    # E-sign / manual document upload supporting the entry.
+    attachment = models.FileField(upload_to='journal_attachments/', null=True, blank=True)
+    signature = models.TextField(blank=True, default='')  # typed name or data-URI signature
+    signed_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='journal_entries_signed')
+    signed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ['-entry_date', '-created_at']
@@ -89,7 +188,11 @@ class JournalEntry(TenantAwareModel):
             original = JournalEntry.objects.filter(pk=self.pk).values('status').first()
             if original and original['status'] == 'posted':
                 update_fields = kwargs.get('update_fields')
-                ALLOWED_FIELDS = {'gl_post_status', 'gl_post_error', 'reconciled_at', 'updated_at'}
+                ALLOWED_FIELDS = {
+                    'gl_post_status', 'gl_post_error', 'reconciled_at', 'updated_at',
+                    'approval_status', 'approved_by', 'approved_at', 'approval_note',
+                    'attachment', 'signature', 'signed_by', 'signed_at', 'posted_by', 'status',
+                }
                 if update_fields:
                     forbidden = set(update_fields) - ALLOWED_FIELDS
                     if forbidden:

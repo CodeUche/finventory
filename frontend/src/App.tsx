@@ -40,6 +40,7 @@ const BillFoldersPage = React.lazy(() => import('@/pages/bills/BillFoldersPage')
 const SuppliersPage = React.lazy(() => import('@/pages/SuppliersPage'))
 const ChartOfAccountsPage = React.lazy(() => import('@/pages/accounting/ChartOfAccountsPage'))
 const JournalPage = React.lazy(() => import('@/pages/accounting/JournalPage'))
+const GeneralLedgerPage = React.lazy(() => import('@/pages/accounting/GeneralLedgerPage'))
 const AssetsPage = React.lazy(() => import('@/pages/accounting/AssetsPage'))
 const BankReconciliationPage = React.lazy(() => import('@/pages/accounting/BankReconciliationPage'))
 const GLHealthPage = React.lazy(() => import('@/pages/accounting/GLHealthPage'))
@@ -294,6 +295,7 @@ export default function App() {
         {/* Accounting */}
         <Route path="accounting/coa"             element={<ModuleRoute module="accounting"><ChartOfAccountsPage /></ModuleRoute>} />
         <Route path="accounting/journal"          element={<ModuleRoute module="accounting"><JournalPage /></ModuleRoute>} />
+        <Route path="accounting/general-ledger"   element={<ModuleRoute module="accounting"><GeneralLedgerPage /></ModuleRoute>} />
         <Route path="accounting/assets"           element={<ModuleRoute module="accounting"><AssetsPage /></ModuleRoute>} />
         <Route path="accounting/reconciliation"   element={<ModuleRoute module="accounting"><BankReconciliationPage /></ModuleRoute>} />
         <Route path="accounting/gl-health"        element={<ModuleRoute module="accounting"><GLHealthPage /></ModuleRoute>} />

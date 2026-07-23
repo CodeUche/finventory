@@ -22,6 +22,7 @@ const ROUTE_LABELS: Record<string, string> = {
   '/credits':                     'Credits',
   '/accounting/coa':              'Chart of Accounts',
   '/accounting/journal':          'Journal Entries',
+  '/accounting/general-ledger':   'General Ledger',
   '/accounting/assets':           'Fixed Assets',
   '/accounting/reconciliation':   'Bank Reconciliation',
   '/payroll/employees':           'Employees',

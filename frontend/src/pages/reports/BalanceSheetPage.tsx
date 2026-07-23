@@ -37,8 +37,10 @@ const MONTHS = [
 
 // Account code groupings for display
 const ASSET_GROUPS: { label: string; from: number; to: number }[] = [
-  { label: 'Current Assets', from: 1000, to: 1299 },
-  { label: 'Fixed Assets', from: 1300, to: 1599 },
+  // Current assets run 1000–1499 (cash, bank, AR, inventory, prepaids, VAT
+  // receivable). Fixed assets are 1500–1599; everything else is "other".
+  { label: 'Current Assets', from: 1000, to: 1499 },
+  { label: 'Fixed Assets', from: 1500, to: 1599 },
   { label: 'Other Assets', from: 1600, to: 1999 },
 ]
 const LIABILITY_GROUPS: { label: string; from: number; to: number }[] = [
@@ -149,8 +151,8 @@ export default function BalanceSheetPage() {
         .filter(a => { const c = parseInt(a.code, 10); return c >= from && c <= to })
         .reduce((s, a) => s + parseFloat(String(a.balance)), 0)
 
-    const currentAssets = sumGroup(data.assets, 1000, 1299)
-    const fixedAssets   = sumGroup(data.assets, 1300, 1599)
+    const currentAssets = sumGroup(data.assets, 1000, 1499)
+    const fixedAssets   = sumGroup(data.assets, 1500, 1599)
     const otherAssets   = sumGroup(data.assets, 1600, 1999)
 
     // Current liabilities (codes 2000–2499) for Current Ratio

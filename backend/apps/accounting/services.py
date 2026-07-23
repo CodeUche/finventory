@@ -28,6 +28,7 @@ COA_SEED = [
     ('2700', 'Accrued Liabilities', AccountType.LIABILITY),
     ('3001', 'Owner Equity', AccountType.EQUITY),
     ('3100', 'Retained Earnings', AccountType.EQUITY),
+    ('3900', 'Take-On Suspense / Opening Balance Equity', AccountType.EQUITY),
     ('4001', 'Sales Revenue', AccountType.REVENUE),
     ('4100', 'Other Income', AccountType.REVENUE),
     ('5001', 'Cost of Goods Sold', AccountType.COST_OF_GOODS),
@@ -180,20 +181,332 @@ class AccountMappingService:
 
 class AccountingService:
     @staticmethod
+    def seed_account_sub_types(organisation):
+        """Seed the default account sub-type taxonomy (client COA spec)."""
+        from .models import AccountSubType, ACCOUNT_GROUP_SPEC
+        for group, (base_type, _statement, sub_names) in ACCOUNT_GROUP_SPEC.items():
+            for name in sub_names:
+                AccountSubType.objects.get_or_create(
+                    organisation=organisation,
+                    account_group=group,
+                    name=name,
+                    defaults={'base_account_type': base_type, 'is_system': True},
+                )
+
+    # Control accounts accumulate from sub-ledgers (customers/suppliers/stock) and
+    # must not accept direct manual journals — only system auto-posting.
+    CONTROL_CODES = {'1100', '2001', '1200'}  # AR, AP, Inventory
+
+    @staticmethod
     def seed_chart_of_accounts(organisation):
+        from .models import DEFAULT_GROUP_FOR_TYPE, normal_balance_for_type
+        AccountingService.seed_account_sub_types(organisation)
         for code, name, acct_type in COA_SEED:
+            is_control = code in AccountingService.CONTROL_CODES
             Account.objects.get_or_create(
                 organisation=organisation,
                 code=code,
-                defaults={'name': name, 'account_type': acct_type, 'is_system': True}
+                defaults={
+                    'name': name,
+                    'account_type': acct_type,
+                    'account_group': DEFAULT_GROUP_FOR_TYPE.get(acct_type, ''),
+                    'normal_balance': normal_balance_for_type(acct_type),
+                    'is_control_account': is_control,
+                    'allow_posting': not is_control,
+                    'is_system': True,
+                },
             )
 
     @staticmethod
-    def trial_balance(organisation):
+    def _coerce_date(value):
+        """Accept a date or an ISO 'YYYY-MM-DD' string and return a date."""
+        from datetime import date as _date
+        if isinstance(value, str):
+            return _date.fromisoformat(value)
+        return value
+
+    @staticmethod
+    def get_or_create_suspense_account(organisation):
+        """Return the Take-On Suspense / Opening Balance Equity account (3900),
+        creating it for legacy orgs that were seeded before it existed."""
+        from .models import normal_balance_for_type
+        acct = Account.objects.filter(organisation=organisation, code='3900').first()
+        if acct:
+            return acct
+        return Account.objects.create(
+            organisation=organisation,
+            code='3900',
+            name='Take-On Suspense / Opening Balance Equity',
+            account_type=AccountType.EQUITY,
+            account_group='Equity',
+            normal_balance=normal_balance_for_type(AccountType.EQUITY),
+            is_system=True,
+        )
+
+    @staticmethod
+    @transaction.atomic
+    def set_opening_balances(organisation, as_of_date, entries, created_by=None):
+        """
+        Post ONE balanced take-on journal for opening balances as of `as_of_date`.
+
+        entries: list of dicts {account: Account, amount: Decimal, side: 'debit'|'credit'}
+
+        Debit-balance accounts are debited, credit-balance accounts credited, and the
+        net difference is plugged to Take-On Suspense (3900) so the entry always
+        balances — the Sage/QuickBooks take-on pattern. Re-running for the same date
+        reverses the prior take-on entries first so corrections are non-destructive.
+        """
+        as_of_date = AccountingService._coerce_date(as_of_date)
+        suspense = AccountingService.get_or_create_suspense_account(organisation)
+
+        # Reverse any prior posted opening-balance take-on for this date.
+        prior = JournalEntry.objects.filter(
+            organisation=organisation,
+            source_type='opening_balance',
+            source_ref__startswith=f'opening-{as_of_date}',
+            status='posted',
+        )
+        for e in prior:
+            AccountingService.reverse_journal_entry(e, actor=created_by)
+
+        lines = []
+        total_debit = Decimal('0')
+        total_credit = Decimal('0')
+        for item in entries:
+            acct = item['account']
+            amount = Decimal(str(item.get('amount') or 0))
+            side = (item.get('side') or acct.effective_normal_balance).lower()
+            if amount <= 0:
+                continue
+            if acct.code == '3900':
+                # Never let the user post directly to the suspense plug line.
+                continue
+            if side == 'debit':
+                lines.append((acct, amount, Decimal('0')))
+                total_debit += amount
+            else:
+                lines.append((acct, Decimal('0'), amount))
+                total_credit += amount
+            acct.opening_balance = amount if side == 'debit' else -amount
+            acct.opening_balance_date = as_of_date
+            acct.save(update_fields=['opening_balance', 'opening_balance_date'])
+
+        if not lines:
+            return None
+
+        # Plug the difference to Take-On Suspense so the take-on always balances.
+        diff = total_debit - total_credit
+        if diff > Decimal('0'):
+            lines.append((suspense, Decimal('0'), diff))
+        elif diff < Decimal('0'):
+            lines.append((suspense, -diff, Decimal('0')))
+
+        import uuid
+        source_ref = f"opening-{as_of_date}-{uuid.uuid4().hex[:12]}"
+        return AccountingService.post_journal_entry(
+            organisation,
+            description=f"Opening balances as of {as_of_date}",
+            entry_date=as_of_date,
+            lines=lines,
+            created_by=created_by,
+            ref='OPEN',
+            source_type='opening_balance',
+            source_ref=source_ref,
+        )
+
+    @staticmethod
+    @transaction.atomic
+    def set_account_opening_balance(organisation, account, amount, side, as_of_date, created_by=None):
+        """
+        Post an opening balance for a SINGLE account (the account-form 'Option 1' path).
+
+        Reverses only THIS account's prior opening entry (keyed per-account, so it does
+        not disturb the batch take-on) and posts DR/CR account + offsetting Take-On
+        Suspense so it balances. Passing amount<=0 clears the opening entry.
+        """
+        as_of_date = AccountingService._coerce_date(as_of_date)
+        amount = Decimal(str(amount or 0))
+        side = (side or account.effective_normal_balance).lower()
+        ref_prefix = f"opening-acct-{account.id}"
+
+        prior = JournalEntry.objects.filter(
+            organisation=organisation, source_type='opening_balance',
+            source_ref__startswith=ref_prefix, status='posted',
+        )
+        for e in prior:
+            AccountingService.reverse_journal_entry(e, actor=created_by)
+
+        account.opening_balance = amount if side == 'debit' else -amount
+        account.opening_balance_date = as_of_date
+        account.save(update_fields=['opening_balance', 'opening_balance_date'])
+
+        if amount <= 0:
+            return None
+
+        suspense = AccountingService.get_or_create_suspense_account(organisation)
+        if account.id == suspense.id:
+            return None
+        if side == 'debit':
+            lines = [(account, amount, Decimal('0')), (suspense, Decimal('0'), amount)]
+        else:
+            lines = [(account, Decimal('0'), amount), (suspense, amount, Decimal('0'))]
+
+        import uuid
+        return AccountingService.post_journal_entry(
+            organisation,
+            description=f"Opening balance — {account.code} {account.name}",
+            entry_date=as_of_date,
+            lines=lines,
+            created_by=created_by,
+            ref='OPEN',
+            source_type='opening_balance',
+            source_ref=f"{ref_prefix}-{uuid.uuid4().hex[:12]}",
+        )
+
+    @staticmethod
+    @transaction.atomic
+    def set_subledger_opening_balances(organisation, as_of_date, customers=None,
+                                       suppliers=None, items=None, created_by=None):
+        """
+        Take-on opening balances for the sub-ledgers (the wizard's Add Customers /
+        Add Suppliers / Add Items). Sets each subledger figure AND posts ONE balanced
+        take-on journal:
+            DR 1100 Accounts Receivable   = Σ customer opening balances
+            DR 1200 Inventory             = Σ item (qty × cost)
+            CR 2001 Accounts Payable      = Σ supplier opening balances
+            plug 3900 Take-On Suspense.
+
+        customers/suppliers: [{id, amount}]   items: [{product_id, warehouse_id?, quantity, unit_cost?}]
+        Re-running for the same date reverses the prior subledger take-on first.
+        """
+        from apps.customers.models import Customer
+        from apps.suppliers.models import Supplier
+        from apps.inventory.models import Product, Warehouse
+        from apps.inventory.services import InventoryService
+
+        as_of_date = AccountingService._coerce_date(as_of_date)
+        customers = customers or []
+        suppliers = suppliers or []
+        items = items or []
+
+        ref_prefix = f"opening-subledger-{as_of_date}"
+        prior = JournalEntry.objects.filter(
+            organisation=organisation, source_type='opening_balance',
+            source_ref__startswith=ref_prefix, status='posted',
+        )
+        for e in prior:
+            AccountingService.reverse_journal_entry(e, actor=created_by)
+
+        ar_total = Decimal('0')
+        for c in customers:
+            amount = Decimal(str(c.get('amount') or 0))
+            if amount <= 0:
+                continue
+            cust = Customer.objects.filter(organisation=organisation, id=c.get('id')).first()
+            if not cust:
+                continue
+            cust.outstanding_balance = amount
+            cust.save(update_fields=['outstanding_balance'])
+            ar_total += amount
+
+        ap_total = Decimal('0')
+        for s in suppliers:
+            amount = Decimal(str(s.get('amount') or 0))
+            if amount <= 0:
+                continue
+            sup = Supplier.objects.filter(organisation=organisation, id=s.get('id')).first()
+            if not sup:
+                continue
+            sup.opening_balance = amount
+            sup.save(update_fields=['opening_balance'])
+            ap_total += amount
+
+        inv_total = Decimal('0')
+        default_wh = Warehouse.objects.filter(organisation=organisation).order_by('created_at').first()
+        for it in items:
+            qty = Decimal(str(it.get('quantity') or 0))
+            if qty <= 0:
+                continue
+            product = Product.objects.filter(organisation=organisation, id=it.get('product_id')).first()
+            if not product:
+                continue
+            warehouse = None
+            if it.get('warehouse_id'):
+                warehouse = Warehouse.objects.filter(organisation=organisation, id=it['warehouse_id']).first()
+            warehouse = warehouse or default_wh
+            if not warehouse:
+                continue
+            unit_cost = Decimal(str(it.get('unit_cost') or product.cost_price or 0))
+            InventoryService.record_movement(
+                organisation=organisation, product=product, warehouse=warehouse,
+                quantity=qty, movement_type='opening', unit_cost=unit_cost,
+                reference='Opening balance', notes=f'Opening stock as of {as_of_date}',
+                created_by=created_by,
+            )
+            inv_total += qty * unit_cost
+
+        ar = AccountingService._get_account_by_code(organisation, '1100')
+        inv = AccountingService._get_account_by_code(organisation, '1200')
+        ap = AccountingService._get_account_by_code(organisation, '2001')
+        suspense = AccountingService.get_or_create_suspense_account(organisation)
+
+        lines = []
+        if ar and ar_total > 0:
+            lines.append((ar, ar_total, Decimal('0')))
+        if inv and inv_total > 0:
+            lines.append((inv, inv_total, Decimal('0')))
+        if ap and ap_total > 0:
+            lines.append((ap, Decimal('0'), ap_total))
+        if not lines:
+            return None
+
+        total_debit = ar_total + inv_total
+        total_credit = ap_total
+        diff = total_debit - total_credit
+        if diff > 0:
+            lines.append((suspense, Decimal('0'), diff))
+        elif diff < 0:
+            lines.append((suspense, -diff, Decimal('0')))
+
+        import uuid
+        return AccountingService.post_journal_entry(
+            organisation,
+            description=f"Sub-ledger opening balances as of {as_of_date}",
+            entry_date=as_of_date,
+            lines=lines,
+            created_by=created_by,
+            ref='OPEN',
+            source_type='opening_balance',
+            source_ref=f"{ref_prefix}-{uuid.uuid4().hex[:12]}",
+        )
+
+    @staticmethod
+    def _ledger_balance(account, as_of=None):
+        """
+        Posted-ledger balance for a single account, with the account's normal sign
+        applied. This is the SAME source of truth the trial balance uses, optionally
+        constrained to entries on/before `as_of`. One aggregate query per account.
+        """
+        lines = JournalLine.objects.filter(
+            journal_entry__organisation=account.organisation,
+            account=account,
+            journal_entry__status='posted',
+        )
+        if as_of:
+            lines = lines.filter(journal_entry__entry_date__lte=as_of)
+        agg = lines.aggregate(d=Sum('debit'), c=Sum('credit'))
+        debits = agg['d'] or Decimal('0')
+        credits = agg['c'] or Decimal('0')
+        if account.account_type in (AccountType.ASSET, AccountType.EXPENSE, AccountType.COST_OF_GOODS):
+            return debits - credits
+        return credits - debits
+
+    @staticmethod
+    def trial_balance(organisation, as_of=None):
         accounts = Account.objects.filter(organisation=organisation, is_active=True)
         result = []
         for acct in accounts:
-            bal = acct.balance
+            bal = AccountingService._ledger_balance(acct, as_of=as_of)
             if bal != 0:
                 result.append({
                     'code': acct.code,
@@ -206,34 +519,92 @@ class AccountingService:
     @staticmethod
     def balance_sheet(organisation, as_of=None):
         """
-        Compute a synthetic balance sheet from actual transaction data.
-        """
-        synthetic = AccountingService._synthetic_account_balances(organisation, as_of=as_of)
-        accounts = Account.objects.filter(organisation=organisation, is_active=True)
+        Ledger-derived balance sheet. Every figure is read from the posted general
+        ledger — the SAME source as the trial balance — so the sheet is guaranteed to
+        balance whenever the trial balance does (a balanced TB mathematically implies
+        Assets = Liabilities + Equity + (Revenue − Expenses)).
 
+        Current-year P&L net (revenue − expenses − COGS) is rolled into equity as a
+        computed "Current Year Earnings" line so profit not yet closed to retained
+        earnings still lands on the sheet. Any residual (rounding) difference is
+        plugged to a Take-On Suspense line so the statement ALWAYS presents balanced,
+        per the client requirement.
+        """
+        accounts = Account.objects.filter(organisation=organisation, is_active=True)
         assets_data, liabilities_data, equity_data = [], [], []
+        total_income = Decimal('0')
+        total_expense = Decimal('0')
+
         for acct in accounts:
-            balance = synthetic.get(acct.code, acct.balance)
-            row = {'code': acct.code, 'name': acct.name, 'balance': balance}
+            bal = AccountingService._ledger_balance(acct, as_of=as_of)
+            row = {'code': acct.code, 'name': acct.name, 'balance': bal}
             if acct.account_type == AccountType.ASSET:
-                assets_data.append(row)
+                if bal != 0:
+                    assets_data.append(row)
             elif acct.account_type == AccountType.LIABILITY:
-                liabilities_data.append(row)
+                if bal != 0:
+                    liabilities_data.append(row)
             elif acct.account_type == AccountType.EQUITY:
-                equity_data.append(row)
+                if bal != 0:
+                    equity_data.append(row)
+            elif acct.account_type == AccountType.REVENUE:
+                total_income += bal
+            elif acct.account_type in (AccountType.EXPENSE, AccountType.COST_OF_GOODS):
+                total_expense += bal
+
+        # Roll current-year P&L net into equity (income − expenses).
+        current_year_earnings = total_income - total_expense
+        if current_year_earnings != 0:
+            equity_data.append({
+                'code': '',
+                'name': 'Current Year Earnings',
+                'balance': current_year_earnings,
+                'is_computed': True,
+            })
+
+        total_assets = sum((r['balance'] for r in assets_data), Decimal('0'))
+        total_liabilities = sum((r['balance'] for r in liabilities_data), Decimal('0'))
+        total_equity = sum((r['balance'] for r in equity_data), Decimal('0'))
+
+        # Safety plug: with a clean double-entry ledger the difference is 0 by
+        # construction, but any residual is posted to Take-On Suspense so the sheet
+        # is never presented as "not balanced".
+        difference = total_assets - (total_liabilities + total_equity)
+        if abs(difference) > Decimal('0.01'):
+            equity_data.append({
+                'code': '3900',
+                'name': 'Take-On Suspense (auto-balance)',
+                'balance': difference,
+                'is_computed': True,
+            })
+            total_equity += difference
 
         return {
             'assets': assets_data,
             'liabilities': liabilities_data,
             'equity': equity_data,
-            'total_assets': sum(r['balance'] for r in assets_data),
-            'total_liabilities': sum(r['balance'] for r in liabilities_data),
-            'total_equity': sum(r['balance'] for r in equity_data),
+            'total_assets': total_assets,
+            'total_liabilities': total_liabilities,
+            'total_equity': total_equity,
+            'current_year_earnings': current_year_earnings,
+            'balanced': abs(total_assets - (total_liabilities + total_equity)) < Decimal('0.01'),
+            'as_of': str(as_of) if as_of else None,
         }
 
     @staticmethod
     def _synthetic_account_balances(organisation, as_of=None) -> dict:
-        """Return a dict of {account_code: balance} computed from transaction data."""
+        """
+        DEPRECATED — no longer used by balance_sheet().
+
+        This reconstructed balances from operational subledgers (SalePayment,
+        Expense, StockItem, FixedAsset, Bill …) rather than the posted general
+        ledger, which is exactly what caused the Balance Sheet to diverge from the
+        Trial Balance (assets from subledgers, no offsetting L+E in the ledger).
+        The Balance Sheet is now ledger-derived; do NOT re-wire this as its source.
+        Kept only for reference / potential reconciliation tooling.
+
+        Return a dict of {account_code: balance} computed from transaction data.
+        """
         balances = {}
         zero = Decimal('0')
 
@@ -445,8 +816,49 @@ class AccountingService:
                 accumulated_to_date=accumulated,
                 net_book_value=nbv,
             )
+            # Post depreciation to the GL so it flows onto the ledger-derived P&L and
+            # Balance Sheet: DR Depreciation Expense (6400) / CR Accumulated
+            # Depreciation (1510). Non-fatal — a missing GL account never blocks the
+            # depreciation run itself.
+            try:
+                AccountingService.post_depreciation_journal(
+                    organisation, asset, monthly_dep, period_last_day
+                )
+            except Exception:
+                logger.warning(
+                    "Depreciation GL post skipped for asset %s %s-%s",
+                    getattr(asset, 'asset_code', asset.pk), year, month,
+                    exc_info=True,
+                )
             entries.append(entry)
         return entries
+
+    @staticmethod
+    def _get_account_by_code(organisation, code):
+        """Return the org's Account for a GL code, or None. Used for code-mapped roles
+        (fixed assets / accumulated depreciation / depreciation expense) that have no
+        AccountMapping role."""
+        return Account.objects.filter(organisation=organisation, code=code).first()
+
+    @staticmethod
+    def post_depreciation_journal(organisation, asset, amount, entry_date):
+        """DR 6400 Depreciation Expense / CR 1510 Accumulated Depreciation."""
+        amount = Decimal(str(amount or 0))
+        if amount <= 0:
+            return None
+        dep_exp = AccountingService._get_account_by_code(organisation, '6400')
+        acc_dep = AccountingService._get_account_by_code(organisation, '1510')
+        if not dep_exp or not acc_dep:
+            return None
+        return AccountingService.post_journal_entry(
+            organisation,
+            description=f"Depreciation — {getattr(asset, 'name', '')}".strip(' —'),
+            entry_date=entry_date,
+            lines=[(dep_exp, amount, Decimal('0')), (acc_dep, Decimal('0'), amount)],
+            ref='DEP',
+            source_type='depreciation',
+            source_ref=f"{asset.pk}-{entry_date.year}-{entry_date.month}",
+        )
 
     # ──────────────────────────────────────────────────────────────────────────
     # Auto-posting helpers

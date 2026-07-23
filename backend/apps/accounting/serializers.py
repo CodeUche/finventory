@@ -1,14 +1,54 @@
 from rest_framework import serializers
-from .models import Account, JournalEntry, JournalLine, FixedAsset, DepreciationEntry, FinancialPeriod, BankReconciliation, BankReconciliationLine, AIReconMatch, AccountMapping
+from .models import (
+    Account, AccountSubType, JournalEntry, JournalLine, FixedAsset, DepreciationEntry,
+    FinancialPeriod, BankReconciliation, BankReconciliationLine, AIReconMatch, AccountMapping,
+    normal_balance_for_type,
+)
+
+
+class AccountSubTypeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AccountSubType
+        fields = ['id', 'name', 'account_group', 'base_account_type', 'is_active', 'is_system']
+        read_only_fields = ['id', 'is_system']
 
 
 class AccountSerializer(serializers.ModelSerializer):
     balance = serializers.DecimalField(max_digits=20, decimal_places=2, read_only=True)
+    sub_type_name = serializers.CharField(source='sub_type.name', read_only=True)
+    parent_code = serializers.CharField(source='parent.code', read_only=True)
+    parent_name = serializers.CharField(source='parent.name', read_only=True)
 
     class Meta:
         model = Account
-        fields = ['id', 'code', 'name', 'account_type', 'parent', 'description', 'is_active', 'is_system', 'balance']
-        read_only_fields = ['id', 'is_system', 'balance']
+        fields = [
+            'id', 'code', 'name', 'account_type', 'account_group', 'sub_type', 'sub_type_name',
+            'parent', 'parent_code', 'parent_name', 'description', 'normal_balance',
+            'is_active', 'allow_posting', 'is_control_account',
+            'opening_balance', 'opening_balance_date', 'attachment', 'is_system', 'balance',
+        ]
+        read_only_fields = ['id', 'is_system', 'balance', 'sub_type_name', 'parent_code', 'parent_name']
+
+    def validate(self, attrs):
+        # Sub-type must belong to the selected group (server-side enforcement so
+        # imports can't create inconsistent (group, sub_type) pairs).
+        sub_type = attrs.get('sub_type') or getattr(self.instance, 'sub_type', None)
+        group = attrs.get('account_group') or getattr(self.instance, 'account_group', '')
+        if sub_type and group and sub_type.account_group != group:
+            raise serializers.ValidationError(
+                {'sub_type': f"Sub-type '{sub_type.name}' does not belong to group '{group}'."}
+            )
+        # Prevent self-parenting cycles.
+        parent = attrs.get('parent')
+        if parent and self.instance and parent.pk == self.instance.pk:
+            raise serializers.ValidationError({'parent': 'An account cannot be its own parent.'})
+        return attrs
+
+    def create(self, validated_data):
+        # Default normal_balance from account_type when the client omits it.
+        if not validated_data.get('normal_balance'):
+            validated_data['normal_balance'] = normal_balance_for_type(validated_data.get('account_type'))
+        return super().create(validated_data)
 
 
 class JournalLineSerializer(serializers.ModelSerializer):
@@ -23,11 +63,30 @@ class JournalLineSerializer(serializers.ModelSerializer):
 
 class JournalEntrySerializer(serializers.ModelSerializer):
     lines = JournalLineSerializer(many=True, read_only=True)
+    total_debit = serializers.SerializerMethodField()
+    total_credit = serializers.SerializerMethodField()
+    created_by_name = serializers.SerializerMethodField()
+    approved_by_name = serializers.CharField(source='approved_by.get_full_name', read_only=True)
+    signed_by_name = serializers.CharField(source='signed_by.get_full_name', read_only=True)
 
     class Meta:
         model = JournalEntry
-        fields = ['id', 'reference', 'description', 'entry_date', 'status', 'created_at', 'lines']
+        fields = [
+            'id', 'reference', 'description', 'entry_date', 'status', 'created_at', 'lines',
+            'total_debit', 'total_credit', 'created_by_name',
+            'approval_status', 'approved_by_name', 'approved_at', 'approval_note',
+            'attachment', 'signature', 'signed_by_name', 'signed_at',
+        ]
         read_only_fields = ['id', 'reference', 'created_at']
+
+    def get_total_debit(self, obj):
+        return sum((l.debit for l in obj.lines.all()), 0)
+
+    def get_total_credit(self, obj):
+        return sum((l.credit for l in obj.lines.all()), 0)
+
+    def get_created_by_name(self, obj):
+        return obj.created_by.get_full_name() if obj.created_by else ''
 
 
 class CreateJournalEntrySerializer(serializers.Serializer):

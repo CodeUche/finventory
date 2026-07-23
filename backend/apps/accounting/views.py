@@ -1,6 +1,7 @@
 import re
 from decimal import Decimal
 from datetime import date
+from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
@@ -10,11 +11,15 @@ from apps.core.mixins import TenantFilterMixin
 from apps.core.permissions import IsAccountant, IsOwnerOrAdmin, plan_requires
 
 _PlanAccounting = plan_requires('accounting')
-from .models import Account, JournalEntry, JournalLine, FixedAsset, FinancialPeriod, BankReconciliation, BankReconciliationLine, AIReconMatch, AccountMapping
+from .models import (
+    Account, AccountSubType, JournalEntry, JournalLine, FixedAsset, FinancialPeriod,
+    BankReconciliation, BankReconciliationLine, AIReconMatch, AccountMapping, ACCOUNT_GROUP_SPEC,
+)
 from django.db import transaction
 from .serializers import (
-    AccountSerializer, JournalEntrySerializer, CreateJournalEntrySerializer, UpdateJournalEntrySerializer,
-    FixedAssetSerializer, FinancialPeriodSerializer, BankReconciliationSerializer, BankReconciliationLineSerializer,
+    AccountSerializer, AccountSubTypeSerializer, JournalEntrySerializer, CreateJournalEntrySerializer,
+    UpdateJournalEntrySerializer, FixedAssetSerializer, FinancialPeriodSerializer,
+    BankReconciliationSerializer, BankReconciliationLineSerializer,
     AIReconMatchSerializer, AccountMappingSerializer, MAPPING_ROLES,
 )
 from .services import AccountingService, AccountMappingService, safe_post_gl
@@ -35,9 +40,184 @@ class AccountViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         instance.delete()
 
     @action(detail=False, methods=['get'])
+    def general_ledger(self, request):
+        """
+        GET /accounting/accounts/general_ledger/?date_from=&date_to=
+        Consolidated GL: every account with a non-zero opening balance or activity in
+        the range, each with its posted lines and a running balance. Powers the
+        'General Ledger' report.
+        """
+        from django.db.models import Sum
+        org = self._get_organisation()
+        df = request.query_params.get('date_from')
+        dt = request.query_params.get('date_to')
+        date_from = date.fromisoformat(df) if df else None
+        date_to = date.fromisoformat(dt) if dt else None
+
+        accounts = Account.objects.filter(organisation=org).order_by('code')
+        result = []
+        for account in accounts:
+            is_debit_normal = account.account_type in ['asset', 'expense', 'cogs']
+            opening = Decimal('0')
+            if date_from:
+                pre = JournalLine.objects.filter(
+                    journal_entry__organisation=org, journal_entry__status='posted',
+                    account=account, journal_entry__entry_date__lt=date_from,
+                ).aggregate(d=Sum('debit'), c=Sum('credit'))
+                pd, pc = pre['d'] or Decimal('0'), pre['c'] or Decimal('0')
+                opening = (pd - pc) if is_debit_normal else (pc - pd)
+
+            qs = JournalLine.objects.filter(
+                journal_entry__organisation=org, journal_entry__status='posted', account=account,
+            ).select_related('journal_entry').order_by('journal_entry__entry_date', 'journal_entry__created_at')
+            if date_from:
+                qs = qs.filter(journal_entry__entry_date__gte=date_from)
+            if date_to:
+                qs = qs.filter(journal_entry__entry_date__lte=date_to)
+
+            running = opening
+            lines = []
+            for line in qs:
+                delta = (line.debit - line.credit) if is_debit_normal else (line.credit - line.debit)
+                running += delta
+                lines.append({
+                    'date': line.journal_entry.entry_date,
+                    'reference': line.journal_entry.reference,
+                    'description': line.description or line.journal_entry.description,
+                    'debit': line.debit, 'credit': line.credit, 'balance': running,
+                })
+            if opening == 0 and not lines:
+                continue  # skip dormant accounts
+            result.append({
+                'code': account.code, 'name': account.name, 'account_type': account.account_type,
+                'opening_balance': opening, 'closing_balance': running, 'lines': lines,
+            })
+        return Response({'accounts': result, 'date_from': df, 'date_to': dt})
+
+    @action(detail=False, methods=['post'])
+    def opening_balances(self, request):
+        """
+        POST /accounting/accounts/opening_balances/
+        Body: { "as_of_date": "YYYY-MM-DD",
+                "entries": [ { "account": "<uuid>", "amount": "10000", "side": "debit" }, ... ] }
+
+        Posts one balanced take-on journal, plugging the difference to Take-On
+        Suspense (3900). Re-posting for the same date reverses the prior take-on.
+        """
+        org = self._get_organisation()
+        as_of_str = request.data.get('as_of_date')
+        if not as_of_str:
+            return Response({'error': 'as_of_date is required'}, status=400)
+        try:
+            as_of = date.fromisoformat(as_of_str)
+        except (ValueError, TypeError):
+            return Response({'error': 'as_of_date must be YYYY-MM-DD'}, status=400)
+
+        raw_entries = request.data.get('entries') or []
+        entries = []
+        for item in raw_entries:
+            acct_id = item.get('account')
+            if not acct_id:
+                continue
+            try:
+                acct = Account.objects.get(id=acct_id, organisation=org)
+            except Account.DoesNotExist:
+                return Response({'error': f'Account {acct_id} not found'}, status=400)
+            entries.append({
+                'account': acct,
+                'amount': item.get('amount', 0),
+                'side': item.get('side'),
+            })
+        if not entries:
+            return Response({'error': 'At least one opening balance entry is required'}, status=400)
+
+        try:
+            entry = AccountingService.set_opening_balances(org, as_of, entries, created_by=request.user)
+        except Exception as e:
+            return Response({'error': f'[{type(e).__name__}] {e}'}, status=422)
+        if entry is None:
+            return Response({'error': 'No non-zero opening balances provided'}, status=400)
+        return Response(JournalEntrySerializer(entry).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'])
+    def set_opening_balance(self, request, pk=None):
+        """Post/replace a single account's opening balance (account-form Option 1)."""
+        account = self.get_object()
+        org = self._get_organisation()
+        as_of_str = request.data.get('as_of_date')
+        try:
+            as_of = date.fromisoformat(as_of_str) if as_of_str else date.today()
+        except (ValueError, TypeError):
+            return Response({'error': 'as_of_date must be YYYY-MM-DD'}, status=400)
+        try:
+            AccountingService.set_account_opening_balance(
+                org, account, request.data.get('amount', 0),
+                request.data.get('side'), as_of, created_by=request.user,
+            )
+        except Exception as e:
+            return Response({'error': f'[{type(e).__name__}] {e}'}, status=422)
+        return Response(AccountSerializer(account).data)
+
+    @action(detail=False, methods=['post'])
+    def subledger_opening_balances(self, request):
+        """
+        POST /accounting/accounts/subledger_opening_balances/
+        Body: { as_of_date, customers:[{id,amount}], suppliers:[{id,amount}],
+                items:[{product_id, warehouse_id?, quantity, unit_cost?}] }
+        """
+        org = self._get_organisation()
+        as_of_str = request.data.get('as_of_date')
+        try:
+            as_of = date.fromisoformat(as_of_str) if as_of_str else date.today()
+        except (ValueError, TypeError):
+            return Response({'error': 'as_of_date must be YYYY-MM-DD'}, status=400)
+        try:
+            entry = AccountingService.set_subledger_opening_balances(
+                org, as_of,
+                customers=request.data.get('customers'),
+                suppliers=request.data.get('suppliers'),
+                items=request.data.get('items'),
+                created_by=request.user,
+            )
+        except Exception as e:
+            return Response({'error': f'[{type(e).__name__}] {e}'}, status=422)
+        if entry is None:
+            return Response({'error': 'No non-zero sub-ledger opening balances provided'}, status=400)
+        return Response(JournalEntrySerializer(entry).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=['get'])
+    def taxonomy(self, request):
+        """Return the account-type headers, their statement + base type and the
+        org's active sub-types, so the COA form can drive dependent dropdowns."""
+        org = self._get_organisation()
+        subs = AccountSubType.objects.filter(organisation=org, is_active=True)
+        by_group = {}
+        for s in subs:
+            by_group.setdefault(s.account_group, []).append(
+                {'id': str(s.id), 'name': s.name, 'base_account_type': s.base_account_type}
+            )
+        groups = []
+        for group, (base_type, statement, _names) in ACCOUNT_GROUP_SPEC.items():
+            groups.append({
+                'group': group,
+                'statement': statement,   # 'pl' or 'bs'
+                'base_account_type': base_type,
+                'sub_types': by_group.get(group, []),
+            })
+        return Response({'groups': groups})
+
+    @action(detail=False, methods=['get'])
     def trial_balance(self, request):
         org = self._get_organisation()
-        data = AccountingService.trial_balance(org)
+        as_of = None
+        as_of_str = request.query_params.get('as_of')
+        if as_of_str:
+            try:
+                from datetime import date
+                as_of = date.fromisoformat(as_of_str)
+            except ValueError:
+                pass
+        data = AccountingService.trial_balance(org, as_of=as_of)
         return Response(data)
 
     @action(detail=False, methods=['get'])
@@ -154,13 +334,58 @@ class AccountViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         })
 
 
+class AccountSubTypeViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+    """CRUD for the 'Add Sub Account Type' management screen."""
+    serializer_class = AccountSubTypeSerializer
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
+
+    def get_queryset(self):
+        org = self._get_organisation()
+        qs = AccountSubType.objects.filter(organisation=org)
+        group = self.request.query_params.get('account_group')
+        if group:
+            qs = qs.filter(account_group=group)
+        return qs
+
+    def perform_create(self, serializer):
+        serializer.save(organisation=self._get_organisation())
+
+    def perform_destroy(self, instance):
+        if instance.is_system:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("System sub-types cannot be deleted; deactivate instead.")
+        if instance.accounts.exists():
+            from rest_framework.exceptions import ValidationError as DRFValidationError
+            raise DRFValidationError("Sub-type is in use by accounts; deactivate instead of deleting.")
+        instance.delete()
+
+
 class JournalEntryViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     serializer_class = JournalEntrySerializer
     permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
 
     def get_queryset(self):
         org = self._get_organisation()
-        return JournalEntry.objects.filter(organisation=org).prefetch_related('lines__account').order_by('-entry_date', '-created_at')
+        qs = JournalEntry.objects.filter(organisation=org).prefetch_related('lines__account')
+        params = self.request.query_params
+        df, dt = params.get('date_from'), params.get('date_to')
+        if df:
+            try:
+                qs = qs.filter(entry_date__gte=date.fromisoformat(df))
+            except ValueError:
+                pass
+        if dt:
+            try:
+                qs = qs.filter(entry_date__lte=date.fromisoformat(dt))
+            except ValueError:
+                pass
+        st = params.get('status')
+        if st:
+            qs = qs.filter(status=st)
+        appr = params.get('approval_status')
+        if appr:
+            qs = qs.filter(approval_status=appr)
+        return qs.order_by('-entry_date', '-created_at')
 
     def _build_lines(self, org, lines_data):
         """Validate balance and return JournalLine instances (unsaved)."""
@@ -171,6 +396,15 @@ class JournalEntryViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         instances = []
         for line in lines_data:
             acct = Account.objects.get(id=line['account'], organisation=org)
+            # Control-account lock: block DIRECT manual/import posting to accounts
+            # flagged allow_posting=False (AR/AP/Inventory control). System
+            # auto-posting goes through AccountingService.post_journal_entry and is
+            # NOT affected by this path, so sales/bills keep posting normally.
+            if not acct.allow_posting:
+                raise ValueError(
+                    f"Account {acct.code} — {acct.name} is a control account and does not "
+                    f"accept direct journal entries. Post to its sub-ledger instead."
+                )
             instances.append(JournalLine(
                 account=acct,
                 debit=Decimal(str(line.get('debit', '0'))),
@@ -288,6 +522,102 @@ class JournalEntryViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                 )
 
         return Response(JournalEntrySerializer(reversal).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=['post'])
+    def import_entries(self, request):
+        """
+        Bulk-import draft journal entries.
+        Body: { "entries": [ { "description", "entry_date",
+                               "lines": [ {"account", "debit", "credit", "description"} ] } ] }
+        Each entry is validated (balanced, no control accounts) and created as a
+        DRAFT for review — never auto-posted. Returns per-row results.
+        """
+        org = self._get_organisation()
+        rows = request.data.get('entries') or []
+        if not rows:
+            return Response({'error': 'No entries provided'}, status=400)
+        created, errors = [], []
+        for idx, row in enumerate(rows):
+            lines = row.get('lines') or []
+            if len(lines) < 2:
+                errors.append({'row': idx, 'error': 'At least two lines required'})
+                continue
+            try:
+                line_instances = self._build_lines(org, lines)
+            except ValueError as e:
+                errors.append({'row': idx, 'error': str(e)})
+                continue
+            except Account.DoesNotExist:
+                errors.append({'row': idx, 'error': 'One or more accounts not found'})
+                continue
+            try:
+                with transaction.atomic():
+                    entry = JournalEntry.objects.create(
+                        organisation=org,
+                        description=row.get('description', 'Imported entry'),
+                        entry_date=row.get('entry_date') or date.today(),
+                        created_by=request.user,
+                    )
+                    for li in line_instances:
+                        li.journal_entry = entry
+                        li.save()
+                created.append(str(entry.id))
+            except Exception as e:
+                errors.append({'row': idx, 'error': f'[{type(e).__name__}] {e}'})
+        return Response(
+            {'created': len(created), 'created_ids': created, 'errors': errors},
+            status=status.HTTP_201_CREATED if created else 400,
+        )
+
+    @action(detail=True, methods=['post'])
+    def submit_for_approval(self, request, pk=None):
+        entry = self.get_object()
+        if entry.status == JournalEntry.POSTED:
+            return Response({'error': 'Posted entries need no approval.'}, status=400)
+        entry.approval_status = JournalEntry.PENDING
+        entry.save(update_fields=['approval_status'])
+        return Response(JournalEntrySerializer(entry).data)
+
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        """Approve a pending journal and (optionally) post it in one step."""
+        entry = self.get_object()
+        entry.approval_status = JournalEntry.APPROVED
+        entry.approved_by = request.user
+        entry.approved_at = timezone.now()
+        entry.approval_note = request.data.get('note', '')
+        entry.save(update_fields=['approval_status', 'approved_by', 'approved_at', 'approval_note'])
+        if request.data.get('post') and entry.status != JournalEntry.POSTED:
+            entry.status = JournalEntry.POSTED
+            entry.posted_by = request.user
+            entry.save(update_fields=['status', 'posted_by'])
+        return Response(JournalEntrySerializer(entry).data)
+
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        entry = self.get_object()
+        if entry.status == JournalEntry.POSTED:
+            return Response({'error': 'Posted entries cannot be rejected. Reverse instead.'}, status=400)
+        entry.approval_status = JournalEntry.REJECTED
+        entry.approved_by = request.user
+        entry.approved_at = timezone.now()
+        entry.approval_note = request.data.get('note', '')
+        entry.save(update_fields=['approval_status', 'approved_by', 'approved_at', 'approval_note'])
+        return Response(JournalEntrySerializer(entry).data)
+
+    @action(detail=True, methods=['post'])
+    def sign(self, request, pk=None):
+        """Attach an e-signature (typed name or data-URI) and/or a document upload."""
+        entry = self.get_object()
+        signature = request.data.get('signature', '')
+        if signature:
+            entry.signature = signature
+            entry.signed_by = request.user
+            entry.signed_at = timezone.now()
+        if 'attachment' in request.FILES:
+            entry.attachment = request.FILES['attachment']
+        entry.save(update_fields=['signature', 'signed_by', 'signed_at', 'attachment'])
+        return Response(JournalEntrySerializer(entry).data)
 
 
 class FixedAssetViewSet(TenantFilterMixin, viewsets.ModelViewSet):

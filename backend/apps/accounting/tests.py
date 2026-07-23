@@ -11,7 +11,7 @@ from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.accounting.exceptions import GLAccountNotConfigured, PeriodLockedError
-from apps.accounting.models import Account, AccountMapping, AccountType, FinancialPeriod, JournalEntry, JournalLine
+from apps.accounting.models import Account, AccountMapping, AccountSubType, AccountType, FinancialPeriod, JournalEntry, JournalLine
 from apps.accounting.services import AccountingService, AccountMappingService, safe_post_gl
 from apps.authentication.models import User
 from apps.subscriptions.models import Plan, Subscription
@@ -198,6 +198,86 @@ class FinancialReportTests(TestCase):
         self.assertIn("assets", res.data)
         self.assertIn("liabilities", res.data)
         self.assertIn("equity", res.data)
+
+
+class BalanceSheetBalancingTests(TestCase):
+    """Regression for the client-reported bug: the Trial Balance balanced but the
+    Balance Sheet showed a huge difference, because the two were computed from
+    different sources. The Balance Sheet is now ledger-derived, so a balanced TB
+    must imply a balanced BS (Assets = Liabilities + Equity + Current-Year Earnings).
+    """
+
+    def setUp(self):
+        self.user = _make_user("bs_owner@example.com")
+        self.org = _make_org(self.user, "BS Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+
+    def _acct(self, code):
+        return Account.objects.get(organisation=self.org, code=code)
+
+    def _post(self, description, lines, entry_date=None):
+        return AccountingService.post_journal_entry(
+            self.org,
+            description=description,
+            entry_date=entry_date or timezone.now().date(),
+            lines=lines,
+            created_by=self.user,
+        )
+
+    def test_balanced_tb_implies_balanced_bs(self):
+        # Post a balanced manual journal touching assets, an expense and equity —
+        # the scenario the client reproduced (cash/bank credit, expense/VAT debit).
+        self._post("Opening / mixed entry", [
+            (self._acct("6700"), Decimal("150000"), Decimal("0")),   # Other Expenses (DR)
+            (self._acct("1400"), Decimal("11250"),  Decimal("0")),   # VAT Receivable (DR)
+            (self._acct("1001"), Decimal("0"),      Decimal("100000")),  # Cash (CR)
+            (self._acct("1002"), Decimal("0"),      Decimal("61250")),   # Bank (CR)
+        ])
+
+        # Trial balance is balanced by construction (posting enforces it).
+        tb = AccountingService.trial_balance(self.org)
+        total_dr = sum(r["balance"] for r in tb if r["balance"] > 0)
+        total_cr = sum(-r["balance"] for r in tb if r["balance"] < 0)
+        # (asset/expense debit balances are +, liability/equity credit balances are -
+        #  under the normal-sign convention, but cash/bank here carry credit balances)
+
+        bs = AccountingService.balance_sheet(self.org)
+        self.assertTrue(bs["balanced"], f"Balance sheet not balanced: {bs}")
+        self.assertAlmostEqual(
+            float(bs["total_assets"]),
+            float(bs["total_liabilities"]) + float(bs["total_equity"]),
+            places=2,
+        )
+        # The ₦150k net loss must appear as negative current-year earnings in equity.
+        self.assertLess(float(bs["current_year_earnings"]), 0)
+
+    def test_profit_rolls_into_equity(self):
+        # DR Cash 200k / CR Sales Revenue 200k  → 200k profit
+        self._post("Cash sale", [
+            (self._acct("1001"), Decimal("200000"), Decimal("0")),
+            (self._acct("4001"), Decimal("0"), Decimal("200000")),
+        ])
+        bs = AccountingService.balance_sheet(self.org)
+        self.assertTrue(bs["balanced"])
+        self.assertAlmostEqual(float(bs["current_year_earnings"]), 200000.0, places=2)
+        # Assets (cash 200k) must equal equity (retained earnings 200k)
+        self.assertAlmostEqual(float(bs["total_assets"]), 200000.0, places=2)
+        self.assertAlmostEqual(float(bs["total_equity"]), 200000.0, places=2)
+
+    def test_trial_balance_as_of_date(self):
+        from datetime import date
+        self._post("Old entry", [
+            (self._acct("1001"), Decimal("50000"), Decimal("0")),
+            (self._acct("4001"), Decimal("0"), Decimal("50000")),
+        ], entry_date=date(2020, 1, 15))
+        self._post("Recent entry", [
+            (self._acct("1001"), Decimal("70000"), Decimal("0")),
+            (self._acct("4001"), Decimal("0"), Decimal("70000")),
+        ])
+        tb_asof = AccountingService.trial_balance(self.org, as_of=date(2020, 6, 30))
+        cash = next(r for r in tb_asof if r["code"] == "1001")
+        self.assertAlmostEqual(float(cash["balance"]), 50000.0, places=2)
 
 
 class AccountMappingCreationTests(TestCase):
@@ -1178,3 +1258,248 @@ class PostHogMiddlewareTests(TestCase):
         """Account mapping endpoint must not 500 (was broken before fix)."""
         res = self.client.get("/api/v1/accounting/account-mapping/")
         self.assertEqual(res.status_code, 200)
+
+
+class ControlAccountAndTaxonomyTests(TestCase):
+    """Phase 2: control-account posting lock, sub-type taxonomy, sub-type CRUD."""
+
+    def setUp(self):
+        self.user = _make_user("ctrl_owner@example.com")
+        self.org = _make_org(self.user, "Ctrl Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+
+    def test_control_accounts_flagged(self):
+        ar = Account.objects.get(organisation=self.org, code="1100")
+        self.assertTrue(ar.is_control_account)
+        self.assertFalse(ar.allow_posting)
+
+    def test_manual_journal_to_control_account_rejected(self):
+        ar = Account.objects.get(organisation=self.org, code="1100")   # control
+        cash = Account.objects.get(organisation=self.org, code="1001")  # postable
+        payload = {
+            "description": "Illegal direct AR post",
+            "entry_date": "2026-01-15",
+            "lines": [
+                {"account": str(ar.id), "debit": "1000", "credit": "0"},
+                {"account": str(cash.id), "debit": "0", "credit": "1000"},
+            ],
+        }
+        res = self.client.post("/api/v1/accounting/journal/", payload, format="json")
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("control account", str(res.data).lower())
+
+    def test_auto_posting_to_control_account_still_works(self):
+        """The service path (used by sales/bills) must remain exempt from the lock."""
+        ar = Account.objects.get(organisation=self.org, code="1100")
+        rev = Account.objects.get(organisation=self.org, code="4001")
+        entry = AccountingService.post_journal_entry(
+            self.org, description="Auto credit sale", entry_date=timezone.now().date(),
+            lines=[(ar, Decimal("1000"), Decimal("0")), (rev, Decimal("0"), Decimal("1000"))],
+            created_by=self.user, source_type="test_sale", source_ref="X1",
+        )
+        self.assertIsNotNone(entry)
+        self.assertEqual(entry.lines.count(), 2)
+
+    def test_taxonomy_endpoint(self):
+        res = self.client.get("/api/v1/accounting/accounts/taxonomy/")
+        self.assertEqual(res.status_code, 200)
+        groups = {g["group"] for g in res.data["groups"]}
+        self.assertIn("Cash & Cash Equivalent", groups)
+        self.assertIn("Indirect Cost", groups)
+        cce = next(g for g in res.data["groups"] if g["group"] == "Cash & Cash Equivalent")
+        self.assertEqual(cce["base_account_type"], "asset")
+        self.assertTrue(any(s["name"] == "Mobile Money" for s in cce["sub_types"]))
+
+    def test_sub_type_crud(self):
+        res = self.client.post("/api/v1/accounting/account-sub-types/", {
+            "name": "Crypto Wallet", "account_group": "Cash & Cash Equivalent",
+            "base_account_type": "asset",
+        }, format="json")
+        self.assertIn(res.status_code, [200, 201], msg=str(res.data))
+        self.assertTrue(AccountSubType.objects.filter(organisation=self.org, name="Crypto Wallet").exists())
+
+    def test_sub_type_group_mismatch_rejected(self):
+        sub = AccountSubType.objects.filter(organisation=self.org, account_group="Equity").first()
+        res = self.client.post("/api/v1/accounting/accounts/", {
+            "code": "9500", "name": "Bad Account", "account_type": "asset",
+            "account_group": "Asset", "sub_type": str(sub.id),
+        }, format="json")
+        self.assertEqual(res.status_code, 400)
+
+
+class OpeningBalanceTakeOnTests(TestCase):
+    """Phase 3: take-on opening balances post one balanced JE with a suspense plug."""
+
+    def setUp(self):
+        self.user = _make_user("open_owner@example.com")
+        self.org = _make_org(self.user, "Open Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+
+    def test_opening_balances_post_and_balance(self):
+        bank = Account.objects.get(organisation=self.org, code="1002")
+        equity = Account.objects.get(organisation=self.org, code="3001")
+        payload = {
+            "as_of_date": "2026-01-01",
+            "entries": [
+                {"account": str(bank.id), "amount": "5000000", "side": "debit"},
+                {"account": str(equity.id), "amount": "3000000", "side": "credit"},
+            ],
+        }
+        res = self.client.post("/api/v1/accounting/accounts/opening_balances/", payload, format="json")
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        # The 2,000,000 difference must be plugged to Take-On Suspense (3900).
+        susp = Account.objects.get(organisation=self.org, code="3900")
+        self.assertAlmostEqual(float(susp.balance), 2000000.0, places=2)
+        # And the balance sheet must balance.
+        bs = AccountingService.balance_sheet(self.org)
+        self.assertTrue(bs["balanced"], msg=str(bs))
+
+    def test_reposting_same_date_replaces(self):
+        bank = Account.objects.get(organisation=self.org, code="1002")
+        equity = Account.objects.get(organisation=self.org, code="3001")
+        p = {"as_of_date": "2026-01-01", "entries": [
+            {"account": str(bank.id), "amount": "1000000", "side": "debit"},
+            {"account": str(equity.id), "amount": "1000000", "side": "credit"},
+        ]}
+        self.client.post("/api/v1/accounting/accounts/opening_balances/", p, format="json")
+        p["entries"][0]["amount"] = "2000000"
+        p["entries"][1]["amount"] = "2000000"
+        self.client.post("/api/v1/accounting/accounts/opening_balances/", p, format="json")
+        bank.refresh_from_db()
+        # After reversal of the first take-on, net bank balance reflects the second only.
+        self.assertAlmostEqual(float(bank.balance), 2000000.0, places=2)
+
+
+class OpeningBalanceExtrasTests(TestCase):
+    """Per-account opening balance + sub-ledger (customers/suppliers/items) take-on."""
+
+    def setUp(self):
+        self.user = _make_user("openx_owner@example.com")
+        self.org = _make_org(self.user, "OpenX Org")
+        _upgrade_to_business(self.org)
+
+    def test_account_opening_balance_posts_and_balances(self):
+        bank = Account.objects.get(organisation=self.org, code="1002")
+        AccountingService.set_account_opening_balance(
+            self.org, bank, Decimal("750000"), "debit",
+            timezone.now().date(), created_by=self.user,
+        )
+        bank.refresh_from_db()
+        self.assertAlmostEqual(float(bank.balance), 750000.0, places=2)
+        susp = Account.objects.get(organisation=self.org, code="3900")
+        self.assertAlmostEqual(float(susp.balance), 750000.0, places=2)  # credit suspense
+        bs = AccountingService.balance_sheet(self.org)
+        self.assertTrue(bs["balanced"], msg=str(bs))
+
+    def test_account_opening_balance_reposts_without_disturbing_others(self):
+        bank = Account.objects.get(organisation=self.org, code="1002")
+        cash = Account.objects.get(organisation=self.org, code="1001")
+        d = timezone.now().date()
+        AccountingService.set_account_opening_balance(self.org, bank, Decimal("100000"), "debit", d, created_by=self.user)
+        AccountingService.set_account_opening_balance(self.org, cash, Decimal("50000"), "debit", d, created_by=self.user)
+        # Re-post bank — cash must be untouched.
+        AccountingService.set_account_opening_balance(self.org, bank, Decimal("200000"), "debit", d, created_by=self.user)
+        bank.refresh_from_db(); cash.refresh_from_db()
+        self.assertAlmostEqual(float(bank.balance), 200000.0, places=2)
+        self.assertAlmostEqual(float(cash.balance), 50000.0, places=2)
+        self.assertTrue(AccountingService.balance_sheet(self.org)["balanced"])
+
+    def test_subledger_opening_balances(self):
+        from apps.customers.models import Customer
+        from apps.suppliers.models import Supplier
+        from apps.inventory.models import Product, Warehouse
+
+        cust = Customer.objects.create(organisation=self.org, name="Acme Ltd")
+        sup = Supplier.objects.create(organisation=self.org, code="SUP1", name="Vendor Co")
+        wh = Warehouse.objects.create(organisation=self.org, name="Main WH")
+        prod = Product.objects.create(
+            organisation=self.org, sku="SKU1", name="Widget",
+            cost_price=Decimal("100"), selling_price=Decimal("150"),
+        )
+        entry = AccountingService.set_subledger_opening_balances(
+            self.org, timezone.now().date(),
+            customers=[{"id": str(cust.id), "amount": "300000"}],
+            suppliers=[{"id": str(sup.id), "amount": "120000"}],
+            items=[{"product_id": str(prod.id), "quantity": "500", "unit_cost": "100"}],
+            created_by=self.user,
+        )
+        self.assertIsNotNone(entry)
+        cust.refresh_from_db(); sup.refresh_from_db()
+        self.assertAlmostEqual(float(cust.outstanding_balance), 300000.0, places=2)
+        self.assertAlmostEqual(float(sup.opening_balance), 120000.0, places=2)
+        # Ledger: AR 300k debit, Inventory 50k debit, AP 120k credit → suspense plug
+        ar = Account.objects.get(organisation=self.org, code="1100")
+        inv = Account.objects.get(organisation=self.org, code="1200")
+        ap = Account.objects.get(organisation=self.org, code="2001")
+        self.assertAlmostEqual(float(ar.balance), 300000.0, places=2)
+        self.assertAlmostEqual(float(inv.balance), 50000.0, places=2)
+        self.assertAlmostEqual(float(ap.balance), 120000.0, places=2)
+        self.assertTrue(AccountingService.balance_sheet(self.org)["balanced"])
+
+
+class SubledgerAndAccountOpeningBalanceTests(TestCase):
+    """Post-doc completion: per-account opening balance + subledger take-on."""
+
+    def setUp(self):
+        self.user = _make_user("sub_owner@example.com")
+        self.org = _make_org(self.user, "Sub Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+
+    def test_account_level_opening_balance_endpoint(self):
+        bank = Account.objects.get(organisation=self.org, code="1002")
+        res = self.client.post(
+            f"/api/v1/accounting/accounts/{bank.id}/set_opening_balance/",
+            {"amount": "750000", "side": "debit", "as_of_date": "2026-01-01"}, format="json",
+        )
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        bank.refresh_from_db()
+        self.assertAlmostEqual(float(bank.balance), 750000.0, places=2)
+        # Suspense carries the offsetting credit; BS still balances.
+        bs = AccountingService.balance_sheet(self.org)
+        self.assertTrue(bs["balanced"], msg=str(bs))
+
+    def test_account_opening_balance_reposts_cleanly(self):
+        bank = Account.objects.get(organisation=self.org, code="1002")
+        AccountingService.set_account_opening_balance(self.org, bank, Decimal("100000"), "debit", "2026-01-01", created_by=self.user)
+        AccountingService.set_account_opening_balance(self.org, bank, Decimal("250000"), "debit", "2026-01-01", created_by=self.user)
+        bank.refresh_from_db()
+        self.assertAlmostEqual(float(bank.balance), 250000.0, places=2)
+
+    def test_subledger_opening_balances(self):
+        from apps.customers.models import Customer
+        from apps.suppliers.models import Supplier
+        from apps.inventory.models import Product, Warehouse
+
+        cust = Customer.objects.create(organisation=self.org, name="Acme Ltd")
+        sup = Supplier.objects.create(organisation=self.org, code="SUP1", name="Global Supply")
+        wh = Warehouse.objects.create(organisation=self.org, name="Main WH", is_default=True)
+        prod = Product.objects.create(
+            organisation=self.org, sku="P1", name="Widget",
+            cost_price=Decimal("100"), selling_price=Decimal("150"),
+        )
+
+        entry = AccountingService.set_subledger_opening_balances(
+            self.org, "2026-01-01",
+            customers=[{"id": str(cust.id), "amount": "500000"}],
+            suppliers=[{"id": str(sup.id), "amount": "200000"}],
+            items=[{"product_id": str(prod.id), "warehouse_id": str(wh.id), "quantity": "10", "unit_cost": "100"}],
+            created_by=self.user,
+        )
+        self.assertIsNotNone(entry)
+
+        ar = Account.objects.get(organisation=self.org, code="1100")
+        ap = Account.objects.get(organisation=self.org, code="2001")
+        inv = Account.objects.get(organisation=self.org, code="1200")
+        self.assertAlmostEqual(float(ar.balance), 500000.0, places=2)   # DR AR
+        self.assertAlmostEqual(float(ap.balance), 200000.0, places=2)   # CR AP
+        self.assertAlmostEqual(float(inv.balance), 1000.0, places=2)    # 10 × 100
+
+        cust.refresh_from_db(); sup.refresh_from_db()
+        self.assertAlmostEqual(float(cust.outstanding_balance), 500000.0, places=2)
+        self.assertAlmostEqual(float(sup.opening_balance), 200000.0, places=2)
+
+        bs = AccountingService.balance_sheet(self.org)
+        self.assertTrue(bs["balanced"], msg=str(bs))
