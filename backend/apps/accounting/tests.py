@@ -655,6 +655,61 @@ class GLHealthReconciliationTests(TestCase):
         self.assertIn("subledgers", res.data["reconciliations"])
 
 
+class YearEndCloseTests(TestCase):
+    """Step 3(e) — year-end close zeroes P&L and crystallises Retained Earnings."""
+
+    def setUp(self):
+        self.user = _make_user("yec_owner@example.com")
+        self.org = _make_org(self.user, "YEC Org")
+        _upgrade_to_business(self.org)
+
+    def _acct(self, code):
+        return Account.objects.get(organisation=self.org, code=code)
+
+    def _post_pl_activity(self):
+        from datetime import date
+        bank, rev, exp = self._acct('1002'), self._acct('4001'), self._acct('6100')
+        AccountingService.post_journal_entry(
+            self.org, "Rev", date(2026, 3, 1),
+            [(bank, Decimal('100000'), Decimal('0')), (rev, Decimal('0'), Decimal('100000'))],
+            self.user, ref='T1')
+        AccountingService.post_journal_entry(
+            self.org, "Exp", date(2026, 4, 1),
+            [(exp, Decimal('30000'), Decimal('0')), (bank, Decimal('0'), Decimal('30000'))],
+            self.user, ref='T2')
+
+    def test_close_moves_pl_to_retained_earnings(self):
+        from datetime import date
+        self._post_pl_activity()
+        re_before = AccountingService._ledger_balance(self._acct('3100'))
+        result = AccountingService.close_year(self.org, 2026, created_by=self.user)
+        self.assertIsNotNone(result)
+        self.assertEqual(result['net_profit'], Decimal('70000'))
+        ye = date(2026, 12, 31)
+        # P&L accounts zeroed as of year-end (ledger balance incl. the closing entry).
+        self.assertEqual(AccountingService._ledger_balance(self._acct('4001'), as_of=ye), Decimal('0'))
+        self.assertEqual(AccountingService._ledger_balance(self._acct('6100'), as_of=ye), Decimal('0'))
+        # Retained Earnings up by net profit.
+        re_after = AccountingService._ledger_balance(self._acct('3100'), as_of=ye)
+        self.assertEqual(re_after - re_before, Decimal('70000'))
+
+    def test_close_is_idempotent(self):
+        from datetime import date
+        self._post_pl_activity()
+        AccountingService.close_year(self.org, 2026, created_by=self.user)
+        AccountingService.close_year(self.org, 2026, created_by=self.user)
+        # RE holds the profit exactly once, not doubled.
+        re = AccountingService._ledger_balance(self._acct('3100'), as_of=date(2026, 12, 31))
+        self.assertEqual(re, Decimal('70000'))
+
+    def test_endpoint_closes_year(self):
+        client = _auth_client(self.user, self.org)
+        self._post_pl_activity()
+        res = client.post("/api/v1/accounting/year-end-close/", {"fiscal_year": 2026}, format="json")
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        self.assertEqual(float(res.data['net_profit']), 70000.0)
+
+
 class JournalEntryIdempotencyTests(TestCase):
     def setUp(self):
         self.user = _make_user("idem_owner@example.com")
@@ -1421,11 +1476,12 @@ class StrictGLModeTests(TestCase):
         self.org.refresh_from_db()
         self.assertTrue(self.org.strict_gl_mode)
 
-    def test_strict_mode_false_by_default(self):
-        """New organisations must have strict_gl_mode=False."""
+    def test_strict_mode_on_by_default(self):
+        """New organisations default to strict_gl_mode=True — they are seeded with a
+        full COA and auto-filled mapping, so strict mode is satisfied out of the box."""
         new_user = _make_user("strict_new@example.com")
         new_org = _make_org(new_user, "Strict New Org")
-        self.assertFalse(new_org.strict_gl_mode)
+        self.assertTrue(new_org.strict_gl_mode)
 
     def test_check_strict_gl_with_complete_mapping_passes(self):
         """check_strict_gl_mode should not raise when all required roles are mapped."""

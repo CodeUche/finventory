@@ -1627,6 +1627,94 @@ class AccountingService:
         }
 
     @staticmethod
+    @transaction.atomic
+    def close_year(organisation, fiscal_year, created_by=None):
+        """Post a year-end closing entry that zeroes the P&L accounts and crystallises
+        the net result into Retained Earnings (3100) — IFRS/GAAP year-end close.
+
+        Non-destructive: re-running for the same year reverses the prior close first.
+        P&L account balances are computed EXCLUDING any year-end-close entries, so the
+        gross operating result is used regardless of prior closes/reversals.
+
+        The P&L *report* reads source documents, so it is unaffected. The balance sheet
+        reads the GL, so after closing its 'Current Year Earnings' line drops to zero and
+        Retained Earnings rises by the same amount (no double count).
+        """
+        import uuid
+        from datetime import date as _date
+        zero = Decimal('0')
+        year_end = _date(int(fiscal_year), 12, 31)
+        # Unique per-attempt source_ref (post_journal_entry dedupes by exact source_ref,
+        # so re-closing must NOT reuse the same ref) + prefix match to find prior closes.
+        ref_prefix = f'year-end-close-{fiscal_year}'
+        source_ref = f'{ref_prefix}-{uuid.uuid4().hex[:12]}'
+
+        prior = JournalEntry.objects.filter(
+            organisation=organisation, source_type='year_end_close',
+            source_ref__startswith=ref_prefix, status='posted',
+        )
+        for e in prior:
+            AccountingService.reverse_journal_entry(e, actor=created_by)
+
+        re_acct = AccountingService._get_account_by_code(organisation, '3100')
+        if re_acct is None:
+            raise ValueError("Retained Earnings account (3100) not found.")
+
+        # Gross operating result must ignore BOTH prior closing entries AND their
+        # reversals, so re-closing (which reverses the old close) stays idempotent.
+        close_ids = {
+            str(i) for i in JournalEntry.objects.filter(
+                organisation=organisation, source_type='year_end_close'
+            ).values_list('id', flat=True)
+        }
+
+        def _gross_balance(acct):
+            q = JournalLine.objects.filter(
+                journal_entry__organisation=organisation, account=acct,
+                journal_entry__status='posted',
+                journal_entry__entry_date__lte=year_end,
+            ).exclude(journal_entry__source_type='year_end_close').exclude(
+                Q(journal_entry__source_type='reversal',
+                  journal_entry__source_ref__in=close_ids)
+            )
+            agg = q.aggregate(d=Sum('debit'), c=Sum('credit'))
+            d = agg['d'] or zero
+            c = agg['c'] or zero
+            return (c - d) if acct.account_type == AccountType.REVENUE else (d - c)
+
+        pl_accounts = Account.objects.filter(
+            organisation=organisation, is_active=True,
+            account_type__in=[AccountType.REVENUE, AccountType.EXPENSE, AccountType.COST_OF_GOODS],
+        )
+        lines = []
+        net = zero
+        for acct in pl_accounts:
+            bal = _gross_balance(acct)
+            if bal == 0:
+                continue
+            if acct.account_type == AccountType.REVENUE:
+                lines.append((acct, bal, zero))   # DR revenue to zero its credit balance
+                net += bal
+            else:
+                lines.append((acct, zero, bal))   # CR expense/COGS to zero its debit balance
+                net -= bal
+
+        if not lines:
+            return None
+
+        if net > 0:
+            lines.append((re_acct, zero, net))    # profit → CR Retained Earnings
+        else:
+            lines.append((re_acct, -net, zero))   # loss → DR Retained Earnings
+
+        entry = AccountingService.post_journal_entry(
+            organisation, f"Year-end close {fiscal_year}", year_end,
+            lines, created_by,
+            ref=f'YEC-{fiscal_year}', source_type='year_end_close', source_ref=source_ref,
+        )
+        return {'entry': entry, 'net_profit': net, 'fiscal_year': int(fiscal_year)}
+
+    @staticmethod
     def retry_gl_post(organisation, model_name: str, object_id: str, user=None):
         """Retry a failed GL post for a given model/id."""
         from .exceptions import GLAccountNotConfigured

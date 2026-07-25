@@ -1567,6 +1567,43 @@ class BeginningBalancesSummaryView(APIView):
         return Response(CapitalisationService.beginning_balances_summary(org))
 
 
+class YearEndCloseView(APIView):
+    """POST /accounting/year-end-close/  {fiscal_year} — close a fiscal year: zero the
+    P&L accounts and crystallise the net result into Retained Earnings."""
+    permission_classes = [IsAuthenticated, IsOwnerOrAdmin, _PlanAccounting]
+
+    def _get_org(self, request):
+        org_id = request.META.get('HTTP_X_ORGANISATION_ID')
+        if not org_id:
+            return None
+        from apps.tenancy.models import Organisation
+        try:
+            return Organisation.objects.get(id=org_id)
+        except Exception:
+            return None
+
+    def post(self, request):
+        from django.core.exceptions import PermissionDenied as _PermissionDenied
+        org = self._get_org(request)
+        if not org:
+            return Response({'error': 'Organisation not found'}, status=400)
+        fiscal_year = request.data.get('fiscal_year')
+        if not fiscal_year:
+            return Response({'error': 'fiscal_year is required'}, status=400)
+        try:
+            result = AccountingService.close_year(org, int(fiscal_year), created_by=request.user)
+        except (ValueError, _PermissionDenied) as e:
+            return Response({'error': str(e)}, status=422)
+        if result is None:
+            return Response({'message': 'Nothing to close — no P&L activity for this year.',
+                             'net_profit': '0'})
+        return Response({
+            'message': f"Year {result['fiscal_year']} closed to Retained Earnings.",
+            'net_profit': str(result['net_profit']),
+            'journal_entry_id': str(result['entry'].id),
+        }, status=201)
+
+
 class GLHealthView(APIView):
     """GET /accounting/gl-health/ — list recent GL failures with retry info."""
     permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]

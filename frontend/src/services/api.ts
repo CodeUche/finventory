@@ -1415,6 +1415,7 @@ export const accountingApi = {
   createPeriod: (data: object) => api.post('/accounting/periods/', data),
   lockPeriod: (id: string) => api.post(`/accounting/periods/${id}/lock/`),
   unlockPeriod: (id: string, reason: string) => api.post(`/accounting/periods/${id}/unlock/`, { reason }),
+  closeYear: (fiscalYear: number) => api.post('/accounting/year-end-close/', { fiscal_year: fiscalYear }),
   // Bank Reconciliation
   reconciliations: () => api.get('/accounting/reconciliations/'),
   createReconciliation: (data: object) => api.post('/accounting/reconciliations/', data),

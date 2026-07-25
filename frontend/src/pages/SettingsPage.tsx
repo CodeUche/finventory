@@ -732,6 +732,28 @@ export default function SettingsPage() {
     }
   }
 
+  const [closingYear, setClosingYear] = useState(false)
+  const handleCloseYear = async () => {
+    const year = new Date().getFullYear()
+    const ok = await confirmDialog(
+      `Close the ${year} financial year? This posts a closing entry that zeroes the ` +
+      `Profit & Loss accounts and moves the net result to Retained Earnings. It can be ` +
+      `re-run safely if you post more ${year} transactions later.`,
+      { title: `Close year ${year}`, confirmText: 'Close year' },
+    )
+    if (!ok) return
+    setClosingYear(true)
+    try {
+      const { data } = await accountingApi.closeYear(year)
+      toast.success(data?.message ?? `Year ${year} closed`)
+    } catch (err) {
+      const apiErr = (err as { response?: { data?: { error?: unknown } } })?.response?.data?.error
+      toast.error(typeof apiErr === 'string' ? apiErr : 'Failed to close the year')
+    } finally {
+      setClosingYear(false)
+    }
+  }
+
   const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 
   const handleCreateSubaccount = async (e: React.FormEvent) => {
@@ -1132,9 +1154,14 @@ export default function SettingsPage() {
               <p className="text-slate-400 text-xs mt-0.5">Lock periods to prevent new transactions from being posted to closed months</p>
             </div>
             {isOwner && (
-              <button onClick={createPeriod} className="btn-primary text-sm">
-                + Create Current Period
-              </button>
+              <div className="flex items-center gap-2">
+                <button onClick={handleCloseYear} disabled={closingYear} className="btn-secondary text-sm">
+                  {closingYear ? 'Closing…' : 'Close Financial Year'}
+                </button>
+                <button onClick={createPeriod} className="btn-primary text-sm">
+                  + Create Current Period
+                </button>
+              </div>
             )}
           </div>
 
