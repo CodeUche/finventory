@@ -1564,7 +1564,67 @@ class AccountingService:
             'payroll', 'run_number', 'created_at',
         )
 
-        return {'summary': summary, 'failures': failures}
+        return {
+            'summary': summary,
+            'failures': failures,
+            'reconciliations': AccountingService.gl_health_reconciliations(organisation),
+        }
+
+    @staticmethod
+    def gl_health_reconciliations(organisation) -> dict:
+        """Prove the control accounts tie to their subledgers, and surface the
+        PRE-PLUG imbalance (the Take-On Suspense balance) that the always-balancing
+        balance sheet would otherwise mask. This is the real 'is the ledger broken?'
+        check — a green balance sheet can still hide a plugged imbalance here."""
+        from apps.customers.models import Customer
+        from apps.bills.models import Bill
+        zero = Decimal('0')
+
+        suspense = Account.objects.filter(organisation=organisation, code='3900').first()
+        suspense_balance = AccountingService._ledger_balance(suspense) if suspense else zero
+
+        def _recon(name, control_acct, subledger_total):
+            control = AccountingService._ledger_balance(control_acct) if control_acct else zero
+            variance = control - subledger_total
+            return {
+                'name': name,
+                'control': control,
+                'subledger': subledger_total,
+                'variance': variance,
+                'reconciled': abs(variance) < Decimal('0.01'),
+            }
+
+        ar_acct = AccountingService._mapped_or_code(organisation, 'accounts_receivable', '1100')
+        ap_acct = AccountingService._mapped_or_code(organisation, 'accounts_payable', '2001')
+        inv_acct = AccountingService._mapped_or_code(organisation, 'inventory_account', '1200')
+
+        ar_sub = Customer.objects.filter(organisation=organisation).aggregate(
+            t=Sum('outstanding_balance'))['t'] or zero
+        ap_sub = Bill.objects.filter(organisation=organisation).aggregate(
+            t=Sum('amount_due'))['t'] or zero
+        try:
+            from apps.inventory.services import InventoryService
+            inv_sub = sum(
+                (getattr(i, 'total_value', zero) or zero)
+                for i in InventoryService.get_stock_valuation(organisation)
+            ) or zero
+        except Exception:
+            inv_sub = zero
+
+        subledgers = [
+            _recon('Accounts Receivable', ar_acct, Decimal(str(ar_sub))),
+            _recon('Accounts Payable', ap_acct, Decimal(str(ap_sub))),
+            _recon('Inventory', inv_acct, Decimal(str(inv_sub))),
+        ]
+        return {
+            'pre_plug_imbalance': suspense_balance,   # the real break the auto-plug hides
+            'is_balanced': abs(suspense_balance) < Decimal('0.01'),
+            'subledgers': subledgers,
+            'all_reconciled': (
+                all(s['reconciled'] for s in subledgers)
+                and abs(suspense_balance) < Decimal('0.01')
+            ),
+        }
 
     @staticmethod
     def retry_gl_post(organisation, model_name: str, object_id: str, user=None):

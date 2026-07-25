@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { RefreshCw, CheckCircle, XCircle, AlertTriangle, Clock, RotateCcw } from 'lucide-react'
 import { accountingApi } from '@/services/api'
+import { formatCurrency } from '@/lib/utils'
 import toast from 'react-hot-toast'
 
 interface GLSummary {
@@ -19,9 +20,23 @@ interface GLFailure {
   amount: string
 }
 
+interface SubledgerRecon {
+  name: string
+  control: number
+  subledger: number
+  variance: number
+  reconciled: boolean
+}
+interface GLReconciliations {
+  pre_plug_imbalance: number
+  is_balanced: boolean
+  subledgers: SubledgerRecon[]
+  all_reconciled: boolean
+}
 interface GLHealth {
   summary: GLSummary
   failures: GLFailure[]
+  reconciliations?: GLReconciliations
 }
 
 const STATUS_META: Record<string, { label: string; icon: React.ElementType; color: string; bg: string; border: string }> = {
@@ -152,6 +167,53 @@ export default function GLHealthPage() {
             />
           </div>
           <p className="text-xs text-slate-400 mt-2">{summary.posted} of {total} entries successfully posted to the GL</p>
+        </div>
+      )}
+
+      {/* Ledger integrity — pre-plug imbalance + subledger↔control reconciliations.
+          A balanced Balance Sheet can still hide a plugged imbalance, so surface it here. */}
+      {data?.reconciliations && (
+        <div className="rounded-xl bg-surface-800 border border-surface-700 overflow-hidden mb-4">
+          <div className="px-4 py-3 border-b border-surface-700 flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-medium text-white">Ledger Integrity</h2>
+              <p className="text-xs text-slate-400 mt-0.5">Control accounts vs. their subledgers, and the pre-plug imbalance</p>
+            </div>
+            <span className={`text-xs px-2 py-1 rounded ${data.reconciliations.all_reconciled ? 'bg-green-500/15 text-green-400 border border-green-500/30' : 'bg-red-500/15 text-red-400 border border-red-500/30'}`}>
+              {data.reconciliations.all_reconciled ? 'All reconciled' : 'Discrepancies found'}
+            </span>
+          </div>
+          <div className="px-4 py-3">
+            {!data.reconciliations.is_balanced && (
+              <div className="mb-3 text-xs px-3 py-2 rounded bg-red-500/10 border border-red-500/30 text-red-300">
+                Pre-plug imbalance (Take-On Suspense): <strong>{formatCurrency(data.reconciliations.pre_plug_imbalance)}</strong> — the ledger does not truly balance; the balance sheet is auto-plugging this to suspense.
+              </div>
+            )}
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-xs text-slate-400 text-left border-b border-surface-700">
+                    <th className="py-1.5 pr-2">Control account</th>
+                    <th className="py-1.5 px-2 text-right">GL balance</th>
+                    <th className="py-1.5 px-2 text-right">Subledger</th>
+                    <th className="py-1.5 px-2 text-right">Variance</th>
+                    <th className="py-1.5 pl-2 text-right">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.reconciliations.subledgers.map((s) => (
+                    <tr key={s.name} className="border-b border-surface-700/50 last:border-0">
+                      <td className="py-1.5 pr-2 text-slate-200">{s.name}</td>
+                      <td className="py-1.5 px-2 text-right text-slate-300">{formatCurrency(s.control)}</td>
+                      <td className="py-1.5 px-2 text-right text-slate-300">{formatCurrency(s.subledger)}</td>
+                      <td className={`py-1.5 px-2 text-right ${s.reconciled ? 'text-slate-400' : 'text-red-400 font-semibold'}`}>{formatCurrency(s.variance)}</td>
+                      <td className="py-1.5 pl-2 text-right">{s.reconciled ? <CheckCircle size={15} className="inline text-green-500" /> : <XCircle size={15} className="inline text-red-500" />}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       )}
 

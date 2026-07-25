@@ -612,6 +612,49 @@ class PeriodAuditSafeUnlockTests(TestCase):
         ).exists())
 
 
+class GLHealthReconciliationTests(TestCase):
+    """Step 3(c) — GL Health surfaces the pre-plug imbalance + subledger↔control recons."""
+
+    def setUp(self):
+        self.user = _make_user("glhealth_owner@example.com")
+        self.org = _make_org(self.user, "GLHealth Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+
+    def test_reconciliations_shape_and_balanced_when_empty(self):
+        rec = AccountingService.gl_health_reconciliations(self.org)
+        for key in ("pre_plug_imbalance", "is_balanced", "subledgers", "all_reconciled"):
+            self.assertIn(key, rec)
+        names = [s["name"] for s in rec["subledgers"]]
+        self.assertEqual(names, ["Accounts Receivable", "Accounts Payable", "Inventory"])
+        for s in rec["subledgers"]:
+            for k in ("control", "subledger", "variance", "reconciled"):
+                self.assertIn(k, s)
+        # Nothing posted → balanced and reconciled.
+        self.assertTrue(rec["is_balanced"])
+        self.assertTrue(rec["all_reconciled"])
+
+    def test_pre_plug_imbalance_surfaced_after_one_sided_takeon(self):
+        from datetime import date
+        bank = Account.objects.filter(organisation=self.org, account_type="asset").first()
+        AccountingService.set_opening_balances(
+            self.org, date(2026, 1, 1),
+            entries=[{"account": bank, "amount": Decimal("250000.00"), "side": "debit"}],
+            created_by=self.user,
+        )
+        rec = AccountingService.gl_health_reconciliations(self.org)
+        # Suspense now carries the plug → not balanced, not all-reconciled.
+        self.assertFalse(rec["is_balanced"])
+        self.assertFalse(rec["all_reconciled"])
+        self.assertNotEqual(rec["pre_plug_imbalance"], Decimal("0"))
+
+    def test_gl_health_endpoint_includes_reconciliations(self):
+        res = self.client.get("/api/v1/accounting/gl-health/")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.assertIn("reconciliations", res.data)
+        self.assertIn("subledgers", res.data["reconciliations"])
+
+
 class JournalEntryIdempotencyTests(TestCase):
     def setUp(self):
         self.user = _make_user("idem_owner@example.com")
