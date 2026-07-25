@@ -1194,6 +1194,9 @@ export const supplierApi = {
 }
 
 export const reportApi = {
+  // Unified report engine (registry-backed): catalog + dispatch by key.
+  catalog: () => api.get('/reports/catalog/'),
+  run: (key: string, params?: object) => api.get(`/reports/r/${key}/`, { params }),
   pnl: (params: object) => api.get('/reports/pnl/', { params }),
   sales: (params: object) => api.get('/reports/sales/', { params }),
   topProducts: (params: object) => api.get('/reports/top-products/', { params }),

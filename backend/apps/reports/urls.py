@@ -20,9 +20,13 @@ from .views import (
     TopCustomersView,
     TopProductsView,
     VATSummaryView,
+    ReportCatalogView,
+    ReportDispatchView,
 )
 
 urlpatterns = [
+    path("catalog/", ReportCatalogView.as_view(), name="report-catalog"),
+    path("r/<str:key>/", ReportDispatchView.as_view(), name="report-dispatch"),
     path("sales/", SalesSummaryView.as_view(), name="report-sales"),
     path("top-products/", TopProductsView.as_view(), name="report-top-products"),
     path("top-customers/", TopCustomersView.as_view(), name="report-top-customers"),
