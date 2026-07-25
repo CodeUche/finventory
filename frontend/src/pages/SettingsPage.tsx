@@ -707,8 +707,27 @@ export default function SettingsPage() {
         await accountingApi.unlockPeriod(period.id, reason)
         toast.success(`Period ${label} unlocked`)
       } else {
-        await accountingApi.lockPeriod(period.id)
-        toast.success(`Period ${label} locked`)
+        try {
+          await accountingApi.lockPeriod(period.id)
+          toast.success(`Period ${label} locked`)
+        } catch (lockErr) {
+          // The close checklist gates the lock — offer to force it if not ready.
+          const resp = (lockErr as { response?: { status?: number; data?: { checklist?: { checks?: { label: string; passed: boolean; detail?: string }[] } } } })?.response
+          const checks = resp?.data?.checklist?.checks
+          if (resp?.status === 400 && checks) {
+            const failing = checks.filter((c) => !c.passed)
+              .map((c) => `• ${c.label}${c.detail ? ` — ${c.detail}` : ''}`).join('\n')
+            const force = await confirmDialog(
+              `Period ${label} isn't ready to close:\n\n${failing}\n\nLock it anyway? (This is recorded in the audit trail.)`,
+              { title: 'Period not ready', confirmText: 'Force lock', danger: true },
+            )
+            if (!force) { setLockingPeriod(null); return }
+            await accountingApi.lockPeriod(period.id, true)
+            toast.success(`Period ${label} locked (forced)`)
+          } else {
+            throw lockErr
+          }
+        }
       }
       const { data } = await accountingApi.periods()
       setPeriods(Array.isArray(data) ? data : data.results ?? [])

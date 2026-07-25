@@ -710,6 +710,53 @@ class YearEndCloseTests(TestCase):
         self.assertEqual(float(res.data['net_profit']), 70000.0)
 
 
+class PeriodCloseChecklistTests(TestCase):
+    """Step 7 — month-end checklist gates the period lock."""
+
+    def setUp(self):
+        self.user = _make_user("close_owner@example.com")
+        self.org = _make_org(self.user, "Close Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+        self.period = FinancialPeriod.objects.create(organisation=self.org, year=2026, month=5)
+
+    def _break_suspense(self):
+        from datetime import date
+        bank = Account.objects.filter(organisation=self.org, account_type="asset").first()
+        AccountingService.set_opening_balances(
+            self.org, date(2026, 1, 1),
+            entries=[{"account": bank, "amount": Decimal("100000"), "side": "debit"}],
+            created_by=self.user)
+
+    def test_checklist_ready_when_clean(self):
+        res = self.client.get(f"/api/v1/accounting/periods/{self.period.id}/close_checklist/")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.assertTrue(res.data["ready"])
+        self.assertTrue(all(c["passed"] for c in res.data["checks"]))
+
+    def test_lock_succeeds_when_ready(self):
+        res = self.client.post(f"/api/v1/accounting/periods/{self.period.id}/lock/")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.period.refresh_from_db()
+        self.assertTrue(self.period.is_locked)
+
+    def test_lock_blocked_when_not_ready(self):
+        self._break_suspense()
+        res = self.client.post(f"/api/v1/accounting/periods/{self.period.id}/lock/")
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("checklist", res.data)
+        self.period.refresh_from_db()
+        self.assertFalse(self.period.is_locked)
+
+    def test_force_lock_overrides_checklist(self):
+        self._break_suspense()
+        res = self.client.post(f"/api/v1/accounting/periods/{self.period.id}/lock/",
+                               {"force": True}, format="json")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.period.refresh_from_db()
+        self.assertTrue(self.period.is_locked)
+
+
 class JournalEntryIdempotencyTests(TestCase):
     def setUp(self):
         self.user = _make_user("idem_owner@example.com")

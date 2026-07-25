@@ -1627,6 +1627,43 @@ class AccountingService:
         }
 
     @staticmethod
+    def period_close_checklist(organisation, year=None, month=None) -> dict:
+        """Month-end readiness checklist that gates locking a period.
+
+        Reuses GL Health: the ledger must have no failed/unmapped postings, the
+        Take-On Suspense must be zero, and every subledger must tie to its control
+        account. `ready` is True only when all checks pass.
+        """
+        health = AccountingService.get_gl_health(organisation)
+        recon = health.get('reconciliations', {})
+        summary = health.get('summary', {})
+        failed = (summary.get('failed', 0) or 0) + (summary.get('not_configured', 0) or 0)
+
+        unreconciled = [s['name'] for s in recon.get('subledgers', []) if not s.get('reconciled')]
+        checks = [
+            {
+                'key': 'no_failed_gl',
+                'label': 'No failed or unmapped GL postings',
+                'passed': failed == 0,
+                'detail': '' if failed == 0 else f'{failed} posting(s) need attention in GL Health.',
+            },
+            {
+                'key': 'suspense_zero',
+                'label': 'Take-On Suspense is zero',
+                'passed': bool(recon.get('is_balanced', True)),
+                'detail': '' if recon.get('is_balanced', True)
+                          else f"Suspense balance: {recon.get('pre_plug_imbalance')}",
+            },
+            {
+                'key': 'subledgers_reconciled',
+                'label': 'Subledgers tie to their control accounts',
+                'passed': bool(recon.get('all_reconciled', True)),
+                'detail': '' if not unreconciled else 'Variance in: ' + ', '.join(unreconciled),
+            },
+        ]
+        return {'ready': all(c['passed'] for c in checks), 'checks': checks}
+
+    @staticmethod
     @transaction.atomic
     def close_year(organisation, fiscal_year, created_by=None):
         """Post a year-end closing entry that zeroes the P&L accounts and crystallises

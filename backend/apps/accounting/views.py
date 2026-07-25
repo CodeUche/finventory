@@ -907,17 +907,34 @@ class FinancialPeriodViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             period = FinancialPeriod.objects.get(organisation=org, year=year, month=month)
         return Response(FinancialPeriodSerializer(period).data, status=status.HTTP_200_OK)
 
+    @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated, IsAccountant, _PlanAccounting])
+    def close_checklist(self, request, pk=None):
+        """Month-end readiness checklist for this period (gates the lock)."""
+        period = self.get_object()
+        data = AccountingService.period_close_checklist(period.organisation, period.year, period.month)
+        return Response(data)
+
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsOwnerOrAdmin, _PlanAccounting])
     def lock(self, request, pk=None):
         from django.utils import timezone as tz
         period = self.get_object()
         if period.is_locked:
             return Response({'error': 'Period is already locked'}, status=400)
+        # Gate the lock on the month-end close checklist unless explicitly forced.
+        force = str(request.data.get('force', '')).lower() in ('1', 'true', 'yes')
+        checklist = AccountingService.period_close_checklist(period.organisation, period.year, period.month)
+        if not checklist['ready'] and not force:
+            return Response(
+                {'error': 'Period is not ready to close. Resolve the checklist items or force the lock.',
+                 'checklist': checklist},
+                status=400,
+            )
         period.is_locked = True
         period.locked_by = request.user
         period.locked_at = tz.now()
         period.save()
-        self._audit(request, period, 'LOCK', f"Locked period {period.year}-{period.month:02d}")
+        forced_note = ' (forced despite checklist)' if (force and not checklist['ready']) else ''
+        self._audit(request, period, 'LOCK', f"Locked period {period.year}-{period.month:02d}{forced_note}")
         return Response(FinancialPeriodSerializer(period).data)
 
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsOwnerOrAdmin, _PlanAccounting])
