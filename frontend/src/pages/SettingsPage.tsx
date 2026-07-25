@@ -751,6 +751,28 @@ export default function SettingsPage() {
     }
   }
 
+  const generateFiscalYear = async () => {
+    const entered = await promptDialog(
+      'Generate a full fiscal year of monthly accounting periods. Enter the year:',
+      { title: 'Generate Fiscal Year', confirmText: 'Generate', optional: false,
+        defaultValue: String(new Date().getFullYear()) },
+    )
+    if (entered === null) return
+    const year = parseInt(entered.trim(), 10)
+    if (!year || year < 2000 || year > 2100) { toast.error('Enter a valid year'); return }
+    try {
+      const { data } = await accountingApi.generateFiscalYear({
+        year, start_date: `${year}-01-01`, rule: 'last_day_of_month',
+      })
+      const { data: p } = await accountingApi.periods()
+      setPeriods(Array.isArray(p) ? p : p.results ?? [])
+      toast.success(`Generated ${data.periods?.length ?? 12} periods for ${year}`)
+    } catch (err) {
+      const apiErr = (err as { response?: { data?: { error?: unknown } } })?.response?.data?.error
+      toast.error(typeof apiErr === 'string' ? apiErr : 'Failed to generate fiscal year')
+    }
+  }
+
   const [closingYear, setClosingYear] = useState(false)
   const handleCloseYear = async () => {
     const year = new Date().getFullYear()
@@ -1176,6 +1198,9 @@ export default function SettingsPage() {
               <div className="flex items-center gap-2">
                 <button onClick={handleCloseYear} disabled={closingYear} className="btn-secondary text-sm">
                   {closingYear ? 'Closing…' : 'Close Financial Year'}
+                </button>
+                <button onClick={generateFiscalYear} className="btn-secondary text-sm">
+                  Generate Fiscal Year
                 </button>
                 <button onClick={createPeriod} className="btn-primary text-sm">
                   + Create Current Period

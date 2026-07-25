@@ -468,10 +468,52 @@ class AssetRevaluation(TenantAwareModel):
         ordering = ['-revaluation_date', '-created_at']
 
 
+class FiscalYear(TenantAwareModel):
+    """A financial/fiscal year that owns 12 (or 13) accounting periods.
+
+    Generated from a start date + a period-end rule (last day of month / last
+    weekday / specific day), mirroring the Sage/QuickBooks 'Generate Accounting
+    Periods' wizard. Periods are still month-grained under the hood (year/month
+    stay on FinancialPeriod for backward compatibility) but also carry explicit
+    start_date/end_date so non-calendar fiscal years are represented faithfully.
+    """
+
+    class GenerationRule(models.TextChoices):
+        LAST_DAY = 'last_day_of_month', 'Last day of month'
+        LAST_WEEKDAY = 'last_weekday', 'Last <weekday> of month'
+        SPECIFIC_DAY = 'specific_day', 'Specific closing day'
+
+    year = models.PositiveIntegerField()
+    start_date = models.DateField()
+    end_date = models.DateField()
+    generation_rule = models.CharField(
+        max_length=20, choices=GenerationRule.choices, default=GenerationRule.LAST_DAY
+    )
+    is_closed = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ['-year']
+        unique_together = [('organisation', 'year')]
+
+    def __str__(self):
+        return f"FY{self.year}"
+
+
 class FinancialPeriod(TenantAwareModel):
-    """A financial month that can be locked to prevent back-dated postings."""
+    """A financial month that can be locked to prevent back-dated postings.
+
+    year/month remain the primary, backward-compatible identity used by the lock
+    lookup; start_date/end_date/period_number are added for the fiscal-year model.
+    """
     year = models.PositiveIntegerField()
     month = models.PositiveIntegerField()
+    # Fiscal-year linkage + explicit range (additive; backfilled for existing rows).
+    fiscal_year = models.ForeignKey(
+        FiscalYear, null=True, blank=True, on_delete=models.SET_NULL, related_name='periods'
+    )
+    start_date = models.DateField(null=True, blank=True)
+    end_date = models.DateField(null=True, blank=True)
+    period_number = models.PositiveIntegerField(null=True, blank=True)
     is_locked = models.BooleanField(default=False)
     locked_by = models.ForeignKey(
         User, null=True, blank=True, on_delete=models.SET_NULL, related_name='locked_periods'
@@ -491,6 +533,39 @@ class FinancialPeriod(TenantAwareModel):
 
     def __str__(self):
         return f"{self.year}-{self.month:02d} ({'locked' if self.is_locked else 'open'})"
+
+
+class PeriodPostingGrant(TenantAwareModel):
+    """A time-boxed exception letting a specific user post into a LOCKED period.
+
+    Granted by an administrator for a limited window (e.g. a few days) so a late
+    adjustment can be posted without unlocking the period for everyone. Every post
+    made under a grant is audit-logged.
+    """
+    period = models.ForeignKey(
+        FinancialPeriod, on_delete=models.CASCADE, related_name='posting_grants'
+    )
+    user = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name='period_posting_grants'
+    )
+    granted_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name='period_grants_given'
+    )
+    reason = models.TextField(blank=True)
+    expires_at = models.DateTimeField()
+    revoked = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [models.Index(fields=['organisation', 'period', 'user', 'revoked'])]
+
+    def __str__(self):
+        return f"Grant to {self.user_id} on {self.period} until {self.expires_at}"
+
+    @property
+    def is_active(self) -> bool:
+        from django.utils import timezone as _tz
+        return (not self.revoked) and self.expires_at > _tz.now()
 
 
 class BankReconciliation(TenantAwareModel):

@@ -2,8 +2,28 @@ from rest_framework import serializers
 from .models import (
     Account, AccountSubType, JournalEntry, JournalLine, FixedAsset, DepreciationEntry,
     FinancialPeriod, BankReconciliation, BankReconciliationLine, AIReconMatch, AccountMapping,
-    AssetType, normal_balance_for_type,
+    AssetType, normal_balance_for_type, FiscalYear, PeriodPostingGrant,
 )
+
+
+class FiscalYearSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FiscalYear
+        fields = ['id', 'year', 'start_date', 'end_date', 'generation_rule', 'is_closed', 'created_at']
+        read_only_fields = fields
+
+
+class PeriodPostingGrantSerializer(serializers.ModelSerializer):
+    user_name = serializers.CharField(source='user.get_full_name', read_only=True)
+    user_email = serializers.CharField(source='user.email', read_only=True)
+    granted_by_name = serializers.CharField(source='granted_by.get_full_name', read_only=True, default=None)
+    is_active = serializers.BooleanField(read_only=True)
+
+    class Meta:
+        model = PeriodPostingGrant
+        fields = ['id', 'period', 'user', 'user_name', 'user_email', 'granted_by',
+                  'granted_by_name', 'reason', 'expires_at', 'revoked', 'is_active', 'created_at']
+        read_only_fields = fields
 
 
 class AccountSubTypeSerializer(serializers.ModelSerializer):

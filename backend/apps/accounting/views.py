@@ -979,6 +979,71 @@ class FinancialPeriodViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             logging.getLogger(__name__).warning(
                 "Failed to write period %s audit log", event, exc_info=True)
 
+    @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated, IsOwnerOrAdmin, _PlanAccounting])
+    def generate_fiscal_year(self, request):
+        """Generate a fiscal year + its 12 monthly periods from a start date + rule."""
+        org = self._get_organisation()
+        year = request.data.get('year')
+        start_date = request.data.get('start_date')
+        if not year or not start_date:
+            return Response({'error': 'year and start_date are required'}, status=400)
+        try:
+            fy = AccountingService.generate_fiscal_year(
+                org, int(year), start_date,
+                rule=request.data.get('rule', 'last_day_of_month'),
+                closing_day=request.data.get('closing_day'),
+                weekday=request.data.get('weekday'),
+                created_by=request.user,
+            )
+        except (ValueError, TypeError) as e:
+            return Response({'error': str(e)}, status=422)
+        from .serializers import FiscalYearSerializer
+        periods = FinancialPeriod.objects.filter(organisation=org, fiscal_year=fy).order_by('period_number')
+        return Response({
+            'fiscal_year': FiscalYearSerializer(fy).data,
+            'periods': FinancialPeriodSerializer(periods, many=True).data,
+        }, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['get', 'post'], permission_classes=[IsAuthenticated, IsOwnerOrAdmin, _PlanAccounting])
+    def grants(self, request, pk=None):
+        """GET: list posting grants for this period. POST: grant a user access."""
+        from .serializers import PeriodPostingGrantSerializer
+        from .models import PeriodPostingGrant
+        period = self.get_object()
+        if request.method.lower() == 'get':
+            qs = PeriodPostingGrant.objects.filter(organisation=period.organisation, period=period)
+            return Response(PeriodPostingGrantSerializer(qs, many=True).data)
+        # POST — create a grant
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        user_id = request.data.get('user_id') or request.data.get('user')
+        if not user_id:
+            return Response({'error': 'user_id is required'}, status=400)
+        try:
+            grantee = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found'}, status=404)
+        grant = AccountingService.grant_period_access(
+            period.organisation, period, grantee, granted_by=request.user,
+            days=request.data.get('days', 3), expires_at=request.data.get('expires_at'),
+            reason=request.data.get('reason', ''),
+        )
+        return Response(PeriodPostingGrantSerializer(grant).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsOwnerOrAdmin, _PlanAccounting])
+    def revoke_grant(self, request, pk=None):
+        """Revoke a posting grant on this period."""
+        from .models import PeriodPostingGrant
+        period = self.get_object()
+        grant_id = request.data.get('grant_id')
+        try:
+            grant = PeriodPostingGrant.objects.get(id=grant_id, organisation=period.organisation, period=period)
+        except PeriodPostingGrant.DoesNotExist:
+            return Response({'error': 'Grant not found'}, status=404)
+        grant.revoked = True
+        grant.save(update_fields=['revoked'])
+        return Response({'status': 'revoked', 'grant_id': str(grant.id)})
+
 
 class BankReconciliationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     serializer_class = BankReconciliationSerializer

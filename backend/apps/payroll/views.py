@@ -269,7 +269,7 @@ class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         from datetime import date as _date
         from apps.accounting.services import AccountingService
         period_date = _date(year, month, 1)
-        if AccountingService.is_period_locked(org, period_date):
+        if AccountingService.is_period_locked(org, period_date, user=request.user):
             return Response(
                 {'error': f'The period {year}-{month:02d} is locked. Unlock it before running payroll.'},
                 status=403,

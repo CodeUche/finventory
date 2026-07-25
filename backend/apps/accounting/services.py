@@ -1016,17 +1016,118 @@ class AccountingService:
     # ──────────────────────────────────────────────────────────────────────────
 
     @staticmethod
-    def is_period_locked(organisation, date) -> bool:
-        """Return True if the financial period for date is locked."""
+    def _has_active_grant(period, user) -> bool:
+        """True if `user` holds an active (non-revoked, unexpired) posting grant for
+        `period` — a time-boxed exception to post into a locked period."""
+        from django.utils import timezone as _tz
+        from .models import PeriodPostingGrant
+        if user is None or not getattr(user, 'id', None):
+            return False
+        return PeriodPostingGrant.objects.filter(
+            period=period, user=user, revoked=False, expires_at__gt=_tz.now(),
+        ).exists()
+
+    @staticmethod
+    def is_period_locked(organisation, date, user=None) -> bool:
+        """Return True if the financial period for date is locked.
+
+        If `user` is given and holds an active posting grant for that period, it is
+        treated as unlocked for them (time-boxed administrator exception).
+        """
         try:
-            return FinancialPeriod.objects.filter(
+            locked = FinancialPeriod.objects.filter(
                 organisation=organisation,
                 year=date.year,
                 month=date.month,
                 is_locked=True,
-            ).exists()
+            ).first()
+            if not locked:
+                return False
+            if user is not None and AccountingService._has_active_grant(locked, user):
+                return False
+            return True
         except Exception:
             return False
+
+    @staticmethod
+    def _last_weekday_of_month(year, month, weekday):
+        """Return the date of the last given weekday (0=Mon..6=Sun) in the month."""
+        import calendar
+        from datetime import date as _date, timedelta
+        last_dom = calendar.monthrange(year, month)[1]
+        d = _date(year, month, last_dom)
+        return d - timedelta(days=(d.weekday() - weekday) % 7)
+
+    @staticmethod
+    @transaction.atomic
+    def generate_fiscal_year(organisation, year, start_date, rule='last_day_of_month',
+                             closing_day=None, weekday=None, created_by=None):
+        """Generate a FiscalYear + its 12 monthly FinancialPeriods (the 'Generate
+        Accounting Periods' wizard). Idempotent: returns the existing FiscalYear if
+        one already exists for `year`. Existing periods are linked/updated, never
+        duplicated, so locks are preserved.
+        """
+        import calendar
+        from datetime import date as _date
+        from .models import FiscalYear, FinancialPeriod
+
+        start_date = AccountingService._coerce_date(start_date)
+        existing = FiscalYear.objects.filter(organisation=organisation, year=int(year)).first()
+        if existing:
+            return existing
+
+        periods = []
+        cur_year, cur_month = start_date.year, start_date.month
+        for i in range(12):
+            p_start = start_date if i == 0 else _date(cur_year, cur_month, 1)
+            last_dom = calendar.monthrange(cur_year, cur_month)[1]
+            if rule == 'specific_day' and closing_day:
+                p_end = _date(cur_year, cur_month, min(int(closing_day), last_dom))
+            elif rule == 'last_weekday' and weekday is not None:
+                p_end = AccountingService._last_weekday_of_month(cur_year, cur_month, int(weekday))
+            else:
+                p_end = _date(cur_year, cur_month, last_dom)
+            periods.append((cur_year, cur_month, i + 1, p_start, p_end))
+            cur_month += 1
+            if cur_month > 12:
+                cur_month, cur_year = 1, cur_year + 1
+
+        fy = FiscalYear.objects.create(
+            organisation=organisation, year=int(year), start_date=start_date,
+            end_date=periods[-1][4], generation_rule=rule,
+        )
+        for (py, pm, pn, ps, pe) in periods:
+            FinancialPeriod.objects.update_or_create(
+                organisation=organisation, year=py, month=pm,
+                defaults={'fiscal_year': fy, 'period_number': pn, 'start_date': ps, 'end_date': pe},
+            )
+        return fy
+
+    @staticmethod
+    def grant_period_access(organisation, period, user, granted_by=None, days=3,
+                            expires_at=None, reason=''):
+        """Grant a user a time-boxed exception to post into a locked period."""
+        from django.utils import timezone as _tz
+        from datetime import timedelta
+        from .models import PeriodPostingGrant
+        if expires_at is None:
+            expires_at = _tz.now() + timedelta(days=int(days or 3))
+        grant = PeriodPostingGrant.objects.create(
+            organisation=organisation, period=period, user=user,
+            granted_by=granted_by, expires_at=expires_at, reason=reason,
+        )
+        try:
+            from apps.core.models import AuditLog
+            AuditLog.log(
+                action=AuditLog.UPDATE, user=granted_by, organisation=organisation,
+                model_name='PeriodPostingGrant', object_id=str(grant.id), object_repr=str(grant),
+                changes={'event': 'period_grant_created', 'user': str(user.id),
+                         'period': str(period.id), 'expires_at': str(expires_at), 'reason': reason},
+                is_owner_action=True,
+            )
+        except Exception:
+            pass
+        return grant
 
     @staticmethod
     def post_journal_entry(
@@ -1053,7 +1154,7 @@ class AccountingService:
         """
         from .exceptions import PeriodLockedError
 
-        # Period lock check
+        # Period lock check — honour a time-boxed posting grant for the acting user.
         if entry_date:
             locked_period = FinancialPeriod.objects.filter(
                 organisation=organisation,
@@ -1062,9 +1163,23 @@ class AccountingService:
                 is_locked=True,
             ).first()
             if locked_period:
-                raise PeriodLockedError(
-                    f"Period {locked_period} is locked. Unlock it before posting."
-                )
+                if AccountingService._has_active_grant(locked_period, created_by):
+                    # Posted into a locked period under an administrator grant — record it.
+                    try:
+                        from apps.core.models import AuditLog
+                        AuditLog.log(
+                            action=AuditLog.UPDATE, user=created_by, organisation=organisation,
+                            model_name='FinancialPeriod', object_id=str(locked_period.id),
+                            object_repr=str(locked_period),
+                            changes={'event': 'locked_period_post_via_grant', 'ref': ref,
+                                     'source': f'{source_type}/{source_ref}'},
+                        )
+                    except Exception:
+                        pass
+                else:
+                    raise PeriodLockedError(
+                        f"Period {locked_period} is locked. Unlock it before posting."
+                    )
 
         # Idempotency: return existing entry if same source already posted
         if source_type and source_ref:

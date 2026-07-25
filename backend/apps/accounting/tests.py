@@ -710,6 +710,105 @@ class YearEndCloseTests(TestCase):
         self.assertEqual(float(res.data['net_profit']), 70000.0)
 
 
+class FiscalYearAndGrantTests(TestCase):
+    """Step 4 — fiscal-year generator + time-boxed posting grants (grant-aware lock)."""
+
+    def setUp(self):
+        self.user = _make_user("fy_owner@example.com")
+        self.org = _make_org(self.user, "FY Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+
+    def test_generate_fiscal_year_creates_12_periods(self):
+        from datetime import date
+        from apps.accounting.models import FiscalYear, FinancialPeriod
+        fy = AccountingService.generate_fiscal_year(self.org, 2027, date(2027, 1, 1))
+        self.assertIsNotNone(fy)
+        periods = FinancialPeriod.objects.filter(organisation=self.org, fiscal_year=fy)
+        self.assertEqual(periods.count(), 12)
+        jan = periods.get(month=1)
+        self.assertEqual(str(jan.start_date), "2027-01-01")
+        self.assertEqual(str(jan.end_date), "2027-01-31")   # last day of month rule
+        feb = periods.get(month=2)
+        self.assertEqual(str(feb.end_date), "2027-02-28")
+
+    def test_generate_is_idempotent(self):
+        from datetime import date
+        from apps.accounting.models import FinancialPeriod
+        AccountingService.generate_fiscal_year(self.org, 2027, date(2027, 1, 1))
+        AccountingService.generate_fiscal_year(self.org, 2027, date(2027, 1, 1))
+        self.assertEqual(FinancialPeriod.objects.filter(organisation=self.org, year=2027).count(), 12)
+
+    def test_specific_day_rule(self):
+        from datetime import date
+        from apps.accounting.models import FinancialPeriod
+        fy = AccountingService.generate_fiscal_year(
+            self.org, 2028, date(2028, 1, 1), rule='specific_day', closing_day=25)
+        jan = FinancialPeriod.objects.get(organisation=self.org, fiscal_year=fy, month=1)
+        self.assertEqual(str(jan.end_date), "2028-01-25")
+
+    def test_generate_endpoint(self):
+        res = self.client.post("/api/v1/accounting/periods/generate_fiscal_year/",
+                               {"year": 2029, "start_date": "2029-01-01"}, format="json")
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        self.assertEqual(len(res.data["periods"]), 12)
+
+    def test_grant_allows_posting_into_locked_period(self):
+        from datetime import date, timedelta
+        from django.utils import timezone
+        from apps.accounting.models import FinancialPeriod
+        # Lock June 2026.
+        period = FinancialPeriod.objects.create(organisation=self.org, year=2026, month=6, is_locked=True)
+        d = date(2026, 6, 15)
+        # Without a grant → locked.
+        self.assertTrue(AccountingService.is_period_locked(self.org, d, user=self.user))
+        # Grant the user access.
+        AccountingService.grant_period_access(
+            self.org, period, self.user, granted_by=self.user,
+            expires_at=timezone.now() + timedelta(days=2), reason="late adjustment")
+        # Now not locked for that user.
+        self.assertFalse(AccountingService.is_period_locked(self.org, d, user=self.user))
+        # A journal dated in the locked period now posts under the grant.
+        bank = Account.objects.get(organisation=self.org, code='1002')
+        rev = Account.objects.get(organisation=self.org, code='4001')
+        je = AccountingService.post_journal_entry(
+            self.org, "Grant post", d,
+            [(bank, Decimal('500'), Decimal('0')), (rev, Decimal('0'), Decimal('500'))],
+            self.user, ref='GRANT-1')
+        self.assertIsNotNone(je)
+
+    def test_expired_grant_does_not_bypass_lock(self):
+        from datetime import date, timedelta
+        from django.utils import timezone
+        from apps.accounting.models import FinancialPeriod
+        from apps.accounting.exceptions import PeriodLockedError
+        period = FinancialPeriod.objects.create(organisation=self.org, year=2026, month=7, is_locked=True)
+        AccountingService.grant_period_access(
+            self.org, period, self.user, granted_by=self.user,
+            expires_at=timezone.now() - timedelta(days=1), reason="expired")  # already expired
+        self.assertTrue(AccountingService.is_period_locked(self.org, date(2026, 7, 10), user=self.user))
+        bank = Account.objects.get(organisation=self.org, code='1002')
+        rev = Account.objects.get(organisation=self.org, code='4001')
+        with self.assertRaises(PeriodLockedError):
+            AccountingService.post_journal_entry(
+                self.org, "Blocked", date(2026, 7, 10),
+                [(bank, Decimal('500'), Decimal('0')), (rev, Decimal('0'), Decimal('500'))],
+                self.user, ref='BLOCK-1')
+
+    def test_grant_endpoint_and_revoke(self):
+        from apps.accounting.models import FinancialPeriod
+        period = FinancialPeriod.objects.create(organisation=self.org, year=2026, month=8, is_locked=True)
+        res = self.client.post(f"/api/v1/accounting/periods/{period.id}/grants/",
+                               {"user_id": str(self.user.id), "days": 2, "reason": "fix"}, format="json")
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        grant_id = res.data["id"]
+        listing = self.client.get(f"/api/v1/accounting/periods/{period.id}/grants/")
+        self.assertEqual(len(listing.data), 1)
+        rev = self.client.post(f"/api/v1/accounting/periods/{period.id}/revoke_grant/",
+                               {"grant_id": grant_id}, format="json")
+        self.assertEqual(rev.status_code, 200, msg=str(rev.data))
+
+
 class PeriodCloseChecklistTests(TestCase):
     """Step 7 — month-end checklist gates the period lock."""
 

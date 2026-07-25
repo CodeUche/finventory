@@ -77,7 +77,7 @@ class SaleService:
 
         check_strict_gl_mode(organisation)
 
-        if AccountingService.is_period_locked(organisation, issue_date):
+        if AccountingService.is_period_locked(organisation, issue_date, user=created_by):
             from django.core.exceptions import PermissionDenied
             raise PermissionDenied(f"The period {issue_date.year}-{issue_date.month:02d} is locked. Unlock it before creating new transactions.")
 

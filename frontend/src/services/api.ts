@@ -1419,6 +1419,10 @@ export const accountingApi = {
   lockPeriod: (id: string, force = false) => api.post(`/accounting/periods/${id}/lock/`, force ? { force: true } : {}),
   unlockPeriod: (id: string, reason: string) => api.post(`/accounting/periods/${id}/unlock/`, { reason }),
   periodCloseChecklist: (id: string) => api.get(`/accounting/periods/${id}/close_checklist/`),
+  generateFiscalYear: (data: object) => api.post('/accounting/periods/generate_fiscal_year/', data),
+  periodGrants: (id: string) => api.get(`/accounting/periods/${id}/grants/`),
+  grantPeriodAccess: (id: string, data: object) => api.post(`/accounting/periods/${id}/grants/`, data),
+  revokePeriodGrant: (id: string, grantId: string) => api.post(`/accounting/periods/${id}/revoke_grant/`, { grant_id: grantId }),
   closeYear: (fiscalYear: number) => api.post('/accounting/year-end-close/', { fiscal_year: fiscalYear }),
   // Bank Reconciliation
   reconciliations: () => api.get('/accounting/reconciliations/'),
