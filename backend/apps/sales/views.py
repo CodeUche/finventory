@@ -202,11 +202,18 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
             return Response({"error": str(e)}, status=404)
         except Product.DoesNotExist as e:
             return Response({"error": f"Product not found: {e}"}, status=422)
-        except ValueError as e:
-            return Response({"error": str(e)}, status=422)
-        except Exception:
+        except (ValueError, DjangoValidationError, PermissionDenied) as e:
+            # Period-locked (PermissionDenied), strict-GL / stock / store-credit
+            # (ValueError) and validation errors all carry a clear, user-actionable
+            # message — surface it instead of the opaque "unexpected error" toast
+            # (this was the POS "An unexpected error occurred" bug on locked periods).
+            msg = "; ".join(e.messages) if isinstance(e, DjangoValidationError) else str(e)
+            return Response({"error": msg}, status=422)
+        except Exception as e:
             logger.exception("Unexpected error creating sale")
-            return Response({"error": "An unexpected error occurred. Please try again."}, status=422)
+            return Response(
+                {"error": f"Could not complete sale: {type(e).__name__}: {e}"}, status=422
+            )
 
     def _check_invoice_edit_permission(self, request):
         """

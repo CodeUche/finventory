@@ -43,6 +43,10 @@ interface AssetForm {
   reducing_balance_rate: string
   depreciation_convention: string
   opening_accumulated_depreciation: string
+  total_units: string
+  serial_number: string
+  barcode: string
+  master_asset: string
 }
 
 const today = new Date().toISOString().split('T')[0]
@@ -52,6 +56,7 @@ const BLANK: AssetForm = {
   useful_life_years: '5', residual_value: '0', funding_source: 'bank',
   reducing_balance_rate: '', depreciation_convention: 'full_month',
   opening_accumulated_depreciation: '0',
+  total_units: '', serial_number: '', barcode: '', master_asset: '',
 }
 
 export default function AssetsPage() {
@@ -75,12 +80,18 @@ export default function AssetsPage() {
 
   // Transfer / revalue modals
   const [warehouses, setWarehouses] = useState<{ id: string; name: string }[]>([])
+  const [assetTypes, setAssetTypes] = useState<{ id: string; code: string; name: string }[]>([])
   const [transferAsset, setTransferAsset] = useState<FixedAsset | null>(null)
-  const [transferForm, setTransferForm] = useState({ to_location: '', to_cost_centre: '', transfer_date: today, reference: '' })
+  const [transferForm, setTransferForm] = useState({ to_location: '', to_cost_centre: '', transfer_date: today, reference: '', to_asset_type: '' })
   const [transferring, setTransferring] = useState(false)
   const [revalueAsset, setRevalueAsset] = useState<FixedAsset | null>(null)
   const [revalueForm, setRevalueForm] = useState({ new_value: '', revaluation_date: today })
   const [revaluing, setRevaluing] = useState(false)
+
+  // Record-usage modal (Units of Production)
+  const [usageAsset, setUsageAsset] = useState<FixedAsset | null>(null)
+  const [usageForm, setUsageForm] = useState({ year: new Date().getFullYear(), month: new Date().getMonth() + 1, units: '' })
+  const [recordingUsage, setRecordingUsage] = useState(false)
 
   const load = async () => {
     setLoading(true)
@@ -102,6 +113,7 @@ export default function AssetsPage() {
 
   useEffect(() => {
     inventoryApi.warehouses().then((r) => setWarehouses(r.data.results ?? r.data)).catch(() => {})
+    accountingApi.assetTypes().then((r) => setAssetTypes(r.data.results ?? r.data)).catch(() => {})
   }, [])
 
   const handleRunDepreciation = async (draft = false) => {
@@ -135,6 +147,9 @@ export default function AssetsPage() {
       reducing_balance_rate: a.reducing_balance_rate ?? '',
       depreciation_convention: a.depreciation_convention ?? 'full_month',
       opening_accumulated_depreciation: '0',
+      total_units: a.total_units ?? '',
+      serial_number: a.serial_number ?? '', barcode: a.barcode ?? '',
+      master_asset: a.master_asset ?? '',
     })
     setShowModal(true)
   }
@@ -158,9 +173,15 @@ export default function AssetsPage() {
         funding_source: form.funding_source,
         capitalisation_source: isTakeon ? 'opening_balance' : 'direct',
         depreciation_convention: form.depreciation_convention,
+        serial_number: form.serial_number,
+        barcode: form.barcode,
+        master_asset: form.master_asset || null,
       }
       if (form.depreciation_method === 'reducing_balance' && form.reducing_balance_rate) {
         payload.reducing_balance_rate = parseFloat(stripCommas(form.reducing_balance_rate))
+      }
+      if (form.depreciation_method === 'units' && form.total_units) {
+        payload.total_units = parseFloat(stripCommas(form.total_units))
       }
       if (isTakeon) {
         payload.opening_accumulated_depreciation = parseFloat(stripCommas(form.opening_accumulated_depreciation)) || 0
@@ -198,23 +219,50 @@ export default function AssetsPage() {
 
   const openTransfer = (a: FixedAsset) => {
     setTransferAsset(a)
-    setTransferForm({ to_location: a.location ?? '', to_cost_centre: a.cost_centre ?? '', transfer_date: today, reference: '' })
+    setTransferForm({ to_location: a.location ?? '', to_cost_centre: a.cost_centre ?? '', transfer_date: today, reference: '', to_asset_type: a.asset_type ?? '' })
   }
   const handleTransfer = async () => {
     if (!transferAsset) return
     setTransferring(true)
     try {
-      await accountingApi.transferAsset(transferAsset.id, {
+      const payload: Record<string, unknown> = {
         to_location: transferForm.to_location || null,
         to_cost_centre: transferForm.to_cost_centre,
         transfer_date: transferForm.transfer_date,
         reference: transferForm.reference,
-      })
+      }
+      if (transferForm.to_asset_type && transferForm.to_asset_type !== (transferAsset.asset_type ?? '')) {
+        payload.to_asset_type = transferForm.to_asset_type
+      }
+      await accountingApi.transferAsset(transferAsset.id, payload)
       toast.success('Asset transferred')
       setTransferAsset(null)
       load()
     } catch { toast.error('Failed to transfer asset') }
     finally { setTransferring(false) }
+  }
+
+  const openUsage = (a: FixedAsset) => {
+    setUsageAsset(a)
+    setUsageForm({ year: new Date().getFullYear(), month: new Date().getMonth() + 1, units: '' })
+  }
+  const handleRecordUsage = async () => {
+    if (!usageAsset) return
+    const units = parseFloat(stripCommas(usageForm.units))
+    if (!units || units <= 0) { toast.error('Units used must be greater than 0'); return }
+    setRecordingUsage(true)
+    try {
+      const { data } = await accountingApi.recordAssetUsage(usageAsset.id, {
+        year: usageForm.year, month: usageForm.month, units,
+      })
+      const amt = (data as { depreciation_amount?: string }).depreciation_amount ?? '0'
+      toast.success(`Usage recorded — depreciation of ${formatCurrency(String(amt))} posted`)
+      setUsageAsset(null)
+      load()
+    } catch (e) {
+      const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+      toast.error(typeof msg === 'string' ? msg : 'Failed to record usage')
+    } finally { setRecordingUsage(false) }
   }
 
   const openRevalue = (a: FixedAsset) => { setRevalueAsset(a); setRevalueForm({ new_value: '', revaluation_date: today }) }
@@ -360,6 +408,9 @@ export default function AssetsPage() {
                       <button onClick={() => openEdit(a)} className="text-xs px-2.5 py-1 rounded-lg bg-brand-500/15 text-brand-400 hover:bg-brand-500/25 transition-colors">Edit</button>
                       {a.is_active && (
                         <>
+                          {a.depreciation_method === 'units' && (
+                            <button onClick={() => openUsage(a)} className="ml-2 text-xs px-2.5 py-1 rounded-lg bg-brand-500/15 text-brand-400 hover:bg-brand-500/25 transition-colors">Record Usage</button>
+                          )}
                           <button onClick={() => openTransfer(a)} className="ml-2 text-xs px-2.5 py-1 rounded-lg bg-surface-700 text-slate-300 hover:bg-surface-600 transition-colors">Transfer</button>
                           <button onClick={() => openRevalue(a)} className="ml-2 text-xs px-2.5 py-1 rounded-lg bg-surface-700 text-slate-300 hover:bg-surface-600 transition-colors">Revalue</button>
                           <button onClick={() => openDispose(a)} className="ml-2 text-xs px-2.5 py-1 rounded-lg bg-red-500/15 text-red-400 hover:bg-red-500/25 transition-colors">Dispose</button>
@@ -428,6 +479,22 @@ export default function AssetsPage() {
                   {CATEGORIES.map((c) => <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>)}
                 </select>
               </div>
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Serial Number</label>
+                <input className="input" placeholder="optional" value={form.serial_number} onChange={(e) => setForm({ ...form, serial_number: e.target.value })} />
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Barcode / Tag</label>
+                <input className="input" placeholder="optional" value={form.barcode} onChange={(e) => setForm({ ...form, barcode: e.target.value })} />
+              </div>
+              <div className="col-span-2">
+                <label className="text-xs text-slate-400 mb-1 block">Component of (master asset)</label>
+                <select className="input" value={form.master_asset} onChange={(e) => setForm({ ...form, master_asset: e.target.value })}>
+                  <option value="">None — this is a standalone / master asset</option>
+                  {assets.filter((a) => a.id !== editId).map((a) => <option key={a.id} value={a.id}>{a.asset_code} — {a.name}</option>)}
+                </select>
+                <p className="text-[11px] text-slate-500 mt-1">Link a sub-component (e.g. a part) to a parent asset for grouped tracking.</p>
+              </div>
               {!editId && (
                 <div className="col-span-2">
                   <label className="text-xs text-slate-400 mb-1 block">How was it funded? *</label>
@@ -484,6 +551,13 @@ export default function AssetsPage() {
                       <input type="number" min="0" step="0.1" className="input" placeholder="derive from life" value={form.reducing_balance_rate} onChange={(e) => setForm({ ...form, reducing_balance_rate: e.target.value })} />
                     </div>
                   )}
+                  {form.depreciation_method === 'units' && (
+                    <div className="col-span-2">
+                      <label className="text-xs text-slate-400 mb-1 block">Total estimated units of production *</label>
+                      <AmountInput className="input" value={form.total_units} onChange={(v) => setForm({ ...form, total_units: v })} />
+                      <p className="text-[11px] text-slate-500 mt-1">Depreciation is charged per unit used — record monthly usage from the register's ⋯ menu.</p>
+                    </div>
+                  )}
                   <div>
                     <label className="text-xs text-slate-400 mb-1 block">Residual Value</label>
                     <AmountInput className="input" value={form.residual_value} onChange={(v) => setForm({ ...form, residual_value: v })} />
@@ -491,7 +565,8 @@ export default function AssetsPage() {
                   <div>
                     <label className="text-xs text-slate-400 mb-1 block">First-period convention</label>
                     <select className="input" value={form.depreciation_convention} onChange={(e) => setForm({ ...form, depreciation_convention: e.target.value })}>
-                      <option value="full_month">Full month</option>
+                      <option value="full_month">Full month (charge in month of purchase)</option>
+                      <option value="new_month">New month (start the month after purchase)</option>
                       <option value="pro_rata">Pro-rata (by days)</option>
                     </select>
                   </div>
@@ -558,8 +633,17 @@ export default function AssetsPage() {
               <h2 className="text-lg font-bold text-white">Transfer {transferAsset.asset_code}</h2>
               <button onClick={() => setTransferAsset(null)} className="text-slate-400 hover:text-white"><X size={20} /></button>
             </div>
-            <p className="text-xs text-slate-400">A transfer reclassifies the asset's location / cost-centre. It does not change GL cost or depreciation.</p>
+            <p className="text-xs text-slate-400">A transfer reclassifies the asset's location, cost-centre or asset type. It does not change GL cost or depreciation.</p>
             <div className="grid grid-cols-2 gap-4">
+              {assetTypes.length > 0 && (
+                <div className="col-span-2">
+                  <label className="text-xs text-slate-400 mb-1 block">Reclassify to asset type</label>
+                  <select className="input" value={transferForm.to_asset_type} onChange={(e) => setTransferForm({ ...transferForm, to_asset_type: e.target.value })}>
+                    <option value="">— unchanged —</option>
+                    {assetTypes.map((t) => <option key={t.id} value={t.id}>{t.code} — {t.name}</option>)}
+                  </select>
+                </div>
+              )}
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">New location</label>
                 <select className="input" value={transferForm.to_location} onChange={(e) => setTransferForm({ ...transferForm, to_location: e.target.value })}>
@@ -617,6 +701,47 @@ export default function AssetsPage() {
               <button className="flex-1 py-2.5 rounded-xl border border-surface-600 text-slate-400 hover:text-white text-sm" onClick={() => setRevalueAsset(null)}>Cancel</button>
               <button className="btn-primary flex-1 py-2.5 justify-center disabled:opacity-50" onClick={handleRevalue} disabled={revaluing}>
                 {revaluing ? <Loader2 size={16} className="animate-spin" /> : 'Revalue'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Record Usage Modal (Units of Production) */}
+      {usageAsset && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setUsageAsset(null)} />
+          <div className="relative card w-full max-w-md p-6 space-y-5">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold text-white">Record Usage — {usageAsset.asset_code}</h2>
+              <button onClick={() => setUsageAsset(null)} className="text-slate-400 hover:text-white"><X size={20} /></button>
+            </div>
+            <p className="text-xs text-slate-400">
+              Enter units produced this period. Depreciation is charged as
+              (units ÷ total est. {usageAsset.total_units ? Number(usageAsset.total_units).toLocaleString() : '—'} units) × depreciable cost, and posted to the GL.
+            </p>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Year</label>
+                <input type="number" className="input" value={usageForm.year} onChange={(e) => setUsageForm({ ...usageForm, year: parseInt(e.target.value) || usageForm.year })} />
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Month</label>
+                <select className="input" value={usageForm.month} onChange={(e) => setUsageForm({ ...usageForm, month: parseInt(e.target.value) })}>
+                  {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                    <option key={m} value={m}>{new Date(2000, m - 1, 1).toLocaleString('default', { month: 'long' })}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="col-span-2">
+                <label className="text-xs text-slate-400 mb-1 block">Units produced this period *</label>
+                <AmountInput className="input" value={usageForm.units} onChange={(v) => setUsageForm({ ...usageForm, units: v })} />
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <button className="flex-1 py-2.5 rounded-xl border border-surface-600 text-slate-400 hover:text-white text-sm" onClick={() => setUsageAsset(null)}>Cancel</button>
+              <button className="btn-primary flex-1 py-2.5 justify-center disabled:opacity-50" onClick={handleRecordUsage} disabled={recordingUsage}>
+                {recordingUsage ? <Loader2 size={16} className="animate-spin" /> : 'Record & Post'}
               </button>
             </div>
           </div>

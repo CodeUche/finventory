@@ -111,6 +111,21 @@ class InvoiceCreateTests(TestCase):
         invoice = Invoice.objects.filter(organisation=self.org).first()
         self.assertEqual(invoice.status, Invoice.Status.PROFORMA)
 
+    def test_create_invoice_in_locked_period_returns_clear_message(self):
+        """POS/sale into a LOCKED period must return a clear 'locked' message, not the
+        opaque 'An unexpected error occurred' toast (the reported POS bug)."""
+        from apps.accounting.models import FinancialPeriod
+        from django.utils import timezone
+        now = timezone.now()
+        FinancialPeriod.objects.create(
+            organisation=self.org, year=now.year, month=now.month, is_locked=True,
+        )
+        res = self.client.post("/api/v1/sales/invoices/", self._payload(), format="json")
+        self.assertEqual(res.status_code, 422, msg=str(res.data))
+        body = str(res.data).lower()
+        self.assertIn("locked", body)
+        self.assertNotIn("unexpected error", body)
+
 
 class InvoiceRetrieveTests(TestCase):
     def setUp(self):

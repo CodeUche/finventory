@@ -445,6 +445,78 @@ class AccountMappingAPITests(TestCase):
         res = self.client.get("/api/v1/accounting/account-mapping/suggestions/")
         self.assertEqual(res.status_code, 200)
 
+
+class GLMappingModuleTests(TestCase):
+    """Step 1 — NHF role, module grouping, and stronger mapping validation."""
+
+    def setUp(self):
+        self.user = _make_user("glmap_owner@example.com")
+        self.org = _make_org(self.user, "GLMap Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+        self.mapping = AccountMapping.objects.get(organisation=self.org)
+
+    def test_get_includes_module_grouping_and_labels(self):
+        res = self.client.get("/api/v1/accounting/account-mapping/")
+        self.assertEqual(res.status_code, 200)
+        self.assertIn("modules", res.data)
+        self.assertIn("role_labels", res.data)
+        grouped = [r for m in res.data["modules"] for r in m["roles"]]
+        from apps.accounting.serializers import MAPPING_ROLES
+        # Every role appears exactly once across the module groups, incl. NHF.
+        self.assertEqual(sorted(grouped), sorted(MAPPING_ROLES))
+        self.assertIn("nhf_account", grouped)
+
+    def test_nhf_role_resolves_via_mapping(self):
+        liability = Account.objects.filter(
+            organisation=self.org, account_type="liability"
+        ).first()
+        self.assertIsNotNone(liability)
+        self.mapping.nhf_account = liability
+        self.mapping.save()
+        acct = AccountMappingService.resolve(self.org, "nhf_account")
+        self.assertEqual(acct.pk, liability.pk)
+
+    def test_put_rejects_header_account(self):
+        """Mapping a role to a header/summary account (one with children) must 400."""
+        parent = Account.objects.create(
+            organisation=self.org, code="4900", name="Revenue Header",
+            account_type="revenue", account_group="Revenue",
+        )
+        Account.objects.create(
+            organisation=self.org, code="4901", name="Sub Revenue",
+            account_type="revenue", account_group="Revenue", parent=parent,
+        )
+        res = self.client.put("/api/v1/accounting/account-mapping/", {
+            "revenue_account": str(parent.id),
+        }, format="json")
+        self.assertEqual(res.status_code, 400)
+
+    def test_put_rejects_inactive_account(self):
+        acct = Account.objects.create(
+            organisation=self.org, code="4950", name="Inactive Revenue",
+            account_type="revenue", account_group="Revenue", is_active=False,
+        )
+        res = self.client.put("/api/v1/accounting/account-mapping/", {
+            "revenue_account": str(acct.id),
+        }, format="json")
+        self.assertEqual(res.status_code, 400)
+
+    def test_take_on_uses_mapped_control_account(self):
+        """Subledger take-on should resolve AR via the GL mapping, not a hardcoded code."""
+        from datetime import date
+        from apps.customers.models import Customer
+        cust = Customer.objects.create(organisation=self.org, name="Opening Debtor")
+        je = AccountingService.set_subledger_opening_balances(
+            self.org, date(2026, 1, 1),
+            customers=[{"id": str(cust.id), "amount": "1000.00"}],
+        )
+        self.assertIsNotNone(je)
+        ar = self.mapping.accounts_receivable
+        self.assertIsNotNone(ar)
+        # The AR control account carries the opening debit.
+        self.assertTrue(je.lines.filter(account=ar, debit=Decimal("1000.00")).exists())
+
     def test_unauthenticated_denied(self):
         from rest_framework.test import APIClient
         anon = APIClient()
@@ -2358,3 +2430,108 @@ class DeterministicReconciliationTests(TestCase):
         r2 = self.client.post("/api/v1/accounting/reconciliations/", payload, format="json")
         self.assertEqual(r2.status_code, 200, msg=str(r2.data))   # resumed, not 500
         self.assertEqual(r2.data["id"], r1.data["id"])
+
+
+class FixedAssetMasterConventionUsageTransferTests(TestCase):
+    """The four post-review additions: asset-master fields (serial/barcode/master-sub),
+    the 'new month' convention, Units-of-Production usage entry, and asset-type transfer."""
+
+    def setUp(self):
+        self.user = _make_user("famcut_owner@example.com")
+        self.org = _make_org(self.user, "FAMCUT Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+        m = AccountMapping.objects.get(organisation=self.org)
+        m.bank_account = Account.objects.get(organisation=self.org, code="1002"); m.save()
+
+    def _gl(self, code):
+        acct = Account.objects.filter(organisation=self.org, code=code).first()
+        return AccountingService._ledger_balance(acct) if acct else Decimal("0")
+
+    # 1. Asset Master extras — serial / barcode / master-sub linking
+    def test_serial_barcode_and_master_sub(self):
+        master = self.client.post("/api/v1/accounting/assets/", {
+            "name": "Server Rack", "category": "equipment", "purchase_date": "2026-07-01",
+            "purchase_cost": "2000000", "useful_life_years": 5, "funding_source": "bank",
+            "serial_number": "SRV-001", "barcode": "0123456789",
+        }, format="json")
+        self.assertEqual(master.status_code, 201, msg=str(master.data))
+        self.assertEqual(master.data["serial_number"], "SRV-001")
+        self.assertEqual(master.data["barcode"], "0123456789")
+        sub = self.client.post("/api/v1/accounting/assets/", {
+            "name": "Rack UPS add-on", "category": "equipment", "purchase_date": "2026-07-02",
+            "purchase_cost": "300000", "useful_life_years": 5, "funding_source": "bank",
+            "master_asset": master.data["id"],
+        }, format="json")
+        self.assertEqual(sub.status_code, 201, msg=str(sub.data))
+        self.assertEqual(str(sub.data["master_asset"]), str(master.data["id"]))
+        self.assertEqual(FixedAsset.objects.get(id=master.data["id"]).sub_assets.count(), 1)
+
+    # 2. "New month" convention — first charge deferred to the month after purchase
+    def test_new_month_convention_defers_first_charge(self):
+        import datetime
+        a = FixedAsset.objects.create(
+            organisation=self.org, name="Van", asset_code="NM-1", category="vehicle",
+            purchase_date=datetime.date(2026, 7, 10), purchase_cost=Decimal("1200000"),
+            useful_life_years=5, residual_value=Decimal("0"),
+            depreciation_convention="new_month", acquisition_posted=True,
+        )
+        AccountingService.run_depreciation(self.org, 2026, 7, created_by=self.user)
+        self.assertFalse(a.depreciation_entries.filter(period_year=2026, period_month=7).exists())
+        AccountingService.run_depreciation(self.org, 2026, 8, created_by=self.user)
+        aug = a.depreciation_entries.get(period_year=2026, period_month=8)
+        self.assertAlmostEqual(float(aug.depreciation_amount), 20000.0, places=2)
+
+    # 3. Units of Production — usage entry drives the charge
+    def test_units_of_production_usage(self):
+        import datetime
+        a = FixedAsset.objects.create(
+            organisation=self.org, name="Press", asset_code="U-1", category="equipment",
+            purchase_date=datetime.date(2026, 7, 1), purchase_cost=Decimal("1000000"),
+            useful_life_years=10, residual_value=Decimal("0"),
+            depreciation_method="units", total_units=Decimal("100000"), acquisition_posted=True,
+        )
+        res = self.client.post(f"/api/v1/accounting/assets/{a.id}/record_usage/", {
+            "year": 2026, "month": 7, "units": "10000",
+        }, format="json")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.assertAlmostEqual(float(res.data["depreciation_amount"]), 100000.0, places=2)  # 10k/100k * 1m
+        e = a.depreciation_entries.get(period_year=2026, period_month=7)
+        self.assertAlmostEqual(float(e.units), 10000.0, places=2)
+        self.assertAlmostEqual(float(self._gl("1510")), -100000.0, places=2)
+        # A second entry for the same period is rejected.
+        dup = self.client.post(f"/api/v1/accounting/assets/{a.id}/record_usage/",
+                               {"year": 2026, "month": 7, "units": "5000"}, format="json")
+        self.assertEqual(dup.status_code, 422)
+
+    def test_units_requires_total_units(self):
+        import datetime
+        a = FixedAsset.objects.create(
+            organisation=self.org, name="Press2", asset_code="U-2", category="equipment",
+            purchase_date=datetime.date(2026, 7, 1), purchase_cost=Decimal("1000000"),
+            depreciation_method="units", acquisition_posted=True,   # no total_units
+        )
+        res = self.client.post(f"/api/v1/accounting/assets/{a.id}/record_usage/",
+                               {"year": 2026, "month": 7, "units": "10000"}, format="json")
+        self.assertEqual(res.status_code, 422)
+
+    # 4. Asset-type transfer as a dated transaction
+    def test_asset_type_transfer(self):
+        from apps.accounting.models import AssetType, AssetTransfer
+        at_a = AssetType.objects.create(organisation=self.org, code="MV", name="Motor Vehicles",
+                                        category="vehicle", depreciation_method="straight_line", useful_life_years=4)
+        at_b = AssetType.objects.create(organisation=self.org, code="PM", name="Plant & Machinery",
+                                        category="equipment", depreciation_method="reducing_balance", useful_life_years=8)
+        res = self.client.post("/api/v1/accounting/assets/", {
+            "name": "Forklift", "category": "equipment", "purchase_date": "2026-07-01",
+            "purchase_cost": "900000", "funding_source": "bank", "asset_type": str(at_a.id),
+        }, format="json")
+        asset_id = res.data["id"]
+        trf = self.client.post(f"/api/v1/accounting/assets/{asset_id}/transfer/", {
+            "to_asset_type": str(at_b.id), "transfer_date": "2026-08-01", "reference": "reclass",
+        }, format="json")
+        self.assertEqual(trf.status_code, 200, msg=str(trf.data))
+        self.assertEqual(str(FixedAsset.objects.get(id=asset_id).asset_type_id), str(at_b.id))
+        x = AssetTransfer.objects.get(organisation=self.org, asset_id=asset_id)
+        self.assertEqual(str(x.from_asset_type_id), str(at_a.id))
+        self.assertEqual(str(x.to_asset_type_id), str(at_b.id))

@@ -21,6 +21,7 @@ from .serializers import (
     UpdateJournalEntrySerializer, FixedAssetSerializer, FinancialPeriodSerializer,
     BankReconciliationSerializer, BankReconciliationLineSerializer,
     AIReconMatchSerializer, AccountMappingSerializer, AssetTypeSerializer, MAPPING_ROLES,
+    MAPPING_ROLE_MODULES, MAPPING_ROLE_LABELS,
 )
 from .services import AccountingService, AccountMappingService, safe_post_gl
 
@@ -730,7 +731,7 @@ class FixedAssetViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def transfer(self, request, pk=None):
-        """POST /accounting/assets/{id}/transfer/  Body: {to_location, to_cost_centre, transfer_date, reference, notes}"""
+        """POST /accounting/assets/{id}/transfer/  Body: {to_location, to_cost_centre, to_asset_type, transfer_date, reference, notes}"""
         asset = self.get_object()
         org = self._get_organisation()
         to_location = None
@@ -740,15 +741,49 @@ class FixedAssetViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             to_location = Warehouse.objects.filter(organisation=org, id=loc_id).first()
             if not to_location:
                 return Response({'error': 'Destination location not found'}, status=400)
+        to_asset_type = None
+        at_id = request.data.get('to_asset_type')
+        if at_id:
+            from .models import AssetType
+            to_asset_type = AssetType.objects.filter(organisation=org, id=at_id).first()
+            if not to_asset_type:
+                return Response({'error': 'Destination asset type not found'}, status=400)
         from .services import CapitalisationService
         CapitalisationService.transfer_asset(
             org, asset, to_location=to_location,
             to_cost_centre=request.data.get('to_cost_centre'),
+            to_asset_type=to_asset_type,
             transfer_date=request.data.get('transfer_date'),
             reference=request.data.get('reference', ''), notes=request.data.get('notes', ''),
             created_by=request.user,
         )
         return Response(FixedAssetSerializer(asset).data)
+
+    @action(detail=True, methods=['post'])
+    def record_usage(self, request, pk=None):
+        """POST /accounting/assets/{id}/record_usage/  Body: {year, month, units}
+        Units-of-Production depreciation for a period from recorded usage."""
+        asset = self.get_object()
+        org = self._get_organisation()
+        today = date.today()
+        try:
+            year = int(request.data.get('year', today.year))
+            month = int(request.data.get('month', today.month))
+            units = request.data.get('units')
+        except (TypeError, ValueError):
+            return Response({'error': 'year, month and units are required'}, status=400)
+        from .services import AccountingService
+        try:
+            entry = AccountingService.record_usage_depreciation(
+                org, asset, year, month, units, created_by=request.user
+            )
+        except Exception as e:
+            return Response({'error': f'{e}'}, status=422)
+        return Response({
+            'message': f'Recorded {units} units for {year}-{month:02d}.',
+            'depreciation_amount': entry.depreciation_amount,
+            'asset': FixedAssetSerializer(asset).data,
+        })
 
     @action(detail=True, methods=['post'])
     def revalue(self, request, pk=None):
@@ -1406,7 +1441,12 @@ class AccountMappingView(APIView):
         if not org:
             return Response({'error': 'Organisation not found'}, status=400)
         mapping = AccountMappingService.get_or_create_mapping(org)
-        return Response(AccountMappingSerializer(mapping).data)
+        data = AccountMappingSerializer(mapping).data
+        # Expose the module grouping + labels so the UI can render mapping BY MODULE
+        # (GL / Customer / Supplier / Inventory / Payroll) per the client spec.
+        data['modules'] = MAPPING_ROLE_MODULES
+        data['role_labels'] = MAPPING_ROLE_LABELS
+        return Response(data)
 
     def put(self, request):
         org = self._get_org(request)
@@ -1431,8 +1471,18 @@ class AccountMappingView(APIView):
             elif f'{role}_id' in request.data and request.data[f'{role}_id'] is None:
                 setattr(mapping, role, None)
 
+        # Enforce model-level rules (active, non-header) before saving.
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        try:
+            mapping.full_clean(exclude=['organisation'])
+        except DjangoValidationError as e:
+            return Response({'error': '; '.join(e.messages)}, status=400)
+
         mapping.save()
-        return Response(AccountMappingSerializer(mapping).data)
+        data = AccountMappingSerializer(mapping).data
+        data['modules'] = MAPPING_ROLE_MODULES
+        data['role_labels'] = MAPPING_ROLE_LABELS
+        return Response(data)
 
 
 class AccountMappingSuggestionsView(APIView):

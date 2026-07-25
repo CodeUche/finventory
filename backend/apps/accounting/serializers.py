@@ -104,7 +104,7 @@ class UpdateJournalEntrySerializer(serializers.Serializer):
 class DepreciationEntrySerializer(serializers.ModelSerializer):
     class Meta:
         model = DepreciationEntry
-        fields = ['id', 'period_year', 'period_month', 'depreciation_amount', 'accumulated_to_date', 'net_book_value']
+        fields = ['id', 'period_year', 'period_month', 'depreciation_amount', 'accumulated_to_date', 'net_book_value', 'units']
         read_only_fields = ['id']
 
 
@@ -184,6 +184,7 @@ class FixedAssetSerializer(serializers.ModelSerializer):
             'qualifying_cost', 'input_tax_paid', 'input_tax_amount',
             'reducing_balance_rate', 'depreciation_convention', 'total_units',
             'location', 'cost_centre', 'asset_type',
+            'serial_number', 'barcode', 'master_asset',
         ]
         read_only_fields = ['id', 'acquisition_posted', 'acquisition_error', 'source_document_ref']
 
@@ -214,9 +215,37 @@ def _account_summary(account):
 MAPPING_ROLES = [
     'revenue_account', 'cogs_account', 'inventory_account', 'accounts_receivable',
     'cash_account', 'bank_account', 'accounts_payable', 'vat_output_account',
-    'vat_input_account', 'paye_account', 'pension_account', 'wht_account',
+    'vat_input_account', 'paye_account', 'pension_account', 'nhf_account', 'wht_account',
     'salary_expense_account', 'general_expense_account', 'bank_charges_account',
 ]
+
+# GL Mapping grouped BY MODULE (per client spec: GL / Customer / Supplier / Inventory,
+# extended with Cash & Bank and Payroll so every role has a home). Each role appears
+# exactly once; the frontend renders these as tabs/sections. Order defines display order.
+MAPPING_ROLE_MODULES = [
+    {'key': 'gl', 'label': 'General Ledger', 'roles': [
+        'cash_account', 'bank_account', 'bank_charges_account', 'general_expense_account']},
+    {'key': 'customer', 'label': 'Customers & Sales', 'roles': [
+        'accounts_receivable', 'revenue_account', 'vat_output_account']},
+    {'key': 'supplier', 'label': 'Suppliers & Purchases', 'roles': [
+        'accounts_payable', 'vat_input_account']},
+    {'key': 'inventory', 'label': 'Inventory & COGS', 'roles': [
+        'inventory_account', 'cogs_account']},
+    {'key': 'payroll', 'label': 'Payroll', 'roles': [
+        'salary_expense_account', 'paye_account', 'pension_account', 'nhf_account', 'wht_account']},
+]
+
+# Human-readable labels for each role (used by the module-grouped UI).
+MAPPING_ROLE_LABELS = {
+    'revenue_account': 'Revenue', 'cogs_account': 'Cost of Goods Sold',
+    'inventory_account': 'Inventory', 'accounts_receivable': 'Accounts Receivable',
+    'cash_account': 'Cash', 'bank_account': 'Bank', 'accounts_payable': 'Accounts Payable',
+    'vat_output_account': 'VAT Output (Sales)', 'vat_input_account': 'VAT Input (Purchases)',
+    'paye_account': 'PAYE Payable', 'pension_account': 'Pension Payable',
+    'nhf_account': 'NHF Payable', 'wht_account': 'WHT Payable',
+    'salary_expense_account': 'Salaries & Wages', 'general_expense_account': 'General Expenses',
+    'bank_charges_account': 'Bank Charges',
+}
 
 
 class AccountMappingSerializer(serializers.ModelSerializer):

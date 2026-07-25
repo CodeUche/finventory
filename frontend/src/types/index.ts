@@ -604,9 +604,14 @@ export interface FixedAsset {
   acquisition_posted?: boolean
   acquisition_error?: string
   reducing_balance_rate?: string | null
-  depreciation_convention?: 'full_month' | 'pro_rata'
+  depreciation_convention?: 'full_month' | 'pro_rata' | 'new_month'
   location?: string | null
   cost_centre?: string
+  asset_type?: string | null
+  total_units?: string | null
+  serial_number?: string
+  barcode?: string
+  master_asset?: string | null
 }
 
 export interface AssetReconciliation {

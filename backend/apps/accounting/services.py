@@ -116,6 +116,7 @@ class AccountMappingService:
         'vat_input_account':       (['asset'],            ['1300'],       ['vat input', 'input vat', 'recoverable']),
         'paye_account':            (['liability'],        ['2200', '22'], ['paye', 'income tax', 'payroll tax']),
         'pension_account':         (['liability'],        ['2300', '23'], ['pension']),
+        'nhf_account':             (['liability'],        ['2600', '26'], ['nhf', 'national housing', 'housing fund']),
         'wht_account':             (['liability'],        ['2400', '24'], ['withholding', 'wht']),
         'salary_expense_account':  (['expense'],          ['6001', '60'], ['salary', 'salaries', 'wages', 'payroll']),
         'general_expense_account': (['expense'],          ['6700', '67'], ['sundry', 'general', 'miscellaneous', 'other expenses']),
@@ -244,6 +245,16 @@ class AccountingService:
             normal_balance=normal_balance_for_type(AccountType.EQUITY),
             is_system=True,
         )
+
+    @staticmethod
+    def _mapped_or_code(organisation, role, code):
+        """Resolve a control account via the GL mapping first, falling back to the
+        default code. Keeps take-on / opening balances consistent with how business
+        events post (so remapping AR/AP/Inventory flows through to take-on too)."""
+        try:
+            return AccountMappingService.resolve(organisation, role)
+        except Exception:
+            return AccountingService._get_account_by_code(organisation, code)
 
     @staticmethod
     @transaction.atomic
@@ -447,9 +458,9 @@ class AccountingService:
             )
             inv_total += qty * unit_cost
 
-        ar = AccountingService._get_account_by_code(organisation, '1100')
-        inv = AccountingService._get_account_by_code(organisation, '1200')
-        ap = AccountingService._get_account_by_code(organisation, '2001')
+        ar = AccountingService._mapped_or_code(organisation, 'accounts_receivable', '1100')
+        inv = AccountingService._mapped_or_code(organisation, 'inventory_account', '1200')
+        ap = AccountingService._mapped_or_code(organisation, 'accounts_payable', '2001')
         suspense = AccountingService.get_or_create_suspense_account(organisation)
 
         lines = []
@@ -775,6 +786,13 @@ class AccountingService:
             # run charges nothing (usage-driven posting is handled separately).
             return zero
 
+        # "New month" convention: charge nothing in the purchase month; the first
+        # charge lands the following month.
+        if (accumulated_so_far <= zero
+                and asset.depreciation_convention == FixedAsset.CONV_NEW_MONTH
+                and asset.purchase_date.year == year and asset.purchase_date.month == month):
+            return zero
+
         if method == FixedAsset.RB:
             if asset.reducing_balance_rate:
                 annual_rate = Decimal(str(asset.reducing_balance_rate)) / Decimal('100')
@@ -932,6 +950,43 @@ class AccountingService:
             status='draft' if draft else 'posted',
             approval_status='pending' if draft else 'none',
         )
+
+    @staticmethod
+    @transaction.atomic
+    def record_usage_depreciation(organisation, asset, year, month, units, created_by=None):
+        """Units-of-Production depreciation for one period: charge =
+        units × (cost − residual) / total_units, capped at the remaining depreciable
+        base. Creates the depreciation entry (with the units) and posts it to the GL.
+        Idempotent per (asset, year, month)."""
+        import calendar
+        from datetime import date as _date
+        from .models import DepreciationEntry
+        units = Decimal(str(units or 0))
+        total = Decimal(str(asset.total_units or 0))
+        if units <= 0 or total <= 0:
+            raise ValueError("Units of Usage needs a positive usage and a total-units figure on the asset.")
+        if DepreciationEntry.objects.filter(asset=asset, period_year=year, period_month=month).exists():
+            raise ValueError(f"Depreciation for {year}-{month:02d} already exists for this asset.")
+
+        accumulated_so_far = Decimal(str(asset.accumulated_depreciation or 0))
+        depreciable_remaining = Decimal(str(asset.purchase_cost)) - accumulated_so_far - Decimal(str(asset.residual_value or 0))
+        if depreciable_remaining <= 0:
+            raise ValueError("This asset is already fully depreciated.")
+
+        charge = (units * (Decimal(str(asset.purchase_cost)) - Decimal(str(asset.residual_value or 0))) / total)
+        charge = min(charge.quantize(Decimal('0.01')), depreciable_remaining)
+        accumulated = accumulated_so_far + charge
+        nbv = max(Decimal(str(asset.residual_value or 0)), Decimal(str(asset.purchase_cost)) - accumulated)
+        period_last_day = _date(year, month, calendar.monthrange(year, month)[1])
+
+        entry = DepreciationEntry.objects.create(
+            organisation=organisation, asset=asset, period_year=year, period_month=month,
+            depreciation_amount=charge, accumulated_to_date=accumulated, net_book_value=nbv, units=units,
+        )
+        AccountingService.post_depreciation_journal(
+            organisation, asset, charge, period_last_day, created_by=created_by
+        )
+        return entry
 
     @staticmethod
     @transaction.atomic
@@ -1944,9 +1999,11 @@ class CapitalisationService:
     @staticmethod
     @transaction.atomic
     def transfer_asset(organisation, asset, to_location=None, to_cost_centre=None,
-                       transfer_date=None, reference='', notes='', created_by=None):
-        """Record an asset transfer (location/cost-centre) and update the asset. Pure
-        sub-ledger reclassification — no GL cost/depreciation change."""
+                       to_asset_type=None, transfer_date=None, reference='', notes='', created_by=None):
+        """Record an asset transfer (location / cost-centre / asset type) and update the
+        asset. Pure sub-ledger reclassification — no GL cost/depreciation change.
+        Transferring to a new asset type is how the depreciation rules change going
+        forward (the type supplies the method and GL accounts)."""
         from django.utils import timezone as _tz
         from .models import AssetTransfer
         transfer_date = (AccountingService._coerce_date(transfer_date)
@@ -1955,6 +2012,7 @@ class CapitalisationService:
             organisation=organisation, asset=asset, transfer_date=transfer_date,
             from_location=asset.location, to_location=to_location,
             from_cost_centre=asset.cost_centre or '', to_cost_centre=to_cost_centre or '',
+            from_asset_type=asset.asset_type, to_asset_type=to_asset_type,
             reference=reference or '', notes=notes or '',
         )
         fields = []
@@ -1962,6 +2020,8 @@ class CapitalisationService:
             asset.location = to_location; fields.append('location')
         if to_cost_centre is not None:
             asset.cost_centre = to_cost_centre or ''; fields.append('cost_centre')
+        if to_asset_type is not None:
+            asset.asset_type = to_asset_type; fields.append('asset_type')
         if fields:
             asset.save(update_fields=fields)
         return xfer

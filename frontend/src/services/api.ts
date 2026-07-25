@@ -1401,6 +1401,7 @@ export const accountingApi = {
   disposeAsset: (id: string, data: object) => api.post(`/accounting/assets/${id}/dispose/`, data),
   transferAsset: (id: string, data: object) => api.post(`/accounting/assets/${id}/transfer/`, data),
   revalueAsset: (id: string, data: object) => api.post(`/accounting/assets/${id}/revalue/`, data),
+  recordAssetUsage: (id: string, data: object) => api.post(`/accounting/assets/${id}/record_usage/`, data),
   assetRegisterReport: () => api.get('/accounting/assets/register_report/'),
   assetsByCategory: () => api.get('/accounting/assets/by_category/'),
   assetsByLocation: () => api.get('/accounting/assets/by_location/'),

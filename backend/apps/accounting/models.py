@@ -266,8 +266,11 @@ class FixedAsset(TenantAwareModel):
     ]
 
     # Depreciation convention for the FIRST period an asset is depreciated.
-    CONV_FULL = 'full_month'; CONV_PRORATA = 'pro_rata'
-    CONVENTION_CHOICES = [(CONV_FULL, 'Full month'), (CONV_PRORATA, 'Pro-rata (by days)')]
+    CONV_FULL = 'full_month'; CONV_PRORATA = 'pro_rata'; CONV_NEW_MONTH = 'new_month'
+    CONVENTION_CHOICES = [
+        (CONV_FULL, 'Full month'), (CONV_PRORATA, 'Pro-rata (by days)'),
+        (CONV_NEW_MONTH, 'New month (start the month after purchase)'),
+    ]
 
     # How the acquisition was funded — drives the credit leg of the acquisition
     # journal (DR 1500 Fixed Assets / CR funding). 'none' means the asset is being
@@ -292,6 +295,13 @@ class FixedAsset(TenantAwareModel):
     category = models.CharField(max_length=20, choices=CATEGORY_CHOICES, default=OTHER)
     asset_type = models.ForeignKey(
         'AssetType', null=True, blank=True, on_delete=models.SET_NULL, related_name='assets'
+    )
+    # Asset master file: serial/barcode for reconciliation, and master/sub linking
+    # (a sub-asset — e.g. an add-on — points to its master asset).
+    serial_number = models.CharField(max_length=100, blank=True, default='')
+    barcode = models.CharField(max_length=100, blank=True, default='')
+    master_asset = models.ForeignKey(
+        'self', null=True, blank=True, on_delete=models.SET_NULL, related_name='sub_assets'
     )
     account = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL)
     purchase_date = models.DateField()
@@ -374,6 +384,8 @@ class DepreciationEntry(TenantAwareModel):
     depreciation_amount = MoneyField()
     accumulated_to_date = MoneyField()
     net_book_value = MoneyField()
+    # Units consumed in the period (Units-of-Production method only).
+    units = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
 
     class Meta:
         ordering = ['period_year', 'period_month']
@@ -426,6 +438,13 @@ class AssetTransfer(TenantAwareModel):
     )
     from_cost_centre = models.CharField(max_length=100, blank=True, default='')
     to_cost_centre = models.CharField(max_length=100, blank=True, default='')
+    # Asset-type change as a dated transfer (rules for depreciation may change).
+    from_asset_type = models.ForeignKey(
+        AssetType, null=True, blank=True, on_delete=models.SET_NULL, related_name='+'
+    )
+    to_asset_type = models.ForeignKey(
+        AssetType, null=True, blank=True, on_delete=models.SET_NULL, related_name='+'
+    )
     reference = models.CharField(max_length=100, blank=True, default='')
     notes = models.TextField(blank=True, default='')
 
@@ -553,6 +572,7 @@ class AccountMapping(TenantAwareModel):
     vat_input_account       = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='mapping_vat_input')
     paye_account            = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='mapping_paye')
     pension_account         = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='mapping_pension')
+    nhf_account             = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='mapping_nhf')
     wht_account             = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='mapping_wht')
     # Expenses
     salary_expense_account  = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='mapping_salary')
@@ -563,16 +583,34 @@ class AccountMapping(TenantAwareModel):
         verbose_name = 'Account Mapping'
 
     def clean(self):
-        """Validate that all FK accounts belong to the same organisation."""
+        """Validate each mapped account: same org, active, and a real posting leaf.
+
+        NOTE: control accounts (AR/AP/Inventory/Fixed Assets) legitimately map here and
+        are posting-locked (allow_posting=False) for MANUAL journals only — auto-posting
+        is exempt — so we deliberately do NOT enforce allow_posting. We DO reject inactive
+        accounts and header/summary accounts (accounts that have children), which must
+        never be a posting target.
+        """
         fk_fields = [
             'revenue_account', 'cogs_account', 'inventory_account', 'accounts_receivable',
             'cash_account', 'bank_account', 'accounts_payable', 'vat_output_account',
-            'vat_input_account', 'paye_account', 'pension_account', 'wht_account',
+            'vat_input_account', 'paye_account', 'pension_account', 'nhf_account', 'wht_account',
             'salary_expense_account', 'general_expense_account', 'bank_charges_account',
         ]
         for field_name in fk_fields:
             account = getattr(self, field_name, None)
-            if account is not None and account.organisation_id != self.organisation_id:
+            if account is None:
+                continue
+            if account.organisation_id != self.organisation_id:
                 raise ValidationError(
                     f"Account '{account}' for role '{field_name}' does not belong to this organisation."
+                )
+            if not account.is_active:
+                raise ValidationError(
+                    f"Account '{account}' for role '{field_name}' is inactive and cannot be mapped."
+                )
+            if account.children.exists():
+                raise ValidationError(
+                    f"Account '{account}' for role '{field_name}' is a header/summary account; "
+                    f"map a specific posting account instead."
                 )
