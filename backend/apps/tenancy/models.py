@@ -143,8 +143,11 @@ class Organisation(SoftDeleteModel):
     )
     is_active = models.BooleanField(default=True)
     onboarding_completed = models.BooleanField(default=False)
-    # When True, transactions are rejected if required GL account mappings are missing
-    strict_gl_mode = models.BooleanField(default=False)
+    # When True, transactions are rejected if required GL account mappings are missing.
+    # Default ON: new orgs are seeded with a full COA and an auto-filled mapping, so
+    # strict mode is satisfied out of the box and keeps the books correct from day one.
+    # (Existing orgs keep whatever value they already have.)
+    strict_gl_mode = models.BooleanField(default=True)
     # Fixed-asset policy. Items costing below the threshold are expensed, not
     # capitalised (default ₦100,000). Revaluation (IAS 16) is opt-in — SME default is
     # the cost model — and needs practitioner sign-off before enabling.
