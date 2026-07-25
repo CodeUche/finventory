@@ -13,14 +13,14 @@ from apps.core.permissions import IsAccountant, IsOwnerOrAdmin, plan_requires
 _PlanAccounting = plan_requires('accounting')
 from .models import (
     Account, AccountSubType, JournalEntry, JournalLine, FixedAsset, FinancialPeriod,
-    BankReconciliation, BankReconciliationLine, AIReconMatch, AccountMapping, ACCOUNT_GROUP_SPEC,
+    BankReconciliation, BankReconciliationLine, AIReconMatch, AccountMapping, AssetType, ACCOUNT_GROUP_SPEC,
 )
 from django.db import transaction
 from .serializers import (
     AccountSerializer, AccountSubTypeSerializer, JournalEntrySerializer, CreateJournalEntrySerializer,
     UpdateJournalEntrySerializer, FixedAssetSerializer, FinancialPeriodSerializer,
     BankReconciliationSerializer, BankReconciliationLineSerializer,
-    AIReconMatchSerializer, AccountMappingSerializer, MAPPING_ROLES,
+    AIReconMatchSerializer, AccountMappingSerializer, AssetTypeSerializer, MAPPING_ROLES,
 )
 from .services import AccountingService, AccountMappingService, safe_post_gl
 
@@ -620,13 +620,193 @@ class JournalEntryViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         return Response(JournalEntrySerializer(entry).data)
 
 
+class AssetTypeViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+    """CRUD for asset types (default depreciation settings + GL account mapping)."""
+    serializer_class = AssetTypeSerializer
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
+
+    def get_queryset(self):
+        return AssetType.objects.filter(organisation=self._get_organisation())
+
+
 class FixedAssetViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     serializer_class = FixedAssetSerializer
     permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
 
     def get_queryset(self):
         org = self._get_organisation()
-        return FixedAsset.objects.filter(organisation=org).prefetch_related('depreciation_entries')
+        return FixedAsset.objects.filter(organisation=org).select_related('asset_type').prefetch_related('depreciation_entries')
+
+    def perform_create(self, serializer):
+        """Create the asset (organisation injected by the mixin) AND post its GL entry.
+
+        - Purchase (default): DR 1500 Fixed Assets / CR funding (Bank/Cash/AP/Equity).
+        - Take-on (capitalisation_source='opening_balance' or funding_source='none'):
+          DR 1500 / CR 1510 accumulated dep / CR 3900 NBV, seeding depreciation
+          history. Pass `opening_accumulated_depreciation` for dep-to-date.
+
+        Posting failure is non-fatal and recorded on the asset (acquisition_error)."""
+        org = getattr(self.request, 'organisation', None) or self._get_organisation()
+        from .services import CapitalisationService
+        # Auto-generate the asset code when the user leaves it blank ("auto if blank").
+        if not (serializer.validated_data.get('asset_code') or '').strip():
+            serializer.validated_data['asset_code'] = CapitalisationService._next_asset_code(org)
+        super().perform_create(serializer)  # injects organisation + writes audit
+        asset = serializer.instance
+        is_takeon = (
+            asset.capitalisation_source == FixedAsset.CAP_OPENING
+            or asset.funding_source == FixedAsset.FUND_NONE
+        )
+        try:
+            if is_takeon:
+                CapitalisationService.set_asset_opening_balance(
+                    org, asset,
+                    accumulated_depreciation=self.request.data.get('opening_accumulated_depreciation', 0),
+                    created_by=self.request.user,
+                )
+            else:
+                CapitalisationService.post_acquisition(
+                    org, asset, funding_source=asset.funding_source, created_by=self.request.user,
+                )
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Asset GL posting failed for %s", asset.asset_code, exc_info=True
+            )
+
+    @action(detail=False, methods=['get'])
+    def reconciliation(self, request):
+        """GET /accounting/assets/reconciliation/?as_of=YYYY-MM-DD
+        Prove the register ties to the GL (cost/accum-dep/NBV vs 1500/1510), with the
+        Take-On Suspense decomposition and any assets whose acquisition never posted."""
+        org = self._get_organisation()
+        as_of = None
+        as_of_str = request.query_params.get('as_of')
+        if as_of_str:
+            try:
+                as_of = date.fromisoformat(as_of_str)
+            except ValueError:
+                pass
+        from .services import CapitalisationService
+        return Response(CapitalisationService.gl_reconciliation(org, as_of=as_of))
+
+    @action(detail=True, methods=['post'])
+    def dispose(self, request, pk=None):
+        """POST /accounting/assets/{id}/dispose/  Body: {proceeds, disposal_date, proceeds_funding}
+        Derecognise the asset and post the gain/loss on disposal."""
+        asset = self.get_object()
+        org = self._get_organisation()
+        from .services import CapitalisationService
+        try:
+            result = CapitalisationService.dispose_asset(
+                org, asset,
+                proceeds=request.data.get('proceeds', 0),
+                disposal_date=request.data.get('disposal_date'),
+                proceeds_funding=request.data.get('proceeds_funding', 'bank'),
+                created_by=request.user,
+            )
+        except Exception as e:
+            return Response({'error': f'[{type(e).__name__}] {e}'}, status=422)
+        if result is None:
+            return Response({'error': 'Asset is already disposed.'}, status=400)
+        return Response({
+            'message': 'Asset disposed.',
+            'gain_loss': result['gain_loss'],
+            'net_book_value': result['net_book_value'],
+            'proceeds': result['proceeds'],
+            'asset': FixedAssetSerializer(asset).data,
+        })
+
+    @action(detail=False, methods=['get'])
+    def disposal_report(self, request):
+        """GET /accounting/assets/disposal_report/?date_from=&date_to="""
+        org = self._get_organisation()
+        df = request.query_params.get('date_from')
+        dt = request.query_params.get('date_to')
+        date_from = date.fromisoformat(df) if df else None
+        date_to = date.fromisoformat(dt) if dt else None
+        from .services import CapitalisationService
+        return Response(CapitalisationService.disposal_report(org, date_from=date_from, date_to=date_to))
+
+    @action(detail=True, methods=['post'])
+    def transfer(self, request, pk=None):
+        """POST /accounting/assets/{id}/transfer/  Body: {to_location, to_cost_centre, transfer_date, reference, notes}"""
+        asset = self.get_object()
+        org = self._get_organisation()
+        to_location = None
+        loc_id = request.data.get('to_location')
+        if loc_id:
+            from apps.inventory.models import Warehouse
+            to_location = Warehouse.objects.filter(organisation=org, id=loc_id).first()
+            if not to_location:
+                return Response({'error': 'Destination location not found'}, status=400)
+        from .services import CapitalisationService
+        CapitalisationService.transfer_asset(
+            org, asset, to_location=to_location,
+            to_cost_centre=request.data.get('to_cost_centre'),
+            transfer_date=request.data.get('transfer_date'),
+            reference=request.data.get('reference', ''), notes=request.data.get('notes', ''),
+            created_by=request.user,
+        )
+        return Response(FixedAssetSerializer(asset).data)
+
+    @action(detail=True, methods=['post'])
+    def revalue(self, request, pk=None):
+        """POST /accounting/assets/{id}/revalue/  Body: {new_value, revaluation_date, reference, notes}
+        Gated behind the org's fixed_asset_revaluation_enabled flag."""
+        asset = self.get_object()
+        org = self._get_organisation()
+        from .services import CapitalisationService
+        try:
+            result = CapitalisationService.revalue_asset(
+                org, asset, new_value=request.data.get('new_value'),
+                revaluation_date=request.data.get('revaluation_date'),
+                reference=request.data.get('reference', ''), notes=request.data.get('notes', ''),
+                created_by=request.user,
+            )
+        except Exception as e:
+            return Response({'error': f'[{type(e).__name__}] {e}'}, status=422)
+        return Response({
+            'message': 'Asset revalued.', 'surplus': result['surplus'],
+            'new_carrying_amount': result['new_carrying_amount'],
+            'asset': FixedAssetSerializer(asset).data,
+        })
+
+    @action(detail=False, methods=['get'])
+    def register_report(self, request):
+        from .services import CapitalisationService
+        return Response(CapitalisationService.asset_register_report(self._get_organisation()))
+
+    @action(detail=False, methods=['get'])
+    def by_category(self, request):
+        from .services import CapitalisationService
+        return Response(CapitalisationService.assets_by_category(self._get_organisation()))
+
+    @action(detail=False, methods=['get'])
+    def by_location(self, request):
+        from .services import CapitalisationService
+        return Response(CapitalisationService.assets_by_location(self._get_organisation()))
+
+    @action(detail=False, methods=['get'])
+    def transfer_report(self, request):
+        org = self._get_organisation()
+        df = request.query_params.get('date_from')
+        dt = request.query_params.get('date_to')
+        from .services import CapitalisationService
+        return Response(CapitalisationService.transfer_report(
+            org,
+            date_from=date.fromisoformat(df) if df else None,
+            date_to=date.fromisoformat(dt) if dt else None,
+        ))
+
+    @action(detail=True, methods=['get'])
+    def depreciation_schedule(self, request, pk=None):
+        """GET /accounting/assets/{id}/depreciation_schedule/?forecast=true"""
+        asset = self.get_object()
+        forecast = request.query_params.get('forecast', '').lower() in ('1', 'true', 'yes')
+        from .services import CapitalisationService
+        return Response(CapitalisationService.depreciation_schedule(
+            self._get_organisation(), asset, forecast=forecast))
 
     @action(detail=False, methods=['post'])
     def run_depreciation(self, request):
@@ -634,8 +814,40 @@ class FixedAssetViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         today = date.today()
         year = int(request.data.get('year', today.year))
         month = int(request.data.get('month', today.month))
-        entries = AccountingService.run_depreciation(org, year, month)
-        return Response({'message': f'Ran depreciation for {year}-{month:02d}', 'entries_created': len(entries)})
+        catch_up = bool(request.data.get('catch_up'))
+        draft = bool(request.data.get('draft'))
+        if catch_up:
+            entries = AccountingService.run_depreciation_catch_up(org, year, month, created_by=request.user, draft=draft)
+        else:
+            entries = AccountingService.run_depreciation(org, year, month, created_by=request.user, draft=draft)
+        already_run = len(entries) == 0 and not catch_up
+        mode = 'draft batch' if draft else 'posted'
+        if already_run:
+            message = f'Depreciation for {year}-{month:02d} has already been run (or no assets are due).'
+        elif catch_up:
+            message = f'Ran catch-up depreciation up to {year}-{month:02d} ({mode}): {len(entries)} entries.'
+        else:
+            message = f'Ran depreciation for {year}-{month:02d} ({mode}): {len(entries)} entries.'
+        return Response({
+            'message': message,
+            'entries_created': len(entries),
+            'already_run': already_run,
+            'draft': draft,
+        })
+
+    @action(detail=False, methods=['post'])
+    def post_depreciation_batch(self, request):
+        """POST /accounting/assets/post_depreciation_batch/  Body: {year, month}
+        Post (approve) all draft depreciation journals for the period."""
+        org = self._get_organisation()
+        today = date.today()
+        year = int(request.data.get('year', today.year))
+        month = int(request.data.get('month', today.month))
+        count = AccountingService.post_depreciation_drafts(org, year, month, request.user)
+        return Response({
+            'posted': count,
+            'message': f'Posted {count} draft depreciation entr{"y" if count == 1 else "ies"} for {year}-{month:02d}.',
+        })
 
 
 class FinancialPeriodViewSet(TenantFilterMixin, viewsets.ModelViewSet):
@@ -689,6 +901,31 @@ class BankReconciliationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     def get_queryset(self):
         org = self._get_organisation()
         return BankReconciliation.objects.filter(organisation=org).prefetch_related('lines')
+
+    def create(self, request, *args, **kwargs):
+        """Start a reconciliation. If one already exists for this account + period,
+        resume it (return it) instead of erroring with a unique-constraint 500."""
+        from django.db import IntegrityError, transaction as _txn
+        org = self._get_organisation()
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            with _txn.atomic():
+                recon = serializer.save(organisation=org)
+        except IntegrityError:
+            v = serializer.validated_data
+            acct = v.get('account')
+            existing = BankReconciliation.objects.filter(
+                organisation=org, account=acct,
+                period_start=v.get('period_start'), period_end=v.get('period_end'),
+            ).first()
+            if existing:
+                return Response(self.get_serializer(existing).data, status=status.HTTP_200_OK)
+            return Response(
+                {'error': 'A reconciliation for this account and period already exists.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(self.get_serializer(recon).data, status=status.HTTP_201_CREATED)
 
     def perform_create(self, serializer):
         org = self._get_organisation()
@@ -828,12 +1065,37 @@ class BankReconciliationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             'lines': BankReconciliationLineSerializer(lines_created, many=True).data,
         }, status=status.HTTP_201_CREATED)
 
+    @action(detail=True, methods=['post'], url_path='auto_match')
+    def auto_match(self, request, pk=None):
+        """
+        POST /accounting/reconciliations/{id}/auto_match/
+        Deterministic exact-match pass — instant, offline, auditable. Matches bank
+        lines to book entries on exact amount + date tolerance (+ reference), auto-
+        confirming unambiguous matches. Run this FIRST; the AI pass then only handles
+        whatever is left. Body (optional): {"date_tolerance_days": 4}.
+        """
+        recon = self.get_object()
+        from apps.accounting.services import ReconciliationMatchingService
+        tol = request.data.get('date_tolerance_days')
+        try:
+            tol = int(tol) if tol is not None else None
+        except (TypeError, ValueError):
+            tol = None
+        summary = ReconciliationMatchingService.deterministic_match(recon, date_tolerance_days=tol)
+        all_matches = AIReconMatch.objects.filter(reconciliation=recon).select_related(
+            'bank_line', 'book_line', 'book_line__journal_entry'
+        )
+        return Response({
+            'matches': AIReconMatchSerializer(all_matches, many=True).data,
+            'summary': summary,
+        })
+
     @action(detail=True, methods=['post'], url_path='ai_reconcile')
     def ai_reconcile(self, request, pk=None):
         """
         POST /accounting/reconciliations/{id}/ai_reconcile/
-        Uses Groq (free tier, llama-3.3-70b-versatile) to match bank statement
-        lines to book journal lines. Requires GROQ_API_KEY in .env.
+        AI-assist pass (Groq llama-3.3-70b) for the lines the deterministic auto-match
+        could NOT resolve. Requires GROQ_API_KEY. A hard timeout keeps it from hanging.
         Get a free key at: https://console.groq.com/keys
         """
         import json
@@ -848,10 +1110,10 @@ class BankReconciliationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                 status=status.HTTP_422_UNPROCESSABLE_ENTITY,
             )
 
-        # Fetch bank statement lines for this reconciliation
-        bank_lines = list(recon.lines.all())
+        # Only the lines the deterministic pass left uncleared — never re-match cleared ones.
+        bank_lines = list(recon.lines.filter(is_cleared=False))
         if not bank_lines:
-            return Response({'error': 'No bank statement lines found. Import a CSV statement first.'}, status=400)
+            return Response({'error': 'No unmatched bank statement lines. Import a statement, or everything is already matched.'}, status=400)
 
         # Fetch book journal lines for the account + period
         journal_lines = list(
@@ -932,7 +1194,9 @@ RESPONSE FORMAT — Return ONLY valid JSON, nothing else:
 
         try:
             from groq import Groq
-            client = Groq(api_key=api_key)
+            # Hard timeout + no retries so a slow/unreachable Groq can never hang the
+            # request (the "stuck in progress" bug). It fails fast into the except below.
+            client = Groq(api_key=api_key, timeout=20.0, max_retries=0)
             chat_completion = client.chat.completions.create(
                 model='llama-3.3-70b-versatile',
                 messages=[{'role': 'user', 'content': prompt}],

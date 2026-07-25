@@ -388,3 +388,133 @@ class TaxService:
             },
         )
         return tax_return
+
+
+class CapitalAllowanceService:
+    """
+    Nigeria Tax Act 2025 capital-allowance engine.
+
+    GATED behind organisation.capital_allowance_nta2025_enabled (default False). Until a
+    licensed Nigerian tax practitioner signs off the rate table + qualifying rules, the
+    CIT computation continues to use its manual `allowances` input and this engine does
+    NOT affect any live number. It is built and tested so it can be switched on after
+    sign-off without further code changes.
+
+    Rules encoded (our understanding — needs sign-off): no initial allowance; uniform
+    straight-line annual rate per class (10/20/25); 1% notional cost retained until
+    disposal; §27(2) VAT/levy-paid qualifying; disposal via chargeable gains only (no
+    balancing charge/allowance, no roll-over relief).
+    """
+
+    # Fixed-asset register category → CA asset class (→ rate band).
+    CATEGORY_TO_CLASS = {
+        'building': 'non_industrial_building',
+        'vehicle': 'motor_vehicle',
+        'equipment': 'plant_machinery',
+        'furniture': 'furniture',
+        'other': 'other',
+        # 'land' is intentionally excluded — land does not qualify for capital allowances.
+    }
+
+    @staticmethod
+    def is_enabled(organisation) -> bool:
+        return bool(getattr(organisation, 'capital_allowance_nta2025_enabled', False))
+
+    @staticmethod
+    def _qualifying_assets(organisation, tax_year):
+        from apps.accounting.models import FixedAsset
+        assets = FixedAsset.objects.filter(organisation=organisation).exclude(
+            category=FixedAsset.LAND
+        )
+        result = []
+        for a in assets:
+            if a.purchase_date and a.purchase_date.year > tax_year:
+                continue
+            if a.disposal_date and a.disposal_date.year < tax_year:
+                continue
+            # §27(2): only capex on which input VAT/levy was paid qualifies. When the
+            # flag is unset we still include it (evidence may pre-date capture); the
+            # practitioner review decides the exact qualifying test.
+            result.append(a)
+        return result
+
+    @staticmethod
+    @transaction.atomic
+    def generate_for_year(organisation, tax_year):
+        """Build/refresh CapitalAllowanceClaim rows for each qualifying asset, chaining
+        the tax written-down value from the prior year. Idempotent per (asset, year)."""
+        from .models import CapitalAllowanceClaim
+        claims = []
+        for a in CapitalAllowanceService._qualifying_assets(organisation, tax_year):
+            # MoneyField defaults to 0 (not None) — fall back to purchase_cost when unset.
+            qcost = Decimal(str(a.qualifying_cost)) if a.qualifying_cost else Decimal(str(a.purchase_cost or 0))
+            if qcost <= 0:
+                continue
+            asset_class = CapitalAllowanceService.CATEGORY_TO_CLASS.get(a.category, 'other')
+            name = f"{a.asset_code} — {a.name}"[:300]
+            prior = CapitalAllowanceClaim.objects.filter(
+                organisation=organisation, asset=a, tax_year=tax_year - 1
+            ).first()
+            opening = Decimal(str(prior.closing_tax_written_down_value)) if prior else qcost
+            claim, _ = CapitalAllowanceClaim.objects.update_or_create(
+                organisation=organisation, asset_name=name, tax_year=tax_year,
+                defaults={
+                    'asset': a, 'asset_class': asset_class,
+                    'cost': Decimal(str(a.purchase_cost)), 'qualifying_cost': qcost,
+                    'opening_tax_written_down_value': opening,
+                    'is_acquisition_year': bool(a.purchase_date and a.purchase_date.year == tax_year),
+                },
+            )
+            claims.append(claim)
+        return claims
+
+    @staticmethod
+    def total_for_year(organisation, tax_year) -> Decimal:
+        from .models import CapitalAllowanceClaim
+        return CapitalAllowanceClaim.objects.filter(
+            organisation=organisation, tax_year=tax_year
+        ).aggregate(t=Sum('total_allowance'))['t'] or Decimal('0')
+
+    @staticmethod
+    def chargeable_gain_on_disposal(asset, proceeds) -> Decimal:
+        """NTA 2025: chargeable gain = proceeds − tax WDV (if CA was claimed) else −
+        cost. No balancing charge/allowance; no roll-over relief. Taxed at the CIT
+        rate via the normal CIT computation (small companies exempt)."""
+        from .models import CapitalAllowanceClaim
+        proceeds = Decimal(str(proceeds or 0))
+        last = CapitalAllowanceClaim.objects.filter(asset=asset).order_by('-tax_year').first()
+        base = (Decimal(str(last.closing_tax_written_down_value)) if last
+                else Decimal(str(asset.purchase_cost or 0)))
+        return proceeds - base
+
+    @staticmethod
+    def compute_assessable_profit(organisation, accounting_profit, tax_year, book_depreciation=None):
+        """
+        When the CA engine is ENABLED: assessable profit = accounting profit + book
+        depreciation add-back − capital allowances (Nigerian CIT disallows accounting
+        depreciation and substitutes capital allowances). When DISABLED (default),
+        returns the accounting profit unchanged so nothing about the live CIT number
+        changes until practitioner sign-off.
+        """
+        accounting_profit = Decimal(str(accounting_profit or 0))
+        if not CapitalAllowanceService.is_enabled(organisation):
+            return {
+                'assessable_profit': accounting_profit,
+                'depreciation_addback': Decimal('0'),
+                'capital_allowances': Decimal('0'),
+                'ca_enabled': False,
+            }
+        from apps.accounting.models import DepreciationEntry
+        if book_depreciation is None:
+            book_depreciation = DepreciationEntry.objects.filter(
+                organisation=organisation, period_year=tax_year
+            ).aggregate(t=Sum('depreciation_amount'))['t'] or Decimal('0')
+        book_depreciation = Decimal(str(book_depreciation))
+        CapitalAllowanceService.generate_for_year(organisation, tax_year)
+        ca = CapitalAllowanceService.total_for_year(organisation, tax_year)
+        return {
+            'assessable_profit': accounting_profit + book_depreciation - ca,
+            'depreciation_addback': book_depreciation,
+            'capital_allowances': ca,
+            'ca_enabled': True,
+        }

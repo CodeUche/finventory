@@ -18,7 +18,7 @@ from django.conf import settings
 from django.db import models
 
 from apps.core.fields import EncryptedCharField
-from apps.core.models import SoftDeleteModel, TimeStampedModel
+from apps.core.models import SoftDeleteModel, TimeStampedModel, MoneyField
 
 
 class Organisation(SoftDeleteModel):
@@ -145,6 +145,14 @@ class Organisation(SoftDeleteModel):
     onboarding_completed = models.BooleanField(default=False)
     # When True, transactions are rejected if required GL account mappings are missing
     strict_gl_mode = models.BooleanField(default=False)
+    # Fixed-asset policy. Items costing below the threshold are expensed, not
+    # capitalised (default ₦100,000). Revaluation (IAS 16) is opt-in — SME default is
+    # the cost model — and needs practitioner sign-off before enabling.
+    fixed_asset_capitalisation_threshold = MoneyField(default=100000)
+    fixed_asset_revaluation_enabled = models.BooleanField(default=False)
+    # NTA-2025 capital-allowance engine. OFF until a licensed tax practitioner signs
+    # off the rate table + qualifying rules — enabling it drives the CIT computation.
+    capital_allowance_nta2025_enabled = models.BooleanField(default=False)
 
     class Meta(SoftDeleteModel.Meta):
         verbose_name = "Organisation"

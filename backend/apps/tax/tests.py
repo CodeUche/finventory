@@ -457,21 +457,23 @@ class CapitalAllowanceTests(TestCase):
         }, format="json")
         self.assertEqual(res.status_code, 201)
 
-    def test_initial_allowance_computed_on_acquisition_year(self):
-        """Motor vehicle: IA = 25% of cost in acquisition year."""
+    def test_nta2025_no_initial_allowance(self):
+        """NTA 2025 abolished the initial allowance; plant & machinery is a uniform
+        20% straight-line annual allowance on qualifying cost."""
         res = self.client.post("/api/v1/tax/capital-allowances/", {
             "asset_name": "Generator",
             "asset_class": "plant_machinery",
-            "tax_year": 2025,
+            "tax_year": 2026,
             "cost": "2000000",
             "opening_tax_written_down_value": "2000000",
             "is_acquisition_year": True,
         }, format="json")
         self.assertEqual(res.status_code, 201)
         obj = CapitalAllowanceClaim.objects.get(id=res.data["id"])
-        # Plant & machinery IA rate = 50%
-        self.assertEqual(obj.initial_allowance, Decimal("1000000.00"))
-        self.assertEqual(obj.initial_allowance_rate, Decimal("50"))
+        self.assertEqual(obj.initial_allowance, Decimal("0.00"))
+        self.assertEqual(obj.initial_allowance_rate, Decimal("0"))
+        self.assertEqual(obj.annual_allowance_rate, Decimal("20"))
+        self.assertEqual(obj.annual_allowance, Decimal("400000.00"))  # 20% × 2,000,000
 
     def test_no_initial_allowance_if_not_acquisition_year(self):
         res = self.client.post("/api/v1/tax/capital-allowances/", {
@@ -488,22 +490,22 @@ class CapitalAllowanceTests(TestCase):
         self.assertEqual(obj.initial_allowance_rate, Decimal("0"))
 
     def test_annual_allowance_computed(self):
-        """Motor vehicle AA = 20% of (opening WDV − IA)."""
+        """NTA 2025: computer/IT annual allowance = 25% straight-line on qualifying cost."""
         res = self.client.post("/api/v1/tax/capital-allowances/", {
             "asset_name": "Office Computer",
             "asset_class": "computer",
-            "tax_year": 2025,
+            "tax_year": 2026,
             "cost": "800000",
             "opening_tax_written_down_value": "800000",
             "is_acquisition_year": True,
         }, format="json")
         self.assertEqual(res.status_code, 201)
         obj = CapitalAllowanceClaim.objects.get(id=res.data["id"])
-        # Computer: IA = 50% of 800k = 400k; AA = 25% of (800k − 400k) = 100k
-        self.assertEqual(obj.initial_allowance, Decimal("400000.00"))
-        self.assertEqual(obj.annual_allowance, Decimal("100000.00"))
-        self.assertEqual(obj.total_allowance, Decimal("500000.00"))
-        self.assertEqual(obj.closing_tax_written_down_value, Decimal("300000.00"))
+        # No IA; AA = 25% of 800k = 200k; closing WDV = 600k.
+        self.assertEqual(obj.initial_allowance, Decimal("0.00"))
+        self.assertEqual(obj.annual_allowance, Decimal("200000.00"))
+        self.assertEqual(obj.total_allowance, Decimal("200000.00"))
+        self.assertEqual(obj.closing_tax_written_down_value, Decimal("600000.00"))
 
     def test_closing_wdv_never_negative(self):
         """Closing WDV is clamped to 0."""
@@ -537,6 +539,91 @@ class CapitalAllowanceTests(TestCase):
         self.assertEqual(res.status_code, 201)
         res2 = self.client.delete(f"/api/v1/tax/capital-allowances/{res.data['id']}/")
         self.assertEqual(res2.status_code, 204)
+
+
+class CapitalAllowanceEngineTests(TestCase):
+    """NTA-2025 CA engine, GATED behind capital_allowance_nta2025_enabled (default OFF).
+    Flag off → no effect on the CIT number; flag on → depreciation add-back + CA."""
+
+    def setUp(self):
+        self.user = _make_user("cae_owner@example.com")
+        self.org = _make_org(self.user, "CAE Org")
+        _upgrade_to_business(self.org)
+
+    def _make_asset(self, cost="2000000", category="equipment", code="CA-1"):
+        from apps.accounting.models import FixedAsset
+        return FixedAsset.objects.create(
+            organisation=self.org, name="Machine", asset_code=code, category=category,
+            purchase_date=__import__("datetime").date(2026, 1, 1),
+            purchase_cost=Decimal(cost), useful_life_years=5, residual_value=Decimal("0"),
+            acquisition_posted=True,
+        )
+
+    def test_flag_off_leaves_profit_unchanged(self):
+        from apps.tax.services import CapitalAllowanceService
+        self._make_asset()
+        out = CapitalAllowanceService.compute_assessable_profit(self.org, Decimal("1000000"), 2026)
+        self.assertFalse(out["ca_enabled"])
+        self.assertEqual(out["assessable_profit"], Decimal("1000000"))
+        self.assertEqual(out["capital_allowances"], Decimal("0"))
+
+    def test_flag_on_generates_claims_and_adjusts_profit(self):
+        from apps.tax.services import CapitalAllowanceService
+        self.org.capital_allowance_nta2025_enabled = True
+        self.org.save(update_fields=["capital_allowance_nta2025_enabled"])
+        self._make_asset(cost="2000000", category="equipment")  # plant & machinery 20%
+        # Accounting profit 1,000,000; book depreciation add-back 300,000; CA = 20%×2m = 400,000.
+        out = CapitalAllowanceService.compute_assessable_profit(
+            self.org, Decimal("1000000"), 2026, book_depreciation=Decimal("300000"))
+        self.assertTrue(out["ca_enabled"])
+        self.assertEqual(out["capital_allowances"], Decimal("400000.00"))
+        self.assertEqual(out["depreciation_addback"], Decimal("300000"))
+        # 1,000,000 + 300,000 − 400,000 = 900,000
+        self.assertEqual(out["assessable_profit"], Decimal("900000.00"))
+
+    def test_land_excluded_from_capital_allowances(self):
+        from apps.tax.services import CapitalAllowanceService
+        self.org.capital_allowance_nta2025_enabled = True
+        self.org.save(update_fields=["capital_allowance_nta2025_enabled"])
+        self._make_asset(cost="5000000", category="land", code="CA-LAND")
+        claims = CapitalAllowanceService.generate_for_year(self.org, 2026)
+        self.assertEqual(len(claims), 0)
+
+    def test_wdv_chains_year_to_year(self):
+        from apps.tax.services import CapitalAllowanceService
+        self.org.capital_allowance_nta2025_enabled = True
+        self.org.save(update_fields=["capital_allowance_nta2025_enabled"])
+        self._make_asset(cost="2000000", category="equipment")
+        CapitalAllowanceService.generate_for_year(self.org, 2026)  # opening 2m, claim 400k, closing 1.6m
+        CapitalAllowanceService.generate_for_year(self.org, 2027)
+        from apps.tax.models import CapitalAllowanceClaim
+        y2 = CapitalAllowanceClaim.objects.get(organisation=self.org, tax_year=2027)
+        self.assertEqual(y2.opening_tax_written_down_value, Decimal("1600000.00"))
+        self.assertEqual(y2.annual_allowance, Decimal("400000.00"))
+        self.assertEqual(y2.closing_tax_written_down_value, Decimal("1200000.00"))
+
+    def test_chargeable_gain_on_disposal(self):
+        from apps.tax.services import CapitalAllowanceService
+        self.org.capital_allowance_nta2025_enabled = True
+        self.org.save(update_fields=["capital_allowance_nta2025_enabled"])
+        asset = self._make_asset(cost="2000000", category="equipment")
+        CapitalAllowanceService.generate_for_year(self.org, 2026)  # closing WDV 1.6m
+        # Sell for 1,800,000 → chargeable gain = proceeds − tax WDV = 200,000.
+        gain = CapitalAllowanceService.chargeable_gain_on_disposal(asset, Decimal("1800000"))
+        self.assertEqual(gain, Decimal("200000.00"))
+
+    def test_notional_floor_retained(self):
+        """WDV never written below 1% of qualifying cost until disposal."""
+        from apps.tax.services import CapitalAllowanceService
+        from apps.tax.models import CapitalAllowanceClaim
+        self.org.capital_allowance_nta2025_enabled = True
+        self.org.save(update_fields=["capital_allowance_nta2025_enabled"])
+        # 25% motor vehicle over 5 years would fully write off, but 1% (of cost) is retained.
+        asset = self._make_asset(cost="1000000", category="vehicle", code="CA-VEH")
+        for yr in range(2026, 2033):
+            CapitalAllowanceService.generate_for_year(self.org, yr)
+        last = CapitalAllowanceClaim.objects.filter(organisation=self.org, asset=asset).order_by("-tax_year").first()
+        self.assertGreaterEqual(float(last.closing_tax_written_down_value), 10000.0)  # 1% of 1,000,000
 
 
 # ── DeferredTaxItem Tests ──────────────────────────────────────────────────────

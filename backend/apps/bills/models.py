@@ -92,6 +92,12 @@ class BillItem(TenantAwareModel):
         'accounting.Account', null=True, blank=True,
         on_delete=models.SET_NULL, related_name='bill_items'
     )
+    # Capitalisation: when set, this line's VAT-exclusive cost is debited to Fixed
+    # Assets (1500) instead of an expense account, and a FixedAsset register record is
+    # created on bill approval (Phase 1 — bill-line capitalisation).
+    capitalise = models.BooleanField(default=False)
+    asset_category = models.CharField(max_length=20, blank=True, default='')
+    useful_life_years = models.PositiveIntegerField(null=True, blank=True)
 
     class Meta:
         ordering = ['created_at']

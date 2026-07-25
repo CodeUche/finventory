@@ -132,7 +132,9 @@ class JournalEntry(TenantAwareModel):
     description = models.CharField(max_length=500)
     entry_date = models.DateField()
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=DRAFT)
-    created_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name='journal_entries_created')
+    # Nullable: system/automated postings (depreciation runs, scheduled tasks) have
+    # no human author. User-initiated entries always set this.
+    created_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.PROTECT, related_name='journal_entries_created')
     posted_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='journal_entries_posted')
     # Idempotency: uniquely identifies the business event that triggered this entry
     source_type = models.CharField(max_length=40, blank=True, default='')
@@ -256,20 +258,78 @@ class FixedAsset(TenantAwareModel):
     CATEGORY_CHOICES = [(c, c) for c in [LAND, BUILDING, VEHICLE, EQUIPMENT, FURNITURE, OTHER]]
 
     SL = 'straight_line'; RB = 'reducing_balance'
-    DEPRECIATION_CHOICES = [(SL, 'Straight Line'), (RB, 'Reducing Balance')]
+    IMMEDIATE = 'immediate'; ZERO = 'zero'; UNITS = 'units'
+    DEPRECIATION_CHOICES = [
+        (SL, 'Straight Line'), (RB, 'Reducing Balance'),
+        (IMMEDIATE, 'Immediate Write-Off'), (ZERO, 'No Depreciation (0%)'),
+        (UNITS, 'Units of Production'),
+    ]
+
+    # Depreciation convention for the FIRST period an asset is depreciated.
+    CONV_FULL = 'full_month'; CONV_PRORATA = 'pro_rata'
+    CONVENTION_CHOICES = [(CONV_FULL, 'Full month'), (CONV_PRORATA, 'Pro-rata (by days)')]
+
+    # How the acquisition was funded — drives the credit leg of the acquisition
+    # journal (DR 1500 Fixed Assets / CR funding). 'none' means the asset is being
+    # brought on via the opening-balance / take-on flow, which posts its own entry,
+    # so the acquisition journal is NOT posted here.
+    FUND_BANK = 'bank'; FUND_CASH = 'cash'; FUND_PAYABLE = 'payable'
+    FUND_EQUITY = 'equity'; FUND_NONE = 'none'
+    FUNDING_CHOICES = [
+        (FUND_BANK, 'Bank'), (FUND_CASH, 'Cash'), (FUND_PAYABLE, 'Accounts Payable'),
+        (FUND_EQUITY, 'Owner / Capital Introduced'), (FUND_NONE, 'Already on books (opening balance)'),
+    ]
+
+    # Where the capitalisation originated (audit / double-post guard).
+    CAP_DIRECT = 'direct'; CAP_BILL = 'bill'; CAP_OPENING = 'opening_balance'
+    CAP_SOURCE_CHOICES = [
+        (CAP_DIRECT, 'Direct purchase'), (CAP_BILL, 'Capitalised from bill'),
+        (CAP_OPENING, 'Opening balance / take-on'),
+    ]
 
     name = models.CharField(max_length=200)
     asset_code = models.CharField(max_length=20)
     category = models.CharField(max_length=20, choices=CATEGORY_CHOICES, default=OTHER)
+    asset_type = models.ForeignKey(
+        'AssetType', null=True, blank=True, on_delete=models.SET_NULL, related_name='assets'
+    )
     account = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL)
     purchase_date = models.DateField()
     purchase_cost = MoneyField()
     depreciation_method = models.CharField(max_length=20, choices=DEPRECIATION_CHOICES, default=SL)
     useful_life_years = models.PositiveIntegerField(default=5)
     residual_value = MoneyField(default=0)
+    # Configurable reducing-balance rate (annual %, e.g. 25 for 25%). When null the
+    # rate is derived from useful life (1/life). Only used for the RB method.
+    reducing_balance_rate = models.DecimalField(max_digits=6, decimal_places=3, null=True, blank=True)
+    depreciation_convention = models.CharField(max_length=12, choices=CONVENTION_CHOICES, default=CONV_FULL)
+    # Units-of-production: total expected lifetime output (only used for UNITS method).
+    total_units = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
     disposal_date = models.DateField(null=True, blank=True)
     disposal_amount = MoneyField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
+
+    # Location / cost-centre (for Asset-by-Location reporting and transfers).
+    location = models.ForeignKey(
+        'inventory.Warehouse', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='fixed_assets',
+    )
+    cost_centre = models.CharField(max_length=100, blank=True, default='')
+
+    # ── Acquisition posting (Phase 1) ─────────────────────────────────────────
+    funding_source = models.CharField(max_length=12, choices=FUNDING_CHOICES, default=FUND_BANK)
+    capitalisation_source = models.CharField(max_length=20, choices=CAP_SOURCE_CHOICES, default=CAP_DIRECT)
+    # Idempotency stamp for the double-post guard (e.g. 'bill_line:<uuid>').
+    source_document_ref = models.CharField(max_length=100, blank=True, default='')
+    acquisition_posted = models.BooleanField(default=False)
+    acquisition_error = models.CharField(max_length=500, blank=True, default='')
+
+    # ── Tax channel (captured at capitalisation; consumed by the gated CA engine) ──
+    # qualifying_cost is the capital-allowance cost base (may differ from purchase_cost
+    # once §27(2) VAT/levy exclusions apply); input_tax_* records §27(2) evidence.
+    qualifying_cost = MoneyField(null=True, blank=True)
+    input_tax_paid = models.BooleanField(default=False)
+    input_tax_amount = MoneyField(null=True, blank=True)
 
     class Meta:
         ordering = ['-purchase_date']
@@ -318,6 +378,75 @@ class DepreciationEntry(TenantAwareModel):
     class Meta:
         ordering = ['period_year', 'period_month']
         unique_together = [('asset', 'period_year', 'period_month')]
+
+
+class AssetType(TenantAwareModel):
+    """A class of asset (e.g. 'Motor Vehicles') carrying default depreciation settings
+    and GL account mapping. Assets may link to an asset type; the type then supplies
+    the book method + depreciation-expense / accumulated-depreciation accounts for the
+    ledger posting (reviewer's 'methods linked to asset types' requirement)."""
+    code = models.CharField(max_length=20)
+    name = models.CharField(max_length=200)
+    category = models.CharField(max_length=20, choices=FixedAsset.CATEGORY_CHOICES, default=FixedAsset.OTHER)
+    depreciation_method = models.CharField(
+        max_length=20, choices=FixedAsset.DEPRECIATION_CHOICES, default=FixedAsset.SL
+    )
+    useful_life_years = models.PositiveIntegerField(default=5)
+    reducing_balance_rate = models.DecimalField(max_digits=6, decimal_places=3, null=True, blank=True)
+    fixed_asset_account = models.ForeignKey(
+        Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='asset_type_fa'
+    )
+    depreciation_expense_account = models.ForeignKey(
+        Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='asset_type_dep_exp'
+    )
+    accumulated_depreciation_account = models.ForeignKey(
+        Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='asset_type_acc_dep'
+    )
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['code']
+        unique_together = [('organisation', 'code')]
+
+    def __str__(self):
+        return f"{self.code} - {self.name}"
+
+
+class AssetTransfer(TenantAwareModel):
+    """Record of a fixed asset moving between locations / cost-centres. A pure
+    sub-ledger reclassification — it does NOT change GL cost or accumulated
+    depreciation (IFRS: a transfer has no depreciation/valuation effect)."""
+    asset = models.ForeignKey(FixedAsset, on_delete=models.CASCADE, related_name='transfers')
+    transfer_date = models.DateField()
+    from_location = models.ForeignKey(
+        'inventory.Warehouse', null=True, blank=True, on_delete=models.SET_NULL, related_name='+'
+    )
+    to_location = models.ForeignKey(
+        'inventory.Warehouse', null=True, blank=True, on_delete=models.SET_NULL, related_name='+'
+    )
+    from_cost_centre = models.CharField(max_length=100, blank=True, default='')
+    to_cost_centre = models.CharField(max_length=100, blank=True, default='')
+    reference = models.CharField(max_length=100, blank=True, default='')
+    notes = models.TextField(blank=True, default='')
+
+    class Meta:
+        ordering = ['-transfer_date', '-created_at']
+
+
+class AssetRevaluation(TenantAwareModel):
+    """IAS 16 revaluation of a fixed asset. Gated behind the org's
+    fixed_asset_revaluation_enabled flag; upward surplus → equity (Revaluation
+    Surplus), downward deficit → P&L. Optional; SME default is the cost model."""
+    asset = models.ForeignKey(FixedAsset, on_delete=models.CASCADE, related_name='revaluations')
+    revaluation_date = models.DateField()
+    previous_carrying_amount = MoneyField()
+    new_carrying_amount = MoneyField()
+    surplus = MoneyField(default=0)  # positive = surplus (equity), negative = deficit (P&L)
+    reference = models.CharField(max_length=100, blank=True, default='')
+    notes = models.TextField(blank=True, default='')
+
+    class Meta:
+        ordering = ['-revaluation_date', '-created_at']
 
 
 class FinancialPeriod(TenantAwareModel):

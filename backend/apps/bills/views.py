@@ -139,6 +139,11 @@ class BillViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
                 entry['expense_category_id'] = item['expense_category_id']
             if item.get('account_id'):
                 entry['account_id'] = item['account_id']
+            # Capitalisation: book this line to Fixed Assets instead of an expense.
+            if item.get('capitalise'):
+                entry['capitalise'] = True
+                entry['asset_category'] = item.get('asset_category', '')
+                entry['useful_life_years'] = item.get('useful_life_years')
             items_data.append(entry)
         bill_data = {
             'supplier': supplier,
@@ -231,6 +236,10 @@ class BillViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
                 entry['category_label'] = item['category_label']
             if item.get('account_id'):
                 entry['account_id'] = item['account_id']
+            if item.get('capitalise'):
+                entry['capitalise'] = True
+                entry['asset_category'] = item.get('asset_category', '')
+                entry['useful_life_years'] = item.get('useful_life_years')
             items_data.append(entry)
 
         bill_data = {

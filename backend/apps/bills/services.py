@@ -42,6 +42,9 @@ class BillService:
                 line_total=line,
                 expense_category_id=cat_id,
                 account_id=item.get('account_id'),
+                capitalise=item.get('capitalise', False),
+                asset_category=item.get('asset_category', '') or '',
+                useful_life_years=item.get('useful_life_years'),
             )
             subtotal += line
         bill.subtotal = subtotal
@@ -100,6 +103,9 @@ class BillService:
                 line_total=line,
                 expense_category_id=cat_id,
                 account_id=item.get('account_id'),
+                capitalise=item.get('capitalise', False),
+                asset_category=item.get('asset_category', '') or '',
+                useful_life_years=item.get('useful_life_years'),
             )
             subtotal += line
 

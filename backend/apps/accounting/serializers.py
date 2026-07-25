@@ -2,7 +2,7 @@ from rest_framework import serializers
 from .models import (
     Account, AccountSubType, JournalEntry, JournalLine, FixedAsset, DepreciationEntry,
     FinancialPeriod, BankReconciliation, BankReconciliationLine, AIReconMatch, AccountMapping,
-    normal_balance_for_type,
+    AssetType, normal_balance_for_type,
 )
 
 
@@ -164,6 +164,9 @@ class BankReconciliationSerializer(serializers.ModelSerializer):
 
 
 class FixedAssetSerializer(serializers.ModelSerializer):
+    # Optional — auto-generated (FA-XXXX) by the view when left blank, matching the
+    # "auto if blank" hint on the form.
+    asset_code = serializers.CharField(required=False, allow_blank=True)
     annual_depreciation = serializers.DecimalField(max_digits=15, decimal_places=2, read_only=True)
     accumulated_depreciation = serializers.DecimalField(max_digits=15, decimal_places=2, read_only=True)
     net_book_value = serializers.DecimalField(max_digits=15, decimal_places=2, read_only=True)
@@ -175,9 +178,30 @@ class FixedAssetSerializer(serializers.ModelSerializer):
             'id', 'name', 'asset_code', 'category', 'account', 'purchase_date',
             'purchase_cost', 'depreciation_method', 'useful_life_years', 'residual_value',
             'disposal_date', 'disposal_amount', 'is_active', 'annual_depreciation',
-            'accumulated_depreciation', 'net_book_value', 'depreciation_entries'
+            'accumulated_depreciation', 'net_book_value', 'depreciation_entries',
+            'funding_source', 'capitalisation_source', 'source_document_ref',
+            'acquisition_posted', 'acquisition_error',
+            'qualifying_cost', 'input_tax_paid', 'input_tax_amount',
+            'reducing_balance_rate', 'depreciation_convention', 'total_units',
+            'location', 'cost_centre', 'asset_type',
         ]
-        read_only_fields = ['id']
+        read_only_fields = ['id', 'acquisition_posted', 'acquisition_error', 'source_document_ref']
+
+
+class AssetTypeSerializer(serializers.ModelSerializer):
+    asset_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AssetType
+        fields = [
+            'id', 'code', 'name', 'category', 'depreciation_method', 'useful_life_years',
+            'reducing_balance_rate', 'fixed_asset_account', 'depreciation_expense_account',
+            'accumulated_depreciation_account', 'is_active', 'asset_count',
+        ]
+        read_only_fields = ['id', 'asset_count']
+
+    def get_asset_count(self, obj):
+        return obj.assets.count()
 
 
 # Helper to build account summary dict

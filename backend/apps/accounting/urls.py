@@ -1,8 +1,8 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
-    AccountViewSet, AccountSubTypeViewSet, JournalEntryViewSet, FixedAssetViewSet, FinancialPeriodViewSet,
-    BankReconciliationViewSet, AccountMappingView, AccountMappingSuggestionsView,
+    AccountViewSet, AccountSubTypeViewSet, JournalEntryViewSet, FixedAssetViewSet, AssetTypeViewSet,
+    FinancialPeriodViewSet, BankReconciliationViewSet, AccountMappingView, AccountMappingSuggestionsView,
     GLHealthView, GLHealthRetryView, GLHealthBulkRetryView,
 )
 
@@ -10,6 +10,7 @@ router = DefaultRouter()
 router.register('accounts', AccountViewSet, basename='account')
 router.register('account-sub-types', AccountSubTypeViewSet, basename='account-sub-type')
 router.register('journal', JournalEntryViewSet, basename='journal')
+router.register('asset-types', AssetTypeViewSet, basename='asset-type')
 router.register('assets', FixedAssetViewSet, basename='asset')
 router.register('periods', FinancialPeriodViewSet, basename='period')
 router.register('reconciliations', BankReconciliationViewSet, basename='reconciliation')

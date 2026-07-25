@@ -32,8 +32,8 @@ const STATUS_BADGE: Record<string, string> = {
   voided: 'badge-slate',
 }
 
-interface BillLineForm { description: string; quantity: string; unit_cost: string; category_label: string }
-const BLANK_LINE: BillLineForm = { description: '', quantity: '1', unit_cost: '', category_label: '' }
+interface BillLineForm { description: string; quantity: string; unit_cost: string; category_label: string; capitalise: boolean }
+const BLANK_LINE: BillLineForm = { description: '', quantity: '1', unit_cost: '', category_label: '', capitalise: false }
 
 interface BillForm {
   supplier: string
@@ -192,6 +192,7 @@ export default function BillsPage() {
       quantity: String(item.quantity ?? '1'),
       unit_cost: normalizeAmountStr(String(item.unit_cost ?? '')),
       category_label: item.expense_category_name ?? '',
+      capitalise: Boolean(item.capitalise),
     }))
     setLines(existingItems.length > 0 ? existingItems : [{ ...BLANK_LINE }])
     setShowModal(true)
@@ -218,6 +219,7 @@ export default function BillsPage() {
           quantity: parseFloat(l.quantity) || 1,
           unit_cost: parseFloat(stripCommas(l.unit_cost)) || 0,
           ...(l.category_label ? { category_label: l.category_label } : {}),
+          ...(l.capitalise ? { capitalise: true } : {}),
         })),
       }
       if (editingBillId) {
@@ -273,6 +275,10 @@ export default function BillsPage() {
       }
       return updated
     }))
+  }
+
+  const toggleCapitalise = (i: number) => {
+    setLines(lines.map((l, idx) => (idx === i ? { ...l, capitalise: !l.capitalise } : l)))
   }
 
   // Summary
@@ -579,6 +585,11 @@ export default function BillsPage() {
                       value={line.description}
                       onChange={(e) => updateLine(i, 'description', e.target.value)}
                     />
+                    <label className="mt-1.5 flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
+                      <input type="checkbox" className="accent-brand-500" checked={line.capitalise} onChange={() => toggleCapitalise(i)} />
+                      Capitalise as fixed asset
+                      <FieldTooltip text="Books this line to Fixed Assets (1500) instead of an expense and creates an asset record on approval." />
+                    </label>
                   </div>
                 ))}
               </div>

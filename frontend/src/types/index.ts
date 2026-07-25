@@ -61,6 +61,9 @@ export interface Organisation {
   managing_firm_name?: string | null
   managing_firm_logo?: string | null
   strict_gl_mode?: boolean
+  fixed_asset_capitalisation_threshold?: string
+  fixed_asset_revaluation_enabled?: boolean
+  capital_allowance_nta2025_enabled?: boolean
 }
 
 // ─── Product ──────────────────────────────────────────────────────────────────
@@ -586,7 +589,7 @@ export interface FixedAsset {
   account: string | null
   purchase_date: string
   purchase_cost: string
-  depreciation_method: 'straight_line' | 'reducing_balance'
+  depreciation_method: 'straight_line' | 'reducing_balance' | 'immediate' | 'zero' | 'units'
   useful_life_years: number
   residual_value: string
   disposal_date: string | null
@@ -596,6 +599,24 @@ export interface FixedAsset {
   accumulated_depreciation: string
   net_book_value: string
   depreciation_entries: DepreciationEntry[]
+  funding_source?: 'bank' | 'cash' | 'payable' | 'equity' | 'none'
+  capitalisation_source?: 'direct' | 'bill' | 'opening_balance'
+  acquisition_posted?: boolean
+  acquisition_error?: string
+  reducing_balance_rate?: string | null
+  depreciation_convention?: 'full_month' | 'pro_rata'
+  location?: string | null
+  cost_centre?: string
+}
+
+export interface AssetReconciliation {
+  register: { cost: string; accumulated_depreciation: string; net_book_value: string }
+  gl: { cost: string; accumulated_depreciation: string; net_book_value: string }
+  variance: { cost: string; accumulated_depreciation: string; net_book_value: string }
+  suspense_balance: string
+  suspense_by_source: { source_type: string; balance: string }[]
+  assets_missing_acquisition: { id: string; asset_code: string; name: string; cost: string; error: string }[]
+  reconciled: boolean
 }
 
 // Payroll

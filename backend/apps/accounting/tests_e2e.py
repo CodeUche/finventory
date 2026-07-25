@@ -154,3 +154,202 @@ class EndToEndUserJourneyTest(TestCase):
         # Final invariant: TB balanced AND BS balanced together
         self.assertTrue(self._tb_balanced())
         self.assertTrue(self._bs()["balanced"])
+
+
+class FixedAssetFullJourneyE2ETest(TestCase):
+    """End-to-end Fixed Asset journey through the HTTP API — the exact calls the UI
+    fires. A single real-user session: buy assets, bring one on as opening balance,
+    capitalise a bill line, run a DRAFT depreciation batch and post it, dispose,
+    transfer, revalue, pull every report, wire an asset type, and toggle the gated
+    tax engine — asserting the register reconciles to the ledger at each stage."""
+
+    def setUp(self):
+        from apps.accounting.models import AccountMapping, Account
+        from apps.inventory.models import Warehouse
+        self.user = _make_user("fa_journey@example.com")
+        self.org = _make_org(self.user, "FA Journey Org")
+        _upgrade_to_business(self.org)
+        self.c = _auth_client(self.user, self.org)
+        # Deterministic funding accounts (a real org would map these in GL settings).
+        m = AccountMapping.objects.get(organisation=self.org)
+        m.bank_account = Account.objects.get(organisation=self.org, code="1002")
+        m.cash_account = Account.objects.get(organisation=self.org, code="1001")
+        m.accounts_payable = Account.objects.get(organisation=self.org, code="2001")
+        m.general_expense_account = Account.objects.get(organisation=self.org, code="6700")
+        m.save()
+        self.wh = Warehouse.objects.create(organisation=self.org, name="Head Office", is_default=True)
+
+    def _gl(self, code):
+        res = self.c.get("/api/v1/accounting/accounts/trial_balance/")
+        for r in res.data:
+            if r["code"] == code:
+                return float(r["balance"])
+        return 0.0
+
+    def _recon(self):
+        res = self.c.get("/api/v1/accounting/assets/reconciliation/")
+        self.assertEqual(res.status_code, 200)
+        return res.data
+
+    def _bs_balanced(self):
+        res = self.c.get("/api/v1/accounting/accounts/balance_sheet/")
+        self.assertEqual(res.status_code, 200)
+        return res.data["balanced"]
+
+    def test_full_fixed_asset_journey(self):
+        from apps.suppliers.models import Supplier
+        from apps.accounting.models import FixedAsset
+
+        # 1. Open the Fixed Assets page — empty register, reconciled.
+        res = self.c.get("/api/v1/accounting/assets/")
+        self.assertEqual(res.status_code, 200)
+        rows = res.data["results"] if isinstance(res.data, dict) and "results" in res.data else res.data
+        self.assertEqual(len(rows), 0)
+        self.assertTrue(self._recon()["reconciled"])
+
+        # 2. Add a bank-funded asset (the "Add Asset" modal) → posts DR 1500 / CR Bank.
+        a = self.c.post("/api/v1/accounting/assets/", {
+            "name": "Toyota Hilux", "asset_code": "VEH-001", "category": "vehicle",
+            "purchase_date": "2026-07-01", "purchase_cost": "1200000",
+            "useful_life_years": 5, "residual_value": "0", "funding_source": "bank",
+        }, format="json")
+        self.assertEqual(a.status_code, 201, msg=str(a.data))
+        asset_a = a.data["id"]
+        self.assertTrue(a.data["acquisition_posted"])
+        self.assertAlmostEqual(self._gl("1500"), 1200000.0, places=2)
+        self.assertAlmostEqual(self._gl("1002"), -1200000.0, places=2)
+        self.assertTrue(self._bs_balanced())
+
+        # 3. Bring an already-owned asset on as an opening balance (take-on).
+        b = self.c.post("/api/v1/accounting/assets/", {
+            "name": "Legacy Truck", "asset_code": "VEH-002", "category": "vehicle",
+            "purchase_date": "2026-07-01", "purchase_cost": "1000000",
+            "useful_life_years": 5, "residual_value": "0",
+            "funding_source": "none", "capitalisation_source": "opening_balance",
+            "opening_accumulated_depreciation": "200000",
+        }, format="json")
+        self.assertEqual(b.status_code, 201, msg=str(b.data))
+        self.assertAlmostEqual(self._gl("1500"), 2200000.0, places=2)
+        self.assertAlmostEqual(self._gl("1510"), -200000.0, places=2)
+        self.assertAlmostEqual(self._gl("3900"), 800000.0, places=2)  # take-on suspense
+        self.assertTrue(self._bs_balanced())
+
+        # 4. Capitalise a bill line — a supplier bill with a "capitalise" line creates
+        #    the asset and books it to 1500 instead of an expense.
+        supplier = Supplier.objects.create(organisation=self.org, name="PowerGen Ltd")
+        bill = self.c.post("/api/v1/bills/", {
+            "supplier": str(supplier.id), "issue_date": "2026-07-05", "due_date": "2026-08-05",
+            "status": "approved", "tax_amount": "0",
+            "items": [
+                {"description": "Generator", "quantity": "1", "unit_cost": "800000",
+                 "capitalise": True, "asset_category": "equipment", "useful_life_years": 5},
+                {"description": "Cabling", "quantity": "1", "unit_cost": "200000"},
+            ],
+        }, format="json")
+        self.assertIn(bill.status_code, [200, 201], msg=str(bill.data))
+        self.assertAlmostEqual(self._gl("1500"), 3000000.0, places=2)   # +800k capital line
+        self.assertAlmostEqual(self._gl("6700"), 200000.0, places=2)    # expense line
+        self.assertAlmostEqual(self._gl("2001"), 1000000.0, places=2)   # AP gross
+        self.assertEqual(FixedAsset.objects.filter(organisation=self.org, capitalisation_source="bill").count(), 1)
+        asset_c = FixedAsset.objects.get(organisation=self.org, capitalisation_source="bill").id
+
+        # 5. Reconciliation panel — register ties to the GL exactly.
+        rec = self._recon()
+        self.assertTrue(rec["reconciled"], msg=str(rec))
+        self.assertAlmostEqual(float(rec["variance"]["cost"]), 0.0, places=2)
+
+        # 6. Run depreciation as a DRAFT batch (accountant review). Entries are drafted,
+        #    the ledger is NOT yet updated, so reconciliation correctly flags the gap.
+        run = self.c.post("/api/v1/accounting/assets/run_depreciation/",
+                          {"year": 2026, "month": 7, "draft": True}, format="json")
+        self.assertEqual(run.status_code, 200, msg=str(run.data))
+        self.assertEqual(run.data["entries_created"], 2)  # Hilux + Generator (Legacy occupies July via take-on)
+        self.assertAlmostEqual(self._gl("1510"), -200000.0, places=2)  # unchanged — drafts not posted
+        self.assertFalse(self._recon()["reconciled"])                  # variance surfaced
+
+        # 7. Post the batch — drafts become posted, ledger catches up, reconciled again.
+        post = self.c.post("/api/v1/accounting/assets/post_depreciation_batch/",
+                           {"year": 2026, "month": 7}, format="json")
+        self.assertEqual(post.status_code, 200, msg=str(post.data))
+        self.assertAlmostEqual(self._gl("1510"), -233333.33, places=1)  # 200k + 20k + 13,333.33
+        self.assertTrue(self._recon()["reconciled"])
+        self.assertTrue(self._bs_balanced())
+
+        # 8. Depreciation schedule (with forward projection) for one asset.
+        sched = self.c.get(f"/api/v1/accounting/assets/{asset_a}/depreciation_schedule/?forecast=true")
+        self.assertEqual(sched.status_code, 200)
+        types = {r["type"] for r in sched.data["schedule"]}
+        self.assertIn("actual", types)
+        self.assertIn("projected", types)
+
+        # 9. Dispose the Hilux for a gain → derecognised from the GL, gain to P&L.
+        disp = self.c.post(f"/api/v1/accounting/assets/{asset_a}/dispose/",
+                           {"proceeds": "1300000", "disposal_date": "2026-08-01"}, format="json")
+        self.assertEqual(disp.status_code, 200, msg=str(disp.data))
+        self.assertAlmostEqual(float(disp.data["gain_loss"]), 120000.0, places=2)  # 1.3m − 1.18m NBV
+        self.assertAlmostEqual(self._gl("1500"), 1800000.0, places=2)  # Hilux cost removed
+        self.assertAlmostEqual(self._gl("4200"), 120000.0, places=2)   # gain on disposal
+        self.assertTrue(self._recon()["reconciled"])
+        self.assertTrue(self._bs_balanced())
+        drep = self.c.get("/api/v1/accounting/assets/disposal_report/")
+        self.assertEqual(len(drep.data["rows"]), 1)
+
+        # 10. Transfer the Legacy truck to a location.
+        trf = self.c.post(f"/api/v1/accounting/assets/{b.data['id']}/transfer/",
+                          {"to_location": str(self.wh.id), "to_cost_centre": "Operations",
+                           "transfer_date": "2026-08-02"}, format="json")
+        self.assertEqual(trf.status_code, 200, msg=str(trf.data))
+        trep = self.c.get("/api/v1/accounting/assets/transfer_report/")
+        self.assertEqual(len(trep.data["rows"]), 1)
+        self.assertEqual(trep.data["rows"][0]["to_location"], "Head Office")
+
+        # 11. Enable revaluation in Settings (org PATCH) and revalue the Generator.
+        patch = self.c.patch(f"/api/v1/tenancy/organisations/{self.org.id}/",
+                             {"fixed_asset_revaluation_enabled": True}, format="json")
+        self.assertIn(patch.status_code, [200, 201])
+        rev = self.c.post(f"/api/v1/accounting/assets/{asset_c}/revalue/",
+                          {"new_value": "900000", "revaluation_date": "2026-08-03"}, format="json")
+        self.assertEqual(rev.status_code, 200, msg=str(rev.data))
+        self.assertGreater(self._gl("3200"), 0.0)   # revaluation surplus in equity
+        self.assertTrue(self._bs_balanced())
+
+        # 12. All the register/grouping reports respond with the expected totals.
+        reg = self.c.get("/api/v1/accounting/assets/register_report/")
+        self.assertEqual(reg.status_code, 200)
+        self.assertGreater(float(reg.data["totals"]["cost"]), 0.0)
+        self.assertEqual(self.c.get("/api/v1/accounting/assets/by_category/").status_code, 200)
+        self.assertEqual(self.c.get("/api/v1/accounting/assets/by_location/").status_code, 200)
+
+        # 13. Asset Types — create a type carrying method + GL accounts, use it on an asset.
+        at = self.c.post("/api/v1/accounting/asset-types/", {
+            "code": "MV", "name": "Motor Vehicles", "category": "vehicle",
+            "depreciation_method": "straight_line", "useful_life_years": 4,
+        }, format="json")
+        self.assertIn(at.status_code, [200, 201], msg=str(at.data))
+        typed = self.c.post("/api/v1/accounting/assets/", {
+            "name": "Van", "asset_code": "VEH-003", "category": "vehicle",
+            "purchase_date": "2026-08-01", "purchase_cost": "600000",
+            "useful_life_years": 4, "residual_value": "0", "funding_source": "cash",
+            "asset_type": at.data["id"],
+        }, format="json")
+        self.assertEqual(typed.status_code, 201, msg=str(typed.data))
+        self.assertEqual(str(FixedAsset.objects.get(id=typed.data["id"]).asset_type_id), str(at.data["id"]))
+
+        # 14. Toggle the gated NTA-2025 capital-allowance engine in Settings, confirm it
+        #     now drives the tax computation (off by default = no effect).
+        from apps.tax.services import CapitalAllowanceService
+        off = CapitalAllowanceService.compute_assessable_profit(self.org, Decimal("1000000"), 2026)
+        self.assertFalse(off["ca_enabled"])
+        self.assertEqual(off["capital_allowances"], Decimal("0"))
+        patch2 = self.c.patch(f"/api/v1/tenancy/organisations/{self.org.id}/",
+                              {"capital_allowance_nta2025_enabled": True}, format="json")
+        self.assertIn(patch2.status_code, [200, 201])
+        self.org.refresh_from_db()
+        on = CapitalAllowanceService.compute_assessable_profit(self.org, Decimal("1000000"), 2026)
+        self.assertTrue(on["ca_enabled"])
+        self.assertGreater(float(on["capital_allowances"]), 0.0)
+
+        # Final invariant: after the whole journey the books still balance and the
+        # register still ties to the ledger.
+        self.assertTrue(self._bs_balanced())
+        self.assertTrue(self._recon()["reconciled"])

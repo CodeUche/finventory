@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import {
   CheckSquare, Square, RefreshCw, CheckCircle2, Upload, FileText,
-  Sparkles, ChevronDown, ChevronRight, AlertTriangle, XCircle, Check, X,
+  Sparkles, Zap, ChevronDown, ChevronRight, AlertTriangle, XCircle, Check, X,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { accountingApi, bypassNextGets } from '@/services/api'
@@ -100,6 +100,7 @@ export default function BankReconciliationPage() {
   const [aiMatches, setAiMatches] = useState<AIMatch[]>([])
   const [unmatchedBook, setUnmatchedBook] = useState<UnmatchedBook[]>([])
   const [aiRunning, setAiRunning] = useState(false)
+  const [autoRunning, setAutoRunning] = useState(false)
   const [aiRan, setAiRan] = useState(false)
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     matched: true,
@@ -195,7 +196,29 @@ export default function BankReconciliationPage() {
     }
   }
 
-  // ─── AI Reconcile ──────────────────────────────────────────────────────────
+  // ─── Auto-Match (deterministic, instant, offline) ───────────────────────────
+
+  const handleAutoMatch = async () => {
+    if (!activeRecon) return
+    setAutoRunning(true)
+    try {
+      const { data } = await accountingApi.autoMatch(activeRecon.id)
+      setAiMatches(data.matches ?? [])
+      setAiRan(true)
+      const s = data.summary ?? {}
+      toast.success(
+        `Auto-matched ${s.matched ?? 0} for review, ${s.unmatched_bank ?? 0} unmatched — confirm to post`,
+      )
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { error?: unknown } } }
+      const apiErr = e?.response?.data?.error
+      toast.error(typeof apiErr === 'string' ? apiErr : 'Auto-match failed')
+    } finally {
+      setAutoRunning(false)
+    }
+  }
+
+  // ─── AI Reconcile (assist — only the lines auto-match couldn't resolve) ──────
 
   const handleAiReconcile = async () => {
     if (!activeRecon) return
@@ -440,18 +463,30 @@ export default function BankReconciliationPage() {
                       </p>
                       <p className="text-sm text-slate-400">
                         {aiRan
-                          ? `AI found ${aiMatches.length} match${aiMatches.length !== 1 ? 'es' : ''}. Review below.`
-                          : 'Run AI matching to automatically pair bank lines with book entries.'}
+                          ? `${aiMatches.length} match${aiMatches.length !== 1 ? 'es' : ''} found. Review below.`
+                          : 'Auto-Match pairs lines instantly by exact amount + date (no waiting). Use AI Assist only for whatever’s left.'}
                       </p>
                     </div>
-                    <button
-                      onClick={handleAiReconcile}
-                      disabled={aiRunning}
-                      className="btn-primary flex items-center gap-2 shrink-0 disabled:opacity-50"
-                    >
-                      <Sparkles size={15} />
-                      {aiRunning ? 'Analyzing transactions…' : aiRan ? 'Re-run AI Match' : 'Run AI Reconciliation'}
-                    </button>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        onClick={handleAutoMatch}
+                        disabled={autoRunning}
+                        className="btn-primary flex items-center gap-2 disabled:opacity-50"
+                        title="Deterministic exact-match — instant and offline"
+                      >
+                        <Zap size={15} />
+                        {autoRunning ? 'Matching…' : 'Auto-Match'}
+                      </button>
+                      <button
+                        onClick={handleAiReconcile}
+                        disabled={aiRunning}
+                        className="btn-ghost flex items-center gap-2 disabled:opacity-50"
+                        title="AI assist for lines Auto-Match couldn’t resolve (needs a Groq key)"
+                      >
+                        <Sparkles size={15} />
+                        {aiRunning ? 'Analyzing…' : 'AI Assist'}
+                      </button>
+                    </div>
                   </div>
 
                   {/* Post confirmed GL button */}

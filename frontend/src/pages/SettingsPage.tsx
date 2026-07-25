@@ -2783,6 +2783,57 @@ export default function SettingsPage() {
             </button>
           </div>
 
+          {/* Fixed-Asset Policy */}
+          <div className="rounded-xl bg-slate-800 border border-slate-700 px-5 py-4 space-y-4">
+            <div>
+              <p className="text-sm font-medium text-white">Fixed-Asset Policy</p>
+              <p className="text-xs text-slate-400 mt-0.5">Capitalisation threshold and optional models for the Fixed Assets module.</p>
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-sm text-slate-200">Capitalisation threshold</p>
+                <p className="text-xs text-slate-400 mt-0.5">Items costing below this are expensed, not capitalised.</p>
+              </div>
+              <input
+                type="number" min="0" step="1000"
+                className="input w-40 text-right"
+                defaultValue={organisation?.fixed_asset_capitalisation_threshold ?? '100000'}
+                onBlur={async (e) => {
+                  try {
+                    const { data } = await orgApi.update(organisation!.id, { fixed_asset_capitalisation_threshold: e.target.value })
+                    updateOrganisation(data); toast.success('Threshold updated')
+                  } catch { toast.error('Failed to update threshold') }
+                }}
+              />
+            </div>
+            {([
+              { key: 'fixed_asset_revaluation_enabled', label: 'Enable revaluation (IAS 16)', hint: 'Off by default — SME cost model. Enabling needs practitioner sign-off.' },
+              { key: 'capital_allowance_nta2025_enabled', label: 'Enable NTA-2025 capital allowances', hint: 'Drives the CIT computation. Keep OFF until a licensed tax practitioner signs off the rates.' },
+            ] as const).map((row) => {
+              const on = Boolean((organisation as unknown as Record<string, unknown>)?.[row.key])
+              return (
+                <div key={row.key} className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-sm text-slate-200">{row.label}</p>
+                    <p className="text-xs text-slate-400 mt-0.5">{row.hint}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        const { data } = await orgApi.update(organisation!.id, { [row.key]: !on })
+                        updateOrganisation(data); toast.success('Setting updated')
+                      } catch { toast.error('Failed to update setting') }
+                    }}
+                    className={`relative inline-flex h-6 w-11 shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none ${on ? 'bg-brand-600' : 'bg-slate-600'}`}
+                  >
+                    <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${on ? 'translate-x-5' : 'translate-x-0'}`} />
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+
           {!glMapping ? (
             <div className="flex justify-center py-8"><Loader2 size={24} className="animate-spin text-slate-400" /></div>
           ) : (

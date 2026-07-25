@@ -367,29 +367,55 @@ class CapitalAllowanceClaim(TenantAwareModel):
         (OTHER, 'Other'),
     ]
 
-    # CITA Schedule 2 rates: (initial_allowance%, annual_allowance%)
+    # ── Nigeria Tax Act 2025 regime (effective 1 Jan 2026) ────────────────────
+    # NTA 2025 ABOLISHED the initial allowance and replaced the reducing-balance
+    # annual allowance with a UNIFORM STRAIGHT-LINE annual rate per class, retaining a
+    # 1% notional cost until disposal. Rate BAND MEMBERSHIP is our understanding and
+    # REQUIRES A LICENSED NIGERIAN TAX PRACTITIONER'S SIGN-OFF before the CA engine is
+    # enabled (org.capital_allowance_nta2025_enabled, default False).
+    NTA_ANNUAL_RATES = {
+        INDUSTRIAL_BUILDING: Decimal('10'),       # Band A — permanent buildings
+        NON_INDUSTRIAL_BUILDING: Decimal('10'),   # Band A
+        PLANT_MACHINERY: Decimal('20'),           # Band B — plant & machinery
+        FURNITURE: Decimal('20'),                 # Band B — furniture & fittings
+        MOTOR_VEHICLE: Decimal('25'),             # Band C — motor vehicles
+        COMPUTER: Decimal('25'),                  # Band C — software / IT
+        OTHER: Decimal('25'),                     # Band C — other qualifying assets
+    }
+    NOTIONAL_RATE = Decimal('1')  # 1% of qualifying cost retained until disposal
+
+    # Retained for backward compatibility (legacy pre-2025 rows); no longer used by save().
     ASSET_CLASS_RATES = {
-        INDUSTRIAL_BUILDING: (Decimal('15'), Decimal('10')),
-        NON_INDUSTRIAL_BUILDING: (Decimal('15'), Decimal('10')),
-        PLANT_MACHINERY: (Decimal('50'), Decimal('25')),
-        MOTOR_VEHICLE: (Decimal('25'), Decimal('20')),
-        FURNITURE: (Decimal('25'), Decimal('20')),
-        COMPUTER: (Decimal('50'), Decimal('25')),
-        OTHER: (Decimal('25'), Decimal('20')),
+        INDUSTRIAL_BUILDING: (Decimal('0'), Decimal('10')),
+        NON_INDUSTRIAL_BUILDING: (Decimal('0'), Decimal('10')),
+        PLANT_MACHINERY: (Decimal('0'), Decimal('20')),
+        MOTOR_VEHICLE: (Decimal('0'), Decimal('25')),
+        FURNITURE: (Decimal('0'), Decimal('20')),
+        COMPUTER: (Decimal('0'), Decimal('25')),
+        OTHER: (Decimal('0'), Decimal('25')),
     }
 
     asset_name = models.CharField(max_length=300)
+    # Link back to the fixed-asset register (Phase: tax track). Nullable for legacy rows.
+    asset = models.ForeignKey(
+        'accounting.FixedAsset', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='capital_allowance_claims',
+    )
     asset_class = models.CharField(max_length=30, choices=ASSET_CLASS_CHOICES, default=PLANT_MACHINERY)
     tax_year = models.PositiveIntegerField()
     cost = MoneyField(help_text="Original acquisition cost")
+    # §27(2): only capex on which VAT/import-levy was paid qualifies. qualifying_cost is
+    # the CA cost base (may differ from cost).
+    qualifying_cost = MoneyField(null=True, blank=True, help_text="Capital-allowance cost base (§27(2))")
     opening_tax_written_down_value = MoneyField(default=0, help_text="Tax WDV at start of this tax year")
     initial_allowance_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0,
-        help_text="IA rate % (only in year of acquisition)")
+        help_text="Abolished under NTA 2025 — always 0")
     annual_allowance_rate = models.DecimalField(max_digits=5, decimal_places=2, default=20)
     initial_allowance = MoneyField(default=0)
     annual_allowance = MoneyField(default=0)
     total_allowance = MoneyField(default=0)
     closing_tax_written_down_value = MoneyField(default=0)
+    notional_floor = MoneyField(default=0, help_text="1% of qualifying cost retained until disposal")
     is_acquisition_year = models.BooleanField(default=False)
     notes = models.TextField(blank=True)
 
@@ -400,26 +426,62 @@ class CapitalAllowanceClaim(TenantAwareModel):
     def __str__(self):
         return f"{self.asset_name} — CA {self.tax_year}"
 
-    def save(self, *args, **kwargs):
-        ia_rate, aa_rate = self.ASSET_CLASS_RATES.get(
-            self.asset_class, (Decimal('25'), Decimal('20'))
-        )
-        if self.is_acquisition_year:
-            self.initial_allowance_rate = ia_rate
-            self.initial_allowance = (Decimal(str(self.cost)) * ia_rate / 100).quantize(Decimal('0.01'))
-        else:
-            self.initial_allowance_rate = Decimal('0')
-            self.initial_allowance = Decimal('0')
+    def _resolve_rate(self):
+        """Prefer an org-specific version-dated CARateTable; else the NTA-2025 default.
+        Both require practitioner sign-off before the engine is enabled."""
+        try:
+            from datetime import date
+            rt = CARateTable.objects.filter(
+                organisation=self.organisation, asset_class=self.asset_class,
+                effective_from__lte=date(self.tax_year, 1, 1),
+            ).order_by('-effective_from').first()
+            if rt:
+                return Decimal(str(rt.annual_rate)), Decimal(str(rt.notional_rate))
+        except Exception:
+            pass
+        return self.NTA_ANNUAL_RATES.get(self.asset_class, Decimal('25')), self.NOTIONAL_RATE
 
-        self.annual_allowance_rate = aa_rate
-        base = Decimal(str(self.opening_tax_written_down_value)) - self.initial_allowance
-        self.annual_allowance = (base * aa_rate / 100).quantize(Decimal('0.01'))
-        self.total_allowance = self.initial_allowance + self.annual_allowance
-        self.closing_tax_written_down_value = max(
-            Decimal('0'),
-            Decimal(str(self.opening_tax_written_down_value)) - self.total_allowance
-        )
+    def save(self, *args, **kwargs):
+        # MoneyField defaults to 0 (not None), so treat a falsy qualifying_cost as "use cost".
+        qcost = Decimal(str(self.qualifying_cost)) if self.qualifying_cost else Decimal(str(self.cost))
+        rate, notional_rate = self._resolve_rate()
+
+        # NTA 2025: no initial allowance; uniform straight-line annual on qualifying cost.
+        self.initial_allowance_rate = Decimal('0')
+        self.initial_allowance = Decimal('0')
+        self.annual_allowance_rate = rate
+
+        opening = Decimal(str(self.opening_tax_written_down_value or qcost))
+        floor = (qcost * notional_rate / 100).quantize(Decimal('0.01'))
+        self.notional_floor = floor
+
+        annual = (qcost * rate / 100).quantize(Decimal('0.01'))
+        # Retain the 1% notional value until disposal — never write below the floor.
+        annual = max(Decimal('0'), min(annual, opening - floor))
+        self.annual_allowance = annual
+        self.total_allowance = annual
+        self.closing_tax_written_down_value = opening - annual
         super().save(*args, **kwargs)
+
+
+class CARateTable(TenantAwareModel):
+    """Version-dated capital-allowance annual rate per asset class (Nigeria Tax Act
+    2025). Rates/classes REQUIRE licensed-practitioner sign-off before the CA engine
+    is switched on. When present, overrides the model's NTA default rates."""
+    effective_from = models.DateField()
+    asset_class = models.CharField(max_length=30, choices=CapitalAllowanceClaim.ASSET_CLASS_CHOICES)
+    annual_rate = models.DecimalField(max_digits=5, decimal_places=2, help_text="Straight-line annual %")
+    notional_rate = models.DecimalField(max_digits=5, decimal_places=2, default=1,
+        help_text="Notional cost % retained until disposal")
+    signed_off_by = models.CharField(max_length=200, blank=True, default='',
+        help_text="Practitioner who signed off this rate version")
+
+    class Meta:
+        ordering = ['-effective_from', 'asset_class']
+        unique_together = [('organisation', 'effective_from', 'asset_class')]
+
+    def __str__(self):
+        return f"CA {self.asset_class} {self.annual_rate}% from {self.effective_from}"
 
 
 class DeferredTaxItem(TenantAwareModel):

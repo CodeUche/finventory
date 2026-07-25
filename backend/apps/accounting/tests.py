@@ -11,7 +11,7 @@ from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.accounting.exceptions import GLAccountNotConfigured, PeriodLockedError
-from apps.accounting.models import Account, AccountMapping, AccountSubType, AccountType, FinancialPeriod, JournalEntry, JournalLine
+from apps.accounting.models import Account, AccountMapping, AccountSubType, AccountType, FinancialPeriod, FixedAsset, JournalEntry, JournalLine
 from apps.accounting.services import AccountingService, AccountMappingService, safe_post_gl
 from apps.authentication.models import User
 from apps.subscriptions.models import Plan, Subscription
@@ -1503,3 +1503,858 @@ class SubledgerAndAccountOpeningBalanceTests(TestCase):
 
         bs = AccountingService.balance_sheet(self.org)
         self.assertTrue(bs["balanced"], msg=str(bs))
+
+
+class FixedAssetAcquisitionTests(TestCase):
+    """Phase 1: creating a fixed asset posts DR 1500 Fixed Assets / CR funding, the
+    register reconciles to the GL, acquisition is not double-posted, and 1500/1510 are
+    control-locked. This closes the reviewer's ₦94m balance-sheet defect (asset cost
+    on the register but nothing posted to the ledger)."""
+
+    def setUp(self):
+        self.user = _make_user("fa_owner@example.com")
+        self.org = _make_org(self.user, "FA Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+        # Deterministic funding accounts for the credit leg.
+        m = AccountMapping.objects.get(organisation=self.org)
+        m.bank_account = Account.objects.get(organisation=self.org, code="1002")
+        m.cash_account = Account.objects.get(organisation=self.org, code="1001")
+        m.accounts_payable = Account.objects.get(organisation=self.org, code="2001")
+        m.save()
+
+    def _create_asset(self, cost="1200000", funding="bank", asset_code="FA-001", **extra):
+        payload = {
+            "name": "Toyota Hilux", "asset_code": asset_code, "category": "vehicle",
+            "purchase_date": "2026-07-01", "purchase_cost": cost,
+            "depreciation_method": "straight_line", "useful_life_years": 5,
+            "residual_value": "0", "funding_source": funding,
+        }
+        payload.update(extra)
+        return self.client.post("/api/v1/accounting/assets/", payload, format="json")
+
+    def _gl(self, code):
+        acct = Account.objects.get(organisation=self.org, code=code)
+        return AccountingService._ledger_balance(acct)
+
+    def test_acquisition_posts_dr_1500_cr_bank(self):
+        res = self._create_asset()
+        self.assertIn(res.status_code, [200, 201], msg=str(res.data))
+        je = JournalEntry.objects.filter(
+            organisation=self.org, source_type="asset_acquisition"
+        ).first()
+        self.assertIsNotNone(je, "acquisition journal was not posted")
+        # DR 1500 = cost, CR 1002 Bank = cost
+        self.assertAlmostEqual(float(self._gl("1500")), 1200000.0, places=2)
+        self.assertAlmostEqual(float(self._gl("1002")), -1200000.0, places=2)
+        self.assertTrue(FixedAsset.objects.get(id=res.data["id"]).acquisition_posted)
+
+    def test_register_reconciles_to_gl_after_depreciation(self):
+        """Canonical QA case: ₦1.2m asset, 1 month SL depreciation → register NBV
+        (1,180,000) equals GL 1500+1510, balance sheet balances, suspense plug is 0."""
+        res = self._create_asset()
+        asset = FixedAsset.objects.get(id=res.data["id"])
+        AccountingService.run_depreciation(self.org, 2026, 7)  # one month
+        asset.refresh_from_db()
+
+        # Register figures
+        self.assertAlmostEqual(float(asset.accumulated_depreciation), 20000.0, places=2)
+        self.assertAlmostEqual(float(asset.net_book_value), 1180000.0, places=2)
+
+        # GL figures
+        self.assertAlmostEqual(float(self._gl("1500")), 1200000.0, places=2)   # cost
+        self.assertAlmostEqual(float(self._gl("1510")), -20000.0, places=2)    # contra
+        net_fixed_assets = self._gl("1500") + self._gl("1510")
+        self.assertAlmostEqual(float(net_fixed_assets), float(asset.net_book_value), places=2)
+
+        bs = AccountingService.balance_sheet(self.org)
+        self.assertTrue(bs["balanced"], msg=str(bs))
+        # No auto-balance suspense plug should be needed.
+        plug = [r for r in bs["equity"] if r.get("code") == "3900" and r.get("is_computed")]
+        self.assertEqual(plug, [], "auto-balance suspense plug should be empty once acquisition posts")
+
+    def test_acquisition_not_double_posted(self):
+        res = self._create_asset()
+        asset = FixedAsset.objects.get(id=res.data["id"])
+        # Re-invoking the service must be a no-op (idempotent on asset).
+        from apps.accounting.services import CapitalisationService
+        again = CapitalisationService.post_acquisition(self.org, asset)
+        self.assertIsNone(again)
+        count = JournalEntry.objects.filter(
+            organisation=self.org, source_type="asset_acquisition",
+            source_ref=f"asset:{asset.pk}",
+        ).count()
+        self.assertEqual(count, 1)
+
+    def test_owner_capital_funding_credits_equity(self):
+        res = self._create_asset(funding="equity", asset_code="FA-EQ")
+        self.assertIn(res.status_code, [200, 201], msg=str(res.data))
+        self.assertAlmostEqual(float(self._gl("1500")), 1200000.0, places=2)
+        self.assertAlmostEqual(float(self._gl("3001")), 1200000.0, places=2)  # Owner Equity (credit-normal)
+
+    def test_opening_balance_funding_posts_takeon_not_acquisition(self):
+        """Assets brought on via take-on (funding_source='none') must NOT post a
+        purchase acquisition journal — instead the take-on flow posts its own entry
+        (DR 1500 / CR 3900), so no cost is double-expensed."""
+        res = self._create_asset(funding="none", asset_code="FA-OPEN")
+        self.assertIn(res.status_code, [200, 201], msg=str(res.data))
+        # No purchase-acquisition entry...
+        self.assertFalse(
+            JournalEntry.objects.filter(organisation=self.org, source_type="asset_acquisition").exists()
+        )
+        # ...but a take-on entry that puts the gross cost on 1500 against suspense (3900).
+        self.assertTrue(
+            JournalEntry.objects.filter(organisation=self.org, source_type="asset_takeon").exists()
+        )
+        self.assertAlmostEqual(float(self._gl("1500")), 1200000.0, places=2)
+        self.assertAlmostEqual(float(self._gl("3900")), 1200000.0, places=2)
+
+    def test_1500_and_1510_are_control_locked(self):
+        for code in ("1500", "1510"):
+            acct = Account.objects.get(organisation=self.org, code=code)
+            self.assertTrue(acct.is_control_account, f"{code} should be a control account")
+            self.assertFalse(acct.allow_posting, f"{code} should block direct posting")
+
+    def test_manual_journal_to_fixed_assets_rejected(self):
+        fa = Account.objects.get(organisation=self.org, code="1500")   # control
+        bank = Account.objects.get(organisation=self.org, code="1002")
+        payload = {
+            "description": "Illegal direct FA post", "entry_date": "2026-07-15",
+            "lines": [
+                {"account": str(fa.id), "debit": "500000", "credit": "0"},
+                {"account": str(bank.id), "debit": "0", "credit": "500000"},
+            ],
+        }
+        res = self.client.post("/api/v1/accounting/journal/", payload, format="json")
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("control account", str(res.data).lower())
+
+    def test_below_threshold_helper(self):
+        from apps.accounting.services import CapitalisationService
+        self.assertFalse(CapitalisationService.should_capitalise(self.org, "50000"))
+        self.assertTrue(CapitalisationService.should_capitalise(self.org, "100000"))
+        self.assertTrue(CapitalisationService.should_capitalise(self.org, "250000"))
+
+    def test_blank_asset_code_auto_generates(self):
+        """The form invites a blank Asset Code ('auto if blank'); the API must
+        auto-generate an FA-XXXX code instead of rejecting it (regression: the UI
+        create failed with 'Asset Code: This field may not be blank')."""
+        res = self.client.post("/api/v1/accounting/assets/", {
+            "name": "Uncoded Asset", "category": "equipment",
+            "purchase_date": "2026-07-01", "purchase_cost": "300000",
+            "useful_life_years": 5, "residual_value": "0", "funding_source": "bank",
+        }, format="json")
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        self.assertTrue(res.data["asset_code"].startswith("FA-"), msg=res.data["asset_code"])
+
+
+class BillCapitalisationTests(TestCase):
+    """Phase 1: a bill line flagged capitalise=True redirects its VAT-exclusive share
+    from the expense account to Fixed Assets (1500) and creates a FixedAsset register
+    record on approval — without a separate acquisition journal (the bill JE carries
+    the debit) and without double-posting."""
+
+    def setUp(self):
+        self.user = _make_user("billcap_owner@example.com")
+        self.org = _make_org(self.user, "BillCap Org")
+        _upgrade_to_business(self.org)
+        m = AccountMapping.objects.get(organisation=self.org)
+        m.general_expense_account = Account.objects.get(organisation=self.org, code="6700")
+        m.accounts_payable = Account.objects.get(organisation=self.org, code="2001")
+        m.save()
+
+    def _gl(self, code):
+        acct = Account.objects.get(organisation=self.org, code=code)
+        return AccountingService._ledger_balance(acct)
+
+    def _make_bill(self, tax=Decimal("0"), status="approved"):
+        from apps.bills.services import BillService
+        from apps.suppliers.models import Supplier
+        supplier = Supplier.objects.create(organisation=self.org, name="BillCap Vendor")
+        validated = {
+            "supplier": supplier, "issue_date": timezone.now().date(),
+            "due_date": timezone.now().date(), "status": status, "tax_amount": tax,
+        }
+        items = [
+            {"description": "Generator", "quantity": Decimal("1"), "unit_cost": Decimal("800000"),
+             "capitalise": True, "asset_category": "equipment", "useful_life_years": 5},
+            {"description": "Stationery", "quantity": Decimal("1"), "unit_cost": Decimal("200000"),
+             "capitalise": False},
+        ]
+        return BillService.create_bill(validated, items, self.org, self.user)
+
+    def test_capital_line_redirects_to_1500_and_creates_asset(self):
+        bill = self._make_bill()
+        bill.refresh_from_db()
+        self.assertEqual(bill.gl_post_status, "posted", msg=bill.gl_post_error)
+        # 1500 gets the capital net (800k), expense gets 200k, AP credited full 1,000,000.
+        self.assertAlmostEqual(float(self._gl("1500")), 800000.0, places=2)
+        self.assertAlmostEqual(float(self._gl("6700")), 200000.0, places=2)
+        self.assertAlmostEqual(float(self._gl("2001")), 1000000.0, places=2)  # AP credit-normal
+        # A FixedAsset register record exists, stamped as posted, keyed to the bill line.
+        capital_item = bill.items.get(capitalise=True)
+        asset = FixedAsset.objects.get(
+            organisation=self.org, source_document_ref=f"bill_line:{capital_item.id}"
+        )
+        self.assertTrue(asset.acquisition_posted)
+        self.assertAlmostEqual(float(asset.purchase_cost), 800000.0, places=2)
+        self.assertEqual(asset.category, "equipment")
+        self.assertEqual(asset.capitalisation_source, FixedAsset.CAP_BILL)
+
+    def test_no_separate_acquisition_journal(self):
+        """The bill's approval JE carries the DR 1500 — there must be no extra
+        asset_acquisition entry (which would double-count)."""
+        self._make_bill()
+        self.assertFalse(
+            JournalEntry.objects.filter(organisation=self.org, source_type="asset_acquisition").exists()
+        )
+        self.assertEqual(
+            JournalEntry.objects.filter(organisation=self.org, source_type="bill_approved").count(), 1
+        )
+
+    def test_balance_sheet_balances_after_bill_capitalisation(self):
+        self._make_bill()
+        bs = AccountingService.balance_sheet(self.org)
+        self.assertTrue(bs["balanced"], msg=str(bs))
+
+    def test_reposting_bill_does_not_double_post_or_duplicate_asset(self):
+        bill = self._make_bill()
+        # Re-run the posting (idempotent on bill_approved source_ref).
+        AccountingService.post_bill_approved_journal(self.org, bill, self.user)
+        self.assertAlmostEqual(float(self._gl("1500")), 800000.0, places=2)
+        capital_item = bill.items.get(capitalise=True)
+        assets = FixedAsset.objects.filter(
+            organisation=self.org, source_document_ref=f"bill_line:{capital_item.id}"
+        )
+        self.assertEqual(assets.count(), 1)
+
+    def test_vat_split_keeps_entry_balanced(self):
+        """With VAT, the capital line's VAT-exclusive share goes to 1500 and the entry
+        still balances; the asset records the input-tax evidence."""
+        # subtotal 1,000,000 + VAT 75,000 = 1,075,000 total.
+        bill = self._make_bill(tax=Decimal("75000"))
+        bill.refresh_from_db()
+        self.assertEqual(bill.gl_post_status, "posted", msg=bill.gl_post_error)
+        # net_cost = 1,000,000; capital share 80% → 800,000 to 1500.
+        self.assertAlmostEqual(float(self._gl("1500")), 800000.0, places=2)
+        self.assertAlmostEqual(float(self._gl("6700")), 200000.0, places=2)
+        self.assertAlmostEqual(float(self._gl("1400")), 75000.0, places=2)   # input VAT
+        self.assertAlmostEqual(float(self._gl("2001")), 1075000.0, places=2)  # AP gross
+        self.assertTrue(AccountingService.balance_sheet(self.org)["balanced"])
+        capital_item = bill.items.get(capitalise=True)
+        asset = FixedAsset.objects.get(
+            organisation=self.org, source_document_ref=f"bill_line:{capital_item.id}"
+        )
+        self.assertTrue(asset.input_tax_paid)
+        self.assertAlmostEqual(float(asset.input_tax_amount), 60000.0, places=2)  # 80% of 75k
+
+
+class FixedAssetTakeOnAndReconciliationTests(TestCase):
+    """Phase 2: per-asset opening-balance take-on posts DR 1500 / CR 1510 / CR 3900 and
+    seeds depreciation history; the reconciliation endpoint proves register == GL."""
+
+    def setUp(self):
+        self.user = _make_user("faopen_owner@example.com")
+        self.org = _make_org(self.user, "FAOpen Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+        m = AccountMapping.objects.get(organisation=self.org)
+        m.bank_account = Account.objects.get(organisation=self.org, code="1002")
+        m.save()
+
+    def _gl(self, code):
+        acct = Account.objects.get(organisation=self.org, code=code)
+        return AccountingService._ledger_balance(acct)
+
+    def _create_takeon(self, cost="1000000", accum="200000", asset_code="FA-TO1"):
+        payload = {
+            "name": "Legacy Truck", "asset_code": asset_code, "category": "vehicle",
+            "purchase_date": "2026-07-01", "purchase_cost": cost,
+            "depreciation_method": "straight_line", "useful_life_years": 5,
+            "residual_value": "0", "funding_source": "none",
+            "capitalisation_source": "opening_balance",
+            "opening_accumulated_depreciation": accum,
+        }
+        return self.client.post("/api/v1/accounting/assets/", payload, format="json")
+
+    def test_takeon_posts_split_entry(self):
+        res = self._create_takeon()
+        self.assertIn(res.status_code, [200, 201], msg=str(res.data))
+        # DR 1500 gross; CR 1510 accum (contra, negative); CR 3900 NBV.
+        self.assertAlmostEqual(float(self._gl("1500")), 1000000.0, places=2)
+        self.assertAlmostEqual(float(self._gl("1510")), -200000.0, places=2)
+        self.assertAlmostEqual(float(self._gl("3900")), 800000.0, places=2)  # equity credit
+        asset = FixedAsset.objects.get(id=res.data["id"])
+        self.assertAlmostEqual(float(asset.accumulated_depreciation), 200000.0, places=2)
+        self.assertAlmostEqual(float(asset.net_book_value), 800000.0, places=2)
+        self.assertTrue(asset.acquisition_posted)
+        self.assertTrue(AccountingService.balance_sheet(self.org)["balanced"])
+
+    def test_takeon_continues_depreciation_from_nbv(self):
+        res = self._create_takeon()
+        asset = FixedAsset.objects.get(id=res.data["id"])
+        # Next month's run continues from the taken-on NBV (not from full cost).
+        AccountingService.run_depreciation(self.org, 2026, 8, created_by=self.user)
+        aug = asset.depreciation_entries.get(period_year=2026, period_month=8)
+        self.assertAlmostEqual(float(aug.depreciation_amount), 16666.67, places=1)  # 1,000,000/60
+        # GL accumulated dep magnitude now 200,000 + 16,666.67.
+        self.assertAlmostEqual(float(self._gl("1510")), -216666.67, places=1)
+
+    def test_reconciliation_zero_variance_after_purchase(self):
+        # Direct purchase → register and GL must tie exactly.
+        self.client.post("/api/v1/accounting/assets/", {
+            "name": "New Van", "asset_code": "FA-REC1", "category": "vehicle",
+            "purchase_date": "2026-07-01", "purchase_cost": "500000",
+            "useful_life_years": 5, "residual_value": "0", "funding_source": "bank",
+        }, format="json")
+        res = self.client.get("/api/v1/accounting/assets/reconciliation/")
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(res.data["reconciled"], msg=str(res.data))
+        self.assertAlmostEqual(float(res.data["variance"]["cost"]), 0.0, places=2)
+        self.assertAlmostEqual(float(res.data["variance"]["net_book_value"]), 0.0, places=2)
+
+    def test_reconciliation_flags_unposted_acquisition(self):
+        """An asset whose acquisition failed to post must appear in the variance and
+        the missing-acquisition list — the defect is surfaced, not hidden."""
+        # Remove the bank mapping so the acquisition post can't resolve funding.
+        m = AccountMapping.objects.get(organisation=self.org)
+        m.bank_account = None
+        m.save()
+        res = self.client.post("/api/v1/accounting/assets/", {
+            "name": "Orphan Asset", "asset_code": "FA-ORPH", "category": "equipment",
+            "purchase_date": "2026-07-01", "purchase_cost": "300000",
+            "useful_life_years": 5, "residual_value": "0", "funding_source": "bank",
+        }, format="json")
+        asset = FixedAsset.objects.get(id=res.data["id"])
+        self.assertFalse(asset.acquisition_posted)
+        rec = self.client.get("/api/v1/accounting/assets/reconciliation/").data
+        self.assertFalse(rec["reconciled"])
+        self.assertAlmostEqual(float(rec["variance"]["cost"]), 300000.0, places=2)
+        codes = [a["asset_code"] for a in rec["assets_missing_acquisition"]]
+        self.assertIn("FA-ORPH", codes)
+
+
+class DepreciationMethodTests(TestCase):
+    """Phase 3: depreciation methods (immediate write-off, 0%, configurable reducing
+    balance), pro-rata first-period convention, multi-period catch-up + messaging."""
+
+    def setUp(self):
+        self.user = _make_user("dep_owner@example.com")
+        self.org = _make_org(self.user, "Dep Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+        m = AccountMapping.objects.get(organisation=self.org)
+        m.bank_account = Account.objects.get(organisation=self.org, code="1002")
+        m.save()
+
+    def _make_asset(self, **kw):
+        defaults = dict(
+            organisation=self.org, name="Asset", asset_code=kw.pop("asset_code", "D-1"),
+            category="equipment", purchase_date=__import__("datetime").date(2026, 7, 1),
+            purchase_cost=Decimal("1200000"), useful_life_years=5, residual_value=Decimal("0"),
+            funding_source="none", capitalisation_source="opening_balance",
+        )
+        defaults.update(kw)
+        return FixedAsset.objects.create(**defaults)
+
+    def test_immediate_write_off_full_first_period(self):
+        asset = self._make_asset(depreciation_method="immediate", asset_code="D-IMM")
+        AccountingService.run_depreciation(self.org, 2026, 7, created_by=self.user)
+        asset.refresh_from_db()
+        self.assertAlmostEqual(float(asset.accumulated_depreciation), 1200000.0, places=2)
+        self.assertAlmostEqual(float(asset.net_book_value), 0.0, places=2)
+        # A second run charges nothing more.
+        AccountingService.run_depreciation(self.org, 2026, 8, created_by=self.user)
+        asset.refresh_from_db()
+        self.assertAlmostEqual(float(asset.accumulated_depreciation), 1200000.0, places=2)
+
+    def test_zero_method_never_depreciates(self):
+        asset = self._make_asset(depreciation_method="zero", asset_code="D-ZERO")
+        AccountingService.run_depreciation(self.org, 2026, 7, created_by=self.user)
+        asset.refresh_from_db()
+        self.assertEqual(asset.depreciation_entries.count(), 0)
+        self.assertAlmostEqual(float(asset.accumulated_depreciation), 0.0, places=2)
+
+    def test_configurable_reducing_balance_rate(self):
+        # 25% annual reducing balance → month 1 = 1,200,000 × 25% / 12 = 25,000.
+        asset = self._make_asset(
+            depreciation_method="reducing_balance", reducing_balance_rate=Decimal("25"),
+            asset_code="D-RB",
+        )
+        AccountingService.run_depreciation(self.org, 2026, 7, created_by=self.user)
+        entry = asset.depreciation_entries.get(period_year=2026, period_month=7)
+        self.assertAlmostEqual(float(entry.depreciation_amount), 25000.0, places=2)
+
+    def test_pro_rata_first_period(self):
+        # Purchased 16 July → 16 days of a 31-day month. SL monthly = 1,200,000/60 = 20,000.
+        # Pro-rata = 20,000 × 16/31 = 10,322.58.
+        asset = self._make_asset(
+            depreciation_method="straight_line", depreciation_convention="pro_rata",
+            purchase_date=__import__("datetime").date(2026, 7, 16), asset_code="D-PRO",
+        )
+        AccountingService.run_depreciation(self.org, 2026, 7, created_by=self.user)
+        jul = asset.depreciation_entries.get(period_year=2026, period_month=7)
+        self.assertAlmostEqual(float(jul.depreciation_amount), 20000.0 * 16 / 31, places=1)
+        # The following full month charges the full 20,000.
+        AccountingService.run_depreciation(self.org, 2026, 8, created_by=self.user)
+        aug = asset.depreciation_entries.get(period_year=2026, period_month=8)
+        self.assertAlmostEqual(float(aug.depreciation_amount), 20000.0, places=2)
+
+    def test_catch_up_runs_all_periods(self):
+        self._make_asset(depreciation_method="straight_line", asset_code="D-CATCH")
+        res = self.client.post("/api/v1/accounting/assets/run_depreciation/", {
+            "year": 2026, "month": 10, "catch_up": True,
+        }, format="json")
+        self.assertEqual(res.status_code, 200)
+        # Jul, Aug, Sep, Oct = 4 periods.
+        self.assertEqual(res.data["entries_created"], 4)
+
+    def test_already_run_messaging(self):
+        self._make_asset(depreciation_method="straight_line", asset_code="D-AGAIN")
+        self.client.post("/api/v1/accounting/assets/run_depreciation/",
+                         {"year": 2026, "month": 7}, format="json")
+        res = self.client.post("/api/v1/accounting/assets/run_depreciation/",
+                               {"year": 2026, "month": 7}, format="json")
+        self.assertEqual(res.data["entries_created"], 0)
+        self.assertTrue(res.data["already_run"])
+        self.assertIn("already been run", res.data["message"])
+
+
+class AssetDisposalTests(TestCase):
+    """Phase 4: disposal derecognises cost + accumulated depreciation from the GL and
+    posts the gain/loss on disposal; the register stays reconciled to the ledger."""
+
+    def setUp(self):
+        self.user = _make_user("disp_owner@example.com")
+        self.org = _make_org(self.user, "Disp Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+        m = AccountMapping.objects.get(organisation=self.org)
+        m.bank_account = Account.objects.get(organisation=self.org, code="1002")
+        m.save()
+
+    def _gl(self, code):
+        acct = Account.objects.filter(organisation=self.org, code=code).first()
+        return AccountingService._ledger_balance(acct) if acct else Decimal("0")
+
+    def _asset_with_one_month_dep(self, code="DS-1"):
+        res = self.client.post("/api/v1/accounting/assets/", {
+            "name": "Hilux", "asset_code": code, "category": "vehicle",
+            "purchase_date": "2026-07-01", "purchase_cost": "1200000",
+            "useful_life_years": 5, "residual_value": "0", "funding_source": "bank",
+        }, format="json")
+        AccountingService.run_depreciation(self.org, 2026, 7, created_by=self.user)  # 20,000
+        return FixedAsset.objects.get(id=res.data["id"])
+
+    def test_disposal_gain_derecognises_and_posts_gain(self):
+        asset = self._asset_with_one_month_dep()
+        res = self.client.post(f"/api/v1/accounting/assets/{asset.id}/dispose/", {
+            "proceeds": "1300000", "disposal_date": "2026-08-01", "proceeds_funding": "bank",
+        }, format="json")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.assertAlmostEqual(float(res.data["gain_loss"]), 120000.0, places=2)  # 1.3m − 1.18m NBV
+        # 1500 and 1510 fully cleared; bank net +100k; gain 120k in P&L.
+        self.assertAlmostEqual(float(self._gl("1500")), 0.0, places=2)
+        self.assertAlmostEqual(float(self._gl("1510")), 0.0, places=2)
+        self.assertAlmostEqual(float(self._gl("1002")), 100000.0, places=2)  # -1.2m +1.3m
+        self.assertAlmostEqual(float(self._gl("4200")), 120000.0, places=2)  # gain (revenue)
+        asset.refresh_from_db()
+        self.assertFalse(asset.is_active)
+        self.assertIsNotNone(asset.disposal_date)
+        self.assertTrue(AccountingService.balance_sheet(self.org)["balanced"])
+
+    def test_disposal_loss(self):
+        asset = self._asset_with_one_month_dep(code="DS-LOSS")
+        res = self.client.post(f"/api/v1/accounting/assets/{asset.id}/dispose/", {
+            "proceeds": "1000000", "disposal_date": "2026-08-01",
+        }, format="json")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        # NBV 1,180,000; proceeds 1,000,000 → loss 180,000 (debit 4200 → negative revenue).
+        self.assertAlmostEqual(float(res.data["gain_loss"]), -180000.0, places=2)
+        self.assertAlmostEqual(float(self._gl("4200")), -180000.0, places=2)
+        self.assertTrue(AccountingService.balance_sheet(self.org)["balanced"])
+
+    def test_reconciliation_holds_after_disposal(self):
+        asset = self._asset_with_one_month_dep(code="DS-REC")
+        self.client.post(f"/api/v1/accounting/assets/{asset.id}/dispose/",
+                         {"proceeds": "1000000", "disposal_date": "2026-08-01"}, format="json")
+        rec = self.client.get("/api/v1/accounting/assets/reconciliation/").data
+        self.assertTrue(rec["reconciled"], msg=str(rec))
+
+    def test_double_disposal_rejected(self):
+        asset = self._asset_with_one_month_dep(code="DS-DUP")
+        self.client.post(f"/api/v1/accounting/assets/{asset.id}/dispose/",
+                         {"proceeds": "1000000", "disposal_date": "2026-08-01"}, format="json")
+        res = self.client.post(f"/api/v1/accounting/assets/{asset.id}/dispose/",
+                               {"proceeds": "500000", "disposal_date": "2026-08-02"}, format="json")
+        self.assertEqual(res.status_code, 400)
+
+    def test_disposal_report(self):
+        asset = self._asset_with_one_month_dep(code="DS-RPT")
+        self.client.post(f"/api/v1/accounting/assets/{asset.id}/dispose/",
+                         {"proceeds": "1300000", "disposal_date": "2026-08-01"}, format="json")
+        rep = self.client.get("/api/v1/accounting/assets/disposal_report/").data
+        self.assertEqual(len(rep["rows"]), 1)
+        self.assertAlmostEqual(float(rep["rows"][0]["gain_loss"]), 120000.0, places=2)
+        self.assertAlmostEqual(float(rep["totals"]["proceeds"]), 1300000.0, places=2)
+
+
+class AssetTransferRevaluationReportTests(TestCase):
+    """Phase 4: transfer (reclassification, no GL change), gated revaluation, and the
+    asset reports (register / by-category / by-location / transfer / forecast)."""
+
+    def setUp(self):
+        self.user = _make_user("xfer_owner@example.com")
+        self.org = _make_org(self.user, "Xfer Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+        m = AccountMapping.objects.get(organisation=self.org)
+        m.bank_account = Account.objects.get(organisation=self.org, code="1002")
+        m.save()
+
+    def _gl(self, code):
+        acct = Account.objects.filter(organisation=self.org, code=code).first()
+        return AccountingService._ledger_balance(acct) if acct else Decimal("0")
+
+    def _make_asset(self, cost="1000000", code="X-1"):
+        res = self.client.post("/api/v1/accounting/assets/", {
+            "name": "Machine", "asset_code": code, "category": "equipment",
+            "purchase_date": "2026-07-01", "purchase_cost": cost,
+            "useful_life_years": 5, "residual_value": "0", "funding_source": "bank",
+        }, format="json")
+        return FixedAsset.objects.get(id=res.data["id"])
+
+    def test_transfer_updates_location_without_gl_change(self):
+        from apps.inventory.models import Warehouse
+        asset = self._make_asset(code="X-TRANS")
+        wh = Warehouse.objects.create(organisation=self.org, name="Lagos Branch")
+        gl_before = self._gl("1500")
+        res = self.client.post(f"/api/v1/accounting/assets/{asset.id}/transfer/", {
+            "to_location": str(wh.id), "to_cost_centre": "Operations",
+            "transfer_date": "2026-08-01", "reference": "TRF-1",
+        }, format="json")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        asset.refresh_from_db()
+        self.assertEqual(asset.location_id, wh.id)
+        self.assertEqual(asset.cost_centre, "Operations")
+        self.assertAlmostEqual(float(self._gl("1500")), float(gl_before), places=2)  # unchanged
+        rep = self.client.get("/api/v1/accounting/assets/transfer_report/").data
+        self.assertEqual(len(rep["rows"]), 1)
+        self.assertEqual(rep["rows"][0]["to_location"], "Lagos Branch")
+
+    def test_revaluation_gated_off_by_default(self):
+        asset = self._make_asset(code="X-REVOFF")
+        res = self.client.post(f"/api/v1/accounting/assets/{asset.id}/revalue/",
+                               {"new_value": "1200000"}, format="json")
+        self.assertEqual(res.status_code, 422)
+        self.assertIn("not enabled", str(res.data).lower())
+
+    def test_revaluation_upward_surplus_when_enabled(self):
+        self.org.fixed_asset_revaluation_enabled = True
+        self.org.save(update_fields=["fixed_asset_revaluation_enabled"])
+        asset = self._make_asset(cost="1000000", code="X-REVUP")
+        res = self.client.post(f"/api/v1/accounting/assets/{asset.id}/revalue/", {
+            "new_value": "1200000", "revaluation_date": "2026-08-01",
+        }, format="json")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.assertAlmostEqual(float(res.data["surplus"]), 200000.0, places=2)
+        self.assertAlmostEqual(float(self._gl("1500")), 1200000.0, places=2)   # restated
+        self.assertAlmostEqual(float(self._gl("3200")), 200000.0, places=2)    # revaluation surplus (equity)
+        asset.refresh_from_db()
+        self.assertAlmostEqual(float(asset.net_book_value), 1200000.0, places=2)
+        self.assertTrue(AccountingService.balance_sheet(self.org)["balanced"])
+
+    def test_register_and_grouping_reports(self):
+        from apps.inventory.models import Warehouse
+        wh = Warehouse.objects.create(organisation=self.org, name="HQ")
+        a1 = self._make_asset(cost="500000", code="X-R1")
+        a2 = self._make_asset(cost="300000", code="X-R2")
+        FixedAsset.objects.filter(id=a1.id).update(location=wh)
+        reg = self.client.get("/api/v1/accounting/assets/register_report/").data
+        self.assertAlmostEqual(float(reg["totals"]["cost"]), 800000.0, places=2)
+        cat = self.client.get("/api/v1/accounting/assets/by_category/").data
+        equip = next(g for g in cat["groups"] if g["category"] == "equipment")
+        self.assertAlmostEqual(float(equip["cost"]), 800000.0, places=2)
+        loc = self.client.get("/api/v1/accounting/assets/by_location/").data
+        names = {g["location"] for g in loc["groups"]}
+        self.assertIn("HQ", names)
+        self.assertIn("Unassigned", names)
+
+    def test_depreciation_forecast_schedule(self):
+        asset = self._make_asset(cost="1200000", code="X-FC")
+        AccountingService.run_depreciation(self.org, 2026, 7, created_by=self.user)
+        res = self.client.get(
+            f"/api/v1/accounting/assets/{asset.id}/depreciation_schedule/?forecast=true"
+        ).data
+        types = {r["type"] for r in res["schedule"]}
+        self.assertIn("actual", types)
+        self.assertIn("projected", types)
+        self.assertIn("not posted", res["disclaimer"].lower())
+
+
+class FixedAssetTenantIsolationTests(TestCase):
+    """Security: the fixed-asset lifecycle endpoints must be strictly org-scoped — no
+    cross-tenant read or mutation."""
+
+    def setUp(self):
+        self.owner_a = _make_user("fa_a@example.com")
+        self.org_a = _make_org(self.owner_a, "FA Org A")
+        _upgrade_to_business(self.org_a)
+        self.client_a = _auth_client(self.owner_a, self.org_a)
+        m = AccountMapping.objects.get(organisation=self.org_a)
+        m.bank_account = Account.objects.get(organisation=self.org_a, code="1002"); m.save()
+
+        self.owner_b = _make_user("fa_b@example.com")
+        self.org_b = _make_org(self.owner_b, "FA Org B")
+        _upgrade_to_business(self.org_b)
+        self.client_b = _auth_client(self.owner_b, self.org_b)
+
+        res = self.client_a.post("/api/v1/accounting/assets/", {
+            "name": "A Asset", "asset_code": "A-1", "category": "equipment",
+            "purchase_date": "2026-07-01", "purchase_cost": "500000",
+            "useful_life_years": 5, "residual_value": "0", "funding_source": "bank",
+        }, format="json")
+        self.asset_a_id = res.data["id"]
+
+    def test_other_org_cannot_see_asset_in_list(self):
+        res = self.client_b.get("/api/v1/accounting/assets/")
+        data = res.data["results"] if isinstance(res.data, dict) and "results" in res.data else res.data
+        self.assertEqual(len(data), 0)
+        # And org A still sees exactly its own one asset.
+        res_a = self.client_a.get("/api/v1/accounting/assets/")
+        data_a = res_a.data["results"] if isinstance(res_a.data, dict) and "results" in res_a.data else res_a.data
+        self.assertEqual(len(data_a), 1)
+
+    def test_other_org_reconciliation_is_isolated(self):
+        rec = self.client_b.get("/api/v1/accounting/assets/reconciliation/").data
+        self.assertAlmostEqual(float(rec["register"]["cost"]), 0.0, places=2)
+
+    def test_other_org_cannot_dispose_foreign_asset(self):
+        res = self.client_b.post(f"/api/v1/accounting/assets/{self.asset_a_id}/dispose/",
+                                 {"proceeds": "1"}, format="json")
+        self.assertIn(res.status_code, [403, 404])
+        # Asset A remains active.
+        self.assertTrue(FixedAsset.objects.get(id=self.asset_a_id).is_active)
+
+    def test_other_org_cannot_transfer_or_revalue_foreign_asset(self):
+        r1 = self.client_b.post(f"/api/v1/accounting/assets/{self.asset_a_id}/transfer/",
+                                {"to_cost_centre": "X"}, format="json")
+        self.assertIn(r1.status_code, [403, 404])
+        r2 = self.client_b.post(f"/api/v1/accounting/assets/{self.asset_a_id}/revalue/",
+                                {"new_value": "1"}, format="json")
+        self.assertIn(r2.status_code, [403, 404])
+
+    def test_unauthenticated_denied(self):
+        from rest_framework.test import APIClient
+        anon = APIClient()
+        self.assertIn(anon.get("/api/v1/accounting/assets/reconciliation/").status_code, [401, 403])
+        self.assertIn(anon.get("/api/v1/accounting/assets/register_report/").status_code, [401, 403])
+
+
+class AssetTypeAndDraftBatchTests(TestCase):
+    """Phase 3b: asset types (method + GL account mapping) and draft-batch depreciation
+    (generate drafts for review, then post the batch)."""
+
+    def setUp(self):
+        self.user = _make_user("at_owner@example.com")
+        self.org = _make_org(self.user, "AT Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+        m = AccountMapping.objects.get(organisation=self.org)
+        m.bank_account = Account.objects.get(organisation=self.org, code="1002")
+        m.save()
+
+    def _gl(self, code):
+        acct = Account.objects.filter(organisation=self.org, code=code).first()
+        return AccountingService._ledger_balance(acct) if acct else Decimal("0")
+
+    def test_asset_type_crud(self):
+        res = self.client.post("/api/v1/accounting/asset-types/", {
+            "code": "MV", "name": "Motor Vehicles", "category": "vehicle",
+            "depreciation_method": "straight_line", "useful_life_years": 4,
+        }, format="json")
+        self.assertIn(res.status_code, [200, 201], msg=str(res.data))
+        from apps.accounting.models import AssetType
+        self.assertTrue(AssetType.objects.filter(organisation=self.org, code="MV").exists())
+
+    def test_asset_type_is_tenant_scoped(self):
+        self.client.post("/api/v1/accounting/asset-types/", {
+            "code": "MV", "name": "Motor Vehicles", "category": "vehicle",
+        }, format="json")
+        other_user = _make_user("at_other@example.com")
+        other_org = _make_org(other_user, "AT Other")
+        _upgrade_to_business(other_org)
+        oc = _auth_client(other_user, other_org)
+        res = oc.get("/api/v1/accounting/asset-types/")
+        data = res.data["results"] if isinstance(res.data, dict) and "results" in res.data else res.data
+        self.assertEqual(len(data), 0)
+
+    def test_depreciation_uses_asset_type_accounts(self):
+        from apps.accounting.models import AssetType, FixedAsset
+        # Custom depreciation-expense account 6410 mapped via the asset type.
+        dep_acct = Account.objects.create(
+            organisation=self.org, code="6410", name="Depreciation — Vehicles",
+            account_type="expense",
+        )
+        at = AssetType.objects.create(
+            organisation=self.org, code="MV", name="Motor Vehicles", category="vehicle",
+            depreciation_expense_account=dep_acct,
+        )
+        asset = FixedAsset.objects.create(
+            organisation=self.org, name="Van", asset_code="AT-1", category="vehicle",
+            asset_type=at, purchase_date=__import__("datetime").date(2026, 7, 1),
+            purchase_cost=Decimal("1200000"), useful_life_years=5, residual_value=Decimal("0"),
+            acquisition_posted=True,
+        )
+        AccountingService.run_depreciation(self.org, 2026, 7, created_by=self.user)
+        # Depreciation hit the asset-type's 6410, not the default 6400.
+        self.assertAlmostEqual(float(self._gl("6410")), 20000.0, places=2)
+        self.assertAlmostEqual(float(self._gl("6400")), 0.0, places=2)
+
+    def test_draft_batch_then_post(self):
+        from apps.accounting.models import FixedAsset, JournalEntry
+        FixedAsset.objects.create(
+            organisation=self.org, name="Machine", asset_code="AT-DR", category="equipment",
+            purchase_date=__import__("datetime").date(2026, 7, 1), purchase_cost=Decimal("1200000"),
+            useful_life_years=5, residual_value=Decimal("0"), acquisition_posted=True,
+        )
+        # Draft run — entries computed, JE created as draft, GL NOT yet affected.
+        res = self.client.post("/api/v1/accounting/assets/run_depreciation/",
+                               {"year": 2026, "month": 7, "draft": True}, format="json")
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(res.data["draft"])
+        je = JournalEntry.objects.get(organisation=self.org, source_type="depreciation")
+        self.assertEqual(je.status, "draft")
+        self.assertAlmostEqual(float(self._gl("1510")), 0.0, places=2)  # not posted yet
+        # Post the batch.
+        res2 = self.client.post("/api/v1/accounting/assets/post_depreciation_batch/",
+                                {"year": 2026, "month": 7}, format="json")
+        self.assertEqual(res2.status_code, 200)
+        self.assertEqual(res2.data["posted"], 1)
+        je.refresh_from_db()
+        self.assertEqual(je.status, "posted")
+        self.assertAlmostEqual(float(self._gl("1510")), -20000.0, places=2)  # now on the ledger
+
+
+class DeterministicReconciliationTests(TestCase):
+    """The reliable, offline auto-match: exact amount + date tolerance (+ reference),
+    one-to-one, auto-confirming unambiguous matches — no external LLM, no waiting."""
+
+    def setUp(self):
+        self.user = _make_user("recon_det@example.com")
+        self.org = _make_org(self.user, "Recon Det Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+        self.bank = Account.objects.get(organisation=self.org, code="1002")
+        from apps.accounting.models import BankReconciliation
+        self.recon = BankReconciliation.objects.create(
+            organisation=self.org, account=self.bank,
+            period_start=__import__("datetime").date(2026, 7, 1),
+            period_end=__import__("datetime").date(2026, 7, 31),
+            statement_closing_balance=Decimal("0"),
+        )
+
+    def _book(self, amount, d, inflow=True, desc=""):
+        """Post a journal entry that moves `amount` in/out of the bank account."""
+        rev = Account.objects.get(organisation=self.org, code="4001")
+        exp = Account.objects.get(organisation=self.org, code="6700")
+        amt = Decimal(str(amount))
+        if inflow:
+            lines = [(self.bank, amt, Decimal("0")), (rev, Decimal("0"), amt)]
+        else:
+            lines = [(exp, amt, Decimal("0")), (self.bank, Decimal("0"), amt)]
+        return AccountingService.post_journal_entry(
+            self.org, desc or "bank move", __import__("datetime").date.fromisoformat(d),
+            lines, self.user, source_type="test", source_ref=f"{desc}-{d}-{amount}",
+        )
+
+    def _bankline(self, amount, d, ref="", desc="stmt"):
+        from apps.accounting.models import BankReconciliationLine
+        return BankReconciliationLine.objects.create(
+            organisation=self.org, reconciliation=self.recon, description=desc,
+            transaction_date=__import__("datetime").date.fromisoformat(d),
+            amount=Decimal(str(amount)), reference=ref,
+        )
+
+    def _auto(self):
+        return self.client.post(f"/api/v1/accounting/reconciliations/{self.recon.id}/auto_match/", {}, format="json")
+
+    def test_exact_amount_matches_proposed(self):
+        self._book("450000", "2026-07-10", inflow=True)
+        self._book("1200000", "2026-07-05", inflow=False)
+        bl1 = self._bankline("450000", "2026-07-10")
+        bl2 = self._bankline("-1200000", "2026-07-05")
+        res = self._auto()
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.assertEqual(res.data["summary"]["matched"], 2)
+        self.assertEqual(res.data["summary"]["unmatched_bank"], 0)
+        # Proposed for review — never silently clears the ledger.
+        matches = [m for m in res.data["matches"] if m["book_line"]]
+        self.assertTrue(all(m["status"] == "proposed" for m in matches))
+        bl1.refresh_from_db(); bl2.refresh_from_db()
+        self.assertFalse(bl1.is_cleared)
+        self.assertFalse(bl2.is_cleared)
+
+    def test_within_tolerance_lower_confidence(self):
+        self._book("75000", "2026-07-10", inflow=True)
+        self._bankline("75000", "2026-07-13")  # 3 days off → matched but confidence 0.90
+        res = self._auto()
+        self.assertEqual(res.data["summary"]["matched"], 1)
+        m = next(m for m in res.data["matches"] if m["book_line"])
+        self.assertLess(float(m["confidence"]), 1.0)
+
+    def test_beyond_tolerance_unmatched(self):
+        self._book("90000", "2026-07-02", inflow=True)
+        self._bankline("90000", "2026-07-20")  # 18 days → beyond tolerance
+        res = self._auto()
+        self.assertEqual(res.data["summary"]["unmatched_bank"], 1)
+        self.assertEqual(res.data["summary"]["matched"], 0)
+        # The unmatched line is surfaced (a record with no book line), never hidden.
+        self.assertTrue(any(m["book_line"] is None for m in res.data["matches"]))
+
+    def test_one_to_one_no_double_match(self):
+        # One book entry of 50,000; two identical bank lines → only one can match.
+        self._book("50000", "2026-07-08", inflow=True)
+        self._bankline("50000", "2026-07-08")
+        self._bankline("50000", "2026-07-08")
+        res = self._auto()
+        self.assertEqual(res.data["summary"]["matched"], 1)
+        self.assertEqual(res.data["summary"]["unmatched_bank"], 1)
+
+    def test_reference_match_gives_full_confidence(self):
+        self._book("30000", "2026-07-10", inflow=True, desc="INV-7788 settlement")
+        self._bankline("30000", "2026-07-13", ref="INV-7788")  # 3 days off but ref hit → 1.0
+        res = self._auto()
+        self.assertEqual(res.data["summary"]["matched"], 1)
+        m = next(m for m in res.data["matches"] if m["book_line"])
+        self.assertEqual(float(m["confidence"]), 1.0)
+
+    def test_direction_matters(self):
+        # A 20,000 OUTFLOW on the book must not match a 20,000 INFLOW on the statement.
+        self._book("20000", "2026-07-05", inflow=False)   # money out
+        self._bankline("20000", "2026-07-05")             # money in (+)
+        res = self._auto()
+        self.assertEqual(res.data["summary"]["matched"], 0)
+        self.assertEqual(res.data["summary"]["unmatched_bank"], 1)
+
+    def test_ai_endpoint_never_hangs_or_crashes(self):
+        self._book("450000", "2026-07-10", inflow=True)
+        self._bankline("450000", "2026-07-10")
+        self._auto()
+        res = self.client.post(f"/api/v1/accounting/reconciliations/{self.recon.id}/ai_reconcile/")
+        # No Groq key in the test env → clean 422; never a hang, never a 500.
+        self.assertIn(res.status_code, [400, 422])
+
+    def test_duplicate_reconciliation_resumes_not_500(self):
+        """Starting a reconciliation for an account+period that already exists must
+        resume it (200), not crash with a unique-constraint 500."""
+        payload = {
+            "account": str(self.bank.id),
+            "period_start": "2026-08-01", "period_end": "2026-08-31",
+            "statement_closing_balance": "1000",
+        }
+        r1 = self.client.post("/api/v1/accounting/reconciliations/", payload, format="json")
+        self.assertEqual(r1.status_code, 201, msg=str(r1.data))
+        r2 = self.client.post("/api/v1/accounting/reconciliations/", payload, format="json")
+        self.assertEqual(r2.status_code, 200, msg=str(r2.data))   # resumed, not 500
+        self.assertEqual(r2.data["id"], r1.data["id"])
