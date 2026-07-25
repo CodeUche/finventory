@@ -238,7 +238,33 @@ def notes_shell(organisation, date_from: date, date_to: date, **_):
     }
 
 
+def purchase_returns(organisation, date_from: date, date_to: date, **_):
+    """Supplier purchase returns (debit notes) in the period."""
+    from apps.purchases.models import PurchaseReturn
+    qs = PurchaseReturn.objects.filter(organisation=organisation).select_related("supplier")
+    if date_from:
+        qs = qs.filter(return_date__gte=date_from)
+    if date_to:
+        qs = qs.filter(return_date__lte=date_to)
+    qs = qs.order_by("return_date", "return_number")
+    rows = []
+    total = _zero()
+    for r in qs:
+        total += Decimal(str(r.total_amount or 0))
+        rows.append({
+            "return_number": r.return_number,
+            "date": str(r.return_date),
+            "supplier": r.supplier.name if r.supplier else "",
+            "refund_method": r.refund_method,
+            "subtotal": r.subtotal, "tax": r.tax_amount, "total": r.total_amount,
+        })
+    return {"period_start": str(date_from), "period_end": str(date_to),
+            "rows": rows, "total": total}
+
+
 def _register_defaults() -> None:
+    register(ReportDef("purchase-returns", "Purchase Returns", "Accounts Payable",
+                       purchase_returns, "Supplier returns / debit notes in the period."))
     register(ReportDef("gl-detail", "General Ledger (Detail)", "General Ledger",
                        gl_detail, "Running-balance ledger detail per account."))
     register(ReportDef("journal-register", "Journal Register", "General Ledger",

@@ -72,3 +72,30 @@ class ReceiveItemSerializer(serializers.Serializer):
     # Batch numbers are short reference codes — cap to prevent oversized strings
     batch_number = serializers.CharField(required=False, default="", max_length=100)
     expiry_date = serializers.DateField(required=False, allow_null=True)
+
+
+from .models import PurchaseReturn, PurchaseReturnItem  # noqa: E402
+
+
+class PurchaseReturnItemSerializer(serializers.ModelSerializer):
+    product_name = serializers.CharField(source="product.name", read_only=True)
+    product_sku = serializers.CharField(source="product.sku", read_only=True)
+
+    class Meta:
+        model = PurchaseReturnItem
+        fields = ["id", "product", "product_name", "product_sku",
+                  "quantity_returned", "unit_cost", "line_total"]
+        read_only_fields = fields
+
+
+class PurchaseReturnSerializer(serializers.ModelSerializer):
+    items = PurchaseReturnItemSerializer(many=True, read_only=True)
+    supplier_name = serializers.CharField(source="supplier.name", read_only=True, default=None)
+    po_number = serializers.CharField(source="purchase_order.po_number", read_only=True)
+
+    class Meta:
+        model = PurchaseReturn
+        fields = ["id", "return_number", "purchase_order", "po_number", "supplier",
+                  "supplier_name", "warehouse", "return_date", "reason", "refund_method",
+                  "subtotal", "tax_amount", "total_amount", "gl_post_status", "items", "created_at"]
+        read_only_fields = fields

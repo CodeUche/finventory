@@ -117,3 +117,88 @@ class PurchaseOrderItem(TenantAwareModel):
     @property
     def is_fully_received(self) -> bool:
         return self.quantity_received >= self.quantity_ordered
+
+
+class PurchaseReturn(TenantAwareModel):
+    """A return of received goods to a supplier (supplier debit note).
+
+    Reduces inventory and posts a reversing journal: DR Accounts Payable (or Cash/Bank
+    if refunded), CR Inventory (net cost), CR VAT Input (recoverable VAT reversed).
+    """
+
+    class RefundMethod(models.TextChoices):
+        AP = "ap", "Reduce Payable (debit note)"
+        CASH = "cash", "Cash Refund"
+        BANK = "bank", "Bank Refund"
+
+    purchase_order = models.ForeignKey(
+        PurchaseOrder, on_delete=models.PROTECT, related_name="returns"
+    )
+    supplier = models.ForeignKey(
+        "suppliers.Supplier", null=True, blank=True,
+        on_delete=models.PROTECT, related_name="purchase_returns"
+    )
+    warehouse = models.ForeignKey(
+        "inventory.Warehouse", on_delete=models.PROTECT, related_name="purchase_returns"
+    )
+    return_number = models.CharField(max_length=50, unique=True, db_index=True)
+    return_date = models.DateField()
+    reason = models.TextField(blank=True)
+    refund_method = models.CharField(
+        max_length=10, choices=RefundMethod.choices, default=RefundMethod.AP
+    )
+    subtotal = MoneyField(default=0)
+    tax_amount = MoneyField(default=0)
+    total_amount = MoneyField(default=0)
+    gl_post_status = models.CharField(max_length=20, default="pending")
+    gl_post_error = models.TextField(blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="purchase_returns"
+    )
+
+    class Meta(TenantAwareModel.Meta):
+        ordering = ["-return_date", "-created_at"]
+
+    def __str__(self):
+        return self.return_number
+
+    @classmethod
+    def generate_number(cls, organisation):
+        from django.db.models import Max
+        import re
+        prefix = str(organisation.id).replace("-", "")[:4].upper()
+        pattern = f"PRET-{prefix}-"
+        last = cls.objects.filter(return_number__startswith=pattern).aggregate(m=Max("return_number"))["m"]
+        seq = 1
+        if last:
+            m = re.search(r"-(\d+)$", last)
+            seq = (int(m.group(1)) + 1) if m else 1
+        candidate = f"{pattern}{seq:06d}"
+        while cls.objects.filter(return_number=candidate).exists():
+            seq += 1
+            candidate = f"{pattern}{seq:06d}"
+        return candidate
+
+
+class PurchaseReturnItem(TenantAwareModel):
+    """A single returned line."""
+
+    purchase_return = models.ForeignKey(
+        PurchaseReturn, on_delete=models.CASCADE, related_name="items"
+    )
+    po_item = models.ForeignKey(
+        PurchaseOrderItem, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name="return_items"
+    )
+    product = models.ForeignKey(
+        "inventory.Product", on_delete=models.PROTECT, related_name="purchase_return_items"
+    )
+    quantity_returned = models.DecimalField(max_digits=12, decimal_places=2)
+    unit_cost = MoneyField()
+    line_total = MoneyField()
+
+    class Meta(TenantAwareModel.Meta):
+        pass
+
+    def __str__(self):
+        return f"{self.product.sku} × {self.quantity_returned} (return)"
