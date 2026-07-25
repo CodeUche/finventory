@@ -1414,7 +1414,7 @@ export const accountingApi = {
   periods: () => api.get('/accounting/periods/'),
   createPeriod: (data: object) => api.post('/accounting/periods/', data),
   lockPeriod: (id: string) => api.post(`/accounting/periods/${id}/lock/`),
-  unlockPeriod: (id: string) => api.post(`/accounting/periods/${id}/unlock/`),
+  unlockPeriod: (id: string, reason: string) => api.post(`/accounting/periods/${id}/unlock/`, { reason }),
   // Bank Reconciliation
   reconciliations: () => api.get('/accounting/reconciliations/'),
   createReconciliation: (data: object) => api.post('/accounting/reconciliations/', data),

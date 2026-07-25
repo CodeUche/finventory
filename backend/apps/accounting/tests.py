@@ -562,6 +562,56 @@ class BeginningBalancesSummaryTests(TestCase):
         self.assertTrue(len(res.data["suspense"]["by_source"]) >= 1)
 
 
+class PeriodAuditSafeUnlockTests(TestCase):
+    """Step 3(b) — unlocking a closed period requires a reason, preserves the lock
+    evidence, and writes an immutable audit-log entry."""
+
+    def setUp(self):
+        self.user = _make_user("period_owner@example.com")
+        self.org = _make_org(self.user, "Period Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+        self.period = FinancialPeriod.objects.create(organisation=self.org, year=2026, month=6)
+
+    def _lock(self):
+        return self.client.post(f"/api/v1/accounting/periods/{self.period.id}/lock/")
+
+    def test_unlock_requires_reason(self):
+        self._lock()
+        res = self.client.post(f"/api/v1/accounting/periods/{self.period.id}/unlock/", {}, format="json")
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("reason", str(res.data).lower())
+
+    def test_cannot_unlock_open_period(self):
+        res = self.client.post(f"/api/v1/accounting/periods/{self.period.id}/unlock/",
+                               {"reason": "x"}, format="json")
+        self.assertEqual(res.status_code, 400)
+
+    def test_unlock_preserves_evidence_and_logs(self):
+        from apps.core.models import AuditLog
+        self._lock()
+        self.period.refresh_from_db()
+        self.assertTrue(self.period.is_locked)
+        self.assertEqual(self.period.locked_by_id, self.user.id)
+        res = self.client.post(
+            f"/api/v1/accounting/periods/{self.period.id}/unlock/",
+            {"reason": "Late supplier invoice for June"}, format="json")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.period.refresh_from_db()
+        self.assertFalse(self.period.is_locked)
+        # Lock evidence must survive the unlock.
+        self.assertEqual(self.period.locked_by_id, self.user.id)
+        self.assertIsNotNone(self.period.locked_at)
+        # Unlock evidence recorded.
+        self.assertEqual(self.period.unlocked_by_id, self.user.id)
+        self.assertIn("Late supplier", self.period.unlock_reason)
+        # Immutable audit-log entry written.
+        self.assertTrue(AuditLog.objects.filter(
+            organisation_id=self.org.id, model_name='FinancialPeriod',
+            object_id=str(self.period.id),
+        ).exists())
+
+
 class JournalEntryIdempotencyTests(TestCase):
     def setUp(self):
         self.user = _make_user("idem_owner@example.com")

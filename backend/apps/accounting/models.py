@@ -477,6 +477,13 @@ class FinancialPeriod(TenantAwareModel):
         User, null=True, blank=True, on_delete=models.SET_NULL, related_name='locked_periods'
     )
     locked_at = models.DateTimeField(null=True, blank=True)
+    # Audit-safe unlock: keep the lock evidence AND record who unlocked, when, and why.
+    # (Previously unlock() nulled locked_by/locked_at, destroying the audit trail.)
+    unlocked_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name='unlocked_periods'
+    )
+    unlocked_at = models.DateTimeField(null=True, blank=True)
+    unlock_reason = models.TextField(blank=True)
 
     class Meta:
         ordering = ['-year', '-month']

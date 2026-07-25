@@ -688,19 +688,33 @@ export default function SettingsPage() {
   }
 
   const handleLockToggle = async (period: FinancialPeriod) => {
+    const label = `${period.year}-${String(period.month).padStart(2, '0')}`
+    // Unlocking a closed period is audit-sensitive — capture a reason first.
+    let reason = ''
+    if (period.is_locked) {
+      const entered = await promptDialog(
+        `Unlocking a closed period is recorded in the audit trail. Why are you unlocking ${label}?`,
+        { title: 'Unlock period', confirmText: 'Unlock', optional: false, multiline: true,
+          placeholder: 'e.g. Late supplier invoice must be posted to this month' },
+      )
+      if (entered === null) return              // cancelled
+      reason = entered.trim()
+      if (!reason) { toast.error('A reason is required to unlock a closed period.'); return }
+    }
     setLockingPeriod(period.id)
     try {
       if (period.is_locked) {
-        await accountingApi.unlockPeriod(period.id)
-        toast.success(`Period ${period.year}-${String(period.month).padStart(2, '0')} unlocked`)
+        await accountingApi.unlockPeriod(period.id, reason)
+        toast.success(`Period ${label} unlocked`)
       } else {
         await accountingApi.lockPeriod(period.id)
-        toast.success(`Period ${period.year}-${String(period.month).padStart(2, '0')} locked`)
+        toast.success(`Period ${label} locked`)
       }
       const { data } = await accountingApi.periods()
       setPeriods(Array.isArray(data) ? data : data.results ?? [])
-    } catch {
-      toast.error('Failed to update period lock')
+    } catch (err) {
+      const apiErr = (err as { response?: { data?: { error?: unknown } } })?.response?.data?.error
+      toast.error(typeof apiErr === 'string' ? apiErr : 'Failed to update period lock')
     } finally {
       setLockingPeriod(null)
     }

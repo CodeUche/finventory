@@ -917,16 +917,50 @@ class FinancialPeriodViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         period.locked_by = request.user
         period.locked_at = tz.now()
         period.save()
+        self._audit(request, period, 'LOCK', f"Locked period {period.year}-{period.month:02d}")
         return Response(FinancialPeriodSerializer(period).data)
 
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsOwnerOrAdmin, _PlanAccounting])
     def unlock(self, request, pk=None):
+        from django.utils import timezone as tz
         period = self.get_object()
+        # Unlocking a closed period is an audit-sensitive action — require a reason,
+        # keep the original lock evidence, and record who unlocked + why. Only an
+        # already-locked period can be unlocked.
+        if not period.is_locked:
+            return Response({'error': 'Period is not locked'}, status=400)
+        reason = (request.data.get('reason') or '').strip()
+        if not reason:
+            return Response({'error': 'A reason is required to unlock a closed period.'}, status=400)
         period.is_locked = False
-        period.locked_by = None
-        period.locked_at = None
+        period.unlocked_by = request.user
+        period.unlocked_at = tz.now()
+        period.unlock_reason = reason
+        # Deliberately keep locked_by / locked_at so the lock history survives.
         period.save()
+        self._audit(request, period, 'UNLOCK',
+                    f"Unlocked period {period.year}-{period.month:02d} — reason: {reason}")
         return Response(FinancialPeriodSerializer(period).data)
+
+    def _audit(self, request, period, event, message):
+        """Write an immutable audit-log entry for a lock/unlock event."""
+        try:
+            from apps.core.models import AuditLog
+            AuditLog.log(
+                action=AuditLog.UPDATE,
+                user=request.user,
+                organisation=period.organisation,
+                model_name='FinancialPeriod',
+                object_id=str(period.id),
+                object_repr=str(period),
+                changes={'event': f'period_{event.lower()}', 'note': message},
+                request=request,
+                is_owner_action=True,
+            )
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Failed to write period %s audit log", event, exc_info=True)
 
 
 class BankReconciliationViewSet(TenantFilterMixin, viewsets.ModelViewSet):

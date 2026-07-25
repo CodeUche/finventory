@@ -110,11 +110,14 @@ class DepreciationEntrySerializer(serializers.ModelSerializer):
 
 class FinancialPeriodSerializer(serializers.ModelSerializer):
     locked_by_name = serializers.CharField(source='locked_by.get_full_name', read_only=True, default=None)
+    unlocked_by_name = serializers.CharField(source='unlocked_by.get_full_name', read_only=True, default=None)
 
     class Meta:
         model = FinancialPeriod
-        fields = ['id', 'year', 'month', 'is_locked', 'locked_by', 'locked_by_name', 'locked_at', 'created_at']
-        read_only_fields = ['id', 'is_locked', 'locked_by', 'locked_at', 'created_at']
+        fields = ['id', 'year', 'month', 'is_locked', 'locked_by', 'locked_by_name', 'locked_at',
+                  'unlocked_by', 'unlocked_by_name', 'unlocked_at', 'unlock_reason', 'created_at']
+        read_only_fields = ['id', 'is_locked', 'locked_by', 'locked_at',
+                            'unlocked_by', 'unlocked_at', 'unlock_reason', 'created_at']
 
 
 class BankReconciliationLineSerializer(serializers.ModelSerializer):
