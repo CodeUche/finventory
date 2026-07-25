@@ -18,6 +18,7 @@ COA_SEED = [
     ('1510', 'Accumulated Depreciation', AccountType.ASSET),
     ('1600', 'Deferred Tax Asset', AccountType.ASSET),
     ('2001', 'Accounts Payable', AccountType.LIABILITY),
+    ('2050', 'Customer Deposits', AccountType.LIABILITY),   # advances/deposits — liability until earned
     ('2800', 'Deferred Tax Liability', AccountType.LIABILITY),
     ('2100', 'VAT Payable', AccountType.LIABILITY),
     ('2200', 'PAYE Payable', AccountType.LIABILITY),
@@ -1932,6 +1933,68 @@ class CapitalisationService:
             'assets_missing_acquisition': missing,
             'reconciled': abs(var_cost) < Decimal('0.01') and abs(var_nbv) < Decimal('0.01'),
             'as_of': str(as_of) if as_of else None,
+        }
+
+    @staticmethod
+    def beginning_balances_summary(organisation):
+        """Consolidated take-on / opening-balance status for the Beginning Balances page.
+
+        Surfaces the Take-On Suspense (3900) plug prominently: a non-zero balance after
+        take-on means the opening balances are incomplete or unbalanced and must be
+        cleared before go-live. Control balances resolve through the GL mapping so a
+        remapped AR/AP/Inventory account is reflected here too.
+        """
+        zero = Decimal('0')
+
+        suspense = Account.objects.filter(organisation=organisation, code='3900').first()
+        suspense_balance = AccountingService._ledger_balance(suspense) if suspense else zero
+        suspense_by_source = []
+        if suspense:
+            agg = JournalLine.objects.filter(
+                journal_entry__organisation=organisation, account=suspense,
+                journal_entry__status='posted',
+            ).values('journal_entry__source_type').annotate(d=Sum('debit'), c=Sum('credit'))
+            for r in agg:
+                bal = (r['c'] or zero) - (r['d'] or zero)  # equity is credit-normal
+                if bal != 0:
+                    suspense_by_source.append({
+                        'source_type': r['journal_entry__source_type'] or '(manual)',
+                        'balance': bal,
+                    })
+
+        # GL accounts carrying an opening balance
+        opening_accts = Account.objects.filter(
+            organisation=organisation, opening_balance__isnull=False,
+        ).exclude(opening_balance=zero)
+        accounts_with_opening = opening_accts.count()
+        opening_total = sum((Decimal(str(a.opening_balance or 0)) for a in opening_accts), zero)
+
+        # Subledger control accounts (resolve via mapping, fall back to default code)
+        ar = AccountingService._mapped_or_code(organisation, 'accounts_receivable', '1100')
+        ap = AccountingService._mapped_or_code(organisation, 'accounts_payable', '2001')
+        inv = AccountingService._mapped_or_code(organisation, 'inventory_account', '1200')
+        controls = {
+            'accounts_receivable': AccountingService._ledger_balance(ar) if ar else zero,
+            'accounts_payable': AccountingService._ledger_balance(ap) if ap else zero,
+            'inventory': AccountingService._ledger_balance(inv) if inv else zero,
+        }
+
+        has_takeon = JournalEntry.objects.filter(
+            organisation=organisation, source_type='opening_balance', status='posted',
+        ).exists()
+
+        is_zero = abs(suspense_balance) < Decimal('0.01')
+        return {
+            'suspense': {
+                'balance': suspense_balance,
+                'by_source': suspense_by_source,
+                'is_zero': is_zero,
+            },
+            'accounts_with_opening': accounts_with_opening,
+            'opening_total': opening_total,
+            'controls': controls,
+            'has_takeon': has_takeon,
+            'balanced': is_zero,
         }
 
     @staticmethod

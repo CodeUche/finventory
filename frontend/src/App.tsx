@@ -45,6 +45,7 @@ const AssetsPage = React.lazy(() => import('@/pages/accounting/AssetsPage'))
 const DepreciationPage = React.lazy(() => import('@/pages/accounting/DepreciationPage'))
 const BankReconciliationPage = React.lazy(() => import('@/pages/accounting/BankReconciliationPage'))
 const GLHealthPage = React.lazy(() => import('@/pages/accounting/GLHealthPage'))
+const BeginningBalancesPage = React.lazy(() => import('@/pages/accounting/BeginningBalancesPage'))
 const EmployeesPage = React.lazy(() => import('@/pages/payroll/EmployeesPage'))
 const PayrollPage = React.lazy(() => import('@/pages/payroll/PayrollPage'))
 const BudgetPage = React.lazy(() => import('@/pages/BudgetPage'))
@@ -295,6 +296,7 @@ export default function App() {
 
         {/* Accounting */}
         <Route path="accounting/coa"             element={<ModuleRoute module="accounting"><ChartOfAccountsPage /></ModuleRoute>} />
+        <Route path="accounting/beginning-balances" element={<ModuleRoute module="accounting"><BeginningBalancesPage /></ModuleRoute>} />
         <Route path="accounting/journal"          element={<ModuleRoute module="accounting"><JournalPage /></ModuleRoute>} />
         <Route path="accounting/general-ledger"   element={<ModuleRoute module="accounting"><GeneralLedgerPage /></ModuleRoute>} />
         <Route path="accounting/assets"           element={<ModuleRoute module="accounting"><AssetsPage /></ModuleRoute>} />

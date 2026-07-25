@@ -524,6 +524,44 @@ class GLMappingModuleTests(TestCase):
         self.assertIn(res.status_code, [401, 403])
 
 
+class BeginningBalancesSummaryTests(TestCase):
+    """Step 2 — consolidated Beginning Balances status endpoint + suspense surfacing."""
+
+    def setUp(self):
+        self.user = _make_user("bbal_owner@example.com")
+        self.org = _make_org(self.user, "BBal Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+
+    def test_summary_endpoint_returns_shape(self):
+        res = self.client.get("/api/v1/accounting/beginning-balances/summary/")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        for key in ("suspense", "accounts_with_opening", "controls", "has_takeon", "balanced"):
+            self.assertIn(key, res.data)
+        self.assertTrue(res.data["suspense"]["is_zero"])
+        self.assertFalse(res.data["has_takeon"])
+        self.assertTrue(res.data["balanced"])
+
+    def test_summary_surfaces_nonzero_suspense_after_takeon(self):
+        """A one-sided GL take-on plugs to suspense; the summary must flag it."""
+        from datetime import date
+        bank = Account.objects.filter(
+            organisation=self.org, account_type="asset"
+        ).first()
+        self.assertIsNotNone(bank)
+        AccountingService.set_opening_balances(
+            self.org, date(2026, 1, 1),
+            entries=[{"account": bank, "amount": Decimal("500000.00"), "side": "debit"}],
+            created_by=self.user,
+        )
+        res = self.client.get("/api/v1/accounting/beginning-balances/summary/")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.assertTrue(res.data["has_takeon"])
+        self.assertFalse(res.data["suspense"]["is_zero"])
+        self.assertFalse(res.data["balanced"])
+        self.assertTrue(len(res.data["suspense"]["by_source"]) >= 1)
+
+
 class JournalEntryIdempotencyTests(TestCase):
     def setUp(self):
         self.user = _make_user("idem_owner@example.com")

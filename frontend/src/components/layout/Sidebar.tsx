@@ -66,6 +66,7 @@ const navGroups: { label: string | null; items: { name: string; href: string; ic
     label: 'ACCOUNTING',
     items: [
       { name: 'Chart of Accounts', href: '/accounting/coa', icon: BookOpen, module: 'accounting' },
+      { name: 'Beginning Balances', href: '/accounting/beginning-balances', icon: Scale, module: 'accounting' },
       { name: 'Journal Entries', href: '/accounting/journal', icon: BookMarked, module: 'accounting' },
       { name: 'General Ledger', href: '/accounting/general-ledger', icon: FileText, module: 'accounting' },
       { name: 'Fixed Assets', href: '/accounting/assets', icon: Landmark, module: 'accounting' },

@@ -1510,6 +1510,29 @@ class AccountMappingSuggestionsView(APIView):
         return Response(suggestions)
 
 
+class BeginningBalancesSummaryView(APIView):
+    """GET /accounting/beginning-balances/summary/ — consolidated take-on status
+    (suspense plug, GL opening balances, subledger control balances)."""
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
+
+    def _get_org(self, request):
+        org_id = request.META.get('HTTP_X_ORGANISATION_ID')
+        if not org_id:
+            return None
+        from apps.tenancy.models import Organisation
+        try:
+            return Organisation.objects.get(id=org_id)
+        except Exception:
+            return None
+
+    def get(self, request):
+        org = self._get_org(request)
+        if not org:
+            return Response({'error': 'Organisation not found'}, status=400)
+        from .services import CapitalisationService
+        return Response(CapitalisationService.beginning_balances_summary(org))
+
+
 class GLHealthView(APIView):
     """GET /accounting/gl-health/ — list recent GL failures with retry info."""
     permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]

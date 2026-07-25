@@ -1377,6 +1377,7 @@ export const accountingApi = {
   setOpeningBalances: (data: object) => api.post('/accounting/accounts/opening_balances/', data),
   setAccountOpeningBalance: (id: string, data: object) => api.post(`/accounting/accounts/${id}/set_opening_balance/`, data),
   setSubledgerOpeningBalances: (data: object) => api.post('/accounting/accounts/subledger_opening_balances/', data),
+  beginningBalancesSummary: () => api.get('/accounting/beginning-balances/summary/'),
   journal: (params?: object) => api.get('/accounting/journal/', { params }),
   createJournalEntry: (data: object) => api.post('/accounting/journal/', data),
   updateJournalEntry: (id: string, data: object) => api.patch(`/accounting/journal/${id}/`, data),
