@@ -68,6 +68,18 @@ class ReportEngineTests(BaseReportTestCase):
         self.assertEqual(Decimal(str(sec["lines"][0]["balance"])), Decimal("1000"))
         self.assertEqual(Decimal(str(sec["closing_balance"])), Decimal("1000"))
 
+    def test_gl_detail_by_code_carries_source_drilldown_fields(self):
+        res = self._dispatch("gl-detail", period="custom",
+                             date_from="2026-01-01", date_to="2026-12-31",
+                             account_code="4001")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        accounts = res.data["data"]["accounts"]
+        self.assertEqual(len(accounts), 1)
+        line = accounts[0]["lines"][0]
+        # Drill-down needs these to link a ledger line to its source document.
+        for k in ("journal_entry_id", "source_type", "source_ref"):
+            self.assertIn(k, line)
+
     def test_changes_in_equity_includes_unclosed_profit(self):
         res = self._dispatch("changes-in-equity", period="custom",
                              date_from="2026-01-01", date_to="2026-12-31")

@@ -56,11 +56,12 @@ def _zero() -> Decimal:
     return Decimal("0")
 
 
-def gl_detail(organisation, date_from: date, date_to: date, account_id=None, **_):
+def gl_detail(organisation, date_from: date, date_to: date, account_id=None, account_code=None, **_):
     """General Ledger detail with a running balance per account.
 
     Opening balance = posted movement strictly before date_from; then every posted
     line within the range, each carrying the running balance; closing balance at the end.
+    Filter to a single account by `account_id` or `account_code` (used by drill-down).
     """
     from apps.accounting.models import Account, JournalLine
     from apps.accounting.services import AccountingService
@@ -68,6 +69,8 @@ def gl_detail(organisation, date_from: date, date_to: date, account_id=None, **_
     accounts = Account.objects.filter(organisation=organisation, is_active=True)
     if account_id:
         accounts = accounts.filter(id=account_id)
+    if account_code:
+        accounts = accounts.filter(code=account_code)
     accounts = accounts.order_by("code")
 
     day_before = date_from - timedelta(days=1) if date_from else None
@@ -95,13 +98,18 @@ def gl_detail(organisation, date_from: date, date_to: date, account_id=None, **_
             d = Decimal(str(ln.debit or 0))
             c = Decimal(str(ln.credit or 0))
             running += (d - c) if debit_normal else (c - d)
+            je = ln.journal_entry
             rows.append({
-                "date": str(ln.journal_entry.entry_date),
-                "reference": ln.journal_entry.reference,
-                "description": ln.description or ln.journal_entry.description,
+                "date": str(je.entry_date),
+                "reference": je.reference,
+                "description": ln.description or je.description,
                 "debit": d,
                 "credit": c,
                 "balance": running,
+                # Drill-down: link a ledger line back to the document that created it.
+                "journal_entry_id": str(je.id),
+                "source_type": je.source_type or "",
+                "source_ref": je.source_ref or "",
             })
         if not rows and opening == 0:
             continue  # skip dormant accounts

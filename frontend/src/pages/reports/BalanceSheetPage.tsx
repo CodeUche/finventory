@@ -15,6 +15,7 @@ import {
 import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import toast from 'react-hot-toast'
 import { accountingApi, bypassNextGets } from '@/services/api'
+import AccountDrilldownDrawer from '@/components/AccountDrilldownDrawer'
 import { formatCurrency } from '@/lib/utils'
 import { useThemeAccent } from '@/hooks/useTheme'
 
@@ -82,6 +83,7 @@ export default function BalanceSheetPage() {
   const [loading, setLoading] = useState(true)
   const [noAccounts, setNoAccounts] = useState(false)
   const [seeding, setSeeding] = useState(false)
+  const [drill, setDrill] = useState<{ code: string; name: string } | null>(null)
 
   // Last day of the selected month as the as_of date
   const asOf = (() => {
@@ -382,6 +384,7 @@ export default function BalanceSheetPage() {
               groups={ASSET_GROUPS}
               total={data.total_assets}
               totalLabel="TOTAL ASSETS"
+              onDrill={(code, name) => setDrill({ code, name })}
             />
             {/* Liabilities */}
             <BSSection
@@ -391,6 +394,7 @@ export default function BalanceSheetPage() {
               groups={LIABILITY_GROUPS}
               total={data.total_liabilities}
               totalLabel="TOTAL LIABILITIES"
+              onDrill={(code, name) => setDrill({ code, name })}
             />
             {/* Equity */}
             <BSSection
@@ -400,6 +404,7 @@ export default function BalanceSheetPage() {
               groups={EQUITY_GROUPS}
               total={data.total_equity}
               totalLabel="TOTAL EQUITY"
+              onDrill={(code, name) => setDrill({ code, name })}
             />
           </div>
 
@@ -416,6 +421,15 @@ export default function BalanceSheetPage() {
           </div>
         </>
       ) : null}
+
+      {drill && (
+        <AccountDrilldownDrawer
+          accountCode={drill.code}
+          accountName={drill.name}
+          dateTo={asOf}
+          onClose={() => setDrill(null)}
+        />
+      )}
     </div>
   )
 }
@@ -445,7 +459,7 @@ function RatioRow({
 }
 
 function BSSection({
-  title, headerColor, accounts, groups, total, totalLabel
+  title, headerColor, accounts, groups, total, totalLabel, onDrill
 }: {
   title: string
   headerColor: string
@@ -453,6 +467,7 @@ function BSSection({
   groups: { label: string; from: number; to: number }[]
   total: string | number
   totalLabel: string
+  onDrill?: (code: string, name: string) => void
 }) {
   const grouped = groupAccounts(accounts, groups)
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
@@ -485,15 +500,23 @@ function BSSection({
             </button>
             {!isCollapsed && (
               <div className="divide-y divide-surface-700">
-                {visibleAccounts.map(a => (
-                  <div key={a.code} className="flex items-center justify-between px-5 py-3">
-                    <div>
-                      <span className="text-xs text-slate-500 font-mono mr-2">{a.code}</span>
-                      <span className="text-slate-300 text-sm">{a.name}</span>
+                {visibleAccounts.map(a => {
+                  const drillable = !!(onDrill && a.code)
+                  return (
+                    <div
+                      key={a.code || a.name}
+                      className={`flex items-center justify-between px-5 py-3 ${drillable ? 'cursor-pointer hover:bg-surface-700/40' : ''}`}
+                      onClick={drillable ? () => onDrill!(a.code, a.name) : undefined}
+                      title={drillable ? 'View account activity' : undefined}
+                    >
+                      <div>
+                        <span className="text-xs text-slate-500 font-mono mr-2">{a.code}</span>
+                        <span className={`text-sm ${drillable ? 'text-brand-300 hover:underline' : 'text-slate-300'}`}>{a.name}</span>
+                      </div>
+                      <span className="text-white font-medium text-sm font-mono">{formatCurrency(String(a.balance))}</span>
                     </div>
-                    <span className="text-white font-medium text-sm font-mono">{formatCurrency(String(a.balance))}</span>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             )}
           </div>
