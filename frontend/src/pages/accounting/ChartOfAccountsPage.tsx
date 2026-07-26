@@ -1256,7 +1256,7 @@ export function OpeningBalancesModal({ accounts, onClose, onDone }: {
   onClose: () => void
   onDone: () => void
 }) {
-  const postable = accounts.filter((a) => a.code !== '3900')
+  const postable = (Array.isArray(accounts) ? accounts : []).filter((a) => a.code !== '3900')
   const [tab, setTab] = useState<OBTab>('accounts')
   const [asOf, setAsOf] = useState('')
   const [busy, setBusy] = useState(false)

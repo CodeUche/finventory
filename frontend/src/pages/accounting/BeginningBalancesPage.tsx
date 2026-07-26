@@ -36,7 +36,7 @@ export default function BeginningBalancesPage() {
         accountingApi.accounts(),
       ])
       setSummary(sumRes.data)
-      setAccounts(acctRes.data)
+      setAccounts((acctRes.data as { results?: Account[] }).results ?? acctRes.data)
     } catch (err) {
       const apiErr = (err as { response?: { data?: { error?: unknown } } })?.response?.data?.error
       toast.error(typeof apiErr === 'string' ? apiErr : 'Failed to load beginning balances')
