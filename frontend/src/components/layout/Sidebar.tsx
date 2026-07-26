@@ -35,6 +35,7 @@ export const navGroups: { label: string | null; items: { name: string; href: str
       { name: 'Chart of Accounts', href: '/accounting/coa', icon: BookOpen, module: 'accounting' },
       { name: 'Beginning Balances', href: '/accounting/beginning-balances', icon: Scale, module: 'accounting' },
       { name: 'Journal Entries', href: '/accounting/journal', icon: BookMarked, module: 'accounting' },
+      { name: 'Cashbook (Income & Expense)', href: '/expenses', icon: ArrowDownCircle, module: 'expenses' },
       { name: 'Budgets', href: '/budgets', icon: PieChart, module: 'budget' },
       { name: 'Fixed Assets', href: '/accounting/assets', icon: Landmark, module: 'accounting' },
       { name: 'Depreciation', href: '/accounting/depreciation', icon: Landmark, module: 'accounting' },
@@ -84,12 +85,6 @@ export const navGroups: { label: string | null; items: { name: string; href: str
     items: [
       { name: 'Employees', href: '/payroll/employees', icon: UsersRound, module: 'payroll' },
       { name: 'Payroll Runs', href: '/payroll/runs', icon: Banknote, module: 'payroll' },
-    ],
-  },
-  {
-    label: 'CASH FLOW',
-    items: [
-      { name: 'Cashbook (Income & Expense)', href: '/expenses', icon: ArrowDownCircle, module: 'expenses' },
     ],
   },
   {
