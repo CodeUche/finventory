@@ -61,6 +61,8 @@ api_v1_urlpatterns = [
     path("ai/", include("apps.ai.urls")),
     # FIRS E-Invoicing (DigiTax) — config, submission log, webhook receiver
     path("einvoicing/", include("apps.einvoicing.urls")),
+    path("helpdesk/", include("apps.helpdesk.urls")),
+    path("pos/", include("apps.pos.urls")),
 ]
 
 _admin_only = [IsAdminUser]

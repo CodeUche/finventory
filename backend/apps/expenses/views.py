@@ -128,7 +128,7 @@ class ExpenseViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
         except ValueError as e:
             raise serializers.ValidationError(str(e))
         expense_date = serializer.validated_data.get('expense_date')
-        if expense_date and AccountingService.is_period_locked(org, expense_date):
+        if expense_date and AccountingService.is_period_locked(org, expense_date, user=self.request.user):
             from django.core.exceptions import PermissionDenied
             raise PermissionDenied(f"The period {expense_date.year}-{expense_date.month:02d} is locked.")
 

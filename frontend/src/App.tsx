@@ -45,6 +45,7 @@ const AssetsPage = React.lazy(() => import('@/pages/accounting/AssetsPage'))
 const DepreciationPage = React.lazy(() => import('@/pages/accounting/DepreciationPage'))
 const BankReconciliationPage = React.lazy(() => import('@/pages/accounting/BankReconciliationPage'))
 const GLHealthPage = React.lazy(() => import('@/pages/accounting/GLHealthPage'))
+const BeginningBalancesPage = React.lazy(() => import('@/pages/accounting/BeginningBalancesPage'))
 const EmployeesPage = React.lazy(() => import('@/pages/payroll/EmployeesPage'))
 const PayrollPage = React.lazy(() => import('@/pages/payroll/PayrollPage'))
 const BudgetPage = React.lazy(() => import('@/pages/BudgetPage'))
@@ -58,6 +59,10 @@ const AuditLogPage = React.lazy(() => import('@/pages/AuditLogPage'))
 const SettingsPage = React.lazy(() => import('@/pages/SettingsPage'))
 const PlatformAdminPage = React.lazy(() => import('@/pages/PlatformAdminPage'))
 const BillingPage = React.lazy(() => import('@/pages/BillingPage'))
+const TicketsPage = React.lazy(() => import('@/pages/TicketsPage'))
+const RestaurantPOSPage = React.lazy(() => import('@/pages/pos/RestaurantPOSPage'))
+const TablesPage = React.lazy(() => import('@/pages/pos/TablesPage'))
+const KitchenPage = React.lazy(() => import('@/pages/pos/KitchenPage'))
 const LocationsPage = React.lazy(() => import('@/pages/LocationsPage'))
 const StockReportsPage = React.lazy(() => import('@/pages/inventory/StockReportsPage'))
 const PartnerDashboardPage = React.lazy(() => import('@/pages/PartnerDashboardPage'))
@@ -294,7 +299,11 @@ export default function App() {
         <Route path="credits"   element={<ModuleRoute module="customers"><CreditsPage /></ModuleRoute>} />
 
         {/* Accounting */}
+        <Route path="pos/restaurant"  element={<ModuleRoute module="sales"><RestaurantPOSPage /></ModuleRoute>} />
+        <Route path="pos/tables"      element={<ModuleRoute module="sales"><TablesPage /></ModuleRoute>} />
+        <Route path="pos/kitchen"     element={<ModuleRoute module="sales"><KitchenPage /></ModuleRoute>} />
         <Route path="accounting/coa"             element={<ModuleRoute module="accounting"><ChartOfAccountsPage /></ModuleRoute>} />
+        <Route path="accounting/beginning-balances" element={<ModuleRoute module="accounting"><BeginningBalancesPage /></ModuleRoute>} />
         <Route path="accounting/journal"          element={<ModuleRoute module="accounting"><JournalPage /></ModuleRoute>} />
         <Route path="accounting/general-ledger"   element={<ModuleRoute module="accounting"><GeneralLedgerPage /></ModuleRoute>} />
         <Route path="accounting/assets"           element={<ModuleRoute module="accounting"><AssetsPage /></ModuleRoute>} />
@@ -319,6 +328,7 @@ export default function App() {
         {/* Compliance */}
         <Route path="tax"       element={<ModuleRoute module="tax"><TaxPage /></ModuleRoute>} />
         <Route path="audit-log" element={<AuditLogPage />} />
+        <Route path="helpdesk" element={<TicketsPage />} />
 
         {/* Settings — always accessible for personal profile/security; org tabs filtered inside the page */}
         <Route path="settings" element={<SettingsPage />} />

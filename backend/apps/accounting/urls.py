@@ -3,7 +3,8 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     AccountViewSet, AccountSubTypeViewSet, JournalEntryViewSet, FixedAssetViewSet, AssetTypeViewSet,
     FinancialPeriodViewSet, BankReconciliationViewSet, AccountMappingView, AccountMappingSuggestionsView,
-    GLHealthView, GLHealthRetryView, GLHealthBulkRetryView,
+    GLHealthView, GLHealthRetryView, GLHealthBulkRetryView, BeginningBalancesSummaryView,
+    YearEndCloseView,
 )
 
 router = DefaultRouter()
@@ -17,6 +18,8 @@ router.register('reconciliations', BankReconciliationViewSet, basename='reconcil
 
 urlpatterns = [
     path('', include(router.urls)),
+    path('beginning-balances/summary/', BeginningBalancesSummaryView.as_view(), name='beginning-balances-summary'),
+    path('year-end-close/', YearEndCloseView.as_view(), name='year-end-close'),
     path('account-mapping/', AccountMappingView.as_view(), name='account-mapping'),
     path('account-mapping/suggestions/', AccountMappingSuggestionsView.as_view(), name='account-mapping-suggestions'),
     path('gl-health/', GLHealthView.as_view(), name='gl-health'),

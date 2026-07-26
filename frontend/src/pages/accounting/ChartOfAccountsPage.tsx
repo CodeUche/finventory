@@ -1251,7 +1251,7 @@ type OBTab = 'accounts' | 'customers' | 'suppliers' | 'items'
 interface SubRow { id: string; label: string; amount: string }
 interface ItemRow { product_id: string; label: string; quantity: string; unit_cost: string }
 
-function OpeningBalancesModal({ accounts, onClose, onDone }: {
+export function OpeningBalancesModal({ accounts, onClose, onDone }: {
   accounts: Account[]
   onClose: () => void
   onDone: () => void

@@ -111,6 +111,28 @@ class InvoiceCreateTests(TestCase):
         invoice = Invoice.objects.filter(organisation=self.org).first()
         self.assertEqual(invoice.status, Invoice.Status.PROFORMA)
 
+    def test_split_payment_records_multiple_tenders(self):
+        """POS split payment: a credit invoice paid part cash + part transfer is
+        recorded as two tenders and fully settled."""
+        payload = self._payload(payment_method="credit")
+        res = self.client.post("/api/v1/sales/invoices/", payload, format="json")
+        self.assertIn(res.status_code, [200, 201], msg=str(res.data))
+        inv = Invoice.objects.filter(organisation=self.org).latest("created_at")
+        total = float(inv.total_amount)
+        half = round(total / 2, 2)
+        rest = round(total - half, 2)
+        pay = self.client.post(f"/api/v1/sales/invoices/{inv.id}/pay_split/", {
+            "tenders": [
+                {"amount": half, "method": "cash"},
+                {"amount": rest, "method": "bank_transfer"},
+            ],
+        }, format="json")
+        self.assertEqual(pay.status_code, 201, msg=str(pay.data))
+        self.assertEqual(len(pay.data["payments"]), 2)
+        inv.refresh_from_db()
+        self.assertEqual(inv.status, Invoice.Status.PAID)
+        self.assertEqual(float(inv.amount_due), 0.0)
+
     def test_create_invoice_in_locked_period_returns_clear_message(self):
         """POS/sale into a LOCKED period must return a clear 'locked' message, not the
         opaque 'An unexpected error occurred' toast (the reported POS bug)."""

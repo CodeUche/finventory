@@ -152,3 +152,47 @@ class PurchaseOrderViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet
             "due_today": due_today,
             "overdue": overdue,
         })
+
+
+from .models import PurchaseReturn  # noqa: E402
+from .serializers import PurchaseReturnSerializer  # noqa: E402
+from .services import PurchaseReturnService  # noqa: E402
+
+
+class PurchaseReturnViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+    """List/create supplier purchase returns. Returns are immutable once created."""
+
+    serializer_class = PurchaseReturnSerializer
+    permission_classes = [IsAuthenticated, IsStaff, _PlanPurchases]
+    http_method_names = ["get", "post", "head", "options"]
+    filterset_fields = ["supplier", "purchase_order"]
+    search_fields = ["return_number"]
+
+    def get_queryset(self):
+        org = self._get_organisation()
+        return (PurchaseReturn.objects.filter(organisation=org)
+                .select_related("supplier", "purchase_order")
+                .prefetch_related("items__product"))
+
+    def create(self, request, *args, **kwargs):
+        from apps.inventory.models import Product
+        org = self._get_organisation()
+        po_id = request.data.get("purchase_order_id") or request.data.get("purchase_order")
+        items = request.data.get("items") or []
+        try:
+            po = PurchaseOrder.objects.get(id=po_id, organisation=org)
+        except PurchaseOrder.DoesNotExist:
+            return Response({"error": "Purchase order not found"}, status=404)
+        try:
+            pret = PurchaseReturnService.process_return(
+                org, po, items,
+                return_date=request.data.get("return_date") or None,
+                refund_method=request.data.get("refund_method", "ap"),
+                reason=request.data.get("reason", ""),
+                created_by=request.user,
+            )
+        except (ValueError, Product.DoesNotExist) as e:
+            return Response({"error": str(e)}, status=422)
+        except Exception as e:
+            return Response({"error": f"Could not process return: {type(e).__name__}: {e}"}, status=422)
+        return Response(PurchaseReturnSerializer(pret).data, status=status.HTTP_201_CREATED)

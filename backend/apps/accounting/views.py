@@ -907,26 +907,142 @@ class FinancialPeriodViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             period = FinancialPeriod.objects.get(organisation=org, year=year, month=month)
         return Response(FinancialPeriodSerializer(period).data, status=status.HTTP_200_OK)
 
+    @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated, IsAccountant, _PlanAccounting])
+    def close_checklist(self, request, pk=None):
+        """Month-end readiness checklist for this period (gates the lock)."""
+        period = self.get_object()
+        data = AccountingService.period_close_checklist(period.organisation, period.year, period.month)
+        return Response(data)
+
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsOwnerOrAdmin, _PlanAccounting])
     def lock(self, request, pk=None):
         from django.utils import timezone as tz
         period = self.get_object()
         if period.is_locked:
             return Response({'error': 'Period is already locked'}, status=400)
+        # Gate the lock on the month-end close checklist unless explicitly forced.
+        force = str(request.data.get('force', '')).lower() in ('1', 'true', 'yes')
+        checklist = AccountingService.period_close_checklist(period.organisation, period.year, period.month)
+        if not checklist['ready'] and not force:
+            return Response(
+                {'error': 'Period is not ready to close. Resolve the checklist items or force the lock.',
+                 'checklist': checklist},
+                status=400,
+            )
         period.is_locked = True
         period.locked_by = request.user
         period.locked_at = tz.now()
         period.save()
+        forced_note = ' (forced despite checklist)' if (force and not checklist['ready']) else ''
+        self._audit(request, period, 'LOCK', f"Locked period {period.year}-{period.month:02d}{forced_note}")
         return Response(FinancialPeriodSerializer(period).data)
 
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsOwnerOrAdmin, _PlanAccounting])
     def unlock(self, request, pk=None):
+        from django.utils import timezone as tz
         period = self.get_object()
+        # Unlocking a closed period is an audit-sensitive action — require a reason,
+        # keep the original lock evidence, and record who unlocked + why. Only an
+        # already-locked period can be unlocked.
+        if not period.is_locked:
+            return Response({'error': 'Period is not locked'}, status=400)
+        reason = (request.data.get('reason') or '').strip()
+        if not reason:
+            return Response({'error': 'A reason is required to unlock a closed period.'}, status=400)
         period.is_locked = False
-        period.locked_by = None
-        period.locked_at = None
+        period.unlocked_by = request.user
+        period.unlocked_at = tz.now()
+        period.unlock_reason = reason
+        # Deliberately keep locked_by / locked_at so the lock history survives.
         period.save()
+        self._audit(request, period, 'UNLOCK',
+                    f"Unlocked period {period.year}-{period.month:02d} — reason: {reason}")
         return Response(FinancialPeriodSerializer(period).data)
+
+    def _audit(self, request, period, event, message):
+        """Write an immutable audit-log entry for a lock/unlock event."""
+        try:
+            from apps.core.models import AuditLog
+            AuditLog.log(
+                action=AuditLog.UPDATE,
+                user=request.user,
+                organisation=period.organisation,
+                model_name='FinancialPeriod',
+                object_id=str(period.id),
+                object_repr=str(period),
+                changes={'event': f'period_{event.lower()}', 'note': message},
+                request=request,
+                is_owner_action=True,
+            )
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Failed to write period %s audit log", event, exc_info=True)
+
+    @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated, IsOwnerOrAdmin, _PlanAccounting])
+    def generate_fiscal_year(self, request):
+        """Generate a fiscal year + its 12 monthly periods from a start date + rule."""
+        org = self._get_organisation()
+        year = request.data.get('year')
+        start_date = request.data.get('start_date')
+        if not year or not start_date:
+            return Response({'error': 'year and start_date are required'}, status=400)
+        try:
+            fy = AccountingService.generate_fiscal_year(
+                org, int(year), start_date,
+                rule=request.data.get('rule', 'last_day_of_month'),
+                closing_day=request.data.get('closing_day'),
+                weekday=request.data.get('weekday'),
+                created_by=request.user,
+            )
+        except (ValueError, TypeError) as e:
+            return Response({'error': str(e)}, status=422)
+        from .serializers import FiscalYearSerializer
+        periods = FinancialPeriod.objects.filter(organisation=org, fiscal_year=fy).order_by('period_number')
+        return Response({
+            'fiscal_year': FiscalYearSerializer(fy).data,
+            'periods': FinancialPeriodSerializer(periods, many=True).data,
+        }, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['get', 'post'], permission_classes=[IsAuthenticated, IsOwnerOrAdmin, _PlanAccounting])
+    def grants(self, request, pk=None):
+        """GET: list posting grants for this period. POST: grant a user access."""
+        from .serializers import PeriodPostingGrantSerializer
+        from .models import PeriodPostingGrant
+        period = self.get_object()
+        if request.method.lower() == 'get':
+            qs = PeriodPostingGrant.objects.filter(organisation=period.organisation, period=period)
+            return Response(PeriodPostingGrantSerializer(qs, many=True).data)
+        # POST — create a grant
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        user_id = request.data.get('user_id') or request.data.get('user')
+        if not user_id:
+            return Response({'error': 'user_id is required'}, status=400)
+        try:
+            grantee = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found'}, status=404)
+        grant = AccountingService.grant_period_access(
+            period.organisation, period, grantee, granted_by=request.user,
+            days=request.data.get('days', 3), expires_at=request.data.get('expires_at'),
+            reason=request.data.get('reason', ''),
+        )
+        return Response(PeriodPostingGrantSerializer(grant).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsOwnerOrAdmin, _PlanAccounting])
+    def revoke_grant(self, request, pk=None):
+        """Revoke a posting grant on this period."""
+        from .models import PeriodPostingGrant
+        period = self.get_object()
+        grant_id = request.data.get('grant_id')
+        try:
+            grant = PeriodPostingGrant.objects.get(id=grant_id, organisation=period.organisation, period=period)
+        except PeriodPostingGrant.DoesNotExist:
+            return Response({'error': 'Grant not found'}, status=404)
+        grant.revoked = True
+        grant.save(update_fields=['revoked'])
+        return Response({'status': 'revoked', 'grant_id': str(grant.id)})
 
 
 class BankReconciliationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
@@ -1508,6 +1624,66 @@ class AccountMappingSuggestionsView(APIView):
                 'name': suggestion.name if suggestion else None,
             }
         return Response(suggestions)
+
+
+class BeginningBalancesSummaryView(APIView):
+    """GET /accounting/beginning-balances/summary/ — consolidated take-on status
+    (suspense plug, GL opening balances, subledger control balances)."""
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
+
+    def _get_org(self, request):
+        org_id = request.META.get('HTTP_X_ORGANISATION_ID')
+        if not org_id:
+            return None
+        from apps.tenancy.models import Organisation
+        try:
+            return Organisation.objects.get(id=org_id)
+        except Exception:
+            return None
+
+    def get(self, request):
+        org = self._get_org(request)
+        if not org:
+            return Response({'error': 'Organisation not found'}, status=400)
+        from .services import CapitalisationService
+        return Response(CapitalisationService.beginning_balances_summary(org))
+
+
+class YearEndCloseView(APIView):
+    """POST /accounting/year-end-close/  {fiscal_year} — close a fiscal year: zero the
+    P&L accounts and crystallise the net result into Retained Earnings."""
+    permission_classes = [IsAuthenticated, IsOwnerOrAdmin, _PlanAccounting]
+
+    def _get_org(self, request):
+        org_id = request.META.get('HTTP_X_ORGANISATION_ID')
+        if not org_id:
+            return None
+        from apps.tenancy.models import Organisation
+        try:
+            return Organisation.objects.get(id=org_id)
+        except Exception:
+            return None
+
+    def post(self, request):
+        from django.core.exceptions import PermissionDenied as _PermissionDenied
+        org = self._get_org(request)
+        if not org:
+            return Response({'error': 'Organisation not found'}, status=400)
+        fiscal_year = request.data.get('fiscal_year')
+        if not fiscal_year:
+            return Response({'error': 'fiscal_year is required'}, status=400)
+        try:
+            result = AccountingService.close_year(org, int(fiscal_year), created_by=request.user)
+        except (ValueError, _PermissionDenied) as e:
+            return Response({'error': str(e)}, status=422)
+        if result is None:
+            return Response({'message': 'Nothing to close — no P&L activity for this year.',
+                             'net_profit': '0'})
+        return Response({
+            'message': f"Year {result['fiscal_year']} closed to Retained Earnings.",
+            'net_profit': str(result['net_profit']),
+            'journal_entry_id': str(result['entry'].id),
+        }, status=201)
 
 
 class GLHealthView(APIView):

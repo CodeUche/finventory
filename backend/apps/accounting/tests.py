@@ -524,6 +524,338 @@ class GLMappingModuleTests(TestCase):
         self.assertIn(res.status_code, [401, 403])
 
 
+class BeginningBalancesSummaryTests(TestCase):
+    """Step 2 — consolidated Beginning Balances status endpoint + suspense surfacing."""
+
+    def setUp(self):
+        self.user = _make_user("bbal_owner@example.com")
+        self.org = _make_org(self.user, "BBal Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+
+    def test_summary_endpoint_returns_shape(self):
+        res = self.client.get("/api/v1/accounting/beginning-balances/summary/")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        for key in ("suspense", "accounts_with_opening", "controls", "has_takeon", "balanced"):
+            self.assertIn(key, res.data)
+        self.assertTrue(res.data["suspense"]["is_zero"])
+        self.assertFalse(res.data["has_takeon"])
+        self.assertTrue(res.data["balanced"])
+
+    def test_summary_surfaces_nonzero_suspense_after_takeon(self):
+        """A one-sided GL take-on plugs to suspense; the summary must flag it."""
+        from datetime import date
+        bank = Account.objects.filter(
+            organisation=self.org, account_type="asset"
+        ).first()
+        self.assertIsNotNone(bank)
+        AccountingService.set_opening_balances(
+            self.org, date(2026, 1, 1),
+            entries=[{"account": bank, "amount": Decimal("500000.00"), "side": "debit"}],
+            created_by=self.user,
+        )
+        res = self.client.get("/api/v1/accounting/beginning-balances/summary/")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.assertTrue(res.data["has_takeon"])
+        self.assertFalse(res.data["suspense"]["is_zero"])
+        self.assertFalse(res.data["balanced"])
+        self.assertTrue(len(res.data["suspense"]["by_source"]) >= 1)
+
+
+class PeriodAuditSafeUnlockTests(TestCase):
+    """Step 3(b) — unlocking a closed period requires a reason, preserves the lock
+    evidence, and writes an immutable audit-log entry."""
+
+    def setUp(self):
+        self.user = _make_user("period_owner@example.com")
+        self.org = _make_org(self.user, "Period Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+        self.period = FinancialPeriod.objects.create(organisation=self.org, year=2026, month=6)
+
+    def _lock(self):
+        return self.client.post(f"/api/v1/accounting/periods/{self.period.id}/lock/")
+
+    def test_unlock_requires_reason(self):
+        self._lock()
+        res = self.client.post(f"/api/v1/accounting/periods/{self.period.id}/unlock/", {}, format="json")
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("reason", str(res.data).lower())
+
+    def test_cannot_unlock_open_period(self):
+        res = self.client.post(f"/api/v1/accounting/periods/{self.period.id}/unlock/",
+                               {"reason": "x"}, format="json")
+        self.assertEqual(res.status_code, 400)
+
+    def test_unlock_preserves_evidence_and_logs(self):
+        from apps.core.models import AuditLog
+        self._lock()
+        self.period.refresh_from_db()
+        self.assertTrue(self.period.is_locked)
+        self.assertEqual(self.period.locked_by_id, self.user.id)
+        res = self.client.post(
+            f"/api/v1/accounting/periods/{self.period.id}/unlock/",
+            {"reason": "Late supplier invoice for June"}, format="json")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.period.refresh_from_db()
+        self.assertFalse(self.period.is_locked)
+        # Lock evidence must survive the unlock.
+        self.assertEqual(self.period.locked_by_id, self.user.id)
+        self.assertIsNotNone(self.period.locked_at)
+        # Unlock evidence recorded.
+        self.assertEqual(self.period.unlocked_by_id, self.user.id)
+        self.assertIn("Late supplier", self.period.unlock_reason)
+        # Immutable audit-log entry written.
+        self.assertTrue(AuditLog.objects.filter(
+            organisation_id=self.org.id, model_name='FinancialPeriod',
+            object_id=str(self.period.id),
+        ).exists())
+
+
+class GLHealthReconciliationTests(TestCase):
+    """Step 3(c) — GL Health surfaces the pre-plug imbalance + subledger↔control recons."""
+
+    def setUp(self):
+        self.user = _make_user("glhealth_owner@example.com")
+        self.org = _make_org(self.user, "GLHealth Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+
+    def test_reconciliations_shape_and_balanced_when_empty(self):
+        rec = AccountingService.gl_health_reconciliations(self.org)
+        for key in ("pre_plug_imbalance", "is_balanced", "subledgers", "all_reconciled"):
+            self.assertIn(key, rec)
+        names = [s["name"] for s in rec["subledgers"]]
+        self.assertEqual(names, ["Accounts Receivable", "Accounts Payable", "Inventory"])
+        for s in rec["subledgers"]:
+            for k in ("control", "subledger", "variance", "reconciled"):
+                self.assertIn(k, s)
+        # Nothing posted → balanced and reconciled.
+        self.assertTrue(rec["is_balanced"])
+        self.assertTrue(rec["all_reconciled"])
+
+    def test_pre_plug_imbalance_surfaced_after_one_sided_takeon(self):
+        from datetime import date
+        bank = Account.objects.filter(organisation=self.org, account_type="asset").first()
+        AccountingService.set_opening_balances(
+            self.org, date(2026, 1, 1),
+            entries=[{"account": bank, "amount": Decimal("250000.00"), "side": "debit"}],
+            created_by=self.user,
+        )
+        rec = AccountingService.gl_health_reconciliations(self.org)
+        # Suspense now carries the plug → not balanced, not all-reconciled.
+        self.assertFalse(rec["is_balanced"])
+        self.assertFalse(rec["all_reconciled"])
+        self.assertNotEqual(rec["pre_plug_imbalance"], Decimal("0"))
+
+    def test_gl_health_endpoint_includes_reconciliations(self):
+        res = self.client.get("/api/v1/accounting/gl-health/")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.assertIn("reconciliations", res.data)
+        self.assertIn("subledgers", res.data["reconciliations"])
+
+
+class YearEndCloseTests(TestCase):
+    """Step 3(e) — year-end close zeroes P&L and crystallises Retained Earnings."""
+
+    def setUp(self):
+        self.user = _make_user("yec_owner@example.com")
+        self.org = _make_org(self.user, "YEC Org")
+        _upgrade_to_business(self.org)
+
+    def _acct(self, code):
+        return Account.objects.get(organisation=self.org, code=code)
+
+    def _post_pl_activity(self):
+        from datetime import date
+        bank, rev, exp = self._acct('1002'), self._acct('4001'), self._acct('6100')
+        AccountingService.post_journal_entry(
+            self.org, "Rev", date(2026, 3, 1),
+            [(bank, Decimal('100000'), Decimal('0')), (rev, Decimal('0'), Decimal('100000'))],
+            self.user, ref='T1')
+        AccountingService.post_journal_entry(
+            self.org, "Exp", date(2026, 4, 1),
+            [(exp, Decimal('30000'), Decimal('0')), (bank, Decimal('0'), Decimal('30000'))],
+            self.user, ref='T2')
+
+    def test_close_moves_pl_to_retained_earnings(self):
+        from datetime import date
+        self._post_pl_activity()
+        re_before = AccountingService._ledger_balance(self._acct('3100'))
+        result = AccountingService.close_year(self.org, 2026, created_by=self.user)
+        self.assertIsNotNone(result)
+        self.assertEqual(result['net_profit'], Decimal('70000'))
+        ye = date(2026, 12, 31)
+        # P&L accounts zeroed as of year-end (ledger balance incl. the closing entry).
+        self.assertEqual(AccountingService._ledger_balance(self._acct('4001'), as_of=ye), Decimal('0'))
+        self.assertEqual(AccountingService._ledger_balance(self._acct('6100'), as_of=ye), Decimal('0'))
+        # Retained Earnings up by net profit.
+        re_after = AccountingService._ledger_balance(self._acct('3100'), as_of=ye)
+        self.assertEqual(re_after - re_before, Decimal('70000'))
+
+    def test_close_is_idempotent(self):
+        from datetime import date
+        self._post_pl_activity()
+        AccountingService.close_year(self.org, 2026, created_by=self.user)
+        AccountingService.close_year(self.org, 2026, created_by=self.user)
+        # RE holds the profit exactly once, not doubled.
+        re = AccountingService._ledger_balance(self._acct('3100'), as_of=date(2026, 12, 31))
+        self.assertEqual(re, Decimal('70000'))
+
+    def test_endpoint_closes_year(self):
+        client = _auth_client(self.user, self.org)
+        self._post_pl_activity()
+        res = client.post("/api/v1/accounting/year-end-close/", {"fiscal_year": 2026}, format="json")
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        self.assertEqual(float(res.data['net_profit']), 70000.0)
+
+
+class FiscalYearAndGrantTests(TestCase):
+    """Step 4 — fiscal-year generator + time-boxed posting grants (grant-aware lock)."""
+
+    def setUp(self):
+        self.user = _make_user("fy_owner@example.com")
+        self.org = _make_org(self.user, "FY Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+
+    def test_generate_fiscal_year_creates_12_periods(self):
+        from datetime import date
+        from apps.accounting.models import FiscalYear, FinancialPeriod
+        fy = AccountingService.generate_fiscal_year(self.org, 2027, date(2027, 1, 1))
+        self.assertIsNotNone(fy)
+        periods = FinancialPeriod.objects.filter(organisation=self.org, fiscal_year=fy)
+        self.assertEqual(periods.count(), 12)
+        jan = periods.get(month=1)
+        self.assertEqual(str(jan.start_date), "2027-01-01")
+        self.assertEqual(str(jan.end_date), "2027-01-31")   # last day of month rule
+        feb = periods.get(month=2)
+        self.assertEqual(str(feb.end_date), "2027-02-28")
+
+    def test_generate_is_idempotent(self):
+        from datetime import date
+        from apps.accounting.models import FinancialPeriod
+        AccountingService.generate_fiscal_year(self.org, 2027, date(2027, 1, 1))
+        AccountingService.generate_fiscal_year(self.org, 2027, date(2027, 1, 1))
+        self.assertEqual(FinancialPeriod.objects.filter(organisation=self.org, year=2027).count(), 12)
+
+    def test_specific_day_rule(self):
+        from datetime import date
+        from apps.accounting.models import FinancialPeriod
+        fy = AccountingService.generate_fiscal_year(
+            self.org, 2028, date(2028, 1, 1), rule='specific_day', closing_day=25)
+        jan = FinancialPeriod.objects.get(organisation=self.org, fiscal_year=fy, month=1)
+        self.assertEqual(str(jan.end_date), "2028-01-25")
+
+    def test_generate_endpoint(self):
+        res = self.client.post("/api/v1/accounting/periods/generate_fiscal_year/",
+                               {"year": 2029, "start_date": "2029-01-01"}, format="json")
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        self.assertEqual(len(res.data["periods"]), 12)
+
+    def test_grant_allows_posting_into_locked_period(self):
+        from datetime import date, timedelta
+        from django.utils import timezone
+        from apps.accounting.models import FinancialPeriod
+        # Lock June 2026.
+        period = FinancialPeriod.objects.create(organisation=self.org, year=2026, month=6, is_locked=True)
+        d = date(2026, 6, 15)
+        # Without a grant → locked.
+        self.assertTrue(AccountingService.is_period_locked(self.org, d, user=self.user))
+        # Grant the user access.
+        AccountingService.grant_period_access(
+            self.org, period, self.user, granted_by=self.user,
+            expires_at=timezone.now() + timedelta(days=2), reason="late adjustment")
+        # Now not locked for that user.
+        self.assertFalse(AccountingService.is_period_locked(self.org, d, user=self.user))
+        # A journal dated in the locked period now posts under the grant.
+        bank = Account.objects.get(organisation=self.org, code='1002')
+        rev = Account.objects.get(organisation=self.org, code='4001')
+        je = AccountingService.post_journal_entry(
+            self.org, "Grant post", d,
+            [(bank, Decimal('500'), Decimal('0')), (rev, Decimal('0'), Decimal('500'))],
+            self.user, ref='GRANT-1')
+        self.assertIsNotNone(je)
+
+    def test_expired_grant_does_not_bypass_lock(self):
+        from datetime import date, timedelta
+        from django.utils import timezone
+        from apps.accounting.models import FinancialPeriod
+        from apps.accounting.exceptions import PeriodLockedError
+        period = FinancialPeriod.objects.create(organisation=self.org, year=2026, month=7, is_locked=True)
+        AccountingService.grant_period_access(
+            self.org, period, self.user, granted_by=self.user,
+            expires_at=timezone.now() - timedelta(days=1), reason="expired")  # already expired
+        self.assertTrue(AccountingService.is_period_locked(self.org, date(2026, 7, 10), user=self.user))
+        bank = Account.objects.get(organisation=self.org, code='1002')
+        rev = Account.objects.get(organisation=self.org, code='4001')
+        with self.assertRaises(PeriodLockedError):
+            AccountingService.post_journal_entry(
+                self.org, "Blocked", date(2026, 7, 10),
+                [(bank, Decimal('500'), Decimal('0')), (rev, Decimal('0'), Decimal('500'))],
+                self.user, ref='BLOCK-1')
+
+    def test_grant_endpoint_and_revoke(self):
+        from apps.accounting.models import FinancialPeriod
+        period = FinancialPeriod.objects.create(organisation=self.org, year=2026, month=8, is_locked=True)
+        res = self.client.post(f"/api/v1/accounting/periods/{period.id}/grants/",
+                               {"user_id": str(self.user.id), "days": 2, "reason": "fix"}, format="json")
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        grant_id = res.data["id"]
+        listing = self.client.get(f"/api/v1/accounting/periods/{period.id}/grants/")
+        self.assertEqual(len(listing.data), 1)
+        rev = self.client.post(f"/api/v1/accounting/periods/{period.id}/revoke_grant/",
+                               {"grant_id": grant_id}, format="json")
+        self.assertEqual(rev.status_code, 200, msg=str(rev.data))
+
+
+class PeriodCloseChecklistTests(TestCase):
+    """Step 7 — month-end checklist gates the period lock."""
+
+    def setUp(self):
+        self.user = _make_user("close_owner@example.com")
+        self.org = _make_org(self.user, "Close Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+        self.period = FinancialPeriod.objects.create(organisation=self.org, year=2026, month=5)
+
+    def _break_suspense(self):
+        from datetime import date
+        bank = Account.objects.filter(organisation=self.org, account_type="asset").first()
+        AccountingService.set_opening_balances(
+            self.org, date(2026, 1, 1),
+            entries=[{"account": bank, "amount": Decimal("100000"), "side": "debit"}],
+            created_by=self.user)
+
+    def test_checklist_ready_when_clean(self):
+        res = self.client.get(f"/api/v1/accounting/periods/{self.period.id}/close_checklist/")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.assertTrue(res.data["ready"])
+        self.assertTrue(all(c["passed"] for c in res.data["checks"]))
+
+    def test_lock_succeeds_when_ready(self):
+        res = self.client.post(f"/api/v1/accounting/periods/{self.period.id}/lock/")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.period.refresh_from_db()
+        self.assertTrue(self.period.is_locked)
+
+    def test_lock_blocked_when_not_ready(self):
+        self._break_suspense()
+        res = self.client.post(f"/api/v1/accounting/periods/{self.period.id}/lock/")
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("checklist", res.data)
+        self.period.refresh_from_db()
+        self.assertFalse(self.period.is_locked)
+
+    def test_force_lock_overrides_checklist(self):
+        self._break_suspense()
+        res = self.client.post(f"/api/v1/accounting/periods/{self.period.id}/lock/",
+                               {"force": True}, format="json")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.period.refresh_from_db()
+        self.assertTrue(self.period.is_locked)
+
+
 class JournalEntryIdempotencyTests(TestCase):
     def setUp(self):
         self.user = _make_user("idem_owner@example.com")
@@ -1290,11 +1622,12 @@ class StrictGLModeTests(TestCase):
         self.org.refresh_from_db()
         self.assertTrue(self.org.strict_gl_mode)
 
-    def test_strict_mode_false_by_default(self):
-        """New organisations must have strict_gl_mode=False."""
+    def test_strict_mode_on_by_default(self):
+        """New organisations default to strict_gl_mode=True — they are seeded with a
+        full COA and auto-filled mapping, so strict mode is satisfied out of the box."""
         new_user = _make_user("strict_new@example.com")
         new_org = _make_org(new_user, "Strict New Org")
-        self.assertFalse(new_org.strict_gl_mode)
+        self.assertTrue(new_org.strict_gl_mode)
 
     def test_check_strict_gl_with_complete_mapping_passes(self):
         """check_strict_gl_mode should not raise when all required roles are mapped."""

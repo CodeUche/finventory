@@ -159,3 +159,104 @@ def _upsert_bill_for_po(po: PurchaseOrder, batch_subtotal: Decimal, received_by)
         )
     except Exception as exc:
         logger.warning("GL journal for PO receipt %s failed: %s", po.po_number, exc)
+
+
+class PurchaseReturnService:
+    """Process returns of received goods to a supplier."""
+
+    @staticmethod
+    @transaction.atomic
+    def process_return(organisation, purchase_order, items, return_date=None,
+                       refund_method="ap", reason="", created_by=None):
+        """Create a PurchaseReturn, reduce inventory, and post the reversing journal.
+
+        items: [{product_id, quantity, unit_cost?}]  (unit_cost defaults to the PO line cost)
+        GL:  DR Accounts Payable / Cash / Bank (total incl VAT)
+             CR Inventory        (net cost)
+             CR VAT Input        (recoverable VAT reversed)
+        """
+        from datetime import date as _date
+        from apps.accounting.services import AccountingService, AccountMappingService, safe_post_gl
+        from apps.inventory.models import Product
+        from .models import PurchaseReturn, PurchaseReturnItem, PurchaseOrderItem
+
+        return_date = AccountingService._coerce_date(return_date) if return_date else _date.today()
+        if not items:
+            raise ValueError("A purchase return must have at least one line.")
+
+        # PO VAT rate (proportional) for reversing input VAT.
+        subtotal = Decimal(str(purchase_order.subtotal or 0))
+        vat_rate = (Decimal(str(purchase_order.tax_amount or 0)) / subtotal) if subtotal else Decimal("0")
+
+        pret = PurchaseReturn.objects.create(
+            organisation=organisation,
+            purchase_order=purchase_order,
+            supplier=purchase_order.supplier,
+            warehouse=purchase_order.warehouse,
+            return_number=PurchaseReturn.generate_number(organisation),
+            return_date=return_date,
+            reason=reason,
+            refund_method=refund_method,
+            created_by=created_by,
+        )
+
+        net_total = Decimal("0")
+        for row in items:
+            product = Product.objects.get(id=row["product_id"], organisation=organisation)
+            qty = Decimal(str(row["quantity"]))
+            if qty <= 0:
+                continue
+            po_item = PurchaseOrderItem.objects.filter(
+                purchase_order=purchase_order, product=product
+            ).first()
+            unit_cost = Decimal(str(row.get("unit_cost") or (po_item.unit_cost if po_item else 0)))
+            line_total = qty * unit_cost
+            net_total += line_total
+
+            PurchaseReturnItem.objects.create(
+                organisation=organisation, purchase_return=pret, po_item=po_item,
+                product=product, quantity_returned=qty, unit_cost=unit_cost, line_total=line_total,
+            )
+            # Reduce stock (goods leave our warehouse back to the supplier).
+            if product.product_type == "physical":
+                InventoryService.record_movement(
+                    organisation=organisation, product=product, warehouse=purchase_order.warehouse,
+                    quantity=-qty, movement_type="adjustment_out", unit_cost=unit_cost,
+                    reference=pret.return_number, created_by=created_by,
+                )
+            # Roll back the received quantity on the PO line.
+            if po_item:
+                po_item.quantity_received = max(Decimal("0"), po_item.quantity_received - qty)
+                po_item.save(update_fields=["quantity_received"])
+
+        vat_total = (net_total * vat_rate).quantize(Decimal("0.01"))
+        grand_total = net_total + vat_total
+        pret.subtotal = net_total
+        pret.tax_amount = vat_total
+        pret.total_amount = grand_total
+        pret.save(update_fields=["subtotal", "tax_amount", "total_amount"])
+
+        def _post():
+            zero = Decimal("0")
+            if refund_method == "cash":
+                debit_acct = AccountMappingService.resolve(organisation, "cash_account")
+            elif refund_method == "bank":
+                debit_acct = AccountMappingService.resolve(organisation, "bank_account")
+            else:
+                debit_acct = AccountMappingService.resolve(organisation, "accounts_payable")
+            inv_acct = AccountMappingService.resolve(organisation, "inventory_account")
+            lines = [
+                (debit_acct, grand_total, zero),   # DR AP / Cash / Bank
+                (inv_acct, zero, net_total),        # CR Inventory
+            ]
+            if vat_total > 0:
+                vat_acct = AccountMappingService.resolve(organisation, "vat_input_account")
+                lines.append((vat_acct, zero, vat_total))  # CR VAT Input (reverse recoverable)
+            AccountingService.post_journal_entry(
+                organisation, f"Purchase return {pret.return_number}", return_date,
+                lines, created_by, ref=pret.return_number,
+                source_type="purchase_return", source_ref=str(pret.id),
+            )
+
+        safe_post_gl(_post, model_instance=pret)
+        return pret

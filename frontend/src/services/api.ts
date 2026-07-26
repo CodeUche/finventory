@@ -1122,6 +1122,7 @@ export const salesApi = {
   editLines: (id: string, data: object) => api.patch(`/sales/invoices/${id}/edit_lines/`, data),
   deleteInvoice: (id: string) => api.delete(`/sales/invoices/${id}/`),
   pay: (id: string, data: object) => api.post(`/sales/invoices/${id}/pay/`, data),
+  paySplit: (id: string, tenders: object[]) => api.post(`/sales/invoices/${id}/pay_split/`, { tenders }),
   void: (id: string) => api.post(`/sales/invoices/${id}/void/`),
   processReturn: (invoiceId: string, data: object) =>
     api.post(`/sales/invoices/${invoiceId}/process_return/`, data),
@@ -1194,6 +1195,9 @@ export const supplierApi = {
 }
 
 export const reportApi = {
+  // Unified report engine (registry-backed): catalog + dispatch by key.
+  catalog: () => api.get('/reports/catalog/'),
+  run: (key: string, params?: object) => api.get(`/reports/r/${key}/`, { params }),
   pnl: (params: object) => api.get('/reports/pnl/', { params }),
   sales: (params: object) => api.get('/reports/sales/', { params }),
   topProducts: (params: object) => api.get('/reports/top-products/', { params }),
@@ -1377,6 +1381,7 @@ export const accountingApi = {
   setOpeningBalances: (data: object) => api.post('/accounting/accounts/opening_balances/', data),
   setAccountOpeningBalance: (id: string, data: object) => api.post(`/accounting/accounts/${id}/set_opening_balance/`, data),
   setSubledgerOpeningBalances: (data: object) => api.post('/accounting/accounts/subledger_opening_balances/', data),
+  beginningBalancesSummary: () => api.get('/accounting/beginning-balances/summary/'),
   journal: (params?: object) => api.get('/accounting/journal/', { params }),
   createJournalEntry: (data: object) => api.post('/accounting/journal/', data),
   updateJournalEntry: (id: string, data: object) => api.patch(`/accounting/journal/${id}/`, data),
@@ -1412,8 +1417,14 @@ export const accountingApi = {
   // Financial Periods
   periods: () => api.get('/accounting/periods/'),
   createPeriod: (data: object) => api.post('/accounting/periods/', data),
-  lockPeriod: (id: string) => api.post(`/accounting/periods/${id}/lock/`),
-  unlockPeriod: (id: string) => api.post(`/accounting/periods/${id}/unlock/`),
+  lockPeriod: (id: string, force = false) => api.post(`/accounting/periods/${id}/lock/`, force ? { force: true } : {}),
+  unlockPeriod: (id: string, reason: string) => api.post(`/accounting/periods/${id}/unlock/`, { reason }),
+  periodCloseChecklist: (id: string) => api.get(`/accounting/periods/${id}/close_checklist/`),
+  generateFiscalYear: (data: object) => api.post('/accounting/periods/generate_fiscal_year/', data),
+  periodGrants: (id: string) => api.get(`/accounting/periods/${id}/grants/`),
+  grantPeriodAccess: (id: string, data: object) => api.post(`/accounting/periods/${id}/grants/`, data),
+  revokePeriodGrant: (id: string, grantId: string) => api.post(`/accounting/periods/${id}/revoke_grant/`, { grant_id: grantId }),
+  closeYear: (fiscalYear: number) => api.post('/accounting/year-end-close/', { fiscal_year: fiscalYear }),
   // Bank Reconciliation
   reconciliations: () => api.get('/accounting/reconciliations/'),
   createReconciliation: (data: object) => api.post('/accounting/reconciliations/', data),
@@ -1684,4 +1695,31 @@ export const importApi = {
   /** GET /import/template/<entity>/ — download CSV template */
   templateUrl: (entity: 'products' | 'customers' | 'accounts') =>
     `/import/template/${entity}/`,
+}
+
+// ─── Help Desk / Tickets ─────────────────────────────────────────────────────
+export const helpdeskApi = {
+  tickets: (params?: object) => api.get('/helpdesk/tickets/', { params }),
+  getTicket: (id: string) => api.get(`/helpdesk/tickets/${id}/`),
+  createTicket: (data: object) => api.post('/helpdesk/tickets/', data),
+  addComment: (id: string, body: string) => api.post(`/helpdesk/tickets/${id}/comment/`, { body }),
+  setStatus: (id: string, status: string) => api.post(`/helpdesk/tickets/${id}/set_status/`, { status }),
+}
+
+// ─── Hospitality POS (tables, orders, KOT) ───────────────────────────────────
+export const posApi = {
+  tables: (params?: object) => api.get('/pos/tables/', { params }),
+  createTable: (data: object) => api.post('/pos/tables/', data),
+  updateTable: (id: string, data: object) => api.patch(`/pos/tables/${id}/`, data),
+  deleteTable: (id: string) => api.delete(`/pos/tables/${id}/`),
+  orders: (params?: object) => api.get('/pos/orders/', { params }),
+  getOrder: (id: string) => api.get(`/pos/orders/${id}/`),
+  createOrder: (data: object) => api.post('/pos/orders/', data),
+  addItems: (id: string, items: object[]) => api.post(`/pos/orders/${id}/add_items/`, { items }),
+  setOrderStatus: (id: string, status: string) => api.post(`/pos/orders/${id}/set_status/`, { status }),
+  generateKot: (id: string, section?: string) => api.post(`/pos/orders/${id}/generate_kot/`, { section }),
+  splitBill: (id: string, data: object) => api.post(`/pos/orders/${id}/split_bill/`, data),
+  finalizeOrder: (id: string, tenders: object[]) => api.post(`/pos/orders/${id}/finalize/`, { tenders }),
+  kots: (params?: object) => api.get('/pos/kots/', { params }),
+  setKotStatus: (id: string, status: string) => api.post(`/pos/kots/${id}/set_status/`, { status }),
 }

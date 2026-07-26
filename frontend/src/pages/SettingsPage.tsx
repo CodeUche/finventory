@@ -453,7 +453,12 @@ export default function SettingsPage() {
         }
       })
     }
-  }, [tab])
+    // Deps include organisation?.id, memberRole and planModules: on a direct URL load
+    // / refresh of a permission-gated tab (e.g. GL Mapping), the tab is initially
+    // filtered out until membership + plan load, so `activeTab` falls back to 'profile'.
+    // Re-running when those arrive lets `activeTab` settle on the real tab and fires the
+    // fetch — otherwise the tab renders but stays stuck on its loading spinner.
+  }, [tab, organisation?.id, memberRole, planModules])
 
   // Auto-refresh partner access requests every 15s while the Access tab is
   // open, so an incoming request/acceptance appears without a manual reload.
@@ -688,19 +693,52 @@ export default function SettingsPage() {
   }
 
   const handleLockToggle = async (period: FinancialPeriod) => {
+    const label = `${period.year}-${String(period.month).padStart(2, '0')}`
+    // Unlocking a closed period is audit-sensitive — capture a reason first.
+    let reason = ''
+    if (period.is_locked) {
+      const entered = await promptDialog(
+        `Unlocking a closed period is recorded in the audit trail. Why are you unlocking ${label}?`,
+        { title: 'Unlock period', confirmText: 'Unlock', optional: false, multiline: true,
+          placeholder: 'e.g. Late supplier invoice must be posted to this month' },
+      )
+      if (entered === null) return              // cancelled
+      reason = entered.trim()
+      if (!reason) { toast.error('A reason is required to unlock a closed period.'); return }
+    }
     setLockingPeriod(period.id)
     try {
       if (period.is_locked) {
-        await accountingApi.unlockPeriod(period.id)
-        toast.success(`Period ${period.year}-${String(period.month).padStart(2, '0')} unlocked`)
+        await accountingApi.unlockPeriod(period.id, reason)
+        toast.success(`Period ${label} unlocked`)
       } else {
-        await accountingApi.lockPeriod(period.id)
-        toast.success(`Period ${period.year}-${String(period.month).padStart(2, '0')} locked`)
+        try {
+          await accountingApi.lockPeriod(period.id)
+          toast.success(`Period ${label} locked`)
+        } catch (lockErr) {
+          // The close checklist gates the lock — offer to force it if not ready.
+          const resp = (lockErr as { response?: { status?: number; data?: { checklist?: { checks?: { label: string; passed: boolean; detail?: string }[] } } } })?.response
+          const checks = resp?.data?.checklist?.checks
+          if (resp?.status === 400 && checks) {
+            const failing = checks.filter((c) => !c.passed)
+              .map((c) => `• ${c.label}${c.detail ? ` — ${c.detail}` : ''}`).join('\n')
+            const force = await confirmDialog(
+              `Period ${label} isn't ready to close:\n\n${failing}\n\nLock it anyway? (This is recorded in the audit trail.)`,
+              { title: 'Period not ready', confirmText: 'Force lock', danger: true },
+            )
+            if (!force) { setLockingPeriod(null); return }
+            await accountingApi.lockPeriod(period.id, true)
+            toast.success(`Period ${label} locked (forced)`)
+          } else {
+            throw lockErr
+          }
+        }
       }
       const { data } = await accountingApi.periods()
       setPeriods(Array.isArray(data) ? data : data.results ?? [])
-    } catch {
-      toast.error('Failed to update period lock')
+    } catch (err) {
+      const apiErr = (err as { response?: { data?: { error?: unknown } } })?.response?.data?.error
+      toast.error(typeof apiErr === 'string' ? apiErr : 'Failed to update period lock')
     } finally {
       setLockingPeriod(null)
     }
@@ -715,6 +753,50 @@ export default function SettingsPage() {
       toast.success('Period created')
     } catch {
       toast.error('Period may already exist')
+    }
+  }
+
+  const generateFiscalYear = async () => {
+    const entered = await promptDialog(
+      'Generate a full fiscal year of monthly accounting periods. Enter the year:',
+      { title: 'Generate Fiscal Year', confirmText: 'Generate', optional: false,
+        defaultValue: String(new Date().getFullYear()) },
+    )
+    if (entered === null) return
+    const year = parseInt(entered.trim(), 10)
+    if (!year || year < 2000 || year > 2100) { toast.error('Enter a valid year'); return }
+    try {
+      const { data } = await accountingApi.generateFiscalYear({
+        year, start_date: `${year}-01-01`, rule: 'last_day_of_month',
+      })
+      const { data: p } = await accountingApi.periods()
+      setPeriods(Array.isArray(p) ? p : p.results ?? [])
+      toast.success(`Generated ${data.periods?.length ?? 12} periods for ${year}`)
+    } catch (err) {
+      const apiErr = (err as { response?: { data?: { error?: unknown } } })?.response?.data?.error
+      toast.error(typeof apiErr === 'string' ? apiErr : 'Failed to generate fiscal year')
+    }
+  }
+
+  const [closingYear, setClosingYear] = useState(false)
+  const handleCloseYear = async () => {
+    const year = new Date().getFullYear()
+    const ok = await confirmDialog(
+      `Close the ${year} financial year? This posts a closing entry that zeroes the ` +
+      `Profit & Loss accounts and moves the net result to Retained Earnings. It can be ` +
+      `re-run safely if you post more ${year} transactions later.`,
+      { title: `Close year ${year}`, confirmText: 'Close year' },
+    )
+    if (!ok) return
+    setClosingYear(true)
+    try {
+      const { data } = await accountingApi.closeYear(year)
+      toast.success(data?.message ?? `Year ${year} closed`)
+    } catch (err) {
+      const apiErr = (err as { response?: { data?: { error?: unknown } } })?.response?.data?.error
+      toast.error(typeof apiErr === 'string' ? apiErr : 'Failed to close the year')
+    } finally {
+      setClosingYear(false)
     }
   }
 
@@ -1047,6 +1129,27 @@ export default function SettingsPage() {
               <label className="label">Company Name</label>
               <input className="input" value={company.name} onChange={(e) => setCompany({ ...company, name: e.target.value })} />
             </div>
+            <div className="col-span-2">
+              <label className="label">Business Type</label>
+              <select
+                className="input"
+                value={(organisation as { business_type?: string })?.business_type ?? 'general'}
+                onChange={async (e) => {
+                  try {
+                    const { data } = await orgApi.update(organisation!.id, { business_type: e.target.value })
+                    updateOrganisation(data)
+                    toast.success('Business type updated')
+                  } catch { toast.error('Failed to update business type') }
+                }}
+              >
+                <option value="general">General / Retail</option>
+                <option value="restaurant">Restaurant / Bar / Hotel</option>
+                <option value="pharmacy">Pharmacy / Supermarket</option>
+                <option value="laundry">Laundry</option>
+                <option value="services">Services</option>
+              </select>
+              <p className="text-xs text-slate-500 mt-1">Restaurant unlocks the hospitality POS (tables, KOT, order types).</p>
+            </div>
             <div>
               <label className="label">Country</label>
               <input className="input" value={company.country} onChange={(e) => setCompany({ ...company, country: e.target.value })} />
@@ -1118,9 +1221,17 @@ export default function SettingsPage() {
               <p className="text-slate-400 text-xs mt-0.5">Lock periods to prevent new transactions from being posted to closed months</p>
             </div>
             {isOwner && (
-              <button onClick={createPeriod} className="btn-primary text-sm">
-                + Create Current Period
-              </button>
+              <div className="flex items-center gap-2">
+                <button onClick={handleCloseYear} disabled={closingYear} className="btn-secondary text-sm">
+                  {closingYear ? 'Closing…' : 'Close Financial Year'}
+                </button>
+                <button onClick={generateFiscalYear} className="btn-secondary text-sm">
+                  Generate Fiscal Year
+                </button>
+                <button onClick={createPeriod} className="btn-primary text-sm">
+                  + Create Current Period
+                </button>
+              </div>
             )}
           </div>
 
@@ -2838,60 +2949,50 @@ export default function SettingsPage() {
             <div className="flex justify-center py-8"><Loader2 size={24} className="animate-spin text-slate-400" /></div>
           ) : (
             <div className="space-y-3">
-              {[
-                { role: 'revenue_account',         label: 'Revenue Account',          hint: 'Sales/revenue credited on invoice' },
-                { role: 'cogs_account',             label: 'Cost of Goods Sold',       hint: 'Debited on sale for product cost' },
-                { role: 'inventory_account',        label: 'Inventory Account',        hint: 'Credited on sale (stock reduction)' },
-                { role: 'accounts_receivable',      label: 'Accounts Receivable',      hint: 'Debited for credit sales' },
-                { role: 'cash_account',             label: 'Cash Account',             hint: 'Debited on cash payments received' },
-                { role: 'bank_account',             label: 'Bank Account',             hint: 'Debited on bank/POS payments' },
-                { role: 'accounts_payable',         label: 'Accounts Payable',         hint: 'Credited on bill approval' },
-                { role: 'vat_output_account',       label: 'VAT Output (Payable)',     hint: 'Credited on VAT collected' },
-                { role: 'vat_input_account',        label: 'VAT Input (Recoverable)',  hint: 'Debited on VAT paid to suppliers' },
-                { role: 'paye_account',             label: 'PAYE Payable',             hint: 'Credited on payroll run' },
-                { role: 'pension_account',          label: 'Pension Payable',          hint: 'Credited on payroll run' },
-                { role: 'wht_account',              label: 'WHT / NHF Payable',        hint: 'Withholding tax liability' },
-                { role: 'salary_expense_account',   label: 'Salaries & Wages',         hint: 'Debited on payroll run' },
-                { role: 'general_expense_account',  label: 'General Expenses',         hint: 'Debited on expense recording' },
-                { role: 'bank_charges_account',     label: 'Bank Charges',             hint: 'Bank fees expense account' },
-              ].map(({ role, label, hint }) => {
-                const currentId = glMapping[`${role}_id`] ?? null
-                const suggestion = glMapping[`${role}_suggestion`]
-                return (
-                  <div key={role} className="rounded-lg bg-slate-800 border border-slate-700 px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-2">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-white">{label}</p>
-                      <p className="text-xs text-slate-500">{hint}</p>
-                      {!currentId && suggestion && (
-                        <p className="text-xs text-amber-400 mt-0.5">Suggested: {suggestion.code} – {suggestion.name}</p>
-                      )}
-                    </div>
-                    <select
-                      className="w-full sm:w-64 bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-brand-500"
-                      value={currentId ?? ''}
-                      onChange={(e) => {
-                        const val = e.target.value || null
-                        setGlMapping((prev: any) => ({
-                          ...prev,
-                          [`${role}_id`]: val,
-                          [`${role}_name`]: glAccounts.find((a: any) => a.id === val)?.name ?? null,
-                        }))
-                      }}
-                    >
-                      <option value="">— Not mapped —</option>
-                      {glAccounts.map((a: any) => (
-                        <option key={a.id} value={a.id}>{a.code} – {a.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                )
-              })}
+              {(glMapping.modules ?? []).map((mod: any) => (
+                <div key={mod.key} className="space-y-3">
+                  <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mt-4 mb-1">{mod.label}</h4>
+                  {mod.roles.map((role: string) => {
+                    const label = glMapping.role_labels?.[role] ?? role
+                    const currentId = glMapping[`${role}_id`] ?? null
+                    const suggestion = glMapping[`${role}_suggestion`]
+                    return (
+                      <div key={role} className="rounded-lg bg-slate-800 border border-slate-700 px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-2">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-white">{label}</p>
+                          {!currentId && suggestion && (
+                            <p className="text-xs text-amber-400 mt-0.5">Suggested: {suggestion.code} – {suggestion.name}</p>
+                          )}
+                        </div>
+                        <select
+                          className="w-full sm:w-64 bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-brand-500"
+                          value={currentId ?? ''}
+                          onChange={(e) => {
+                            const val = e.target.value || null
+                            setGlMapping((prev: any) => ({
+                              ...prev,
+                              [`${role}_id`]: val,
+                              [`${role}_name`]: glAccounts.find((a: any) => a.id === val)?.name ?? null,
+                            }))
+                          }}
+                        >
+                          <option value="">— Not mapped —</option>
+                          {glAccounts.map((a: any) => (
+                            <option key={a.id} value={a.id}>{a.code} – {a.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )
+                  })}
+                </div>
+              ))}
               <button
                 onClick={async () => {
                   setGlMappingSaving(true)
                   try {
                     const payload: Record<string, string | null> = {}
-                    const roles = ['revenue_account','cogs_account','inventory_account','accounts_receivable','cash_account','bank_account','accounts_payable','vat_output_account','vat_input_account','paye_account','pension_account','wht_account','salary_expense_account','general_expense_account','bank_charges_account']
+                    // Derive the role list from the module grouping so new roles (e.g. NHF) are included.
+                    const roles: string[] = (glMapping?.modules ?? []).flatMap((m: any) => m.roles)
                     roles.forEach((r) => { payload[r] = glMapping?.[`${r}_id`] ?? null })
                     const res = await accountingApi.updateAccountMapping(payload)
                     setGlMapping(res.data)

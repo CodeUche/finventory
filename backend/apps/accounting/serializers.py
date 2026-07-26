@@ -2,8 +2,28 @@ from rest_framework import serializers
 from .models import (
     Account, AccountSubType, JournalEntry, JournalLine, FixedAsset, DepreciationEntry,
     FinancialPeriod, BankReconciliation, BankReconciliationLine, AIReconMatch, AccountMapping,
-    AssetType, normal_balance_for_type,
+    AssetType, normal_balance_for_type, FiscalYear, PeriodPostingGrant,
 )
+
+
+class FiscalYearSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FiscalYear
+        fields = ['id', 'year', 'start_date', 'end_date', 'generation_rule', 'is_closed', 'created_at']
+        read_only_fields = fields
+
+
+class PeriodPostingGrantSerializer(serializers.ModelSerializer):
+    user_name = serializers.CharField(source='user.get_full_name', read_only=True)
+    user_email = serializers.CharField(source='user.email', read_only=True)
+    granted_by_name = serializers.CharField(source='granted_by.get_full_name', read_only=True, default=None)
+    is_active = serializers.BooleanField(read_only=True)
+
+    class Meta:
+        model = PeriodPostingGrant
+        fields = ['id', 'period', 'user', 'user_name', 'user_email', 'granted_by',
+                  'granted_by_name', 'reason', 'expires_at', 'revoked', 'is_active', 'created_at']
+        read_only_fields = fields
 
 
 class AccountSubTypeSerializer(serializers.ModelSerializer):
@@ -110,11 +130,14 @@ class DepreciationEntrySerializer(serializers.ModelSerializer):
 
 class FinancialPeriodSerializer(serializers.ModelSerializer):
     locked_by_name = serializers.CharField(source='locked_by.get_full_name', read_only=True, default=None)
+    unlocked_by_name = serializers.CharField(source='unlocked_by.get_full_name', read_only=True, default=None)
 
     class Meta:
         model = FinancialPeriod
-        fields = ['id', 'year', 'month', 'is_locked', 'locked_by', 'locked_by_name', 'locked_at', 'created_at']
-        read_only_fields = ['id', 'is_locked', 'locked_by', 'locked_at', 'created_at']
+        fields = ['id', 'year', 'month', 'is_locked', 'locked_by', 'locked_by_name', 'locked_at',
+                  'unlocked_by', 'unlocked_by_name', 'unlocked_at', 'unlock_reason', 'created_at']
+        read_only_fields = ['id', 'is_locked', 'locked_by', 'locked_at',
+                            'unlocked_by', 'unlocked_at', 'unlock_reason', 'created_at']
 
 
 class BankReconciliationLineSerializer(serializers.ModelSerializer):

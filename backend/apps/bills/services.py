@@ -14,7 +14,7 @@ class BillService:
     def create_bill(validated_data, items_data, organisation, user):
         from apps.accounting.services import AccountingService
         issue_date = validated_data.get('issue_date') or timezone.now().date()
-        if AccountingService.is_period_locked(organisation, issue_date):
+        if AccountingService.is_period_locked(organisation, issue_date, user=user):
             from django.core.exceptions import PermissionDenied
             raise PermissionDenied(f"The period {issue_date.year}-{issue_date.month:02d} is locked.")
 

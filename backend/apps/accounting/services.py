@@ -18,6 +18,7 @@ COA_SEED = [
     ('1510', 'Accumulated Depreciation', AccountType.ASSET),
     ('1600', 'Deferred Tax Asset', AccountType.ASSET),
     ('2001', 'Accounts Payable', AccountType.LIABILITY),
+    ('2050', 'Customer Deposits', AccountType.LIABILITY),   # advances/deposits — liability until earned
     ('2800', 'Deferred Tax Liability', AccountType.LIABILITY),
     ('2100', 'VAT Payable', AccountType.LIABILITY),
     ('2200', 'PAYE Payable', AccountType.LIABILITY),
@@ -1015,17 +1016,118 @@ class AccountingService:
     # ──────────────────────────────────────────────────────────────────────────
 
     @staticmethod
-    def is_period_locked(organisation, date) -> bool:
-        """Return True if the financial period for date is locked."""
+    def _has_active_grant(period, user) -> bool:
+        """True if `user` holds an active (non-revoked, unexpired) posting grant for
+        `period` — a time-boxed exception to post into a locked period."""
+        from django.utils import timezone as _tz
+        from .models import PeriodPostingGrant
+        if user is None or not getattr(user, 'id', None):
+            return False
+        return PeriodPostingGrant.objects.filter(
+            period=period, user=user, revoked=False, expires_at__gt=_tz.now(),
+        ).exists()
+
+    @staticmethod
+    def is_period_locked(organisation, date, user=None) -> bool:
+        """Return True if the financial period for date is locked.
+
+        If `user` is given and holds an active posting grant for that period, it is
+        treated as unlocked for them (time-boxed administrator exception).
+        """
         try:
-            return FinancialPeriod.objects.filter(
+            locked = FinancialPeriod.objects.filter(
                 organisation=organisation,
                 year=date.year,
                 month=date.month,
                 is_locked=True,
-            ).exists()
+            ).first()
+            if not locked:
+                return False
+            if user is not None and AccountingService._has_active_grant(locked, user):
+                return False
+            return True
         except Exception:
             return False
+
+    @staticmethod
+    def _last_weekday_of_month(year, month, weekday):
+        """Return the date of the last given weekday (0=Mon..6=Sun) in the month."""
+        import calendar
+        from datetime import date as _date, timedelta
+        last_dom = calendar.monthrange(year, month)[1]
+        d = _date(year, month, last_dom)
+        return d - timedelta(days=(d.weekday() - weekday) % 7)
+
+    @staticmethod
+    @transaction.atomic
+    def generate_fiscal_year(organisation, year, start_date, rule='last_day_of_month',
+                             closing_day=None, weekday=None, created_by=None):
+        """Generate a FiscalYear + its 12 monthly FinancialPeriods (the 'Generate
+        Accounting Periods' wizard). Idempotent: returns the existing FiscalYear if
+        one already exists for `year`. Existing periods are linked/updated, never
+        duplicated, so locks are preserved.
+        """
+        import calendar
+        from datetime import date as _date
+        from .models import FiscalYear, FinancialPeriod
+
+        start_date = AccountingService._coerce_date(start_date)
+        existing = FiscalYear.objects.filter(organisation=organisation, year=int(year)).first()
+        if existing:
+            return existing
+
+        periods = []
+        cur_year, cur_month = start_date.year, start_date.month
+        for i in range(12):
+            p_start = start_date if i == 0 else _date(cur_year, cur_month, 1)
+            last_dom = calendar.monthrange(cur_year, cur_month)[1]
+            if rule == 'specific_day' and closing_day:
+                p_end = _date(cur_year, cur_month, min(int(closing_day), last_dom))
+            elif rule == 'last_weekday' and weekday is not None:
+                p_end = AccountingService._last_weekday_of_month(cur_year, cur_month, int(weekday))
+            else:
+                p_end = _date(cur_year, cur_month, last_dom)
+            periods.append((cur_year, cur_month, i + 1, p_start, p_end))
+            cur_month += 1
+            if cur_month > 12:
+                cur_month, cur_year = 1, cur_year + 1
+
+        fy = FiscalYear.objects.create(
+            organisation=organisation, year=int(year), start_date=start_date,
+            end_date=periods[-1][4], generation_rule=rule,
+        )
+        for (py, pm, pn, ps, pe) in periods:
+            FinancialPeriod.objects.update_or_create(
+                organisation=organisation, year=py, month=pm,
+                defaults={'fiscal_year': fy, 'period_number': pn, 'start_date': ps, 'end_date': pe},
+            )
+        return fy
+
+    @staticmethod
+    def grant_period_access(organisation, period, user, granted_by=None, days=3,
+                            expires_at=None, reason=''):
+        """Grant a user a time-boxed exception to post into a locked period."""
+        from django.utils import timezone as _tz
+        from datetime import timedelta
+        from .models import PeriodPostingGrant
+        if expires_at is None:
+            expires_at = _tz.now() + timedelta(days=int(days or 3))
+        grant = PeriodPostingGrant.objects.create(
+            organisation=organisation, period=period, user=user,
+            granted_by=granted_by, expires_at=expires_at, reason=reason,
+        )
+        try:
+            from apps.core.models import AuditLog
+            AuditLog.log(
+                action=AuditLog.UPDATE, user=granted_by, organisation=organisation,
+                model_name='PeriodPostingGrant', object_id=str(grant.id), object_repr=str(grant),
+                changes={'event': 'period_grant_created', 'user': str(user.id),
+                         'period': str(period.id), 'expires_at': str(expires_at), 'reason': reason},
+                is_owner_action=True,
+            )
+        except Exception:
+            pass
+        return grant
 
     @staticmethod
     def post_journal_entry(
@@ -1052,7 +1154,7 @@ class AccountingService:
         """
         from .exceptions import PeriodLockedError
 
-        # Period lock check
+        # Period lock check — honour a time-boxed posting grant for the acting user.
         if entry_date:
             locked_period = FinancialPeriod.objects.filter(
                 organisation=organisation,
@@ -1061,9 +1163,23 @@ class AccountingService:
                 is_locked=True,
             ).first()
             if locked_period:
-                raise PeriodLockedError(
-                    f"Period {locked_period} is locked. Unlock it before posting."
-                )
+                if AccountingService._has_active_grant(locked_period, created_by):
+                    # Posted into a locked period under an administrator grant — record it.
+                    try:
+                        from apps.core.models import AuditLog
+                        AuditLog.log(
+                            action=AuditLog.UPDATE, user=created_by, organisation=organisation,
+                            model_name='FinancialPeriod', object_id=str(locked_period.id),
+                            object_repr=str(locked_period),
+                            changes={'event': 'locked_period_post_via_grant', 'ref': ref,
+                                     'source': f'{source_type}/{source_ref}'},
+                        )
+                    except Exception:
+                        pass
+                else:
+                    raise PeriodLockedError(
+                        f"Period {locked_period} is locked. Unlock it before posting."
+                    )
 
         # Idempotency: return existing entry if same source already posted
         if source_type and source_ref:
@@ -1563,7 +1679,192 @@ class AccountingService:
             'payroll', 'run_number', 'created_at',
         )
 
-        return {'summary': summary, 'failures': failures}
+        return {
+            'summary': summary,
+            'failures': failures,
+            'reconciliations': AccountingService.gl_health_reconciliations(organisation),
+        }
+
+    @staticmethod
+    def gl_health_reconciliations(organisation) -> dict:
+        """Prove the control accounts tie to their subledgers, and surface the
+        PRE-PLUG imbalance (the Take-On Suspense balance) that the always-balancing
+        balance sheet would otherwise mask. This is the real 'is the ledger broken?'
+        check — a green balance sheet can still hide a plugged imbalance here."""
+        from apps.customers.models import Customer
+        from apps.bills.models import Bill
+        zero = Decimal('0')
+
+        suspense = Account.objects.filter(organisation=organisation, code='3900').first()
+        suspense_balance = AccountingService._ledger_balance(suspense) if suspense else zero
+
+        def _recon(name, control_acct, subledger_total):
+            control = AccountingService._ledger_balance(control_acct) if control_acct else zero
+            variance = control - subledger_total
+            return {
+                'name': name,
+                'control': control,
+                'subledger': subledger_total,
+                'variance': variance,
+                'reconciled': abs(variance) < Decimal('0.01'),
+            }
+
+        ar_acct = AccountingService._mapped_or_code(organisation, 'accounts_receivable', '1100')
+        ap_acct = AccountingService._mapped_or_code(organisation, 'accounts_payable', '2001')
+        inv_acct = AccountingService._mapped_or_code(organisation, 'inventory_account', '1200')
+
+        ar_sub = Customer.objects.filter(organisation=organisation).aggregate(
+            t=Sum('outstanding_balance'))['t'] or zero
+        ap_sub = Bill.objects.filter(organisation=organisation).aggregate(
+            t=Sum('amount_due'))['t'] or zero
+        try:
+            from apps.inventory.services import InventoryService
+            inv_sub = sum(
+                (getattr(i, 'total_value', zero) or zero)
+                for i in InventoryService.get_stock_valuation(organisation)
+            ) or zero
+        except Exception:
+            inv_sub = zero
+
+        subledgers = [
+            _recon('Accounts Receivable', ar_acct, Decimal(str(ar_sub))),
+            _recon('Accounts Payable', ap_acct, Decimal(str(ap_sub))),
+            _recon('Inventory', inv_acct, Decimal(str(inv_sub))),
+        ]
+        return {
+            'pre_plug_imbalance': suspense_balance,   # the real break the auto-plug hides
+            'is_balanced': abs(suspense_balance) < Decimal('0.01'),
+            'subledgers': subledgers,
+            'all_reconciled': (
+                all(s['reconciled'] for s in subledgers)
+                and abs(suspense_balance) < Decimal('0.01')
+            ),
+        }
+
+    @staticmethod
+    def period_close_checklist(organisation, year=None, month=None) -> dict:
+        """Month-end readiness checklist that gates locking a period.
+
+        Reuses GL Health: the ledger must have no failed/unmapped postings, the
+        Take-On Suspense must be zero, and every subledger must tie to its control
+        account. `ready` is True only when all checks pass.
+        """
+        health = AccountingService.get_gl_health(organisation)
+        recon = health.get('reconciliations', {})
+        summary = health.get('summary', {})
+        failed = (summary.get('failed', 0) or 0) + (summary.get('not_configured', 0) or 0)
+
+        unreconciled = [s['name'] for s in recon.get('subledgers', []) if not s.get('reconciled')]
+        checks = [
+            {
+                'key': 'no_failed_gl',
+                'label': 'No failed or unmapped GL postings',
+                'passed': failed == 0,
+                'detail': '' if failed == 0 else f'{failed} posting(s) need attention in GL Health.',
+            },
+            {
+                'key': 'suspense_zero',
+                'label': 'Take-On Suspense is zero',
+                'passed': bool(recon.get('is_balanced', True)),
+                'detail': '' if recon.get('is_balanced', True)
+                          else f"Suspense balance: {recon.get('pre_plug_imbalance')}",
+            },
+            {
+                'key': 'subledgers_reconciled',
+                'label': 'Subledgers tie to their control accounts',
+                'passed': bool(recon.get('all_reconciled', True)),
+                'detail': '' if not unreconciled else 'Variance in: ' + ', '.join(unreconciled),
+            },
+        ]
+        return {'ready': all(c['passed'] for c in checks), 'checks': checks}
+
+    @staticmethod
+    @transaction.atomic
+    def close_year(organisation, fiscal_year, created_by=None):
+        """Post a year-end closing entry that zeroes the P&L accounts and crystallises
+        the net result into Retained Earnings (3100) — IFRS/GAAP year-end close.
+
+        Non-destructive: re-running for the same year reverses the prior close first.
+        P&L account balances are computed EXCLUDING any year-end-close entries, so the
+        gross operating result is used regardless of prior closes/reversals.
+
+        The P&L *report* reads source documents, so it is unaffected. The balance sheet
+        reads the GL, so after closing its 'Current Year Earnings' line drops to zero and
+        Retained Earnings rises by the same amount (no double count).
+        """
+        import uuid
+        from datetime import date as _date
+        zero = Decimal('0')
+        year_end = _date(int(fiscal_year), 12, 31)
+        # Unique per-attempt source_ref (post_journal_entry dedupes by exact source_ref,
+        # so re-closing must NOT reuse the same ref) + prefix match to find prior closes.
+        ref_prefix = f'year-end-close-{fiscal_year}'
+        source_ref = f'{ref_prefix}-{uuid.uuid4().hex[:12]}'
+
+        prior = JournalEntry.objects.filter(
+            organisation=organisation, source_type='year_end_close',
+            source_ref__startswith=ref_prefix, status='posted',
+        )
+        for e in prior:
+            AccountingService.reverse_journal_entry(e, actor=created_by)
+
+        re_acct = AccountingService._get_account_by_code(organisation, '3100')
+        if re_acct is None:
+            raise ValueError("Retained Earnings account (3100) not found.")
+
+        # Gross operating result must ignore BOTH prior closing entries AND their
+        # reversals, so re-closing (which reverses the old close) stays idempotent.
+        close_ids = {
+            str(i) for i in JournalEntry.objects.filter(
+                organisation=organisation, source_type='year_end_close'
+            ).values_list('id', flat=True)
+        }
+
+        def _gross_balance(acct):
+            q = JournalLine.objects.filter(
+                journal_entry__organisation=organisation, account=acct,
+                journal_entry__status='posted',
+                journal_entry__entry_date__lte=year_end,
+            ).exclude(journal_entry__source_type='year_end_close').exclude(
+                Q(journal_entry__source_type='reversal',
+                  journal_entry__source_ref__in=close_ids)
+            )
+            agg = q.aggregate(d=Sum('debit'), c=Sum('credit'))
+            d = agg['d'] or zero
+            c = agg['c'] or zero
+            return (c - d) if acct.account_type == AccountType.REVENUE else (d - c)
+
+        pl_accounts = Account.objects.filter(
+            organisation=organisation, is_active=True,
+            account_type__in=[AccountType.REVENUE, AccountType.EXPENSE, AccountType.COST_OF_GOODS],
+        )
+        lines = []
+        net = zero
+        for acct in pl_accounts:
+            bal = _gross_balance(acct)
+            if bal == 0:
+                continue
+            if acct.account_type == AccountType.REVENUE:
+                lines.append((acct, bal, zero))   # DR revenue to zero its credit balance
+                net += bal
+            else:
+                lines.append((acct, zero, bal))   # CR expense/COGS to zero its debit balance
+                net -= bal
+
+        if not lines:
+            return None
+
+        if net > 0:
+            lines.append((re_acct, zero, net))    # profit → CR Retained Earnings
+        else:
+            lines.append((re_acct, -net, zero))   # loss → DR Retained Earnings
+
+        entry = AccountingService.post_journal_entry(
+            organisation, f"Year-end close {fiscal_year}", year_end,
+            lines, created_by,
+            ref=f'YEC-{fiscal_year}', source_type='year_end_close', source_ref=source_ref,
+        )
+        return {'entry': entry, 'net_profit': net, 'fiscal_year': int(fiscal_year)}
 
     @staticmethod
     def retry_gl_post(organisation, model_name: str, object_id: str, user=None):
@@ -1932,6 +2233,68 @@ class CapitalisationService:
             'assets_missing_acquisition': missing,
             'reconciled': abs(var_cost) < Decimal('0.01') and abs(var_nbv) < Decimal('0.01'),
             'as_of': str(as_of) if as_of else None,
+        }
+
+    @staticmethod
+    def beginning_balances_summary(organisation):
+        """Consolidated take-on / opening-balance status for the Beginning Balances page.
+
+        Surfaces the Take-On Suspense (3900) plug prominently: a non-zero balance after
+        take-on means the opening balances are incomplete or unbalanced and must be
+        cleared before go-live. Control balances resolve through the GL mapping so a
+        remapped AR/AP/Inventory account is reflected here too.
+        """
+        zero = Decimal('0')
+
+        suspense = Account.objects.filter(organisation=organisation, code='3900').first()
+        suspense_balance = AccountingService._ledger_balance(suspense) if suspense else zero
+        suspense_by_source = []
+        if suspense:
+            agg = JournalLine.objects.filter(
+                journal_entry__organisation=organisation, account=suspense,
+                journal_entry__status='posted',
+            ).values('journal_entry__source_type').annotate(d=Sum('debit'), c=Sum('credit'))
+            for r in agg:
+                bal = (r['c'] or zero) - (r['d'] or zero)  # equity is credit-normal
+                if bal != 0:
+                    suspense_by_source.append({
+                        'source_type': r['journal_entry__source_type'] or '(manual)',
+                        'balance': bal,
+                    })
+
+        # GL accounts carrying an opening balance
+        opening_accts = Account.objects.filter(
+            organisation=organisation, opening_balance__isnull=False,
+        ).exclude(opening_balance=zero)
+        accounts_with_opening = opening_accts.count()
+        opening_total = sum((Decimal(str(a.opening_balance or 0)) for a in opening_accts), zero)
+
+        # Subledger control accounts (resolve via mapping, fall back to default code)
+        ar = AccountingService._mapped_or_code(organisation, 'accounts_receivable', '1100')
+        ap = AccountingService._mapped_or_code(organisation, 'accounts_payable', '2001')
+        inv = AccountingService._mapped_or_code(organisation, 'inventory_account', '1200')
+        controls = {
+            'accounts_receivable': AccountingService._ledger_balance(ar) if ar else zero,
+            'accounts_payable': AccountingService._ledger_balance(ap) if ap else zero,
+            'inventory': AccountingService._ledger_balance(inv) if inv else zero,
+        }
+
+        has_takeon = JournalEntry.objects.filter(
+            organisation=organisation, source_type='opening_balance', status='posted',
+        ).exists()
+
+        is_zero = abs(suspense_balance) < Decimal('0.01')
+        return {
+            'suspense': {
+                'balance': suspense_balance,
+                'by_source': suspense_by_source,
+                'is_zero': is_zero,
+            },
+            'accounts_with_opening': accounts_with_opening,
+            'opening_total': opening_total,
+            'controls': controls,
+            'has_takeon': has_takeon,
+            'balanced': is_zero,
         }
 
     @staticmethod

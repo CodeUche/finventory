@@ -747,3 +747,43 @@ class ProductDetailsView(BaseDateRangeView):
             title="Product Details",
             filename_base="product_details",
         )
+
+
+# ─── Unified report engine (registry-backed dispatch) ────────────────────────
+
+from . import registry as report_registry  # noqa: E402
+
+
+class ReportCatalogView(BaseDateRangeView):
+    """GET /reports/catalog/ — list registry-backed reports for the reports menu."""
+
+    def get(self, request):
+        return Response({"reports": report_registry.catalog()})
+
+
+class ReportDispatchView(BaseDateRangeView):
+    """GET /reports/r/<key>/ — run any registry-backed report by key.
+
+    Accepts the standard period params plus any resolver-specific params
+    (e.g. ?account_id= for gl-detail). Returns JSON.
+    """
+
+    def get(self, request, key):
+        rd = report_registry.get(key)
+        if rd is None:
+            return Response({"error": f"Unknown report: {key}"}, status=404)
+        org = self.get_organisation()
+        if org is None:
+            return Response({"error": "Organisation not found"}, status=400)
+        date_from, date_to = self.get_date_range(request)
+        reserved = {"period", "date_from", "date_to", "format"}
+        extra = {k: v for k, v in request.query_params.items() if k not in reserved}
+        try:
+            data = rd.resolver(org, date_from, date_to, **extra)
+        except Exception as e:
+            return Response({"error": str(e)}, status=422)
+        return Response({
+            "key": rd.key, "label": rd.label, "category": rd.category,
+            "period_label": self.get_period_label(request, date_from, date_to),
+            "data": data,
+        })

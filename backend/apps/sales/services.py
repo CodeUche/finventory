@@ -77,7 +77,7 @@ class SaleService:
 
         check_strict_gl_mode(organisation)
 
-        if AccountingService.is_period_locked(organisation, issue_date):
+        if AccountingService.is_period_locked(organisation, issue_date, user=created_by):
             from django.core.exceptions import PermissionDenied
             raise PermissionDenied(f"The period {issue_date.year}-{issue_date.month:02d} is locked. Unlock it before creating new transactions.")
 
@@ -472,6 +472,33 @@ class SaleService:
                 logger.warning("CreditService.record_payment failed for invoice %s: %s", invoice.invoice_number, exc)
 
         return payment
+
+    @staticmethod
+    def record_split_payment(invoice: Invoice, tenders, received_by):
+        """Record multiple tenders (a split payment) against an invoice in one call.
+
+        tenders: [{amount, method, reference?}]. Each tender is recorded via
+        record_payment, so status transitions and GL/credit wiring are identical to a
+        single payment — this is the additive 'split payment' capability (cash + transfer
+        + card, etc.) the POS needs, without changing the sale-posting hot path.
+        """
+        if not tenders:
+            raise ValueError("At least one payment line is required.")
+        payments = []
+        for t in tenders:
+            amt = Decimal(str(t.get("amount") or 0))
+            if amt <= 0:
+                continue
+            payments.append(SaleService.record_payment(
+                invoice=invoice,
+                amount=amt,
+                method=t.get("method", "cash"),
+                reference=t.get("reference", ""),
+                received_by=received_by,
+            ))
+        if not payments:
+            raise ValueError("No valid payment lines (amounts must be greater than zero).")
+        return payments
 
     @staticmethod
     @transaction.atomic
