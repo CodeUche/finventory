@@ -53,7 +53,7 @@ class OrganisationSerializer(serializers.ModelSerializer):
             "show_company_name_on_pdf",
             "invoice_template", "pension_provider", "ai_custom_context",
             "onboarding_completed",
-            "strict_gl_mode",
+            "strict_gl_mode", "business_type",
             "fixed_asset_capitalisation_threshold", "fixed_asset_revaluation_enabled",
             "capital_allowance_nta2025_enabled",
             "managing_firm_name", "managing_firm_logo",

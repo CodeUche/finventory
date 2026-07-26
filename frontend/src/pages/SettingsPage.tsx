@@ -1124,6 +1124,27 @@ export default function SettingsPage() {
               <label className="label">Company Name</label>
               <input className="input" value={company.name} onChange={(e) => setCompany({ ...company, name: e.target.value })} />
             </div>
+            <div className="col-span-2">
+              <label className="label">Business Type</label>
+              <select
+                className="input"
+                value={(organisation as { business_type?: string })?.business_type ?? 'general'}
+                onChange={async (e) => {
+                  try {
+                    const { data } = await orgApi.update(organisation!.id, { business_type: e.target.value })
+                    updateOrganisation(data)
+                    toast.success('Business type updated')
+                  } catch { toast.error('Failed to update business type') }
+                }}
+              >
+                <option value="general">General / Retail</option>
+                <option value="restaurant">Restaurant / Bar / Hotel</option>
+                <option value="pharmacy">Pharmacy / Supermarket</option>
+                <option value="laundry">Laundry</option>
+                <option value="services">Services</option>
+              </select>
+              <p className="text-xs text-slate-500 mt-1">Restaurant unlocks the hospitality POS (tables, KOT, order types).</p>
+            </div>
             <div>
               <label className="label">Country</label>
               <input className="input" value={company.country} onChange={(e) => setCompany({ ...company, country: e.target.value })} />

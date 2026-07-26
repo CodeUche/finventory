@@ -60,6 +60,9 @@ const SettingsPage = React.lazy(() => import('@/pages/SettingsPage'))
 const PlatformAdminPage = React.lazy(() => import('@/pages/PlatformAdminPage'))
 const BillingPage = React.lazy(() => import('@/pages/BillingPage'))
 const TicketsPage = React.lazy(() => import('@/pages/TicketsPage'))
+const RestaurantPOSPage = React.lazy(() => import('@/pages/pos/RestaurantPOSPage'))
+const TablesPage = React.lazy(() => import('@/pages/pos/TablesPage'))
+const KitchenPage = React.lazy(() => import('@/pages/pos/KitchenPage'))
 const LocationsPage = React.lazy(() => import('@/pages/LocationsPage'))
 const StockReportsPage = React.lazy(() => import('@/pages/inventory/StockReportsPage'))
 const PartnerDashboardPage = React.lazy(() => import('@/pages/PartnerDashboardPage'))
@@ -296,6 +299,9 @@ export default function App() {
         <Route path="credits"   element={<ModuleRoute module="customers"><CreditsPage /></ModuleRoute>} />
 
         {/* Accounting */}
+        <Route path="pos/restaurant"  element={<ModuleRoute module="sales"><RestaurantPOSPage /></ModuleRoute>} />
+        <Route path="pos/tables"      element={<ModuleRoute module="sales"><TablesPage /></ModuleRoute>} />
+        <Route path="pos/kitchen"     element={<ModuleRoute module="sales"><KitchenPage /></ModuleRoute>} />
         <Route path="accounting/coa"             element={<ModuleRoute module="accounting"><ChartOfAccountsPage /></ModuleRoute>} />
         <Route path="accounting/beginning-balances" element={<ModuleRoute module="accounting"><BeginningBalancesPage /></ModuleRoute>} />
         <Route path="accounting/journal"          element={<ModuleRoute module="accounting"><JournalPage /></ModuleRoute>} />

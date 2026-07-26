@@ -143,6 +143,16 @@ class Organisation(SoftDeleteModel):
     )
     is_active = models.BooleanField(default=True)
     onboarding_completed = models.BooleanField(default=False)
+    # Drives the business-type-aware POS (retail / restaurant / pharmacy / laundry /
+    # services). 'restaurant' unlocks the hospitality module (tables, KOT, order types).
+    class BusinessType(models.TextChoices):
+        GENERAL = 'general', 'General / Retail'
+        RESTAURANT = 'restaurant', 'Restaurant / Bar / Hotel'
+        PHARMACY = 'pharmacy', 'Pharmacy / Supermarket'
+        LAUNDRY = 'laundry', 'Laundry'
+        SERVICES = 'services', 'Services'
+    business_type = models.CharField(
+        max_length=20, choices=BusinessType.choices, default=BusinessType.GENERAL)
     # When True, transactions are rejected if required GL account mappings are missing.
     # Default ON: new orgs are seeded with a full COA and an auto-filled mapping, so
     # strict mode is satisfied out of the box and keeps the books correct from day one.

@@ -8,7 +8,7 @@ import {
   PieChart, Scale, Shield, ClipboardList, ChevronDown, ChevronRight, ShieldCheck,
   MapPin, ClipboardCheck, GraduationCap, Briefcase, ShoppingCart,
   User, Layout, Mail, Lock, Bot, Globe, Upload, GitBranch,
-  ChevronLeft, HelpCircle,
+  ChevronLeft, HelpCircle, LayoutGrid,
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { authApi } from '@/services/api'
@@ -19,7 +19,7 @@ import type { ModuleKey } from '@/types'
 // ─── Navigation structure ─────────────────────────────────────────────────────
 // `module` maps to ModuleKey for permission filtering; null = always visible
 // `ownerOnly` = only owners/admins see this item (no sub-account access)
-export const navGroups: { label: string | null; items: { name: string; href: string; icon: React.ElementType; module?: ModuleKey; ownerOnly?: boolean; partnerOnly?: boolean }[] }[] = [
+export const navGroups: { label: string | null; items: { name: string; href: string; icon: React.ElementType; module?: ModuleKey; ownerOnly?: boolean; partnerOnly?: boolean; businessType?: string }[] }[] = [
   {
     label: null,
     items: [
@@ -56,6 +56,9 @@ export const navGroups: { label: string | null; items: { name: string; href: str
       { name: 'Invoices', href: '/sales', icon: FileText, module: 'sales' },
       { name: 'Recurring Invoices', href: '/recurring', icon: RefreshCw, module: 'recurring' },
       { name: 'POS', href: '/sales/new', icon: ShoppingCart, module: 'sales' },
+      { name: 'Restaurant POS', href: '/pos/restaurant', icon: ClipboardList, module: 'sales', businessType: 'restaurant' },
+      { name: 'Tables', href: '/pos/tables', icon: LayoutGrid, module: 'sales', businessType: 'restaurant' },
+      { name: 'Kitchen (KOT)', href: '/pos/kitchen', icon: ClipboardCheck, module: 'sales', businessType: 'restaurant' },
       { name: 'Locations', href: '/locations', icon: MapPin, module: 'sales' },
     ],
   },
@@ -142,10 +145,14 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
 
   // Returns true if the nav item should be visible.
   // Checks: ownerOnly → plan modules → sub-account RBAC permissions
-  const canSeeItem = (mod?: ModuleKey, ownerOnly?: boolean, partnerOnly?: boolean) => {
+  const canSeeItem = (mod?: ModuleKey, ownerOnly?: boolean, partnerOnly?: boolean, businessType?: string) => {
     const membershipLoading = memberRole === null && !user?.is_superuser
     if (partnerOnly && (!FEATURES.PARTNER_CHANNEL || !user?.has_partner_profile)) return false
     if (partnerOnly && !user?.is_superuser && !planName?.startsWith('partner')) return false
+    // Business-type gate (e.g. restaurant-only POS): hide once the org's type is known
+    // and differs. Fail-open while the org type is still loading.
+    const orgBusinessType = (organisation as { business_type?: string } | null)?.business_type
+    if (businessType && orgBusinessType && orgBusinessType !== businessType) return false
     if (!mod) return true                             // no module restriction (dashboard, settings)
     if (user?.is_superuser) return true              // superusers always see everything
     // Plan-level gate: if the active plan restricts modules, only show allowed ones
@@ -285,7 +292,7 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
       <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-0.5">
         {navGroups.map((group, gi) => {
           const isCollapsed = group.label ? (collapsed[group.label] ?? false) : false
-          const visibleItems = group.items.filter((item) => canSeeItem(item.module, item.ownerOnly, item.partnerOnly))
+          const visibleItems = group.items.filter((item) => canSeeItem(item.module, item.ownerOnly, item.partnerOnly, item.businessType))
           if (group.label && visibleItems.length === 0) return null
 
           // Single-item labeled groups render as a plain NavLink (no collapsible toggle)

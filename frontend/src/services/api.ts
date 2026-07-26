@@ -1705,3 +1705,21 @@ export const helpdeskApi = {
   addComment: (id: string, body: string) => api.post(`/helpdesk/tickets/${id}/comment/`, { body }),
   setStatus: (id: string, status: string) => api.post(`/helpdesk/tickets/${id}/set_status/`, { status }),
 }
+
+// ─── Hospitality POS (tables, orders, KOT) ───────────────────────────────────
+export const posApi = {
+  tables: (params?: object) => api.get('/pos/tables/', { params }),
+  createTable: (data: object) => api.post('/pos/tables/', data),
+  updateTable: (id: string, data: object) => api.patch(`/pos/tables/${id}/`, data),
+  deleteTable: (id: string) => api.delete(`/pos/tables/${id}/`),
+  orders: (params?: object) => api.get('/pos/orders/', { params }),
+  getOrder: (id: string) => api.get(`/pos/orders/${id}/`),
+  createOrder: (data: object) => api.post('/pos/orders/', data),
+  addItems: (id: string, items: object[]) => api.post(`/pos/orders/${id}/add_items/`, { items }),
+  setOrderStatus: (id: string, status: string) => api.post(`/pos/orders/${id}/set_status/`, { status }),
+  generateKot: (id: string, section?: string) => api.post(`/pos/orders/${id}/generate_kot/`, { section }),
+  splitBill: (id: string, data: object) => api.post(`/pos/orders/${id}/split_bill/`, data),
+  finalizeOrder: (id: string, tenders: object[]) => api.post(`/pos/orders/${id}/finalize/`, { tenders }),
+  kots: (params?: object) => api.get('/pos/kots/', { params }),
+  setKotStatus: (id: string, status: string) => api.post(`/pos/kots/${id}/set_status/`, { status }),
+}
