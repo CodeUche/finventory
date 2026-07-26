@@ -92,6 +92,25 @@ class POSModuleTests(TestCase):
         self.assertTrue(JournalEntry.objects.filter(
             organisation=self.org, source_type="pos_service_tip").exists())
 
+    def test_pickup_order_without_table_finalizes(self):
+        """The POS module works for non-hospitality sectors: a pickup/counter order
+        with no table finalises into a paid sale + GL just the same."""
+        res = self.client.post("/api/v1/pos/orders/", {
+            "order_type": "pickup",
+            "items": [{"product_id": str(self.product.id), "quantity": 1, "unit_price": "1000"}],
+        }, format="json")
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        oid = res.data["id"]
+        fin = self.client.post(f"/api/v1/pos/orders/{oid}/finalize/", {
+            "tenders": [{"amount": "1000", "method": "card"}]}, format="json")
+        self.assertEqual(fin.status_code, 201, msg=str(fin.data))
+        order = POSOrder.objects.get(id=oid)
+        self.assertEqual(order.status, "completed")
+        inv = Invoice.objects.get(id=order.invoice_id)
+        self.assertEqual(inv.status, Invoice.Status.PAID)
+        self.assertTrue(JournalEntry.objects.filter(
+            organisation=self.org, source_type="sale", source_ref=str(inv.id)).exists())
+
     def test_tenant_isolation(self):
         oid = self._create_order().data["id"]
         other = _make_user("pos_other@example.com")

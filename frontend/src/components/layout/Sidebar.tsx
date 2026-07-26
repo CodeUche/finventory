@@ -56,7 +56,7 @@ export const navGroups: { label: string | null; items: { name: string; href: str
       { name: 'Invoices', href: '/sales', icon: FileText, module: 'sales' },
       { name: 'Recurring Invoices', href: '/recurring', icon: RefreshCw, module: 'recurring' },
       { name: 'POS', href: '/sales/new', icon: ShoppingCart, module: 'sales' },
-      { name: 'Restaurant POS', href: '/pos/restaurant', icon: ClipboardList, module: 'sales', businessType: 'restaurant' },
+      { name: 'POS Orders', href: '/pos/restaurant', icon: ClipboardList, module: 'sales' },
       { name: 'Tables', href: '/pos/tables', icon: LayoutGrid, module: 'sales', businessType: 'restaurant' },
       { name: 'Kitchen (KOT)', href: '/pos/kitchen', icon: ClipboardCheck, module: 'sales', businessType: 'restaurant' },
       { name: 'Locations', href: '/locations', icon: MapPin, module: 'sales' },

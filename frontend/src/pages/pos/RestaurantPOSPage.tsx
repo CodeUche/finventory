@@ -3,25 +3,34 @@ import { ClipboardList, Plus, Minus, Trash2, ClipboardCheck, GitBranch, CreditCa
 import toast from 'react-hot-toast'
 import { inventoryApi, posApi } from '@/services/api'
 import { formatCurrency } from '@/lib/utils'
+import { useAuthStore } from '@/store/authStore'
 
 interface Product { id: string; name: string; sku: string; selling_price: string | number }
 interface Table { id: string; name: string; status: string; section: string }
 interface CartLine { product: Product; quantity: number; unit_price: number }
 interface Tender { method: string; amount: string }
 
-const ORDER_TYPES = [
-  { key: 'dine_in', label: 'Dine In' },
+const ALL_ORDER_TYPES = [
+  { key: 'dine_in', label: 'Dine In', restaurantOnly: true },
+  { key: 'pickup', label: 'Pickup / Counter' },
   { key: 'delivery', label: 'Delivery' },
-  { key: 'pickup', label: 'Pickup' },
-  { key: 'room_service', label: 'Room Service' },
+  { key: 'room_service', label: 'Room Service', restaurantOnly: true },
 ]
 const TENDER_METHODS = ['cash', 'card', 'bank_transfer', 'pos']
 
 export default function RestaurantPOSPage() {
+  const organisation = useAuthStore((s) => s.organisation)
+  const isRestaurant = (organisation as { business_type?: string } | null)?.business_type === 'restaurant'
+  const orderTypes = ALL_ORDER_TYPES.filter((t) => isRestaurant || !t.restaurantOnly)
   const [products, setProducts] = useState<Product[]>([])
   const [tables, setTables] = useState<Table[]>([])
   const [search, setSearch] = useState('')
-  const [orderType, setOrderType] = useState('dine_in')
+  const [orderType, setOrderType] = useState(isRestaurant ? 'dine_in' : 'pickup')
+
+  // If the org isn't a restaurant, don't leave a hospitality-only order type selected.
+  useEffect(() => {
+    if (!isRestaurant && (orderType === 'dine_in' || orderType === 'room_service')) setOrderType('pickup')
+  }, [isRestaurant, orderType])
   const [tableId, setTableId] = useState('')
   const [roomNumber, setRoomNumber] = useState('')
   const [cart, setCart] = useState<CartLine[]>([])
@@ -143,7 +152,7 @@ export default function RestaurantPOSPage() {
       {/* Products */}
       <div className="flex-1 flex flex-col min-h-0">
         <div className="flex items-center gap-2 mb-3">
-          <h1 className="text-lg font-bold text-white flex items-center gap-2"><ClipboardList size={18} /> Restaurant POS</h1>
+          <h1 className="text-lg font-bold text-white flex items-center gap-2"><ClipboardList size={18} /> {isRestaurant ? 'Restaurant POS' : 'POS Orders'}</h1>
           <div className="relative ml-auto w-64 max-w-full">
             <Search size={14} className="absolute left-3 top-2.5 text-slate-400" />
             <input className="input w-full pl-8" placeholder="Search menu…" value={search} onChange={(e) => setSearch(e.target.value)} />
@@ -165,7 +174,7 @@ export default function RestaurantPOSPage() {
       <div className="w-full lg:w-96 flex flex-col rounded-xl border border-surface-700 bg-surface-900 min-h-0">
         <div className="p-3 border-b border-surface-700 space-y-2">
           <div className="flex flex-wrap gap-1">
-            {ORDER_TYPES.map((t) => (
+            {orderTypes.map((t) => (
               <button key={t.key} onClick={() => setOrderType(t.key)} disabled={!!orderId}
                 className={`text-xs px-2 py-1 rounded border ${orderType === t.key ? 'bg-brand-600/20 border-brand-500/40 text-white' : 'border-surface-600 text-slate-400'}`}>
                 {t.label}
@@ -213,9 +222,11 @@ export default function RestaurantPOSPage() {
           </div>
           <div className="flex justify-between text-sm text-slate-300"><span>Subtotal</span><span>{formatCurrency(subtotal)}</span></div>
           <div className="flex justify-between text-base font-bold text-white"><span>Total</span><span>{formatCurrency(total)}</span></div>
-          <div className="grid grid-cols-3 gap-2">
-            <button onClick={sendToKitchen} disabled={busy} className="btn-secondary text-xs flex items-center justify-center gap-1"><ClipboardCheck size={14} /> KOT</button>
-            <button onClick={doSplitBill} disabled={busy} className="btn-secondary text-xs flex items-center justify-center gap-1"><GitBranch size={14} /> GitBranch</button>
+          <div className={`grid ${isRestaurant ? 'grid-cols-3' : 'grid-cols-2'} gap-2`}>
+            {isRestaurant && (
+              <button onClick={sendToKitchen} disabled={busy} className="btn-secondary text-xs flex items-center justify-center gap-1"><ClipboardCheck size={14} /> KOT</button>
+            )}
+            <button onClick={doSplitBill} disabled={busy} className="btn-secondary text-xs flex items-center justify-center gap-1"><GitBranch size={14} /> Split</button>
             <button onClick={openPay} disabled={busy} className="btn-primary text-xs flex items-center justify-center gap-1">
               {busy ? <Loader2 size={14} className="animate-spin" /> : <><CreditCard size={14} /> Pay</>}
             </button>
