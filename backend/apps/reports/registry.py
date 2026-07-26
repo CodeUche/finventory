@@ -270,9 +270,43 @@ def purchase_returns(organisation, date_from: date, date_to: date, **_):
             "rows": rows, "total": total}
 
 
+def vat_return(organisation, date_from: date, date_to: date, **_):
+    """VAT Return / Liability — output VAT less input VAT for the period.
+    (Reframes the ambiguous 'Net Tax Report'.)"""
+    from .services import ReportService
+    return ReportService.vat_summary(organisation, date_from, date_to)
+
+
+def customer_receipts(organisation, date_from: date, date_to: date, **_):
+    """Customer Receipts — money received from customers in the period.
+    (Half of the old ambiguous 'Payments' report.)"""
+    from .services import ReportService
+    return ReportService.customer_payments(organisation, date_from, date_to)
+
+
+def financial_report_pack(organisation, date_from: date, date_to: date, **_):
+    """Single-entity Financial Report Pack (P&L + Balance Sheet + Trial Balance).
+    This is the reframed 'Consolidated Reports' — a single-entity pack, NOT true
+    multi-entity consolidation."""
+    from .services import ReportService
+    from apps.accounting.services import AccountingService
+    return {
+        "period_start": str(date_from), "period_end": str(date_to),
+        "profit_and_loss": ReportService.profit_and_loss(organisation, date_from, date_to),
+        "balance_sheet": AccountingService.balance_sheet(organisation, as_of=date_to),
+        "trial_balance": AccountingService.trial_balance(organisation, as_of=date_to),
+    }
+
+
 def _register_defaults() -> None:
     register(ReportDef("purchase-returns", "Purchase Returns", "Accounts Payable",
                        purchase_returns, "Supplier returns / debit notes in the period."))
+    register(ReportDef("vat-return", "VAT Return / Liability", "Tax",
+                       vat_return, "Output VAT less input VAT (reframes 'Net Tax')."))
+    register(ReportDef("customer-receipts", "Customer Receipts", "Accounts Receivable",
+                       customer_receipts, "Receipts from customers in the period."))
+    register(ReportDef("financial-report-pack", "Financial Report Pack", "Financial Statements",
+                       financial_report_pack, "Single-entity P&L + Balance Sheet + Trial Balance pack."))
     register(ReportDef("gl-detail", "General Ledger (Detail)", "General Ledger",
                        gl_detail, "Running-balance ledger detail per account."))
     register(ReportDef("journal-register", "Journal Register", "General Ledger",

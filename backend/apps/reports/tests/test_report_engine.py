@@ -45,6 +45,19 @@ class ReportEngineTests(BaseReportTestCase):
         res = self._dispatch("does-not-exist")
         self.assertEqual(res.status_code, 404)
 
+    def test_reframed_reports_registered_and_dispatch(self):
+        self._auth()
+        cat = self.client.get(reverse("report-catalog"))
+        keys = [r["key"] for r in cat.data["reports"]]
+        for k in ("vat-return", "customer-receipts", "financial-report-pack"):
+            self.assertIn(k, keys)
+        # Financial Report Pack dispatches and bundles the three statements.
+        res = self._dispatch("financial-report-pack", period="custom",
+                             date_from="2026-01-01", date_to="2026-12-31")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        for section in ("profit_and_loss", "balance_sheet", "trial_balance"):
+            self.assertIn(section, res.data["data"])
+
     def test_journal_register_lists_entry(self):
         res = self._dispatch("journal-register", period="custom",
                              date_from="2026-01-01", date_to="2026-12-31")
