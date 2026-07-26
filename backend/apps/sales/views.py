@@ -412,6 +412,22 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
             return Response({"error": str(e)}, status=422)
 
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
+    def pay_split(self, request, pk=None):
+        """POST /api/v1/sales/invoices/{id}/pay_split/ — record multiple tenders
+        (split payment: e.g. part cash + part transfer) in one call."""
+        invoice = self.get_object()
+        tenders = request.data.get("tenders") or request.data.get("payments") or []
+        try:
+            payments = SaleService.record_split_payment(invoice, tenders, received_by=request.user)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=422)
+        invoice.refresh_from_db()
+        return Response({
+            "payments": SalePaymentSerializer(payments, many=True).data,
+            "invoice": InvoiceSerializer(invoice).data,
+        }, status=201)
+
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
     def void(self, request, pk=None):
         """POST /api/v1/sales/invoices/{id}/void/"""
         invoice = self.get_object()

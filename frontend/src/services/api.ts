@@ -1122,6 +1122,7 @@ export const salesApi = {
   editLines: (id: string, data: object) => api.patch(`/sales/invoices/${id}/edit_lines/`, data),
   deleteInvoice: (id: string) => api.delete(`/sales/invoices/${id}/`),
   pay: (id: string, data: object) => api.post(`/sales/invoices/${id}/pay/`, data),
+  paySplit: (id: string, tenders: object[]) => api.post(`/sales/invoices/${id}/pay_split/`, { tenders }),
   void: (id: string) => api.post(`/sales/invoices/${id}/void/`),
   processReturn: (invoiceId: string, data: object) =>
     api.post(`/sales/invoices/${invoiceId}/process_return/`, data),
