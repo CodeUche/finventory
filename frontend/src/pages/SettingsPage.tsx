@@ -453,7 +453,12 @@ export default function SettingsPage() {
         }
       })
     }
-  }, [tab])
+    // Deps include organisation?.id, memberRole and planModules: on a direct URL load
+    // / refresh of a permission-gated tab (e.g. GL Mapping), the tab is initially
+    // filtered out until membership + plan load, so `activeTab` falls back to 'profile'.
+    // Re-running when those arrive lets `activeTab` settle on the real tab and fires the
+    // fetch — otherwise the tab renders but stays stuck on its loading spinner.
+  }, [tab, organisation?.id, memberRole, planModules])
 
   // Auto-refresh partner access requests every 15s while the Access tab is
   // open, so an incoming request/acceptance appears without a manual reload.
