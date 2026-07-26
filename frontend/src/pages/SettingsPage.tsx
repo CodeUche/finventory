@@ -2923,60 +2923,50 @@ export default function SettingsPage() {
             <div className="flex justify-center py-8"><Loader2 size={24} className="animate-spin text-slate-400" /></div>
           ) : (
             <div className="space-y-3">
-              {[
-                { role: 'revenue_account',         label: 'Revenue Account',          hint: 'Sales/revenue credited on invoice' },
-                { role: 'cogs_account',             label: 'Cost of Goods Sold',       hint: 'Debited on sale for product cost' },
-                { role: 'inventory_account',        label: 'Inventory Account',        hint: 'Credited on sale (stock reduction)' },
-                { role: 'accounts_receivable',      label: 'Accounts Receivable',      hint: 'Debited for credit sales' },
-                { role: 'cash_account',             label: 'Cash Account',             hint: 'Debited on cash payments received' },
-                { role: 'bank_account',             label: 'Bank Account',             hint: 'Debited on bank/POS payments' },
-                { role: 'accounts_payable',         label: 'Accounts Payable',         hint: 'Credited on bill approval' },
-                { role: 'vat_output_account',       label: 'VAT Output (Payable)',     hint: 'Credited on VAT collected' },
-                { role: 'vat_input_account',        label: 'VAT Input (Recoverable)',  hint: 'Debited on VAT paid to suppliers' },
-                { role: 'paye_account',             label: 'PAYE Payable',             hint: 'Credited on payroll run' },
-                { role: 'pension_account',          label: 'Pension Payable',          hint: 'Credited on payroll run' },
-                { role: 'wht_account',              label: 'WHT / NHF Payable',        hint: 'Withholding tax liability' },
-                { role: 'salary_expense_account',   label: 'Salaries & Wages',         hint: 'Debited on payroll run' },
-                { role: 'general_expense_account',  label: 'General Expenses',         hint: 'Debited on expense recording' },
-                { role: 'bank_charges_account',     label: 'Bank Charges',             hint: 'Bank fees expense account' },
-              ].map(({ role, label, hint }) => {
-                const currentId = glMapping[`${role}_id`] ?? null
-                const suggestion = glMapping[`${role}_suggestion`]
-                return (
-                  <div key={role} className="rounded-lg bg-slate-800 border border-slate-700 px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-2">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-white">{label}</p>
-                      <p className="text-xs text-slate-500">{hint}</p>
-                      {!currentId && suggestion && (
-                        <p className="text-xs text-amber-400 mt-0.5">Suggested: {suggestion.code} – {suggestion.name}</p>
-                      )}
-                    </div>
-                    <select
-                      className="w-full sm:w-64 bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-brand-500"
-                      value={currentId ?? ''}
-                      onChange={(e) => {
-                        const val = e.target.value || null
-                        setGlMapping((prev: any) => ({
-                          ...prev,
-                          [`${role}_id`]: val,
-                          [`${role}_name`]: glAccounts.find((a: any) => a.id === val)?.name ?? null,
-                        }))
-                      }}
-                    >
-                      <option value="">— Not mapped —</option>
-                      {glAccounts.map((a: any) => (
-                        <option key={a.id} value={a.id}>{a.code} – {a.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                )
-              })}
+              {(glMapping.modules ?? []).map((mod: any) => (
+                <div key={mod.key} className="space-y-3">
+                  <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mt-4 mb-1">{mod.label}</h4>
+                  {mod.roles.map((role: string) => {
+                    const label = glMapping.role_labels?.[role] ?? role
+                    const currentId = glMapping[`${role}_id`] ?? null
+                    const suggestion = glMapping[`${role}_suggestion`]
+                    return (
+                      <div key={role} className="rounded-lg bg-slate-800 border border-slate-700 px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-2">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-white">{label}</p>
+                          {!currentId && suggestion && (
+                            <p className="text-xs text-amber-400 mt-0.5">Suggested: {suggestion.code} – {suggestion.name}</p>
+                          )}
+                        </div>
+                        <select
+                          className="w-full sm:w-64 bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-brand-500"
+                          value={currentId ?? ''}
+                          onChange={(e) => {
+                            const val = e.target.value || null
+                            setGlMapping((prev: any) => ({
+                              ...prev,
+                              [`${role}_id`]: val,
+                              [`${role}_name`]: glAccounts.find((a: any) => a.id === val)?.name ?? null,
+                            }))
+                          }}
+                        >
+                          <option value="">— Not mapped —</option>
+                          {glAccounts.map((a: any) => (
+                            <option key={a.id} value={a.id}>{a.code} – {a.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )
+                  })}
+                </div>
+              ))}
               <button
                 onClick={async () => {
                   setGlMappingSaving(true)
                   try {
                     const payload: Record<string, string | null> = {}
-                    const roles = ['revenue_account','cogs_account','inventory_account','accounts_receivable','cash_account','bank_account','accounts_payable','vat_output_account','vat_input_account','paye_account','pension_account','wht_account','salary_expense_account','general_expense_account','bank_charges_account']
+                    // Derive the role list from the module grouping so new roles (e.g. NHF) are included.
+                    const roles: string[] = (glMapping?.modules ?? []).flatMap((m: any) => m.roles)
                     roles.forEach((r) => { payload[r] = glMapping?.[`${r}_id`] ?? null })
                     const res = await accountingApi.updateAccountMapping(payload)
                     setGlMapping(res.data)

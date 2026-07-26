@@ -18,6 +18,7 @@ import { warmOfflineCache } from '@/lib/cacheWarm'
 import type { AccessLevel, ModuleKey, ModulePermission, Organisation } from '@/types'
 import SubscriptionPaywall from '@/components/SubscriptionPaywall'
 import SupportChat from '@/components/SupportChat'
+import CommandPalette from '@/components/CommandPalette'
 import { FEATURES } from '@/lib/featureFlags'
 
 export default function AppLayout() {
@@ -441,6 +442,9 @@ export default function AppLayout() {
 
       {/* Floating support chat */}
       <SupportChat />
+
+      {/* ⌘K command palette */}
+      <CommandPalette />
     </div>
   )
 }

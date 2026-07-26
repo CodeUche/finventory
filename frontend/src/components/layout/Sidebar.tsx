@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { NavLink, Link, useNavigate, useLocation } from 'react-router-dom'
 import {
-  LayoutDashboard, Package, Boxes, Plus, Layers,
+  LayoutDashboard, Package, Boxes, Layers,
   Users, Receipt, BarChart3, LogOut, X, FileText, RefreshCw,
   CreditCard, Truck, Building2, Warehouse, Calculator, BookOpen,
   BookMarked, Landmark, UsersRound, Banknote, ArrowDownCircle,
@@ -19,13 +19,52 @@ import type { ModuleKey } from '@/types'
 // ─── Navigation structure ─────────────────────────────────────────────────────
 // `module` maps to ModuleKey for permission filtering; null = always visible
 // `ownerOnly` = only owners/admins see this item (no sub-account access)
-const navGroups: { label: string | null; items: { name: string; href: string; icon: React.ElementType; module?: ModuleKey; ownerOnly?: boolean; partnerOnly?: boolean }[] }[] = [
+export const navGroups: { label: string | null; items: { name: string; href: string; icon: React.ElementType; module?: ModuleKey; ownerOnly?: boolean; partnerOnly?: boolean }[] }[] = [
   {
     label: null,
     items: [
       { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
       { name: 'Partner Dashboard', href: '/partner', icon: GraduationCap, ownerOnly: true, partnerOnly: true },
       { name: 'Partner Invoices', href: '/partner/invoices', icon: Briefcase, ownerOnly: true, partnerOnly: true },
+    ],
+  },
+  {
+    // Accountant-first ordering (Sage/QuickBooks/Xero style): the ledger comes first.
+    label: 'ACCOUNTING & FINANCE',
+    items: [
+      { name: 'Chart of Accounts', href: '/accounting/coa', icon: BookOpen, module: 'accounting' },
+      { name: 'Beginning Balances', href: '/accounting/beginning-balances', icon: Scale, module: 'accounting' },
+      { name: 'Journal Entries', href: '/accounting/journal', icon: BookMarked, module: 'accounting' },
+      { name: 'Budgets', href: '/budgets', icon: PieChart, module: 'budget' },
+      { name: 'Fixed Assets', href: '/accounting/assets', icon: Landmark, module: 'accounting' },
+      { name: 'Depreciation', href: '/accounting/depreciation', icon: Landmark, module: 'accounting' },
+      { name: 'Bank Reconciliation', href: '/accounting/reconciliation', icon: Scale, module: 'accounting' },
+      { name: 'GL Health', href: '/accounting/gl-health', icon: ShieldCheck, module: 'accounting' },
+    ],
+  },
+  {
+    label: 'CUSTOMERS & RECEIPTS',
+    items: [
+      { name: 'Customers', href: '/customers', icon: Users, module: 'customers' },
+      { name: 'Customer Receipts / Deposits', href: '/credits', icon: CreditCard, module: 'customers' },
+    ],
+  },
+  {
+    label: 'SALES & POS',
+    items: [
+      { name: 'Quotes', href: '/quotes', icon: ClipboardList, module: 'quotes' },
+      { name: 'Invoices', href: '/sales', icon: FileText, module: 'sales' },
+      { name: 'Recurring Invoices', href: '/recurring', icon: RefreshCw, module: 'recurring' },
+      { name: 'POS', href: '/sales/new', icon: ShoppingCart, module: 'sales' },
+      { name: 'Locations', href: '/locations', icon: MapPin, module: 'sales' },
+    ],
+  },
+  {
+    label: 'PROCUREMENT',
+    items: [
+      { name: 'Suppliers', href: '/suppliers', icon: Building2, module: 'suppliers' },
+      { name: 'Purchase Orders', href: '/purchases', icon: Truck, module: 'purchases' },
+      { name: 'Pay Bills (PO)', href: '/bills', icon: Receipt, module: 'bills' },
     ],
   },
   {
@@ -38,44 +77,6 @@ const navGroups: { label: string | null; items: { name: string; href: string; ic
     ],
   },
   {
-    label: 'SALES',
-    items: [
-      { name: 'New Sale', href: '/sales/new', icon: Plus, module: 'sales' },
-      { name: 'Quotes', href: '/quotes', icon: ClipboardList, module: 'quotes' },
-      { name: 'Invoices', href: '/sales', icon: FileText, module: 'sales' },
-      { name: 'Recurring', href: '/recurring', icon: RefreshCw, module: 'recurring' },
-      { name: 'Locations', href: '/locations', icon: MapPin, module: 'sales' },
-    ],
-  },
-  {
-    label: 'PROCUREMENT',
-    items: [
-      { name: 'Suppliers', href: '/suppliers', icon: Building2, module: 'suppliers' },
-      { name: 'Purchase Orders', href: '/purchases', icon: Truck, module: 'purchases' },
-      { name: 'Bills (AP)', href: '/bills', icon: Receipt, module: 'bills' },
-    ],
-  },
-  {
-    label: 'CUSTOMER & PAYMENTS',
-    items: [
-      { name: 'Customers', href: '/customers', icon: Users, module: 'customers' },
-      { name: 'Payment Information', href: '/credits', icon: CreditCard, module: 'customers' },
-    ],
-  },
-  {
-    label: 'ACCOUNTING',
-    items: [
-      { name: 'Chart of Accounts', href: '/accounting/coa', icon: BookOpen, module: 'accounting' },
-      { name: 'Beginning Balances', href: '/accounting/beginning-balances', icon: Scale, module: 'accounting' },
-      { name: 'Journal Entries', href: '/accounting/journal', icon: BookMarked, module: 'accounting' },
-      { name: 'General Ledger', href: '/accounting/general-ledger', icon: FileText, module: 'accounting' },
-      { name: 'Fixed Assets', href: '/accounting/assets', icon: Landmark, module: 'accounting' },
-      { name: 'Depreciation', href: '/accounting/depreciation', icon: Landmark, module: 'accounting' },
-      { name: 'Bank Reconciliation', href: '/accounting/reconciliation', icon: Scale, module: 'accounting' },
-      { name: 'GL Health', href: '/accounting/gl-health', icon: ShieldCheck, module: 'accounting' },
-    ],
-  },
-  {
     label: 'PAYROLL',
     items: [
       { name: 'Employees', href: '/payroll/employees', icon: UsersRound, module: 'payroll' },
@@ -85,14 +86,13 @@ const navGroups: { label: string | null; items: { name: string; href: string; ic
   {
     label: 'CASH FLOW',
     items: [
-      { name: 'Income & Expenses', href: '/expenses', icon: ArrowDownCircle, module: 'expenses' },
-      { name: 'Budgets', href: '/budgets', icon: PieChart, module: 'budget' },
+      { name: 'Cashbook (Income & Expense)', href: '/expenses', icon: ArrowDownCircle, module: 'expenses' },
     ],
   },
   {
-    label: 'REPORTS',
+    label: 'GENERAL REPORTS',
     items: [
-      { name: 'P&L / Cash Flow', href: '/reports', icon: BarChart3, module: 'reports' },
+      { name: 'Financial Statements', href: '/reports', icon: BarChart3, module: 'reports' },
       { name: 'Balance Sheet', href: '/reports/balance-sheet', icon: Scale, module: 'accounting' },
       { name: 'Stock Reports', href: '/reports/stock', icon: ClipboardCheck, module: 'inventory' },
       { name: 'Sales by Customer', href: '/reports/sales-by-customer', icon: Users, module: 'reports' },
@@ -107,9 +107,15 @@ const navGroups: { label: string | null; items: { name: string; href: string; ic
     ],
   },
   {
-    label: 'BILLING',
+    label: 'BILLING & PLANS',
     items: [
       { name: 'Billing & Plans', href: '/billing', icon: CreditCard, ownerOnly: true },
+    ],
+  },
+  {
+    label: 'ANALYTICS',
+    items: [
+      { name: 'Owners Analytics', href: '/owner-analytics', icon: BarChart3, ownerOnly: true },
     ],
   },
 ]
