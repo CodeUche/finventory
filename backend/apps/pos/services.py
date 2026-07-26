@@ -166,31 +166,27 @@ class POSOrderService:
             "unit_price": str(i.unit_price),
         } for i in order_items]
 
-        tenders = tenders or []
-        total_tendered = None
-        if tenders:
-            total_tendered = sum((Decimal(str(t.get("amount") or 0)) for t in tenders), ZERO)
-        primary_method = tenders[0].get("method", "cash") if tenders else "cash"
-        payment_method = POSOrderService._METHOD_MAP.get(primary_method, "cash")
-        if payment_method == "credit":   # walk-in POS can't post credit — fall back to cash
-            payment_method = "cash"
-
-        # Standard sale (revenue + VAT + COGS + inventory + cash/bank receipt).
+        # Create the sale UNPAID so the sale journal posts DR Accounts Receivable →
+        # CR Revenue + VAT (post_sale_journal debits AR when there is no payment). The
+        # receipt is then posted separately, splitting the debit across each tender's own
+        # cash/bank account — true per-tender GL, always balanced, AR fully relieved.
         invoice = SaleService.create_sale(
             organisation=organisation,
             created_by=created_by,
             customer=order.customer,
             warehouse=warehouse,
             items=sale_items,
-            payment_method=payment_method,
-            amount_paid=total_tendered,
+            payment_method="cash",   # label only — amount_paid=0 records no payment
+            amount_paid=ZERO,
             notes=f"POS order {order.order_number}",
         )
 
-        # Record the split breakdown for audit (does not affect totals/GL).
-        if len(tenders) > 1:
-            summary = ", ".join(f"{t.get('method', 'cash')} {t.get('amount')}" for t in tenders)
-            SalePayment.objects.filter(invoice=invoice).update(reference=f"Split: {summary}")
+        total_due = Decimal(str(invoice.total_amount))
+        # Default to a single cash tender for the full amount when none supplied.
+        if not tenders:
+            tenders = [{"method": "cash", "amount": str(total_due)}]
+
+        POSOrderService._settle_invoice(organisation, invoice, tenders, order, created_by)
 
         # Service charge (income) + tip (liability owed to staff), posted only if present.
         svc = Decimal(str(order.service_charge or 0))
@@ -215,6 +211,56 @@ class POSOrderService:
         order.save(update_fields=["invoice", "updated_at"])
         POSOrderService.set_status(order, POSOrder.Status.COMPLETED)
         return {"order": order, "invoice": invoice}
+
+    @staticmethod
+    def _settle_invoice(organisation, invoice, tenders, order, created_by):
+        """Post a per-tender receipt — DR each tender's own cash/bank account, CR AR —
+        and record the payments, relieving AR exactly (change on overpayment is not
+        posted). Always balanced: Σ tender debits == AR credit == amount applied."""
+        from apps.sales.models import SalePayment, Invoice as _Invoice
+        from apps.accounting.services import AccountingService, AccountMappingService, safe_post_gl
+
+        total_due = Decimal(str(invoice.total_amount))
+        total_tendered = sum((Decimal(str(t.get("amount") or 0)) for t in tenders), ZERO)
+        applied = min(total_tendered, total_due)
+        if applied <= 0:
+            return
+
+        ar = AccountMappingService.resolve(organisation, "accounts_receivable")
+        cash = AccountMappingService.resolve(organisation, "cash_account")
+        bank = AccountMappingService.resolve(organisation, "bank_account")
+
+        remaining = applied
+        receipt_lines = []
+        payment_rows = []
+        for t in tenders:
+            if remaining <= 0:
+                break
+            amt = min(Decimal(str(t.get("amount") or 0)), remaining)
+            if amt <= 0:
+                continue
+            inv_method = POSOrderService._METHOD_MAP.get(t.get("method", "cash"), "cash")
+            acct = cash if inv_method == "cash" else bank
+            receipt_lines.append((acct, amt, ZERO))          # DR this tender's cash/bank
+            payment_rows.append((t.get("method", "cash"), inv_method, amt))
+            remaining -= amt
+        receipt_lines.append((ar, ZERO, applied))            # CR Accounts Receivable
+
+        def _post_receipt():
+            AccountingService.post_journal_entry(
+                organisation, f"POS receipt {order.order_number}", invoice.issue_date,
+                receipt_lines, created_by, ref=order.order_number,
+                source_type="pos_receipt", source_ref=str(order.id))
+        safe_post_gl(_post_receipt)
+
+        for (method, inv_method, amt) in payment_rows:
+            SalePayment.objects.create(
+                organisation=organisation, invoice=invoice, amount=amt,
+                method=inv_method, reference=f"POS {method}", received_by=created_by)
+        invoice.amount_paid = applied
+        invoice.amount_due = total_due - applied
+        invoice.status = _Invoice.Status.PAID if applied >= total_due else _Invoice.Status.PARTIALLY_PAID
+        invoice.save(update_fields=["amount_paid", "amount_due", "status"])
 
     @staticmethod
     def _tips_payable_account(organisation):

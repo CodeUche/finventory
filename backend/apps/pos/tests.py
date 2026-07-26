@@ -80,6 +80,29 @@ class POSModuleTests(TestCase):
         self.table.refresh_from_db()
         self.assertEqual(self.table.status, "available")
 
+    def test_split_tender_posts_per_account_receipt(self):
+        """A split payment (cash + card) debits EACH tender's own cash/bank GL account
+        and credits AR — true per-tender GL split, balanced."""
+        from apps.accounting.services import AccountMappingService
+        oid = self._create_order(qty=2).data["id"]  # 2 × 1000 = 2000, no tax
+        res = self.client.post(f"/api/v1/pos/orders/{oid}/finalize/", {
+            "tenders": [{"amount": "1200", "method": "cash"}, {"amount": "800", "method": "card"}],
+        }, format="json")
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        order = POSOrder.objects.get(id=oid)
+        receipt = JournalEntry.objects.filter(
+            organisation=self.org, source_type="pos_receipt", source_ref=str(order.id)).first()
+        self.assertIsNotNone(receipt)
+        cash = AccountMappingService.resolve(self.org, "cash_account")
+        bank = AccountMappingService.resolve(self.org, "bank_account")
+        ar = AccountMappingService.resolve(self.org, "accounts_receivable")
+        self.assertTrue(receipt.lines.filter(account=cash, debit=Decimal("1200.00")).exists())
+        self.assertTrue(receipt.lines.filter(account=bank, debit=Decimal("800.00")).exists())   # card → bank
+        self.assertTrue(receipt.lines.filter(account=ar, credit=Decimal("2000.00")).exists())
+        inv = Invoice.objects.get(id=order.invoice_id)
+        self.assertEqual(inv.status, Invoice.Status.PAID)
+        self.assertEqual(inv.amount_due, Decimal("0.00"))
+
     def test_finalize_posts_service_charge_and_tip(self):
         order = POSOrder.objects.get(id=self._create_order().data["id"])
         order.service_charge = Decimal("150"); order.tip_amount = Decimal("100")
