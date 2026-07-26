@@ -121,6 +121,7 @@ LOCAL_APPS = [
     "apps.budgets",
     "apps.ai",
     "apps.einvoicing",   # FIRS e-invoicing via DigiTax — gated by FirsConfig.is_enrolled
+    "apps.helpdesk",     # support ticket management
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS

@@ -1696,3 +1696,12 @@ export const importApi = {
   templateUrl: (entity: 'products' | 'customers' | 'accounts') =>
     `/import/template/${entity}/`,
 }
+
+// ─── Help Desk / Tickets ─────────────────────────────────────────────────────
+export const helpdeskApi = {
+  tickets: (params?: object) => api.get('/helpdesk/tickets/', { params }),
+  getTicket: (id: string) => api.get(`/helpdesk/tickets/${id}/`),
+  createTicket: (data: object) => api.post('/helpdesk/tickets/', data),
+  addComment: (id: string, body: string) => api.post(`/helpdesk/tickets/${id}/comment/`, { body }),
+  setStatus: (id: string, status: string) => api.post(`/helpdesk/tickets/${id}/set_status/`, { status }),
+}

@@ -8,7 +8,7 @@ import {
   PieChart, Scale, Shield, ClipboardList, ChevronDown, ChevronRight, ShieldCheck,
   MapPin, ClipboardCheck, GraduationCap, Briefcase, ShoppingCart,
   User, Layout, Mail, Lock, Bot, Globe, Upload, GitBranch,
-  ChevronLeft,
+  ChevronLeft, HelpCircle,
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { authApi } from '@/services/api'
@@ -110,6 +110,12 @@ export const navGroups: { label: string | null; items: { name: string; href: str
     label: 'BILLING & PLANS',
     items: [
       { name: 'Billing & Plans', href: '/billing', icon: CreditCard, ownerOnly: true },
+    ],
+  },
+  {
+    label: 'HELP DESK',
+    items: [
+      { name: 'Tickets', href: '/helpdesk', icon: HelpCircle, ownerOnly: true },
     ],
   },
   {

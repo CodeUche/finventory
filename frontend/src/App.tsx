@@ -59,6 +59,7 @@ const AuditLogPage = React.lazy(() => import('@/pages/AuditLogPage'))
 const SettingsPage = React.lazy(() => import('@/pages/SettingsPage'))
 const PlatformAdminPage = React.lazy(() => import('@/pages/PlatformAdminPage'))
 const BillingPage = React.lazy(() => import('@/pages/BillingPage'))
+const TicketsPage = React.lazy(() => import('@/pages/TicketsPage'))
 const LocationsPage = React.lazy(() => import('@/pages/LocationsPage'))
 const StockReportsPage = React.lazy(() => import('@/pages/inventory/StockReportsPage'))
 const PartnerDashboardPage = React.lazy(() => import('@/pages/PartnerDashboardPage'))
@@ -321,6 +322,7 @@ export default function App() {
         {/* Compliance */}
         <Route path="tax"       element={<ModuleRoute module="tax"><TaxPage /></ModuleRoute>} />
         <Route path="audit-log" element={<AuditLogPage />} />
+        <Route path="helpdesk" element={<TicketsPage />} />
 
         {/* Settings — always accessible for personal profile/security; org tabs filtered inside the page */}
         <Route path="settings" element={<SettingsPage />} />
