@@ -1551,6 +1551,11 @@ export const platformAdminApi = {
   stats: () => api.get('/platform/stats/'),
   users: () => api.get('/platform/users/'),
   setUserActive: (id: string, isActive: boolean) => api.patch(`/platform/users/${id}/`, { is_active: isActive }),
+  // Cross-org support inbox (superuser only)
+  tickets: (params?: object) => api.get('/platform/tickets/', { params }),
+  ticketReply: (id: string, body: string) => api.post(`/platform/tickets/${id}/reply/`, { body }),
+  ticketStatus: (id: string, status: string) => api.post(`/platform/tickets/${id}/set_status/`, { status }),
+  ticketAssign: (id: string, userId?: string) => api.post(`/platform/tickets/${id}/assign/`, userId ? { user_id: userId } : {}),
 }
 
 export const subscriptionApi = {

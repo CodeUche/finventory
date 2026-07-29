@@ -15,12 +15,16 @@ class TicketCommentSerializer(serializers.ModelSerializer):
 class SupportTicketSerializer(serializers.ModelSerializer):
     comments = TicketCommentSerializer(many=True, read_only=True)
     created_by_name = serializers.CharField(source="created_by.get_full_name", read_only=True)
+    created_by_email = serializers.CharField(source="created_by.email", read_only=True)
     assigned_to_name = serializers.CharField(source="assigned_to.get_full_name", read_only=True, default=None)
+    organisation_name = serializers.CharField(source="organisation.name", read_only=True)
 
     class Meta:
         model = SupportTicket
         fields = ["id", "ticket_number", "subject", "description", "status", "priority",
-                  "category", "created_by", "created_by_name", "assigned_to", "assigned_to_name",
+                  "category", "created_by", "created_by_name", "created_by_email",
+                  "organisation_name", "assigned_to", "assigned_to_name",
                   "resolved_at", "comments", "created_at", "updated_at"]
         read_only_fields = ["id", "ticket_number", "created_by", "created_by_name",
+                            "created_by_email", "organisation_name",
                             "assigned_to_name", "resolved_at", "comments", "created_at", "updated_at"]

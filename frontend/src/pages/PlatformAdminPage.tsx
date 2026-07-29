@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import { confirmDialog } from '@/lib/dialog'
-import { Shield, Users, Building2, RefreshCw, Loader2, CheckCircle, XCircle, TrendingUp, BookOpen, Ban, RotateCcw } from 'lucide-react'
+import { Shield, Users, Building2, RefreshCw, Loader2, CheckCircle, XCircle, TrendingUp, BookOpen, Ban, RotateCcw, MessageSquare, Send, UserCheck } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { platformAdminApi, orgApi, bypassNextGets } from '@/services/api'
 import { formatCurrency } from '@/lib/utils'
@@ -22,11 +22,28 @@ interface Stats {
   superusers: number; total_invoices: number; total_revenue: string
   plans: { name: string; price: string; is_active: boolean }[]
 }
+interface TicketComment { id: string; author_name: string; body: string; created_at: string }
+interface PlatformTicket {
+  id: string; ticket_number: string; subject: string; description: string
+  status: string; priority: string; category: string
+  created_by_name: string; created_by_email: string; organisation_name: string
+  assigned_to_name: string | null; comments: TicketComment[]; created_at: string
+}
 
 const SUB_BADGE: Record<string, string> = {
   active: 'badge-green', trialing: 'badge-blue', canceled: 'badge-red',
   none: 'badge-slate', past_due: 'badge-red',
 }
+const TICKET_STATUS_BADGE: Record<string, string> = {
+  open: 'badge-blue', in_progress: 'badge-orange', resolved: 'badge-green', closed: 'badge-slate',
+}
+const TICKET_PRIORITY_BADGE: Record<string, string> = {
+  low: 'badge-slate', normal: 'badge-blue', high: 'badge-orange', urgent: 'badge-red',
+}
+const TICKET_STATUSES: { value: string; label: string }[] = [
+  { value: 'open', label: 'Open' }, { value: 'in_progress', label: 'In Progress' },
+  { value: 'resolved', label: 'Resolved' }, { value: 'closed', label: 'Closed' },
+]
 
 export default function PlatformAdminPage() {
   const { user } = useAuthStore()
@@ -35,9 +52,17 @@ export default function PlatformAdminPage() {
   const [orgs, setOrgs] = useState<OrgRow[]>([])
   const [users, setUsers] = useState<PlatformUser[]>([])
   const [loading, setLoading] = useState(true)
-  const [tab, setTab] = useState<'overview' | 'orgs' | 'users'>('overview')
+  const [tab, setTab] = useState<'overview' | 'orgs' | 'users' | 'support'>('overview')
   const [reseedingOrg, setReseedingOrg] = useState<string | null>(null)
   const [togglingUser, setTogglingUser] = useState<string | null>(null)
+  // Support inbox (lazy-loaded when the tab is first opened)
+  const [tickets, setTickets] = useState<PlatformTicket[]>([])
+  const [ticketsLoaded, setTicketsLoaded] = useState(false)
+  const [ticketsLoading, setTicketsLoading] = useState(false)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [reply, setReply] = useState('')
+  const [replying, setReplying] = useState(false)
+  const [ticketBusy, setTicketBusy] = useState(false)
 
   // Guard: redirect non-superusers
   useEffect(() => {
@@ -97,6 +122,74 @@ export default function PlatformAdminPage() {
       setTogglingUser(null)
     }
   }
+
+  const loadTickets = async () => {
+    setTicketsLoading(true)
+    try {
+      const { data } = await platformAdminApi.tickets({ page_size: 100 })
+      setTickets(data.results ?? data)
+      setTicketsLoaded(true)
+    } catch {
+      toast.error('Failed to load support tickets')
+    } finally {
+      setTicketsLoading(false)
+    }
+  }
+
+  // Lazy-load the inbox the first time the Support tab is opened.
+  useEffect(() => {
+    if (tab === 'support' && !ticketsLoaded && !ticketsLoading) loadTickets()
+  }, [tab])
+
+  const selectedTicket = tickets.find((t) => t.id === selectedId) ?? null
+
+  const handleReply = async () => {
+    if (!selectedTicket || !reply.trim()) return
+    setReplying(true)
+    try {
+      const { data } = await platformAdminApi.ticketReply(selectedTicket.id, reply.trim())
+      setTickets((prev) => prev.map((t) => t.id === selectedTicket.id
+        ? { ...t, comments: [...t.comments, data] } : t))
+      setReply('')
+      toast.success('Reply sent — the customer has been emailed')
+    } catch {
+      toast.error('Failed to send reply')
+    } finally {
+      setReplying(false)
+    }
+  }
+
+  const handleTicketStatus = async (status: string) => {
+    if (!selectedTicket) return
+    setTicketBusy(true)
+    try {
+      const { data } = await platformAdminApi.ticketStatus(selectedTicket.id, status)
+      setTickets((prev) => prev.map((t) => t.id === selectedTicket.id ? { ...t, status: data.status } : t))
+    } catch {
+      toast.error('Failed to update status')
+    } finally {
+      setTicketBusy(false)
+    }
+  }
+
+  const handleAssignSelf = async () => {
+    if (!selectedTicket) return
+    setTicketBusy(true)
+    try {
+      const { data } = await platformAdminApi.ticketAssign(selectedTicket.id)
+      setTickets((prev) => prev.map((t) => t.id === selectedTicket.id ? { ...t, assigned_to_name: data.assigned_to_name } : t))
+      toast.success('Assigned to you')
+    } catch {
+      toast.error('Failed to assign')
+    } finally {
+      setTicketBusy(false)
+    }
+  }
+
+  const openTicketCount = useMemo(
+    () => tickets.filter((t) => t.status === 'open' || t.status === 'in_progress').length,
+    [tickets],
+  )
 
   // Group sub-accounts under their organisation's owner so admins can tell
   // real (owner) accounts apart from staff/sub-accounts added by them.
@@ -205,15 +298,18 @@ export default function PlatformAdminPage() {
 
       {/* Tabs */}
       <div className="flex gap-1 p-1 bg-surface-800 rounded-xl w-fit">
-        {(['overview', 'orgs', 'users'] as const).map((t) => (
+        {(['overview', 'orgs', 'users', 'support'] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
             className={tab === t
-              ? 'px-4 py-2 rounded-lg text-sm font-semibold bg-brand-500 text-white'
-              : 'px-4 py-2 rounded-lg text-sm text-slate-400 hover:text-white transition-colors capitalize'}
+              ? 'px-4 py-2 rounded-lg text-sm font-semibold bg-brand-500 text-white flex items-center gap-1.5'
+              : 'px-4 py-2 rounded-lg text-sm text-slate-400 hover:text-white transition-colors capitalize flex items-center gap-1.5'}
           >
-            {t === 'orgs' ? 'Organisations' : t.charAt(0).toUpperCase() + t.slice(1)}
+            {t === 'orgs' ? 'Organisations' : t === 'support' ? 'Support' : t.charAt(0).toUpperCase() + t.slice(1)}
+            {t === 'support' && ticketsLoaded && openTicketCount > 0 && (
+              <span className="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none">{openTicketCount}</span>
+            )}
           </button>
         ))}
       </div>
@@ -353,6 +449,118 @@ export default function PlatformAdminPage() {
                 </table>
               </div>
             </div>
+          )}
+
+          {/* Support Tab — cross-org ticket inbox */}
+          {tab === 'support' && (
+            ticketsLoading ? (
+              <div className="card p-16 flex justify-center"><Loader2 className="animate-spin text-slate-500" size={28} /></div>
+            ) : tickets.length === 0 ? (
+              <div className="card p-16 text-center">
+                <MessageSquare size={36} className="text-slate-600 mx-auto mb-3" />
+                <p className="text-slate-300 font-medium">No support tickets yet</p>
+                <p className="text-slate-500 text-sm mt-1">Tickets raised by any organisation land here — and are emailed to support@auditytechnologies.com.</p>
+              </div>
+            ) : (
+              <div className="grid lg:grid-cols-[minmax(0,380px)_1fr] gap-4">
+                {/* Ticket list */}
+                <div className="card p-0 overflow-hidden divide-y divide-surface-700 max-h-[70vh] overflow-y-auto">
+                  {tickets.map((t) => (
+                    <button
+                      key={t.id}
+                      onClick={() => setSelectedId(t.id)}
+                      className={`w-full text-left px-4 py-3 transition-colors ${selectedId === t.id ? 'bg-surface-700' : 'hover:bg-surface-800'}`}
+                    >
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <span className="text-xs font-mono text-slate-500">{t.ticket_number}</span>
+                        <span className={TICKET_STATUS_BADGE[t.status] ?? 'badge-slate'}>{t.status.replace('_', ' ')}</span>
+                      </div>
+                      <p className="text-sm text-white font-medium truncate">{t.subject}</p>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className="text-xs text-slate-400 truncate">{t.organisation_name}</span>
+                        <span className={`${TICKET_PRIORITY_BADGE[t.priority] ?? 'badge-slate'} shrink-0`}>{t.priority}</span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+
+                {/* Ticket detail / thread */}
+                {selectedTicket ? (
+                  <div className="card p-5 flex flex-col max-h-[70vh]">
+                    <div className="border-b border-surface-700 pb-3 mb-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <h2 className="text-lg font-semibold text-white">{selectedTicket.subject}</h2>
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            {selectedTicket.ticket_number} · {selectedTicket.organisation_name} · {selectedTicket.created_by_name} &lt;{selectedTicket.created_by_email}&gt;
+                          </p>
+                        </div>
+                        <button
+                          onClick={handleAssignSelf}
+                          disabled={ticketBusy}
+                          className="btn-ghost text-xs flex items-center gap-1.5 shrink-0 disabled:opacity-50"
+                          title="Assign this ticket to yourself"
+                        >
+                          <UserCheck size={13} /> {selectedTicket.assigned_to_name ? selectedTicket.assigned_to_name : 'Assign to me'}
+                        </button>
+                      </div>
+                      <div className="flex items-center gap-1.5 mt-3 flex-wrap">
+                        {TICKET_STATUSES.map((s) => (
+                          <button
+                            key={s.value}
+                            onClick={() => handleTicketStatus(s.value)}
+                            disabled={ticketBusy}
+                            className={`text-xs px-2.5 py-1 rounded-lg transition-colors disabled:opacity-50 ${
+                              selectedTicket.status === s.value ? 'bg-brand-500 text-white' : 'bg-surface-700 text-slate-400 hover:text-white'}`}
+                          >
+                            {s.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Thread */}
+                    <div className="flex-1 overflow-y-auto space-y-3 pr-1">
+                      <div className="bg-surface-800 border border-surface-700 rounded-lg p-3">
+                        <p className="text-xs text-slate-500 mb-1">{selectedTicket.created_by_name} · {new Date(selectedTicket.created_at).toLocaleString()}</p>
+                        <p className="text-sm text-slate-200 whitespace-pre-wrap">{selectedTicket.description || '(no description)'}</p>
+                      </div>
+                      {selectedTicket.comments.map((c) => (
+                        <div key={c.id} className="bg-surface-800 border border-surface-700 rounded-lg p-3">
+                          <p className="text-xs text-slate-500 mb-1">{c.author_name} · {new Date(c.created_at).toLocaleString()}</p>
+                          <p className="text-sm text-slate-200 whitespace-pre-wrap">{c.body}</p>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Reply */}
+                    <div className="border-t border-surface-700 pt-3 mt-3">
+                      <textarea
+                        value={reply}
+                        onChange={(e) => setReply(e.target.value)}
+                        placeholder="Reply to the customer… (they'll be emailed)"
+                        rows={3}
+                        className="input w-full resize-none"
+                      />
+                      <div className="flex justify-end mt-2">
+                        <button
+                          onClick={handleReply}
+                          disabled={replying || !reply.trim()}
+                          className="btn-primary flex items-center gap-2 disabled:opacity-50"
+                        >
+                          {replying ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />} Send reply
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="card p-16 flex flex-col items-center justify-center text-center">
+                    <MessageSquare size={32} className="text-slate-600 mb-3" />
+                    <p className="text-slate-400 text-sm">Select a ticket to view the conversation and reply.</p>
+                  </div>
+                )}
+              </div>
+            )
           )}
         </>
       )}

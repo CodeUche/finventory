@@ -51,6 +51,9 @@ FRONTEND_URL = config("FRONTEND_URL", default="http://localhost:3000")
 # Backend public URL — used to build email verification links for desktop app
 BACKEND_URL = config("BACKEND_URL", default="http://localhost:8000")
 
+# Help-desk: every support ticket (and customer reply) is emailed here.
+SUPPORT_TICKET_EMAIL = config("SUPPORT_TICKET_EMAIL", default="support@auditytechnologies.com")
+
 # Groq AI key — powers the "Explain My Money" AI assistant (free globally)
 # Get yours free at https://console.groq.com/keys
 GROQ_API_KEY = config("GROQ_API_KEY", default="")

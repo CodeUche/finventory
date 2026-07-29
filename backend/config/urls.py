@@ -106,6 +106,11 @@ urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 # Platform admin API (superusers only) + Audit log (owner/admin/superuser)
 from apps.core.admin_views import AuditLogView, PlatformStatsView, PlatformUsersView, PlatformUserDetailView
 from apps.core.import_views import ImportProductsView, ImportCustomersView, ImportAccountsView, ImportTemplateView, SuggestColumnMappingView
+from rest_framework.routers import DefaultRouter
+from apps.helpdesk.views import PlatformTicketViewSet
+_platform_router = DefaultRouter()
+_platform_router.register('platform/tickets', PlatformTicketViewSet, basename='platform-ticket')
+urlpatterns += [path('api/v1/', include(_platform_router.urls))]
 urlpatterns += [
     path('api/v1/audit-log/', AuditLogView.as_view(), name='audit-log'),
     path('api/v1/platform/stats/', PlatformStatsView.as_view(), name='platform-stats'),
