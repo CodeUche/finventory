@@ -34,7 +34,7 @@ class AccountSubTypeSerializer(serializers.ModelSerializer):
 
 
 class AccountSerializer(serializers.ModelSerializer):
-    balance = serializers.DecimalField(max_digits=20, decimal_places=2, read_only=True)
+    balance = serializers.SerializerMethodField()
     sub_type_name = serializers.CharField(source='sub_type.name', read_only=True)
     parent_code = serializers.CharField(source='parent.code', read_only=True)
     parent_name = serializers.CharField(source='parent.name', read_only=True)
@@ -47,7 +47,13 @@ class AccountSerializer(serializers.ModelSerializer):
             'is_active', 'allow_posting', 'is_control_account',
             'opening_balance', 'opening_balance_date', 'attachment', 'is_system', 'balance',
         ]
-        read_only_fields = ['id', 'is_system', 'balance', 'sub_type_name', 'parent_code', 'parent_name']
+        read_only_fields = ['id', 'is_system', 'sub_type_name', 'parent_code', 'parent_name']
+
+    def get_balance(self, obj):
+        # AccountViewSet annotates `gl_balance` so listing the chart is one query.
+        # Fall back to the model property for callers that serialise a plain instance.
+        annotated = getattr(obj, 'gl_balance', None)
+        return annotated if annotated is not None else obj.balance
 
     def validate(self, attrs):
         # Sub-type must belong to the selected group (server-side enforcement so

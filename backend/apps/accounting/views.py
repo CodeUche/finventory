@@ -12,8 +12,9 @@ from apps.core.permissions import IsAccountant, IsOwnerOrAdmin, plan_requires
 
 _PlanAccounting = plan_requires('accounting')
 from .models import (
-    Account, AccountSubType, JournalEntry, JournalLine, FixedAsset, FinancialPeriod,
+    Account, AccountSubType, AccountType, JournalEntry, JournalLine, FixedAsset, FinancialPeriod,
     BankReconciliation, BankReconciliationLine, AIReconMatch, AccountMapping, AssetType, ACCOUNT_GROUP_SPEC,
+    DEBIT_NORMAL_TYPES,
 )
 from django.db import transaction
 from .serializers import (
@@ -29,16 +30,83 @@ from .services import AccountingService, AccountMappingService, safe_post_gl
 class AccountViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     serializer_class = AccountSerializer
     permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
+    filterset_fields = [
+        'account_type', 'account_group', 'sub_type', 'parent',
+        'is_active', 'is_control_account', 'allow_posting',
+    ]
+    search_fields = ['code', 'name']
+    ordering_fields = ['code', 'name', 'account_type']
+
+    def _base_queryset(self):
+        """Org-scoped accounts WITHOUT the balance annotation.
+
+        Aggregations over this queryset (e.g. the per-type counts in `summary`)
+        must not see the journal-line join from `get_queryset`, which would group
+        by line and inflate every count.
+        """
+        return Account.objects.filter(organisation=self._get_organisation())
 
     def get_queryset(self):
-        org = self._get_organisation()
-        return Account.objects.filter(organisation=org)
+        from django.db.models import Case, DecimalField, F, Q, Sum, When
+        from django.db.models.functions import Coalesce
+
+        posted = Q(journal_lines__journal_entry__status='posted')
+        zero = Decimal('0')
+        money = DecimalField(max_digits=20, decimal_places=2)
+        # `balance` is a model property doing 2 aggregates per row; annotate it so
+        # listing the whole chart is one query instead of 2N. The alias cannot be
+        # called `balance` — the ORM assigns annotations with setattr and the
+        # read-only property would raise AttributeError on every row.
+        return (
+            self._base_queryset()
+            .select_related('sub_type', 'parent')
+            .annotate(
+                _dr=Coalesce(Sum('journal_lines__debit', filter=posted), zero, output_field=money),
+                _cr=Coalesce(Sum('journal_lines__credit', filter=posted), zero, output_field=money),
+            )
+            .annotate(
+                gl_balance=Case(
+                    When(account_type__in=DEBIT_NORMAL_TYPES, then=F('_dr') - F('_cr')),
+                    default=F('_cr') - F('_dr'),
+                    output_field=money,
+                )
+            )
+            # annotate() sets a GROUP BY, which makes Django treat Meta.ordering as
+            # absent and DRF warn about unstable pagination. Re-assert it.
+            .order_by('code')
+        )
 
     def perform_destroy(self, instance):
         if instance.is_system:
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("System accounts cannot be deleted")
         instance.delete()
+
+    @action(detail=False, methods=['get'])
+    def summary(self, request):
+        """
+        GET /accounting/accounts/summary/
+        -> { total, by_type: {asset, liability, equity, revenue, expense, cogs} }
+
+        Server-truthful counts for the COA filter chips, so they stay correct
+        regardless of how the list is paged. `account_type` is deliberately NOT
+        honoured here — the chips must keep showing the other types' counts while
+        one type is selected.
+        """
+        from django.db.models import Count
+        qs = self._base_queryset()
+        is_active = request.query_params.get('is_active')
+        if is_active is not None:
+            qs = qs.filter(is_active=is_active.lower() in ('1', 'true', 'yes'))
+        search = request.query_params.get('search')
+        if search:
+            from django.db.models import Q
+            qs = qs.filter(Q(code__icontains=search) | Q(name__icontains=search))
+
+        by_type = {t: 0 for t in AccountType.values}
+        for row in qs.values('account_type').annotate(n=Count('id')):
+            by_type[row['account_type']] = row['n']
+        return Response({'total': sum(by_type.values()), 'by_type': by_type})
 
     @action(detail=False, methods=['get'])
     def general_ledger(self, request):

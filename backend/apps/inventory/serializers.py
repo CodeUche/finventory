@@ -27,6 +27,12 @@ class ProductSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True)
     total_stock = serializers.SerializerMethodField()
     quantity_incoming = serializers.SerializerMethodField()
+    inventory_account_code = serializers.CharField(
+        source="inventory_account.code", read_only=True, default=None
+    )
+    inventory_account_name = serializers.CharField(
+        source="inventory_account.name", read_only=True, default=None
+    )
 
     class Meta:
         model = Product
@@ -36,6 +42,7 @@ class ProductSerializer(serializers.ModelSerializer):
             "cost_price", "owner_cost_price", "selling_price", "wholesale_price",
             "reorder_level", "max_stock_level", "reorder_quantity", "quantity_in_pack", "barcode",
             "is_active", "is_taxable", "tax_class",
+            "inventory_account", "inventory_account_code", "inventory_account_name",
             "total_stock", "quantity_incoming", "created_at", "updated_at",
         ]
         read_only_fields = ["id", "total_stock", "quantity_incoming", "created_at", "updated_at"]
@@ -68,6 +75,10 @@ class ProductSerializer(serializers.ModelSerializer):
             if value.organisation_id != request.organisation.id:
                 raise serializers.ValidationError("Tax class does not belong to this organisation.")
         return value
+
+    def validate_inventory_account(self, value):
+        from apps.core.validators import validate_same_org_account
+        return validate_same_org_account(value, self.context.get('request'))
 
     def get_total_stock(self, obj):
         # Fast path: annotated by ProductViewSet.get_queryset (see there).

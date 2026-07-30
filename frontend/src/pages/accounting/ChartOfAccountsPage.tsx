@@ -19,6 +19,18 @@ const TYPE_BADGE: Record<string, string> = {
   cogs: 'badge-slate',
 }
 
+// Display labels for the raw account_type slugs used across the page.
+const TYPE_LABEL: Record<string, string> = {
+  all: 'All',
+  asset: 'Asset',
+  liability: 'Liability',
+  equity: 'Equity',
+  revenue: 'Revenue',
+  expense: 'Expense',
+  cogs: 'Cogs',
+}
+const typeLabel = (t: string) => TYPE_LABEL[t] ?? t
+
 interface AccountForm {
   code: string
   name: string
@@ -45,6 +57,7 @@ const BLANK: AccountForm = {
 export default function ChartOfAccountsPage() {
   const { organisation } = useAuthStore()
   const [accounts, setAccounts] = useState<Account[]>([])
+  const [summary, setSummary] = useState<{ total: number; by_type: Record<string, number> } | null>(null)
   const [loading, setLoading] = useState(true)
   const [seeding, setSeeding] = useState(false)
 
@@ -80,8 +93,12 @@ export default function ChartOfAccountsPage() {
   const load = async () => {
     setLoading(true)
     try {
-      const { data } = await accountingApi.accounts()
-      setAccounts(data.results ?? data)
+      const [list, counts] = await Promise.all([
+        accountingApi.accounts(),
+        accountingApi.accountsSummary().catch(() => null),
+      ])
+      setAccounts(list.data.results ?? list.data)
+      setSummary(counts?.data ?? null)
     } catch { toast.error('Failed to load accounts') }
     finally { setLoading(false) }
   }
@@ -267,7 +284,13 @@ export default function ChartOfAccountsPage() {
   }
 
   const TYPES = ['asset', 'liability', 'equity', 'revenue', 'expense', 'cogs'] as const
-  const typeCounts = TYPES.reduce((acc, t) => ({ ...acc, [t]: accounts.filter((a) => a.account_type === t).length }), {} as Record<string, number>)
+  // Prefer the server's counts; fall back to counting the loaded rows if the
+  // summary call failed so the chips still show something sensible.
+  const typeCounts = TYPES.reduce(
+    (acc, t) => ({ ...acc, [t]: summary?.by_type?.[t] ?? accounts.filter((a) => a.account_type === t).length }),
+    {} as Record<string, number>,
+  )
+  const totalCount = summary?.total ?? accounts.length
   const baseFiltered = typeFilter === 'all' ? accounts : accounts.filter((a) => a.account_type === typeFilter)
 
   // Order as a Master → Sub tree: each parent immediately followed by its
@@ -301,7 +324,7 @@ export default function ChartOfAccountsPage() {
         <div>
           <h1 className="text-2xl font-bold text-white">Chart of Accounts</h1>
           <p className="text-slate-400 text-sm">
-            {typeFilter === 'all' ? `${accounts.length} accounts` : `${filteredAccounts.length} ${typeFilter} accounts`}
+            {typeFilter === 'all' ? `${totalCount} accounts` : `${filteredAccounts.length} ${typeLabel(typeFilter)} accounts`}
           </p>
         </div>
         <div className="sm:ml-auto flex gap-2 flex-wrap">
@@ -342,8 +365,8 @@ export default function ChartOfAccountsPage() {
           onClick={() => setTypeFilter('all')}
           className={`card p-3 text-center transition-colors ${typeFilter === 'all' ? 'ring-2 ring-brand-500/60' : 'hover:bg-surface-700/50'}`}
         >
-          <span className="badge-slate">all</span>
-          <p className="text-lg font-bold text-white mt-1">{accounts.length}</p>
+          <span className="badge-slate">{typeLabel('all')}</span>
+          <p className="text-lg font-bold text-white mt-1">{totalCount}</p>
         </button>
         {TYPES.map((t) => (
           <button
@@ -351,14 +374,14 @@ export default function ChartOfAccountsPage() {
             onClick={() => setTypeFilter(typeFilter === t ? 'all' : t)}
             className={`card p-3 text-center transition-colors ${typeFilter === t ? 'ring-2 ring-brand-500/60' : 'hover:bg-surface-700/50'}`}
           >
-            <span className={TYPE_BADGE[t]}>{t}</span>
+            <span className={TYPE_BADGE[t]}>{typeLabel(t)}</span>
             <p className="text-lg font-bold text-white mt-1">{typeCounts[t] ?? 0}</p>
           </button>
         ))}
       </div>
       {typeFilter !== 'all' && (
         <div className="flex items-center gap-2 text-sm text-slate-400">
-          <span>Showing <strong className="text-white">{filteredAccounts.length}</strong> {typeFilter} accounts</span>
+          <span>Showing <strong className="text-white">{filteredAccounts.length}</strong> {typeLabel(typeFilter)} accounts</span>
           <button onClick={() => setTypeFilter('all')} className="text-brand-400 hover:underline text-xs">Clear filter</button>
         </div>
       )}
@@ -393,6 +416,12 @@ export default function ChartOfAccountsPage() {
                     </button>
                   </td>
                 </tr>
+              ) : filteredAccounts.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="px-5 py-12 text-center text-slate-500">
+                    No {typeLabel(typeFilter)} accounts yet.
+                  </td>
+                </tr>
               ) : filteredAccounts.map((a) => (
                 <tr
                   key={a.id}
@@ -412,7 +441,7 @@ export default function ChartOfAccountsPage() {
                       {a.sub_type_name && <span className="text-[10px] text-slate-500 border border-surface-600 rounded px-1">{a.sub_type_name}</span>}
                     </span>
                   </td>
-                  <td className="px-5 py-3.5"><span className={TYPE_BADGE[a.account_type]}>{a.account_group || a.account_type}</span></td>
+                  <td className="px-5 py-3.5"><span className={TYPE_BADGE[a.account_type]}>{a.account_group || typeLabel(a.account_type)}</span></td>
                   <td className="px-5 py-3.5 text-right font-mono text-white">
                     {formatCurrency(a.balance)}
                     {Math.abs(a._rollup - (parseFloat(String(a.balance)) || 0)) > 0.01 && (
@@ -476,7 +505,7 @@ export default function ChartOfAccountsPage() {
                   </select>
                 ) : (
                   <select className="input" value={form.account_type} onChange={(e) => setForm({ ...form, account_type: e.target.value })}>
-                    {TYPES.map((t) => <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>)}
+                    {TYPES.map((t) => <option key={t} value={t}>{typeLabel(t)}</option>)}
                   </select>
                 )}
               </div>
@@ -1247,9 +1276,28 @@ function SubTypesModal({ onClose }: { onClose: () => void }) {
 }
 
 // ── Opening Balances (Take-On) modal ─────────────────────────────────────────
+/** Segmented Dr/Cr control shared by every Opening Balances tab. */
+function SideToggle({ value, onChange, className = '' }: {
+  value: OBSide
+  onChange: (s: OBSide) => void
+  className?: string
+}) {
+  return (
+    <div className={`flex rounded-lg overflow-hidden border border-surface-600 ${className}`}>
+      {(['debit', 'credit'] as const).map((s) => (
+        <button key={s} type="button" onClick={() => onChange(s)}
+          className={`flex-1 py-2 text-xs ${value === s ? 'bg-brand-500/20 text-white' : 'text-slate-400'}`}>
+          {s === 'debit' ? 'Dr' : 'Cr'}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 type OBTab = 'accounts' | 'customers' | 'suppliers' | 'items'
-interface SubRow { id: string; label: string; amount: string }
-interface ItemRow { product_id: string; label: string; quantity: string; unit_cost: string }
+type OBSide = 'debit' | 'credit'
+interface SubRow { id: string; label: string; amount: string; side: OBSide; accountLabel?: string }
+interface ItemRow { product_id: string; label: string; quantity: string; unit_cost: string; side: OBSide; accountLabel?: string }
 
 export function OpeningBalancesModal({ accounts, onClose, onDone }: {
   accounts: Account[]
@@ -1267,14 +1315,37 @@ export function OpeningBalancesModal({ accounts, onClose, onDone }: {
   ])
   const setRow = (i: number, patch: Partial<{ account: string; amount: string; side: 'debit' | 'credit' }>) =>
     setEntries((e) => e.map((r, idx) => idx === i ? { ...r, ...patch } : r))
-  const addRow = () => setEntries((e) => [...e, { account: '', amount: '', side: 'debit' }])
-  const removeRow = (i: number) => setEntries((e) => e.filter((_, idx) => idx !== i))
+  const addRow = (after?: number) => setEntries((e) => {
+    const row = { account: '', amount: '', side: 'debit' as const }
+    if (after === undefined) return [...e, row]
+    return [...e.slice(0, after + 1), row, ...e.slice(after + 1)]
+  })
+  // Always leave one row behind, otherwise the form becomes unusable.
+  const removeRow = (i: number) => setEntries((e) => (e.length <= 1 ? e : e.filter((_, idx) => idx !== i)))
 
   // Sub-ledger tabs
   const [customers, setCustomers] = useState<SubRow[]>([])
   const [suppliers, setSuppliers] = useState<SubRow[]>([])
   const [items, setItems] = useState<ItemRow[]>([])
   const [loadedSub, setLoadedSub] = useState(false)
+
+  // Footer text names the account the org has actually mapped, not a hardcoded code.
+  const [mapping, setMapping] = useState<Record<string, string | null> | null>(null)
+  useEffect(() => {
+    accountingApi.getAccountMapping()
+      .then(({ data }) => setMapping(data))
+      .catch(() => setMapping(null))
+  }, [])
+  const mapped = (role: string, fallback: string) => {
+    const code = mapping?.[`${role}_code`]
+    const name = mapping?.[`${role}_name`]
+    return code ? `${code} ${name ?? ''}`.trim() : fallback
+  }
+  const defaultAccounts = {
+    receivable: mapped('accounts_receivable', 'Accounts Receivable'),
+    payable: mapped('accounts_payable', 'Accounts Payable'),
+    inventory: mapped('inventory_account', 'Inventory'),
+  }
 
   useEffect(() => {
     if (loadedSub) return
@@ -1287,12 +1358,25 @@ export function OpeningBalancesModal({ accounts, onClose, onDone }: {
           supplierApi.list({ page_size: 500 }),
           inventoryApi.products({ page_size: 500 }),
         ])
-        const cust = (c.data.results ?? c.data) as { id: string; name: string }[]
-        const sup = (s.data.results ?? s.data) as { id: string; name: string }[]
-        const prod = (p.data.results ?? p.data) as { id: string; name: string; sku?: string; cost_price?: string | number }[]
-        setCustomers(cust.map((x) => ({ id: x.id, label: x.name, amount: '' })))
-        setSuppliers(sup.map((x) => ({ id: x.id, label: x.name, amount: '' })))
-        setItems(prod.map((x) => ({ product_id: x.id, label: `${x.sku ? x.sku + ' — ' : ''}${x.name}`, quantity: '', unit_cost: x.cost_price ? String(x.cost_price) : '' })))
+        type Party = { id: string; name: string }
+        type Acct = { code?: string | null; name?: string | null }
+        const acctLabel = (a: Acct) => (a.code ? `${a.code} — ${a.name}` : undefined)
+        const cust = (c.data.results ?? c.data) as (Party & { receivable_account_code?: string | null; receivable_account_name?: string | null })[]
+        const sup = (s.data.results ?? s.data) as (Party & { payable_account_code?: string | null; payable_account_name?: string | null })[]
+        const prod = (p.data.results ?? p.data) as (Party & { sku?: string; cost_price?: string | number; inventory_account_code?: string | null; inventory_account_name?: string | null })[]
+        setCustomers(cust.map((x) => ({
+          id: x.id, label: x.name, amount: '', side: 'debit',
+          accountLabel: acctLabel({ code: x.receivable_account_code, name: x.receivable_account_name }),
+        })))
+        setSuppliers(sup.map((x) => ({
+          id: x.id, label: x.name, amount: '', side: 'credit',
+          accountLabel: acctLabel({ code: x.payable_account_code, name: x.payable_account_name }),
+        })))
+        setItems(prod.map((x) => ({
+          product_id: x.id, label: `${x.sku ? x.sku + ' — ' : ''}${x.name}`,
+          quantity: '', unit_cost: x.cost_price ? String(x.cost_price) : '', side: 'debit',
+          accountLabel: acctLabel({ code: x.inventory_account_code, name: x.inventory_account_name }),
+        })))
       } catch { toast.error('Failed to load sub-ledgers') }
     })()
   }, [tab, loadedSub])
@@ -1304,39 +1388,51 @@ export function OpeningBalancesModal({ accounts, onClose, onDone }: {
   }, { debit: 0, credit: 0 })
   const diff = totals.debit - totals.credit
 
-  const subTotal = (rows: SubRow[]) => rows.reduce((s, r) => s + (parseFloat(stripCommas(r.amount) || '0') || 0), 0)
-  const itemsTotal = items.reduce((s, r) => s + (parseFloat(stripCommas(r.quantity) || '0') || 0) * (parseFloat(stripCommas(r.unit_cost) || '0') || 0), 0)
+  // Sub-ledger totals are signed so a Dr and a Cr row offset each other, matching
+  // what the posted journal will net to.
+  const signed = (amount: string, side: OBSide) => {
+    const v = parseFloat(stripCommas(amount) || '0') || 0
+    return side === 'debit' ? v : -v
+  }
+  const subTotal = (rows: SubRow[]) => rows.reduce((s, r) => s + signed(r.amount, r.side), 0)
+  const itemsTotal = items.reduce(
+    (s, r) => s + signed(String((parseFloat(stripCommas(r.quantity) || '0') || 0) * (parseFloat(stripCommas(r.unit_cost) || '0') || 0)), r.side),
+    0,
+  )
 
   const toISO = (dd: string) => {
     if (!dd) return ''
     const [d, m, y] = dd.split('/'); return d && m && y ? `${y}-${m}-${d}` : dd
   }
 
-  const submitAccounts = async (iso: string) => {
-    const payloadEntries = entries
-      .filter((r) => r.account && parseFloat(stripCommas(r.amount) || '0') > 0)
-      .map((r) => ({ account: r.account, amount: stripCommas(r.amount), side: r.side }))
-    if (!payloadEntries.length) { toast.error('Add at least one opening balance'); return false }
-    await accountingApi.setOpeningBalances({ as_of_date: iso, entries: payloadEntries })
-    return true
-  }
+  const accountsPayload = () => entries
+    .filter((r) => r.account && parseFloat(stripCommas(r.amount) || '0') > 0)
+    .map((r) => ({ account: r.account, amount: stripCommas(r.amount), side: r.side }))
 
-  const submitSubledger = async (iso: string) => {
-    const custPayload = customers.filter((r) => parseFloat(stripCommas(r.amount) || '0') > 0).map((r) => ({ id: r.id, amount: stripCommas(r.amount) }))
-    const supPayload = suppliers.filter((r) => parseFloat(stripCommas(r.amount) || '0') > 0).map((r) => ({ id: r.id, amount: stripCommas(r.amount) }))
-    const itemPayload = items.filter((r) => parseFloat(stripCommas(r.quantity) || '0') > 0).map((r) => ({ product_id: r.product_id, quantity: stripCommas(r.quantity), unit_cost: stripCommas(r.unit_cost) }))
-    if (!custPayload.length && !supPayload.length && !itemPayload.length) { toast.error('Enter at least one sub-ledger opening balance'); return false }
-    await accountingApi.setSubledgerOpeningBalances({ as_of_date: iso, customers: custPayload, suppliers: supPayload, items: itemPayload })
-    return true
-  }
+  const subledgerPayload = () => ({
+    customers: customers.filter((r) => parseFloat(stripCommas(r.amount) || '0') > 0)
+      .map((r) => ({ id: r.id, amount: stripCommas(r.amount), side: r.side })),
+    suppliers: suppliers.filter((r) => parseFloat(stripCommas(r.amount) || '0') > 0)
+      .map((r) => ({ id: r.id, amount: stripCommas(r.amount), side: r.side })),
+    items: items.filter((r) => parseFloat(stripCommas(r.quantity) || '0') > 0)
+      .map((r) => ({ product_id: r.product_id, quantity: stripCommas(r.quantity), unit_cost: stripCommas(r.unit_cost), side: r.side })),
+  })
 
   const submit = async () => {
     const iso = toISO(asOf)
     if (!iso) { toast.error('As-of date is required'); return }
+    // Post everything the user has entered, on every tab — not just the tab that
+    // happens to be open when they press the button.
+    const acct = accountsPayload()
+    const sub = subledgerPayload()
+    const hasSub = sub.customers.length || sub.suppliers.length || sub.items.length
+    if (!acct.length && !hasSub) { toast.error('Enter at least one opening balance'); return }
     setBusy(true)
     try {
-      const ok = tab === 'accounts' ? await submitAccounts(iso) : await submitSubledger(iso)
-      if (ok) { toast.success('Opening balances posted'); onDone() }
+      if (acct.length) await accountingApi.setOpeningBalances({ as_of_date: iso, entries: acct })
+      if (hasSub) await accountingApi.setSubledgerOpeningBalances({ as_of_date: iso, ...sub })
+      toast.success('Opening balances posted')
+      onDone()
     } catch (err) {
       const apiErr = (err as { response?: { data?: { error?: unknown } } })?.response?.data?.error
       toast.error(typeof apiErr === 'string' ? apiErr : ((apiErr as { message?: string })?.message ?? 'Failed to post opening balances'))
@@ -1387,18 +1483,17 @@ export function OpeningBalancesModal({ accounts, onClose, onDone }: {
                     <option value="">Select account…</option>
                     {postable.map((a) => <option key={a.id} value={a.id}>{a.code} — {a.name}</option>)}
                   </select>
-                  <div className="col-span-3 flex rounded-lg overflow-hidden border border-surface-600">
-                    {(['debit', 'credit'] as const).map((s) => (
-                      <button key={s} type="button" onClick={() => setRow(i, { side: s })}
-                        className={`flex-1 py-2 text-xs ${r.side === s ? 'bg-brand-500/20 text-white' : 'text-slate-400'}`}>{s === 'debit' ? 'Dr' : 'Cr'}</button>
-                    ))}
-                  </div>
-                  <input className="input col-span-3" inputMode="decimal" placeholder="0.00" value={r.amount}
+                  <SideToggle className="col-span-3" value={r.side} onChange={(s) => setRow(i, { side: s })} />
+                  <input className="input col-span-2" inputMode="decimal" placeholder="0.00" value={r.amount}
                     onChange={(e) => setRow(i, { amount: formatAmountInput(e.target.value) })} />
-                  <button onClick={() => removeRow(i)} className="col-span-1 text-slate-500 hover:text-red-400 justify-self-center"><X size={16} /></button>
+                  <div className="col-span-2 flex items-center justify-center gap-1">
+                    <button onClick={() => addRow(i)} title="Add line below"
+                      className="text-slate-500 hover:text-brand-400"><Plus size={16} /></button>
+                    <button onClick={() => removeRow(i)} title="Remove line" disabled={entries.length <= 1}
+                      className="text-slate-500 hover:text-red-400 disabled:opacity-30 disabled:hover:text-slate-500"><X size={16} /></button>
+                  </div>
                 </div>
               ))}
-              <button onClick={addRow} className="btn-ghost flex items-center gap-1.5 text-sm"><Plus size={14} /> Add Line</button>
             </div>
             <div className="flex items-center justify-between text-sm border-t border-surface-700 pt-3">
               <div className="text-slate-400">Total Debit <span className="font-mono text-white ml-1">{formatCurrency(totals.debit)}</span></div>
@@ -1423,7 +1518,7 @@ export function OpeningBalancesModal({ accounts, onClose, onDone }: {
             emptyLabel={tab === 'customers' ? 'No customers found.' : 'No suppliers found.'}
             noun={tab === 'customers' ? 'customer' : 'supplier'}
             total={subTotal(tab === 'customers' ? customers : suppliers)}
-            postsTo={tab === 'customers' ? 'Accounts Receivable (1100)' : 'Accounts Payable (2001)'}
+            postsTo={tab === 'customers' ? defaultAccounts.receivable : defaultAccounts.payable}
           />
         )}
 
@@ -1436,18 +1531,26 @@ export function OpeningBalancesModal({ accounts, onClose, onDone }: {
               <div className="max-h-72 overflow-y-auto space-y-1.5 pr-1">
                 {items.map((r, i) => (
                   <div key={r.product_id} className="grid grid-cols-12 gap-2 items-center">
-                    <span className="col-span-5 text-sm text-slate-300 truncate" title={r.label}>{r.label}</span>
+                    <span className="col-span-4 text-sm text-slate-300 truncate" title={r.accountLabel ? `${r.label} → ${r.accountLabel}` : r.label}>
+                      {r.label}
+                      {r.accountLabel && <span className="block text-[10px] text-slate-500 truncate">{r.accountLabel}</span>}
+                    </span>
+                    <SideToggle className="col-span-2" value={r.side}
+                      onChange={(s) => setItems((arr) => arr.map((x, idx) => idx === i ? { ...x, side: s } : x))} />
                     <input className="input col-span-3" inputMode="decimal" placeholder="Qty" value={r.quantity}
                       onChange={(e) => setItems((arr) => arr.map((x, idx) => idx === i ? { ...x, quantity: formatAmountInput(e.target.value) } : x))} />
-                    <input className="input col-span-4" inputMode="decimal" placeholder="Unit cost" value={r.unit_cost}
+                    <input className="input col-span-3" inputMode="decimal" placeholder="Unit cost" value={r.unit_cost}
                       onChange={(e) => setItems((arr) => arr.map((x, idx) => idx === i ? { ...x, unit_cost: formatAmountInput(e.target.value) } : x))} />
                   </div>
                 ))}
               </div>
             )}
             <div className="flex items-center justify-between text-sm border-t border-surface-700 pt-3">
-              <span className="text-slate-400">Inventory value <span className="font-mono text-white ml-1">{formatCurrency(itemsTotal)}</span></span>
-              <span className="text-[11px] text-slate-500">Posts to Inventory (1200), offset to Take-On Suspense</span>
+              <span className="text-slate-400">
+                Inventory value <span className="font-mono text-white ml-1">{formatCurrency(Math.abs(itemsTotal))}</span>
+                <span className="ml-1 text-xs">{itemsTotal < 0 ? 'Cr' : 'Dr'}</span>
+              </span>
+              <span className="text-[11px] text-slate-500">Posts to {defaultAccounts.inventory}, offset to Take-On Suspense</span>
             </div>
           </div>
         )}
@@ -1473,6 +1576,8 @@ function SubledgerList({ rows, setRows, emptyLabel, noun, total, postsTo }: {
 }) {
   const [q, setQ] = useState('')
   const filtered = rows.filter((r) => !q.trim() || r.label.toLowerCase().includes(q.trim().toLowerCase()))
+  const patch = (id: string, p: Partial<SubRow>) =>
+    setRows((arr) => arr.map((x) => x.id === id ? { ...x, ...p } : x))
   return (
     <div className="space-y-2">
       <div className="relative">
@@ -1485,16 +1590,27 @@ function SubledgerList({ rows, setRows, emptyLabel, noun, total, postsTo }: {
         <div className="max-h-72 overflow-y-auto space-y-1.5 pr-1">
           {filtered.map((r) => (
             <div key={r.id} className="grid grid-cols-12 gap-2 items-center">
-              <span className="col-span-8 text-sm text-slate-300 truncate" title={r.label}>{r.label}</span>
+              <span className="col-span-5 text-sm text-slate-300 truncate" title={r.accountLabel ? `${r.label} → ${r.accountLabel}` : r.label}>
+                {r.label}
+                {r.accountLabel && <span className="block text-[10px] text-slate-500 truncate">{r.accountLabel}</span>}
+              </span>
+              <SideToggle className="col-span-3" value={r.side} onChange={(s) => patch(r.id, { side: s })} />
               <input className="input col-span-4" inputMode="decimal" placeholder="0.00" value={r.amount}
-                onChange={(e) => setRows((arr) => arr.map((x) => x.id === r.id ? { ...x, amount: formatAmountInput(e.target.value) } : x))} />
+                onChange={(e) => patch(r.id, { amount: formatAmountInput(e.target.value) })} />
             </div>
           ))}
         </div>
       )}
       <div className="flex items-center justify-between text-sm border-t border-surface-700 pt-3">
-        <span className="text-slate-400">Total <span className="font-mono text-white ml-1">{formatCurrency(total)}</span></span>
-        <span className="text-[11px] text-slate-500">Posts to {postsTo}, offset to Take-On Suspense</span>
+        <span className="text-slate-400">
+          Net <span className="font-mono text-white ml-1">{formatCurrency(Math.abs(total))}</span>
+          <span className="ml-1 text-xs">{total < 0 ? 'Cr' : 'Dr'}</span>
+        </span>
+        <span className="text-[11px] text-slate-500">
+          {rows.some((r) => r.accountLabel)
+            ? `Posts to each ${noun}'s own account (default ${postsTo}), offset to Take-On Suspense`
+            : `Posts to ${postsTo}, offset to Take-On Suspense`}
+        </span>
       </div>
     </div>
   )

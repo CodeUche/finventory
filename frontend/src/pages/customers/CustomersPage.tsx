@@ -11,6 +11,7 @@ import { formatCurrency, formatDate, getStatusColor } from '@/lib/utils'
 import AmountInput from '@/components/AmountInput'
 import DateInput from '@/components/DateInput'
 import { FieldTooltip } from '@/components/FieldTooltip'
+import GLAccountSelect from '@/components/GLAccountSelect'
 import { useAuthStore } from '@/store/authStore'
 import { saveBlobFile } from '@/lib/saveBlobFile'
 import type { Customer } from '@/types'
@@ -60,6 +61,7 @@ interface NewCustomerForm {
   phone: string
   address: string
   credit_limit: string
+  receivable_account: string
 }
 
 const BLANK: NewCustomerForm = {
@@ -69,7 +71,11 @@ const BLANK: NewCustomerForm = {
   phone: '',
   address: '',
   credit_limit: '0',
+  receivable_account: '',
 }
+
+// A blank GL override means "use the organisation default" — send null, not "".
+const toPayload = (f: NewCustomerForm) => ({ ...f, receivable_account: f.receivable_account || null })
 
 export default function CustomersPage() {
   const { organisation } = useAuthStore()
@@ -142,7 +148,7 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
     if (!form.name.trim()) { toast.error('Customer name required'); return }
     setSaving(true)
     try {
-      await customerApi.create(form)
+      await customerApi.create(toPayload(form))
       toast.success('Customer added')
       setShowModal(false)
       setForm(BLANK)
@@ -160,6 +166,7 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
       phone: c.phone ?? '',
       address: c.address ?? '',
       credit_limit: c.credit_limit,
+      receivable_account: c.receivable_account ?? '',
     })
     setShowEditModal(true)
   }
@@ -168,7 +175,7 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
     if (!editForm.name.trim() || !editId) { toast.error('Customer name required'); return }
     setSaving(true)
     try {
-      const updated = await customerApi.update(editId, editForm)
+      const updated = await customerApi.update(editId, toPayload(editForm))
       toast.success('Customer updated')
       setShowEditModal(false)
       if (selected?.id === editId) setSelected({ ...selected, ...updated.data })
@@ -743,6 +750,11 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
                 <textarea className="input resize-none" rows={2} value={editForm.address}
                   onChange={(e) => setEditForm({ ...editForm, address: e.target.value })} />
               </div>
+              <div className="col-span-2">
+                <label className="text-xs text-slate-400 mb-1 block">Receivable Account<FieldTooltip text="The GL control account this customer's balance posts to. Leave on the organisation default unless this customer should be tracked in its own receivable account." /></label>
+                <GLAccountSelect value={editForm.receivable_account}
+                  onChange={(v) => setEditForm({ ...editForm, receivable_account: v })} />
+              </div>
             </div>
 
             <div className="flex gap-3 pt-1">
@@ -1182,6 +1194,12 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
                   value={form.address}
                   onChange={(e) => setForm({ ...form, address: e.target.value })}
                 />
+              </div>
+
+              <div className="col-span-2">
+                <label className="text-xs text-slate-400 mb-1 block">Receivable Account<FieldTooltip text="The GL control account this customer's balance posts to. Leave on the organisation default unless this customer should be tracked in its own receivable account." /></label>
+                <GLAccountSelect value={form.receivable_account}
+                  onChange={(v) => setForm({ ...form, receivable_account: v })} />
               </div>
             </div>
 

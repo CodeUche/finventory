@@ -40,8 +40,18 @@ class Customer(TenantAwareModel):
         default=0, help_text="Net payment terms in days (0 = cash on delivery)"
     )
 
-    # Denormalised outstanding balance (updated by credit service)
+    # Denormalised outstanding balance (updated by credit service).
+    # Signed: positive = the customer owes us (debit), negative = the customer is
+    # in credit (prepayment / unapplied credit note).
     outstanding_balance = MoneyField(default=0)
+
+    # Optional per-customer receivable control account. Blank falls back to the org
+    # AccountMapping 'accounts_receivable' role, then to code 1100.
+    receivable_account = models.ForeignKey(
+        'accounting.Account', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='customers', limit_choices_to={'is_active': True},
+        help_text="GL control account for this customer. Leave blank to use the organisation default.",
+    )
 
     # Store credit balance (pre-paid credit the customer can use against future purchases)
     store_credit = MoneyField(default=0, help_text="Pre-paid credit balance redeemable on future sales")

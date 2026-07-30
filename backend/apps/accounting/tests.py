@@ -1910,6 +1910,606 @@ class SubledgerAndAccountOpeningBalanceTests(TestCase):
         self.assertTrue(bs["balanced"], msg=str(bs))
 
 
+class AccountListingAndSummaryTests(TestCase):
+    """The whole chart must be reachable through the API.
+
+    Regression for the reviewer's 'revenue/expense/cogs show 0 and never appear in
+    the list or the journal picker' report: the list is ordered by code and paginated
+    at 25, so every 4xxx/5xxx/6xxx account fell onto page 2 and was never fetched.
+    """
+
+    def setUp(self):
+        self.user = _make_user("coa_list@example.com")
+        self.org = _make_org(self.user, "COA List Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+
+    def _all_accounts(self):
+        res = self.client.get("/api/v1/accounting/accounts/?page_size=1000")
+        self.assertEqual(res.status_code, 200)
+        return res.data.get("results") or res.data
+
+    def test_summary_returns_all_six_types_with_counts(self):
+        res = self.client.get("/api/v1/accounting/accounts/summary/")
+        self.assertEqual(res.status_code, 200)
+        by_type = res.data["by_type"]
+        for t in ["asset", "liability", "equity", "revenue", "expense", "cogs"]:
+            self.assertIn(t, by_type)
+        # The seeded COA — revenue/cogs/expense must be non-zero.
+        self.assertEqual(by_type["revenue"], 2)
+        self.assertEqual(by_type["cogs"], 1)
+        self.assertEqual(by_type["expense"], 8)
+        self.assertEqual(res.data["total"], Account.objects.filter(organisation=self.org).count())
+
+    def test_summary_counts_not_inflated_by_journal_lines(self):
+        """The balance annotation joins journal lines; summary must not group over it."""
+        before = self.client.get("/api/v1/accounting/accounts/summary/").data["total"]
+        cash = Account.objects.get(organisation=self.org, code="1001")
+        sales = Account.objects.get(organisation=self.org, code="4001")
+        for _ in range(3):
+            AccountingService.post_journal_entry(
+                self.org, description="Sale", entry_date=timezone.now().date(),
+                lines=[(cash, Decimal("100"), Decimal("0")), (sales, Decimal("0"), Decimal("100"))],
+                created_by=self.user,
+            )
+        after = self.client.get("/api/v1/accounting/accounts/summary/").data
+        self.assertEqual(after["total"], before)
+        self.assertEqual(after["by_type"]["revenue"], 2)
+
+    def test_full_list_contains_all_six_account_types(self):
+        types = {a["account_type"] for a in self._all_accounts()}
+        self.assertEqual(
+            types, {"asset", "liability", "equity", "revenue", "expense", "cogs"}
+        )
+
+    def test_page_size_returns_every_account(self):
+        total = Account.objects.filter(organisation=self.org).count()
+        self.assertGreater(total, 25)  # otherwise this test proves nothing
+        res = self.client.get("/api/v1/accounting/accounts/?page_size=1000")
+        self.assertEqual(res.data["count"], total)
+        self.assertEqual(len(res.data["results"]), total)
+
+    def test_filter_by_account_type(self):
+        res = self.client.get("/api/v1/accounting/accounts/?account_type=revenue&page_size=1000")
+        results = res.data["results"]
+        self.assertEqual(len(results), 2)
+        self.assertTrue(all(a["account_type"] == "revenue" for a in results))
+
+    def test_filter_by_is_active(self):
+        acct = Account.objects.filter(organisation=self.org, account_type="expense").first()
+        acct.is_active = False
+        acct.save(update_fields=["is_active"])
+        res = self.client.get("/api/v1/accounting/accounts/?is_active=false&page_size=1000")
+        self.assertEqual([a["code"] for a in res.data["results"]], [acct.code])
+
+    def test_search_matches_code_and_name(self):
+        by_code = self.client.get("/api/v1/accounting/accounts/?search=4001&page_size=1000")
+        self.assertIn("4001", [a["code"] for a in by_code.data["results"]])
+        by_name = self.client.get("/api/v1/accounting/accounts/?search=Sales&page_size=1000")
+        self.assertTrue(any("Sales" in a["name"] for a in by_name.data["results"]))
+
+    def test_balance_annotation_matches_property(self):
+        """Debit-normal and credit-normal accounts must both keep their sign."""
+        cash = Account.objects.get(organisation=self.org, code="1001")      # debit-normal
+        sales = Account.objects.get(organisation=self.org, code="4001")     # credit-normal
+        AccountingService.post_journal_entry(
+            self.org, description="Sale", entry_date=timezone.now().date(),
+            lines=[(cash, Decimal("2500"), Decimal("0")), (sales, Decimal("0"), Decimal("2500"))],
+            created_by=self.user,
+        )
+        by_code = {a["code"]: a for a in self._all_accounts()}
+        self.assertAlmostEqual(float(by_code["1001"]["balance"]), float(cash.balance), places=2)
+        self.assertAlmostEqual(float(by_code["4001"]["balance"]), float(sales.balance), places=2)
+        self.assertAlmostEqual(float(by_code["4001"]["balance"]), 2500.0, places=2)
+
+    def test_account_list_query_count_does_not_scale_with_row_count(self):
+        """`balance` used to fire 2 aggregates per row; the annotation makes it flat."""
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+        total = Account.objects.filter(organisation=self.org).count()
+        with CaptureQueriesContext(connection) as ctx:
+            self.client.get("/api/v1/accounting/accounts/?page_size=1000")
+        # Pre-fix this was ~5 queries per account (balance ×2, sub_type, parent ×2).
+        self.assertLess(len(ctx.captured_queries), total)
+
+
+class PerPartyGLAccountOverrideTests(TestCase):
+    """A customer/supplier/product can point at its own control account."""
+
+    def setUp(self):
+        from apps.customers.models import Customer
+        from apps.suppliers.models import Supplier
+        from apps.inventory.models import Product, Warehouse
+
+        self.user = _make_user("perparty@example.com")
+        self.org = _make_org(self.user, "Per Party Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+
+        self.cust = Customer.objects.create(organisation=self.org, name="Better Oil Services Ltd")
+        self.sup = Supplier.objects.create(organisation=self.org, code="S1", name="Firm Concept Ltd")
+        self.wh = Warehouse.objects.create(organisation=self.org, name="Main WH", is_default=True)
+        self.prod = Product.objects.create(
+            organisation=self.org, sku="RICE", name="Rice",
+            cost_price=Decimal("100"), selling_price=Decimal("150"),
+        )
+        self.ar = Account.objects.get(organisation=self.org, code="1100")
+        self.ap = Account.objects.get(organisation=self.org, code="2001")
+        self.inv = Account.objects.get(organisation=self.org, code="1200")
+
+    def _account(self, code, name, acct_type):
+        return Account.objects.create(
+            organisation=self.org, code=code, name=name, account_type=acct_type,
+        )
+
+    def _lines(self, entry):
+        return {line.account.code: (line.debit, line.credit) for line in entry.lines.all()}
+
+    def test_customer_override_routes_journal_to_that_account(self):
+        alt = self._account("1105", "Trade Debtors — Oil", AccountType.ASSET)
+        self.cust.receivable_account = alt
+        self.cust.save(update_fields=["receivable_account"])
+
+        entry = AccountingService.set_subledger_opening_balances(
+            self.org, "2026-01-01",
+            customers=[{"id": str(self.cust.id), "amount": "250000", "side": "debit"}],
+            created_by=self.user,
+        )
+        lines = self._lines(entry)
+        self.assertEqual(lines["1105"][0], Decimal("250000"))
+        self.assertNotIn("1100", lines)
+
+    def test_supplier_override_routes_journal_to_that_account(self):
+        alt = self._account("2005", "Trade Creditors — Logistics", AccountType.LIABILITY)
+        self.sup.payable_account = alt
+        self.sup.save(update_fields=["payable_account"])
+
+        entry = AccountingService.set_subledger_opening_balances(
+            self.org, "2026-01-01",
+            suppliers=[{"id": str(self.sup.id), "amount": "120000", "side": "credit"}],
+            created_by=self.user,
+        )
+        lines = self._lines(entry)
+        self.assertEqual(lines["2005"][1], Decimal("120000"))
+        self.assertNotIn("2001", lines)
+
+    def test_product_override_routes_journal_to_that_account(self):
+        alt = self._account("1205", "Inventory — Grains", AccountType.ASSET)
+        self.prod.inventory_account = alt
+        self.prod.save(update_fields=["inventory_account"])
+
+        entry = AccountingService.set_subledger_opening_balances(
+            self.org, "2026-01-01",
+            items=[{"product_id": str(self.prod.id), "warehouse_id": str(self.wh.id),
+                    "quantity": "10", "unit_cost": "100"}],
+            created_by=self.user,
+        )
+        lines = self._lines(entry)
+        self.assertEqual(lines["1205"][0], Decimal("1000"))
+        self.assertNotIn("1200", lines)
+
+    def test_falls_back_to_org_mapping_then_default_code(self):
+        """No per-party override -> the org mapping wins; no mapping -> the code."""
+        mapped = self._account("1150", "Receivables (mapped)", AccountType.ASSET)
+        m = AccountMapping.objects.get(organisation=self.org)
+        m.accounts_receivable = mapped
+        m.save()
+        entry = AccountingService.set_subledger_opening_balances(
+            self.org, "2026-01-01",
+            customers=[{"id": str(self.cust.id), "amount": "1000"}],
+            created_by=self.user,
+        )
+        self.assertIn("1150", self._lines(entry))
+
+    def test_cannot_assign_account_from_another_organisation(self):
+        other_user = _make_user("otherorg@example.com")
+        other_org = _make_org(other_user, "Other Org")
+        foreign = Account.objects.get(organisation=other_org, code="1100")
+        res = self.client.patch(
+            f"/api/v1/customers/{self.cust.id}/",
+            {"receivable_account": str(foreign.id)}, format="json",
+        )
+        self.assertEqual(res.status_code, 400, msg=str(res.data))
+        self.cust.refresh_from_db()
+        self.assertIsNone(self.cust.receivable_account)
+
+
+class SubledgerTakeOnSidesTests(TestCase):
+    """Dr/Cr on every sub-ledger tab, netted to one line per resolved account.
+
+    Mirrors the reviewer's stated entries: a customer credit balance debits Take-On
+    Suspense and credits the customer's account, a supplier debit balance does the
+    reverse, and the control account is never posted twice.
+    """
+
+    def setUp(self):
+        from apps.customers.models import Customer
+        from apps.suppliers.models import Supplier
+        from apps.inventory.models import Product, Warehouse
+
+        self.user = _make_user("sides@example.com")
+        self.org = _make_org(self.user, "Sides Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+        self.c1 = Customer.objects.create(organisation=self.org, code="C1", name="Cust One")
+        self.c2 = Customer.objects.create(organisation=self.org, code="C2", name="Cust Two")
+        self.s1 = Supplier.objects.create(organisation=self.org, code="S1", name="Sup One")
+        self.wh = Warehouse.objects.create(organisation=self.org, name="WH", is_default=True)
+        self.prod = Product.objects.create(
+            organisation=self.org, sku="P1", name="Widget",
+            cost_price=Decimal("100"), selling_price=Decimal("150"),
+        )
+
+    def _lines(self, entry):
+        return {line.account.code: (line.debit, line.credit) for line in entry.lines.all()}
+
+    def test_customer_credit_balance_debits_suspense_and_credits_receivable(self):
+        entry = AccountingService.set_subledger_opening_balances(
+            self.org, "2026-01-01",
+            customers=[{"id": str(self.c1.id), "amount": "50000", "side": "credit"}],
+            created_by=self.user,
+        )
+        lines = self._lines(entry)
+        self.assertEqual(lines["1100"], (Decimal("0"), Decimal("50000")))
+        self.assertEqual(lines["3900"], (Decimal("50000"), Decimal("0")))
+        self.c1.refresh_from_db()
+        self.assertEqual(self.c1.outstanding_balance, Decimal("-50000"))
+
+    def test_supplier_debit_balance_debits_payable_and_credits_suspense(self):
+        entry = AccountingService.set_subledger_opening_balances(
+            self.org, "2026-01-01",
+            suppliers=[{"id": str(self.s1.id), "amount": "30000", "side": "debit"}],
+            created_by=self.user,
+        )
+        lines = self._lines(entry)
+        self.assertEqual(lines["2001"], (Decimal("30000"), Decimal("0")))
+        self.assertEqual(lines["3900"], (Decimal("0"), Decimal("30000")))
+        self.s1.refresh_from_db()
+        self.assertEqual(self.s1.opening_balance, Decimal("-30000"))
+
+    def test_mixed_customer_sides_net_to_one_line(self):
+        entry = AccountingService.set_subledger_opening_balances(
+            self.org, "2026-01-01",
+            customers=[
+                {"id": str(self.c1.id), "amount": "500", "side": "debit"},
+                {"id": str(self.c2.id), "amount": "200", "side": "credit"},
+            ],
+            created_by=self.user,
+        )
+        ar = Account.objects.get(organisation=self.org, code="1100")
+        ar_lines = entry.lines.filter(account=ar)
+        self.assertEqual(ar_lines.count(), 1)
+        self.assertEqual(ar_lines.first().debit, Decimal("300"))
+
+    def test_fully_netting_customers_emit_no_line(self):
+        entry = AccountingService.set_subledger_opening_balances(
+            self.org, "2026-01-01",
+            customers=[
+                {"id": str(self.c1.id), "amount": "500", "side": "debit"},
+                {"id": str(self.c2.id), "amount": "500", "side": "credit"},
+            ],
+            created_by=self.user,
+        )
+        self.assertIsNone(entry)
+
+    def test_customer_and_supplier_sharing_an_account_net_to_one_line(self):
+        shared = Account.objects.create(
+            organisation=self.org, code="1180", name="Trading Control", account_type=AccountType.ASSET,
+        )
+        self.c1.receivable_account = shared
+        self.c1.save(update_fields=["receivable_account"])
+        self.s1.payable_account = shared
+        self.s1.save(update_fields=["payable_account"])
+
+        entry = AccountingService.set_subledger_opening_balances(
+            self.org, "2026-01-01",
+            customers=[{"id": str(self.c1.id), "amount": "900", "side": "debit"}],
+            suppliers=[{"id": str(self.s1.id), "amount": "400", "side": "credit"}],
+            created_by=self.user,
+        )
+        shared_lines = entry.lines.filter(account=shared)
+        self.assertEqual(shared_lines.count(), 1)
+        self.assertEqual(shared_lines.first().debit, Decimal("500"))
+
+    def test_inventory_credit_side_reverses_the_journal_direction(self):
+        AccountingService.set_subledger_opening_balances(
+            self.org, "2026-01-01",
+            items=[{"product_id": str(self.prod.id), "warehouse_id": str(self.wh.id),
+                    "quantity": "10", "unit_cost": "100"}],
+            created_by=self.user,
+        )
+        entry = AccountingService.set_subledger_opening_balances(
+            self.org, "2026-02-01",
+            items=[{"product_id": str(self.prod.id), "warehouse_id": str(self.wh.id),
+                    "quantity": "4", "unit_cost": "100", "side": "credit"}],
+            created_by=self.user,
+        )
+        lines = self._lines(entry)
+        self.assertEqual(lines["1200"], (Decimal("0"), Decimal("400")))
+        self.assertEqual(lines["3900"], (Decimal("400"), Decimal("0")))
+
+    def test_inventory_credit_beyond_stock_on_hand_is_rejected_clearly(self):
+        with self.assertRaises(ValueError) as ctx:
+            AccountingService.set_subledger_opening_balances(
+                self.org, "2026-01-01",
+                items=[{"product_id": str(self.prod.id), "warehouse_id": str(self.wh.id),
+                        "quantity": "5", "unit_cost": "100", "side": "credit"}],
+                created_by=self.user,
+            )
+        self.assertIn("stock adjustment", str(ctx.exception))
+
+    def test_negative_amount_is_treated_as_the_other_side(self):
+        entry = AccountingService.set_subledger_opening_balances(
+            self.org, "2026-01-01",
+            customers=[{"id": str(self.c1.id), "amount": "-750", "side": "debit"}],
+            created_by=self.user,
+        )
+        self.assertEqual(self._lines(entry)["1100"], (Decimal("0"), Decimal("750")))
+
+    def test_balance_sheet_balances_for_every_side_combination(self):
+        AccountingService.set_subledger_opening_balances(
+            self.org, "2026-01-01",
+            customers=[
+                {"id": str(self.c1.id), "amount": "500", "side": "debit"},
+                {"id": str(self.c2.id), "amount": "200", "side": "credit"},
+            ],
+            suppliers=[{"id": str(self.s1.id), "amount": "300", "side": "debit"}],
+            items=[{"product_id": str(self.prod.id), "warehouse_id": str(self.wh.id),
+                    "quantity": "3", "unit_cost": "100"}],
+            created_by=self.user,
+        )
+        bs = AccountingService.balance_sheet(self.org)
+        self.assertTrue(bs["balanced"], msg=str(bs))
+
+
+class SubledgerTakeOnRerunTests(TestCase):
+    """Re-running a take-on is a correction, not a second posting."""
+
+    def setUp(self):
+        from apps.customers.models import Customer
+        from apps.inventory.models import Product, Warehouse
+
+        self.user = _make_user("rerun@example.com")
+        self.org = _make_org(self.user, "Rerun Org")
+        _upgrade_to_business(self.org)
+        self.cust = Customer.objects.create(organisation=self.org, name="Cust")
+        self.wh = Warehouse.objects.create(organisation=self.org, name="WH", is_default=True)
+        self.prod = Product.objects.create(
+            organisation=self.org, sku="P1", name="Widget",
+            cost_price=Decimal("100"), selling_price=Decimal("150"),
+        )
+
+    def _post(self, qty, date="2026-01-01", products=None):
+        items = products if products is not None else [
+            {"product_id": str(self.prod.id), "warehouse_id": str(self.wh.id),
+             "quantity": str(qty), "unit_cost": "100"}
+        ]
+        return AccountingService.set_subledger_opening_balances(
+            self.org, date,
+            customers=[{"id": str(self.cust.id), "amount": "5000"}],
+            items=items, created_by=self.user,
+        )
+
+    def _stock(self):
+        from apps.inventory.models import StockItem
+        item = StockItem.objects.filter(organisation=self.org, product=self.prod).first()
+        return item.quantity_on_hand if item else Decimal("0")
+
+    def test_same_date_rerun_does_not_double_stock(self):
+        self._post(10)
+        self.assertEqual(self._stock(), Decimal("10"))
+        self._post(10)
+        self.assertEqual(self._stock(), Decimal("10"))
+
+    def test_same_date_rerun_does_not_double_the_gl(self):
+        self._post(10)
+        self._post(10)
+        ar = Account.objects.get(organisation=self.org, code="1100")
+        inv = Account.objects.get(organisation=self.org, code="1200")
+        self.assertAlmostEqual(float(ar.balance), 5000.0, places=2)
+        self.assertAlmostEqual(float(inv.balance), 1000.0, places=2)
+
+    def test_rerun_with_increased_quantity_posts_only_the_delta(self):
+        from apps.inventory.models import StockMovement
+        self._post(10)
+        self._post(14)
+        self.assertEqual(self._stock(), Decimal("14"))
+        deltas = StockMovement.objects.filter(
+            organisation=self.org, movement_type="opening",
+        ).order_by("created_at").values_list("quantity", flat=True)
+        self.assertEqual(list(deltas), [Decimal("10"), Decimal("4")])
+
+    def test_third_rerun_does_not_collide_on_the_reversal(self):
+        """Reversals leave the original posted, so a naive re-run reverses it twice.
+
+        That collided on the reversal's (org, source_type, source_ref) uniqueness and
+        surfaced in the UI as an opaque 422 IntegrityError on the third post.
+        """
+        self._post(10)
+        self._post(10)
+        self._post(10)  # used to raise IntegrityError
+        self.assertEqual(self._stock(), Decimal("10"))
+        ar = Account.objects.get(organisation=self.org, code="1100")
+        self.assertAlmostEqual(float(ar.balance), 5000.0, places=2)
+
+    def test_many_reruns_keep_the_balance_sheet_balanced(self):
+        for _ in range(4):
+            self._post(10)
+        bs = AccountingService.balance_sheet(self.org)
+        self.assertTrue(bs["balanced"], msg=str(bs))
+
+    def test_rerun_dropping_a_product_zeroes_its_opening_stock(self):
+        self._post(10)
+        self._post(0, products=[])
+        self.assertEqual(self._stock(), Decimal("0"))
+
+    def test_rerun_after_opening_stock_was_sold_gives_a_clear_error(self):
+        from apps.inventory.services import InventoryService
+        self._post(10)
+        InventoryService.record_movement(
+            organisation=self.org, product=self.prod, warehouse=self.wh,
+            quantity=Decimal("-8"), movement_type="sale", unit_cost=Decimal("100"),
+            reference="SO-1", created_by=self.user,
+        )
+        with self.assertRaises(ValueError) as ctx:
+            self._post(1)
+        self.assertIn("stock adjustment", str(ctx.exception))
+
+
+class ControlAccountOpeningBalanceGuardTests(TestCase):
+    """Opening balances on AR/AP/Inventory must go through the sub-ledger tabs.
+
+    Entering them on the Accounts tab as well would double the control account
+    against its sub-ledger — the reviewer's 'hope it is not posting twice' concern.
+    """
+
+    def setUp(self):
+        self.user = _make_user("guard@example.com")
+        self.org = _make_org(self.user, "Guard Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+
+    def _post_batch(self, code, amount="300000", side="debit"):
+        acct = Account.objects.get(organisation=self.org, code=code)
+        return self.client.post(
+            "/api/v1/accounting/accounts/opening_balances/",
+            {"as_of_date": "2026-01-01",
+             "entries": [{"account": str(acct.id), "amount": amount, "side": side}]},
+            format="json",
+        )
+
+    def test_batch_rejects_receivable_control_account(self):
+        res = self._post_batch("1100")
+        self.assertEqual(res.status_code, 422)
+        self.assertIn("Customers tab", str(res.data["error"]))
+
+    def test_batch_rejects_payable_and_inventory_control_accounts(self):
+        self.assertIn("Suppliers tab", str(self._post_batch("2001", side="credit").data["error"]))
+        self.assertIn("Inventory tab", str(self._post_batch("1200").data["error"]))
+
+    def test_batch_accepts_an_ordinary_account(self):
+        res = self._post_batch("1002")  # Bank Account
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+
+    def test_single_account_endpoint_rejects_control_account(self):
+        acct = Account.objects.get(organisation=self.org, code="1100")
+        res = self.client.post(
+            f"/api/v1/accounting/accounts/{acct.id}/set_opening_balance/",
+            {"amount": "1000", "side": "debit", "as_of_date": "2026-01-01"}, format="json",
+        )
+        self.assertEqual(res.status_code, 422)
+
+    def test_rejected_control_account_does_not_reverse_an_existing_entry(self):
+        bank = Account.objects.get(organisation=self.org, code="1002")
+        AccountingService.set_account_opening_balance(
+            self.org, bank, Decimal("80000"), "debit", "2026-01-01", created_by=self.user,
+        )
+        ar = Account.objects.get(organisation=self.org, code="1100")
+        with self.assertRaises(ValueError):
+            AccountingService.set_account_opening_balance(
+                self.org, ar, Decimal("5000"), "debit", "2026-01-01", created_by=self.user,
+            )
+        self.assertAlmostEqual(float(bank.balance), 80000.0, places=2)
+
+    def test_legacy_org_control_account_is_still_rejected_by_code(self):
+        """Orgs seeded before the flags existed carry allow_posting=True."""
+        Account.objects.filter(organisation=self.org, code="1100").update(
+            allow_posting=True, is_control_account=False,
+        )
+        self.assertEqual(self._post_batch("1100").status_code, 422)
+
+    def test_subledger_takeon_can_still_post_to_control_accounts(self):
+        """The guard must not leak into post_journal_entry."""
+        from apps.customers.models import Customer
+        cust = Customer.objects.create(organisation=self.org, name="Cust")
+        entry = AccountingService.set_subledger_opening_balances(
+            self.org, "2026-01-01",
+            customers=[{"id": str(cust.id), "amount": "1000"}], created_by=self.user,
+        )
+        self.assertIsNotNone(entry)
+        ar = Account.objects.get(organisation=self.org, code="1100")
+        self.assertAlmostEqual(float(ar.balance), 1000.0, places=2)
+
+
+class SubledgerTakeOnBackwardCompatTests(TestCase):
+    """Side-less payloads must reproduce the pre-Dr/Cr behaviour exactly."""
+
+    def setUp(self):
+        from apps.customers.models import Customer
+        from apps.suppliers.models import Supplier
+        from apps.inventory.models import Product, Warehouse
+
+        self.user = _make_user("compat@example.com")
+        self.org = _make_org(self.user, "Compat Org")
+        _upgrade_to_business(self.org)
+        self.cust = Customer.objects.create(organisation=self.org, name="Acme Ltd")
+        self.sup = Supplier.objects.create(organisation=self.org, code="SUP1", name="Global Supply")
+        self.wh = Warehouse.objects.create(organisation=self.org, name="Main WH", is_default=True)
+        self.prod = Product.objects.create(
+            organisation=self.org, sku="P1", name="Widget",
+            cost_price=Decimal("100"), selling_price=Decimal("150"),
+        )
+
+    def test_legacy_payload_reproduces_pre_rework_balances(self):
+        AccountingService.set_subledger_opening_balances(
+            self.org, "2026-01-01",
+            customers=[{"id": str(self.cust.id), "amount": "500000"}],
+            suppliers=[{"id": str(self.sup.id), "amount": "200000"}],
+            items=[{"product_id": str(self.prod.id), "warehouse_id": str(self.wh.id),
+                    "quantity": "10", "unit_cost": "100"}],
+            created_by=self.user,
+        )
+        ar = Account.objects.get(organisation=self.org, code="1100")
+        ap = Account.objects.get(organisation=self.org, code="2001")
+        inv = Account.objects.get(organisation=self.org, code="1200")
+        self.assertAlmostEqual(float(ar.balance), 500000.0, places=2)
+        self.assertAlmostEqual(float(ap.balance), 200000.0, places=2)
+        self.assertAlmostEqual(float(inv.balance), 1000.0, places=2)
+        self.cust.refresh_from_db(); self.sup.refresh_from_db()
+        self.assertAlmostEqual(float(self.cust.outstanding_balance), 500000.0, places=2)
+        self.assertAlmostEqual(float(self.sup.opening_balance), 200000.0, places=2)
+
+    def test_dr_cr_abbreviations_are_accepted(self):
+        entry = AccountingService.set_subledger_opening_balances(
+            self.org, "2026-01-01",
+            customers=[{"id": str(self.cust.id), "amount": "100", "side": "Cr"}],
+            created_by=self.user,
+        )
+        line = entry.lines.get(account__code="1100")
+        self.assertEqual(line.credit, Decimal("100"))
+
+
+class NegativeCustomerBalancePaymentTests(TestCase):
+    """A customer taken on in credit must not have that credit erased by a payment."""
+
+    def setUp(self):
+        from apps.customers.models import Customer
+        self.user = _make_user("negbal@example.com")
+        self.org = _make_org(self.user, "NegBal Org")
+        _upgrade_to_business(self.org)
+        self.cust = Customer.objects.create(
+            organisation=self.org, name="Prepaid Cust", outstanding_balance=Decimal("-500"),
+        )
+
+    def test_payment_against_a_credit_balance_keeps_the_credit(self):
+        from apps.credits.services import CreditService
+        CreditService.record_payment(
+            self.org, self.cust, Decimal("100"), recorded_by=self.user,
+        )
+        self.cust.refresh_from_db()
+        self.assertEqual(self.cust.outstanding_balance, Decimal("-600"))
+
+    def test_overpayment_against_a_debit_balance_still_clamps_at_zero(self):
+        self.cust.outstanding_balance = Decimal("200")
+        self.cust.save(update_fields=["outstanding_balance"])
+        from apps.credits.services import CreditService
+        CreditService.record_payment(
+            self.org, self.cust, Decimal("500"), recorded_by=self.user,
+        )
+        self.cust.refresh_from_db()
+        self.assertEqual(self.cust.outstanding_balance, Decimal("0"))
+
+
 class FixedAssetAcquisitionTests(TestCase):
     """Phase 1: creating a fixed asset posts DR 1500 Fixed Assets / CR funding, the
     register reconciles to the GL, acquisition is not double-posted, and 1500/1510 are

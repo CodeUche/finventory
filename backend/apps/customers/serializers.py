@@ -2,6 +2,8 @@ import uuid
 
 from rest_framework import serializers
 
+from apps.core.validators import validate_same_org_account
+
 from .models import Customer, CustomerDebit
 
 
@@ -10,6 +12,12 @@ class CustomerSerializer(serializers.ModelSerializer):
     is_credit_blocked = serializers.BooleanField(read_only=True)
     code = serializers.CharField(max_length=50, required=False, default="")
     credit_score = serializers.SerializerMethodField()
+    receivable_account_code = serializers.CharField(
+        source="receivable_account.code", read_only=True, default=None
+    )
+    receivable_account_name = serializers.CharField(
+        source="receivable_account.name", read_only=True, default=None
+    )
 
     class Meta:
         model = Customer
@@ -18,9 +26,13 @@ class CustomerSerializer(serializers.ModelSerializer):
             "address", "contact_person", "credit_limit",
             "payment_terms_days", "outstanding_balance", "store_credit",
             "available_credit", "is_credit_blocked", "credit_score",
+            "receivable_account", "receivable_account_code", "receivable_account_name",
             "notes", "is_active", "created_at", "updated_at",
         ]
         read_only_fields = ["id", "outstanding_balance", "created_at", "updated_at"]
+
+    def validate_receivable_account(self, value):
+        return validate_same_org_account(value, self.context.get("request"))
 
     def get_credit_score(self, obj) -> int:
         """Compute a 1–100 credit score based on invoice payment history."""

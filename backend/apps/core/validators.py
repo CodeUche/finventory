@@ -15,6 +15,7 @@ import os
 
 import filetype
 from django.core.exceptions import ValidationError
+from rest_framework import serializers
 
 # ── File type allowlists ───────────────────────────────────────────────────────
 # Keep these conservative — only accept formats the UI actually uses.
@@ -33,6 +34,21 @@ _LETTERHEAD_MIME_TYPES = {"application/pdf", "image/jpeg", "image/png", "image/g
 # but per-field limits give a tighter, more informative error message.
 _MAX_IMAGE_BYTES = 5 * 1024 * 1024    # 5 MB
 _MAX_DOCUMENT_BYTES = 10 * 1024 * 1024  # 10 MB
+
+
+def validate_same_org_account(value, request):
+    """Reject a GL account belonging to another organisation.
+
+    DRF auto-generates ``queryset=Account.objects.all()`` for a plain FK, so the
+    per-party GL account overrides need an explicit tenant check or a caller could
+    attach another organisation's account.
+    """
+    if value is None:
+        return value
+    org = getattr(request, "organisation", None) if request else None
+    if org is not None and value.organisation_id != org.id:
+        raise serializers.ValidationError("That account does not belong to this organisation.")
+    return value
 
 
 def sniff_image_bytes(data: bytes) -> str | None:

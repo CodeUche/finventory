@@ -85,6 +85,9 @@ export interface Product {
   is_active: boolean
   is_taxable: boolean
   tax_class: string | null
+  inventory_account?: string | null
+  inventory_account_code?: string | null
+  inventory_account_name?: string | null
   total_stock: number
 }
 
@@ -118,6 +121,9 @@ export interface Customer {
   available_credit: string
   is_credit_blocked: boolean
   credit_score?: number
+  receivable_account?: string | null
+  receivable_account_code?: string | null
+  receivable_account_name?: string | null
   is_active: boolean
 }
 

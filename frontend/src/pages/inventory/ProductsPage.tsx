@@ -15,6 +15,7 @@ import type { Product, TaxClass, Organisation } from '@/types'
 import SortSelect from '@/components/SortSelect'
 import { FieldTooltip } from '@/components/FieldTooltip'
 import DateInput from '@/components/DateInput'
+import GLAccountSelect from '@/components/GLAccountSelect'
 // @ts-ignore
 import autoTable from 'jspdf-autotable'
 import jsPDF from 'jspdf'
@@ -263,6 +264,7 @@ const BLANK = {
   reorder_level: '10', max_stock_level: '', quantity_in_pack: '1',
   alcohol_percentage: '', volume_ml: '',
   is_taxable: false, tax_class: '',
+  inventory_account: '',
   is_active: true,
   description: '', barcode: '', category: '',
 }
@@ -403,6 +405,7 @@ export default function ProductsPage() {
       volume_ml: String(p.volume_ml ?? ''),
       is_taxable: p.is_taxable ?? false,
       tax_class: p.tax_class ?? '',
+      inventory_account: p.inventory_account ?? '',
       is_active: p.is_active ?? true,
       description: (p as any).description ?? '',
       barcode: (p as any).barcode ?? '',
@@ -472,6 +475,8 @@ export default function ProductsPage() {
     // Send null for tax_class when empty, or when is_taxable is false
     if (!payload.is_taxable) payload.tax_class = null
     else if (!payload.tax_class) payload.tax_class = null
+    // Blank GL override means "use the organisation default"
+    if (!payload.inventory_account) payload.inventory_account = null
     // Editing without detail hydration (offline): never send the fields the slim
     // list doesn't carry — sending their empty defaults would wipe real data.
     if (editId && !editHydrated) {
@@ -1144,6 +1149,16 @@ export default function ProductsPage() {
                         No VAT classes configured. Add them in Tax → VAT Classes.
                       </p>
                     )}
+                  </div>
+                )}
+                {form.product_type === 'physical' && (
+                  <div>
+                    <label className="label">Inventory Account</label>
+                    <GLAccountSelect value={form.inventory_account}
+                      onChange={(v) => setForm((f) => ({ ...f, inventory_account: v }))} />
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      GL control account this item's stock value posts to. Leave on the organisation default unless this item needs its own inventory account.
+                    </p>
                   </div>
                 )}
               </div>

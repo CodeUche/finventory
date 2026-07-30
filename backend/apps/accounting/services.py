@@ -257,6 +257,86 @@ class AccountingService:
         except Exception:
             return AccountingService._get_account_by_code(organisation, code)
 
+    # Which take-on tab owns each control account, for the guard's error message.
+    _CONTROL_ACCOUNT_ROUTE = {
+        '1100': 'enter these on the Customers tab so each customer balance is recorded individually',
+        '2001': 'enter these on the Suppliers tab so each supplier balance is recorded individually',
+        '1200': 'enter these on the Inventory tab so each item quantity and cost is recorded individually',
+        '1500': 'take these on through the Fixed Assets register',
+        '1510': 'take these on through the Fixed Assets register',
+    }
+
+    @staticmethod
+    def _reverse_prior_entries(entries, actor=None):
+        """Reverse prior take-on entries, skipping any that were already reversed.
+
+        The ledger is immutable, so `reverse_journal_entry` leaves the original at
+        status='posted'. A take-on re-run therefore re-selects every earlier entry,
+        and reversing one twice collides on the reversal's
+        (organisation, source_type, source_ref) uniqueness — which surfaced as an
+        opaque IntegrityError on the third re-run.
+        """
+        entries = list(entries)
+        if not entries:
+            return
+        already_reversed = set(
+            JournalEntry.objects.filter(
+                organisation=entries[0].organisation,
+                source_type='reversal',
+                source_ref__in=[str(e.id) for e in entries],
+            ).values_list('source_ref', flat=True)
+        )
+        for entry in entries:
+            if str(entry.id) in already_reversed:
+                continue
+            AccountingService.reverse_journal_entry(entry, actor=actor)
+
+    @staticmethod
+    def _normalise_side(value, default):
+        """Coerce a take-on side to 'debit'/'credit', tolerating 'Dr'/'Cr' and blanks."""
+        raw = (str(value or '')).strip().lower()
+        if raw in ('debit', 'dr'):
+            return 'debit'
+        if raw in ('credit', 'cr'):
+            return 'credit'
+        return default
+
+    @staticmethod
+    def _resolve_party_account(organisation, party, fk_attr, role, default_code):
+        """Resolve the GL control account for one customer / supplier / product.
+
+        Three tiers: the party's own override, then the org's AccountMapping role,
+        then the default code. The per-party tier is what lets a business point an
+        individual party at its own receivable/payable/inventory account.
+        """
+        if party is not None and getattr(party, f'{fk_attr}_id', None):
+            return getattr(party, fk_attr)
+        return AccountingService._mapped_or_code(organisation, role, default_code)
+
+    @staticmethod
+    def _assert_takeon_postable(account):
+        """Reject a direct opening balance on a control account.
+
+        AR/AP/Inventory/Fixed-Asset balances accumulate from their sub-ledgers. Posting
+        them here as well as on the sub-ledger tabs silently doubles the control account,
+        which is the failure this guard exists to prevent. The `code in CONTROL_CODES`
+        clause covers legacy orgs seeded before the flags existed (their accounts still
+        carry allow_posting=True until the backfill migration runs).
+        """
+        is_control = (
+            not account.allow_posting
+            or account.is_control_account
+            or account.code in AccountingService.CONTROL_CODES
+        )
+        if not is_control:
+            return
+        route = AccountingService._CONTROL_ACCOUNT_ROUTE.get(account.code)
+        detail = f", {route}" if route else ""
+        raise ValueError(
+            f"{account.code} — {account.name} is a control account and cannot take a direct "
+            f"opening balance{detail}."
+        )
+
     @staticmethod
     @transaction.atomic
     def set_opening_balances(organisation, as_of_date, entries, created_by=None):
@@ -280,8 +360,7 @@ class AccountingService:
             source_ref__startswith=f'opening-{as_of_date}',
             status='posted',
         )
-        for e in prior:
-            AccountingService.reverse_journal_entry(e, actor=created_by)
+        AccountingService._reverse_prior_entries(prior, actor=created_by)
 
         lines = []
         total_debit = Decimal('0')
@@ -290,6 +369,9 @@ class AccountingService:
             acct = item['account']
             amount = Decimal(str(item.get('amount') or 0))
             side = (item.get('side') or acct.effective_normal_balance).lower()
+            # Checked before the zero-skip so a control account fails loudly rather
+            # than being silently ignored when the user leaves the amount blank.
+            AccountingService._assert_takeon_postable(acct)
             if amount <= 0:
                 continue
             if acct.code == '3900':
@@ -343,12 +425,14 @@ class AccountingService:
         side = (side or account.effective_normal_balance).lower()
         ref_prefix = f"opening-acct-{account.id}"
 
+        # Guard first: a rejected call must not reverse the account's existing entry.
+        AccountingService._assert_takeon_postable(account)
+
         prior = JournalEntry.objects.filter(
             organisation=organisation, source_type='opening_balance',
             source_ref__startswith=ref_prefix, status='posted',
         )
-        for e in prior:
-            AccountingService.reverse_journal_entry(e, actor=created_by)
+        AccountingService._reverse_prior_entries(prior, actor=created_by)
 
         account.opening_balance = amount if side == 'debit' else -amount
         account.opening_balance_date = as_of_date
@@ -382,20 +466,36 @@ class AccountingService:
     def set_subledger_opening_balances(organisation, as_of_date, customers=None,
                                        suppliers=None, items=None, created_by=None):
         """
-        Take-on opening balances for the sub-ledgers (the wizard's Add Customers /
-        Add Suppliers / Add Items). Sets each subledger figure AND posts ONE balanced
-        take-on journal:
-            DR 1100 Accounts Receivable   = Σ customer opening balances
-            DR 1200 Inventory             = Σ item (qty × cost)
-            CR 2001 Accounts Payable      = Σ supplier opening balances
-            plug 3900 Take-On Suspense.
+        Take-on opening balances for the sub-ledgers (the wizard's Customers /
+        Suppliers / Inventory tabs). Sets each sub-ledger figure AND posts ONE
+        balanced take-on journal.
 
-        customers/suppliers: [{id, amount}]   items: [{product_id, warehouse_id?, quantity, unit_cost?}]
-        Re-running for the same date reverses the prior subledger take-on first.
+        Each row carries a side, so a customer can be taken on with a credit balance
+        (prepayment) and a supplier with a debit balance (advance paid):
+
+            customer debit  -> DR mapped account / CR Take-On Suspense
+            customer credit -> DR Take-On Suspense / CR mapped account
+            supplier credit -> CR mapped account / DR Take-On Suspense
+            supplier debit  -> DR mapped account / CR Take-On Suspense
+            item debit      -> DR mapped account / CR Take-On Suspense
+            item credit     -> DR Take-On Suspense / CR mapped account
+
+        The GL account is resolved per party (override -> org mapping -> default
+        code) and amounts are NETTED per resolved account, so the journal carries
+        exactly one line per account no matter how many parties map to it — the
+        control account can never be posted twice.
+
+        customers/suppliers: [{id, amount, side?}]
+        items: [{product_id, warehouse_id?, quantity, unit_cost?, side?}]
+        `side` is optional; it defaults to debit for customers/items and credit for
+        suppliers, which reproduces the pre-Dr/Cr behaviour for older callers.
+
+        Re-running for the same date reverses the prior take-on journal and posts
+        only the NET stock delta, so a correction never doubles stock or the GL.
         """
         from apps.customers.models import Customer
         from apps.suppliers.models import Supplier
-        from apps.inventory.models import Product, Warehouse
+        from apps.inventory.models import Product, Warehouse, StockMovement
         from apps.inventory.services import InventoryService
 
         as_of_date = AccountingService._coerce_date(as_of_date)
@@ -408,40 +508,74 @@ class AccountingService:
             organisation=organisation, source_type='opening_balance',
             source_ref__startswith=ref_prefix, status='posted',
         )
-        for e in prior:
-            AccountingService.reverse_journal_entry(e, actor=created_by)
+        AccountingService._reverse_prior_entries(prior, actor=created_by)
 
-        ar_total = Decimal('0')
+        # account_id -> [Account, signed Decimal]; positive == net debit.
+        buckets = {}
+
+        def add(account, signed):
+            if account is None or signed == 0:
+                return
+            slot = buckets.setdefault(account.id, [account, Decimal('0')])
+            slot[1] += signed
+
         for c in customers:
             amount = Decimal(str(c.get('amount') or 0))
-            if amount <= 0:
+            if amount == 0:
                 continue
-            cust = Customer.objects.filter(organisation=organisation, id=c.get('id')).first()
+            side = AccountingService._normalise_side(c.get('side'), 'debit')
+            if amount < 0:  # a negative amount is just the other side
+                amount, side = -amount, ('credit' if side == 'debit' else 'debit')
+            cust = Customer.objects.filter(
+                organisation=organisation, id=c.get('id')
+            ).select_related('receivable_account').first()
             if not cust:
                 continue
-            cust.outstanding_balance = amount
-            cust.save(update_fields=['outstanding_balance'])
-            ar_total += amount
+            signed = amount if side == 'debit' else -amount
+            cust.outstanding_balance = signed
+            cust.save(update_fields=['outstanding_balance', 'updated_at'])
+            add(AccountingService._resolve_party_account(
+                organisation, cust, 'receivable_account', 'accounts_receivable', '1100'), signed)
 
-        ap_total = Decimal('0')
         for s in suppliers:
             amount = Decimal(str(s.get('amount') or 0))
-            if amount <= 0:
+            if amount == 0:
                 continue
-            sup = Supplier.objects.filter(organisation=organisation, id=s.get('id')).first()
+            side = AccountingService._normalise_side(s.get('side'), 'credit')
+            if amount < 0:
+                amount, side = -amount, ('debit' if side == 'credit' else 'credit')
+            sup = Supplier.objects.filter(
+                organisation=organisation, id=s.get('id')
+            ).select_related('payable_account').first()
             if not sup:
                 continue
-            sup.opening_balance = amount
-            sup.save(update_fields=['opening_balance'])
-            ap_total += amount
+            # Supplier.opening_balance is positive when we owe them (a credit balance).
+            sup.opening_balance = amount if side == 'credit' else -amount
+            sup.save(update_fields=['opening_balance', 'updated_at'])
+            signed = -amount if side == 'credit' else amount
+            add(AccountingService._resolve_party_account(
+                organisation, sup, 'payable_account', 'accounts_payable', '2001'), signed)
 
-        inv_total = Decimal('0')
+        # Prior take-on stock, so a re-run posts only the delta instead of stacking.
+        prior_stock = {
+            (row['product_id'], row['warehouse_id']): row['q']
+            for row in StockMovement.objects.filter(
+                organisation=organisation, movement_type='opening', reference=ref_prefix,
+            ).values('product_id', 'warehouse_id').annotate(q=Sum('quantity'))
+        }
+
         default_wh = Warehouse.objects.filter(organisation=organisation).order_by('created_at').first()
+        seen_stock = set()
         for it in items:
             qty = Decimal(str(it.get('quantity') or 0))
-            if qty <= 0:
+            if qty == 0:
                 continue
-            product = Product.objects.filter(organisation=organisation, id=it.get('product_id')).first()
+            side = AccountingService._normalise_side(it.get('side'), 'debit')
+            if qty < 0:
+                qty, side = -qty, ('credit' if side == 'debit' else 'debit')
+            product = Product.objects.filter(
+                organisation=organisation, id=it.get('product_id')
+            ).select_related('inventory_account').first()
             if not product:
                 continue
             warehouse = None
@@ -451,36 +585,54 @@ class AccountingService:
             if not warehouse:
                 continue
             unit_cost = Decimal(str(it.get('unit_cost') or product.cost_price or 0))
-            InventoryService.record_movement(
-                organisation=organisation, product=product, warehouse=warehouse,
-                quantity=qty, movement_type='opening', unit_cost=unit_cost,
-                reference='Opening balance', notes=f'Opening stock as of {as_of_date}',
-                created_by=created_by,
-            )
-            inv_total += qty * unit_cost
+            signed_qty = qty if side == 'debit' else -qty
+            key = (product.id, warehouse.id)
+            seen_stock.add(key)
+            delta = signed_qty - prior_stock.get(key, Decimal('0'))
+            if delta != 0:
+                AccountingService._move_opening_stock(
+                    organisation, product, warehouse, delta, unit_cost,
+                    ref_prefix, as_of_date, created_by,
+                )
+            add(AccountingService._resolve_party_account(
+                organisation, product, 'inventory_account', 'inventory_account', '1200'),
+                signed_qty * unit_cost)
 
-        ar = AccountingService._mapped_or_code(organisation, 'accounts_receivable', '1100')
-        inv = AccountingService._mapped_or_code(organisation, 'inventory_account', '1200')
-        ap = AccountingService._mapped_or_code(organisation, 'accounts_payable', '2001')
-        suspense = AccountingService.get_or_create_suspense_account(organisation)
+        # An item dropped from the payload must have its take-on stock backed out,
+        # otherwise removing a row silently leaves the stock behind.
+        for (product_id, warehouse_id), prior_qty in prior_stock.items():
+            if (product_id, warehouse_id) in seen_stock or prior_qty == 0:
+                continue
+            product = Product.objects.filter(organisation=organisation, id=product_id).first()
+            warehouse = Warehouse.objects.filter(organisation=organisation, id=warehouse_id).first()
+            if not product or not warehouse:
+                continue
+            AccountingService._move_opening_stock(
+                organisation, product, warehouse, -prior_qty, product.cost_price,
+                ref_prefix, as_of_date, created_by,
+            )
+
+        if not buckets:
+            return None
 
         lines = []
-        if ar and ar_total > 0:
-            lines.append((ar, ar_total, Decimal('0')))
-        if inv and inv_total > 0:
-            lines.append((inv, inv_total, Decimal('0')))
-        if ap and ap_total > 0:
-            lines.append((ap, Decimal('0'), ap_total))
+        net_total = Decimal('0')
+        for account, signed in sorted(buckets.values(), key=lambda b: b[0].code):
+            if signed == 0:
+                continue  # fully-netting parties contribute no line at all
+            net_total += signed
+            if signed > 0:
+                lines.append((account, signed, Decimal('0')))
+            else:
+                lines.append((account, Decimal('0'), -signed))
         if not lines:
             return None
 
-        total_debit = ar_total + inv_total
-        total_credit = ap_total
-        diff = total_debit - total_credit
-        if diff > 0:
-            lines.append((suspense, Decimal('0'), diff))
-        elif diff < 0:
-            lines.append((suspense, -diff, Decimal('0')))
+        suspense = AccountingService.get_or_create_suspense_account(organisation)
+        if net_total > 0:
+            lines.append((suspense, Decimal('0'), net_total))
+        elif net_total < 0:
+            lines.append((suspense, -net_total, Decimal('0')))
 
         import uuid
         return AccountingService.post_journal_entry(
@@ -493,6 +645,25 @@ class AccountingService:
             source_type='opening_balance',
             source_ref=f"{ref_prefix}-{uuid.uuid4().hex[:12]}",
         )
+
+    @staticmethod
+    def _move_opening_stock(organisation, product, warehouse, delta, unit_cost,
+                            ref_prefix, as_of_date, created_by):
+        """Post a take-on stock delta, translating the raw stock error into guidance."""
+        from apps.inventory.services import InventoryService
+        try:
+            InventoryService.record_movement(
+                organisation=organisation, product=product, warehouse=warehouse,
+                quantity=delta, movement_type='opening', unit_cost=unit_cost,
+                reference=ref_prefix, notes=f'Opening stock as of {as_of_date}',
+                created_by=created_by,
+            )
+        except ValueError:
+            raise ValueError(
+                f"{product.sku} — {product.name}: the opening quantity cannot be reduced to this "
+                f"level because stock from the original take-on has already been sold or "
+                f"transferred. Post a stock adjustment instead."
+            )
 
     @staticmethod
     def _ledger_balance(account, as_of=None):
@@ -1805,8 +1976,7 @@ class AccountingService:
             organisation=organisation, source_type='year_end_close',
             source_ref__startswith=ref_prefix, status='posted',
         )
-        for e in prior:
-            AccountingService.reverse_journal_entry(e, actor=created_by)
+        AccountingService._reverse_prior_entries(prior, actor=created_by)
 
         re_acct = AccountingService._get_account_by_code(organisation, '3100')
         if re_acct is None:

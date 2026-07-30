@@ -1362,7 +1362,11 @@ export const partnerApi = {
 }
 
 export const accountingApi = {
-  accounts: (params?: object) => api.get('/accounting/accounts/', { params }),
+  // Default a large page size: every caller needs the WHOLE chart (tree rendering,
+  // journal-line pickers, type counts). Without it DRF's 25-row default silently
+  // truncated the list at the 3xxx accounts, hiding all revenue/expense/COGS.
+  accounts: (params?: object) => api.get('/accounting/accounts/', { params: { page_size: 1000, ...params } }),
+  accountsSummary: (params?: object) => api.get('/accounting/accounts/summary/', { params }),
   createAccount: (data: object) => api.post('/accounting/accounts/', data),
   updateAccount: (id: string, data: object) => api.patch(`/accounting/accounts/${id}/`, data),
   deleteAccount: (id: string) => api.delete(`/accounting/accounts/${id}/`),

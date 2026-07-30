@@ -38,7 +38,12 @@ class CreditService:
     @transaction.atomic
     def record_payment(organisation, customer, amount: Decimal, recorded_by, description="", due_date=None) -> CreditTransaction:
         """Record a credit payment (reduces outstanding balance) and post GL entry."""
-        new_balance = max(customer.outstanding_balance - amount, Decimal("0"))
+        # Clamp only a genuine overpayment against a debit balance. A customer whose
+        # balance is already negative is in credit (take-on prepayment / unapplied
+        # credit note) — clamping there would erase that credit and desynchronise the
+        # sub-ledger from the AR control account.
+        raw_balance = customer.outstanding_balance - amount
+        new_balance = raw_balance if customer.outstanding_balance < 0 else max(raw_balance, Decimal("0"))
         txn = CreditTransaction.objects.create(
             organisation=organisation,
             customer=customer,

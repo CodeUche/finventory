@@ -152,6 +152,14 @@ class Product(TenantAwareModel):
         "tax.TaxClass", null=True, blank=True, on_delete=models.SET_NULL, related_name="products"
     )
 
+    # Optional per-product inventory control account. Blank falls back to the org
+    # AccountMapping 'inventory_account' role, then to code 1200.
+    inventory_account = models.ForeignKey(
+        "accounting.Account", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="products", limit_choices_to={"is_active": True},
+        help_text="GL control account for this item's stock. Leave blank to use the organisation default.",
+    )
+
     class Meta(TenantAwareModel.Meta):
         unique_together = [["organisation", "sku"]]
         indexes = [

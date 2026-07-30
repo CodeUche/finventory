@@ -6,6 +6,7 @@ import toast from 'react-hot-toast'
 import { supplierApi } from '@/services/api'
 import { usePagination } from '@/hooks/usePagination'
 import Pagination from '@/components/Pagination'
+import GLAccountSelect from '@/components/GLAccountSelect'
 
 interface Supplier {
   id: string
@@ -18,6 +19,7 @@ interface Supplier {
   tax_id: string
   payment_terms_days: number
   notes: string
+  payable_account?: string | null
   is_active: boolean
 }
 
@@ -30,7 +32,11 @@ const BLANK = {
   tax_id: '',
   payment_terms_days: '30',
   notes: '',
+  payable_account: '',
 }
+
+// A blank GL override means "use the organisation default" — send null, not "".
+const toPayload = (f: typeof BLANK) => ({ ...f, payable_account: f.payable_account || null })
 
 export default function SuppliersPage() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
@@ -74,6 +80,7 @@ export default function SuppliersPage() {
       tax_id: s.tax_id ?? '',
       payment_terms_days: String(s.payment_terms_days ?? 30),
       notes: s.notes ?? '',
+      payable_account: s.payable_account ?? '',
     })
     setShowModal(true)
   }
@@ -83,10 +90,10 @@ export default function SuppliersPage() {
     setSaving(true)
     try {
       if (editId) {
-        await supplierApi.update(editId, form)
+        await supplierApi.update(editId, toPayload(form))
         toast.success('Supplier updated')
       } else {
-        await supplierApi.create(form)
+        await supplierApi.create(toPayload(form))
         toast.success('Supplier added')
       }
       setShowModal(false)
@@ -222,6 +229,14 @@ export default function SuppliersPage() {
                 <div className="col-span-2">
                   <label className="label">Notes</label>
                   <textarea className="input resize-none" rows={2} value={form.notes} onChange={upd('notes')} placeholder="Any additional notes…" />
+                </div>
+                <div className="col-span-2">
+                  <label className="label">Payable Account</label>
+                  <GLAccountSelect value={form.payable_account}
+                    onChange={(v) => setForm((f) => ({ ...f, payable_account: v }))} />
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    GL control account this supplier's balance posts to. Leave on the organisation default unless this supplier needs its own payable account.
+                  </p>
                 </div>
               </div>
               <div className="flex gap-3 pt-2">
