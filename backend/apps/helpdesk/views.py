@@ -33,7 +33,11 @@ class SupportTicketViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             created_by=self.request.user,
             ticket_number=SupportTicket.generate_number(org),
         )
-        services.notify_new_ticket(ticket)
+        # Notifications must never break ticket creation.
+        try:
+            services.notify_new_ticket(ticket)
+        except Exception:  # pragma: no cover - defensive
+            pass
 
     @action(detail=True, methods=["post"])
     def comment(self, request, pk=None):
@@ -43,7 +47,10 @@ class SupportTicketViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             return Response({"error": "Comment body is required"}, status=400)
         c = TicketComment.objects.create(
             organisation=ticket.organisation, ticket=ticket, author=request.user, body=body)
-        services.notify_new_comment(c)
+        try:
+            services.notify_new_comment(c)
+        except Exception:  # pragma: no cover - defensive
+            pass
         return Response(TicketCommentSerializer(c).data, status=201)
 
     @action(detail=True, methods=["post"])
@@ -93,7 +100,10 @@ class PlatformTicketViewSet(viewsets.ReadOnlyModelViewSet):
         c = TicketComment.objects.create(
             organisation=ticket.organisation, ticket=ticket, author=request.user, body=body)
         # Support replied → email the customer who raised it.
-        services.notify_creator_reply(c)
+        try:
+            services.notify_creator_reply(c)
+        except Exception:  # pragma: no cover - defensive
+            pass
         return Response(TicketCommentSerializer(c).data, status=201)
 
     @action(detail=True, methods=["post"])

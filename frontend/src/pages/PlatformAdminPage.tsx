@@ -473,7 +473,7 @@ export default function PlatformAdminPage() {
                     >
                       <div className="flex items-center justify-between gap-2 mb-1">
                         <span className="text-xs font-mono text-slate-500">{t.ticket_number}</span>
-                        <span className={TICKET_STATUS_BADGE[t.status] ?? 'badge-slate'}>{t.status.replace('_', ' ')}</span>
+                        <span className={TICKET_STATUS_BADGE[t.status] ?? 'badge-slate'}>{(t.status ?? 'open').replace('_', ' ')}</span>
                       </div>
                       <p className="text-sm text-white font-medium truncate">{t.subject}</p>
                       <div className="flex items-center gap-2 mt-1">

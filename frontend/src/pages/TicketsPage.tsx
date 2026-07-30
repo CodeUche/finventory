@@ -116,7 +116,7 @@ export default function TicketsPage() {
                 </div>
                 <div className="text-[11px] text-slate-500 mt-0.5">{t.created_by_name} · {formatDate(t.created_at)}</div>
               </div>
-              <span className={`text-[11px] px-2 py-1 rounded border shrink-0 ${STATUS_BADGE[t.status] ?? ''}`}>{t.status.replace('_', ' ')}</span>
+              <span className={`text-[11px] px-2 py-1 rounded border shrink-0 ${STATUS_BADGE[t.status] ?? ''}`}>{(t.status ?? 'open').replace('_', ' ')}</span>
             </button>
           ))}
         </div>
