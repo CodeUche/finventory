@@ -2,6 +2,10 @@ import { defineConfig } from '@playwright/test'
 
 // Relative to the config's directory (the project is ESM, so no __dirname).
 const STORAGE_STATE = './e2e/.auth/user.json'
+const PAYMENTS_STORAGE_STATE = './e2e/.auth/payments.json'
+// The payments stack runs on its own ports so it can point at a throwaway
+// database without disturbing whatever is already using :3000/:8000.
+const PAYMENTS_URL = process.env.E2E_PAYMENTS_URL || 'http://localhost:3010'
 
 // Browser E2E against the running dev app (Vite :3000 proxies /api → Django :8000).
 export default defineConfig({
@@ -26,9 +30,20 @@ export default defineConfig({
     { name: 'setup', testMatch: /auth\.setup\.ts/ },
     {
       name: 'e2e',
-      testIgnore: /auth\.setup\.ts/,
+      testIgnore: /(auth|payments)\.setup\.ts|payments\.spec\.ts/,
       dependencies: ['setup'],
       use: { storageState: STORAGE_STATE },
+    },
+
+    // Payments run against their own isolated stack and their own user, so they
+    // get a separate login. Point at it with:
+    //   E2E_BASE_URL=http://localhost:3010 npx playwright test --project=payments
+    { name: 'payments-setup', testMatch: /payments\.setup\.ts/, use: { baseURL: PAYMENTS_URL } },
+    {
+      name: 'payments',
+      testMatch: /payments\.spec\.ts/,
+      dependencies: ['payments-setup'],
+      use: { storageState: PAYMENTS_STORAGE_STATE, baseURL: PAYMENTS_URL },
     },
   ],
 })

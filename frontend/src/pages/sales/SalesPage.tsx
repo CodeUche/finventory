@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
-import { Plus, Receipt, Search, X, Loader2, CheckCircle, Ban, FileDown, Mail, MessageCircle, RotateCcw, Truck, Pencil, Trash2, CalendarClock, RefreshCw, PackageCheck, AlertTriangle, FileText } from 'lucide-react'
+import { Plus, Receipt, Search, X, Loader2, CheckCircle, Ban, FileDown, Mail, MessageCircle, RotateCcw, Truck, Pencil, Trash2, CalendarClock, RefreshCw, PackageCheck, AlertTriangle, FileText, Landmark } from 'lucide-react'
+import CollectPaymentModal from '@/components/CollectPaymentModal'
 import SortSelect from '@/components/SortSelect'
 import YearFilter, { yearToDateParams } from '@/components/YearFilter'
 import MonthFilter, { monthToDateParams, type ArchiveMonth } from '@/components/MonthFilter'
@@ -504,6 +505,7 @@ export default function SalesPage() {
   const [acting, setActing] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [payAmount, setPayAmount] = useState('')
+  const [showCollect, setShowCollect] = useState(false)
   const [payMethod, setPayMethod] = useState('cash')
   const [tenderedAmount, setTenderedAmount] = useState('')
   const [pdfPreview, setPdfPreview] = useState<PdfPreview | null>(null)
@@ -1249,6 +1251,14 @@ export default function SalesPage() {
                       )}
                     </div>
                   )}
+
+                  {/* Let the customer pay themselves — one-time account, card, or transfer. */}
+                  <button
+                    onClick={() => setShowCollect(true)}
+                    className="btn-ghost w-full mt-2 py-2 text-sm flex items-center justify-center gap-2"
+                  >
+                    <Landmark size={14} /> Ask customer to pay
+                  </button>
                 </div>
               )}
             </div>
@@ -1658,6 +1668,16 @@ export default function SalesPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {showCollect && selected && (
+        <CollectPaymentModal
+          invoiceId={selected.id}
+          invoiceNumber={selected.invoice_number}
+          amountDue={selected.amount_due ?? 0}
+          onClose={() => setShowCollect(false)}
+          onPaid={() => { setShowCollect(false); bypassNextGets(); load() }}
+        />
       )}
     </div>
   )

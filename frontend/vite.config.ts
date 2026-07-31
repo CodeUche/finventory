@@ -99,12 +99,15 @@ export default defineConfig(({ mode }) => {
   },
 
   server: {
-    port: 3000,
-    strictPort: true, // Tauri expects exactly this port
+    // Tauri expects exactly 3000. VITE_DEV_PORT lets a second, isolated dev
+    // stack run alongside it (e.g. E2E against a throwaway database) without
+    // fighting the primary one for the port.
+    port: Number(process.env.VITE_DEV_PORT) || 3000,
+    strictPort: true,
     proxy: {
       // Active only during `vite` dev server — not in packaged builds
       '/api': {
-        target: 'http://localhost:8000',
+        target: process.env.VITE_PROXY_TARGET || 'http://localhost:8000',
         changeOrigin: true,
       },
     },

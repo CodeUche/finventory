@@ -14,7 +14,7 @@ import {
   setTimeoutPreference,
   type TimeoutOption,
 } from '@/hooks/useInactivityTimeout'
-import type { PaymentGatewayConfig, FinancialPeriod, TeamMember, ModuleKey, AccessLevel, PartnerAccessRequest, PartnerClientLink } from '@/types'
+import type { PaymentGatewayConfig, MerchantBankAccount, FinancialPeriod, TeamMember, ModuleKey, AccessLevel, PartnerAccessRequest, PartnerClientLink } from '@/types'
 import { NIGERIAN_BANKS } from '@/lib/banks'
 import { useResolveBankAccount } from '@/hooks/useResolveBankAccount'
 
@@ -328,6 +328,44 @@ export default function SettingsPage() {
   const [paystackForm, setPaystackForm] = useState({ public_key: '', secret_key: '', webhook_secret: '', is_active: false })
   const [savingGateway, setSavingGateway] = useState(false)
 
+  // ─── Accounts customers transfer into (no provider needed) ───────────────────
+  const [payAccounts, setPayAccounts] = useState<MerchantBankAccount[]>([])
+  const [payAccountForm, setPayAccountForm] = useState({
+    bank_name: '', account_number: '', account_name: '', is_default: false,
+  })
+  const [savingPayAccount, setSavingPayAccount] = useState(false)
+
+  const loadPayAccounts = async () => {
+    try {
+      const { data } = await paymentGatewayApi.bankAccounts()
+      setPayAccounts(data.results ?? data)
+    } catch { /* non-fatal — the rest of the tab still works */ }
+  }
+
+  const addPayAccount = async () => {
+    if (!payAccountForm.bank_name || payAccountForm.account_number.length < 10) {
+      toast.error('Choose a bank and enter a 10-digit account number')
+      return
+    }
+    setSavingPayAccount(true)
+    try {
+      await paymentGatewayApi.createBankAccount(payAccountForm)
+      toast.success('Account added')
+      setPayAccountForm({ bank_name: '', account_number: '', account_name: '', is_default: false })
+      loadPayAccounts()
+    } catch {
+      toast.error('Could not add the account')
+    } finally { setSavingPayAccount(false) }
+  }
+
+  const deletePayAccount = async (id: string) => {
+    if (!(await confirmDialog('Remove this account from checkout?'))) return
+    try {
+      await paymentGatewayApi.deleteBankAccount(id)
+      loadPayAccounts()
+    } catch { toast.error('Could not remove the account') }
+  }
+
   // ─── Team state ──────────────────────────────────────────────────────────────
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([])
   const [loadingTeam, setLoadingTeam] = useState(false)
@@ -384,6 +422,7 @@ export default function SettingsPage() {
         }
       }).catch(() => {})
     }
+    if (activeTab === 'bank') loadPayAccounts()
     if (activeTab === 'email' && organisation?.id) {
       orgApi.getEmailConfig(organisation.id).then(({ data }) => {
         setEmailForm({
@@ -1655,6 +1694,76 @@ export default function SettingsPage() {
           <button onClick={saveCompany} disabled={savingCompany} className="btn-primary">
             {savingCompany ? <><Loader2 size={16} className="animate-spin" /> Saving…</> : 'Save Banking Details'}
           </button>
+
+          {/* Accounts customers can transfer into at checkout. */}
+          <div className="pt-5 border-t border-surface-700 space-y-4">
+            <div>
+              <h3 className="text-sm font-semibold text-white">Accounts customers can pay into</h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Offered at checkout and on your storefront. Money goes straight to you — Audity never
+                holds it. There is no automatic confirmation on these, so someone has to check the
+                bank and confirm before a sale counts as paid.
+              </p>
+            </div>
+
+            {payAccounts.length > 0 && (
+              <div className="space-y-2">
+                {payAccounts.map((a) => (
+                  <div key={a.id} className="flex items-center gap-3 rounded-xl border border-surface-600 p-3">
+                    <LandmarkIcon size={15} className="text-slate-500 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm text-white truncate">
+                        {a.bank_name} · <span className="font-mono">{a.account_number}</span>
+                      </p>
+                      <p className="text-xs text-slate-500 truncate">{a.account_name}</p>
+                    </div>
+                    {a.is_default && <span className="badge-green shrink-0">Default</span>}
+                    <button
+                      onClick={() => deletePayAccount(a.id)}
+                      className="btn-ghost p-1.5 text-slate-500 hover:text-red-400 shrink-0"
+                      title="Remove"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-3">
+              <select
+                className="input"
+                value={payAccountForm.bank_name}
+                onChange={(e) => setPayAccountForm({ ...payAccountForm, bank_name: e.target.value })}
+              >
+                <option value="">Select bank…</option>
+                {NIGERIAN_BANKS.map((b) => <option key={b.code} value={b.name}>{b.name}</option>)}
+              </select>
+              <input
+                className="input" placeholder="Account number" inputMode="numeric" maxLength={10}
+                value={payAccountForm.account_number}
+                onChange={(e) => setPayAccountForm({
+                  ...payAccountForm, account_number: e.target.value.replace(/\D/g, ''),
+                })}
+              />
+              <input
+                className="input col-span-2" placeholder="Account name"
+                value={payAccountForm.account_name}
+                onChange={(e) => setPayAccountForm({ ...payAccountForm, account_name: e.target.value })}
+              />
+              <label className="col-span-2 flex items-center gap-2 text-sm text-slate-300">
+                <input
+                  type="checkbox" className="w-4 h-4 accent-brand-500"
+                  checked={payAccountForm.is_default}
+                  onChange={(e) => setPayAccountForm({ ...payAccountForm, is_default: e.target.checked })}
+                />
+                Offer this one first
+              </label>
+            </div>
+            <button onClick={addPayAccount} disabled={savingPayAccount} className="btn-ghost text-sm">
+              {savingPayAccount ? <Loader2 size={14} className="animate-spin" /> : 'Add account'}
+            </button>
+          </div>
         </div>
       )}
 

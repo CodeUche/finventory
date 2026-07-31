@@ -981,9 +981,68 @@ export interface Budget {
 // Payment gateway
 export interface PaymentGatewayConfig {
   id: string
-  provider: 'paystack' | 'flutterwave'
+  provider: 'paystack' | 'flutterwave' | 'monnify'
+  provider_label?: string
   public_key: string
   is_active: boolean
+  /** Secrets are write-only; these say whether one is stored. */
+  has_secret_key?: boolean
+  has_webhook_secret?: boolean
+  contract_code?: string
+  preferred_bank?: string
+  use_sandbox?: boolean
+  allow_card?: boolean
+  allow_transfer?: boolean
+  virtual_account_minutes?: number
+}
+
+/** A bank account the merchant asks customers to transfer into directly. */
+export interface MerchantBankAccount {
+  id: string
+  bank_name: string
+  account_number: string
+  account_name: string
+  is_default: boolean
+  is_active: boolean
+  show_on_invoice: boolean
+  show_on_storefront: boolean
+  instructions?: string
+  created_at?: string
+}
+
+/** A one-time account number issued for a single sale. */
+export interface VirtualAccount {
+  id: string
+  invoice: string
+  invoice_number: string
+  provider: string
+  reference: string
+  account_number: string
+  bank_name: string
+  account_name: string
+  amount: string
+  currency: string
+  status: 'pending' | 'paid' | 'expired' | 'cancelled'
+  is_expired: boolean
+  expires_at: string | null
+  paid_at: string | null
+}
+
+/** A customer's claim that they transferred into the merchant's own account. */
+export interface BankTransferClaim {
+  id: string
+  invoice: string
+  invoice_number: string
+  bank_name: string
+  account_number: string
+  amount: string
+  payer_name: string
+  narration: string
+  status: 'awaiting' | 'confirmed' | 'rejected'
+  reviewed_by_name?: string
+  reviewed_at?: string | null
+  review_note?: string
+  created_at: string
 }
 
 export interface PaymentLink {
