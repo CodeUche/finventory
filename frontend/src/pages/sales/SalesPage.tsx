@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
-import { Plus, Receipt, Search, X, Loader2, CheckCircle, Ban, FileDown, Mail, MessageCircle, RotateCcw, Truck, Pencil, Trash2, CalendarClock, RefreshCw, PackageCheck, AlertTriangle, FileText, Landmark } from 'lucide-react'
+import { Plus, Receipt, Search, X, Loader2, CheckCircle, Ban, FileDown, Mail, MessageCircle, RotateCcw, Truck, Pencil, Trash2, CalendarClock, RefreshCw, PackageCheck, AlertTriangle, FileText, Landmark, Printer } from 'lucide-react'
 import CollectPaymentModal from '@/components/CollectPaymentModal'
+import { printReceipt } from '@/lib/receipt'
 import SortSelect from '@/components/SortSelect'
 import YearFilter, { yearToDateParams } from '@/components/YearFilter'
 import MonthFilter, { monthToDateParams, type ArchiveMonth } from '@/components/MonthFilter'
@@ -506,6 +507,35 @@ export default function SalesPage() {
   const [exporting, setExporting] = useState(false)
   const [payAmount, setPayAmount] = useState('')
   const [showCollect, setShowCollect] = useState(false)
+
+  /** Print an 80mm thermal receipt for the open invoice. */
+  const printInvoiceReceipt = () => {
+    const inv = detail ?? selected
+    if (!inv) return
+    printReceipt({
+      merchant: organisation?.invoice_company_name || organisation?.name || 'Receipt',
+      address: organisation?.address,
+      phone: organisation?.phone,
+      tin: organisation?.tax_id,
+      invoiceNumber: inv.invoice_number,
+      date: formatDate(inv.issue_date),
+      cashier: inv.sold_by || undefined,
+      customer: inv.customer_name || undefined,
+      lines: (inv.items ?? []).map((it) => ({
+        name: it.product_name,
+        qty: it.quantity,
+        unit_price: it.unit_price,
+        line_total: it.line_total,
+      })),
+      subtotal: inv.subtotal,
+      tax: inv.tax_amount,
+      discount: inv.discount_amount,
+      total: inv.total_amount,
+      payments: (inv.payments ?? []).map((p) => ({ method: p.method, amount: p.amount })),
+      firsIrn: inv.firs_irn,
+      qrCodeBase64: inv.firs_qr_code,
+    })
+  }
   const [payMethod, setPayMethod] = useState('cash')
   const [tenderedAmount, setTenderedAmount] = useState('')
   const [pdfPreview, setPdfPreview] = useState<PdfPreview | null>(null)
@@ -1260,6 +1290,16 @@ export default function SalesPage() {
                     <Landmark size={14} /> Ask customer to pay
                   </button>
                 </div>
+              )}
+
+              {/* Thermal receipt — 80mm roll, straight to the OS print dialog. */}
+              {inv && (
+                <button
+                  onClick={printInvoiceReceipt}
+                  className="btn-ghost w-full py-2 text-sm flex items-center justify-center gap-2"
+                >
+                  <Printer size={14} /> Print receipt
+                </button>
               )}
             </div>
 

@@ -1522,6 +1522,15 @@ export const recurringApi = {
   generateNow: (id: string) => api.post(`/sales/recurring/${id}/generate_now/`),
 }
 
+export const tillApi = {
+  sessions: (params?: object) => api.get('/pos/till-sessions/', { params }),
+  /** The signed-in cashier's open till + live expected figures (never the count). */
+  current: () => api.get('/pos/till-sessions/current/'),
+  open: (data: object) => api.post('/pos/till-sessions/open/', data),
+  close: (id: string, data: object) => api.post(`/pos/till-sessions/${id}/close/`, data),
+  zReport: (id: string) => api.get(`/pos/till-sessions/${id}/z_report/`),
+}
+
 export const paymentGatewayApi = {
   configs: () => api.get('/payments/gateways/'),
   createConfig: (data: object) => api.post('/payments/gateways/', data),

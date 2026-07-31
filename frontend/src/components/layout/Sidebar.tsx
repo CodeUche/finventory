@@ -8,7 +8,7 @@ import {
   PieChart, Scale, Shield, ClipboardList, ChevronDown, ChevronRight, ShieldCheck,
   MapPin, ClipboardCheck, GraduationCap, Briefcase, ShoppingCart,
   User, Layout, Mail, Lock, Bot, Globe, Upload, GitBranch,
-  ChevronLeft, HelpCircle, LayoutGrid, Zap,
+  ChevronLeft, HelpCircle, LayoutGrid, Zap, Wallet,
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { authApi } from '@/services/api'
@@ -57,6 +57,7 @@ export const navGroups: { label: string | null; alwaysGroup?: boolean; items: { 
       { name: 'Recurring Invoices', href: '/recurring', icon: RefreshCw, module: 'recurring' },
       { name: 'POS', href: '/sales/new', icon: ShoppingCart, module: 'sales' },
       { name: 'POS Orders', href: '/pos/restaurant', icon: ClipboardList, module: 'sales' },
+      { name: 'Till / Cash-up', href: '/pos/till', icon: Wallet, module: 'sales' },
       { name: 'Tables', href: '/pos/tables', icon: LayoutGrid, module: 'sales', businessType: 'restaurant' },
       { name: 'Kitchen (KOT)', href: '/pos/kitchen', icon: ClipboardCheck, module: 'sales', businessType: 'restaurant' },
       { name: 'Locations', href: '/locations', icon: MapPin, module: 'sales' },

@@ -301,6 +301,14 @@ class SalePayment(TenantAwareModel):
         on_delete=models.PROTECT,
         related_name="received_payments",
     )
+    # Which till shift took this money. Set when a payment is recorded while the
+    # cashier has a session open, so the end-of-day count is an exact figure
+    # rather than a guess from timestamps. Gateway and storefront payments have
+    # no session — correctly, since they never touch the drawer.
+    till_session = models.ForeignKey(
+        "pos.TillSession", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="payments",
+    )
     notes = models.TextField(blank=True)
 
     class Meta(TenantAwareModel.Meta):

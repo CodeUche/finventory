@@ -417,6 +417,17 @@ class SaleService:
         )
 
     @staticmethod
+    def _open_till_for(organisation, user):
+        """The cashier's open till session, if they have one."""
+        if user is None:
+            return None
+        try:
+            from apps.pos.till_services import TillService
+            return TillService.current_session(organisation, user)
+        except Exception:  # pragma: no cover — a till lookup must never fail a sale
+            return None
+
+    @staticmethod
     @transaction.atomic
     def record_payment(invoice: Invoice, amount: Decimal, method: str, received_by, reference="") -> SalePayment:
         """
@@ -445,6 +456,10 @@ class SaleService:
                 method=method,
                 reference=reference,
                 received_by=received_by,
+                # Attach to the cashier's open till so the end-of-day count is
+                # exact. None for gateway/storefront payments, which is right —
+                # that money never reaches the drawer.
+                till_session=SaleService._open_till_for(invoice.organisation, received_by),
             )
 
             invoice.amount_paid += amount

@@ -87,6 +87,7 @@ import {
   Phone as _Phone,
   Play as _Play,
   Plus as _Plus,
+  Printer as _Printer,
   Prohibit as _Prohibit,
   Pulse as _Pulse,
   Question as _Question,
@@ -236,6 +237,7 @@ export const Phone = mk(_Phone)
 export const PieChart = mk(_ChartPie)
 export const Play = mk(_Play)
 export const Plus = mk(_Plus)
+export const Printer = mk(_Printer)
 export const Receipt = mk(_Receipt)
 export const RefreshCw = mk(_ArrowsClockwise)
 export const RotateCcw = mk(_ArrowCounterClockwise)

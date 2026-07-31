@@ -4,6 +4,74 @@ from django.db import models
 from apps.core.models import MoneyField, TenantAwareModel
 
 
+class TillSession(TenantAwareModel):
+    """One cashier's shift at one till, from opening float to counted drawer.
+
+    This is what turns "the money looks about right" into a number the ledger
+    can carry: the cashier counts blind, the system reveals what it expected,
+    and any difference is posted to Cash Over & Short rather than quietly
+    absorbed.
+    """
+
+    class Status(models.TextChoices):
+        OPEN = "open", "Open"
+        CLOSED = "closed", "Closed"
+
+    location = models.ForeignKey(
+        "inventory.Warehouse", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="till_sessions",
+        help_text="Which shop or counter this till belongs to.",
+    )
+    opened_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="till_sessions_opened",
+    )
+    opened_at = models.DateTimeField(auto_now_add=True)
+    opening_float = MoneyField(default=0, help_text="Cash in the drawer at the start.")
+
+    closed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="till_sessions_closed",
+    )
+    closed_at = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.OPEN)
+
+    # Cash only — card and transfer settle to the bank and cannot be short.
+    cash_variance = MoneyField(default=0, help_text="Counted minus expected. Negative is short.")
+    variance_reason = models.CharField(max_length=300, blank=True)
+    notes = models.TextField(blank=True)
+
+    class Meta(TenantAwareModel.Meta):
+        ordering = ["-opened_at"]
+        indexes = [models.Index(fields=["organisation", "status"])]
+
+    def __str__(self):
+        return f"Till {self.opened_by} @ {self.opened_at:%d %b %H:%M}"
+
+    @property
+    def is_open(self) -> bool:
+        return self.status == self.Status.OPEN
+
+
+class TillTenderCount(TenantAwareModel):
+    """What the system expected in one tender versus what was counted."""
+
+    session = models.ForeignKey(
+        TillSession, on_delete=models.CASCADE, related_name="tender_counts",
+    )
+    method = models.CharField(max_length=20)
+    expected = MoneyField(default=0)
+    counted = MoneyField(default=0)
+    variance = MoneyField(default=0)
+    transaction_count = models.PositiveIntegerField(default=0)
+
+    class Meta(TenantAwareModel.Meta):
+        ordering = ["method"]
+        unique_together = [("session", "method")]
+
+    def __str__(self):
+        return f"{self.method}: {self.counted} vs {self.expected}"
+
+
 class RestaurantTable(TenantAwareModel):
     """A physical table/room for dine-in / room-service seating."""
 
