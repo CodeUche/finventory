@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
-import { RefreshCw, TrendingDown } from 'lucide-react'
+import { Loader2, RefreshCw, TrendingDown } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { accountingApi, bypassNextGets } from '@/services/api'
+import { confirmDialog } from '@/lib/dialog'
 import { formatCurrency } from '@/lib/utils'
 import type { FixedAsset } from '@/types'
 
@@ -20,6 +21,7 @@ export default function DepreciationPage() {
   const [assets, setAssets] = useState<FixedAsset[]>([])
   const [loading, setLoading] = useState(true)
   const [period, setPeriod] = useState('')
+  const [runningDep, setRunningDep] = useState(false)
 
   const load = async () => {
     setLoading(true)
@@ -31,6 +33,27 @@ export default function DepreciationPage() {
   }
   useEffect(() => { load() }, [])
   useDataRefresh(load)
+
+  // Same run flow as the Fixed Assets page — so depreciation can be run from here too.
+  const handleRunDepreciation = async (draft = false) => {
+    const now = new Date()
+    const monthLabel = now.toLocaleString('default', { month: 'long' })
+    const verb = draft ? 'Generate a DRAFT depreciation batch' : 'Run and POST depreciation'
+    const catchUp = await confirmDialog(
+      `${verb} up to ${monthLabel} ${now.getFullYear()}?\n\nClick OK to catch up ALL outstanding months through this period, or Cancel to run just this month.`,
+    )
+    const payload = { year: now.getFullYear(), month: now.getMonth() + 1, catch_up: catchUp, draft }
+    setRunningDep(true)
+    try {
+      const { data } = await accountingApi.runDepreciation(payload)
+      const d = data as { entries_created?: number; already_run?: boolean; message?: string }
+      if (d.already_run) toast(d.message ?? 'Depreciation already run for this period.', { icon: 'ℹ️' })
+      else toast.success(d.message ?? `Depreciation run complete — ${d.entries_created ?? 0} entries created`)
+      bypassNextGets()
+      load()
+    } catch { toast.error('Failed to run depreciation') }
+    finally { setRunningDep(false) }
+  }
 
   const rows = useMemo<DepRow[]>(() => {
     const out: DepRow[] = []
@@ -70,6 +93,13 @@ export default function DepreciationPage() {
           <button onClick={() => { bypassNextGets(); load() }} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
           </button>
+          <button onClick={() => handleRunDepreciation(false)} disabled={runningDep} className="btn-primary flex items-center gap-2 text-sm" title="Compute and post depreciation">
+            {runningDep ? <Loader2 size={14} className="animate-spin" /> : <TrendingDown size={14} />}
+            Run Depreciation
+          </button>
+          <button onClick={() => handleRunDepreciation(true)} disabled={runningDep} className="btn-ghost text-sm" title="Compute depreciation as a draft batch for review">
+            Draft Batch
+          </button>
         </div>
       </div>
 
@@ -101,7 +131,7 @@ export default function DepreciationPage() {
                 <tr>
                   <td colSpan={6} className="px-4 py-12 text-center">
                     <TrendingDown size={32} className="mx-auto mb-2 text-slate-600" />
-                    <p className="text-slate-500">No depreciation posted yet. Run depreciation from the Fixed Assets page.</p>
+                    <p className="text-slate-500">No depreciation posted yet. Click Run Depreciation above to post this period.</p>
                   </td>
                 </tr>
               ) : filtered.map((r) => (

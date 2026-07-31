@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { confirmDialog } from '@/lib/dialog'
 import { CheckCircle, X as XIcon, Loader2, CreditCard, Zap, Building2, Star, ExternalLink, RefreshCw, Package, ShoppingCart, FileText, Receipt, Users, Truck, BarChart3, Calculator, Briefcase, Wallet, Clock, DollarSign, Shield, ChevronDown, ChevronUp, GraduationCap, LayoutDashboard, FileBarChart2, Layers, Coins } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { subscriptionApi, orgApi, bypassNextGets, partnerApi, authApi } from '@/services/api'
 import { openExternal } from '@/lib/openExternal'
 
@@ -159,6 +159,22 @@ export default function BillingPage() {
   }
 
   useEffect(() => { load(); loadCommission() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Deep-link support for the sidebar's Billing sub-items:
+  //   /billing#current-plan      → scroll to the current-plan card
+  //   /billing#plans-section     → scroll to the plan picker
+  //   /billing#payment-history   → expand + scroll to payment history
+  const { hash } = useLocation()
+  useEffect(() => {
+    if (!hash || loading) return
+    const id = hash.slice(1)
+    if (id === 'payment-history') setHistoryOpen(true)
+    // Let the section render (payment history expands) before scrolling.
+    const t = setTimeout(() => {
+      document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 100)
+    return () => clearTimeout(t)
+  }, [hash, loading])
 
   const handlePaymentSuccess = useCallback(async (reference: string) => {
     toast.loading('Confirming payment…', { id: 'pay-verify' })
@@ -376,7 +392,7 @@ export default function BillingPage() {
 
       {/* Current plan status */}
       {subscription && (
-        <div className="card flex flex-col sm:flex-row sm:items-center gap-4">
+        <div id="current-plan" className="card flex flex-col sm:flex-row sm:items-center gap-4">
           <div className="flex-1 space-y-1">
             <div className="flex items-center gap-2">
               <span className="text-white font-semibold text-lg">{subscription.plan?.name ?? 'Current'} Plan</span>
@@ -631,7 +647,7 @@ export default function BillingPage() {
 
       {/* Payment history — collapsible */}
       {payments.length > 0 && (
-        <div>
+        <div id="payment-history">
           <button
             onClick={() => setHistoryOpen((v) => !v)}
             className="w-full flex items-center justify-between group"

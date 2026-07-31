@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, X, Landmark, Loader2, ChevronDown, ChevronUp, RefreshCw, AlertTriangle, CheckCircle2 } from 'lucide-react'
@@ -322,6 +323,9 @@ export default function AssetsPage() {
           <button onClick={handlePostBatch} className="btn-ghost text-sm" title="Post this month's draft depreciation batch">
             Post Batch
           </button>
+          <Link to="/accounting/depreciation" className="btn-ghost text-sm" title="View the posted depreciation register">
+            Depreciation Register
+          </Link>
           <button onClick={openCreate} className="btn-primary flex items-center gap-2">
             <Plus size={16} /> Add Asset
           </button>

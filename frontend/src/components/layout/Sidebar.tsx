@@ -8,7 +8,7 @@ import {
   PieChart, Scale, Shield, ClipboardList, ChevronDown, ChevronRight, ShieldCheck,
   MapPin, ClipboardCheck, GraduationCap, Briefcase, ShoppingCart,
   User, Layout, Mail, Lock, Bot, Globe, Upload, GitBranch,
-  ChevronLeft, HelpCircle, LayoutGrid,
+  ChevronLeft, HelpCircle, LayoutGrid, Zap,
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { authApi } from '@/services/api'
@@ -35,10 +35,8 @@ export const navGroups: { label: string | null; items: { name: string; href: str
       { name: 'Chart of Accounts', href: '/accounting/coa', icon: BookOpen, module: 'accounting' },
       { name: 'Beginning Balances', href: '/accounting/beginning-balances', icon: Scale, module: 'accounting' },
       { name: 'Journal Entries', href: '/accounting/journal', icon: BookMarked, module: 'accounting' },
-      { name: 'Cashbook (Income & Expense)', href: '/expenses', icon: ArrowDownCircle, module: 'expenses' },
       { name: 'Budgets', href: '/budgets', icon: PieChart, module: 'budget' },
       { name: 'Fixed Assets', href: '/accounting/assets', icon: Landmark, module: 'accounting' },
-      { name: 'Depreciation', href: '/accounting/depreciation', icon: Landmark, module: 'accounting' },
       { name: 'Bank Reconciliation', href: '/accounting/reconciliation', icon: Scale, module: 'accounting' },
       { name: 'GL Health', href: '/accounting/gl-health', icon: ShieldCheck, module: 'accounting' },
     ],
@@ -88,8 +86,15 @@ export const navGroups: { label: string | null; items: { name: string; href: str
     ],
   },
   {
+    label: 'CASHFLOW',
+    items: [
+      { name: 'Income & Expense', href: '/expenses', icon: ArrowDownCircle, module: 'expenses' },
+    ],
+  },
+  {
     label: 'GENERAL REPORTS',
     items: [
+      { name: 'All Reports', href: '/reports/all', icon: BookMarked, module: 'reports' },
       { name: 'Financial Statements', href: '/reports', icon: BarChart3, module: 'reports' },
       { name: 'Balance Sheet', href: '/reports/balance-sheet', icon: Scale, module: 'accounting' },
       { name: 'Stock Reports', href: '/reports/stock', icon: ClipboardCheck, module: 'inventory' },
@@ -107,7 +112,9 @@ export const navGroups: { label: string | null; items: { name: string; href: str
   {
     label: 'BILLING & PLANS',
     items: [
-      { name: 'Billing & Plans', href: '/billing', icon: CreditCard, ownerOnly: true },
+      { name: 'Current Plan', href: '/billing#current-plan', icon: CreditCard, ownerOnly: true },
+      { name: 'Change Plan', href: '/billing#plans-section', icon: Zap, ownerOnly: true },
+      { name: 'Billing & Invoices', href: '/billing#payment-history', icon: Receipt, ownerOnly: true },
     ],
   },
   {
