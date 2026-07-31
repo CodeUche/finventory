@@ -5,6 +5,7 @@
  *     Reveals which products are high-volume low-margin vs niche high-margin.
  */
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { ChevronDown, ChevronRight, Loader2, Package, BarChart2, TrendingUp } from 'lucide-react'
 import {
   BarChart, Bar, ScatterChart, Scatter, XAxis, YAxis,
@@ -69,6 +70,7 @@ export default function SalesByProductPage() {
   }, [period]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { load() }, [load])
+  useDataRefresh(load)
 
   const toggleRow = async (productId: string) => {
     if (expandedId === productId) { setExpandedId(null); return }

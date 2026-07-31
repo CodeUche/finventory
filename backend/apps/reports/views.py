@@ -782,6 +782,27 @@ class ReportDispatchView(BaseDateRangeView):
             data = rd.resolver(org, date_from, date_to, **extra)
         except Exception as e:
             return Response({"error": str(e)}, status=422)
+
+        # Generic export: any resolver returning a flat "rows" list can be
+        # exported to Excel/PDF without a bespoke row_fn per report.
+        fmt = request.query_params.get("format", "json").lower()
+        if fmt in ("excel", "pdf"):
+            rows_data = data.get("rows") if isinstance(data, dict) else None
+            if isinstance(rows_data, list) and rows_data and isinstance(rows_data[0], dict):
+                headers = list(rows_data[0].keys())
+                pretty = [h.replace("_", " ").title() for h in headers]
+                response = dispatch_export(
+                    fmt=fmt,
+                    headers=pretty,
+                    rows=[[r.get(h) for h in headers] for r in rows_data],
+                    title=rd.label,
+                    subtitle=self.get_period_label(request, date_from, date_to),
+                    filename_base=rd.key,
+                    org=org,
+                )
+                if response is not None:
+                    return response
+
         return Response({
             "key": rd.key, "label": rd.label, "category": rd.category,
             "period_label": self.get_period_label(request, date_from, date_to),

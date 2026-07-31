@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { confirmDialog } from '@/lib/dialog'
 import { CheckCircle, X as XIcon, Loader2, CreditCard, Zap, Building2, Star, ExternalLink, RefreshCw, Package, ShoppingCart, FileText, Receipt, Users, Truck, BarChart3, Calculator, Briefcase, Wallet, Clock, DollarSign, Shield, ChevronDown, ChevronUp, GraduationCap, LayoutDashboard, FileBarChart2, Layers, Coins } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -159,6 +160,7 @@ export default function BillingPage() {
   }
 
   useEffect(() => { load(); loadCommission() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  useDataRefresh(() => { load(); loadCommission() })
 
   // Deep-link support for the sidebar's Billing sub-items:
   //   /billing#current-plan      → scroll to the current-plan card

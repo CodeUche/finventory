@@ -1,9 +1,9 @@
-import { Menu, Search, X, Package, Receipt, Users, Sun, Moon, LogOut } from 'lucide-react'
+import { Menu, Search, X, Package, Receipt, Users, Sun, Moon, LogOut, RefreshCw } from 'lucide-react'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { useAuthStore } from '@/store/authStore'
-import { orgApi, inventoryApi, salesApi, customerApi, authApi } from '@/services/api'
+import { orgApi, inventoryApi, salesApi, customerApi, authApi, bypassNextGets } from '@/services/api'
 import { setActiveCurrency, formatCurrency } from '@/lib/utils'
 import NotificationBell from '@/components/NotificationBell'
 import { SyncStatusBadge } from '@/components/SyncStatusBadge'
@@ -51,9 +51,29 @@ export default function TopBar({ onMenuClick }: TopBarProps) {
   const [searching, setSearching] = useState(false)
   const [showDrop, setShowDrop] = useState(false)
   const [activeIndex, setActiveIndex] = useState(-1)
+  const [refreshing, setRefreshing] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const dropRef = useRef<HTMLDivElement>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  /**
+   * Global refresh, usable from anywhere in the app.
+   * Bypasses the GET cache for the next requests, then broadcasts
+   * `audity:data-changed` — the event every page's useDataRefresh() subscribes
+   * to — so the current module reloads its own data without a full page reload.
+   */
+  const handleGlobalRefresh = () => {
+    if (refreshing) return
+    setRefreshing(true)
+    try {
+      bypassNextGets()
+      window.dispatchEvent(new CustomEvent('audity:data-changed'))
+    } finally {
+      // Spin briefly so the action always reads as "something happened",
+      // even when the page's own fetch resolves instantly from cache.
+      setTimeout(() => setRefreshing(false), 600)
+    }
+  }
 
   const handleCurrencyChange = async (newCurrency: string) => {
     if (!organisation || newCurrency === organisation.currency) return
@@ -292,6 +312,19 @@ export default function TopBar({ onMenuClick }: TopBarProps) {
       </div>
 
       <div className="flex items-center gap-3 ml-auto">
+        {/* Global refresh — works on every page: bypasses the GET cache, then
+            fires audity:data-changed, which every module's useDataRefresh
+            listens for and re-runs its own load(). */}
+        <button
+          onClick={handleGlobalRefresh}
+          disabled={refreshing}
+          className="btn-ghost p-2 text-slate-400 hover:text-white transition-colors disabled:opacity-60"
+          aria-label="Refresh data"
+          title="Refresh this page's data"
+        >
+          <RefreshCw size={17} className={refreshing ? 'animate-spin' : ''} />
+        </button>
+
         {/* Theme toggle */}
         <button
           onClick={toggleTheme}

@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { LayoutGrid, Plus, Trash2, Loader2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { posApi } from '@/services/api'
@@ -26,6 +27,7 @@ export default function TablesPage() {
     } catch { toast.error('Failed to load tables') } finally { setLoading(false) }
   }, [])
   useEffect(() => { load() }, [load])
+  useDataRefresh(load)
 
   const add = async () => {
     if (!form.name.trim()) { toast.error('Table name required'); return }

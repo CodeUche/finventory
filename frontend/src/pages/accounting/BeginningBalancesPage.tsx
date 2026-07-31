@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Scale, RefreshCw, Loader2, AlertTriangle, CheckCircle2, Users, Truck, Package, BookOpen } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { accountingApi } from '@/services/api'
@@ -46,6 +47,7 @@ export default function BeginningBalancesPage() {
   }, [])
 
   useEffect(() => { load() }, [load])
+  useDataRefresh(load)
 
   const suspense = summary?.suspense
   const balanced = summary?.balanced

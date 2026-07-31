@@ -1617,6 +1617,7 @@ export default function ReportsPage() {
               loading={cgLoading}
               emptyMessage="No customer balance data."
               rightAlignCols={[2, 3, 4]}
+              paginate
             />
           </div>
 
@@ -1636,6 +1637,7 @@ export default function ReportsPage() {
               loading={cgLoading}
               emptyMessage="No customer directory data."
               rightAlignCols={[5, 6, 7, 8]}
+              paginate
             />
           </div>
 
@@ -1656,6 +1658,7 @@ export default function ReportsPage() {
               loading={cgLoading}
               emptyMessage="No product directory data."
               rightAlignCols={[3, 4, 5, 6, 7]}
+              paginate
             />
           </div>
 
@@ -1667,24 +1670,19 @@ export default function ReportsPage() {
             </div>
             <p className="text-xs text-slate-500 mb-2">Click a row to see individual payments for that customer.</p>
             <div className="space-y-2">
-              <div onClick={(e) => {
-                const tr = (e.target as HTMLElement).closest('tr')
-                if (!tr || !tr.parentElement) return
-                const rows = Array.from(tr.parentElement.children)
-                const idx = rows.indexOf(tr)
-                const r = paymentsByCust[idx]
-                if (r) togglePaymentDrilldown(r)
-              }} className="cursor-pointer">
-                <ReportTable
-                  headers={['Customer', 'Total Received', 'Payment Count']}
-                  rows={paymentsByCust.map(r => [
-                    r.customer_name, formatCurrency(r.total_received), r.payment_count,
-                  ])}
-                  loading={cgLoading}
-                  emptyMessage="No payment data for this period."
-                  rightAlignCols={[1, 2]}
-                />
-              </div>
+              {/* Row clicks resolve via the original row index, so the drill-down
+                  stays correct after sorting or paging. */}
+              <ReportTable
+                headers={['Customer', 'Total Received', 'Payment Count']}
+                rows={paymentsByCust.map(r => [
+                  r.customer_name, formatCurrency(r.total_received), r.payment_count,
+                ])}
+                loading={cgLoading}
+                emptyMessage="No payment data for this period."
+                rightAlignCols={[1, 2]}
+                paginate
+                onRowClick={(i) => { const r = paymentsByCust[i]; if (r) togglePaymentDrilldown(r) }}
+              />
 
               {expandedPayCust && (
                 <div className="card p-4">
@@ -1699,6 +1697,7 @@ export default function ReportsPage() {
                     loading={custPaymentsLoading}
                     emptyMessage="No payments found for this customer."
                     rightAlignCols={[1]}
+                    paginate
                   />
                 </div>
               )}
@@ -1758,6 +1757,7 @@ export default function ReportsPage() {
                   loading={statementLoading}
                   emptyMessage="No GL activity for this account in the selected period."
                   rightAlignCols={[3, 4, 5]}
+                  paginate
                 />
               </>
             )}

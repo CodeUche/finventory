@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
+import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { confirmDialog } from '@/lib/dialog'
 import { Shield, Users, Building2, RefreshCw, Loader2, CheckCircle, XCircle, TrendingUp, BookOpen, Ban, RotateCcw, MessageSquare, Send, UserCheck } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -92,6 +93,7 @@ export default function PlatformAdminPage() {
   }
 
   useEffect(() => { load() }, [])
+  useDataRefresh(load)
 
   const handleReseedCoa = async (org: OrgRow) => {
     if (!(await confirmDialog(`Reseed chart of accounts for "${org.name}"?\n\nThis is safe and idempotent — it only adds missing accounts, never overwrites existing ones.`))) return

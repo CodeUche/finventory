@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { confirmDialog } from '@/lib/dialog'
 import {
   FileText, Plus, Send, CheckCircle, Trash2, Loader2,
@@ -239,6 +240,7 @@ export default function PartnerInvoicesPage() {
   }
 
   useEffect(() => { load() }, [statusFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+  useDataRefresh(load)
 
   const handleMarkPaid = async (inv: PartnerInvoice) => {
     setActionLoading(inv.id)

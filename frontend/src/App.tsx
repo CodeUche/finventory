@@ -53,6 +53,7 @@ const ReportsPage = React.lazy(() => import('@/pages/reports/ReportsPage'))
 const BalanceSheetPage = React.lazy(() => import('@/pages/reports/BalanceSheetPage'))
 const SalesByCustomerPage = React.lazy(() => import('@/pages/reports/SalesByCustomerPage'))
 const SalesByProductPage = React.lazy(() => import('@/pages/reports/SalesByProductPage'))
+const AllReportsPage = React.lazy(() => import('@/pages/reports/AllReportsPage'))
 const OwnerAnalyticsPage = React.lazy(() => import('@/pages/dashboard/OwnerAnalyticsPage'))
 const TaxPage = React.lazy(() => import('@/pages/TaxPage'))
 const AuditLogPage = React.lazy(() => import('@/pages/AuditLogPage'))
@@ -323,6 +324,7 @@ export default function App() {
         <Route path="reports/stock"                 element={<ModuleRoute module="inventory"><StockReportsPage /></ModuleRoute>} />
         <Route path="reports/sales-by-customer"     element={<ModuleRoute module="reports"><SalesByCustomerPage /></ModuleRoute>} />
         <Route path="reports/sales-by-product"      element={<ModuleRoute module="reports"><SalesByProductPage /></ModuleRoute>} />
+        <Route path="reports/all"                   element={<ModuleRoute module="reports"><AllReportsPage /></ModuleRoute>} />
         <Route path="owner-analytics"       element={<OwnerOnlyRoute><OwnerAnalyticsPage /></OwnerOnlyRoute>} />
 
         {/* Compliance */}

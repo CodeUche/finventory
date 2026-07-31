@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { ClipboardCheck, Loader2, RefreshCw } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { posApi } from '@/services/api'
@@ -30,6 +31,7 @@ export default function KitchenPage() {
     } catch { toast.error('Failed to load kitchen tickets') } finally { setLoading(false) }
   }, [])
   useEffect(() => { load(); const i = setInterval(load, 20000); return () => clearInterval(i) }, [load])
+  useDataRefresh(load)
 
   const advance = async (k: KOT) => {
     const next = NEXT[k.status]

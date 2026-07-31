@@ -381,6 +381,28 @@ class CatalogTreeMatchesSpec(NewReportsBase):
                 out = self._dispatch(r["key"])
                 self.assertEqual(out.status_code, 200, msg=str(out.data))
 
+    def test_row_based_report_exports_to_excel(self):
+        self._auth()
+        url = reverse("report-dispatch", kwargs={"key": "pay-bills"})
+        res = self.client.get(url, {**PERIOD, "format": "excel"})
+        self.assertEqual(res.status_code, 200)
+        self.assertIn("spreadsheetml", res["Content-Type"])
+
+    def test_row_based_report_exports_to_pdf(self):
+        self._auth()
+        url = reverse("report-dispatch", kwargs={"key": "pay-bills"})
+        res = self.client.get(url, {**PERIOD, "format": "pdf"})
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res["Content-Type"], "application/pdf")
+
+    def test_non_row_report_falls_back_to_json(self):
+        """Nested reports (no flat rows) must still return JSON, not crash."""
+        self._auth()
+        url = reverse("report-dispatch", kwargs={"key": "gl-detail"})
+        res = self.client.get(url, {**PERIOD, "format": "excel"})
+        self.assertEqual(res.status_code, 200)
+        self.assertIn("data", res.data)
+
     def test_tenant_isolation(self):
         """Another org's user must see empty data, not ours."""
         from apps.reports.tests.test_views import _make_superuser, _make_org

@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { HelpCircle, Plus, X, Loader2, Send } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { helpdeskApi } from '@/services/api'
@@ -43,6 +44,7 @@ export default function TicketsPage() {
     }
   }, [])
   useEffect(() => { load() }, [load])
+  useDataRefresh(load)
 
   const createTicket = async () => {
     if (!form.subject.trim()) { toast.error('Subject is required'); return }

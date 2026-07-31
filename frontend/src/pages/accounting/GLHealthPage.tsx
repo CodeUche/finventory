@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { RefreshCw, CheckCircle, XCircle, AlertTriangle, Clock, RotateCcw } from 'lucide-react'
 import { accountingApi } from '@/services/api'
 import { formatCurrency } from '@/lib/utils'
@@ -72,6 +73,7 @@ export default function GLHealthPage() {
   }, [])
 
   useEffect(() => { load() }, [load])
+  useDataRefresh(load)
 
   const handleBulkRetry = async () => {
     setBulkRetrying(true)

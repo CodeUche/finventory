@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, useCallback } from 'react'
+import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { ClipboardList, Plus, Minus, Trash2, ClipboardCheck, GitBranch, CreditCard, X, Loader2, Search } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { inventoryApi, posApi } from '@/services/api'
@@ -52,6 +53,7 @@ export default function RestaurantPOSPage() {
     }
   }, [tableId])
   useEffect(() => { load() }, [load])
+  useDataRefresh(load)
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()

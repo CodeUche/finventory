@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { ChevronDown, ChevronRight, Loader2, Users } from 'lucide-react'
 import { reportApi } from '@/services/api'
 import { formatCurrency, formatDate } from '@/lib/utils'
@@ -44,6 +45,7 @@ export default function SalesByCustomerPage() {
   }, [period]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { load() }, [load])
+  useDataRefresh(load)
 
   const toggleRow = async (key: string) => {
     if (expandedId === key) { setExpandedId(null); return }
