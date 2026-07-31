@@ -386,18 +386,38 @@ def tax_summary_report(organisation, date_from: date, date_to: date, **_):
 # ── General-ledger reports ───────────────────────────────────────────────────
 
 def account_list(organisation, date_from: date, date_to: date, **_):
-    """Chart of accounts with current ledger balances."""
-    from apps.accounting.models import Account
-    from apps.accounting.services import AccountingService
+    """Chart of accounts with current ledger balances.
 
+    Balances are aggregated in ONE grouped query rather than one per account —
+    a per-account `_ledger_balance()` call made this O(number of accounts).
+    Sign convention matches `_ledger_balance` / the trial balance exactly.
+    """
+    from django.db.models import Sum
+    from apps.accounting.models import Account, AccountType, JournalLine
+
+    lines = JournalLine.objects.filter(
+        journal_entry__organisation=organisation,
+        journal_entry__status="posted",
+    )
+    if date_to:
+        lines = lines.filter(journal_entry__entry_date__lte=date_to)
+    totals = {
+        row["account"]: (row["d"] or _zero(), row["c"] or _zero())
+        for row in lines.values("account").annotate(d=Sum("debit"), c=Sum("credit"))
+    }
+
+    debit_normal = (AccountType.ASSET, AccountType.EXPENSE, AccountType.COST_OF_GOODS)
     rows = []
     for acct in Account.objects.filter(
-            organisation=organisation, is_active=True).order_by("code"):
+            organisation=organisation, is_active=True
+    ).select_related("sub_type").order_by("code"):
+        debits, credits = totals.get(acct.id, (_zero(), _zero()))
+        balance = (debits - credits) if acct.account_type in debit_normal else (credits - debits)
         rows.append({
             "code": acct.code, "name": acct.name,
             "type": acct.account_type,
-            "sub_type": acct.sub_type.name if getattr(acct, "sub_type", None) else "",
-            "balance": AccountingService._ledger_balance(acct, as_of=date_to),
+            "sub_type": acct.sub_type.name if acct.sub_type else "",
+            "balance": balance,
         })
     return {"as_of": str(date_to), "rows": rows}
 

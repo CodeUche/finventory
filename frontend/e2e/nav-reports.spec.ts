@@ -66,6 +66,19 @@ test('sidebar shows the restructured groups (Cashflow is its own group)', async 
   await assertNoCrash(page, errors)
 })
 
+test('Owner Analytics appears exactly once in the sidebar', async ({ page }) => {
+  // Regression: a single-item ANALYTICS nav group rendered a second, heading-less
+  // "Owners Analytics" link alongside the dedicated owner-only section.
+  const { errors } = guardAgainstCrashes(page)
+  await login(page)
+
+  const sidebar = page.locator('aside, nav').first()
+  const links = sidebar.getByRole('link', { name: /owner'?s? analytics/i })
+  await expect(links).toHaveCount(1)
+
+  await assertNoCrash(page, errors)
+})
+
 test('Cashflow → Income & Expense opens the cashbook', async ({ page }) => {
   const { errors } = guardAgainstCrashes(page)
   await login(page)
@@ -137,10 +150,18 @@ test('every report in the hub opens without crashing', async ({ page }) => {
   for (const name of REPORTS) {
     const btn = page.getByRole('button', { name, exact: true }).first()
     if (await btn.count() === 0) continue      // plan-gated in this org
-    await btn.click()
+    // Wait for the report's own request to settle before moving on — a real user
+    // waits for the result. Firing all 30+ back-to-back queues them behind each
+    // other and trips the client's request timeout, which isn't a real failure.
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.url().includes('/reports/') && r.request().method() === 'GET',
+        { timeout: 30_000 },
+      ).catch(() => null),
+      btn.click(),
+    ])
     // Either data, an empty state, or a nested render — but never a crash.
     await expect(page.getByText('Something went wrong')).toHaveCount(0)
-    await page.waitForTimeout(400)
   }
 
   expect(reportButtons).toBeTruthy()

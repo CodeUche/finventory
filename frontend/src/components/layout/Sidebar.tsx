@@ -126,12 +126,9 @@ export const navGroups: { label: string | null; alwaysGroup?: boolean; items: { 
       { name: 'Tickets', href: '/helpdesk', icon: HelpCircle, ownerOnly: true },
     ],
   },
-  {
-    label: 'ANALYTICS',
-    items: [
-      { name: 'Owners Analytics', href: '/owner-analytics', icon: BarChart3, ownerOnly: true },
-    ],
-  },
+  // NOTE: no ANALYTICS group here — Owner Analytics is rendered by the dedicated
+  // owner-only section further down (under the OWNER heading). Adding it here too
+  // produced two "Owners Analytics" entries in the sidebar.
 ]
 
 interface SidebarProps {
