@@ -756,25 +756,123 @@ export default function SettingsPage() {
     }
   }
 
+  // "Generate Accounting Periods" — mirrors the reviewer's sample dialog:
+  // Year, Year Start Date, and how each period's end date is derived.
+  const [showFyModal, setShowFyModal] = useState(false)
+  const [generatingFy, setGeneratingFy] = useState(false)
+  const [fyForm, setFyForm] = useState({
+    year: String(new Date().getFullYear()),
+    start_date: `${new Date().getFullYear()}-01-01`,
+    rule: 'last_day_of_month' as 'last_day_of_month' | 'last_weekday' | 'specific_day',
+    weekday: '0',      // 0 = Monday (matches Python's calendar weekday numbering)
+    closing_day: '1',
+  })
+
+  const openFyModal = () => {
+    const y = new Date().getFullYear()
+    setFyForm({
+      year: String(y), start_date: `${y}-01-01`,
+      rule: 'last_day_of_month', weekday: '0', closing_day: '1',
+    })
+    setShowFyModal(true)
+  }
+
   const generateFiscalYear = async () => {
-    const entered = await promptDialog(
-      'Generate a full fiscal year of monthly accounting periods. Enter the year:',
-      { title: 'Generate Fiscal Year', confirmText: 'Generate', optional: false,
-        defaultValue: String(new Date().getFullYear()) },
-    )
-    if (entered === null) return
-    const year = parseInt(entered.trim(), 10)
-    if (!year || year < 2000 || year > 2100) { toast.error('Enter a valid year'); return }
+    const year = parseInt(fyForm.year.trim(), 10)
+    if (!year || year < 2000 || year > 2100) { toast.error('Enter a valid year between 2000 and 2100'); return }
+    if (!fyForm.start_date) { toast.error('Choose the year start date'); return }
+    setGeneratingFy(true)
     try {
-      const { data } = await accountingApi.generateFiscalYear({
-        year, start_date: `${year}-01-01`, rule: 'last_day_of_month',
-      })
+      const payload: Record<string, unknown> = {
+        year, start_date: fyForm.start_date, rule: fyForm.rule,
+      }
+      if (fyForm.rule === 'last_weekday') payload.weekday = parseInt(fyForm.weekday, 10)
+      if (fyForm.rule === 'specific_day') payload.closing_day = parseInt(fyForm.closing_day, 10)
+      const { data } = await accountingApi.generateFiscalYear(payload)
       const { data: p } = await accountingApi.periods()
       setPeriods(Array.isArray(p) ? p : p.results ?? [])
       toast.success(`Generated ${data.periods?.length ?? 12} periods for ${year}`)
+      setShowFyModal(false)
     } catch (err) {
       const apiErr = (err as { response?: { data?: { error?: unknown } } })?.response?.data?.error
       toast.error(typeof apiErr === 'string' ? apiErr : 'Failed to generate fiscal year')
+    } finally {
+      setGeneratingFy(false)
+    }
+  }
+
+  // ── Period posting grants ──
+  // A locked period can still be opened to specific people for a few days
+  // (spec: "allow some users some privileges or access to work for some days").
+  interface PeriodGrant {
+    id: string; user: string; user_name?: string; user_email?: string
+    expires_at: string; reason: string; revoked: boolean
+  }
+  const [grantPeriod, setGrantPeriod] = useState<FinancialPeriod | null>(null)
+  const [grants, setGrants] = useState<PeriodGrant[]>([])
+  const [grantsLoading, setGrantsLoading] = useState(false)
+  const [grantBusy, setGrantBusy] = useState(false)
+  const [grantForm, setGrantForm] = useState({ user_id: '', days: '3', reason: '' })
+
+  const openGrants = async (p: FinancialPeriod) => {
+    setGrantPeriod(p)
+    setGrantForm({ user_id: '', days: '3', reason: '' })
+    setGrantsLoading(true)
+    try {
+      // The Periods tab doesn't fetch the team, so pull it in when needed.
+      const calls: Promise<unknown>[] = [accountingApi.periodGrants(p.id)]
+      if (teamMembers.length === 0) calls.push(teamApi.members())
+      const [grantsRes, membersRes] = await Promise.all(calls) as [
+        { data: PeriodGrant[] | { results?: PeriodGrant[] } },
+        { data: TeamMember[] | { results?: TeamMember[] } } | undefined,
+      ]
+      const g = grantsRes.data
+      setGrants(Array.isArray(g) ? g : g.results ?? [])
+      if (membersRes) {
+        const m = membersRes.data
+        setTeamMembers(Array.isArray(m) ? m : m.results ?? [])
+      }
+    } catch {
+      toast.error('Failed to load access grants')
+      setGrants([])
+    } finally {
+      setGrantsLoading(false)
+    }
+  }
+
+  const submitGrant = async () => {
+    if (!grantPeriod) return
+    if (!grantForm.user_id) { toast.error('Choose who should get access'); return }
+    const days = parseInt(grantForm.days, 10)
+    if (!days || days < 1 || days > 90) { toast.error('Enter between 1 and 90 days'); return }
+    setGrantBusy(true)
+    try {
+      await accountingApi.grantPeriodAccess(grantPeriod.id, {
+        user_id: grantForm.user_id, days, reason: grantForm.reason,
+      })
+      toast.success('Access granted')
+      setGrantForm({ user_id: '', days: '3', reason: '' })
+      const { data } = await accountingApi.periodGrants(grantPeriod.id)
+      setGrants(Array.isArray(data) ? data : data.results ?? [])
+    } catch (err) {
+      const apiErr = (err as { response?: { data?: { error?: unknown } } })?.response?.data?.error
+      toast.error(typeof apiErr === 'string' ? apiErr : 'Failed to grant access')
+    } finally {
+      setGrantBusy(false)
+    }
+  }
+
+  const revokeGrant = async (grantId: string) => {
+    if (!grantPeriod) return
+    setGrantBusy(true)
+    try {
+      await accountingApi.revokePeriodGrant(grantPeriod.id, grantId)
+      setGrants((prev) => prev.map((g) => g.id === grantId ? { ...g, revoked: true } : g))
+      toast.success('Access revoked')
+    } catch {
+      toast.error('Failed to revoke access')
+    } finally {
+      setGrantBusy(false)
     }
   }
 
@@ -801,6 +899,8 @@ export default function SettingsPage() {
   }
 
   const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+  // Order matches Python's calendar module (Monday = 0), which the backend uses.
+  const WEEKDAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']
 
   const handleCreateSubaccount = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -1225,8 +1325,8 @@ export default function SettingsPage() {
                 <button onClick={handleCloseYear} disabled={closingYear} className="btn-secondary text-sm">
                   {closingYear ? 'Closing…' : 'Close Financial Year'}
                 </button>
-                <button onClick={generateFiscalYear} className="btn-secondary text-sm">
-                  Generate Fiscal Year
+                <button onClick={openFyModal} className="btn-secondary text-sm">
+                  Generate Accounting Periods
                 </button>
                 <button onClick={createPeriod} className="btn-primary text-sm">
                   + Create Current Period
@@ -1249,6 +1349,9 @@ export default function SettingsPage() {
                 <div key={p.id} className={`flex items-center justify-between p-4 rounded-xl border ${p.is_locked ? 'border-red-500/30 bg-red-500/5' : 'border-surface-700'}`}>
                   <div>
                     <p className="text-white font-semibold">{MONTHS[p.month - 1]} {p.year}</p>
+                    {p.start_date && p.end_date && (
+                      <p className="text-xs text-slate-500">{p.start_date} → {p.end_date}</p>
+                    )}
                     {p.is_locked && p.locked_by_name && (
                       <p className="text-xs text-slate-500">Locked by {p.locked_by_name}</p>
                     )}
@@ -1257,6 +1360,15 @@ export default function SettingsPage() {
                     <span className={`text-xs font-medium px-2 py-1 rounded-lg ${p.is_locked ? 'bg-red-500/15 text-red-400' : 'bg-green-500/15 text-green-400'}`}>
                       {p.is_locked ? 'LOCKED' : 'OPEN'}
                     </span>
+                    {isOwner && p.is_locked && (
+                      <button
+                        onClick={() => openGrants(p)}
+                        title="Let specific people post into this locked period for a few days"
+                        className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-surface-600 text-slate-300 hover:bg-surface-700 transition-colors"
+                      >
+                        <Key size={12} /> Access
+                      </button>
+                    )}
                     {isOwner && (
                       <button
                         onClick={() => handleLockToggle(p)}
@@ -1274,6 +1386,211 @@ export default function SettingsPage() {
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* Time-boxed posting access into a locked period */}
+          {grantPeriod && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setGrantPeriod(null)}>
+              <div className="w-full max-w-lg bg-surface-900 border border-surface-700 rounded-2xl p-5" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-start justify-between mb-1">
+                  <h3 className="text-base font-semibold text-white">
+                    Period Access — {MONTHS[grantPeriod.month - 1]} {grantPeriod.year}
+                  </h3>
+                  <button onClick={() => setGrantPeriod(null)} className="text-slate-400 hover:text-white"><X size={18} /></button>
+                </div>
+                <p className="text-xs text-slate-400 mb-4">
+                  This period is locked. Grant a team member temporary permission to post into it —
+                  access expires automatically and every grant is recorded in the audit trail.
+                </p>
+
+                <div className="grid sm:grid-cols-[1fr_auto] gap-2 items-end">
+                  <label className="block">
+                    <span className="text-xs text-slate-400">Team member</span>
+                    <select
+                      value={grantForm.user_id}
+                      onChange={(e) => setGrantForm((f) => ({ ...f, user_id: e.target.value }))}
+                      className="input w-full mt-1"
+                    >
+                      <option value="">— Select a person —</option>
+                      {teamMembers.filter((m) => m.is_active).map((m) => (
+                        <option key={m.id} value={m.user}>
+                          {m.user_full_name || m.user_email} ({m.role})
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="block">
+                    <span className="text-xs text-slate-400">Days</span>
+                    <input
+                      type="number" min={1} max={90}
+                      value={grantForm.days}
+                      onChange={(e) => setGrantForm((f) => ({ ...f, days: e.target.value }))}
+                      className="input w-24 mt-1"
+                    />
+                  </label>
+                </div>
+                <label className="block mt-2">
+                  <span className="text-xs text-slate-400">Reason (recorded in the audit trail)</span>
+                  <input
+                    value={grantForm.reason}
+                    onChange={(e) => setGrantForm((f) => ({ ...f, reason: e.target.value }))}
+                    placeholder="e.g. Posting late supplier invoices for year-end"
+                    className="input w-full mt-1"
+                  />
+                </label>
+                <div className="flex justify-end mt-3">
+                  <button onClick={submitGrant} disabled={grantBusy} className="btn-primary text-sm flex items-center gap-2">
+                    {grantBusy && <Loader2 size={14} className="animate-spin" />} Grant access
+                  </button>
+                </div>
+
+                <div className="border-t border-surface-700 mt-4 pt-3">
+                  <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Current access</h4>
+                  {grantsLoading ? (
+                    <div className="flex justify-center py-5"><Loader2 size={18} className="animate-spin text-slate-500" /></div>
+                  ) : grants.length === 0 ? (
+                    <p className="text-xs text-slate-500 py-2">No one has been granted access to this period.</p>
+                  ) : (
+                    <div className="space-y-1.5 max-h-52 overflow-y-auto">
+                      {grants.map((g) => {
+                        const expired = new Date(g.expires_at) < new Date()
+                        const inactive = g.revoked || expired
+                        return (
+                          <div key={g.id} className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-surface-800 border border-surface-700">
+                            <div className="min-w-0 flex-1">
+                              <p className={inactive ? 'text-slate-500' : 'text-slate-200'}>
+                                {g.user_name || g.user_email || 'User'}
+                              </p>
+                              <p className="text-slate-500">
+                                {g.revoked ? 'Revoked' : expired ? 'Expired' : `Until ${new Date(g.expires_at).toLocaleString()}`}
+                                {g.reason ? ` · ${g.reason}` : ''}
+                              </p>
+                            </div>
+                            {!inactive && (
+                              <button
+                                onClick={() => revokeGrant(g.id)}
+                                disabled={grantBusy}
+                                className="text-red-400 hover:text-red-300 disabled:opacity-50 shrink-0"
+                              >
+                                Revoke
+                              </button>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Generate Accounting Periods — the reviewer's sample dialog */}
+          {showFyModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setShowFyModal(false)}>
+              <div className="w-full max-w-md bg-surface-900 border border-surface-700 rounded-2xl p-5" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-base font-semibold text-white">Generate Accounting Periods</h3>
+                  <button onClick={() => setShowFyModal(false)} className="text-slate-400 hover:text-white"><X size={18} /></button>
+                </div>
+
+                <div className="space-y-3">
+                  <label className="block">
+                    <span className="text-xs text-slate-400">Year</span>
+                    <input
+                      type="number" min={2000} max={2100}
+                      value={fyForm.year}
+                      onChange={(e) => {
+                        const y = e.target.value
+                        setFyForm((f) => ({
+                          ...f, year: y,
+                          // Keep the start date in step with the year unless edited away from Jan 1.
+                          start_date: /^\d{4}-01-01$/.test(f.start_date) && y.length === 4
+                            ? `${y}-01-01` : f.start_date,
+                        }))
+                      }}
+                      className="input w-full mt-1"
+                    />
+                  </label>
+
+                  <label className="block">
+                    <span className="text-xs text-slate-400">Year Start Date</span>
+                    <input
+                      type="date"
+                      value={fyForm.start_date}
+                      onChange={(e) => setFyForm((f) => ({ ...f, start_date: e.target.value }))}
+                      className="input w-full mt-1"
+                    />
+                  </label>
+
+                  <fieldset className="border border-surface-700 rounded-xl p-3">
+                    <legend className="text-xs text-slate-400 px-1">Generate period end dates based on</legend>
+                    <div className="space-y-2.5">
+                      <label className="flex items-center gap-2 text-sm text-slate-200">
+                        <input
+                          type="radio" name="fy-rule" value="last_day_of_month"
+                          checked={fyForm.rule === 'last_day_of_month'}
+                          onChange={() => setFyForm((f) => ({ ...f, rule: 'last_day_of_month' }))}
+                        />
+                        Last day of month
+                      </label>
+
+                      <div className="flex items-center gap-2">
+                        <label className="flex items-center gap-2 text-sm text-slate-200">
+                          <input
+                            type="radio" name="fy-rule" value="last_weekday"
+                            checked={fyForm.rule === 'last_weekday'}
+                            onChange={() => setFyForm((f) => ({ ...f, rule: 'last_weekday' }))}
+                          />
+                          Last
+                        </label>
+                        <select
+                          value={fyForm.weekday}
+                          disabled={fyForm.rule !== 'last_weekday'}
+                          onChange={(e) => setFyForm((f) => ({ ...f, weekday: e.target.value }))}
+                          className="input py-1 text-sm w-32 disabled:opacity-40"
+                        >
+                          {WEEKDAYS.map((d, i) => <option key={d} value={i}>{d}</option>)}
+                        </select>
+                        <span className={`text-sm ${fyForm.rule === 'last_weekday' ? 'text-slate-200' : 'text-slate-600'}`}>of the month</span>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <label className="flex items-center gap-2 text-sm text-slate-200">
+                          <input
+                            type="radio" name="fy-rule" value="specific_day"
+                            checked={fyForm.rule === 'specific_day'}
+                            onChange={() => setFyForm((f) => ({ ...f, rule: 'specific_day' }))}
+                          />
+                          Specific day
+                        </label>
+                        <input
+                          type="number" min={1} max={31}
+                          value={fyForm.closing_day}
+                          disabled={fyForm.rule !== 'specific_day'}
+                          onChange={(e) => setFyForm((f) => ({ ...f, closing_day: e.target.value }))}
+                          className="input py-1 text-sm w-20 disabled:opacity-40"
+                          aria-label="Closing day of period"
+                        />
+                        <span className={`text-sm ${fyForm.rule === 'specific_day' ? 'text-slate-200' : 'text-slate-600'}`}>closing day of period</span>
+                      </div>
+                    </div>
+                  </fieldset>
+
+                  <p className="text-[11px] text-slate-500">
+                    Creates the full financial year — 12 monthly periods. Existing periods are
+                    linked, never duplicated, so current locks are preserved.
+                  </p>
+                </div>
+
+                <div className="flex justify-end gap-2 mt-5">
+                  <button onClick={() => setShowFyModal(false)} className="btn-ghost text-sm">Cancel</button>
+                  <button onClick={generateFiscalYear} disabled={generatingFy} className="btn-primary text-sm flex items-center gap-2">
+                    {generatingFy && <Loader2 size={14} className="animate-spin" />} Generate
+                  </button>
+                </div>
+              </div>
             </div>
           )}
         </div>

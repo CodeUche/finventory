@@ -1,16 +1,17 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
-import { Plus, X, Landmark, Loader2, ChevronDown, ChevronUp, RefreshCw, AlertTriangle, CheckCircle2 } from 'lucide-react'
+import { Plus, X, Landmark, Loader2, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { accountingApi, inventoryApi, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatDate, stripCommas } from '@/lib/utils'
 import AmountInput from '@/components/AmountInput'
-import type { FixedAsset, Account, AssetReconciliation } from '@/types'
+import type { FixedAsset, Account } from '@/types'
 import DateInput from '@/components/DateInput'
 
 const CATEGORIES = ['land', 'building', 'vehicle', 'equipment', 'furniture', 'other'] as const
+/** Category chips shown above the register — "all" first, then each category. */
+const CATEGORY_FILTERS = ['all', ...CATEGORIES] as const
 
 const METHODS: { value: string; label: string }[] = [
   { value: 'straight_line', label: 'Straight Line' },
@@ -63,16 +64,15 @@ const BLANK: AssetForm = {
 export default function AssetsPage() {
   const [assets, setAssets] = useState<FixedAsset[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
-  const [recon, setRecon] = useState<AssetReconciliation | null>(null)
   const [loading, setLoading] = useState(true)
   const [expandedRow, setExpandedRow] = useState<string | null>(null)
+  const [categoryFilter, setCategoryFilter] = useState<typeof CATEGORY_FILTERS[number]>('all')
 
   const [showModal, setShowModal] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
   const [form, setForm] = useState<AssetForm>(BLANK)
   const [saving, setSaving] = useState(false)
 
-  const [runningDep, setRunningDep] = useState(false)
 
   // Disposal modal
   const [disposeAsset, setDisposeAsset] = useState<FixedAsset | null>(null)
@@ -97,14 +97,12 @@ export default function AssetsPage() {
   const load = async () => {
     setLoading(true)
     try {
-      const [aRes, accRes, recRes] = await Promise.all([
+      const [aRes, accRes] = await Promise.all([
         accountingApi.assets(),
         accountingApi.accounts(),
-        accountingApi.assetReconciliation().catch(() => null),
       ])
       setAssets(aRes.data.results ?? aRes.data)
       setAccounts(accRes.data.results ?? accRes.data)
-      setRecon(recRes ? recRes.data : null)
     } catch { toast.error('Failed to load fixed assets') }
     finally { setLoading(false) }
   }
@@ -116,25 +114,6 @@ export default function AssetsPage() {
     inventoryApi.warehouses().then((r) => setWarehouses(r.data.results ?? r.data)).catch(() => {})
     accountingApi.assetTypes().then((r) => setAssetTypes(r.data.results ?? r.data)).catch(() => {})
   }, [])
-
-  const handleRunDepreciation = async (draft = false) => {
-    const now = new Date()
-    const monthLabel = now.toLocaleString('default', { month: 'long' })
-    const verb = draft ? 'Generate a DRAFT depreciation batch' : 'Run and POST depreciation'
-    const catchUp = await confirmDialog(
-      `${verb} up to ${monthLabel} ${now.getFullYear()}?\n\nClick OK to catch up ALL outstanding months through this period, or Cancel to run just this month.`,
-    )
-    const payload = { year: now.getFullYear(), month: now.getMonth() + 1, catch_up: catchUp, draft }
-    setRunningDep(true)
-    try {
-      const { data } = await accountingApi.runDepreciation(payload)
-      const d = data as { entries_created?: number; already_run?: boolean; message?: string }
-      if (d.already_run) toast(d.message ?? 'Depreciation already run for this period.', { icon: 'ℹ️' })
-      else toast.success(d.message ?? `Depreciation run complete — ${d.entries_created ?? 0} entries created`)
-      load()
-    } catch { toast.error('Failed to run depreciation') }
-    finally { setRunningDep(false) }
-  }
 
   const openCreate = () => { setEditId(null); setForm(BLANK); setShowModal(true) }
   const openEdit = (a: FixedAsset) => {
@@ -285,18 +264,9 @@ export default function AssetsPage() {
     } finally { setRevaluing(false) }
   }
 
-  const handlePostBatch = async () => {
-    const now = new Date()
-    try {
-      const { data } = await accountingApi.postDepreciationBatch({ year: now.getFullYear(), month: now.getMonth() + 1 })
-      toast.success((data as { message?: string }).message ?? 'Draft batch posted')
-      load()
-    } catch { toast.error('Failed to post depreciation batch') }
-  }
-
-  const totalCost = assets.reduce((s, a) => s + parseFloat(a.purchase_cost), 0)
-  const totalDepreciation = assets.reduce((s, a) => s + parseFloat(a.accumulated_depreciation), 0)
-  const totalNBV = assets.reduce((s, a) => s + parseFloat(a.net_book_value), 0)
+  const visibleAssets = categoryFilter === 'all'
+    ? assets
+    : assets.filter((a) => a.category === categoryFilter)
 
   const assetAccounts = accounts.filter((a) => a.account_type === 'asset')
   const isTakeon = form.funding_source === 'none'
@@ -307,23 +277,13 @@ export default function AssetsPage() {
       <div className="flex flex-col sm:flex-row sm:items-center gap-4">
         <div>
           <h1 className="text-2xl font-bold text-white">Fixed Assets Register</h1>
-          <p className="text-slate-400 text-sm">{assets.length} assets</p>
+          <p className="text-slate-400 text-sm">{visibleAssets.length} of {assets.length} assets</p>
         </div>
         <div className="sm:ml-auto flex gap-2">
           <button onClick={() => { bypassNextGets(); load() }} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
           </button>
-          <button onClick={() => handleRunDepreciation(false)} disabled={runningDep} className="btn-ghost flex items-center gap-2 text-sm" title="Compute and post depreciation">
-            {runningDep ? <Loader2 size={14} className="animate-spin" /> : null}
-            Run Depreciation
-          </button>
-          <button onClick={() => handleRunDepreciation(true)} disabled={runningDep} className="btn-ghost text-sm" title="Compute depreciation as a draft batch for review">
-            Draft Batch
-          </button>
-          <button onClick={handlePostBatch} className="btn-ghost text-sm" title="Post this month's draft depreciation batch">
-            Post Batch
-          </button>
-          <Link to="/accounting/depreciation" className="btn-ghost text-sm" title="View the posted depreciation register">
+          <Link to="/accounting/depreciation" className="btn-ghost text-sm" title="Run depreciation and view the posted depreciation register">
             Depreciation Register
           </Link>
           <button onClick={openCreate} className="btn-primary flex items-center gap-2">
@@ -332,33 +292,26 @@ export default function AssetsPage() {
         </div>
       </div>
 
-      {/* Register ↔ GL reconciliation banner */}
-      {recon && (
-        <div className={`card p-4 flex flex-col gap-2 border ${recon.reconciled ? 'border-emerald-500/30' : 'border-amber-500/40'}`}>
-          <div className="flex items-center gap-2">
-            {recon.reconciled
-              ? <><CheckCircle2 size={16} className="text-emerald-400" /><span className="text-sm font-medium text-emerald-400">Register reconciles to the General Ledger</span></>
-              : <><AlertTriangle size={16} className="text-amber-400" /><span className="text-sm font-medium text-amber-400">Register does not tie to the General Ledger</span></>}
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-            <div><p className="text-slate-500">Register NBV</p><p className="font-mono text-white">{formatCurrency(recon.register.net_book_value)}</p></div>
-            <div><p className="text-slate-500">GL NBV (1500−1510)</p><p className="font-mono text-white">{formatCurrency(recon.gl.net_book_value)}</p></div>
-            <div><p className="text-slate-500">Variance</p><p className={`font-mono ${Math.abs(parseFloat(recon.variance.net_book_value)) < 0.01 ? 'text-emerald-400' : 'text-amber-400'}`}>{formatCurrency(recon.variance.net_book_value)}</p></div>
-            <div><p className="text-slate-500">Take-On Suspense (3900)</p><p className="font-mono text-slate-300">{formatCurrency(recon.suspense_balance)}</p></div>
-          </div>
-          {recon.assets_missing_acquisition.length > 0 && (
-            <p className="text-xs text-amber-400/90">
-              {recon.assets_missing_acquisition.length} asset(s) have no posted acquisition — e.g. {recon.assets_missing_acquisition.slice(0, 3).map((a) => a.asset_code).join(', ')}. Check GL account mapping.
-            </p>
-          )}
-        </div>
-      )}
-
-      {/* Summary */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="card p-5"><p className="text-xs text-slate-400">Total Assets Value</p><p className="text-xl font-bold text-white mt-1">{formatCurrency(String(totalCost))}</p></div>
-        <div className="card p-5"><p className="text-xs text-slate-400">Total Depreciation</p><p className="text-xl font-bold text-red-400 mt-1">{formatCurrency(String(totalDepreciation))}</p></div>
-        <div className="card p-5"><p className="text-xs text-slate-400">Net Book Value</p><p className="text-xl font-bold text-emerald-400 mt-1">{formatCurrency(String(totalNBV))}</p></div>
+      {/* Category filter — counts per asset category, "all" first. */}
+      <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+        {CATEGORY_FILTERS.map((c) => {
+          const count = c === 'all'
+            ? assets.length
+            : assets.filter((a) => a.category === c).length
+          const active = categoryFilter === c
+          return (
+            <button
+              key={c}
+              onClick={() => setCategoryFilter(c)}
+              className={`card px-3 py-2.5 text-left transition-colors ${
+                active ? 'border-brand-500/60 bg-brand-500/10' : 'hover:border-surface-600'
+              }`}
+            >
+              <span className={`badge-slate capitalize text-[10px] ${active ? 'text-brand-300' : ''}`}>{c}</span>
+              <p className={`text-lg font-bold mt-1 ${active ? 'text-brand-300' : 'text-white'}`}>{count}</p>
+            </button>
+          )
+        })}
       </div>
 
       {/* Table */}
@@ -367,7 +320,7 @@ export default function AssetsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-surface-700">
-                {['', 'Code', 'Name', 'Category', 'Purchase Date', 'Cost', 'Acc. Dep', 'Net Book Value', 'Method', 'Status', ''].map((h) => (
+                {['', 'Code', 'Name', 'Category', 'Purchase Date', 'Cost', 'Method', 'Status', ''].map((h) => (
                   <th key={h} className="px-4 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
                 ))}
               </tr>
@@ -376,19 +329,19 @@ export default function AssetsPage() {
               {loading ? (
                 Array.from({ length: 5 }).map((_, i) => (
                   <tr key={i} className="table-row">
-                    {Array.from({ length: 11 }).map((_, j) => (
+                    {Array.from({ length: 9 }).map((_, j) => (
                       <td key={j} className="px-4 py-3.5"><div className="h-4 bg-surface-700 rounded animate-pulse w-16" /></td>
                     ))}
                   </tr>
                 ))
-              ) : assets.length === 0 ? (
+              ) : visibleAssets.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="px-4 py-12 text-center">
+                  <td colSpan={9} className="px-4 py-12 text-center">
                     <Landmark size={32} className="mx-auto mb-2 text-slate-600" />
                     <p className="text-slate-500">No fixed assets yet</p>
                   </td>
                 </tr>
-              ) : assets.map((a) => (
+              ) : visibleAssets.map((a) => (
                 <>
                   <tr key={a.id} className="table-row">
                     <td className="px-4 py-3.5">
@@ -404,8 +357,6 @@ export default function AssetsPage() {
                     <td className="px-4 py-3.5"><span className="badge-slate capitalize">{a.category}</span></td>
                     <td className="px-4 py-3.5 text-slate-400">{formatDate(a.purchase_date)}</td>
                     <td className="px-4 py-3.5 font-mono text-white">{formatCurrency(a.purchase_cost)}</td>
-                    <td className="px-4 py-3.5 font-mono text-red-400">{formatCurrency(a.accumulated_depreciation)}</td>
-                    <td className="px-4 py-3.5 font-mono text-emerald-400">{formatCurrency(a.net_book_value)}</td>
                     <td className="px-4 py-3.5 text-slate-400 text-xs">{METHOD_ABBR[a.depreciation_method] ?? a.depreciation_method}</td>
                     <td className="px-4 py-3.5">{a.is_active ? <span className="badge-green">Active</span> : <span className="badge-slate">Disposed</span>}</td>
                     <td className="px-4 py-3.5 whitespace-nowrap">
@@ -424,7 +375,7 @@ export default function AssetsPage() {
                   </tr>
                   {expandedRow === a.id && (
                     <tr key={`${a.id}-dep`} className="bg-surface-900/50">
-                      <td colSpan={11} className="px-6 py-4">
+                      <td colSpan={9} className="px-6 py-4">
                         <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Depreciation History (posted)</p>
                         {a.depreciation_entries.length === 0 ? (
                           <p className="text-slate-500 text-sm">No depreciation entries yet. Run depreciation first.</p>

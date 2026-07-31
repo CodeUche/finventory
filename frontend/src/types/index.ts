@@ -1010,6 +1010,10 @@ export interface FinancialPeriod {
   locked_by_name: string | null
   locked_at: string | null
   created_at: string
+  /** Set when the period was created by the fiscal-year generator. */
+  start_date?: string | null
+  end_date?: string | null
+  period_number?: number | null
 }
 
 // ─── Bank Reconciliation ──────────────────────────────────────────────────────

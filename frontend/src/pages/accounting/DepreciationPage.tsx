@@ -22,6 +22,7 @@ export default function DepreciationPage() {
   const [loading, setLoading] = useState(true)
   const [period, setPeriod] = useState('')
   const [runningDep, setRunningDep] = useState(false)
+  const [postingBatch, setPostingBatch] = useState(false)
 
   const load = async () => {
     setLoading(true)
@@ -55,6 +56,20 @@ export default function DepreciationPage() {
     finally { setRunningDep(false) }
   }
 
+  const handlePostBatch = async () => {
+    const now = new Date()
+    setPostingBatch(true)
+    try {
+      const { data } = await accountingApi.postDepreciationBatch({
+        year: now.getFullYear(), month: now.getMonth() + 1,
+      })
+      toast.success((data as { message?: string }).message ?? 'Draft batch posted')
+      bypassNextGets()
+      load()
+    } catch { toast.error('Failed to post depreciation batch') }
+    finally { setPostingBatch(false) }
+  }
+
   const rows = useMemo<DepRow[]>(() => {
     const out: DepRow[] = []
     for (const a of assets) {
@@ -78,6 +93,10 @@ export default function DepreciationPage() {
   const filtered = period ? rows.filter((r) => r.period === period) : rows
   const totalDep = filtered.reduce((s, r) => s + parseFloat(r.depreciation), 0)
 
+  // Register-wide totals (always across all assets, independent of the period filter).
+  const totalCost = assets.reduce((s, a) => s + parseFloat(a.purchase_cost || '0'), 0)
+  const totalNBV = assets.reduce((s, a) => s + parseFloat(a.net_book_value || '0'), 0)
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center gap-4">
@@ -100,12 +119,26 @@ export default function DepreciationPage() {
           <button onClick={() => handleRunDepreciation(true)} disabled={runningDep} className="btn-ghost text-sm" title="Compute depreciation as a draft batch for review">
             Draft Batch
           </button>
+          <button onClick={handlePostBatch} disabled={postingBatch} className="btn-ghost text-sm" title="Post this month's draft depreciation batch">
+            {postingBatch ? <Loader2 size={14} className="animate-spin" /> : 'Post Batch'}
+          </button>
         </div>
       </div>
 
-      <div className="card p-5 max-w-xs">
-        <p className="text-xs text-slate-400">Total Depreciation{period ? ` (${period})` : ''}</p>
-        <p className="text-xl font-bold text-red-400 mt-1">{formatCurrency(String(totalDep))}</p>
+      {/* Register totals — the asset value, depreciation and NBV summary lives here. */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="card p-5">
+          <p className="text-xs text-slate-400">Total Assets Value</p>
+          <p className="text-xl font-bold text-white mt-1">{formatCurrency(String(totalCost))}</p>
+        </div>
+        <div className="card p-5">
+          <p className="text-xs text-slate-400">Total Depreciation{period ? ` (${period})` : ''}</p>
+          <p className="text-xl font-bold text-red-400 mt-1">{formatCurrency(String(totalDep))}</p>
+        </div>
+        <div className="card p-5">
+          <p className="text-xs text-slate-400">Net Book Value</p>
+          <p className="text-xl font-bold text-emerald-400 mt-1">{formatCurrency(String(totalNBV))}</p>
+        </div>
       </div>
 
       <div className="card p-0 overflow-hidden">

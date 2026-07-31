@@ -141,9 +141,11 @@ class FinancialPeriodSerializer(serializers.ModelSerializer):
     class Meta:
         model = FinancialPeriod
         fields = ['id', 'year', 'month', 'is_locked', 'locked_by', 'locked_by_name', 'locked_at',
-                  'unlocked_by', 'unlocked_by_name', 'unlocked_at', 'unlock_reason', 'created_at']
+                  'unlocked_by', 'unlocked_by_name', 'unlocked_at', 'unlock_reason', 'created_at',
+                  'start_date', 'end_date', 'period_number']
         read_only_fields = ['id', 'is_locked', 'locked_by', 'locked_at',
-                            'unlocked_by', 'unlocked_at', 'unlock_reason', 'created_at']
+                            'unlocked_by', 'unlocked_at', 'unlock_reason', 'created_at',
+                            'start_date', 'end_date', 'period_number']
 
 
 class BankReconciliationLineSerializer(serializers.ModelSerializer):
