@@ -1888,6 +1888,15 @@ class AccountingService:
             PayrollRun.objects.filter(organisation=organisation),
             'payroll', 'run_number', 'created_at',
         )
+        # Till shifts: closing is never blocked by the ledger, so an unposted
+        # cash variance has to surface here or a shortfall stays invisible.
+        from apps.pos.models import TillSession
+        _process_model(
+            TillSession.objects.filter(
+                organisation=organisation, status=TillSession.Status.CLOSED,
+            ).select_related('opened_by'),
+            'till', 'id', 'closed_at', 'cash_variance',
+        )
 
         return {
             'summary': summary,
@@ -1936,10 +1945,25 @@ class AccountingService:
         except Exception:
             inv_sub = zero
 
+        # Cash Over & Short must equal the shortfalls recorded on closed tills.
+        # This is the check that survives a lying status flag: if a variance
+        # never reached the ledger, the two sides disagree and it is visible
+        # here regardless of what gl_post_status claims.
+        from apps.pos.models import TillSession
+        till_variance = TillSession.objects.filter(
+            organisation=organisation, status=TillSession.Status.CLOSED,
+        ).aggregate(t=Sum('cash_variance'))['t'] or zero
+        over_short_acct = Account.objects.filter(
+            organisation=organisation, code='6800',
+        ).first()
+
         subledgers = [
             _recon('Accounts Receivable', ar_acct, Decimal(str(ar_sub))),
             _recon('Accounts Payable', ap_acct, Decimal(str(ap_sub))),
             _recon('Inventory', inv_acct, Decimal(str(inv_sub))),
+            # A shortfall is negative on the session and a debit (positive) in
+            # the expense account, hence the sign flip.
+            _recon('Till Cash Over & Short', over_short_acct, -Decimal(str(till_variance))),
         ]
         return {
             'pre_plug_imbalance': suspense_balance,   # the real break the auto-plug hides
@@ -2109,6 +2133,11 @@ class AccountingService:
                 AccountingService.post_payroll_journal, organisation, obj, user,
                 model_instance=obj,
             )
+        elif model_name == 'till':
+            from apps.pos.models import TillSession
+            from apps.pos.till_services import TillService
+            obj = TillSession.objects.get(id=object_id, organisation=organisation)
+            success, err = TillService.post_variance(obj, user)
         else:
             return False, f"Unknown model: {model_name}"
 

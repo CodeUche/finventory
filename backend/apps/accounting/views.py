@@ -1799,6 +1799,7 @@ class GLHealthBulkRetryView(APIView):
         from apps.bills.models import Bill
         from apps.expenses.models import Expense
         from apps.payroll.models import PayrollRun
+        from apps.pos.models import TillSession
 
         results = {'attempted': 0, 'succeeded': 0, 'failed': 0, 'errors': []}
         retry_statuses = ['failed', 'not_configured']
@@ -1808,6 +1809,7 @@ class GLHealthBulkRetryView(APIView):
             ('bill',    Bill.objects.filter(organisation=org, gl_post_status__in=retry_statuses)),
             ('expense', Expense.objects.filter(organisation=org, gl_post_status__in=retry_statuses)),
             ('payroll', PayrollRun.objects.filter(organisation=org, gl_post_status__in=retry_statuses)),
+            ('till',    TillSession.objects.filter(organisation=org, gl_post_status__in=retry_statuses)),
         ]:
             for obj in qs[:50]:  # cap per model to avoid timeout
                 results['attempted'] += 1

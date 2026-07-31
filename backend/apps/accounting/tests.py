@@ -626,7 +626,12 @@ class GLHealthReconciliationTests(TestCase):
         for key in ("pre_plug_imbalance", "is_balanced", "subledgers", "all_reconciled"):
             self.assertIn(key, rec)
         names = [s["name"] for s in rec["subledgers"]]
-        self.assertEqual(names, ["Accounts Receivable", "Accounts Payable", "Inventory"])
+        self.assertEqual(names, [
+            "Accounts Receivable", "Accounts Payable", "Inventory",
+            # Till variances reconcile against Cash Over & Short, so a shortfall
+            # that never reached the ledger shows up here too.
+            "Till Cash Over & Short",
+        ])
         for s in rec["subledgers"]:
             for k in ("control", "subledger", "variance", "reconciled"):
                 self.assertIn(k, s)

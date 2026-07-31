@@ -158,46 +158,58 @@ class TillService:
         ])
 
         if cash_variance != ZERO:
-            TillService._post_variance(session, cash_variance, user)
+            TillService.post_variance(session, user)
+        else:
+            # Nothing to post — say so explicitly rather than leaving it
+            # 'pending', which would look like an unposted shortfall forever.
+            session.gl_post_status = "posted"
+            session.save(update_fields=["gl_post_status"])
         return session
 
     @staticmethod
-    def _post_variance(session: TillSession, variance: Decimal, user):
+    def post_variance(session: TillSession, user=None):
         """Short: DR Cash Over & Short / CR Cash. Over: the reverse.
 
-        Never blocks the close — a cashier must be able to go home even if the
-        ledger is momentarily unhappy, and the variance is on the session either
-        way for a manager to chase.
+        Routed through safe_post_gl so a failure lands on the session as
+        `gl_post_status='failed'` instead of only a log line. Closing the till
+        still never blocks — but an unposted shortfall now shows up on the GL
+        Health screen and can be retried from there like any other posting.
         """
-        try:
-            from apps.accounting.models import AccountType
-            from apps.accounting.services import AccountingService, AccountMappingService
+        from apps.accounting.services import safe_post_gl
+        return safe_post_gl(
+            TillService._post_variance_journal, session, user,
+            model_instance=session,
+        )
 
-            org = session.organisation
-            cash_acct = AccountMappingService.resolve(org, "cash_account")
-            over_short = AccountingService._get_or_create_account(
-                org, CASH_OVER_SHORT_CODE, CASH_OVER_SHORT_NAME, AccountType.EXPENSE,
-            )
-            amount = abs(variance)
-            if variance < ZERO:   # short — cash is missing
-                lines = [(over_short, amount, ZERO), (cash_acct, ZERO, amount)]
-                label = "shortage"
-            else:                 # over — more cash than the system expected
-                lines = [(cash_acct, amount, ZERO), (over_short, ZERO, amount)]
-                label = "overage"
+    @staticmethod
+    def _post_variance_journal(session: TillSession, user=None):
+        from apps.accounting.models import AccountType
+        from apps.accounting.services import AccountingService, AccountMappingService
 
-            AccountingService.post_journal_entry(
-                org,
-                description=f"Till {label} — {session.opened_by.get_full_name() or session.opened_by.email}",
-                entry_date=(session.closed_at or timezone.now()).date(),
-                lines=lines,
-                created_by=user,
-                ref="TILL",
-                source_type="till_variance",
-                source_ref=str(session.id),
-            )
-        except Exception as exc:  # pragma: no cover — never trap the cashier
-            logger.warning("Till variance GL posting failed for %s: %s", session.id, exc)
+        org = session.organisation
+        variance = Decimal(str(session.cash_variance))
+        cash_acct = AccountMappingService.resolve(org, "cash_account")
+        over_short = AccountingService._get_or_create_account(
+            org, CASH_OVER_SHORT_CODE, CASH_OVER_SHORT_NAME, AccountType.EXPENSE,
+        )
+        amount = abs(variance)
+        if variance < ZERO:   # short — cash is missing
+            lines = [(over_short, amount, ZERO), (cash_acct, ZERO, amount)]
+            label = "shortage"
+        else:                 # over — more cash than the system expected
+            lines = [(cash_acct, amount, ZERO), (over_short, ZERO, amount)]
+            label = "overage"
+
+        return AccountingService.post_journal_entry(
+            org,
+            description=f"Till {label} — {session.opened_by.get_full_name() or session.opened_by.email}",
+            entry_date=(session.closed_at or timezone.now()).date(),
+            lines=lines,
+            created_by=user,
+            ref="TILL",
+            source_type="till_variance",
+            source_ref=str(session.id),
+        )
 
     # ── Z-report ────────────────────────────────────────────────────────────
     @staticmethod

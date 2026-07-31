@@ -40,6 +40,17 @@ class TillSession(TenantAwareModel):
     variance_reason = models.CharField(max_length=300, blank=True)
     notes = models.TextField(blank=True)
 
+    # Closing a till must never be blocked by the ledger, so the variance
+    # posting is allowed to fail — but silence would understate a shortfall
+    # forever. These carry the outcome so GL Health can list it and retry it,
+    # exactly like a failed invoice or bill posting.
+    GL_STATUS = [
+        ('pending', 'Pending'), ('posted', 'Posted'),
+        ('failed', 'Failed'), ('not_configured', 'Not configured'),
+    ]
+    gl_post_status = models.CharField(max_length=20, choices=GL_STATUS, default='pending')
+    gl_post_error = models.TextField(blank=True)
+
     class Meta(TenantAwareModel.Meta):
         ordering = ["-opened_at"]
         indexes = [models.Index(fields=["organisation", "status"])]

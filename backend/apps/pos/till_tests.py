@@ -245,6 +245,114 @@ class VarianceLedgerTests(TillTestBase):
         self.assertTrue(bs["balanced"], msg=str(bs))
 
 
+class VarianceNotSilentlyLostTests(TillTestBase):
+    """Closing must never be blocked — but an unposted shortfall must never hide.
+
+    The trade-off is deliberate: a cashier has to be able to go home. These
+    tests make sure the cost of that is visible and recoverable rather than
+    silent.
+    """
+
+    def _fail_posting(self):
+        """Simulate the ledger refusing the entry (locked period, bad mapping…)."""
+        from unittest.mock import patch
+        return patch(
+            "apps.pos.till_services.TillService._post_variance_journal",
+            side_effect=RuntimeError("period is locked"),
+        )
+
+    def test_a_failed_posting_still_lets_the_cashier_close(self):
+        session = TillService.open_session(self.org, self.user, "20000")
+        self._take("1000")
+        with self._fail_posting():
+            TillService.close_session(session, self.user, {"cash": "20700"})
+        session.refresh_from_db()
+        self.assertEqual(session.status, TillSession.Status.CLOSED)
+        self.assertEqual(session.cash_variance, Decimal("-300"))
+
+    def test_a_failed_posting_is_recorded_not_just_logged(self):
+        session = TillService.open_session(self.org, self.user, "20000")
+        self._take("1000")
+        with self._fail_posting():
+            TillService.close_session(session, self.user, {"cash": "20700"})
+        session.refresh_from_db()
+        self.assertEqual(session.gl_post_status, "failed")
+        self.assertIn("period is locked", session.gl_post_error)
+
+    def test_a_successful_posting_is_marked_posted(self):
+        session = TillService.open_session(self.org, self.user, "20000")
+        self._take("1000")
+        TillService.close_session(session, self.user, {"cash": "20700"})
+        session.refresh_from_db()
+        self.assertEqual(session.gl_post_status, "posted")
+
+    def test_a_balanced_till_is_not_left_looking_unposted(self):
+        session = TillService.open_session(self.org, self.user, "20000")
+        self._take("1000")
+        TillService.close_session(session, self.user, {"cash": "21000"})
+        session.refresh_from_db()
+        self.assertEqual(session.gl_post_status, "posted")
+
+    def test_an_unposted_shortfall_appears_on_gl_health(self):
+        session = TillService.open_session(self.org, self.user, "20000")
+        self._take("1000")
+        with self._fail_posting():
+            TillService.close_session(session, self.user, {"cash": "20700"})
+
+        health = AccountingService.get_gl_health(self.org)
+        tills = [f for f in health["failures"] if f["model"] == "till"]
+        self.assertEqual(len(tills), 1)
+        self.assertIn("period is locked", tills[0]["error"])
+
+    def test_it_can_be_retried_once_the_problem_is_fixed(self):
+        session = TillService.open_session(self.org, self.user, "20000")
+        self._take("1000")
+        with self._fail_posting():
+            TillService.close_session(session, self.user, {"cash": "20700"})
+
+        success, err = AccountingService.retry_gl_post(
+            self.org, "till", str(session.id), self.user,
+        )
+        self.assertTrue(success, msg=err)
+        session.refresh_from_db()
+        self.assertEqual(session.gl_post_status, "posted")
+        self.assertEqual(self._gl("6800"), Decimal("300"))
+
+    def test_retry_all_picks_up_a_failed_till(self):
+        session = TillService.open_session(self.org, self.user, "20000")
+        self._take("1000")
+        with self._fail_posting():
+            TillService.close_session(session, self.user, {"cash": "20700"})
+
+        res = self.client.post("/api/v1/accounting/gl-health/retry-all/")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.assertGreaterEqual(res.data["succeeded"], 1)
+        session.refresh_from_db()
+        self.assertEqual(session.gl_post_status, "posted")
+
+    def test_reconciliation_catches_a_variance_that_never_reached_the_ledger(self):
+        """The safety net: this holds even if the status flag were wrong."""
+        session = TillService.open_session(self.org, self.user, "20000")
+        self._take("1000")
+        with self._fail_posting():
+            TillService.close_session(session, self.user, {"cash": "20700"})
+
+        recon = AccountingService.gl_health_reconciliations(self.org)
+        till_row = next(r for r in recon["subledgers"] if "Till" in r["name"])
+        self.assertFalse(till_row["reconciled"])
+        self.assertEqual(till_row["variance"], Decimal("-300"))
+        self.assertFalse(recon["all_reconciled"])
+
+    def test_reconciliation_agrees_once_the_variance_is_posted(self):
+        session = TillService.open_session(self.org, self.user, "20000")
+        self._take("1000")
+        TillService.close_session(session, self.user, {"cash": "20700"})
+
+        recon = AccountingService.gl_health_reconciliations(self.org)
+        till_row = next(r for r in recon["subledgers"] if "Till" in r["name"])
+        self.assertTrue(till_row["reconciled"], msg=str(till_row))
+
+
 class ZReportTests(TillTestBase):
     def test_report_summarises_the_shift(self):
         session = TillService.open_session(self.org, self.user, "20000", self.warehouse)
