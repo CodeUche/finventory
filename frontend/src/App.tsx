@@ -62,6 +62,7 @@ const PlatformAdminPage = React.lazy(() => import('@/pages/PlatformAdminPage'))
 const BillingPage = React.lazy(() => import('@/pages/BillingPage'))
 const TicketsPage = React.lazy(() => import('@/pages/TicketsPage'))
 const RestaurantPOSPage = React.lazy(() => import('@/pages/pos/RestaurantPOSPage'))
+const TransferConfirmationsPage = React.lazy(() => import('@/pages/payments/TransferConfirmationsPage'))
 const TablesPage = React.lazy(() => import('@/pages/pos/TablesPage'))
 const KitchenPage = React.lazy(() => import('@/pages/pos/KitchenPage'))
 const LocationsPage = React.lazy(() => import('@/pages/LocationsPage'))
@@ -331,6 +332,7 @@ export default function App() {
         <Route path="tax"       element={<ModuleRoute module="tax"><TaxPage /></ModuleRoute>} />
         <Route path="audit-log" element={<AuditLogPage />} />
         <Route path="helpdesk" element={<TicketsPage />} />
+        <Route path="payments/transfers" element={<ModuleRoute module="sales"><TransferConfirmationsPage /></ModuleRoute>} />
 
         {/* Settings — always accessible for personal profile/security; org tabs filtered inside the page */}
         <Route path="settings" element={<SettingsPage />} />

@@ -467,10 +467,51 @@ class SaleService:
                     amount=amount,
                     recorded_by=received_by,
                     description=f"Credit payment – {invoice.invoice_number}",
+                    method=method,
                 )
             except Exception as exc:
                 logger.warning("CreditService.record_payment failed for invoice %s: %s", invoice.invoice_number, exc)
 
+        return payment
+
+    @staticmethod
+    def record_payment_from_gateway(invoice: Invoice, amount: Decimal, reference: str,
+                                    channel: str = "bank_transfer", provider: str = "") -> "SalePayment":
+        """Record a payment confirmed by a payment provider.
+
+        There is no signed-in user behind a webhook, so ``received_by`` is None.
+        `channel` is the provider's own wording normalised to a tender we
+        already understand ('card' / 'bank_transfer' / 'pos'), which is what
+        decides whether the money lands in cash or bank in the ledger.
+
+        Callers must have already guarded against replays — see
+        PaymentService.settle.
+        """
+        method = channel if channel in {"cash", "card", "bank_transfer", "pos"} else "bank_transfer"
+        payment = SaleService.record_payment(
+            invoice=invoice,
+            amount=Decimal(str(amount)),
+            method=method,
+            received_by=None,
+            reference=reference or "",
+        )
+
+        # A cash sale books the asset leg at sale time, so posting again here
+        # would double it. Only a credit sale still has a receivable to clear —
+        # and CreditService already posted that inside record_payment.
+        if invoice.payment_method != Invoice.PaymentMethod.CREDIT:
+            try:
+                from apps.accounting.services import AccountingService, safe_post_gl
+                safe_post_gl(
+                    AccountingService.post_gateway_payment_journal,
+                    invoice.organisation, invoice, payment,
+                    provider=provider,
+                )
+            except Exception as exc:  # pragma: no cover — never block a payment
+                logger.warning(
+                    "Gateway payment GL posting failed for %s: %s",
+                    invoice.invoice_number, exc,
+                )
         return payment
 
     @staticmethod

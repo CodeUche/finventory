@@ -293,8 +293,11 @@ class SalePayment(TenantAwareModel):
     method = models.CharField(max_length=20, choices=Method.choices)
     reference = models.CharField(max_length=100, blank=True)
     received_at = models.DateTimeField(auto_now_add=True)
+    # Nullable: a payment confirmed by a gateway webhook or a storefront order
+    # has no signed-in user behind it. Staff-recorded payments always set it.
     received_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
+        null=True, blank=True,
         on_delete=models.PROTECT,
         related_name="received_payments",
     )

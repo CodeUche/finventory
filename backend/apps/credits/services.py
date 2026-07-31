@@ -36,8 +36,14 @@ class CreditService:
 
     @staticmethod
     @transaction.atomic
-    def record_payment(organisation, customer, amount: Decimal, recorded_by, description="", due_date=None) -> CreditTransaction:
-        """Record a credit payment (reduces outstanding balance) and post GL entry."""
+    def record_payment(organisation, customer, amount: Decimal, recorded_by, description="",
+                       due_date=None, method="cash") -> CreditTransaction:
+        """Record a credit payment (reduces outstanding balance) and post GL entry.
+
+        `method` decides which asset account is debited — a transfer or card
+        payment must land in bank, not cash, or the cash-up count can never
+        agree with the ledger.
+        """
         # Clamp only a genuine overpayment against a debit balance. A customer whose
         # balance is already negative is in credit (take-on prepayment / unapplied
         # credit note) — clamping there would erase that credit and desynchronise the
@@ -57,13 +63,13 @@ class CreditService:
         customer.outstanding_balance = new_balance
         customer.save(update_fields=["outstanding_balance", "updated_at"])
 
-        # Post GL: DR 1001 Cash → CR 1100 Accounts Receivable
+        # Post GL: DR Cash/Bank (per tender) → CR 1100 Accounts Receivable
         try:
             from apps.accounting.services import AccountingService
             from django.utils import timezone
             AccountingService.post_credit_payment_journal(
                 organisation, customer, amount, recorded_by,
-                txn.description, timezone.now().date(),
+                txn.description, timezone.now().date(), method=method,
             )
         except Exception as exc:
             logger.warning("post_credit_payment_journal failed for %s: %s", customer.name, exc)

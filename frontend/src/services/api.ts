@@ -1528,6 +1528,28 @@ export const paymentGatewayApi = {
   updateConfig: (id: string, data: object) => api.patch(`/payments/gateways/${id}/`, data),
   createLink: (invoiceId: string) => api.post('/payments/links/create_link/', { invoice_id: invoiceId }),
   links: (params?: object) => api.get('/payments/links/', { params }),
+
+  /** What this merchant can currently collect with (card / one-time account / transfer). */
+  options: () => api.get('/payments/options/'),
+
+  // Merchant's own bank accounts — for customers who just transfer directly.
+  bankAccounts: () => api.get('/payments/bank-accounts/'),
+  createBankAccount: (data: object) => api.post('/payments/bank-accounts/', data),
+  updateBankAccount: (id: string, data: object) => api.patch(`/payments/bank-accounts/${id}/`, data),
+  deleteBankAccount: (id: string) => api.delete(`/payments/bank-accounts/${id}/`),
+
+  // One-time account numbers, confirmed automatically by the provider.
+  issueVirtualAccount: (invoiceId: string) =>
+    api.post('/payments/virtual-accounts/issue/', { invoice_id: invoiceId }),
+  virtualAccountStatus: (id: string) => api.get(`/payments/virtual-accounts/${id}/status/`),
+
+  // Transfers into the merchant's own account, confirmed by a person.
+  transferClaims: (params?: object) => api.get('/payments/transfer-claims/', { params }),
+  claimTransfer: (data: object) => api.post('/payments/transfer-claims/', data),
+  confirmTransfer: (id: string, note = '') =>
+    api.post(`/payments/transfer-claims/${id}/confirm/`, { note }),
+  rejectTransfer: (id: string, note = '') =>
+    api.post(`/payments/transfer-claims/${id}/reject/`, { note }),
 }
 
 export const exciseApi = {

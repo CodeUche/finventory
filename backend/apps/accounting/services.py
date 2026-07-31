@@ -1544,18 +1544,57 @@ class AccountingService:
         )
 
     @staticmethod
-    def post_credit_payment_journal(organisation, customer, amount: Decimal, user=None, description="", date=None, invoice=None):
+    def tender_asset_account(organisation, method: str):
+        """Which asset account a tender lands in.
+
+        Cash goes to the drawer; card, transfer and terminal payments go to the
+        bank. Getting this wrong makes the end-of-day cash count irreconcilable
+        with the ledger, so every payment path resolves it here rather than
+        deciding for itself.
+        """
+        if method == 'cash':
+            return AccountMappingService.resolve(organisation, 'cash_account')
+        if method in ('bank_transfer', 'pos', 'card', 'transfer'):
+            return AccountMappingService.resolve(organisation, 'bank_account')
+        return AccountMappingService.resolve(organisation, 'cash_account')
+
+    @staticmethod
+    def post_gateway_payment_journal(organisation, invoice, payment, provider=""):
+        """DR Bank/Cash → CR Accounts Receivable for a provider-confirmed payment.
+
+        Used when an invoice was raised before the money arrived (a storefront
+        order, or a payment link sent after the fact), so the sale already sits
+        in receivables and this entry clears it.
+        """
+        from django.utils import timezone
+        zero = Decimal('0')
+        amt = Decimal(str(payment.amount))
+        asset = AccountingService.tender_asset_account(organisation, payment.method)
+        ar_acct = AccountMappingService.resolve(organisation, 'accounts_receivable')
+        label = f" ({provider})" if provider else ""
+        return AccountingService.post_journal_entry(
+            organisation,
+            description=f"Payment received – {invoice.invoice_number}{label}",
+            entry_date=timezone.now().date(),
+            lines=[(asset, amt, zero), (ar_acct, zero, amt)],
+            created_by=None,
+            ref=invoice.invoice_number,
+            source_type='gateway_payment',
+            source_ref=str(payment.id),
+        )
+
+    @staticmethod
+    def post_credit_payment_journal(organisation, customer, amount: Decimal, user=None, description="", date=None, invoice=None, method="cash"):
         """DR Cash/Bank → CR Accounts Receivable when a credit customer pays."""
         from django.utils import timezone
         zero = Decimal('0')
         amt = Decimal(str(amount))
 
-        # Determine payment account from invoice if available
-        cash_acct = AccountMappingService.resolve(organisation, 'cash_account')
+        asset_acct = AccountingService.tender_asset_account(organisation, method)
         ar_acct = AccountMappingService.resolve(organisation, 'accounts_receivable')
 
         lines = [
-            (cash_acct, amt, zero),   # DR Cash
+            (asset_acct, amt, zero),  # DR Cash/Bank per tender
             (ar_acct, zero, amt),     # CR Accounts Receivable
         ]
         ref_date = date or timezone.now().date()

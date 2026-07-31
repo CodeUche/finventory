@@ -46,6 +46,7 @@ export const navGroups: { label: string | null; alwaysGroup?: boolean; items: { 
     items: [
       { name: 'Customers', href: '/customers', icon: Users, module: 'customers' },
       { name: 'Customer Receipts / Deposits', href: '/credits', icon: CreditCard, module: 'customers' },
+      { name: 'Transfers to Confirm', href: '/payments/transfers', icon: Banknote, module: 'sales' },
     ],
   },
   {

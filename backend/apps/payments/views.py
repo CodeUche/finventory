@@ -1,15 +1,18 @@
 """
-Payment gateway views.
+Payment endpoints.
 
-Security notes:
-- Webhook endpoint uses HMAC-SHA512 signature verification (Paystack standard).
-- All authenticated viewsets enforce IsOwnerOrAdmin for config management.
-- Secret keys stored in the DB are never echoed in API responses (write_only
-  enforcement is in PaymentGatewayConfigSerializer).
+Webhook security, in order:
+  1. IP throttling — a flood must not become a database write.
+  2. Organisation resolution from the payload, so an event is only ever verified
+     against the key of the org it claims to belong to.
+  3. Provider signature verification with the merchant's own secret.
+  4. Replay protection in PaymentService.settle.
+
+We answer 200 to anything we deliberately drop. Providers retry aggressively on
+non-2xx, and a retry storm against a spoofed event helps nobody.
 """
 
-import hashlib
-import hmac
+import json
 import logging
 
 from rest_framework import status, viewsets
@@ -18,175 +21,223 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from apps.core.mixins import TenantFilterMixin
-from apps.core.permissions import IsOwnerOrAdmin
+from apps.core.permissions import IsOwnerOrAdmin, IsStaff
 from apps.core.throttles import WebhookRateThrottle
 from apps.sales.models import Invoice
 
-from .models import PaymentGatewayConfig, PaymentLink
-from .serializers import PaymentGatewayConfigSerializer, PaymentLinkSerializer
-from .services import PaystackService
+from .models import (
+    BankTransferClaim, MerchantBankAccount, PaymentGatewayConfig, PaymentLink,
+    VirtualAccount,
+)
+from .providers import PaymentProviderError, get_provider
+from .serializers import (
+    BankTransferClaimSerializer, MerchantBankAccountSerializer,
+    PaymentGatewayConfigSerializer, PaymentLinkSerializer, VirtualAccountSerializer,
+)
+from .services import PaymentService
 
 logger = logging.getLogger(__name__)
 
-# Paystack sends the HMAC-SHA512 signature in this HTTP header.
-# Django converts it to META key format (HTTP_ prefix + uppercase + underscores).
-_PAYSTACK_SIG_HEADER = "HTTP_X_PAYSTACK_SIGNATURE"
 
-
-def _verify_paystack_signature(raw_body: bytes, secret: str, received_sig: str) -> bool:
-    """
-    Verify a Paystack webhook HMAC-SHA512 signature.
-
-    Paystack signs the raw JSON body with the webhook_secret using HMAC-SHA512
-    and sends the hex-encoded digest in the X-Paystack-Signature header.
-
-    We use hmac.compare_digest (constant-time comparison) to prevent
-    timing-oracle attacks.
-
-    Reference: https://paystack.com/docs/payments/webhooks/#verify-event-origin
-    """
-    expected = hmac.new(
-        secret.encode("utf-8"),
-        msg=raw_body,
-        digestmod=hashlib.sha512,
-    ).hexdigest()
-    # compare_digest raises TypeError if either arg isn't str — safe default is False
-    try:
-        return hmac.compare_digest(expected, received_sig)
-    except (TypeError, ValueError):
-        return False
+def _fail(exc, code=422):
+    return Response({'error': str(exc)}, status=code)
 
 
 class PaymentGatewayConfigViewSet(TenantFilterMixin, viewsets.ModelViewSet):
-    """CRUD for per-org payment gateway configurations (Paystack, etc.)."""
+    """A merchant's own gateway keys. Secrets are never echoed back."""
 
     serializer_class = PaymentGatewayConfigSerializer
     permission_classes = [IsAuthenticated, IsOwnerOrAdmin]
 
     def get_queryset(self):
-        org = self._get_organisation()
-        return PaymentGatewayConfig.objects.filter(organisation=org)
+        return PaymentGatewayConfig.objects.filter(organisation=self._get_organisation())
+
+
+class MerchantBankAccountViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+    """Bank accounts the merchant wants customers to transfer into."""
+
+    serializer_class = MerchantBankAccountSerializer
+    permission_classes = [IsAuthenticated, IsOwnerOrAdmin]
+
+    def get_queryset(self):
+        return MerchantBankAccount.objects.filter(organisation=self._get_organisation())
 
 
 class PaymentLinkViewSet(TenantFilterMixin, viewsets.ModelViewSet):
-    """Create and list payment links tied to invoices."""
-
     serializer_class = PaymentLinkSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsStaff]
     http_method_names = ['get', 'post', 'head', 'options']
 
     def get_queryset(self):
-        org = self._get_organisation()
-        return PaymentLink.objects.filter(organisation=org).select_related('invoice')
+        return PaymentLink.objects.filter(
+            organisation=self._get_organisation()
+        ).select_related('invoice')
 
     @action(detail=False, methods=['post'])
     def create_link(self, request):
         org = self._get_organisation()
-        invoice_id = request.data.get('invoice_id')
-        try:
-            invoice = Invoice.objects.get(id=invoice_id, organisation=org)
-        except Invoice.DoesNotExist:
+        invoice = Invoice.objects.filter(
+            id=request.data.get('invoice_id'), organisation=org,
+        ).first()
+        if invoice is None:
             return Response({'error': 'Invoice not found'}, status=404)
         try:
-            config = PaymentGatewayConfig.objects.get(
-                organisation=org, provider='paystack', is_active=True
+            link = PaymentService.create_payment_link(
+                invoice, callback_url=request.data.get('callback_url', ''),
             )
-        except PaymentGatewayConfig.DoesNotExist:
-            return Response(
-                {'error': 'No active Paystack configuration found. '
-                          'Please configure in Settings → Payment Gateways.'},
-                status=400,
-            )
-        link = PaystackService.create_payment_link(invoice, config)
+        except PaymentProviderError as exc:
+            return _fail(exc)
         return Response(PaymentLinkSerializer(link).data, status=status.HTTP_201_CREATED)
+
+
+class VirtualAccountViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+    """One-time account numbers issued per sale."""
+
+    serializer_class = VirtualAccountSerializer
+    permission_classes = [IsAuthenticated, IsStaff]
+    http_method_names = ['get', 'post', 'head', 'options']
+
+    def get_queryset(self):
+        return VirtualAccount.objects.filter(
+            organisation=self._get_organisation()
+        ).select_related('invoice')
+
+    @action(detail=False, methods=['post'])
+    def issue(self, request):
+        org = self._get_organisation()
+        invoice = Invoice.objects.filter(
+            id=request.data.get('invoice_id'), organisation=org,
+        ).first()
+        if invoice is None:
+            return Response({'error': 'Invoice not found'}, status=404)
+        try:
+            account = PaymentService.create_virtual_account(invoice)
+        except PaymentProviderError as exc:
+            return _fail(exc)
+        return Response(VirtualAccountSerializer(account).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['get'])
+    def status(self, request, pk=None):
+        """Polled by the checkout screen while the payer transfers."""
+        account = self.get_object()
+        return Response({
+            'status': 'expired' if account.is_expired else account.status,
+            'paid_at': account.paid_at,
+            'invoice_status': account.invoice.status,
+            'amount_due': account.invoice.amount_due,
+        })
+
+
+class BankTransferClaimViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+    """Transfers into the merchant's own account, pending human confirmation."""
+
+    serializer_class = BankTransferClaimSerializer
+    permission_classes = [IsAuthenticated, IsStaff]
+
+    def get_queryset(self):
+        return BankTransferClaim.objects.filter(
+            organisation=self._get_organisation()
+        ).select_related('invoice', 'bank_account')
+
+    @action(detail=True, methods=['post'])
+    def confirm(self, request, pk=None):
+        try:
+            claim = PaymentService.confirm_bank_transfer(
+                self.get_object(), request.user, request.data.get('note', ''),
+            )
+        except PaymentProviderError as exc:
+            return _fail(exc)
+        return Response(BankTransferClaimSerializer(claim).data)
+
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        try:
+            claim = PaymentService.reject_bank_transfer(
+                self.get_object(), request.user, request.data.get('note', ''),
+            )
+        except PaymentProviderError as exc:
+            return _fail(exc)
+        return Response(BankTransferClaimSerializer(claim).data)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def payment_options(request):
+    """What this merchant can currently collect with."""
+    org = getattr(request, 'organisation', None)
+    if org is None:
+        from apps.tenancy.middleware import resolve_organisation
+        org = resolve_organisation(request)
+    options = PaymentService.payment_options(org)
+    options['bank_accounts'] = MerchantBankAccountSerializer(
+        options['bank_accounts'], many=True,
+    ).data
+    return Response(options)
+
+
+# ── Webhooks ────────────────────────────────────────────────────────────────
+def _org_id_from_payload(provider_slug, payload):
+    """Pull the organisation out of whatever shape this provider sends."""
+    if provider_slug == 'paystack':
+        return ((payload.get('data') or {}).get('metadata') or {}).get('org_id')
+    if provider_slug == 'monnify':
+        data = payload.get('eventData') or {}
+        meta = data.get('metaData') or data.get('metadata') or {}
+        return meta.get('org_id')
+    return None
+
+
+def _handle_webhook(request, provider_slug):
+    raw_body = request.body
+    try:
+        payload = json.loads(raw_body or b'{}')
+    except ValueError:
+        return Response({'status': 'ignored'})
+
+    org_id = _org_id_from_payload(provider_slug, payload)
+    configs = PaymentGatewayConfig.objects.filter(provider=provider_slug, is_active=True)
+    if org_id:
+        configs = configs.filter(organisation_id=org_id)
+
+    # Without an org hint we must try each merchant's secret — only the one that
+    # actually signed this event can verify it, so nothing is trusted blindly.
+    for config in configs.select_related('organisation')[:50]:
+        provider = get_provider(config)
+        if not provider.verify_signature(raw_body, request.META):
+            continue
+        event = provider.parse_event(payload)
+        if event is None:
+            return Response({'status': 'ignored'})
+
+        # A subscription payment is Audity's own billing, not a merchant sale.
+        metadata = (payload.get('data') or {}).get('metadata') or {}
+        if metadata.get('plan_id'):
+            from apps.subscriptions.services import PaystackSubscriptionService
+            PaystackSubscriptionService.activate_from_webhook(payload.get('data') or {})
+            return Response({'status': 'subscription'})
+
+        outcome = PaymentService.settle(config.organisation, provider_slug, event)
+        logger.info("%s webhook %s → %s", provider_slug, event.event_id, outcome)
+        return Response({'status': outcome})
+
+    logger.warning(
+        "%s webhook could not be verified against any active configuration (ip=%s)",
+        provider_slug, request.META.get('REMOTE_ADDR', 'unknown'),
+    )
+    return Response({'status': 'unverified'}, status=400)
 
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
 @throttle_classes([WebhookRateThrottle])
 def paystack_webhook(request):
-    """
-    POST /api/v1/payments/webhook/paystack/
+    """POST /api/v1/payments/webhook/paystack/"""
+    return _handle_webhook(request, 'paystack')
 
-    Receives Paystack webhook events.
 
-    Security controls applied:
-      1. IP-based rate throttling (WebhookRateThrottle: 300/min).
-         We return HTTP 200 even when throttled — returning 429 causes
-         Paystack to retry aggressively, amplifying the attack.
-      2. HMAC-SHA512 signature verification using the org's webhook_secret.
-         If no secret is configured the event is accepted but logged as a
-         warning — operators must add the secret in Settings → Payment Gateways.
-      3. We always return HTTP 200 for invalid/unverified requests to avoid
-         disclosing validation logic (Paystack retries on non-2xx; 200 stops it).
-
-    Paystack signature docs:
-    https://paystack.com/docs/payments/webhooks/#verify-event-origin
-    """
-    received_sig = request.META.get(_PAYSTACK_SIG_HEADER, "").strip()
-
-    if not received_sig:
-        # No signature → not a Paystack request; log and silently drop.
-        logger.warning(
-            "Paystack webhook received without X-Paystack-Signature header "
-            "from IP %s — dropping",
-            request.META.get("REMOTE_ADDR", "unknown"),
-        )
-        # Return 200 to prevent retry floods from misconfigured senders.
-        return Response({"status": "ok"})
-
-    # Parse the raw payload (without trusting it) to extract org_id from metadata,
-    # then look up that org's specific Paystack config.  This prevents a rogue
-    # request from being verified against the wrong org's secret.
-    import json as _json
-    try:
-        raw_data = _json.loads(request.body)
-        org_id = (raw_data.get("data", {}).get("metadata") or {}).get("org_id")
-    except Exception:
-        org_id = None
-
-    if org_id:
-        config = PaymentGatewayConfig.objects.filter(
-            organisation_id=org_id,
-            provider=PaymentGatewayConfig.PAYSTACK,
-            is_active=True,
-        ).first()
-    else:
-        # No org_id in metadata — fall back to checking all configs
-        # (handles legacy or non-subscription events)
-        config = None
-
-    if not config or not config.webhook_secret:
-        # Reject unverified webhooks — accepting without a secret allows payment fraud
-        logger.error(
-            "Paystack webhook rejected from IP %s: webhook_secret is not configured. "
-            "Set webhook_secret in Settings → Payment Gateways.",
-            request.META.get("REMOTE_ADDR", "unknown"),
-        )
-        return Response({"status": "error", "detail": "Webhook secret not configured."}, status=400)
-
-    # Read raw body for HMAC computation — request.data is already parsed
-    # by DRF so we must access request.body (always available before response).
-    raw_body = request.body  # bytes
-    if not _verify_paystack_signature(raw_body, config.webhook_secret, received_sig):
-        logger.warning(
-            "Paystack webhook HMAC mismatch from IP %s — possible spoofed event; "
-            "rejecting",
-            request.META.get("REMOTE_ADDR", "unknown"),
-        )
-        return Response({"status": "error"}, status=400)
-    logger.debug("Paystack webhook signature verified OK")
-
-    # ── Dispatch event ────────────────────────────────────────────────────────
-    event = request.data.get("event", "")
-    data = request.data.get("data", {})
-    logger.info("Paystack webhook event received: %s", event)
-
-    if event == "charge.success":
-        # Check if this is a subscription payment (metadata contains plan_id + org_id)
-        metadata = data.get("metadata", {})
-        if metadata.get("plan_id") and metadata.get("org_id"):
-            from apps.subscriptions.services import PaystackSubscriptionService
-            PaystackSubscriptionService.activate_from_webhook(data)
-
-    return Response({"status": "received"})
+@api_view(['POST'])
+@permission_classes([AllowAny])
+@throttle_classes([WebhookRateThrottle])
+def monnify_webhook(request):
+    """POST /api/v1/payments/webhook/monnify/"""
+    return _handle_webhook(request, 'monnify')
