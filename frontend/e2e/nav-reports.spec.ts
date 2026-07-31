@@ -35,11 +35,20 @@ async function assertNoCrash(page: Page, errors: string[]) {
 }
 
 async function login(page: Page) {
-  await page.goto('/')
-  await page.getByPlaceholder('you@company.com').fill(EMAIL)
-  await page.locator('input[type="password"]').first().fill(PW)
-  await page.locator('button[type="submit"]').click()
+  // Session comes from the shared auth.setup project (storageState), so this
+  // is normally a no-op navigation. Only fall back to a form login if the app
+  // bounced us to /login — avoids hitting the 20/min login throttle.
+  await page.goto('/dashboard')
+  if (!/\/dashboard/.test(page.url())) {
+    await page.goto('/')
+    await page.getByPlaceholder('you@company.com').fill(EMAIL)
+    await page.locator('input[type="password"]').first().fill(PW)
+    await page.locator('button[type="submit"]').click()
+  }
   await expect(page).toHaveURL(/\/dashboard/, { timeout: 45_000 })
+  // The sidebar hides module-gated items until membership + plan modules load.
+  await expect(page.getByText('ACCOUNTING & FINANCE', { exact: true }))
+    .toBeVisible({ timeout: 45_000 })
 }
 
 // ── Nav restructure ──────────────────────────────────────────────────────────
@@ -177,7 +186,10 @@ test('global refresh works from several different modules', async ({ page }) => 
   await login(page)
 
   for (const path of ['/dashboard', '/customers', '/inventory/products', '/reports/all', '/expenses']) {
-    await page.goto(path)
+    // 'load' waits on every sub-resource; under the dev server that can exceed
+    // the navigation timeout on a cold chunk. The app is interactive at
+    // domcontentloaded, which is what this test actually needs.
+    await page.goto(path, { waitUntil: 'domcontentloaded' })
     const refresh = page.getByRole('button', { name: 'Refresh data' })
     await expect(refresh).toBeVisible({ timeout: 30_000 })
     await refresh.click()
@@ -200,7 +212,7 @@ test('Depreciation module exposes Run Depreciation', async ({ page }) => {
   // Open the confirm dialog then back out — proves the action is wired without
   // posting real depreciation into the test org.
   await page.getByRole('button', { name: /Run Depreciation/i }).click()
-  await expect(page.getByText(/catch up ALL outstanding months|Run and POST depreciation/i))
+  await expect(page.getByText(/catch up ALL outstanding months|Run and POST depreciation/i).first())
     .toBeVisible({ timeout: 15_000 })
   await page.getByRole('button', { name: /Cancel/i }).first().click()
 

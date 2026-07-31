@@ -4,10 +4,16 @@ const EMAIL = 'e2e.pilot@audity.test'
 const PW = 'Passw0rd!123'
 
 async function login(page: Page) {
-  await page.goto('/')
-  await page.getByPlaceholder('you@company.com').fill(EMAIL)
-  await page.locator('input[type="password"]').first().fill(PW)
-  await page.locator('button[type="submit"]').click()
+  // Session comes from the shared auth.setup project (storageState), so this
+  // is normally a no-op navigation. Only fall back to a form login if the app
+  // bounced us to /login — avoids hitting the 20/min login throttle.
+  await page.goto('/dashboard')
+  if (!/\/dashboard/.test(page.url())) {
+    await page.goto('/')
+    await page.getByPlaceholder('you@company.com').fill(EMAIL)
+    await page.locator('input[type="password"]').first().fill(PW)
+    await page.locator('button[type="submit"]').click()
+  }
   await expect(page).toHaveURL(/\/dashboard/, { timeout: 45_000 })
 }
 

@@ -86,3 +86,8 @@ tech_stack.pdf
 # OS
 .DS_Store
 Thumbs.db
+
+# Playwright saved auth session (contains live tokens)
+frontend/e2e/.auth/
+frontend/test-results/
+frontend/playwright-report/

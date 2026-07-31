@@ -47,3 +47,23 @@ if _email_host:
     DEFAULT_FROM_EMAIL = _cfg("DEFAULT_FROM_EMAIL", default="")
 else:
     EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+
+# ─── E2E: opt-out of API throttling (development only) ────────────────────────
+# Browser E2E drives many requests from one IP, and the local observability stack
+# also polls /api/v1/health/, which together exhaust the anon (60/hour) and user
+# (1000/hour) throttles. Requests then 429 and the app renders a blank nav — a
+# test-harness artifact that looks like an app bug.
+# Set DISABLE_THROTTLING=True in the local .env (or the E2E run command) to lift
+# the limits. This is read only by development settings; production is unaffected.
+if _cfg("DISABLE_THROTTLING", default=False, cast=bool):
+    # Keep every scope key — views that declare an explicit throttle class (e.g.
+    # LoginRateThrottle, scope 'login') look their scope up by name and raise
+    # KeyError if it is missing. A rate of None is DRF's "unlimited".
+    REST_FRAMEWORK = {  # noqa: F405
+        **REST_FRAMEWORK,  # noqa: F405
+        "DEFAULT_THROTTLE_CLASSES": [],
+        "DEFAULT_THROTTLE_RATES": {
+            scope: None
+            for scope in REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"]  # noqa: F405
+        },
+    }

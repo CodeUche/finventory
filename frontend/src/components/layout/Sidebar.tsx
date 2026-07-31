@@ -19,7 +19,7 @@ import type { ModuleKey } from '@/types'
 // ─── Navigation structure ─────────────────────────────────────────────────────
 // `module` maps to ModuleKey for permission filtering; null = always visible
 // `ownerOnly` = only owners/admins see this item (no sub-account access)
-export const navGroups: { label: string | null; items: { name: string; href: string; icon: React.ElementType; module?: ModuleKey; ownerOnly?: boolean; partnerOnly?: boolean; businessType?: string }[] }[] = [
+export const navGroups: { label: string | null; alwaysGroup?: boolean; items: { name: string; href: string; icon: React.ElementType; module?: ModuleKey; ownerOnly?: boolean; partnerOnly?: boolean; businessType?: string }[] }[] = [
   {
     label: null,
     items: [
@@ -86,7 +86,10 @@ export const navGroups: { label: string | null; items: { name: string; href: str
     ],
   },
   {
+    // Keeps its heading even though it holds one item — Cashflow is a module,
+    // not a loose link (see alwaysGroup in the renderer below).
     label: 'CASHFLOW',
+    alwaysGroup: true,
     items: [
       { name: 'Income & Expense', href: '/expenses', icon: ArrowDownCircle, module: 'expenses' },
     ],
@@ -297,8 +300,11 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
           const visibleItems = group.items.filter((item) => canSeeItem(item.module, item.ownerOnly, item.partnerOnly, item.businessType))
           if (group.label && visibleItems.length === 0) return null
 
-          // Single-item labeled groups render as a plain NavLink (no collapsible toggle)
-          if (group.label && visibleItems.length === 1) {
+          // Single-item labeled groups normally render as a plain NavLink (no
+          // collapsible toggle). Groups flagged `alwaysGroup` keep their heading
+          // even with one item, so a module like Cashflow reads as a module
+          // rather than a loose link.
+          if (group.label && visibleItems.length === 1 && !group.alwaysGroup) {
             const item = visibleItems[0]
             const isLocked = billingOnly && item.href !== '/billing'
             return (

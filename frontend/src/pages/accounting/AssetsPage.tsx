@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, X, Landmark, Loader2, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react'
@@ -320,8 +320,9 @@ export default function AssetsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-surface-700">
-                {['', 'Code', 'Name', 'Category', 'Purchase Date', 'Cost', 'Method', 'Status', ''].map((h) => (
-                  <th key={h} className="px-4 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
+                {/* Two spacer columns are both '' — key by index, not label. */}
+                {['', 'Code', 'Name', 'Category', 'Purchase Date', 'Cost', 'Method', 'Status', ''].map((h, i) => (
+                  <th key={i} className="px-4 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
                 ))}
               </tr>
             </thead>
@@ -342,8 +343,11 @@ export default function AssetsPage() {
                   </td>
                 </tr>
               ) : visibleAssets.map((a) => (
-                <>
-                  <tr key={a.id} className="table-row">
+                // Keyed Fragment: the fragment is the direct child of map(), so the
+                // key must live here — not on the inner <tr> — or React warns about
+                // duplicate/missing keys and may drop rows.
+                <Fragment key={a.id}>
+                  <tr className="table-row">
                     <td className="px-4 py-3.5">
                       <button onClick={() => setExpandedRow(expandedRow === a.id ? null : a.id)} className="text-slate-400 hover:text-white">
                         {expandedRow === a.id ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -403,7 +407,7 @@ export default function AssetsPage() {
                       </td>
                     </tr>
                   )}
-                </>
+                </Fragment>
               ))}
             </tbody>
           </table>
