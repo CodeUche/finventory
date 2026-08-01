@@ -1940,15 +1940,23 @@ class AccountListingAndSummaryTests(TestCase):
         by_type = res.data["by_type"]
         for t in ["asset", "liability", "equity", "revenue", "expense", "cogs"]:
             self.assertIn(t, by_type)
-        # The seeded COA — revenue/cogs/expense must be non-zero.
-        self.assertEqual(by_type["revenue"], 2)
-        self.assertEqual(by_type["cogs"], 1)
-        self.assertEqual(by_type["expense"], 8)
+        # Counted against the database rather than fixed numbers — the seeded
+        # chart grows as features are added, and hardcoding the totals makes
+        # this fail for whoever adds the next account rather than for a real bug.
+        for account_type, count in by_type.items():
+            self.assertEqual(
+                count,
+                Account.objects.filter(organisation=self.org, account_type=account_type).count(),
+                msg=f"{account_type} count disagrees with the database",
+            )
+        # The Profit & Loss types are the ones the reviewer saw stuck at zero.
+        for account_type in ("revenue", "expense", "cogs"):
+            self.assertGreater(by_type[account_type], 0)
         self.assertEqual(res.data["total"], Account.objects.filter(organisation=self.org).count())
 
     def test_summary_counts_not_inflated_by_journal_lines(self):
         """The balance annotation joins journal lines; summary must not group over it."""
-        before = self.client.get("/api/v1/accounting/accounts/summary/").data["total"]
+        before = self.client.get("/api/v1/accounting/accounts/summary/").data
         cash = Account.objects.get(organisation=self.org, code="1001")
         sales = Account.objects.get(organisation=self.org, code="4001")
         for _ in range(3):
@@ -1958,8 +1966,9 @@ class AccountListingAndSummaryTests(TestCase):
                 created_by=self.user,
             )
         after = self.client.get("/api/v1/accounting/accounts/summary/").data
-        self.assertEqual(after["total"], before)
-        self.assertEqual(after["by_type"]["revenue"], 2)
+        # Posting entries must not change how many accounts exist.
+        self.assertEqual(after["total"], before["total"])
+        self.assertEqual(after["by_type"]["revenue"], before["by_type"]["revenue"])
 
     def test_full_list_contains_all_six_account_types(self):
         types = {a["account_type"] for a in self._all_accounts()}
@@ -1977,7 +1986,9 @@ class AccountListingAndSummaryTests(TestCase):
     def test_filter_by_account_type(self):
         res = self.client.get("/api/v1/accounting/accounts/?account_type=revenue&page_size=1000")
         results = res.data["results"]
-        self.assertEqual(len(results), 2)
+        expected = Account.objects.filter(organisation=self.org, account_type="revenue").count()
+        self.assertEqual(len(results), expected)
+        self.assertGreater(len(results), 0)
         self.assertTrue(all(a["account_type"] == "revenue" for a in results))
 
     def test_filter_by_is_active(self):

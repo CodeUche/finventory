@@ -85,6 +85,8 @@ export interface Product {
   is_active: boolean
   is_taxable: boolean
   tax_class: string | null
+  /** Scanned at the till to add straight to the basket. */
+  barcode?: string
   inventory_account?: string | null
   inventory_account_code?: string | null
   inventory_account_name?: string | null

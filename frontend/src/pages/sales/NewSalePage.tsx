@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Minus, Plus, Search, ShoppingCart, Trash2, User, UserCheck, Warehouse, X } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Loader2, Minus, Plus, Search, ShoppingCart, Trash2, User, UserCheck, Warehouse, X } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { customerApi, inventoryApi, locationApi, salesApi } from '@/services/api'
-import { formatCurrency, stripCommas } from '@/lib/utils'
+import { customerApi, inventoryApi, locationApi, salesApi, tillApi } from '@/services/api'
+import { printReceipt } from '@/lib/receipt'
+import { formatCurrency, formatDate, stripCommas } from '@/lib/utils'
 import AmountInput from '@/components/AmountInput'
 import EditableTotal from '@/components/EditableTotal'
 import { useNotifications } from '@/contexts/NotificationsContext'
@@ -23,7 +24,7 @@ const PAYMENT_METHODS = ['cash', 'pos', 'bank_transfer', 'credit']
 export default function NewSalePage() {
   const navigate = useNavigate()
   const { refetch: refetchAlerts } = useNotifications()
-  const { user } = useAuthStore()
+  const { user, organisation } = useAuthStore()
 
   const currentUserName = user ? `${user.first_name} ${user.last_name}`.trim() || user.email : ''
 
@@ -108,11 +109,110 @@ export default function NewSalePage() {
   }
 
   const updateQtyDirect = (id: string, raw: string) => {
-    const v = parseInt(raw, 10)
-    if (!isNaN(v) && v >= 1) {
+    // Decimal, not integer: anything sold by weight (meat, rice from a sack,
+    // fabric by the yard) is rung up as 1.42 kg, and rounding it to 1 or 2
+    // over- or under-charges the customer on every single sale.
+    const v = parseFloat(raw)
+    if (!isNaN(v) && v > 0) {
       setCart((prev) => prev.map((c) => (c.product.id === id ? { ...c, quantity: v } : c)))
     }
   }
+
+  // ── Barcode scanning ──────────────────────────────────────────────────────
+  // A scanner is a keyboard that types fast and presses Enter. We look the code
+  // up as an exact barcode/SKU first and drop it straight in the basket; only
+  // if nothing matches exactly do we fall back to the search dropdown, so a
+  // scan never makes the cashier pick from a list.
+  const [scanning, setScanning] = useState(false)
+  const [showHeld, setShowHeld] = useState(false)
+  // Remembered per device — a counter till wants a receipt every time, a
+  // back-office user raising an invoice almost never does.
+  const [autoPrint, setAutoPrint] = useState<boolean>(() => {
+    try { return localStorage.getItem('audity-pos-autoprint') !== '0' } catch { return true }
+  })
+  const toggleAutoPrint = () => setAutoPrint((v) => {
+    const next = !v
+    try { localStorage.setItem('audity-pos-autoprint', next ? '1' : '0') } catch { /* non-fatal */ }
+    return next
+  })
+
+  // ── Till awareness ────────────────────────────────────────────────────────
+  // Cash taken with no till open cannot be counted at end of shift, so say so
+  // once rather than letting the shortfall surface at close.
+  const [tillOpen, setTillOpen] = useState<boolean | null>(null)
+  useEffect(() => {
+    tillApi.current()
+      .then(({ data }) => setTillOpen(!!data.open))
+      .catch(() => setTillOpen(null))
+  }, [])
+
+  const handleScan = async (code: string) => {
+    const query = code.trim()
+    if (!query) return
+    setScanning(true)
+    try {
+      const { data } = await inventoryApi.products({ search: query, is_active: true })
+      const found: Product[] = data.results ?? data
+      const exact = found.find(
+        (p) => p.barcode?.toLowerCase() === query.toLowerCase()
+            || p.sku?.toLowerCase() === query.toLowerCase(),
+      )
+      if (exact) {
+        addToCart(exact)
+        return
+      }
+      if (found.length === 1) { addToCart(found[0]); return }
+      // Ambiguous — show the list rather than guess which item was scanned.
+      setProducts(found)
+      setShowProductDrop(found.length > 0)
+      if (found.length === 0) toast.error(`Nothing found for "${query}"`)
+    } catch {
+      toast.error('Could not look that up')
+    } finally { setScanning(false) }
+  }
+
+  // ── Held baskets ──────────────────────────────────────────────────────────
+  // A customer forgets their wallet; the queue behind them shouldn't wait.
+  // Kept on the device so a held basket survives a refresh and works offline.
+  const HELD_KEY = `audity-held-baskets-${organisation?.id ?? 'none'}`
+  interface HeldBasket { id: string; label: string; at: string; cart: CartItem[] }
+  const [held, setHeld] = useState<HeldBasket[]>(() => {
+    try { return JSON.parse(localStorage.getItem(HELD_KEY) || '[]') } catch { return [] }
+  })
+
+  const persistHeld = (next: HeldBasket[]) => {
+    setHeld(next)
+    try { localStorage.setItem(HELD_KEY, JSON.stringify(next)) } catch { /* quota — non-fatal */ }
+  }
+
+  // crypto.randomUUID needs a secure context and is missing from the older
+  // Android WebViews on cheap POS terminals — which is exactly where this runs.
+  const basketId = () => {
+    try {
+      if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID()
+    } catch { /* fall through */ }
+    return `held-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  }
+
+  const holdBasket = () => {
+    if (cart.length === 0) { toast.error('Nothing to hold'); return }
+    const label = selectedCustomer?.name || `${cart.length} item${cart.length === 1 ? '' : 's'}`
+    persistHeld([...held, { id: basketId(), label, at: new Date().toISOString(), cart }])
+    setCart([])
+    toast.success('Basket held')
+    searchRef.current?.focus()
+  }
+
+  const resumeBasket = (id: string) => {
+    const basket = held.find((b) => b.id === id)
+    if (!basket) return
+    if (cart.length > 0) { toast.error('Finish or hold the current basket first'); return }
+    setCart(basket.cart)
+    persistHeld(held.filter((b) => b.id !== id))
+    toast.success('Basket resumed')
+  }
+
+  const discardBasket = (id: string) => persistHeld(held.filter((b) => b.id !== id))
 
   const updatePrice = (id: string, price: string) => {
     setCart((prev) =>
@@ -214,9 +314,36 @@ export default function NewSalePage() {
     }
     setSubmitting(true)
     try {
-      await salesApi.create(buildPayload(isProforma))
+      const { data: created } = await salesApi.create(buildPayload(isProforma))
       toast.success(isProforma ? 'Proforma invoice created!' : 'Sale recorded!')
       refetchAlerts()
+
+      // Hand the customer their receipt before leaving the screen. Skipped for
+      // a proforma, which is a quote and not proof of payment.
+      if (!isProforma && created?.id && autoPrint) {
+        printReceipt({
+          merchant: organisation?.invoice_company_name || organisation?.name || 'Receipt',
+          address: organisation?.address,
+          phone: organisation?.phone,
+          tin: organisation?.tax_id,
+          invoiceNumber: created.invoice_number ?? '',
+          date: formatDate(created.issue_date ?? new Date().toISOString()),
+          cashier: currentUserName,
+          customer: selectedCustomer?.name,
+          lines: cart.map((c) => ({
+            name: c.product.name,
+            qty: c.quantity,
+            unit_price: c.unit_price,
+            line_total: c.unit_price * c.quantity * (1 - c.discount_percent / 100),
+          })),
+          subtotal, discount: discountTotal, total: grandTotal,
+          payments: paymentMethod === 'credit' ? [] : [{ method: paymentMethod, amount: grandTotal }],
+          amountTendered: tenderedNum || undefined,
+          change: tenderedNum ? Math.max(0, tenderedNum - grandTotal) : undefined,
+          firsIrn: created.firs_irn,
+          qrCodeBase64: created.firs_qr_code,
+        })
+      }
       navigate('/sales')
     } catch (err: any) {
       const data = err?.response?.data
@@ -256,20 +383,94 @@ export default function NewSalePage() {
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_380px] gap-6">
         {/* ── Left: Product search + Cart ── */}
         <div className="space-y-4">
+          {tillOpen === false && (
+            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200/90 flex gap-2.5 items-start">
+              <AlertTriangle size={15} className="shrink-0 mt-0.5" />
+              <span>
+                No till is open, so cash taken now won't appear in an end-of-day count.{' '}
+                <button onClick={() => navigate('/pos/till')} className="underline hover:text-white">
+                  Open a till
+                </button>.
+              </span>
+            </div>
+          )}
           {/* Product search */}
           <div className="card p-4">
-            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">
-              Search Products
-            </p>
+            <div className="flex items-center gap-2 mb-3">
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                Scan or search
+              </p>
+              {scanning && <Loader2 size={12} className="animate-spin text-brand-400" />}
+              <div className="ml-auto flex items-center gap-2">
+                <button
+                  type="button" onClick={toggleAutoPrint}
+                  className={`btn-ghost px-2.5 py-1 text-[11px] ${autoPrint ? 'text-brand-400' : 'text-slate-500'}`}
+                  title={autoPrint ? 'A receipt prints after each sale' : 'No receipt is printed'}
+                >
+                  Receipt {autoPrint ? 'on' : 'off'}
+                </button>
+                <button
+                  type="button" onClick={holdBasket}
+                  className="btn-ghost px-2.5 py-1 text-[11px]"
+                  title="Park this basket and serve the next customer"
+                >
+                  Hold basket
+                </button>
+                {held.length > 0 && (
+                  <button
+                    type="button" onClick={() => setShowHeld((v) => !v)}
+                    className="btn-ghost px-2.5 py-1 text-[11px] text-brand-400"
+                  >
+                    Resume ({held.length})
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {showHeld && held.length > 0 && (
+              <div className="mb-3 rounded-xl border border-surface-600 divide-y divide-surface-700">
+                {held.map((b) => (
+                  <div key={b.id} className="flex items-center gap-2 px-3 py-2">
+                    <span className="text-sm text-white flex-1 truncate">{b.label}</span>
+                    <span className="text-[11px] text-slate-500">{formatDate(b.at)}</span>
+                    <button
+                      onClick={() => { resumeBasket(b.id); setShowHeld(false) }}
+                      className="btn-ghost px-2 py-1 text-[11px] text-brand-400"
+                    >
+                      Resume
+                    </button>
+                    <button
+                      onClick={() => discardBasket(b.id)}
+                      className="btn-ghost p-1 text-slate-500 hover:text-red-400"
+                      title="Discard"
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
             <div className="relative" ref={searchWrapRef}>
               <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
               <input
                 ref={searchRef}
                 className="input pl-9"
-                placeholder="Product name or SKU…"
+                placeholder="Scan barcode, or type a name / SKU…"
                 value={productQuery}
                 onChange={(e) => setProductQuery(e.target.value)}
                 onFocus={() => products.length > 0 && setShowProductDrop(true)}
+                onKeyDown={(e) => {
+                  // A scanner ends its burst with Enter — treat that as a scan.
+                  // Read the value off the element, NOT off React state: a
+                  // hardware scanner types and sends Enter within a couple of
+                  // milliseconds, faster than React flushes, so state can still
+                  // hold the previous value and the scan would be dropped.
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    handleScan(e.currentTarget.value)
+                  }
+                }}
               />
               {showProductDrop && products.length > 0 && (
                 <div className="absolute top-full mt-1 left-0 right-0 bg-surface-800 border border-surface-600 rounded-xl shadow-xl z-20 max-h-72 overflow-y-auto">
