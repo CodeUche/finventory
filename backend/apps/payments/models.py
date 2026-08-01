@@ -225,3 +225,7 @@ class PaymentEventLog(TenantAwareModel):
 
     def __str__(self):
         return f"{self.provider}:{self.event_id}"
+
+# Card terminal settlement lives in its own module for clarity; re-exported so
+# Django discovers the models and existing imports keep working.
+from .settlement_models import SettlementBatch, SettlementLine  # noqa: E402,F401

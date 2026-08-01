@@ -1622,6 +1622,29 @@ export const recurringApi = {
   generateNow: (id: string) => api.post(`/sales/recurring/${id}/generate_now/`),
 }
 
+export const settlementApi = {
+  batches: (params?: object) => api.get('/payments/settlement-batches/', { params }),
+  /** Imports the terminal export AND matches it in one call.
+   *  Posted as raw text, not FormData: the desktop build routes through Tauri,
+   *  whose IPC layer turns FormData into form-urlencoded and the file never
+   *  arrives. The backend accepts either shape. */
+  upload: (csv: string, filename = '') =>
+    api.post('/payments/settlement-batches/upload/', csv, {
+      headers: { 'Content-Type': 'text/csv', ...(filename ? { 'X-File-Name': filename } : {}) },
+      transformRequest: [(d) => d],   // keep the string as-is
+    }),
+  rematch: (id: string) => api.post(`/payments/settlement-batches/${id}/rematch/`),
+  lines: (params?: object) => api.get('/payments/settlements/', { params }),
+  summary: () => api.get('/payments/settlements/summary/'),
+  candidates: () => api.get('/payments/settlements/candidates/'),
+  assign: (id: string, payment: string, note = '') =>
+    api.post(`/payments/settlements/${id}/assign/`, { payment, note }),
+  otherIncome: (id: string, note = '') =>
+    api.post(`/payments/settlements/${id}/other_income/`, { note }),
+  ignore: (id: string, note = '') => api.post(`/payments/settlements/${id}/ignore/`, { note }),
+  unmatch: (id: string) => api.post(`/payments/settlements/${id}/unmatch/`),
+}
+
 export const storefrontApi = {
   /** The org's shop settings — created on first call so the page always has one. */
   mine: () => api.get('/storefront/settings/mine/'),

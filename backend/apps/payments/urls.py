@@ -1,6 +1,7 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
+from .settlement_views import SettlementBatchViewSet, SettlementLineViewSet
 from .views import (
     BankTransferClaimViewSet, MerchantBankAccountViewSet, PaymentGatewayConfigViewSet,
     PaymentLinkViewSet, VirtualAccountViewSet, monnify_webhook, payment_options,
@@ -13,6 +14,8 @@ router.register('bank-accounts', MerchantBankAccountViewSet, basename='merchant-
 router.register('links', PaymentLinkViewSet, basename='payment-link')
 router.register('virtual-accounts', VirtualAccountViewSet, basename='virtual-account')
 router.register('transfer-claims', BankTransferClaimViewSet, basename='transfer-claim')
+router.register('settlement-batches', SettlementBatchViewSet, basename='settlement-batch')
+router.register('settlements', SettlementLineViewSet, basename='settlement-line')
 
 urlpatterns = [
     path('options/', payment_options, name='payment-options'),

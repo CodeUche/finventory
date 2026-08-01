@@ -72,6 +72,7 @@ const PosRegisterPage = React.lazy(() => import('@/pages/pos/PosRegisterPage'))
 const StorefrontPage = React.lazy(() => import('@/pages/shop/StorefrontPage'))
 const OrderTrackingPage = React.lazy(() => import('@/pages/shop/OrderTrackingPage'))
 const StorefrontAdminPage = React.lazy(() => import('@/pages/shop/StorefrontAdminPage'))
+const SettlementPage = React.lazy(() => import('@/pages/payments/SettlementPage'))
 const TablesPage = React.lazy(() => import('@/pages/pos/TablesPage'))
 const KitchenPage = React.lazy(() => import('@/pages/pos/KitchenPage'))
 const LocationsPage = React.lazy(() => import('@/pages/LocationsPage'))
@@ -392,6 +393,7 @@ export default function App() {
         <Route path="audit-log" element={<AuditLogPage />} />
         <Route path="helpdesk" element={<TicketsPage />} />
         <Route path="payments/transfers" element={<ModuleRoute module="sales"><TransferConfirmationsPage /></ModuleRoute>} />
+        <Route path="payments/settlement" element={<ModuleRoute module="sales"><SettlementPage /></ModuleRoute>} />
         <Route path="pos/till" element={<ModuleRoute module="sales"><TillSessionPage /></ModuleRoute>} />
         <Route path="storefront" element={<ModuleRoute module="sales"><StorefrontAdminPage /></ModuleRoute>} />
 
