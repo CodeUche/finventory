@@ -48,6 +48,10 @@ const GLHealthPage = React.lazy(() => import('@/pages/accounting/GLHealthPage'))
 const BeginningBalancesPage = React.lazy(() => import('@/pages/accounting/BeginningBalancesPage'))
 const EmployeesPage = React.lazy(() => import('@/pages/payroll/EmployeesPage'))
 const PayrollPage = React.lazy(() => import('@/pages/payroll/PayrollPage'))
+const LeavePage = React.lazy(() => import('@/pages/payroll/LeavePage'))
+const CompliancePage = React.lazy(() => import('@/pages/payroll/CompliancePage'))
+const OrgChartPage = React.lazy(() => import('@/pages/payroll/OrgChartPage'))
+const EmployeePortalPage = React.lazy(() => import('@/pages/ess/EmployeePortalPage'))
 const BudgetPage = React.lazy(() => import('@/pages/BudgetPage'))
 const ReportsPage = React.lazy(() => import('@/pages/reports/ReportsPage'))
 const BalanceSheetPage = React.lazy(() => import('@/pages/reports/BalanceSheetPage'))
@@ -64,6 +68,7 @@ const TicketsPage = React.lazy(() => import('@/pages/TicketsPage'))
 const RestaurantPOSPage = React.lazy(() => import('@/pages/pos/RestaurantPOSPage'))
 const TransferConfirmationsPage = React.lazy(() => import('@/pages/payments/TransferConfirmationsPage'))
 const TillSessionPage = React.lazy(() => import('@/pages/pos/TillSessionPage'))
+const PosRegisterPage = React.lazy(() => import('@/pages/pos/PosRegisterPage'))
 const TablesPage = React.lazy(() => import('@/pages/pos/TablesPage'))
 const KitchenPage = React.lazy(() => import('@/pages/pos/KitchenPage'))
 const LocationsPage = React.lazy(() => import('@/pages/LocationsPage'))
@@ -134,6 +139,18 @@ function ErrorBoundary({ children }: { children: React.ReactNode }) {
   const location = useLocation()
   const navigate = useNavigate()
   return <ErrorBoundaryInner resetKey={location.pathname} navigate={navigate}>{children}</ErrorBoundaryInner>
+}
+
+/**
+ * Where a signed-in user lands.
+ *
+ * Employee memberships hold no module permissions, so sending them to the
+ * dashboard would show an empty shell; they belong in the self-service portal.
+ */
+function HomeRedirect() {
+  const memberRole = useAuthStore((s) => s.memberRole)
+  if (memberRole === 'employee') return <Navigate to="/me" replace />
+  return <Navigate to="/dashboard" replace />
 }
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -262,6 +279,30 @@ export default function App() {
       <Route path="/accept-invite/:token" element={<AcceptInvitePage mode="accept" />} />
       <Route path="/reject-invite/:token" element={<AcceptInvitePage mode="reject" />} />
 
+      {/* Employee self-service portal — its own shell, never the operator layout.
+          An employee membership has no module permissions, so routing them into
+          AppLayout would land them on an empty dashboard. */}
+      <Route
+        path="/me"
+        element={
+          <ProtectedRoute>
+            <EmployeePortalPage />
+          </ProtectedRoute>
+        }
+      />
+
+      {/* Register — deliberately outside AppLayout. A till is a locked-down
+          surface: hiding the sidebar with an overlay still leaves every nav
+          link in the DOM, reachable by keyboard and screen reader. */}
+      <Route
+        path="/pos/register"
+        element={
+          <ProtectedRoute>
+            <PosRegisterPage />
+          </ProtectedRoute>
+        }
+      />
+
       {/* Protected */}
       <Route
         path="/"
@@ -271,7 +312,7 @@ export default function App() {
           </ProtectedRoute>
         }
       >
-        <Route index element={<Navigate to="/dashboard" replace />} />
+        <Route index element={<HomeRedirect />} />
         <Route path="dashboard" element={<DashboardPage />} />
 
         {/* Inventory */}
@@ -315,8 +356,15 @@ export default function App() {
         <Route path="accounting/gl-health"        element={<ModuleRoute module="accounting"><GLHealthPage /></ModuleRoute>} />
 
         {/* Payroll */}
-        <Route path="payroll/employees" element={<ModuleRoute module="payroll"><EmployeesPage /></ModuleRoute>} />
-        <Route path="payroll/runs"      element={<ModuleRoute module="payroll"><PayrollPage /></ModuleRoute>} />
+        {/* HR — canonical /hr/* paths. The old /payroll/* URLs are kept as
+            redirects so bookmarks and the shipped desktop build keep working. */}
+        <Route path="hr/employees"   element={<ModuleRoute module="payroll"><EmployeesPage /></ModuleRoute>} />
+        <Route path="hr/runs"        element={<ModuleRoute module="payroll"><PayrollPage /></ModuleRoute>} />
+        <Route path="hr/org-chart"   element={<ModuleRoute module="payroll"><OrgChartPage /></ModuleRoute>} />
+        <Route path="hr/leave"       element={<ModuleRoute module="payroll"><LeavePage /></ModuleRoute>} />
+        <Route path="hr/compliance"  element={<ModuleRoute module="payroll"><CompliancePage /></ModuleRoute>} />
+        <Route path="payroll/employees" element={<Navigate to="/hr/employees" replace />} />
+        <Route path="payroll/runs"      element={<Navigate to="/hr/runs" replace />} />
 
         {/* Finance */}
         <Route path="expenses"              element={<ModuleRoute module="expenses"><ExpensesPage /></ModuleRoute>} />

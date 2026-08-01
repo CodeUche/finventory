@@ -9,6 +9,7 @@ import {
   MapPin, ClipboardCheck, GraduationCap, Briefcase, ShoppingCart,
   User, Layout, Mail, Lock, Bot, Globe, Upload, GitBranch,
   ChevronLeft, HelpCircle, LayoutGrid, Zap, Wallet,
+  CalendarDays,
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { authApi } from '@/services/api'
@@ -55,7 +56,8 @@ export const navGroups: { label: string | null; alwaysGroup?: boolean; items: { 
       { name: 'Quotes', href: '/quotes', icon: ClipboardList, module: 'quotes' },
       { name: 'Invoices', href: '/sales', icon: FileText, module: 'sales' },
       { name: 'Recurring Invoices', href: '/recurring', icon: RefreshCw, module: 'recurring' },
-      { name: 'POS', href: '/sales/new', icon: ShoppingCart, module: 'sales' },
+      { name: 'Register (Till)', href: '/pos/register', icon: ShoppingCart, module: 'sales' },
+      { name: 'New Sale / Invoice', href: '/sales/new', icon: Receipt, module: 'sales' },
       { name: 'POS Orders', href: '/pos/restaurant', icon: ClipboardList, module: 'sales' },
       { name: 'Till / Cash-up', href: '/pos/till', icon: Wallet, module: 'sales' },
       { name: 'Tables', href: '/pos/tables', icon: LayoutGrid, module: 'sales', businessType: 'restaurant' },
@@ -81,10 +83,13 @@ export const navGroups: { label: string | null; alwaysGroup?: boolean; items: { 
     ],
   },
   {
-    label: 'PAYROLL',
+    label: 'HR',
     items: [
-      { name: 'Employees', href: '/payroll/employees', icon: UsersRound, module: 'payroll' },
-      { name: 'Payroll Runs', href: '/payroll/runs', icon: Banknote, module: 'payroll' },
+      { name: 'Employees', href: '/hr/employees', icon: UsersRound, module: 'payroll' },
+      { name: 'Org Chart', href: '/hr/org-chart', icon: GitBranch, module: 'payroll' },
+      { name: 'Leave', href: '/hr/leave', icon: CalendarDays, module: 'payroll' },
+      { name: 'Payroll Runs', href: '/hr/runs', icon: Banknote, module: 'payroll' },
+      { name: 'Compliance & Remittances', href: '/hr/compliance', icon: ShieldCheck, module: 'payroll' },
     ],
   },
   {
