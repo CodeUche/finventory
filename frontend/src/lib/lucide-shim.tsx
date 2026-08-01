@@ -96,6 +96,7 @@ import {
   Scales as _Scales,
   Shield as _Shield,
   ShieldCheck as _ShieldCheck,
+  ShoppingBag as _ShoppingBag,
   ShoppingCart as _ShoppingCart,
   SignOut as _SignOut,
   Sparkle as _Sparkle,
@@ -104,6 +105,7 @@ import {
   Stack as _Stack,
   StackSimple as _StackSimple,
   Star as _Star,
+  Storefront as _Storefront,
   Sun as _Sun,
   Table as _Table,
   Trash as _Trash,
@@ -246,10 +248,12 @@ export const Search = mk(_MagnifyingGlass)
 export const Send = mk(_PaperPlaneTilt)
 export const Shield = mk(_Shield)
 export const ShieldCheck = mk(_ShieldCheck)
+export const ShoppingBag = mk(_ShoppingBag)
 export const ShoppingCart = mk(_ShoppingCart)
 export const Sparkles = mk(_Sparkle)
 export const Square = mk(_Square)
 export const Star = mk(_Star)
+export const Store = mk(_Storefront)
 export const Sun = mk(_Sun)
 export const Table2 = mk(_Table)
 export const Trash2 = mk(_Trash)

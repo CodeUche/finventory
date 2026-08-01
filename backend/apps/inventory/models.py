@@ -137,6 +137,12 @@ class Product(TenantAwareModel):
     barcode = models.CharField(max_length=100, blank=True)
     image = models.ImageField(upload_to="products/", null=True, blank=True)
     is_active = models.BooleanField(default=True, db_index=True)
+    # Off by default: publishing a merchant's whole catalogue to the internet
+    # the moment they enable a storefront would be a nasty surprise.
+    is_published = models.BooleanField(
+        default=False, db_index=True,
+        help_text="Show this item on the public storefront.",
+    )
 
     # ── FIRS e-invoicing fields ───────────────────────────────────────────────
     hsn_code = models.CharField(

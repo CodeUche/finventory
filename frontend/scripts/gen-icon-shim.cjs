@@ -31,7 +31,7 @@ const MAP = {
   Maximize2:'ArrowsOut', Menu:'List', MessageCircle:'ChatCircle', MessageSquare:'ChatText', Minimize2:'ArrowsIn',
   Minus:'Minus', MinusCircle:'MinusCircle', Moon:'Moon', Package:'Package', PackageCheck:'Package', Pencil:'PencilSimple', Phone:'Phone',
   PieChart:'ChartPie', Play:'Play', Plus:'Plus', Printer:'Printer', Receipt:'Receipt',
-  Heart:'Heart', Share2:'ShareNetwork',
+  Heart:'Heart', Share2:'ShareNetwork', ShoppingBag:'ShoppingBag', Store:'Storefront',
   RefreshCw:'ArrowsClockwise',
   RotateCcw:'ArrowCounterClockwise', Scale:'Scales', Search:'MagnifyingGlass', Send:'PaperPlaneTilt',
   Shield:'Shield', ShieldCheck:'ShieldCheck', ShoppingCart:'ShoppingCart', Sparkles:'Sparkle', Star:'Star',
