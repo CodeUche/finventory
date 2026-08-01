@@ -633,6 +633,9 @@ export interface AssetReconciliation {
 }
 
 // Payroll
+/** ISO-2 style code used for Nigerian states — see backend payroll/constants.py */
+export type NigerianStateCode = string
+
 export interface Employee {
   id: string
   employee_id: string
@@ -646,12 +649,38 @@ export interface Employee {
   employment_type: 'full_time' | 'part_time' | 'contract'
   hire_date: string
   termination_date: string | null
+  // HR master data
+  date_of_birth?: string | null
+  gender?: '' | 'male' | 'female'
+  marital_status?: '' | 'single' | 'married' | 'divorced' | 'widowed'
+  nin?: string
+  address?: string
+  next_of_kin_name?: string
+  next_of_kin_phone?: string
+  next_of_kin_relationship?: string
+  emergency_contact_name?: string
+  emergency_contact_phone?: string
+  manager?: string | null
+  manager_name?: string | null
+  grade?: string
+  confirmation_date?: string | null
+  contract_end_date?: string | null
+  has_portal_access?: boolean
+  // Banking
   bank_name: string
+  bank_code?: string
   account_number: string
   account_name: string
+  // Statutory
   pfa_name: string
   pfa_number: string
+  pension_pin?: string
   tin: string
+  /** Determines which State IRS this employee's PAYE is remitted to. */
+  state_of_residence?: NigerianStateCode
+  state_label?: string
+  annual_rent?: string
+  // Pay
   basic_salary: string
   housing_allowance: string
   transport_allowance: string
@@ -660,6 +689,273 @@ export interface Employee {
   gross_salary: string
   is_active: boolean
   created_at: string
+}
+
+export interface TaxAuthority {
+  id: string
+  state_code: string
+  state_label: string
+  name: string
+  portal_url: string
+  payer_id: string
+  is_active: boolean
+}
+
+export interface CompensationRecord {
+  id: string
+  employee: string
+  employee_name: string
+  effective_date: string
+  reason: 'hire' | 'review' | 'promotion' | 'adjustment' | 'demotion'
+  basic_salary: string
+  housing_allowance: string
+  transport_allowance: string
+  leave_allowance: string
+  other_allowances: string
+  gross_salary: string
+  notes: string
+  created_at: string
+}
+
+export interface PayrollAdjustment {
+  id: string
+  employee: string
+  employee_name: string
+  adjustment_type: 'arrears' | 'backpay' | 'correction'
+  amount: string
+  reason: string
+  effective_period_year: number | null
+  effective_period_month: number | null
+  status: 'pending' | 'applied' | 'cancelled'
+  applied_in_run: string | null
+  created_at: string
+}
+
+export interface StatutoryRemittance {
+  id: string
+  payroll_run: string | null
+  run_number: string | null
+  remittance_type: 'paye' | 'pension' | 'nhf' | 'nsitf' | 'itf' | 'benefit'
+  type_label: string
+  period_year: number
+  period_month: number
+  tax_authority: string | null
+  authority_name: string
+  recipient_name: string
+  basis: string
+  amount_due: string
+  amount_paid: string
+  balance_due: string
+  status: 'pending' | 'partial' | 'remitted'
+  due_date: string
+  remittance_date: string | null
+  reference: string
+  notes: string
+  gl_cleared: boolean
+  is_overdue: boolean
+  days_overdue: number
+  created_at: string
+}
+
+export interface RemittanceSummary {
+  outstanding: string
+  outstanding_count: number
+  overdue: string
+  overdue_count: number
+  remitted_ytd: string
+  next_due_date: string | null
+  next_due_recipient: string | null
+}
+
+export interface RemittanceScheduleGroup {
+  recipient: string
+  total: number
+  count: number
+  employees: Array<{
+    employee_id: string
+    name: string
+    gross: number
+    amount: number
+    [key: string]: string | number
+  }>
+}
+
+export interface LeaveType {
+  id: string
+  name: string
+  days_per_year: string
+  accrual_method: 'annual_grant' | 'monthly_accrual'
+  is_paid: boolean
+  carry_forward_max: string
+  gender_restriction: '' | 'male' | 'female'
+  requires_approval: boolean
+  requires_document: boolean
+  is_active: boolean
+}
+
+export interface LeaveBalance {
+  id: string
+  employee: string
+  employee_name: string
+  leave_type: string
+  leave_type_name: string
+  year: number
+  entitled_days: string
+  accrued_days: string
+  carried_forward: string
+  taken_days: string
+  pending_days: string
+  available_days: string
+}
+
+export interface LeaveRequest {
+  id: string
+  employee: string
+  employee_name: string
+  leave_type: string
+  leave_type_name: string
+  is_paid: boolean
+  start_date: string
+  end_date: string
+  days: string
+  reason: string
+  status: 'draft' | 'pending' | 'approved' | 'rejected' | 'cancelled'
+  approver: string | null
+  decided_by: string | null
+  decided_by_name: string | null
+  decided_at: string | null
+  decision_note: string
+  attachment: string | null
+  balance_after: string | null
+  created_at: string
+}
+
+export interface BenefitPlan {
+  id: string
+  name: string
+  benefit_type: 'hmo' | 'life' | 'gym' | 'transport' | 'other'
+  provider_name: string
+  basis: 'fixed' | 'percent_gross'
+  employee_contribution: string
+  employer_contribution: string
+  remittance_day: number
+  is_active: boolean
+  notes: string
+  enrolled_count: number
+}
+
+export interface EmployeeBenefit {
+  id: string
+  employee: string
+  employee_name: string
+  plan: string
+  plan_name: string
+  provider_name: string
+  start_date: string
+  end_date: string | null
+  tier: string
+  employee_contribution_override: string | null
+  employer_contribution_override: string | null
+  is_active: boolean
+}
+
+export interface AdvancePolicy {
+  id: string
+  is_enabled: boolean
+  max_percent_of_accrued: string
+  fee_percent: string
+  min_amount: string
+  max_requests_per_period: number
+  min_months_employed: number
+  require_approval: boolean
+  min_cash_buffer: string
+}
+
+export interface AdvanceRequest {
+  id: string
+  employee: string
+  employee_name: string
+  amount: string
+  fee: string
+  total_recoverable: string
+  period_year: number
+  period_month: number
+  reason: string
+  status: 'pending' | 'approved' | 'rejected' | 'disbursed' | 'recovered' | 'cancelled'
+  accrued_at_request: string
+  days_worked_at_request: string
+  decided_by: string | null
+  decided_at: string | null
+  decision_note: string
+  disbursed_at: string | null
+  amount_recovered: string
+  balance_outstanding: string
+  recovered_in_run: string | null
+  created_at: string
+}
+
+export interface AdvanceEligibility {
+  eligible: boolean
+  reasons: string[]
+  accrued_net: string
+  available: string
+  cap: string
+  already_drawn: string
+  days_worked: string
+  days_in_period: string
+  fee_percent: string
+  min_amount: string
+  max_percent_of_accrued: string
+}
+
+export interface OrgChartNode {
+  id: string
+  employee_id: string
+  name: string
+  first_name: string
+  last_name: string
+  job_title: string
+  department: string
+  manager_id: string | null
+  children: OrgChartNode[]
+}
+
+export interface PayrollSettings {
+  id: string
+  itf_applicable: boolean
+  itf_auto_assert: boolean
+  nsitf_applicable: boolean
+  default_pay_frequency: 'monthly' | 'biweekly' | 'weekly'
+  leave_seeded: boolean
+  tax_authorities_seeded: boolean
+}
+
+export interface PayslipDelivery {
+  id: string
+  payslip: string
+  employee_name: string
+  channel: 'email' | 'portal' | 'download'
+  recipient: string
+  status: 'sent' | 'failed' | 'skipped'
+  error: string
+  sent_by: string | null
+  created_at: string
+}
+
+/** Aggregate payload behind the employee self-service landing page. */
+export interface EssSummary {
+  employee: Employee
+  organisation: { id: string; name: string; currency: string }
+  latest_payslip: (PayslipLine & {
+    period_year: number
+    period_month: number
+    run_status: string
+    payment_date: string | null
+  }) | null
+  leave_balances: LeaveBalance[]
+  open_leave_requests: number
+  advance: AdvanceEligibility | null
+  outstanding_loans: EmployeeLoan[]
 }
 
 export interface EmployeePenalty {
@@ -710,6 +1006,14 @@ export interface PayslipLine {
   employee_bank_code?: string
   employee_account_number?: string
   employee_account_name?: string
+  employee_email?: string
+  /** 1 for a full period; below 1 for joiners, leavers and mid-period contract ends. */
+  proration_factor?: string
+  days_worked?: string
+  days_in_period?: string
+  /** State IRS this line's PAYE is owed to, snapshot at run time. */
+  tax_authority?: string | null
+  tax_authority_name?: string | null
   basic_salary: string
   housing_allowance: string
   transport_allowance: string
@@ -718,16 +1022,21 @@ export interface PayslipLine {
   gross_salary: string
   bonus_amount: string
   overtime_amount: string
+  adjustment_amount?: string
   employee_pension: string
   nhf: string
   nsitf: string
   consolidated_relief_allowance: string
+  rent_relief?: string
   taxable_income: string
   paye_tax: string
   employer_pension: string
   penalty_deductions: string
   loan_deductions: string
   attendance_deduction: string
+  advance_deductions?: string
+  benefit_deductions?: string
+  benefit_employer_cost?: string
   total_deductions: string
   net_salary: string
   status: string
@@ -743,11 +1052,24 @@ export interface PayslipLine {
   }>
 }
 
+export type PayrollRunType =
+  | 'regular'
+  | 'off_cycle'
+  | 'supplementary'
+  | 'thirteenth_month'
+  | 'final_settlement'
+
 export interface PayrollRun {
   id: string
   run_number: string
   period_year: number
   period_month: number
+  period_start?: string | null
+  period_end?: string | null
+  run_type?: PayrollRunType
+  run_type_label?: string
+  sequence?: number
+  pay_frequency?: 'monthly' | 'biweekly' | 'weekly'
   status: 'draft' | 'processing' | 'approved' | 'paid'
   total_gross: string
   total_deductions: string
@@ -757,15 +1079,25 @@ export interface PayrollRun {
   total_pension_employer: string
   total_nhf: string
   total_nsitf: string
+  total_itf?: string
+  total_benefits?: string
+  total_benefits_employer?: string
   total_bonus: string
   total_overtime: string
+  /** Every naira the employer must fund: net + PAYE + both pension legs + NHF + NSITF + ITF + benefits. */
+  employer_cost?: string
   submitted_for_approval: boolean
   submitted_by: string | null
+  target_approver?: string | null
+  target_approver_name?: string | null
   payment_date: string | null
   transfer_reference: string
+  gl_post_status?: 'pending' | 'posted' | 'failed' | 'not_configured'
+  gl_post_error?: string
   created_at: string
   payslips: PayslipLine[]
   employee_count: number
+  prorated_count?: number
 }
 
 // Tax extensions
@@ -1145,6 +1477,10 @@ export type ModuleKey =
   | 'customers' | 'suppliers' | 'payroll' | 'reports' | 'accounting'
   | 'tax' | 'budget' | 'quotes' | 'recurring' | 'settings'
   | 'audit_log' | 'owner_analytics' | 'team'
+  // HR module. 'payroll' remains the permission key for pay runs and employee
+  // records; 'leave' gates the leave surfaces separately so a line manager can
+  // approve time off without seeing anyone's salary.
+  | 'leave'
 
 export type AccessLevel = 'none' | 'view' | 'write' | 'edit'
 

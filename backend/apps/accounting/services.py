@@ -1,4 +1,5 @@
 import logging
+from datetime import date
 from decimal import Decimal
 from django.db import transaction
 from django.db.models import F, Q, Sum
@@ -27,11 +28,16 @@ COA_SEED = [
     ('2500', 'NSITF Payable', AccountType.LIABILITY),
     ('2600', 'NHF Payable', AccountType.LIABILITY),
     ('2700', 'Accrued Liabilities', AccountType.LIABILITY),
+    ('2750', 'ITF Payable', AccountType.LIABILITY),
+    ('2850', 'Accrued Leave', AccountType.LIABILITY),
+    ('2910', 'Employee Benefits Payable', AccountType.LIABILITY),
+    ('1450', 'Employee Salary Advances', AccountType.ASSET),
     ('3001', 'Owner Equity', AccountType.EQUITY),
     ('3100', 'Retained Earnings', AccountType.EQUITY),
     ('3900', 'Take-On Suspense / Opening Balance Equity', AccountType.EQUITY),
     ('4001', 'Sales Revenue', AccountType.REVENUE),
     ('4100', 'Other Income', AccountType.REVENUE),
+    ('4105', 'Salary Advance Fee Income', AccountType.REVENUE),
     ('5001', 'Cost of Goods Sold', AccountType.COST_OF_GOODS),
     ('6001', 'Salaries and Wages', AccountType.EXPENSE),
     ('6100', 'Rent Expense', AccountType.EXPENSE),
@@ -1736,16 +1742,28 @@ class AccountingService:
     @staticmethod
     def post_payroll_journal(organisation, payroll_run, user=None):
         """
-        Balanced payroll GL journal (E1 fix):
+        Balanced payroll GL journal.
 
-        DR Salaries & Wages Expense       = total_gross
+        Every naira that leaves gross pay must land somewhere, or the entry is
+        rejected by post_journal_entry's balance check. The employee-side
+        deductions each need their own credit line:
+
+        DR Salaries & Wages Expense        = total_gross (incl. bonus/overtime/arrears)
         DR Employer Pension Expense        = total_pension_employer
         DR NSITF Expense                   = total_nsitf
-        ─────────────────────────────────────────────────────
+        DR ITF Expense                     = total_itf
+        DR Employee Benefits Expense       = employer share of premiums
+        ---------------------------------------------------------------------
         CR PAYE Payable                    = total_paye
-        CR Pension Payable (emp + empr)    = total_pension_employee + total_pension_employer
+        CR Pension Payable (emp + empr)    = total_pension_employee + employer
         CR NHF Payable                     = total_nhf
         CR NSITF Payable                   = total_nsitf
+        CR ITF Payable                     = total_itf
+        CR Employee Benefits Payable       = employee + employer share
+        CR Employee Salary Advances        = advances recovered (clears the asset)
+        CR Employee Loans Receivable       = loan installments recovered
+        CR Other Income                    = penalties withheld
+        CR Salaries & Wages Expense        = attendance deductions (cost not incurred)
         CR Bank / Net Pay                  = total_net
         """
         zero            = Decimal('0')
@@ -1757,6 +1775,27 @@ class AccountingService:
         nhf             = Decimal(str(payroll_run.total_nhf or 0))
         nsitf           = Decimal(str(payroll_run.total_nsitf or 0))
         net             = Decimal(str(payroll_run.total_net or 0))
+        itf             = Decimal(str(getattr(payroll_run, 'total_itf', 0) or 0))
+        benefit_emp     = Decimal(str(getattr(payroll_run, 'total_benefits', 0) or 0))
+        benefit_er      = Decimal(str(getattr(payroll_run, 'total_benefits_employer', 0) or 0))
+
+        # Per-payslip deductions that reduce net pay but were never credited by
+        # the previous version of this journal - the cause of silent
+        # gl_post_status='failed' on any run carrying a penalty, loan or absence.
+        def _sum(field):
+            try:
+                return sum(
+                    (Decimal(str(v or 0))
+                     for v in payroll_run.payslips.values_list(field, flat=True)),
+                    Decimal('0'),
+                )
+            except Exception:
+                return Decimal('0')
+
+        advances   = _sum('advance_deductions')
+        loans      = _sum('loan_deductions')
+        penalties  = _sum('penalty_deductions')
+        attendance = _sum('attendance_deduction')
 
         salary_acct  = AccountMappingService.resolve(organisation, 'salary_expense_account')
         paye_acct    = AccountMappingService.resolve(organisation, 'paye_account')
@@ -1778,19 +1817,59 @@ class AccountingService:
             )
 
         lines = [
-            # ── Debit side ──────────────────────────────────────────────────
+            # -- Debit side --------------------------------------------------
             (salary_acct,  gross,        zero),    # DR Salaries & Wages (employee cost)
             (salary_acct,  pension_empr, zero),    # DR Employer Pension Expense
             (salary_acct,  nsitf,        zero),    # DR NSITF Expense (employer-borne)
-            # ── Credit side ─────────────────────────────────────────────────
+            # -- Credit side -------------------------------------------------
             (paye_acct,    zero, paye),            # CR PAYE Payable
             (pension_acct, zero, total_pension),   # CR Pension Payable (employee + employer)
             (bank_acct,    zero, net),             # CR Bank / Net Pay
         ]
         if nhf > zero:
-            lines.append((nhf_acct, zero, nhf))   # CR NHF Payable
+            lines.append((nhf_acct, zero, nhf))      # CR NHF Payable
         if nsitf > zero:
             lines.append((nsitf_acct, zero, nsitf))  # CR NSITF Payable
+
+        if itf > zero:
+            itf_acct = AccountingService._get_or_create_account(
+                organisation, '2750', 'ITF Payable', AccountType.LIABILITY
+            )
+            lines.append((salary_acct, itf, zero))   # DR ITF Expense (employer-borne)
+            lines.append((itf_acct, zero, itf))      # CR ITF Payable
+
+        if benefit_emp + benefit_er > zero:
+            benefit_acct = AccountingService._get_or_create_account(
+                organisation, '2910', 'Employee Benefits Payable', AccountType.LIABILITY
+            )
+            # The employee share is already inside gross (a deduction from net),
+            # so only the employer share adds new expense.
+            if benefit_er > zero:
+                lines.append((salary_acct, benefit_er, zero))
+            lines.append((benefit_acct, zero, benefit_emp + benefit_er))
+
+        if advances > zero:
+            advance_acct = AccountingService._get_or_create_account(
+                organisation, '1450', 'Employee Salary Advances', AccountType.ASSET
+            )
+            lines.append((advance_acct, zero, advances))   # CR - clears the asset
+
+        if loans > zero:
+            loan_acct = AccountingService._get_or_create_account(
+                organisation, '1460', 'Employee Loans Receivable', AccountType.ASSET
+            )
+            lines.append((loan_acct, zero, loans))         # CR - clears the receivable
+
+        if penalties > zero:
+            other_income = AccountingService._get_or_create_account(
+                organisation, '4100', 'Other Income', AccountType.REVENUE
+            )
+            lines.append((other_income, zero, penalties))  # CR Other Income
+
+        if attendance > zero:
+            # Salary was debited at full gross; unworked days are cost the
+            # business never incurred, so credit the expense back.
+            lines.append((salary_acct, zero, attendance))
 
         return AccountingService.post_journal_entry(
             organisation,
@@ -1801,6 +1880,123 @@ class AccountingService:
             source_type='payroll',
             source_ref=str(payroll_run.id),
         )
+
+    @staticmethod
+    def post_remittance_clearing(remittance, user=None):
+        """
+        Clear a statutory / benefit liability when it is actually remitted.
+
+        DR <liability account>   = amount paid
+        CR Bank                  = amount paid
+
+        Without this the payable accrues forever and the balance sheet
+        overstates liabilities by every remittance ever made.
+        """
+        organisation = remittance.organisation
+        amount = Decimal(str(remittance.amount_paid or 0))
+        if amount <= Decimal('0'):
+            return None
+
+        CODES = {
+            'paye':    ('2200', 'PAYE Payable'),
+            'pension': ('2300', 'Pension Payable'),
+            'nhf':     ('2600', 'NHF Payable'),
+            'nsitf':   ('2500', 'NSITF Payable'),
+            'itf':     ('2750', 'ITF Payable'),
+            'benefit': ('2910', 'Employee Benefits Payable'),
+        }
+        code, name = CODES.get(remittance.remittance_type, ('2700', 'Accrued Liabilities'))
+        liability_acct = AccountingService._get_or_create_account(
+            organisation, code, name, AccountType.LIABILITY
+        )
+        bank_acct = AccountMappingService.resolve(organisation, 'bank_account')
+
+        label = remittance.recipient_name or name
+        return AccountingService.post_journal_entry(
+            organisation,
+            f"Remittance {remittance.get_remittance_type_display()} - {label}",
+            remittance.remittance_date or date.today(),
+            [
+                (liability_acct, amount, Decimal('0')),
+                (bank_acct, Decimal('0'), amount),
+            ],
+            user,
+            ref=f"REM-{remittance.id}",
+            source_type='remittance',
+            source_ref=str(remittance.id),
+        )
+
+    @staticmethod
+    def post_advance_journal(advance, user=None):
+        """
+        Disbursing a salary advance.
+
+        DR Employee Salary Advances (asset)  = amount + fee
+        CR Bank                              = amount
+        CR Salary Advance Fee Income         = fee
+
+        The employee receives the principal; the fee is recoverable alongside
+        it, so it is an asset on day one and income at the same moment.
+        Recovery is handled inside post_payroll_journal.
+        """
+        organisation = advance.organisation
+        amount = Decimal(str(advance.amount or 0))
+        if amount <= Decimal('0'):
+            return None
+
+        advance_acct = AccountingService._get_or_create_account(
+            organisation, '1450', 'Employee Salary Advances', AccountType.ASSET
+        )
+        bank_acct = AccountMappingService.resolve(organisation, 'bank_account')
+        lines = [
+            (advance_acct, amount, Decimal('0')),
+            (bank_acct, Decimal('0'), amount),
+        ]
+
+        fee = Decimal(str(advance.fee or 0))
+        if fee > Decimal('0'):
+            fee_acct = AccountingService._get_or_create_account(
+                organisation, '4105', 'Salary Advance Fee Income', AccountType.REVENUE
+            )
+            lines.append((advance_acct, fee, Decimal('0')))
+            lines.append((fee_acct, Decimal('0'), fee))
+
+        return AccountingService.post_journal_entry(
+            organisation,
+            f"Salary advance - {advance.employee}",
+            (advance.disbursed_at.date() if advance.disbursed_at else date.today()),
+            lines, user,
+            ref=f"ADV-{advance.id}",
+            source_type='salary_advance',
+            source_ref=str(advance.id),
+        )
+
+    @staticmethod
+    def get_cash_position(organisation):
+        """
+        Current cash + bank balance from the ledger.
+
+        Used by the salary-advance underwriting gate: advances are funded from
+        the employer's own cash, so approving one should not be able to push the
+        business below its configured buffer.
+        """
+        from django.db.models import Sum
+
+        total = Decimal('0')
+        for role in ('cash_account', 'bank_account'):
+            try:
+                acct = AccountMappingService.resolve(organisation, role)
+            except Exception:
+                continue
+            if acct is None:
+                continue
+            agg = JournalLine.objects.filter(
+                account=acct,
+                journal_entry__organisation=organisation,
+                journal_entry__status='posted',
+            ).aggregate(d=Sum('debit'), c=Sum('credit'))
+            total += Decimal(str(agg['d'] or 0)) - Decimal(str(agg['c'] or 0))
+        return total
 
     @staticmethod
     def post_deferred_tax_journal(organisation, deferred_item, user=None):

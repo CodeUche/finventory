@@ -1,13 +1,196 @@
 import calendar
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from django.db import transaction
 
-from .models import (
-    Attendance, Bonus, Employee, EmployeeLoan, EmployeePenalty,
-    EmployeeTaxProfile, PAYERemittance, PayrollRun, PayslipLine,
+from .constants import (
+    DEFAULT_LEAVE_TYPES, ITF_DUE_DAY, ITF_DUE_MONTH, NIGERIAN_STATES,
+    REMITTANCE_DEADLINE_DAY, STATE_LOOKUP,
 )
+from .models import (
+    AdvancePolicy, AdvanceRequest, Attendance, BenefitPlan, Bonus, CompensationRecord,
+    Employee, EmployeeBenefit, EmployeeLoan, EmployeePenalty, EmployeeTaxProfile,
+    LeaveBalance, LeaveRequest, LeaveType, PayrollAdjustment, PayrollRun,
+    PayrollSettings, PayslipLine, StatutoryRemittance, TaxAuthority,
+)
+
+ZERO = Decimal('0')
+CENTS = Decimal('0.01')
+
+
+def _d(value):
+    """Coerce anything money-shaped to Decimal without float contamination."""
+    if value is None:
+        return ZERO
+    if isinstance(value, Decimal):
+        return value
+    return Decimal(str(value))
+
+
+def get_settings(organisation):
+    """Fetch (creating if absent) the org's payroll settings row."""
+    obj, _ = PayrollSettings.objects.get_or_create(organisation=organisation)
+    return obj
+
+
+class TaxAuthorityService:
+    """Seeds and resolves the State IRS an employee's PAYE is owed to."""
+
+    @staticmethod
+    def seed(organisation):
+        """Idempotently create the 36 states + FCT for an organisation."""
+        existing = set(
+            TaxAuthority.objects.filter(organisation=organisation)
+            .values_list('state_code', flat=True)
+        )
+        to_create = [
+            TaxAuthority(
+                organisation=organisation, state_code=code, name=name, portal_url=url,
+            )
+            for code, _label, name, url in NIGERIAN_STATES
+            if code not in existing
+        ]
+        if to_create:
+            TaxAuthority.objects.bulk_create(to_create)
+        settings_row = get_settings(organisation)
+        if not settings_row.tax_authorities_seeded:
+            settings_row.tax_authorities_seeded = True
+            settings_row.save(update_fields=['tax_authorities_seeded'])
+        return TaxAuthority.objects.filter(organisation=organisation)
+
+    @staticmethod
+    def resolve(organisation, state_code):
+        """Return the authority for a state code, seeding on first miss."""
+        if not state_code:
+            return None
+        auth = TaxAuthority.objects.filter(
+            organisation=organisation, state_code=state_code
+        ).first()
+        if auth is None and state_code in STATE_LOOKUP:
+            TaxAuthorityService.seed(organisation)
+            auth = TaxAuthority.objects.filter(
+                organisation=organisation, state_code=state_code
+            ).first()
+        return auth
+
+
+class CompensationService:
+    """Effective-dated salary resolution."""
+
+    COMPONENTS = (
+        'basic_salary', 'housing_allowance', 'transport_allowance',
+        'leave_allowance', 'other_allowances',
+    )
+
+    @classmethod
+    def components_as_of(cls, employee, as_of, records_by_emp=None):
+        """
+        Salary components in force on ``as_of``.
+
+        Falls back to the Employee columns when no record covers the date —
+        which is the case for every employee until the backfill migration or
+        their first raise, so existing orgs keep working unchanged.
+        """
+        if records_by_emp is not None:
+            records = records_by_emp.get(employee.id, [])
+        else:
+            records = list(
+                CompensationRecord.objects
+                .filter(employee=employee, effective_date__lte=as_of)
+                .order_by('-effective_date')[:1]
+            )
+        applicable = None
+        for rec in records:
+            if rec.effective_date <= as_of:
+                applicable = rec
+                break
+        source = applicable or employee
+        return {field: _d(getattr(source, field, 0)) for field in cls.COMPONENTS}
+
+    @classmethod
+    def record_change(cls, employee, effective_date, reason='adjustment', notes='', **components):
+        """
+        Write a compensation record and mirror it onto the Employee row.
+
+        The mirror keeps ``Employee.basic_salary`` authoritative for every
+        existing read path (exports, serializers, the advance calculator) while
+        the history table carries the audit trail.
+        """
+        values = {
+            field: _d(components.get(field, getattr(employee, field, 0)))
+            for field in cls.COMPONENTS
+        }
+        record, _created = CompensationRecord.objects.update_or_create(
+            organisation=employee.organisation,
+            employee=employee,
+            effective_date=effective_date,
+            defaults={'reason': reason, 'notes': notes, **values},
+        )
+        latest = (
+            CompensationRecord.objects
+            .filter(employee=employee)
+            .order_by('-effective_date')
+            .first()
+        )
+        if latest and latest.effective_date == effective_date:
+            for field, val in values.items():
+                setattr(employee, field, val)
+            employee.save(update_fields=list(values.keys()))
+        return record
+
+
+class ProrationService:
+    """
+    Working-day proration for joiners, leavers and mid-period contract ends.
+
+    Uses working days (Mon–Fri) rather than calendar days so that someone who
+    joins on the 28th of a month whose last three days are a weekend is not
+    paid for days they were never going to work.
+    """
+
+    @staticmethod
+    def working_days(start, end):
+        if not start or not end or end < start:
+            return 0
+        total = 0
+        cur = start
+        while cur <= end:
+            if cur.weekday() < 5:
+                total += 1
+            cur += timedelta(days=1)
+        return total
+
+    @classmethod
+    def factor_for(cls, employee, period_start, period_end):
+        """
+        Return (factor, days_worked, days_in_period).
+
+        factor is 1 for anyone employed for the whole period; it never exceeds
+        1 and never goes below 0.
+        """
+        days_in_period = cls.working_days(period_start, period_end)
+        if days_in_period == 0:
+            return Decimal('1'), ZERO, ZERO
+
+        effective_start = period_start
+        if employee.hire_date and employee.hire_date > period_start:
+            effective_start = employee.hire_date
+
+        effective_end = period_end
+        for candidate in (employee.termination_date, employee.contract_end_date):
+            if candidate and candidate < effective_end:
+                effective_end = candidate
+
+        if effective_end < effective_start:
+            return ZERO, ZERO, Decimal(str(days_in_period))
+
+        days_worked = cls.working_days(effective_start, effective_end)
+        factor = (Decimal(str(days_worked)) / Decimal(str(days_in_period))).quantize(
+            Decimal('0.0001')
+        )
+        factor = max(ZERO, min(Decimal('1'), factor))
+        return factor, Decimal(str(days_worked)), Decimal(str(days_in_period))
 
 
 class PayrollService:
@@ -15,6 +198,8 @@ class PayrollService:
     PENSION_RATE_EMPLOYER = Decimal('0.10')    # 10%
     NHF_RATE = Decimal('0.025')               # 2.5% of basic salary (voluntary — NHF Act)
     NSITF_RATE = Decimal('0.01')              # 1% of gross (employer-borne)
+    ITF_RATE = Decimal('0.01')                # 1% of annual payroll (employer-borne)
+    ITF_MIN_HEADCOUNT = 5                     # ITF Act s.6(1)
     RENT_RELIEF_RATE = Decimal('0.20')        # NTA 2025: 20% of annual rent paid
     RENT_RELIEF_CAP = Decimal('500000')       # NTA 2025: capped at ₦500,000 per annum
 
@@ -47,46 +232,70 @@ class PayrollService:
         return tax
 
     @classmethod
-    def calculate_employee_paye(cls, employee, extra_gross=Decimal('0'), tax_profile=None):
+    def calculate_employee_paye(
+        cls, employee, extra_gross=Decimal('0'), tax_profile=None,
+        components=None, proration_factor=None,
+    ):
         """
-        Calculate full payroll figures for one employee (NTA 2025 rules, effective 1 Jan 2026).
-        extra_gross: bonus + overtime pay added on top of monthly salary.
-        tax_profile: optional EmployeeTaxProfile for individual relief overrides.
+        Calculate full payroll figures for one employee (NTA 2025 rules).
+
+        components:        salary components in force for the period (from
+                           CompensationService); falls back to the Employee row.
+        proration_factor:  applied to the salary components only. Bonuses,
+                           overtime and arrears are paid in full because they
+                           are earned events, not time-based entitlements.
+        extra_gross:       bonus + overtime + adjustments added on top.
+
+        Tax methodology note: PAYE is computed by annualising the *actual*
+        monthly taxable pay (including any proration), consistent with how this
+        engine has always worked. For a mid-month joiner this slightly
+        under-deducts in month one and self-corrects across the year.
         """
-        gross = employee.gross_salary + extra_gross
-        pension_base = employee.basic_salary + employee.housing_allowance + employee.transport_allowance
+        comp = components or {
+            f: _d(getattr(employee, f, 0)) for f in CompensationService.COMPONENTS
+        }
+        factor = Decimal('1') if proration_factor is None else _d(proration_factor)
+
+        prorated = {k: (v * factor).quantize(CENTS) for k, v in comp.items()}
+        base_gross = sum(prorated.values(), ZERO)
+        gross = base_gross + _d(extra_gross)
+
+        pension_base = (
+            prorated['basic_salary'] + prorated['housing_allowance']
+            + prorated['transport_allowance']
+        )
         employee_pension = pension_base * cls.PENSION_RATE_EMPLOYEE
 
         # Voluntary pension top-up from tax profile (additional pre-tax deductible)
         if tax_profile and tax_profile.voluntary_pension:
-            employee_pension += Decimal(str(tax_profile.voluntary_pension))
+            employee_pension += _d(tax_profile.voluntary_pension)
 
         # NHF: voluntary for private-sector employees (NHF Act; default opt-in=False)
         nhf_enrolled = (tax_profile.nhf_enrolled if tax_profile else False)
-        nhf = (employee.basic_salary * cls.NHF_RATE) if nhf_enrolled else Decimal('0')
+        nhf = (prorated['basic_salary'] * cls.NHF_RATE) if nhf_enrolled else ZERO
 
         nsitf = gross * cls.NSITF_RATE
 
         # Life assurance premium deduction (still deductible under NTA 2025)
-        life_assurance = Decimal(str(tax_profile.life_assurance_premium)) if tax_profile else Decimal('0')
+        life_assurance = _d(tax_profile.life_assurance_premium) if tax_profile else ZERO
 
         # NTA 2025: Rent Relief replaces CRA — 20% of annual rent paid, capped ₦500,000
-        annual_rent = Decimal(str(employee.annual_rent)) if hasattr(employee, 'annual_rent') and employee.annual_rent else Decimal('0')
+        annual_rent = _d(getattr(employee, 'annual_rent', 0))
         annual_rent_relief = min(annual_rent * cls.RENT_RELIEF_RATE, cls.RENT_RELIEF_CAP)
         monthly_rent_relief = annual_rent_relief / 12
 
         taxable_income = max(
-            Decimal('0'),
+            ZERO,
             gross - employee_pension - nhf - monthly_rent_relief - life_assurance,
         )
         annual_paye = cls.calculate_annual_paye(taxable_income * 12)
         # Quantize once at the annual total, then divide — no per-bracket rounding drift
-        annual_paye = annual_paye.quantize(Decimal('0.01'), rounding='ROUND_HALF_UP')
-        monthly_paye = (annual_paye / 12).quantize(Decimal('0.01'), rounding='ROUND_HALF_UP')
+        annual_paye = annual_paye.quantize(CENTS, rounding='ROUND_HALF_UP')
+        monthly_paye = (annual_paye / 12).quantize(CENTS, rounding='ROUND_HALF_UP')
 
         # Exempt employees (diplomatic, approved expatriate relief)
         if tax_profile and tax_profile.paye_exempt:
-            monthly_paye = Decimal('0')
+            monthly_paye = ZERO
         # NTA 2025 abolished individual minimum tax — income ≤ ₦800k/yr is simply 0%
 
         employer_pension = pension_base * cls.PENSION_RATE_EMPLOYER
@@ -94,11 +303,7 @@ class PayrollService:
         net = gross - total_deductions
 
         return {
-            'basic_salary': employee.basic_salary,
-            'housing_allowance': employee.housing_allowance,
-            'transport_allowance': employee.transport_allowance,
-            'leave_allowance': employee.leave_allowance,
-            'other_allowances': employee.other_allowances,
+            **prorated,
             'gross_salary': gross,
             'employee_pension': employee_pension,
             'nhf': nhf,
@@ -112,26 +317,40 @@ class PayrollService:
         }
 
     @classmethod
-    def _calc_overtime_pay(cls, employee, overtime_hours):
+    def _calc_overtime_pay(cls, basic_salary, overtime_hours):
         """Calculate overtime pay: hours × (basic / 208 working hours) × 1.5 multiplier."""
         if not overtime_hours or overtime_hours <= 0:
-            return Decimal('0')
-        hourly = Decimal(str(employee.basic_salary)) / cls.MONTHLY_WORKING_HOURS
-        return (hourly * Decimal(str(overtime_hours)) * cls.OVERTIME_MULTIPLIER).quantize(Decimal('0.01'))
+            return ZERO
+        hourly = _d(basic_salary) / cls.MONTHLY_WORKING_HOURS
+        return (hourly * _d(overtime_hours) * cls.OVERTIME_MULTIPLIER).quantize(CENTS)
 
     @classmethod
-    def _calc_attendance_deduction(cls, gross, absent_days, period_year, period_month):
-        """Deduct proportional salary for absent days (absent_days / working_days_in_month × gross)."""
-        if not absent_days or absent_days <= 0:
-            return Decimal('0')
-        # Working days = weekdays in the month
-        _, days_in_month = calendar.monthrange(period_year, period_month)
-        weekdays = sum(
-            1 for d in range(1, days_in_month + 1)
-            if calendar.weekday(period_year, period_month, d) < 5  # Mon–Fri
-        )
-        working_days = Decimal(str(max(weekdays, 1)))
-        return (Decimal(str(gross)) * Decimal(str(absent_days)) / working_days).quantize(Decimal('0.01'))
+    def _calc_attendance_deduction(cls, gross, absent_days, working_days):
+        """Deduct proportional salary for absent days."""
+        if not absent_days or absent_days <= 0 or not working_days:
+            return ZERO
+        return (_d(gross) * _d(absent_days) / _d(working_days)).quantize(CENTS)
+
+    @classmethod
+    def _benefit_amounts(cls, enrolments, gross):
+        """Return (employee_share, employer_share) across a set of enrolments."""
+        emp_total = ZERO
+        er_total = ZERO
+        for enrolment in enrolments:
+            plan = enrolment.plan
+            emp_rate = enrolment.employee_contribution_override
+            er_rate = enrolment.employer_contribution_override
+            emp_rate = _d(plan.employee_contribution if emp_rate is None else emp_rate)
+            er_rate = _d(plan.employer_contribution if er_rate is None else er_rate)
+            if plan.basis == BenefitPlan.PERCENT_GROSS:
+                emp_total += (_d(gross) * emp_rate / 100).quantize(CENTS)
+                er_total += (_d(gross) * er_rate / 100).quantize(CENTS)
+            else:
+                emp_total += emp_rate
+                er_total += er_rate
+        return emp_total, er_total
+
+    # ── the run ──────────────────────────────────────────────────────────────
 
     @classmethod
     @transaction.atomic
@@ -139,23 +358,38 @@ class PayrollService:
         org = payroll_run.organisation
         year = payroll_run.period_year
         month = payroll_run.period_month
+        period_start = payroll_run.period_start or date(year, month, 1)
+        period_end = payroll_run.period_end or date(
+            year, month, calendar.monthrange(year, month)[1]
+        )
 
+        # Everyone employed for any part of the period — including leavers, who
+        # the old engine dropped entirely (so they were never paid a final
+        # settlement) via a blanket termination_date__isnull=True filter.
         employees = list(
-            Employee.objects.filter(organisation=org, is_active=True, termination_date__isnull=True)
+            Employee.objects
+            .filter(organisation=org, is_active=True)
+            .filter(hire_date__lte=period_end)
+            .exclude(termination_date__lt=period_start)
         )
         PayslipLine.objects.filter(payroll_run=payroll_run).delete()
 
-        # Pre-load tax profiles keyed by employee_id
+        emp_ids = [e.id for e in employees]
+
+        # ── Pre-load everything the loop needs (no per-employee queries) ─────
         tax_profiles = {
             tp.employee_id: tp
             for tp in EmployeeTaxProfile.objects.filter(
-                organisation=org, employee_id__in=[e.id for e in employees]
+                organisation=org, employee_id__in=emp_ids
             )
         }
 
-        emp_ids = [e.id for e in employees]
+        comp_records: dict = {}
+        for rec in CompensationRecord.objects.filter(
+            organisation=org, employee_id__in=emp_ids, effective_date__lte=period_end
+        ).order_by('employee_id', '-effective_date'):
+            comp_records.setdefault(rec.employee_id, []).append(rec)
 
-        # Pre-fetch and lock all pending penalties + active loans
         pending_penalties = list(
             EmployeePenalty.objects
             .filter(organisation=org, employee_id__in=emp_ids, status=EmployeePenalty.PENDING)
@@ -174,7 +408,6 @@ class PayrollService:
         for loan in active_loans:
             loans_by_emp.setdefault(loan.employee_id, []).append(loan)
 
-        # Pre-fetch pending bonuses for this period
         pending_bonuses = list(
             Bonus.objects
             .filter(
@@ -187,93 +420,181 @@ class PayrollService:
         for b in pending_bonuses:
             bonuses_by_emp.setdefault(b.employee_id, []).append(b)
 
-        # Pre-fetch attendance records for this period
+        pending_adjustments = list(
+            PayrollAdjustment.objects
+            .filter(organisation=org, employee_id__in=emp_ids, status=PayrollAdjustment.PENDING)
+            .select_for_update()
+        )
+        adjustments_by_emp: dict = {}
+        for adj in pending_adjustments:
+            adjustments_by_emp.setdefault(adj.employee_id, []).append(adj)
+
+        outstanding_advances = list(
+            AdvanceRequest.objects
+            .filter(
+                organisation=org, employee_id__in=emp_ids,
+                status=AdvanceRequest.DISBURSED,
+            )
+            .select_for_update()
+        )
+        advances_by_emp: dict = {}
+        for adv in outstanding_advances:
+            advances_by_emp.setdefault(adv.employee_id, []).append(adv)
+
+        benefit_enrolments = list(
+            EmployeeBenefit.objects
+            .filter(
+                organisation=org, employee_id__in=emp_ids, is_active=True,
+                start_date__lte=period_end,
+            )
+            .exclude(end_date__lt=period_start)
+            .select_related('plan')
+        )
+        benefits_by_emp: dict = {}
+        for enrolment in benefit_enrolments:
+            if enrolment.plan.is_active:
+                benefits_by_emp.setdefault(enrolment.employee_id, []).append(enrolment)
+
         attendance_qs = list(
             Attendance.objects.filter(
                 organisation=org, employee_id__in=emp_ids,
-                date__year=year, date__month=month,
+                date__gte=period_start, date__lte=period_end,
             )
         )
-        # Build per-employee: total_overtime_hours + absent_days
         att_overtime_by_emp: dict = {}
         att_absent_by_emp: dict = {}
         for a in attendance_qs:
             eid = a.employee_id
-            att_overtime_by_emp[eid] = att_overtime_by_emp.get(eid, Decimal('0')) + Decimal(str(a.overtime_hours or 0))
-            # absent=1 day, half_day=0.5 day; present/leave/holiday = 0
+            att_overtime_by_emp[eid] = att_overtime_by_emp.get(eid, ZERO) + _d(a.overtime_hours)
+            # absent=1 day, half_day=0.5 day; present/leave/holiday = 0.
+            # Approved *paid* leave writes status='leave' and so costs nothing;
+            # unpaid leave writes status='absent' and falls through to here.
             if a.status == Attendance.ABSENT:
-                att_absent_by_emp[eid] = att_absent_by_emp.get(eid, Decimal('0')) + Decimal('1')
+                att_absent_by_emp[eid] = att_absent_by_emp.get(eid, ZERO) + Decimal('1')
             elif a.status == Attendance.HALF_DAY:
-                att_absent_by_emp[eid] = att_absent_by_emp.get(eid, Decimal('0')) + Decimal('0.5')
+                att_absent_by_emp[eid] = att_absent_by_emp.get(eid, ZERO) + Decimal('0.5')
+
+        authorities = {
+            a.state_code: a for a in TaxAuthority.objects.filter(organisation=org)
+        }
 
         totals = {
-            'gross': Decimal('0'), 'deductions': Decimal('0'), 'net': Decimal('0'),
-            'paye': Decimal('0'), 'pension_emp': Decimal('0'), 'pension_employer': Decimal('0'),
-            'nhf': Decimal('0'), 'nsitf': Decimal('0'),
-            'bonus': Decimal('0'), 'overtime': Decimal('0'),
+            'gross': ZERO, 'deductions': ZERO, 'net': ZERO,
+            'paye': ZERO, 'pension_emp': ZERO, 'pension_employer': ZERO,
+            'nhf': ZERO, 'nsitf': ZERO, 'bonus': ZERO, 'overtime': ZERO,
+            'benefits': ZERO, 'benefits_er': ZERO,
         }
 
         payslips = []
         penalties_to_update = []
         loans_to_update = []
         bonuses_to_update = []
+        adjustments_to_update = []
+        advances_to_update = []
 
         for emp in employees:
-            # Bonus total
+            components = CompensationService.components_as_of(emp, period_end, comp_records)
+            factor, days_worked, days_in_period = ProrationService.factor_for(
+                emp, period_start, period_end
+            )
+
+            # Bonuses — paid in full, not prorated
             emp_bonuses = bonuses_by_emp.get(emp.id, [])
-            bonus_total = sum(Decimal(str(b.amount)) for b in emp_bonuses)
+            bonus_total = sum((_d(b.amount) for b in emp_bonuses), ZERO)
             for b in emp_bonuses:
                 b.status = Bonus.APPLIED
                 b.applied_in_run = payroll_run
                 bonuses_to_update.append(b)
 
-            # Overtime pay
-            overtime_hrs = att_overtime_by_emp.get(emp.id, Decimal('0'))
-            overtime_pay = cls._calc_overtime_pay(emp, overtime_hrs)
+            # Arrears / back-pay — taxed in the period paid
+            emp_adjustments = adjustments_by_emp.get(emp.id, [])
+            adjustment_total = sum((_d(a.amount) for a in emp_adjustments), ZERO)
+            for a in emp_adjustments:
+                a.status = PayrollAdjustment.APPLIED
+                a.applied_in_run = payroll_run
+                adjustments_to_update.append(a)
 
-            extra_gross = bonus_total + overtime_pay
+            overtime_hrs = att_overtime_by_emp.get(emp.id, ZERO)
+            overtime_pay = cls._calc_overtime_pay(components['basic_salary'], overtime_hrs)
 
-            # PAYE calc on (gross + bonus + overtime), with individual relief overrides
-            calc = cls.calculate_employee_paye(emp, extra_gross=extra_gross, tax_profile=tax_profiles.get(emp.id))
+            extra_gross = bonus_total + overtime_pay + adjustment_total
 
-            # Attendance deduction (absent days, applied after PAYE)
-            absent_days = att_absent_by_emp.get(emp.id, Decimal('0'))
-            attendance_ded = cls._calc_attendance_deduction(calc['gross_salary'], absent_days, year, month)
+            calc = cls.calculate_employee_paye(
+                emp,
+                extra_gross=extra_gross,
+                tax_profile=tax_profiles.get(emp.id),
+                components=components,
+                proration_factor=factor,
+            )
 
-            # Penalties
+            absent_days = att_absent_by_emp.get(emp.id, ZERO)
+            attendance_ded = cls._calc_attendance_deduction(
+                calc['gross_salary'], absent_days, days_in_period
+            )
+
             emp_penalties = penalties_by_emp.get(emp.id, [])
-            penalty_total = sum(Decimal(str(p.amount)) for p in emp_penalties)
+            penalty_total = sum((_d(p.amount) for p in emp_penalties), ZERO)
             for p in emp_penalties:
                 p.status = EmployeePenalty.APPLIED
                 p.applied_in_run = payroll_run
                 penalties_to_update.append(p)
 
-            # Loan installments
-            loan_total = Decimal('0')
+            loan_total = ZERO
             for loan in loans_by_emp.get(emp.id, []):
-                installment = Decimal(str(loan.monthly_installment))
+                installment = _d(loan.monthly_installment)
                 balance = loan.balance_remaining
                 deduct = min(installment, balance)
+                if deduct <= ZERO:
+                    continue
                 loan_total += deduct
-                loan.amount_repaid = Decimal(str(loan.amount_repaid)) + deduct
-                if loan.balance_remaining <= Decimal('0.01'):
+                loan.amount_repaid = _d(loan.amount_repaid) + deduct
+                if loan.balance_remaining <= CENTS:
                     loan.status = EmployeeLoan.SETTLED
                 loans_to_update.append(loan)
 
-            extra = penalty_total + loan_total + attendance_ded
-            adjusted_deductions = calc['total_deductions'] + extra
-            adjusted_net = max(Decimal('0'), calc['net_salary'] - extra)
+            # Salary advances recover in full from the period they were drawn
+            # against, using the same mechanism as a loan installment.
+            advance_total = ZERO
+            for adv in advances_by_emp.get(emp.id, []):
+                outstanding = adv.balance_outstanding
+                if outstanding <= ZERO:
+                    continue
+                advance_total += outstanding
+                adv.amount_recovered = _d(adv.amount_recovered) + outstanding
+                adv.status = AdvanceRequest.RECOVERED
+                adv.recovered_in_run = payroll_run
+                advances_to_update.append(adv)
+
+            benefit_emp, benefit_er = cls._benefit_amounts(
+                benefits_by_emp.get(emp.id, []), calc['gross_salary']
+            )
+
+            extra_deductions = (
+                penalty_total + loan_total + attendance_ded + advance_total + benefit_emp
+            )
+            adjusted_deductions = calc['total_deductions'] + extra_deductions
+            adjusted_net = max(ZERO, calc['net_salary'] - extra_deductions)
+
+            authority = authorities.get(emp.state_of_residence) if emp.state_of_residence else None
 
             payslips.append(PayslipLine(
                 organisation=org,
                 payroll_run=payroll_run,
                 employee=emp,
                 **{k: v for k, v in calc.items() if k not in ('total_deductions', 'net_salary')},
+                proration_factor=factor,
+                days_worked=days_worked,
+                days_in_period=days_in_period,
+                tax_authority=authority,
                 bonus_amount=bonus_total,
                 overtime_amount=overtime_pay,
+                adjustment_amount=adjustment_total,
                 attendance_deduction=attendance_ded,
                 penalty_deductions=penalty_total,
                 loan_deductions=loan_total,
+                advance_deductions=advance_total,
+                benefit_deductions=benefit_emp,
+                benefit_employer_cost=benefit_er,
                 total_deductions=adjusted_deductions,
                 net_salary=adjusted_net,
                 transfer_status=PayslipLine.TRANSFER_PENDING,
@@ -289,6 +610,8 @@ class PayrollService:
             totals['nsitf'] += calc['nsitf']
             totals['bonus'] += bonus_total
             totals['overtime'] += overtime_pay
+            totals['benefits'] += benefit_emp
+            totals['benefits_er'] += benefit_er
 
         PayslipLine.objects.bulk_create(payslips)
 
@@ -298,6 +621,23 @@ class PayrollService:
             EmployeeLoan.objects.bulk_update(loans_to_update, ['amount_repaid', 'status'])
         if bonuses_to_update:
             Bonus.objects.bulk_update(bonuses_to_update, ['status', 'applied_in_run'])
+        if adjustments_to_update:
+            PayrollAdjustment.objects.bulk_update(
+                adjustments_to_update, ['status', 'applied_in_run']
+            )
+        if advances_to_update:
+            AdvanceRequest.objects.bulk_update(
+                advances_to_update, ['amount_recovered', 'status', 'recovered_in_run']
+            )
+
+        # ── ITF: 1% of payroll, employer-borne, accrued monthly ──────────────
+        settings_row = get_settings(org)
+        if settings_row.itf_auto_assert and not settings_row.itf_applicable:
+            headcount = Employee.objects.filter(organisation=org, is_active=True).count()
+            if headcount >= cls.ITF_MIN_HEADCOUNT:
+                settings_row.itf_applicable = True
+                settings_row.save(update_fields=['itf_applicable'])
+        itf = (totals['gross'] * cls.ITF_RATE).quantize(CENTS) if settings_row.itf_applicable else ZERO
 
         payroll_run.total_gross = totals['gross']
         payroll_run.total_deductions = totals['deductions']
@@ -307,25 +647,575 @@ class PayrollService:
         payroll_run.total_pension_employer = totals['pension_employer']
         payroll_run.total_nhf = totals['nhf']
         payroll_run.total_nsitf = totals['nsitf']
+        payroll_run.total_itf = itf
+        payroll_run.total_benefits = totals['benefits']
+        payroll_run.total_benefits_employer = totals['benefits_er']
         payroll_run.total_bonus = totals['bonus']
         payroll_run.total_overtime = totals['overtime']
         payroll_run.status = PayrollRun.PROCESSING
         payroll_run.save()
 
-        # Auto-create PAYE remittance obligation: due 10th of following month
+        RemittanceService.generate_for_run(payroll_run)
+        return payroll_run
+
+
+class RemittanceService:
+    """
+    Turns a completed payroll run into the statutory obligations it creates.
+
+    PAYE is split per State IRS and pension per PFA because neither authority
+    accepts a blended schedule — a single lump figure cannot actually be filed.
+    """
+
+    @staticmethod
+    def _due_date(year, month, day):
+        """Day-of-month in the month following the payroll period."""
         if month == 12:
             due_year, due_month = year + 1, 1
         else:
             due_year, due_month = year, month + 1
-        PAYERemittance.objects.update_or_create(
-            organisation=org,
-            period_year=year,
-            period_month=month,
-            defaults={
-                'payroll_run': payroll_run,
-                'amount_due': totals['paye'],
-                'status': PAYERemittance.PENDING,
-                'due_date': date(due_year, due_month, 10),
-            },
+        last_day = calendar.monthrange(due_year, due_month)[1]
+        return date(due_year, due_month, min(day, last_day))
+
+    @classmethod
+    @transaction.atomic
+    def generate_for_run(cls, payroll_run):
+        org = payroll_run.organisation
+        year, month = payroll_run.period_year, payroll_run.period_month
+
+        # Rebuild this run's obligations from scratch, but never touch one that
+        # has already been remitted — that reference has been filed.
+        StatutoryRemittance.objects.filter(
+            organisation=org, payroll_run=payroll_run,
+        ).exclude(status=StatutoryRemittance.REMITTED).delete()
+
+        payslips = list(
+            payroll_run.payslips.select_related('employee', 'tax_authority').all()
         )
-        return payroll_run
+        rows = []
+
+        # ── PAYE, split by the employee's state of residence ────────────────
+        paye_by_authority: dict = {}
+        unassigned_paye = ZERO
+        for slip in payslips:
+            amount = _d(slip.paye_tax)
+            if amount <= ZERO:
+                continue
+            if slip.tax_authority_id:
+                key = slip.tax_authority_id
+                paye_by_authority[key] = paye_by_authority.get(key, ZERO) + amount
+            else:
+                unassigned_paye += amount
+
+        authority_map = {
+            a.id: a for a in TaxAuthority.objects.filter(
+                organisation=org, id__in=list(paye_by_authority.keys())
+            )
+        }
+        paye_due = cls._due_date(year, month, REMITTANCE_DEADLINE_DAY['paye'])
+        for auth_id, amount in paye_by_authority.items():
+            auth = authority_map.get(auth_id)
+            rows.append(StatutoryRemittance(
+                organisation=org, payroll_run=payroll_run,
+                remittance_type=StatutoryRemittance.PAYE,
+                period_year=year, period_month=month,
+                tax_authority=auth,
+                recipient_name=auth.name if auth else '',
+                basis='NTA 2025 progressive bands',
+                amount_due=amount, due_date=paye_due,
+            ))
+        if unassigned_paye > ZERO:
+            # Employees with no state of residence recorded. Surfaced as its own
+            # row rather than silently folded into another state's schedule.
+            rows.append(StatutoryRemittance(
+                organisation=org, payroll_run=payroll_run,
+                remittance_type=StatutoryRemittance.PAYE,
+                period_year=year, period_month=month,
+                recipient_name='Unassigned — set state of residence',
+                basis='NTA 2025 progressive bands',
+                amount_due=unassigned_paye, due_date=paye_due,
+            ))
+
+        # ── Pension, split by PFA ───────────────────────────────────────────
+        pension_by_pfa: dict = {}
+        for slip in payslips:
+            total = _d(slip.employee_pension) + _d(slip.employer_pension)
+            if total <= ZERO:
+                continue
+            pfa = (slip.employee.pfa_name or '').strip() or 'Unassigned PFA'
+            pension_by_pfa[pfa] = pension_by_pfa.get(pfa, ZERO) + total
+
+        pension_due = cls._due_date(year, month, REMITTANCE_DEADLINE_DAY['pension'])
+        for pfa, amount in pension_by_pfa.items():
+            rows.append(StatutoryRemittance(
+                organisation=org, payroll_run=payroll_run,
+                remittance_type=StatutoryRemittance.PENSION,
+                period_year=year, period_month=month,
+                recipient_name=pfa,
+                basis='18% of emoluments (8% employee + 10% employer)',
+                amount_due=amount, due_date=pension_due,
+            ))
+
+        # ── NHF and NSITF ───────────────────────────────────────────────────
+        if _d(payroll_run.total_nhf) > ZERO:
+            rows.append(StatutoryRemittance(
+                organisation=org, payroll_run=payroll_run,
+                remittance_type=StatutoryRemittance.NHF,
+                period_year=year, period_month=month,
+                recipient_name='Federal Mortgage Bank of Nigeria (FMBN)',
+                basis='2.5% of basic salary',
+                amount_due=_d(payroll_run.total_nhf),
+                due_date=cls._due_date(year, month, REMITTANCE_DEADLINE_DAY['nhf']),
+            ))
+        if _d(payroll_run.total_nsitf) > ZERO:
+            rows.append(StatutoryRemittance(
+                organisation=org, payroll_run=payroll_run,
+                remittance_type=StatutoryRemittance.NSITF,
+                period_year=year, period_month=month,
+                recipient_name='NSITF Board',
+                basis='1% of gross — employer-borne',
+                amount_due=_d(payroll_run.total_nsitf),
+                due_date=cls._due_date(year, month, REMITTANCE_DEADLINE_DAY['nsitf']),
+            ))
+
+        # ── Benefit premiums, split by provider ─────────────────────────────
+        benefit_by_provider: dict = {}
+        if _d(payroll_run.total_benefits) + _d(payroll_run.total_benefits_employer) > ZERO:
+            enrolments = EmployeeBenefit.objects.filter(
+                organisation=org, is_active=True,
+                employee__in=[s.employee_id for s in payslips],
+            ).select_related('plan')
+            gross_by_emp = {s.employee_id: _d(s.gross_salary) for s in payslips}
+            by_emp: dict = {}
+            for enrolment in enrolments:
+                by_emp.setdefault(enrolment.employee_id, []).append(enrolment)
+            for emp_id, emp_enrolments in by_emp.items():
+                for enrolment in emp_enrolments:
+                    emp_share, er_share = PayrollService._benefit_amounts(
+                        [enrolment], gross_by_emp.get(emp_id, ZERO)
+                    )
+                    provider = enrolment.plan.provider_name or enrolment.plan.name
+                    benefit_by_provider[provider] = (
+                        benefit_by_provider.get(provider, ZERO) + emp_share + er_share
+                    )
+        for provider, amount in benefit_by_provider.items():
+            if amount <= ZERO:
+                continue
+            rows.append(StatutoryRemittance(
+                organisation=org, payroll_run=payroll_run,
+                remittance_type=StatutoryRemittance.BENEFIT,
+                period_year=year, period_month=month,
+                recipient_name=provider,
+                basis='Benefit premium (employee + employer share)',
+                amount_due=amount,
+                due_date=cls._due_date(year, month, 1),
+            ))
+
+        if rows:
+            StatutoryRemittance.objects.bulk_create(rows)
+
+        cls._accrue_itf(payroll_run)
+        return rows
+
+    @classmethod
+    def _accrue_itf(cls, payroll_run):
+        """
+        ITF is an annual levy due 1 April of the following year, so it is
+        accumulated into a single row per year rather than one per run.
+        """
+        org = payroll_run.organisation
+        year = payroll_run.period_year
+        itf_amount = _d(payroll_run.total_itf)
+        if itf_amount <= ZERO:
+            return None
+
+        row = StatutoryRemittance.objects.filter(
+            organisation=org, remittance_type=StatutoryRemittance.ITF,
+            period_year=year, period_month=0,
+        ).first()
+
+        # Recompute from all runs in the year so re-running a month cannot
+        # double-count the levy.
+        year_total = sum(
+            (_d(r.total_itf) for r in PayrollRun.objects.filter(
+                organisation=org, period_year=year,
+            )),
+            ZERO,
+        )
+        due = date(year + 1, ITF_DUE_MONTH, ITF_DUE_DAY)
+        if row is None:
+            row = StatutoryRemittance.objects.create(
+                organisation=org, payroll_run=None,
+                remittance_type=StatutoryRemittance.ITF,
+                period_year=year, period_month=0,
+                recipient_name='Industrial Training Fund (ITF)',
+                basis='1% of annual payroll — employer-borne',
+                amount_due=year_total, due_date=due,
+            )
+        elif row.status != StatutoryRemittance.REMITTED:
+            row.amount_due = year_total
+            row.due_date = due
+            row.save(update_fields=['amount_due', 'due_date'])
+        return row
+
+    @staticmethod
+    def mark_remitted(remittance, amount=None, reference='', remittance_date=None, user=None):
+        """Record a payment against an obligation and clear the GL liability."""
+        from django.utils import timezone
+
+        paid = _d(amount) if amount is not None else _d(remittance.amount_due)
+        remittance.amount_paid = _d(remittance.amount_paid) + paid
+        remittance.reference = reference or remittance.reference
+        remittance.remittance_date = remittance_date or timezone.localdate()
+        if remittance.amount_paid >= _d(remittance.amount_due):
+            remittance.status = StatutoryRemittance.REMITTED
+        else:
+            remittance.status = StatutoryRemittance.PARTIAL
+        remittance.save(update_fields=[
+            'amount_paid', 'reference', 'remittance_date', 'status',
+        ])
+
+        if remittance.status == StatutoryRemittance.REMITTED and not remittance.gl_cleared:
+            try:
+                from apps.accounting.services import AccountingService
+                posted = AccountingService.post_remittance_clearing(remittance, user=user)
+                if posted:
+                    remittance.gl_cleared = True
+                    remittance.save(update_fields=['gl_cleared'])
+            except Exception:
+                # A GL posting failure must not lose the record that the money
+                # was actually remitted; gl_cleared stays False for retry.
+                pass
+        return remittance
+
+
+class LeaveService:
+    """Leave entitlement, accrual and the bridge into attendance."""
+
+    @staticmethod
+    def seed_defaults(organisation):
+        """Create the Nigerian default leave types once per organisation."""
+        settings_row = get_settings(organisation)
+        existing = set(
+            LeaveType.objects.filter(organisation=organisation).values_list('name', flat=True)
+        )
+        to_create = [
+            LeaveType(
+                organisation=organisation, name=name, days_per_year=Decimal(str(days)),
+                accrual_method=accrual, is_paid=is_paid,
+                carry_forward_max=Decimal(str(carry)), gender_restriction=gender,
+            )
+            for name, days, accrual, is_paid, carry, gender in DEFAULT_LEAVE_TYPES
+            if name not in existing
+        ]
+        if to_create:
+            LeaveType.objects.bulk_create(to_create)
+        if not settings_row.leave_seeded:
+            settings_row.leave_seeded = True
+            settings_row.save(update_fields=['leave_seeded'])
+        return LeaveType.objects.filter(organisation=organisation)
+
+    @staticmethod
+    def get_or_create_balance(employee, leave_type, year):
+        balance, created = LeaveBalance.objects.get_or_create(
+            organisation=employee.organisation,
+            employee=employee, leave_type=leave_type, year=year,
+            defaults={'entitled_days': leave_type.days_per_year},
+        )
+        if created and leave_type.accrual_method == LeaveType.ANNUAL_GRANT:
+            balance.accrued_days = leave_type.days_per_year
+            balance.save(update_fields=['accrued_days'])
+        return balance
+
+    @classmethod
+    def accrue_month(cls, organisation, year, month):
+        """
+        Add one month's share of entitlement to every monthly-accrual balance.
+
+        Pro-rated for anyone hired mid-year: an employee hired in September
+        accrues four months, not twelve.
+        """
+        monthly_types = list(LeaveType.objects.filter(
+            organisation=organisation, is_active=True,
+            accrual_method=LeaveType.MONTHLY_ACCRUAL,
+        ))
+        if not monthly_types:
+            return 0
+
+        employees = list(Employee.objects.filter(
+            organisation=organisation, is_active=True, termination_date__isnull=True,
+        ))
+        period_end = date(year, month, calendar.monthrange(year, month)[1])
+        updated = 0
+        for emp in employees:
+            if emp.hire_date and emp.hire_date > period_end:
+                continue
+            for leave_type in monthly_types:
+                if leave_type.gender_restriction and emp.gender != leave_type.gender_restriction:
+                    continue
+                balance = cls.get_or_create_balance(emp, leave_type, year)
+                monthly_share = (_d(leave_type.days_per_year) / 12).quantize(Decimal('0.01'))
+                ceiling = _d(leave_type.days_per_year)
+                if _d(balance.accrued_days) + monthly_share > ceiling:
+                    monthly_share = max(ZERO, ceiling - _d(balance.accrued_days))
+                if monthly_share <= ZERO:
+                    continue
+                balance.accrued_days = _d(balance.accrued_days) + monthly_share
+                balance.save(update_fields=['accrued_days'])
+                updated += 1
+        return updated
+
+    @classmethod
+    @transaction.atomic
+    def approve(cls, leave_request, user=None, note=''):
+        """
+        Approve a request and write the attendance rows that carry it into payroll.
+
+        This is the whole reason leave lives inside the ERP: paid leave writes
+        status='leave' (which the payroll engine already ignores), unpaid leave
+        writes status='absent' (which falls through to the existing attendance
+        deduction). No new deduction path is introduced.
+        """
+        from django.utils import timezone
+
+        if leave_request.status == LeaveRequest.APPROVED:
+            return leave_request
+
+        leave_request.status = LeaveRequest.APPROVED
+        leave_request.decided_by = user
+        leave_request.decided_at = timezone.now()
+        leave_request.decision_note = note
+        leave_request.save(update_fields=[
+            'status', 'decided_by', 'decided_at', 'decision_note',
+        ])
+
+        cls._write_attendance(leave_request)
+
+        balance = cls.get_or_create_balance(
+            leave_request.employee, leave_request.leave_type, leave_request.start_date.year
+        )
+        days = _d(leave_request.days)
+        balance.pending_days = max(ZERO, _d(balance.pending_days) - days)
+        balance.taken_days = _d(balance.taken_days) + days
+        balance.save(update_fields=['pending_days', 'taken_days'])
+        return leave_request
+
+    @staticmethod
+    def _write_attendance(leave_request):
+        status = (
+            Attendance.LEAVE if leave_request.leave_type.is_paid else Attendance.ABSENT
+        )
+        emp = leave_request.employee
+        cur = leave_request.start_date
+        rows = []
+        while cur <= leave_request.end_date:
+            if cur.weekday() < 5:
+                rows.append(Attendance(
+                    organisation=emp.organisation, employee=emp, date=cur,
+                    status=status,
+                    notes=f"{leave_request.leave_type.name} (auto)",
+                ))
+            cur += timedelta(days=1)
+        for row in rows:
+            Attendance.objects.update_or_create(
+                employee=row.employee, date=row.date,
+                defaults={
+                    'organisation': row.organisation,
+                    'status': row.status,
+                    'notes': row.notes,
+                },
+            )
+
+    @classmethod
+    @transaction.atomic
+    def reject(cls, leave_request, user=None, note=''):
+        from django.utils import timezone
+
+        leave_request.status = LeaveRequest.REJECTED
+        leave_request.decided_by = user
+        leave_request.decided_at = timezone.now()
+        leave_request.decision_note = note
+        leave_request.save(update_fields=[
+            'status', 'decided_by', 'decided_at', 'decision_note',
+        ])
+        balance = cls.get_or_create_balance(
+            leave_request.employee, leave_request.leave_type, leave_request.start_date.year
+        )
+        balance.pending_days = max(ZERO, _d(balance.pending_days) - _d(leave_request.days))
+        balance.save(update_fields=['pending_days'])
+        return leave_request
+
+    @classmethod
+    @transaction.atomic
+    def cancel(cls, leave_request, user=None):
+        """Cancel a request, releasing held or taken days and clearing attendance."""
+        was_approved = leave_request.status == LeaveRequest.APPROVED
+        leave_request.status = LeaveRequest.CANCELLED
+        leave_request.save(update_fields=['status'])
+
+        balance = cls.get_or_create_balance(
+            leave_request.employee, leave_request.leave_type, leave_request.start_date.year
+        )
+        days = _d(leave_request.days)
+        if was_approved:
+            balance.taken_days = max(ZERO, _d(balance.taken_days) - days)
+            Attendance.objects.filter(
+                employee=leave_request.employee,
+                date__gte=leave_request.start_date,
+                date__lte=leave_request.end_date,
+                notes__endswith='(auto)',
+            ).delete()
+        else:
+            balance.pending_days = max(ZERO, _d(balance.pending_days) - days)
+        balance.save(update_fields=['taken_days', 'pending_days'])
+        return leave_request
+
+
+class EWAService:
+    """
+    Earned wage access: an advance on wages already earned this period.
+
+    Employer-funded and employer-recovered, which is what keeps it outside
+    consumer-lending territory. Eligibility is bounded by accrued earnings, and
+    approval is additionally gated on the organisation's own cash position —
+    the underwriting signal an HR-only platform does not hold.
+    """
+
+    @staticmethod
+    def get_policy(organisation):
+        policy, _ = AdvancePolicy.objects.get_or_create(organisation=organisation)
+        return policy
+
+    @classmethod
+    def accrued_net(cls, employee, as_of=None):
+        """
+        Net pay earned so far this period.
+
+        Uses the same proration machinery as the payroll run, so the number an
+        employee sees in the portal is the number the run will produce.
+        """
+        as_of = as_of or date.today()
+        period_start = date(as_of.year, as_of.month, 1)
+        period_end = date(as_of.year, as_of.month, calendar.monthrange(as_of.year, as_of.month)[1])
+
+        days_in_period = ProrationService.working_days(period_start, period_end)
+        effective_start = max(period_start, employee.hire_date or period_start)
+        days_worked = ProrationService.working_days(effective_start, min(as_of, period_end))
+        if days_in_period == 0:
+            return ZERO, ZERO, ZERO
+
+        components = CompensationService.components_as_of(employee, period_end)
+        full_factor = Decimal('1')
+        profile = EmployeeTaxProfile.objects.filter(employee=employee).first()
+        full_calc = PayrollService.calculate_employee_paye(
+            employee, tax_profile=profile, components=components, proration_factor=full_factor,
+        )
+        full_net = _d(full_calc['net_salary'])
+        earned_factor = (Decimal(str(days_worked)) / Decimal(str(days_in_period))).quantize(
+            Decimal('0.0001')
+        )
+        accrued = (full_net * earned_factor).quantize(CENTS)
+        return accrued, Decimal(str(days_worked)), Decimal(str(days_in_period))
+
+    @classmethod
+    def eligibility(cls, employee, as_of=None):
+        """Return a dict describing what this employee may draw right now."""
+        as_of = as_of or date.today()
+        policy = cls.get_policy(employee.organisation)
+        accrued, days_worked, days_in_period = cls.accrued_net(employee, as_of)
+
+        reasons = []
+        if not policy.is_enabled:
+            reasons.append('Salary advances are not enabled for this organisation')
+
+        if employee.hire_date:
+            months_employed = (
+                (as_of.year - employee.hire_date.year) * 12
+                + (as_of.month - employee.hire_date.month)
+            )
+        else:
+            months_employed = 0
+        if months_employed < policy.min_months_employed:
+            reasons.append(
+                f'Requires {policy.min_months_employed} months of service '
+                f'({months_employed} completed)'
+            )
+
+        taken = AdvanceRequest.objects.filter(
+            employee=employee, period_year=as_of.year, period_month=as_of.month,
+        ).exclude(status__in=[AdvanceRequest.REJECTED, AdvanceRequest.CANCELLED])
+        if taken.count() >= policy.max_requests_per_period:
+            reasons.append('Advance limit for this period already reached')
+
+        already = sum((_d(a.amount) for a in taken), ZERO)
+        cap = (accrued * _d(policy.max_percent_of_accrued) / 100).quantize(CENTS)
+        available = max(ZERO, cap - already)
+        if available < _d(policy.min_amount):
+            reasons.append(f'Below the minimum advance of {policy.min_amount}')
+
+        return {
+            'eligible': not reasons,
+            'reasons': reasons,
+            'accrued_net': accrued,
+            'available': available,
+            'cap': cap,
+            'already_drawn': already,
+            'days_worked': days_worked,
+            'days_in_period': days_in_period,
+            'fee_percent': _d(policy.fee_percent),
+            'min_amount': _d(policy.min_amount),
+            'max_percent_of_accrued': _d(policy.max_percent_of_accrued),
+        }
+
+    @classmethod
+    def can_employer_fund(cls, organisation, amount):
+        """
+        The ledger-underwriting gate.
+
+        Reads the organisation's own cash position — the thing a payroll-only
+        platform cannot see — and refuses an advance that would push the
+        business below its configured buffer.
+        """
+        policy = cls.get_policy(organisation)
+        if _d(policy.min_cash_buffer) <= ZERO:
+            return True, ''
+        try:
+            from apps.accounting.services import AccountingService
+            cash = _d(AccountingService.get_cash_position(organisation))
+        except Exception:
+            # If the ledger cannot be read, do not block payroll operations.
+            return True, ''
+        if cash - _d(amount) < _d(policy.min_cash_buffer):
+            return False, (
+                f'Approving this advance would leave the business below its '
+                f'{policy.min_cash_buffer} cash buffer'
+            )
+        return True, ''
+
+    @classmethod
+    @transaction.atomic
+    def request(cls, employee, amount, reason='', as_of=None):
+        as_of = as_of or date.today()
+        amount = _d(amount)
+        info = cls.eligibility(employee, as_of)
+        if not info['eligible']:
+            raise ValueError('; '.join(info['reasons']))
+        if amount > info['available']:
+            raise ValueError(
+                f"Requested {amount} exceeds the available {info['available']}"
+            )
+        policy = cls.get_policy(employee.organisation)
+        fee = (amount * _d(policy.fee_percent) / 100).quantize(CENTS)
+        return AdvanceRequest.objects.create(
+            organisation=employee.organisation,
+            employee=employee,
+            amount=amount,
+            fee=fee,
+            total_recoverable=amount + fee,
+            period_year=as_of.year,
+            period_month=as_of.month,
+            reason=reason,
+            accrued_at_request=info['accrued_net'],
+            days_worked_at_request=info['days_worked'],
+            status=AdvanceRequest.PENDING if policy.require_approval else AdvanceRequest.APPROVED,
+        )

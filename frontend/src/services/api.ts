@@ -1500,10 +1500,110 @@ export const payrollApi = {
     api.get(`/payroll/tax-profiles/by_employee/`, { params: { employee_id: employeeId } }),
   saveTaxProfile: (employeeId: string, data: object) =>
     api.put(`/payroll/tax-profiles/by_employee/`, { ...data, employee_id: employeeId }),
-  // PAYE remittances
-  payeRemittances: (params?: object) => api.get('/payroll/paye-remittances/', { params }),
-  markPayeRemitted: (id: string, data: object) =>
-    api.post(`/payroll/paye-remittances/${id}/mark_remitted/`, data),
+  // ── Statutory & benefit remittances ──────────────────────────────────────
+  // Replaces the old paye-remittances tracker. PAYE is now split per State IRS
+  // and pension per PFA, so one run produces several obligations.
+  remittances: (params?: object) => api.get('/payroll/remittances/', { params }),
+  remittanceSummary: () => api.get('/payroll/remittances/summary/'),
+  markRemitted: (id: string, data: object) =>
+    api.post(`/payroll/remittances/${id}/mark_remitted/`, data),
+  remittanceSchedule: (params: { type: string; year?: number; month?: number }) =>
+    api.get('/payroll/remittances/schedule/', { params }),
+
+  // ── Tax authorities (State IRS registry) ─────────────────────────────────
+  taxAuthorities: () => api.get('/payroll/tax-authorities/'),
+  updateTaxAuthority: (id: string, data: object) =>
+    api.patch(`/payroll/tax-authorities/${id}/`, data),
+
+  // ── Compensation history (effective-dated pay) ───────────────────────────
+  compensation: (employeeId: string) =>
+    api.get('/payroll/compensation/', { params: { employee: employeeId } }),
+  createCompensation: (data: object) => api.post('/payroll/compensation/', data),
+
+  // ── Arrears / back-pay ───────────────────────────────────────────────────
+  adjustments: (params?: object) => api.get('/payroll/adjustments/', { params }),
+  createAdjustment: (data: object) => api.post('/payroll/adjustments/', data),
+  cancelAdjustment: (id: string) => api.post(`/payroll/adjustments/${id}/cancel/`),
+
+  // ── Org chart & portal access ────────────────────────────────────────────
+  orgChart: () => api.get('/payroll/employees/org_chart/'),
+  invitePortal: (id: string) => api.post(`/payroll/employees/${id}/invite_portal/`),
+  revokePortal: (id: string) => api.post(`/payroll/employees/${id}/revoke_portal/`),
+
+  // ── Payroll run extras ───────────────────────────────────────────────────
+  recalculateRun: (id: string) => api.post(`/payroll/runs/${id}/recalculate/`),
+  sendPayslips: (id: string, data: object) =>
+    api.post(`/payroll/runs/${id}/send_payslips/`, data),
+  payslipDeliveries: (id: string) => api.get(`/payroll/runs/${id}/deliveries/`),
+
+  // ── Leave ────────────────────────────────────────────────────────────────
+  leaveTypes: () => api.get('/payroll/leave-types/'),
+  createLeaveType: (data: object) => api.post('/payroll/leave-types/', data),
+  updateLeaveType: (id: string, data: object) => api.patch(`/payroll/leave-types/${id}/`, data),
+  deleteLeaveType: (id: string) => api.delete(`/payroll/leave-types/${id}/`),
+  leaveBalances: (params?: object) => api.get('/payroll/leave-balances/', { params }),
+  accrueLeave: (data?: object) => api.post('/payroll/leave-balances/accrue/', data ?? {}),
+  leaveRequests: (params?: object) => api.get('/payroll/leave-requests/', { params }),
+  createLeaveRequest: (data: object) => api.post('/payroll/leave-requests/', data),
+  approveLeave: (id: string, data?: object) =>
+    api.post(`/payroll/leave-requests/${id}/approve/`, data ?? {}),
+  rejectLeave: (id: string, data?: object) =>
+    api.post(`/payroll/leave-requests/${id}/reject/`, data ?? {}),
+  cancelLeave: (id: string) => api.post(`/payroll/leave-requests/${id}/cancel/`),
+  pendingLeaveCount: () => api.get('/payroll/leave-requests/pending_count/'),
+
+  // ── Benefits ─────────────────────────────────────────────────────────────
+  benefitPlans: () => api.get('/payroll/benefit-plans/'),
+  createBenefitPlan: (data: object) => api.post('/payroll/benefit-plans/', data),
+  updateBenefitPlan: (id: string, data: object) => api.patch(`/payroll/benefit-plans/${id}/`, data),
+  deleteBenefitPlan: (id: string) => api.delete(`/payroll/benefit-plans/${id}/`),
+  employeeBenefits: (params?: object) => api.get('/payroll/employee-benefits/', { params }),
+  enrolBenefit: (data: object) => api.post('/payroll/employee-benefits/', data),
+  updateEmployeeBenefit: (id: string, data: object) =>
+    api.patch(`/payroll/employee-benefits/${id}/`, data),
+  removeEmployeeBenefit: (id: string) => api.delete(`/payroll/employee-benefits/${id}/`),
+
+  // ── Salary advances (earned wage access) ─────────────────────────────────
+  advances: (params?: object) => api.get('/payroll/advances/', { params }),
+  advanceEligibility: (employeeId: string) =>
+    api.get(`/payroll/advances/eligibility/${employeeId}/`),
+  createAdvance: (data: object) => api.post('/payroll/advances/', data),
+  approveAdvance: (id: string, data?: object) =>
+    api.post(`/payroll/advances/${id}/approve/`, data ?? {}),
+  rejectAdvance: (id: string, data?: object) =>
+    api.post(`/payroll/advances/${id}/reject/`, data ?? {}),
+  advancePolicy: () => api.get('/payroll/advance-policy/current/'),
+  saveAdvancePolicy: (data: object) => api.patch('/payroll/advance-policy/current/', data),
+
+  // ── Org-level payroll settings ───────────────────────────────────────────
+  settings: () => api.get('/payroll/settings/current/'),
+  saveSettings: (data: object) => api.patch('/payroll/settings/current/', data),
+}
+
+/**
+ * Employee self-service portal.
+ *
+ * Every endpoint resolves the caller's own Employee record server-side, so no
+ * employee id is ever sent from the client.
+ */
+export const essApi = {
+  summary: () => api.get('/me/summary/'),
+  profile: () => api.get('/me/profile/'),
+  updateProfile: (data: object) => api.patch('/me/profile/', data),
+  payslips: () => api.get('/me/payslips/'),
+  leaveBalances: (year?: number) => api.get('/me/leave-balances/', { params: { year } }),
+  leaveTypes: () => api.get('/me/leave-types/'),
+  leaveRequests: () => api.get('/me/leave-requests/'),
+  createLeaveRequest: (data: object) => api.post('/me/leave-requests/', data),
+  cancelLeaveRequest: (id: string) => api.post(`/me/leave-requests/${id}/cancel/`),
+  documents: () => api.get('/me/documents/'),
+  loans: () => api.get('/me/loans/'),
+  benefits: () => api.get('/me/benefits/'),
+  attendance: (year?: number, month?: number) =>
+    api.get('/me/attendance/', { params: { year, month } }),
+  advances: () => api.get('/me/advances/'),
+  advanceEligibility: () => api.get('/me/advances/eligibility/'),
+  requestAdvance: (data: object) => api.post('/me/advances/', data),
 }
 
 export const budgetApi = {
@@ -1520,6 +1620,16 @@ export const recurringApi = {
   update: (id: string, data: object) => api.patch(`/sales/recurring/${id}/`, data),
   delete: (id: string) => api.delete(`/sales/recurring/${id}/`),
   generateNow: (id: string) => api.post(`/sales/recurring/${id}/generate_now/`),
+}
+
+export const storefrontApi = {
+  /** The org's shop settings — created on first call so the page always has one. */
+  mine: () => api.get('/storefront/settings/mine/'),
+  update: (id: string, data: object) => api.patch(`/storefront/settings/${id}/`, data),
+  orders: (params?: object) => api.get('/storefront/orders/', { params }),
+  accept: (id: string) => api.post(`/storefront/orders/${id}/accept/`),
+  setStatus: (id: string, status: string) =>
+    api.post(`/storefront/orders/${id}/set_status/`, { status }),
 }
 
 export const tillApi = {

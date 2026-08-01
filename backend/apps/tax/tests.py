@@ -832,16 +832,22 @@ class EmployeeTaxProfileTests(TestCase):
         self.assertTrue(res.data["paye_exempt"])
 
 
-# ── PAYERemittance Tests ───────────────────────────────────────────────────────
+# ── Statutory remittance tests ─────────────────────────────────
 
-class PAYERemittanceTests(TestCase):
+class StatutoryRemittanceTests(TestCase):
+    """
+    PAYE remittance moved from a single per-run record to one obligation per
+    State Internal Revenue Service, because PAYE follows the employee's state of
+    residence and a blended figure cannot actually be filed.
+    """
+
     def setUp(self):
         self.user = _make_user("paye_owner@example.com")
         self.org = _make_org(self.user, "PAYE Org")
         _upgrade_to_business(self.org)
         self.client = _auth_client(self.user, self.org)
 
-    def _create_employee(self, email="emp@company.com"):
+    def _create_employee(self, email="emp@company.com", state="LA"):
         res = self.client.post("/api/v1/payroll/employees/", {
             "first_name": "Alice",
             "last_name": "Smith",
@@ -851,77 +857,98 @@ class PAYERemittanceTests(TestCase):
             "basic_salary": "150000.00",
             "employment_type": "full_time",
             "hire_date": "2024-01-01",
-            "pension_enrolled": True,
+            "state_of_residence": state,
         }, format="json")
         return res.data["id"]
 
-    def _create_payroll_run(self):
-        employee_id = self._create_employee()
-        res = self.client.post("/api/v1/payroll/runs/", {
+    def _create_payroll_run(self, month=1):
+        self._create_employee(f"emp{month}@company.com")
+        return self.client.post("/api/v1/payroll/runs/", {
             "period_year": 2025,
-            "period_month": 1,
-            "employee_ids": [employee_id],
+            "period_month": month,
         }, format="json")
-        return res
 
-    def test_paye_remittance_created_with_payroll_run(self):
-        """Creating a payroll run should auto-create a PAYERemittance."""
+    def test_remittances_created_with_payroll_run(self):
         res = self._create_payroll_run()
-        if res.status_code != 201:
-            # If payroll run creation format differs, skip auto-creation check
-            return
-        run_id = res.data["id"]
-        from apps.payroll.models import PayrollRun, PAYERemittance
-        try:
-            run = PayrollRun.objects.get(id=run_id)
-            self.assertTrue(PAYERemittance.objects.filter(payroll_run=run).exists())
-        except PayrollRun.DoesNotExist:
-            pass
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
 
-    def test_list_paye_remittances(self):
-        res = self.client.get("/api/v1/payroll/paye-remittances/")
+        from apps.payroll.models import PayrollRun, StatutoryRemittance
+        run = PayrollRun.objects.get(id=res.data["id"])
+        self.assertTrue(
+            StatutoryRemittance.objects.filter(payroll_run=run).exists(),
+            "a run must generate its statutory obligations",
+        )
+
+    def test_paye_is_routed_to_the_state_irs(self):
+        res = self._create_payroll_run(month=3)
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+
+        from apps.payroll.models import PayrollRun, StatutoryRemittance
+        run = PayrollRun.objects.get(id=res.data["id"])
+        paye = StatutoryRemittance.objects.filter(
+            payroll_run=run, remittance_type=StatutoryRemittance.PAYE,
+        ).first()
+        self.assertIsNotNone(paye)
+        if paye.tax_authority:
+            self.assertIn("Lagos", paye.tax_authority.name)
+
+    def test_list_remittances(self):
+        res = self.client.get("/api/v1/payroll/remittances/")
         self.assertEqual(res.status_code, 200)
 
     def test_mark_remitted_action(self):
-        """If a PAYERemittance exists, mark_remitted should transition it to 'remitted'."""
-        from apps.payroll.models import PAYERemittance, PayrollRun
         from datetime import date
 
-        # Directly create a payroll run + remittance for a clean test
-        employee_id = self._create_employee("emp2@company.com")
-        run_res = self.client.post("/api/v1/payroll/runs/", {
-            "period_year": 2025,
-            "period_month": 2,
-            "employee_ids": [employee_id],
-        }, format="json")
-        if run_res.status_code != 201:
-            return  # payroll format may vary
+        from apps.payroll.models import StatutoryRemittance
 
-        run_id = run_res.data["id"]
-        try:
-            run = PayrollRun.objects.get(id=run_id)
-        except PayrollRun.DoesNotExist:
-            return
+        run_res = self._create_payroll_run(month=2)
+        self.assertEqual(run_res.status_code, 201, msg=str(run_res.data))
 
-        remittance, _ = PAYERemittance.objects.get_or_create(
+        remittance = StatutoryRemittance.objects.create(
             organisation=self.org,
-            payroll_run=run,
-            defaults={
-                "period_year": 2025,
-                "period_month": 2,
-                "amount_due": Decimal("15000"),
-                "due_date": date(2025, 3, 10),
-                "status": PAYERemittance.PENDING,
-            },
+            remittance_type=StatutoryRemittance.PAYE,
+            period_year=2025,
+            period_month=2,
+            recipient_name="Lagos State Internal Revenue Service",
+            amount_due=Decimal("15000"),
+            due_date=date(2025, 3, 10),
+            status=StatutoryRemittance.PENDING,
         )
         res = self.client.post(
-            f"/api/v1/payroll/paye-remittances/{remittance.id}/mark_remitted/",
-            {"reference": "FIRS/PAYE/2025/001", "notes": "Paid via NIBSS"},
+            f"/api/v1/payroll/remittances/{remittance.id}/mark_remitted/",
+            {"reference": "LIRS/PAYE/2025/001", "notes": "Paid via NIBSS"},
             format="json",
         )
-        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
         remittance.refresh_from_db()
-        self.assertEqual(remittance.status, PAYERemittance.REMITTED)
+        self.assertEqual(remittance.status, StatutoryRemittance.REMITTED)
+
+    def test_paye_obligation_task_sums_every_authority(self):
+        """
+        tax.generate_monthly_paye_obligations used to read a single
+        PAYERemittance row; it now has to total the per-state split.
+        """
+        from datetime import date
+
+        from django.db.models import Sum
+
+        from apps.payroll.models import StatutoryRemittance
+
+        for code, amount in (("LA", "10000"), ("KN", "5000")):
+            StatutoryRemittance.objects.create(
+                organisation=self.org,
+                remittance_type=StatutoryRemittance.PAYE,
+                period_year=2025, period_month=4,
+                recipient_name=f"{code} IRS",
+                amount_due=Decimal(amount),
+                due_date=date(2025, 5, 10),
+            )
+        total = StatutoryRemittance.objects.filter(
+            organisation=self.org,
+            remittance_type=StatutoryRemittance.PAYE,
+            period_year=2025, period_month=4,
+        ).aggregate(t=Sum("amount_due"))["t"]
+        self.assertEqual(total, Decimal("15000"))
 
 
 # ── ExciseDuty Tests ───────────────────────────────────────────────────────────

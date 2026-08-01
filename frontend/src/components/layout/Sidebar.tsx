@@ -8,7 +8,7 @@ import {
   PieChart, Scale, Shield, ClipboardList, ChevronDown, ChevronRight, ShieldCheck,
   MapPin, ClipboardCheck, GraduationCap, Briefcase, ShoppingCart,
   User, Layout, Mail, Lock, Bot, Globe, Upload, GitBranch,
-  ChevronLeft, HelpCircle, LayoutGrid, Zap, Wallet,
+  ChevronLeft, HelpCircle, LayoutGrid, Zap, Wallet, Store,
   CalendarDays,
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
@@ -62,6 +62,7 @@ export const navGroups: { label: string | null; alwaysGroup?: boolean; items: { 
       { name: 'Till / Cash-up', href: '/pos/till', icon: Wallet, module: 'sales' },
       { name: 'Tables', href: '/pos/tables', icon: LayoutGrid, module: 'sales', businessType: 'restaurant' },
       { name: 'Kitchen (KOT)', href: '/pos/kitchen', icon: ClipboardCheck, module: 'sales', businessType: 'restaurant' },
+      { name: 'Storefront', href: '/storefront', icon: Store, module: 'sales' },
       { name: 'Locations', href: '/locations', icon: MapPin, module: 'sales' },
     ],
   },

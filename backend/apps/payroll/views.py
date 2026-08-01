@@ -22,15 +22,26 @@ from apps.core.permissions import IsManager, IsStaff, IsOwnerOrAdmin, plan_requi
 
 _PlanPayroll = plan_requires('payroll')
 from .models import (
-    Attendance, Bonus, Employee, EmployeeDocument, EmployeeLoan,
-    EmployeePenalty, EmployeeTaxProfile, PAYERemittance, PayrollRun, PayslipLine,
+    AdvancePolicy, AdvanceRequest, Attendance, BenefitPlan, Bonus, CompensationRecord,
+    Employee, EmployeeBenefit, EmployeeDocument, EmployeeLoan, EmployeePenalty,
+    EmployeeTaxProfile, LeaveBalance, LeaveRequest, LeaveType, PayrollAdjustment,
+    PayrollRun, PayrollSettings, PayslipDelivery, PayslipLine, StatutoryRemittance,
+    TaxAuthority,
 )
 from .serializers import (
-    AttendanceSerializer, BonusSerializer, EmployeeDocumentSerializer,
-    EmployeeLoanSerializer, EmployeePenaltySerializer, EmployeeSerializer,
-    EmployeeTaxProfileSerializer, PAYERemittanceSerializer, PayrollRunSerializer,
+    AdvancePolicySerializer, AdvanceRequestSerializer, AttendanceSerializer,
+    BenefitPlanSerializer, BonusSerializer, CompensationRecordSerializer,
+    EmployeeBenefitSerializer, EmployeeDocumentSerializer, EmployeeLoanSerializer,
+    EmployeePenaltySerializer, EmployeeSerializer, EmployeeTaxProfileSerializer,
+    LeaveBalanceSerializer, LeaveRequestSerializer, LeaveTypeSerializer,
+    PayrollAdjustmentSerializer, PayrollRunSerializer, PayrollSettingsSerializer,
+    PayslipDeliverySerializer, PayslipLineSerializer, StatutoryRemittanceSerializer,
+    TaxAuthoritySerializer,
 )
-from .services import PayrollService
+from .services import (
+    CompensationService, EWAService, LeaveService, PayrollService,
+    RemittanceService, TaxAuthorityService, get_settings,
+)
 
 
 class EmployeeViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
@@ -79,6 +90,145 @@ class EmployeeViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
         except BankResolveError as exc:
             return Response({"error": str(exc)}, status=400)
         return Response({"account_name": account_name})
+
+    @action(detail=False, methods=['get'])
+    def org_chart(self, request):
+        """
+        GET /payroll/employees/org_chart/
+
+        Reporting tree built from the manager FK. Employees with no manager are
+        roots; anyone caught in a cycle is surfaced as a root rather than
+        dropped, so a bad edge is visible instead of silently hiding people.
+        """
+        org = self._get_organisation()
+        employees = list(
+            Employee.objects.filter(organisation=org, is_active=True)
+            .values('id', 'employee_id', 'first_name', 'last_name',
+                    'job_title', 'department', 'manager_id')
+        )
+        by_id = {str(e['id']): e for e in employees}
+        for e in employees:
+            e['id'] = str(e['id'])
+            e['manager_id'] = str(e['manager_id']) if e['manager_id'] else None
+            e['name'] = f"{e['first_name']} {e['last_name']}".strip()
+            e['children'] = []
+
+        roots = []
+        for e in employees:
+            parent_id = e['manager_id']
+            # Walk up to detect a cycle before attaching.
+            seen, cursor, cyclic = {e['id']}, parent_id, False
+            while cursor:
+                if cursor in seen:
+                    cyclic = True
+                    break
+                seen.add(cursor)
+                parent = by_id.get(cursor)
+                cursor = str(parent['manager_id']) if parent and parent.get('manager_id') else None
+            if parent_id and not cyclic and parent_id in by_id:
+                by_id[parent_id]['children'].append(e)
+            else:
+                roots.append(e)
+        return Response(roots)
+
+    @action(detail=True, methods=['post'])
+    def invite_portal(self, request, pk=None):
+        """
+        POST /payroll/employees/{id}/invite_portal/
+
+        Creates a portal login for the employee so they can see their own
+        payslips, leave and advances.
+
+        The account is a normal email user, NOT an is_sub_account one: that flag
+        forces the /staff-login route, which resolves a username against an
+        organisation slug, and employees sign in with their own email address.
+        What restricts them is the `employee` membership role, which carries no
+        module permissions and is refused by every operator endpoint.
+        """
+        import secrets
+
+        from apps.authentication.models import User
+        from apps.tenancy.models import Membership
+
+        employee = self.get_object()
+        org = self._get_organisation()
+
+        if employee.user_id:
+            return Response({'error': 'This employee already has portal access.'}, status=400)
+        email = (employee.email or '').strip().lower()
+        if not email:
+            return Response(
+                {'error': 'Add an email address to this employee before inviting them.'},
+                status=400,
+            )
+        if User.objects.filter(email__iexact=email).exists():
+            return Response(
+                {'error': 'A user with that email address already exists.'}, status=400,
+            )
+
+        temp_password = secrets.token_urlsafe(9)
+        user = User.objects.create_user(
+            email=email,
+            password=temp_password,
+            first_name=employee.first_name,
+            last_name=employee.last_name,
+            is_verified=True,
+        )
+        user.must_change_password = True
+        user.save(update_fields=['must_change_password'])
+
+        Membership.objects.get_or_create(
+            organisation=org, user=user,
+            defaults={'role': Membership.Role.EMPLOYEE, 'is_active': True},
+        )
+        employee.user = user
+        employee.save(update_fields=['user'])
+
+        try:
+            from django.core.mail import send_mail
+            send_mail(
+                subject=f"Your {org.name} employee portal account",
+                message=(
+                    f"Hello {employee.first_name},\n\n"
+                    f"An employee portal account has been created for you.\n\n"
+                    f"Email: {email}\n"
+                    f"Temporary password: {temp_password}\n\n"
+                    f"You will be asked to change it when you first sign in.\n\n"
+                    f"{org.name}"
+                ),
+                from_email=None,
+                recipient_list=[email],
+                fail_silently=True,
+            )
+            emailed = True
+        except Exception:
+            emailed = False
+
+        return Response({
+            'employee': str(employee.id),
+            'email': email,
+            'emailed': emailed,
+            # Returned so an admin can pass it on when SMTP is not configured.
+            'temporary_password': temp_password,
+        }, status=201)
+
+    @action(detail=True, methods=['post'])
+    def revoke_portal(self, request, pk=None):
+        """POST /payroll/employees/{id}/revoke_portal/ — disable portal access."""
+        from apps.tenancy.models import Membership
+
+        employee = self.get_object()
+        if not employee.user_id:
+            return Response({'error': 'This employee does not have portal access.'}, status=400)
+        user = employee.user
+        Membership.objects.filter(organisation=employee.organisation, user=user).update(
+            is_active=False
+        )
+        user.is_active = False
+        user.save(update_fields=['is_active'])
+        employee.user = None
+        employee.save(update_fields=['user'])
+        return Response({'employee': str(employee.id), 'revoked': True})
 
 
 class EmployeeDocumentViewSet(TenantFilterMixin, viewsets.ModelViewSet):
@@ -256,29 +406,116 @@ class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         return PayrollRun.objects.filter(organisation=org).prefetch_related('payslips__employee')
 
     def create(self, request, *args, **kwargs):
-        org = self._get_organisation()
-        year = int(request.data.get('period_year'))
-        month = int(request.data.get('period_month'))
-        run, created = PayrollRun.objects.get_or_create(
-            organisation=org, period_year=year, period_month=month,
-            defaults={'processed_by': request.user}
-        )
-        if not created and run.status not in [PayrollRun.DRAFT]:
-            return Response({'error': 'Payroll already processed for this period'}, status=400)
-        # Period-lock guard
+        import calendar as _cal
         from datetime import date as _date
+
+        org = self._get_organisation()
+        try:
+            year = int(request.data.get('period_year'))
+            month = int(request.data.get('period_month'))
+        except (TypeError, ValueError):
+            return Response({'error': 'period_year and period_month are required.'}, status=400)
+        if not 1 <= month <= 12:
+            return Response({'error': 'period_month must be between 1 and 12.'}, status=400)
+
+        run_type = request.data.get('run_type') or PayrollRun.REGULAR
+        valid_types = [c for c, _ in PayrollRun.RUN_TYPE_CHOICES]
+        if run_type not in valid_types:
+            return Response(
+                {'error': f"run_type must be one of: {', '.join(valid_types)}"}, status=400
+            )
+
+        # Optional explicit period window (drives proration for part-month runs)
+        period_start = request.data.get('period_start')
+        period_end = request.data.get('period_end')
+        if not period_start:
+            period_start = _date(year, month, 1)
+        if not period_end:
+            period_end = _date(year, month, _cal.monthrange(year, month)[1])
+
+        # Period-lock guard
         from apps.accounting.services import AccountingService
-        period_date = _date(year, month, 1)
-        if AccountingService.is_period_locked(org, period_date, user=request.user):
+        if AccountingService.is_period_locked(org, _date(year, month, 1), user=request.user):
             return Response(
                 {'error': f'The period {year}-{month:02d} is locked. Unlock it before running payroll.'},
                 status=403,
             )
+
+        if run_type == PayrollRun.REGULAR:
+            # The regular run stays one-per-month: re-posting it re-runs in
+            # place rather than creating a duplicate set of payslips.
+            run, created = PayrollRun.objects.get_or_create(
+                organisation=org, period_year=year, period_month=month,
+                run_type=PayrollRun.REGULAR, sequence=1,
+                defaults={
+                    'processed_by': request.user,
+                    'period_start': period_start,
+                    'period_end': period_end,
+                    'pay_frequency': request.data.get('pay_frequency')
+                    or get_settings(org).default_pay_frequency,
+                },
+            )
+            if not created and run.status != PayrollRun.DRAFT:
+                # Re-running is destructive: it deletes and rebuilds payslips,
+                # losing transfer references, and bonuses already marked APPLIED
+                # would not be picked up a second time. Force the caller to be
+                # explicit via recalculate/, or to raise an off-cycle run.
+                return Response(
+                    {'error': f'Payroll for {year}-{month:02d} has already been processed. '
+                              f'Use recalculate to rebuild it, or create an off-cycle run.'},
+                    status=400,
+                )
+        else:
+            # Off-cycle / supplementary / 13th-month / final settlement runs
+            # stack behind the regular run, each with its own sequence.
+            last = (
+                PayrollRun.objects
+                .filter(organisation=org, period_year=year, period_month=month, run_type=run_type)
+                .order_by('-sequence').first()
+            )
+            next_seq = (last.sequence + 1) if last else 1
+            run = PayrollRun.objects.create(
+                organisation=org, period_year=year, period_month=month,
+                run_type=run_type, sequence=next_seq,
+                processed_by=request.user,
+                period_start=period_start, period_end=period_end,
+                pay_frequency=request.data.get('pay_frequency')
+                or get_settings(org).default_pay_frequency,
+            )
+            created = True
+
         run = PayrollService.run_payroll(run)
         return Response(
             PayrollRunSerializer(run).data,
             status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
         )
+
+    @action(detail=True, methods=['post'])
+    def recalculate(self, request, pk=None):
+        """
+        POST /payroll/runs/{id}/recalculate/
+
+        Rebuild a processed run in place. Destructive by design — payslips are
+        deleted and recreated, so transfer references are lost — and therefore
+        refused once the run has been approved or paid.
+        """
+        run = self.get_object()
+        if run.status in [PayrollRun.APPROVED, PayrollRun.PAID]:
+            return Response(
+                {'error': 'An approved or paid run cannot be recalculated. '
+                          'Raise a supplementary run instead.'},
+                status=400,
+            )
+        if run.payslips.filter(
+            transfer_status__in=[PayslipLine.TRANSFER_INITIATED, PayslipLine.TRANSFER_SUCCESS]
+        ).exists():
+            return Response(
+                {'error': 'Some salaries have already been transferred for this run. '
+                          'Recalculating would lose those transfer references.'},
+                status=400,
+            )
+        run = PayrollService.run_payroll(run)
+        return Response(PayrollRunSerializer(run).data)
 
     @action(detail=False, methods=['get'])
     def eligible_approvers(self, request):
@@ -1080,8 +1317,12 @@ class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             c.border    = _border()
         ws2.row_dimensions[4].height = 28
 
+        tot_itf = _d(run.total_itf)
+        tot_benefit_emp = sum(_d(p.benefit_deductions) for p in ready)
+        tot_benefit_er = _d(run.total_benefits_employer)
+
         stat_data = [
-            # Employee deductions (already in net pay calc)
+            # Employee deductions (withheld from pay — employer still remits them)
             ('Employee Pension Contribution',
              '8% of (Basic + Housing + Transport)',
              tot_pen_emp,
@@ -1092,28 +1333,44 @@ class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
              tot_nhf,
              '1st week of following month',
              'Federal Mortgage Bank of Nigeria (FMBN)'),
-            ('NSITF Contribution (Employee)',
-             '1% of Gross Salary',
-             tot_nsitf,
-             '1st week of following month',
-             'NSITF Board'),
             ('PAYE Tax (Employee)',
-             'Progressive brackets per Finance Act',
+             'NTA 2025 progressive bands',
              tot_paye,
              '10th of following month',
-             'State Internal Revenue Service (LIRS/SIRS)'),
-            # Employer obligations (additional cost to company)
+             'State Internal Revenue Service of each employee\'s residence'),
+            ('Employee Benefit Premiums',
+             'Employee share of HMO / group life',
+             tot_benefit_emp,
+             '1st of following month',
+             'Benefit providers'),
+            # Employer obligations (additional cost to the company)
             ('Employer Pension Contribution',
              '10% of (Basic + Housing + Transport)',
              tot_pen_er,
              '7th of following month',
              'Pension Fund Administrator (PFA)'),
+            ('NSITF Contribution (Employer)',
+             '1% of Gross Salary — employer-borne',
+             tot_nsitf,
+             '1st week of following month',
+             'NSITF Board'),
+            ('ITF Training Levy (Employer)',
+             '1% of annual payroll — employer-borne',
+             tot_itf,
+             '1 April of following year',
+             'Industrial Training Fund (ITF)'),
+            ('Employer Benefit Premiums',
+             'Employer share of HMO / group life',
+             tot_benefit_er,
+             '1st of following month',
+             'Benefit providers'),
             ('Net Salary Bank Transfer',
              'Total net pay for all employees',
              tot_net,
              payment_date,
              'Employees\' bank accounts via NIBSS NIP'),
         ]
+        stat_data = [row for row in stat_data if row[2]]
 
         for i, (obligation, rate, amount, deadline, remit_to) in \
                 enumerate(stat_data, start=5):
@@ -1134,11 +1391,18 @@ class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                 if col == 3:
                     c.number_format = MONEY_FMT
 
-        # Grand total
+        # Grand total — every naira the employer must fund for this run.
+        # The employee pension contribution was previously omitted here, which
+        # understated the funding requirement by 8% of emoluments.
         grand_row = len(stat_data) + 5
         ws2.row_dimensions[grand_row].height = 20
-        labels = ['TOTAL EMPLOYER OBLIGATION', '(Pension + NHF + NSITF + PAYE + Net Pay)',
-                  tot_pen_er + tot_nhf + tot_nsitf + tot_paye + tot_net, '', '']
+        grand_total = (
+            tot_net + tot_paye + tot_pen_emp + tot_pen_er + tot_nhf
+            + tot_nsitf + tot_itf + tot_benefit_emp + tot_benefit_er
+        )
+        labels = ['TOTAL EMPLOYER FUNDING REQUIREMENT',
+                  '(Net Pay + PAYE + Pension employee & employer + NHF + NSITF + ITF + Benefits)',
+                  grand_total, '', '']
         for col, val in enumerate(labels, start=1):
             c = ws2.cell(row=grand_row, column=col, value=val)
             c.fill      = _fill(GOLD)
@@ -1260,6 +1524,108 @@ class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         ).values('id', 'run_number', 'period_year', 'period_month', 'submitted_by__email')
         return Response(list(runs))
 
+    @action(detail=True, methods=['post'])
+    def send_payslips(self, request, pk=None):
+        """
+        POST /payroll/runs/{id}/send_payslips/
+
+        Body: {"payslips": [{"id": "...", "pdf_base64": "..."}], "subject": "..."}
+
+        Mirrors the invoice-email path: the client renders each PDF and posts it
+        back, the server attaches and sends. Every attempt is written to
+        PayslipDelivery — issuing a payslip is a compliance act and needs a trail.
+        """
+        import base64
+        from email import encoders
+        from email.mime.base import MIMEBase
+
+        from django.core.mail import EmailMultiAlternatives
+
+        run = self.get_object()
+        items = request.data.get('payslips') or []
+        if not isinstance(items, list) or not items:
+            return Response({'error': 'Provide a non-empty payslips array.'}, status=400)
+
+        by_id = {
+            str(p.id): p
+            for p in run.payslips.select_related('employee').all()
+        }
+        org_name = run.organisation.name
+        period = f"{run.period_year}-{run.period_month:02d}"
+        sent, failed, skipped = 0, 0, 0
+        results = []
+
+        for item in items:
+            payslip = by_id.get(str(item.get('id')))
+            if payslip is None:
+                continue
+            employee = payslip.employee
+            recipient = (employee.email or '').strip()
+            if not recipient:
+                PayslipDelivery.objects.create(
+                    organisation=run.organisation, payslip=payslip,
+                    channel=PayslipDelivery.EMAIL, recipient='',
+                    status=PayslipDelivery.SKIPPED,
+                    error='No email address on file', sent_by=request.user,
+                )
+                skipped += 1
+                results.append({'id': str(payslip.id), 'status': 'skipped',
+                                'reason': 'No email address on file'})
+                continue
+
+            try:
+                subject = request.data.get('subject') or f"Payslip for {period} — {org_name}"
+                body = (
+                    f"Dear {employee.first_name},\n\n"
+                    f"Your payslip for {period} is attached.\n\n"
+                    f"Net pay: {payslip.net_salary}\n\n"
+                    f"{org_name}"
+                )
+                msg = EmailMultiAlternatives(subject, body, to=[recipient])
+                pdf_b64 = item.get('pdf_base64')
+                if pdf_b64:
+                    if ',' in pdf_b64[:64]:
+                        pdf_b64 = pdf_b64.split(',', 1)[1]
+                    part = MIMEBase('application', 'pdf')
+                    part.set_payload(base64.b64decode(pdf_b64))
+                    encoders.encode_base64(part)
+                    part.add_header(
+                        'Content-Disposition', 'attachment',
+                        filename=f"Payslip-{employee.employee_id}-{period}.pdf",
+                    )
+                    msg.attach(part)
+                msg.send(fail_silently=False)
+
+                PayslipDelivery.objects.create(
+                    organisation=run.organisation, payslip=payslip,
+                    channel=PayslipDelivery.EMAIL, recipient=recipient,
+                    status=PayslipDelivery.SENT, sent_by=request.user,
+                )
+                sent += 1
+                results.append({'id': str(payslip.id), 'status': 'sent'})
+            except Exception as exc:
+                PayslipDelivery.objects.create(
+                    organisation=run.organisation, payslip=payslip,
+                    channel=PayslipDelivery.EMAIL, recipient=recipient,
+                    status=PayslipDelivery.FAILED, error=str(exc)[:500],
+                    sent_by=request.user,
+                )
+                failed += 1
+                results.append({'id': str(payslip.id), 'status': 'failed', 'reason': str(exc)[:200]})
+
+        return Response({
+            'sent': sent, 'failed': failed, 'skipped': skipped, 'results': results,
+        })
+
+    @action(detail=True, methods=['get'])
+    def deliveries(self, request, pk=None):
+        """GET /payroll/runs/{id}/deliveries/ — payslip delivery audit trail."""
+        run = self.get_object()
+        qs = PayslipDelivery.objects.filter(
+            payslip__payroll_run=run
+        ).select_related('payslip__employee')
+        return Response(PayslipDeliverySerializer(qs, many=True).data)
+
 
 class EmployeeTaxProfileViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     """GET/PUT /payroll/tax-profiles/ — per-employee tax relief overrides."""
@@ -1289,38 +1655,532 @@ class EmployeeTaxProfileViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         return Response(serializer.data)
 
 
-class PAYERemittanceViewSet(TenantFilterMixin, viewsets.ModelViewSet):
-    """GET/PATCH /payroll/paye-remittances/ — PAYE remittance tracker."""
-    serializer_class = PAYERemittanceSerializer
+class StatutoryRemittanceViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+    """
+    GET/PATCH /payroll/remittances/ — every statutory and benefit obligation.
+
+    Rows are generated by the payroll run, so there is no create endpoint.
+    """
+    serializer_class = StatutoryRemittanceSerializer
     permission_classes = [IsAuthenticated, IsOwnerOrAdmin]
-    http_method_names = ['get', 'patch', 'post', 'head', 'options']  # no create/delete — auto-created by run_payroll
+    http_method_names = ['get', 'patch', 'post', 'head', 'options']
 
     def get_queryset(self):
         org = self._get_organisation()
-        return PAYERemittance.objects.filter(organisation=org).select_related('payroll_run')
+        qs = (
+            StatutoryRemittance.objects
+            .filter(organisation=org)
+            .select_related('payroll_run', 'tax_authority')
+        )
+        params = self.request.query_params
+        if params.get('status'):
+            qs = qs.filter(status=params['status'])
+        if params.get('remittance_type'):
+            qs = qs.filter(remittance_type=params['remittance_type'])
+        if params.get('period_year'):
+            qs = qs.filter(period_year=params['period_year'])
+        if params.get('period_month'):
+            qs = qs.filter(period_month=params['period_month'])
+        if params.get('overdue') == 'true':
+            from django.utils import timezone
+            qs = qs.exclude(status=StatutoryRemittance.REMITTED).filter(
+                due_date__lt=timezone.localdate()
+            )
+        return qs
 
-    def perform_update(self, serializer):
-        instance = serializer.instance
-        new_status = serializer.validated_data.get('status', instance.status)
-        amount_paid = serializer.validated_data.get('amount_paid', instance.amount_paid)
-        # Auto-update overdue status
-        from datetime import date as _date
+    @action(detail=False, methods=['get'])
+    def summary(self, request):
+        """GET /payroll/remittances/summary/ — headline figures for the cockpit."""
         from decimal import Decimal as _Dec
-        if new_status == PAYERemittance.REMITTED and _Dec(str(amount_paid)) >= _Dec(str(instance.amount_due)):
-            serializer.save(status=PAYERemittance.REMITTED)
-        else:
-            serializer.save()
+        from django.db.models import Sum
+        from django.utils import timezone
+
+        org = self._get_organisation()
+        qs = StatutoryRemittance.objects.filter(organisation=org)
+        today = timezone.localdate()
+
+        outstanding_qs = qs.exclude(status=StatutoryRemittance.REMITTED)
+        outstanding = sum(
+            (_Dec(str(r.balance_due)) for r in outstanding_qs), _Dec('0')
+        )
+        overdue_qs = outstanding_qs.filter(due_date__lt=today)
+        overdue = sum((_Dec(str(r.balance_due)) for r in overdue_qs), _Dec('0'))
+        remitted_ytd = qs.filter(
+            status=StatutoryRemittance.REMITTED, period_year=today.year,
+        ).aggregate(total=Sum('amount_paid'))['total'] or _Dec('0')
+        next_due = outstanding_qs.order_by('due_date').first()
+
+        return Response({
+            'outstanding': str(outstanding),
+            'outstanding_count': outstanding_qs.count(),
+            'overdue': str(overdue),
+            'overdue_count': overdue_qs.count(),
+            'remitted_ytd': str(remitted_ytd),
+            'next_due_date': next_due.due_date if next_due else None,
+            'next_due_recipient': (
+                next_due.recipient_name or (next_due.tax_authority.name if next_due and next_due.tax_authority else '')
+            ) if next_due else None,
+        })
 
     @action(detail=True, methods=['post'])
     def mark_remitted(self, request, pk=None):
-        """POST /payroll/paye-remittances/{id}/mark_remitted/ — mark as paid with reference."""
-        from datetime import date as _date
+        """
+        POST /payroll/remittances/{id}/mark_remitted/
+
+        Records the payment and posts the clearing journal, so the liability
+        actually leaves the balance sheet instead of accruing forever.
+        """
         remittance = self.get_object()
-        ref = request.data.get('reference', '')
-        amount_paid = request.data.get('amount_paid', remittance.amount_due)
-        remittance.status = PAYERemittance.REMITTED
-        remittance.remittance_date = _date.today()
-        remittance.reference = ref
-        remittance.amount_paid = amount_paid
-        remittance.save()
-        return Response(PAYERemittanceSerializer(remittance).data)
+        if remittance.status == StatutoryRemittance.REMITTED:
+            return Response({'error': 'This obligation has already been remitted.'}, status=400)
+        amount = request.data.get('amount_paid')
+        RemittanceService.mark_remitted(
+            remittance,
+            amount=amount,
+            reference=request.data.get('reference', ''),
+            user=request.user,
+        )
+        remittance.refresh_from_db()
+        return Response(StatutoryRemittanceSerializer(remittance).data)
+
+    @action(detail=False, methods=['get'])
+    def schedule(self, request):
+        """
+        GET /payroll/remittances/schedule/?type=pension&year=&month=
+
+        Per-recipient filing schedule. A PFA will not accept a blended file, so
+        pension exports one sheet per PFA and PAYE one per State IRS.
+        """
+        org = self._get_organisation()
+        r_type = request.query_params.get('type', StatutoryRemittance.PENSION)
+        year = request.query_params.get('year')
+        month = request.query_params.get('month')
+
+        runs = PayrollRun.objects.filter(organisation=org)
+        if year:
+            runs = runs.filter(period_year=year)
+        if month:
+            runs = runs.filter(period_month=month)
+        payslips = (
+            PayslipLine.objects
+            .filter(organisation=org, payroll_run__in=runs)
+            .select_related('employee', 'tax_authority', 'payroll_run')
+        )
+
+        groups: dict = {}
+        for slip in payslips:
+            emp = slip.employee
+            if r_type == StatutoryRemittance.PAYE:
+                key = slip.tax_authority.name if slip.tax_authority_id else 'Unassigned — set state of residence'
+                amount = float(slip.paye_tax or 0)
+                detail = {'tin': emp.tin, 'state': emp.get_state_of_residence_display() or ''}
+            elif r_type == StatutoryRemittance.PENSION:
+                key = (emp.pfa_name or '').strip() or 'Unassigned PFA'
+                amount = float(slip.employee_pension or 0) + float(slip.employer_pension or 0)
+                detail = {
+                    'pfa_number': emp.pfa_number, 'pension_pin': emp.pension_pin,
+                    'employee_share': float(slip.employee_pension or 0),
+                    'employer_share': float(slip.employer_pension or 0),
+                }
+            elif r_type == StatutoryRemittance.NHF:
+                key = 'Federal Mortgage Bank of Nigeria (FMBN)'
+                amount = float(slip.nhf or 0)
+                detail = {}
+            else:
+                key = 'All employees'
+                amount = float(slip.nsitf or 0)
+                detail = {}
+            if amount <= 0:
+                continue
+            groups.setdefault(key, {'recipient': key, 'total': 0.0, 'employees': []})
+            groups[key]['total'] += amount
+            groups[key]['employees'].append({
+                'employee_id': emp.employee_id,
+                'name': f"{emp.first_name} {emp.last_name}",
+                'gross': float(slip.gross_salary or 0),
+                'amount': round(amount, 2),
+                **detail,
+            })
+
+        for group in groups.values():
+            group['total'] = round(group['total'], 2)
+            group['count'] = len(group['employees'])
+        return Response({
+            'type': r_type,
+            'groups': sorted(groups.values(), key=lambda g: -g['total']),
+        })
+
+
+class TaxAuthorityViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+    """GET/PATCH /payroll/tax-authorities/ — the State IRS registry."""
+    serializer_class = TaxAuthoritySerializer
+    permission_classes = [IsAuthenticated, IsStaff, _PlanPayroll]
+
+    def get_queryset(self):
+        org = self._get_organisation()
+        if not TaxAuthority.objects.filter(organisation=org).exists():
+            TaxAuthorityService.seed(org)
+        return TaxAuthority.objects.filter(organisation=org)
+
+    def perform_create(self, serializer):
+        serializer.save(organisation=self._get_organisation())
+
+
+class CompensationRecordViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+    """
+    GET/POST /payroll/compensation/ — effective-dated salary history.
+
+    Writing a record here is what makes a backdated raise auditable and lets the
+    engine compute arrears.
+    """
+    serializer_class = CompensationRecordSerializer
+    permission_classes = [IsAuthenticated, IsOwnerOrAdmin]
+
+    def get_queryset(self):
+        org = self._get_organisation()
+        qs = CompensationRecord.objects.filter(organisation=org).select_related('employee')
+        employee_id = self.request.query_params.get('employee')
+        if employee_id:
+            qs = qs.filter(employee_id=employee_id)
+        return qs
+
+    def perform_create(self, serializer):
+        org = self._get_organisation()
+        employee = serializer.validated_data['employee']
+        if employee.organisation_id != org.id:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('That employee belongs to another organisation.')
+        record = CompensationService.record_change(
+            employee=employee,
+            effective_date=serializer.validated_data['effective_date'],
+            reason=serializer.validated_data.get('reason', CompensationRecord.ADJUSTMENT),
+            notes=serializer.validated_data.get('notes', ''),
+            **{
+                f: serializer.validated_data.get(f)
+                for f in CompensationService.COMPONENTS
+                if serializer.validated_data.get(f) is not None
+            },
+        )
+        serializer.instance = record
+
+
+class PayrollAdjustmentViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+    """GET/POST /payroll/adjustments/ — arrears and back-pay."""
+    serializer_class = PayrollAdjustmentSerializer
+    permission_classes = [IsAuthenticated, IsOwnerOrAdmin]
+
+    def get_queryset(self):
+        org = self._get_organisation()
+        qs = PayrollAdjustment.objects.filter(organisation=org).select_related('employee')
+        employee_id = self.request.query_params.get('employee')
+        if employee_id:
+            qs = qs.filter(employee_id=employee_id)
+        if self.request.query_params.get('status'):
+            qs = qs.filter(status=self.request.query_params['status'])
+        return qs
+
+    def perform_create(self, serializer):
+        serializer.save(organisation=self._get_organisation())
+
+    @action(detail=True, methods=['post'])
+    def cancel(self, request, pk=None):
+        adjustment = self.get_object()
+        if adjustment.status != PayrollAdjustment.PENDING:
+            return Response({'error': 'Only pending adjustments can be cancelled.'}, status=400)
+        adjustment.status = PayrollAdjustment.CANCELLED
+        adjustment.save(update_fields=['status'])
+        return Response(PayrollAdjustmentSerializer(adjustment).data)
+
+
+class PayrollSettingsViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+    """GET/PATCH /payroll/settings/ — org-level payroll configuration."""
+    serializer_class = PayrollSettingsSerializer
+    permission_classes = [IsAuthenticated, IsOwnerOrAdmin]
+    http_method_names = ['get', 'patch', 'head', 'options']
+
+    def get_queryset(self):
+        org = self._get_organisation()
+        get_settings(org)
+        return PayrollSettings.objects.filter(organisation=org)
+
+    @action(detail=False, methods=['get', 'patch'])
+    def current(self, request):
+        org = self._get_organisation()
+        settings_row = get_settings(org)
+        if request.method == 'GET':
+            return Response(PayrollSettingsSerializer(settings_row).data)
+        serializer = PayrollSettingsSerializer(settings_row, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Leave
+# ══════════════════════════════════════════════════════════════════════════════
+
+class LeaveTypeViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+    serializer_class = LeaveTypeSerializer
+    permission_classes = [IsAuthenticated, IsStaff, _PlanPayroll]
+
+    def get_queryset(self):
+        org = self._get_organisation()
+        if not LeaveType.objects.filter(organisation=org).exists():
+            LeaveService.seed_defaults(org)
+        return LeaveType.objects.filter(organisation=org)
+
+    def perform_create(self, serializer):
+        serializer.save(organisation=self._get_organisation())
+
+
+class LeaveBalanceViewSet(TenantFilterMixin, viewsets.ReadOnlyModelViewSet):
+    serializer_class = LeaveBalanceSerializer
+    permission_classes = [IsAuthenticated, IsStaff, _PlanPayroll]
+
+    def get_queryset(self):
+        org = self._get_organisation()
+        qs = (
+            LeaveBalance.objects.filter(organisation=org)
+            .select_related('employee', 'leave_type')
+        )
+        params = self.request.query_params
+        if params.get('employee'):
+            qs = qs.filter(employee_id=params['employee'])
+        if params.get('year'):
+            qs = qs.filter(year=params['year'])
+        return qs
+
+    @action(detail=False, methods=['post'])
+    def accrue(self, request):
+        """POST /payroll/leave-balances/accrue/ — run monthly accrual on demand."""
+        from datetime import date as _date
+        org = self._get_organisation()
+        today = _date.today()
+        year = int(request.data.get('year') or today.year)
+        month = int(request.data.get('month') or today.month)
+        updated = LeaveService.accrue_month(org, year, month)
+        return Response({'updated': updated, 'year': year, 'month': month})
+
+
+class LeaveRequestViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+    serializer_class = LeaveRequestSerializer
+    permission_classes = [IsAuthenticated, IsStaff, _PlanPayroll]
+
+    def get_queryset(self):
+        org = self._get_organisation()
+        qs = (
+            LeaveRequest.objects.filter(organisation=org)
+            .select_related('employee', 'leave_type', 'decided_by')
+        )
+        params = self.request.query_params
+        if params.get('employee'):
+            qs = qs.filter(employee_id=params['employee'])
+        if params.get('status'):
+            qs = qs.filter(status=params['status'])
+        if params.get('year'):
+            qs = qs.filter(start_date__year=params['year'])
+        return qs
+
+    def perform_create(self, serializer):
+        org = self._get_organisation()
+        employee = serializer.validated_data['employee']
+        leave_type = serializer.validated_data['leave_type']
+        days = LeaveRequest.working_days_between(
+            serializer.validated_data['start_date'], serializer.validated_data['end_date']
+        )
+        # Route the approval to the employee's manager where one is recorded.
+        approver = employee.manager.user if (employee.manager and employee.manager.user_id) else None
+        instance = serializer.save(
+            organisation=org, days=days, approver=approver,
+            status=LeaveRequest.PENDING if leave_type.requires_approval else LeaveRequest.APPROVED,
+        )
+        balance = LeaveService.get_or_create_balance(
+            employee, leave_type, instance.start_date.year
+        )
+        if instance.status == LeaveRequest.PENDING:
+            from decimal import Decimal as _Dec
+            balance.pending_days = _Dec(str(balance.pending_days)) + days
+            balance.save(update_fields=['pending_days'])
+        else:
+            LeaveService.approve(instance, user=self.request.user)
+
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        leave_request = self.get_object()
+        if leave_request.status not in [LeaveRequest.PENDING, LeaveRequest.DRAFT]:
+            return Response({'error': 'Only pending requests can be approved.'}, status=400)
+        LeaveService.approve(leave_request, user=request.user, note=request.data.get('note', ''))
+        leave_request.refresh_from_db()
+        return Response(LeaveRequestSerializer(leave_request).data)
+
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        leave_request = self.get_object()
+        if leave_request.status not in [LeaveRequest.PENDING, LeaveRequest.DRAFT]:
+            return Response({'error': 'Only pending requests can be rejected.'}, status=400)
+        LeaveService.reject(leave_request, user=request.user, note=request.data.get('note', ''))
+        leave_request.refresh_from_db()
+        return Response(LeaveRequestSerializer(leave_request).data)
+
+    @action(detail=True, methods=['post'])
+    def cancel(self, request, pk=None):
+        leave_request = self.get_object()
+        if leave_request.status in [LeaveRequest.CANCELLED, LeaveRequest.REJECTED]:
+            return Response({'error': 'This request is already closed.'}, status=400)
+        LeaveService.cancel(leave_request, user=request.user)
+        leave_request.refresh_from_db()
+        return Response(LeaveRequestSerializer(leave_request).data)
+
+    @action(detail=False, methods=['get'])
+    def pending_count(self, request):
+        org = self._get_organisation()
+        count = LeaveRequest.objects.filter(
+            organisation=org, status=LeaveRequest.PENDING
+        ).count()
+        return Response({'count': count})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Benefits
+# ══════════════════════════════════════════════════════════════════════════════
+
+class BenefitPlanViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+    serializer_class = BenefitPlanSerializer
+    permission_classes = [IsAuthenticated, IsStaff, _PlanPayroll]
+
+    def get_queryset(self):
+        return BenefitPlan.objects.filter(organisation=self._get_organisation())
+
+    def perform_create(self, serializer):
+        serializer.save(organisation=self._get_organisation())
+
+
+class EmployeeBenefitViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+    serializer_class = EmployeeBenefitSerializer
+    permission_classes = [IsAuthenticated, IsStaff, _PlanPayroll]
+
+    def get_queryset(self):
+        org = self._get_organisation()
+        qs = (
+            EmployeeBenefit.objects.filter(organisation=org)
+            .select_related('employee', 'plan')
+        )
+        if self.request.query_params.get('employee'):
+            qs = qs.filter(employee_id=self.request.query_params['employee'])
+        return qs
+
+    def perform_create(self, serializer):
+        serializer.save(organisation=self._get_organisation())
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Salary advances (earned wage access)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class AdvanceRequestViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+    serializer_class = AdvanceRequestSerializer
+    permission_classes = [IsAuthenticated, IsStaff, _PlanPayroll]
+
+    def get_queryset(self):
+        org = self._get_organisation()
+        qs = AdvanceRequest.objects.filter(organisation=org).select_related('employee')
+        params = self.request.query_params
+        if params.get('employee'):
+            qs = qs.filter(employee_id=params['employee'])
+        if params.get('status'):
+            qs = qs.filter(status=params['status'])
+        return qs
+
+    def create(self, request, *args, **kwargs):
+        org = self._get_organisation()
+        employee_id = request.data.get('employee')
+        try:
+            employee = Employee.objects.get(organisation=org, id=employee_id)
+        except (Employee.DoesNotExist, ValueError, TypeError):
+            return Response({'error': 'Employee not found in this organisation.'}, status=404)
+        try:
+            advance = EWAService.request(
+                employee, request.data.get('amount'), request.data.get('reason', '')
+            )
+        except ValueError as exc:
+            return Response({'error': str(exc)}, status=400)
+        return Response(AdvanceRequestSerializer(advance).data, status=201)
+
+    @action(detail=False, methods=['get'], url_path='eligibility/(?P<employee_id>[^/.]+)')
+    def eligibility(self, request, employee_id=None):
+        """GET /payroll/advances/eligibility/{employee_id}/ — what may be drawn now."""
+        org = self._get_organisation()
+        try:
+            employee = Employee.objects.get(organisation=org, id=employee_id)
+        except (Employee.DoesNotExist, ValueError, TypeError):
+            return Response({'error': 'Employee not found in this organisation.'}, status=404)
+        info = EWAService.eligibility(employee)
+        return Response({k: (str(v) if hasattr(v, 'quantize') else v) for k, v in info.items()})
+
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        """
+        Approve and disburse. Gated on the organisation's own cash position —
+        the underwriting signal a payroll-only platform does not hold.
+        """
+        from django.utils import timezone
+
+        advance = self.get_object()
+        if advance.status != AdvanceRequest.PENDING:
+            return Response({'error': 'Only pending advances can be approved.'}, status=400)
+
+        can_fund, reason = EWAService.can_employer_fund(advance.organisation, advance.amount)
+        if not can_fund:
+            return Response({'error': reason}, status=400)
+
+        advance.status = AdvanceRequest.DISBURSED
+        advance.decided_by = request.user
+        advance.decided_at = timezone.now()
+        advance.decision_note = request.data.get('note', '')
+        advance.disbursed_at = timezone.now()
+        advance.save(update_fields=[
+            'status', 'decided_by', 'decided_at', 'decision_note', 'disbursed_at',
+        ])
+
+        try:
+            from apps.accounting.services import AccountingService, safe_post_gl
+            safe_post_gl(AccountingService.post_advance_journal, advance, user=request.user)
+        except Exception:
+            pass
+        return Response(AdvanceRequestSerializer(advance).data)
+
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        from django.utils import timezone
+
+        advance = self.get_object()
+        if advance.status != AdvanceRequest.PENDING:
+            return Response({'error': 'Only pending advances can be rejected.'}, status=400)
+        advance.status = AdvanceRequest.REJECTED
+        advance.decided_by = request.user
+        advance.decided_at = timezone.now()
+        advance.decision_note = request.data.get('note', '')
+        advance.save(update_fields=['status', 'decided_by', 'decided_at', 'decision_note'])
+        return Response(AdvanceRequestSerializer(advance).data)
+
+
+class AdvancePolicyViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+    serializer_class = AdvancePolicySerializer
+    permission_classes = [IsAuthenticated, IsOwnerOrAdmin]
+    http_method_names = ['get', 'patch', 'head', 'options']
+
+    def get_queryset(self):
+        org = self._get_organisation()
+        EWAService.get_policy(org)
+        return AdvancePolicy.objects.filter(organisation=org)
+
+    @action(detail=False, methods=['get', 'patch'])
+    def current(self, request):
+        org = self._get_organisation()
+        policy = EWAService.get_policy(org)
+        if request.method == 'GET':
+            return Response(AdvancePolicySerializer(policy).data)
+        serializer = AdvancePolicySerializer(policy, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)

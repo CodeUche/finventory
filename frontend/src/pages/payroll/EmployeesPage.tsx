@@ -15,6 +15,7 @@ import { FieldTooltip } from '@/components/FieldTooltip'
 import { usePagination } from '@/hooks/usePagination'
 import Pagination from '@/components/Pagination'
 import { NIGERIAN_BANKS } from '@/lib/banks'
+import { NIGERIAN_STATES } from '@/lib/nigerianStates'
 import { useResolveBankAccount } from '@/hooks/useResolveBankAccount'
 
 interface EmployeeForm {
@@ -23,7 +24,14 @@ interface EmployeeForm {
   basic_salary: string; housing_allowance: string; transport_allowance: string
   leave_allowance: string; other_allowances: string
   bank_name: string; account_number: string; account_name: string
-  pfa_name: string; pfa_number: string; tin: string
+  pfa_name: string; pfa_number: string; pension_pin: string; tin: string
+  /** Drives which State IRS this employee's PAYE is remitted to. */
+  state_of_residence: string
+  date_of_birth: string; gender: string; marital_status: string; nin: string
+  address: string
+  next_of_kin_name: string; next_of_kin_phone: string; next_of_kin_relationship: string
+  emergency_contact_name: string; emergency_contact_phone: string
+  manager: string; grade: string; confirmation_date: string; contract_end_date: string
 }
 
 interface PenaltyForm { reason: string; amount: string; penalty_date: string }
@@ -39,7 +47,12 @@ const BLANK: EmployeeForm = {
   basic_salary: '', housing_allowance: '0', transport_allowance: '0',
   leave_allowance: '0', other_allowances: '0',
   bank_name: '', account_number: '', account_name: '',
-  pfa_name: '', pfa_number: '', tin: '',
+  pfa_name: '', pfa_number: '', pension_pin: '', tin: '',
+  state_of_residence: '',
+  date_of_birth: '', gender: '', marital_status: '', nin: '', address: '',
+  next_of_kin_name: '', next_of_kin_phone: '', next_of_kin_relationship: '',
+  emergency_contact_name: '', emergency_contact_phone: '',
+  manager: '', grade: '', confirmation_date: '', contract_end_date: '',
 }
 const BLANK_PENALTY: PenaltyForm = { reason: '', amount: '', penalty_date: today }
 const BLANK_LOAN: LoanForm = { principal_amount: '', interest_rate: '0', duration_months: '12', start_date: today, notes: '' }
@@ -183,7 +196,16 @@ export default function EmployeesPage() {
       transport_allowance: formatAmountInput(e.transport_allowance),
       leave_allowance: formatAmountInput(e.leave_allowance), other_allowances: formatAmountInput(e.other_allowances),
       bank_name: e.bank_name, account_number: e.account_number, account_name: e.account_name,
-      pfa_name: e.pfa_name, pfa_number: e.pfa_number, tin: e.tin,
+      pfa_name: e.pfa_name, pfa_number: e.pfa_number, pension_pin: e.pension_pin ?? '', tin: e.tin,
+      state_of_residence: e.state_of_residence ?? '',
+      date_of_birth: e.date_of_birth ?? '', gender: e.gender ?? '',
+      marital_status: e.marital_status ?? '', nin: e.nin ?? '', address: e.address ?? '',
+      next_of_kin_name: e.next_of_kin_name ?? '', next_of_kin_phone: e.next_of_kin_phone ?? '',
+      next_of_kin_relationship: e.next_of_kin_relationship ?? '',
+      emergency_contact_name: e.emergency_contact_name ?? '',
+      emergency_contact_phone: e.emergency_contact_phone ?? '',
+      manager: e.manager ?? '', grade: e.grade ?? '',
+      confirmation_date: e.confirmation_date ?? '', contract_end_date: e.contract_end_date ?? '',
     })
     const matched = NIGERIAN_BANKS.find((b) => b.name === e.bank_name)
     setBankSearch(e.bank_name)
@@ -201,9 +223,14 @@ export default function EmployeesPage() {
     if (!form.basic_salary || parseFloat(stripCommas(form.basic_salary)) <= 0) { toast.error('Basic salary must be > 0'); return }
     setSaving(true)
     try {
-      const payload = {
+      const payload: Record<string, unknown> = {
         ...form,
         bank_code: bankCode,
+        // DRF rejects '' for date and FK fields; send null to clear them.
+        manager: form.manager || null,
+        date_of_birth: form.date_of_birth || null,
+        confirmation_date: form.confirmation_date || null,
+        contract_end_date: form.contract_end_date || null,
         basic_salary: parseFloat(stripCommas(form.basic_salary)),
         housing_allowance: parseFloat(stripCommas(form.housing_allowance)) || 0,
         transport_allowance: parseFloat(stripCommas(form.transport_allowance)) || 0,
@@ -521,7 +548,45 @@ export default function EmployeesPage() {
                     <option value="contract">Contract</option>
                   </select>
                 </div>
-                <div><label className="text-xs text-slate-400 mb-1 block flex items-center gap-1">Hire Date<FieldTooltip text="The date this employee joined your company. Used to calculate tenure." /></label><DateInput value={form.hire_date} onChange={(v) => setForm({ ...form, hire_date: v })} /></div>
+                <div><label className="text-xs text-slate-400 mb-1 block flex items-center gap-1">Hire Date<FieldTooltip text="The date this employee joined your company. Drives proration for mid-month joiners." /></label><DateInput value={form.hire_date} onChange={(v) => setForm({ ...form, hire_date: v })} /></div>
+                <div><label className="text-xs text-slate-400 mb-1 block flex items-center gap-1">Date of Birth<FieldTooltip text="Used for HR records and age-based benefit eligibility." /></label><DateInput value={form.date_of_birth} onChange={(v) => setForm({ ...form, date_of_birth: v })} /></div>
+                <div>
+                  <label className="text-xs text-slate-400 mb-1 block flex items-center gap-1">Gender<FieldTooltip text="Required to apply gender-restricted leave types such as maternity and paternity." /></label>
+                  <select className="input" value={form.gender} onChange={(e) => setForm({ ...form, gender: e.target.value })}>
+                    <option value="">Not specified</option>
+                    <option value="male">Male</option>
+                    <option value="female">Female</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-slate-400 mb-1 block">Marital Status</label>
+                  <select className="input" value={form.marital_status} onChange={(e) => setForm({ ...form, marital_status: e.target.value })}>
+                    <option value="">Not specified</option>
+                    <option value="single">Single</option>
+                    <option value="married">Married</option>
+                    <option value="divorced">Divorced</option>
+                    <option value="widowed">Widowed</option>
+                  </select>
+                </div>
+                <div><label className="text-xs text-slate-400 mb-1 block flex items-center gap-1">NIN<FieldTooltip text="National Identification Number." /></label><input className="input" value={form.nin} onChange={(e) => setForm({ ...form, nin: e.target.value })} /></div>
+                <div><label className="text-xs text-slate-400 mb-1 block">Grade / Level</label><input className="input" placeholder="e.g. M3" value={form.grade} onChange={(e) => setForm({ ...form, grade: e.target.value })} /></div>
+                <div>
+                  <label className="text-xs text-slate-400 mb-1 block flex items-center gap-1">Reports to<FieldTooltip text="Builds the org chart and routes this employee's leave requests for approval." /></label>
+                  <select className="input" value={form.manager} onChange={(e) => setForm({ ...form, manager: e.target.value })}>
+                    <option value="">No manager</option>
+                    {employees.filter((m) => m.id !== editId).map((m) => (
+                      <option key={m.id} value={m.id}>{m.full_name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div><label className="text-xs text-slate-400 mb-1 block flex items-center gap-1">Confirmation Date<FieldTooltip text="End of probation." /></label><DateInput value={form.confirmation_date} onChange={(v) => setForm({ ...form, confirmation_date: v })} /></div>
+                <div><label className="text-xs text-slate-400 mb-1 block flex items-center gap-1">Contract End Date<FieldTooltip text="For fixed-term contracts. Pay is prorated to this date." /></label><DateInput value={form.contract_end_date} onChange={(v) => setForm({ ...form, contract_end_date: v })} /></div>
+                <div className="col-span-2"><label className="text-xs text-slate-400 mb-1 block">Address</label><input className="input" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} /></div>
+                <div><label className="text-xs text-slate-400 mb-1 block">Next of Kin</label><input className="input" value={form.next_of_kin_name} onChange={(e) => setForm({ ...form, next_of_kin_name: e.target.value })} /></div>
+                <div><label className="text-xs text-slate-400 mb-1 block">Next of Kin Phone</label><input className="input" value={form.next_of_kin_phone} onChange={(e) => setForm({ ...form, next_of_kin_phone: e.target.value })} /></div>
+                <div><label className="text-xs text-slate-400 mb-1 block">Relationship</label><input className="input" placeholder="e.g. Spouse" value={form.next_of_kin_relationship} onChange={(e) => setForm({ ...form, next_of_kin_relationship: e.target.value })} /></div>
+                <div><label className="text-xs text-slate-400 mb-1 block">Emergency Contact</label><input className="input" value={form.emergency_contact_name} onChange={(e) => setForm({ ...form, emergency_contact_name: e.target.value })} /></div>
+                <div className="col-span-2"><label className="text-xs text-slate-400 mb-1 block">Emergency Contact Phone</label><input className="input" value={form.emergency_contact_phone} onChange={(e) => setForm({ ...form, emergency_contact_phone: e.target.value })} /></div>
               </div>
             )}
 
@@ -587,7 +652,25 @@ export default function EmployeesPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div><label className="text-xs text-slate-400 mb-1 block flex items-center gap-1">PFA Name<FieldTooltip text="The pension fund administrator managing this employee's retirement contributions." /></label><input className="input" placeholder="e.g. ARM Pension" value={form.pfa_name} onChange={(e) => setForm({ ...form, pfa_name: e.target.value })} /></div>
                 <div><label className="text-xs text-slate-400 mb-1 block">PFA Number (RSA PIN)</label><input className="input" value={form.pfa_number} onChange={(e) => setForm({ ...form, pfa_number: e.target.value })} /></div>
-                <div className="col-span-2"><label className="text-xs text-slate-400 mb-1 block flex items-center gap-1">TIN (Tax ID)<FieldTooltip text="Employee's Tax Identification Number issued by FIRS. Required for accurate PAYE remittance." /></label><input className="input" placeholder="FIRS Tax Identification Number" value={form.tin} onChange={(e) => setForm({ ...form, tin: e.target.value })} /></div>
+                <div><label className="text-xs text-slate-400 mb-1 block flex items-center gap-1">Pension PIN<FieldTooltip text="RSA PIN issued by the PFA. Appears on the pension remittance schedule." /></label><input className="input" value={form.pension_pin} onChange={(e) => setForm({ ...form, pension_pin: e.target.value })} /></div>
+                <div><label className="text-xs text-slate-400 mb-1 block flex items-center gap-1">TIN (Tax ID)<FieldTooltip text="Employee's Tax Identification Number. Appears on the PAYE schedule filed with the State IRS." /></label><input className="input" placeholder="Tax Identification Number" value={form.tin} onChange={(e) => setForm({ ...form, tin: e.target.value })} /></div>
+                <div className="col-span-2">
+                  <label className="text-xs text-slate-400 mb-1 block flex items-center gap-1">
+                    State of Residence
+                    <FieldTooltip text="PAYE is remitted to the State Internal Revenue Service of the employee's state of residence — not to FIRS and not to the state your business is registered in." />
+                  </label>
+                  <select className="input" value={form.state_of_residence} onChange={(e) => setForm({ ...form, state_of_residence: e.target.value })}>
+                    <option value="">Not set — PAYE will be flagged as unassigned</option>
+                    {NIGERIAN_STATES.map((st) => (
+                      <option key={st.code} value={st.code}>{st.label}</option>
+                    ))}
+                  </select>
+                  {!form.state_of_residence && (
+                    <p className="text-[11px] text-amber-400 mt-1">
+                      Without this, PAYE for this employee cannot be routed to a tax authority.
+                    </p>
+                  )}
+                </div>
               </div>
             )}
 

@@ -69,6 +69,9 @@ const RestaurantPOSPage = React.lazy(() => import('@/pages/pos/RestaurantPOSPage
 const TransferConfirmationsPage = React.lazy(() => import('@/pages/payments/TransferConfirmationsPage'))
 const TillSessionPage = React.lazy(() => import('@/pages/pos/TillSessionPage'))
 const PosRegisterPage = React.lazy(() => import('@/pages/pos/PosRegisterPage'))
+const StorefrontPage = React.lazy(() => import('@/pages/shop/StorefrontPage'))
+const OrderTrackingPage = React.lazy(() => import('@/pages/shop/OrderTrackingPage'))
+const StorefrontAdminPage = React.lazy(() => import('@/pages/shop/StorefrontAdminPage'))
 const TablesPage = React.lazy(() => import('@/pages/pos/TablesPage'))
 const KitchenPage = React.lazy(() => import('@/pages/pos/KitchenPage'))
 const LocationsPage = React.lazy(() => import('@/pages/LocationsPage'))
@@ -272,6 +275,13 @@ export default function App() {
       <Route path="/onboarding" element={<OnboardingPage />} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/verify-email" element={<VerifyEmailPage />} />
+      {/* Public storefront — no login, no Audity chrome. These sit with the
+          other unauthenticated routes so it is obvious a customer reaches them
+          without a session, and they must never be wrapped in ProtectedRoute. */}
+      <Route path="/s/:slug" element={<StorefrontPage />} />
+      <Route path="/s/:slug/t/:table" element={<StorefrontPage />} />
+      <Route path="/s/:slug/order/:reference" element={<OrderTrackingPage />} />
+
       <Route path="/legal/terms" element={<TermsPage />} />
       <Route path="/legal/privacy" element={<PrivacyPage />} />
       <Route path="/legal/dpa" element={<DpaPage />} />
@@ -383,6 +393,7 @@ export default function App() {
         <Route path="helpdesk" element={<TicketsPage />} />
         <Route path="payments/transfers" element={<ModuleRoute module="sales"><TransferConfirmationsPage /></ModuleRoute>} />
         <Route path="pos/till" element={<ModuleRoute module="sales"><TillSessionPage /></ModuleRoute>} />
+        <Route path="storefront" element={<ModuleRoute module="sales"><StorefrontAdminPage /></ModuleRoute>} />
 
         {/* Settings — always accessible for personal profile/security; org tabs filtered inside the page */}
         <Route path="settings" element={<SettingsPage />} />

@@ -69,8 +69,12 @@ def generate_monthly_paye_obligations():
     Create PAYE remittance obligation for the prior month for all active orgs.
     PAYE is due by the 10th of the current month (for prior month).
     """
+    from decimal import Decimal
+
+    from django.db.models import Sum
+
     from apps.tenancy.models import Organisation
-    from apps.payroll.models import PAYERemittance
+    from apps.payroll.models import StatutoryRemittance
     from .models import TaxObligation
 
     year, month = _prior_month()
@@ -95,14 +99,18 @@ def generate_monthly_paye_obligations():
         if was_created:
             created += 1
 
-        # Sync amount_due from PAYERemittance if it exists
-        try:
-            paye_rem = PAYERemittance.objects.get(organisation=org, period_year=year, period_month=month)
-            if obligation.amount_due != paye_rem.amount_due:
-                obligation.amount_due = paye_rem.amount_due
-                obligation.save(update_fields=['amount_due'])
-        except PAYERemittance.DoesNotExist:
-            pass
+        # PAYE is now split across the State IRS of each employee's residence,
+        # so the obligation total is the sum of every authority's row for the
+        # period rather than a single record.
+        total = StatutoryRemittance.objects.filter(
+            organisation=org,
+            remittance_type=StatutoryRemittance.PAYE,
+            period_year=year,
+            period_month=month,
+        ).aggregate(total=Sum('amount_due'))['total']
+        if total is not None and obligation.amount_due != total:
+            obligation.amount_due = Decimal(str(total))
+            obligation.save(update_fields=['amount_due'])
 
     logger.info("Generated PAYE obligations for %d/%d: %d new", year, month, created)
     return created

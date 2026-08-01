@@ -23,6 +23,10 @@ ROLE_HIERARCHY = {
     "accountant": 40,
     "staff": 20,
     "viewer": 10,
+    # Employee self-service. Deliberately below viewer so that every existing
+    # IsStaff / IsViewer gate refuses it — an employee reaches their own data
+    # through IsEmployeeSelf on the /me endpoints and nowhere else.
+    "employee": 5,
 }
 
 

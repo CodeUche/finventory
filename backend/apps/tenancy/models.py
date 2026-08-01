@@ -190,6 +190,10 @@ class Membership(TimeStampedModel):
         ACCOUNTANT = "accountant", "Accountant"
         STAFF = "staff", "Staff"
         VIEWER = "viewer", "Viewer"
+        # Employee self-service only. Sits below viewer and never reaches the
+        # operator UI — an EMPLOYEE membership grants access to /me and nothing
+        # else, enforced by IsEmployeeSelf rather than by ModulePermission.
+        EMPLOYEE = "employee", "Employee (self-service)"
 
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -268,7 +272,10 @@ class ModulePermission(TimeStampedModel):
         ('inventory', 'Inventory'),
         ('customers', 'Customers'),
         ('suppliers', 'Suppliers'),
-        ('payroll', 'Payroll'),
+        ('payroll', 'HR / Payroll'),
+        # Separate from payroll so a line manager can approve time off without
+        # being able to see anyone's salary.
+        ('leave', 'Leave'),
         ('reports', 'Reports'),
         ('accounting', 'Accounting'),
         ('tax', 'Tax'),

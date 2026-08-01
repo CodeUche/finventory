@@ -205,6 +205,7 @@ export default function PayrollPage() {
   const [loadingRuns, setLoadingRuns] = useState(true)
   const [expandedRun, setExpandedRun] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
+  const [runType, setRunType] = useState('regular')
   const [submittingId, setSubmittingId] = useState<string | null>(null)
   const [approvingId, setApprovingId] = useState<string | null>(null)
   // Approver picker modal
@@ -309,7 +310,7 @@ export default function PayrollPage() {
 
   const loadPayeRemittances = async () => {
     setLoadingPaye(true)
-    try { const { data } = await payrollApi.payeRemittances(); setPayeRemittances(data.results ?? data) }
+    try { const { data } = await payrollApi.remittances({ remittance_type: 'paye' }); setPayeRemittances(data.results ?? data) }
     catch { toast.error('Failed to load PAYE remittances') }
     finally { setLoadingPaye(false) }
   }
@@ -354,11 +355,22 @@ export default function PayrollPage() {
 
   // ── Runs handlers ────────────────────────────────────────────────────────────
 
+  const RUN_TYPES: { value: string; label: string; hint: string }[] = [
+    { value: 'regular', label: 'Regular', hint: 'The month\u2019s main payroll. One per month.' },
+    { value: 'off_cycle', label: 'Off-cycle', hint: 'An extra payment outside the regular run.' },
+    { value: 'supplementary', label: 'Supplementary', hint: 'Tops up a run that has already been paid.' },
+    { value: 'thirteenth_month', label: '13th month', hint: 'Annual thirteenth-month payment.' },
+    { value: 'final_settlement', label: 'Final settlement', hint: 'Closes out leavers.' },
+  ]
+
   const handleRunPayroll = async () => {
-    if (!(await confirmDialog(`Run payroll for ${MONTHS[selectedMonth - 1]} ${selectedYear}?\n\nThis will compute salaries, bonuses, attendance deductions and statutory deductions for all active employees.`))) return
+    const typeLabel = RUN_TYPES.find((t) => t.value === runType)?.label ?? 'Regular'
+    if (!(await confirmDialog(`Run ${typeLabel.toLowerCase()} payroll for ${MONTHS[selectedMonth - 1]} ${selectedYear}?\n\nSalaries are prorated for anyone who joined or left during the period. Bonuses, arrears, attendance, benefits, loans and salary advances are all applied.`))) return
     setRunning(true)
     try {
-      await payrollApi.runPayroll({ period_year: selectedYear, period_month: selectedMonth })
+      await payrollApi.runPayroll({
+        period_year: selectedYear, period_month: selectedMonth, run_type: runType,
+      })
       toast.success('Payroll computed — review and submit for approval')
       loadRuns()
     } catch (err: any) {
@@ -615,6 +627,15 @@ export default function PayrollPage() {
               <select className="input py-1.5" value={selectedYear} onChange={(e) => setSelectedYear(parseInt(e.target.value))}>
                 {[now.getFullYear() - 1, now.getFullYear(), now.getFullYear() + 1].map((y) => <option key={y} value={y}>{y}</option>)}
               </select>
+              <select
+                className="input py-1.5"
+                aria-label="Run type"
+                value={runType}
+                onChange={(e) => setRunType(e.target.value)}
+                title={RUN_TYPES.find((t) => t.value === runType)?.hint}
+              >
+                {RUN_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+              </select>
               <button onClick={handleRunPayroll} disabled={running} className="btn-primary flex items-center gap-2 disabled:opacity-50">
                 {running ? <Loader2 size={15} className="animate-spin" /> : <Banknote size={15} />}
                 Run Payroll
@@ -735,7 +756,12 @@ export default function PayrollPage() {
                     <>
                       <tr key={r.id} className="table-row">
                         <td className="px-4 py-3.5">
-                          <button onClick={() => setExpandedRun(expandedRun === r.id ? null : r.id)} className="text-slate-400 hover:text-white">
+                          <button
+                            onClick={() => setExpandedRun(expandedRun === r.id ? null : r.id)}
+                            className="text-slate-400 hover:text-white"
+                            aria-expanded={expandedRun === r.id}
+                            aria-label={`${expandedRun === r.id ? 'Hide' : 'Show'} payslips for ${r.run_number}`}
+                          >
                             {expandedRun === r.id ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                           </button>
                         </td>
@@ -802,7 +828,7 @@ export default function PayrollPage() {
                               <table className="w-full text-xs">
                                 <thead>
                                   <tr className="border-b border-surface-700">
-                                    {['Employee', 'Gross', 'Bonus', 'OT Pay', 'PAYE', 'Pension', 'NHF', 'Penalties', 'Loans', 'Att. Ded.', 'Net Pay', 'Transfer'].map((h) => (
+                                    {['Employee', 'Days', 'Factor', 'Gross', 'Bonus', 'OT Pay', 'Arrears', 'PAYE', 'Authority', 'Pension', 'NHF', 'Benefits', 'Penalties', 'Loans', 'Advance', 'Att. Ded.', 'Net Pay', 'Transfer'].map((h) => (
                                       <th key={h} className="pb-2 pr-3 text-left text-slate-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
                                     ))}
                                   </tr>
@@ -811,14 +837,34 @@ export default function PayrollPage() {
                                   {r.payslips.map((p) => (
                                     <tr key={p.id}>
                                       <td className="py-2 pr-3 text-slate-300 whitespace-nowrap">{p.employee_name}</td>
+                                      <td className="py-2 pr-3 font-mono text-slate-400 whitespace-nowrap">
+                                        {p.days_worked ?? '\u2014'}{p.days_in_period ? ` / ${p.days_in_period}` : ''}
+                                      </td>
+                                      <td className="py-2 pr-3 font-mono whitespace-nowrap">
+                                        {p.proration_factor && parseFloat(p.proration_factor) < 1 ? (
+                                          <span className="text-sky-400" title="Prorated \u2014 joined or left during this period">
+                                            {parseFloat(p.proration_factor).toFixed(2)}
+                                          </span>
+                                        ) : (
+                                          <span className="text-slate-600">1.00</span>
+                                        )}
+                                      </td>
                                       <td className="py-2 pr-3 font-mono text-white">{formatCurrency(p.gross_salary)}</td>
                                       <td className="py-2 pr-3 font-mono text-emerald-400">{parseFloat(p.bonus_amount || '0') > 0 ? formatCurrency(p.bonus_amount) : <span className="text-slate-600">—</span>}</td>
                                       <td className="py-2 pr-3 font-mono text-teal-400">{parseFloat(p.overtime_amount || '0') > 0 ? formatCurrency(p.overtime_amount) : <span className="text-slate-600">—</span>}</td>
+                                      <td className="py-2 pr-3 font-mono text-cyan-400">{parseFloat(p.adjustment_amount || '0') !== 0 ? formatCurrency(p.adjustment_amount ?? 0) : <span className="text-slate-600">\u2014</span>}</td>
                                       <td className="py-2 pr-3 font-mono text-red-400">{formatCurrency(p.paye_tax)}</td>
+                                      <td className="py-2 pr-3 text-slate-400 whitespace-nowrap">
+                                        {p.tax_authority_name
+                                          ? p.tax_authority_name.replace(/ (State )?Internal Revenue Service|State Board of Internal Revenue/i, '')
+                                          : <span className="text-amber-500" title="No state of residence set \u2014 PAYE cannot be routed">Unassigned</span>}
+                                      </td>
                                       <td className="py-2 pr-3 font-mono text-orange-400">{formatCurrency(p.employee_pension)}</td>
                                       <td className="py-2 pr-3 font-mono text-blue-400">{formatCurrency(p.nhf)}</td>
+                                      <td className="py-2 pr-3 font-mono text-violet-400">{parseFloat(p.benefit_deductions || '0') > 0 ? formatCurrency(p.benefit_deductions ?? 0) : <span className="text-slate-600">\u2014</span>}</td>
                                       <td className="py-2 pr-3 font-mono text-rose-400">{parseFloat(p.penalty_deductions || '0') > 0 ? formatCurrency(p.penalty_deductions) : <span className="text-slate-600">—</span>}</td>
-                                      <td className="py-2 pr-3 font-mono text-amber-400">{parseFloat(p.loan_deductions || '0') > 0 ? formatCurrency(p.loan_deductions) : <span className="text-slate-600">—</span>}</td>
+                                      <td className="py-2 pr-3 font-mono text-amber-400">{parseFloat(p.loan_deductions || '0') > 0 ? formatCurrency(p.loan_deductions) : <span className="text-slate-600">\u2014</span>}</td>
+                                      <td className="py-2 pr-3 font-mono text-fuchsia-400">{parseFloat(p.advance_deductions || '0') > 0 ? formatCurrency(p.advance_deductions ?? 0) : <span className="text-slate-600">\u2014</span>}</td>
                                       <td className="py-2 pr-3 font-mono text-yellow-500">{parseFloat(p.attendance_deduction || '0') > 0 ? formatCurrency(p.attendance_deduction) : <span className="text-slate-600">—</span>}</td>
                                       <td className="py-2 pr-3 font-mono text-emerald-400 font-semibold">{formatCurrency(p.net_salary)}</td>
                                       <td className="py-2 flex items-center gap-1">
@@ -1453,7 +1499,7 @@ export default function PayrollPage() {
                   if (!remittingPayeId) return
                   setSavingPayeRemit(true)
                   try {
-                    await payrollApi.markPayeRemitted(remittingPayeId, { reference: payeRemitForm.reference, amount_paid: parseFloat(payeRemitForm.amount_paid) || 0, notes: payeRemitForm.notes })
+                    await payrollApi.markRemitted(remittingPayeId, { reference: payeRemitForm.reference, amount_paid: parseFloat(payeRemitForm.amount_paid) || 0, notes: payeRemitForm.notes })
                     toast.success('PAYE remittance recorded')
                     setShowPayeRemitModal(false); loadPayeRemittances()
                   } catch { toast.error('Failed to record remittance') }

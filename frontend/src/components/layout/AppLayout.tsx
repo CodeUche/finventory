@@ -116,6 +116,17 @@ export default function AppLayout() {
     return () => clearTimeout(timer)
   }, [online, isOfflineSession])
 
+  // ── Employee self-service redirect ──────────────────────────────────────────
+  // An `employee` membership carries no module permissions, so the operator
+  // shell would render an empty dashboard with no navigation. Login routes
+  // straight to /dashboard, bypassing the index route, so the guard has to live
+  // here to catch every operator path.
+  useEffect(() => {
+    if (memberRole === 'employee' && !pathname.startsWith('/me')) {
+      navigate('/me', { replace: true })
+    }
+  }, [memberRole, pathname, navigate])
+
   // ── Offline cache warm ──────────────────────────────────────────────────────
   // Once membership + plan are known (so permission gating is accurate), warm
   // the offline cache with every entity collection this user can read. The 3 s

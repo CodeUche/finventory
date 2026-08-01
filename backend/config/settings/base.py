@@ -126,6 +126,7 @@ LOCAL_APPS = [
     "apps.einvoicing",   # FIRS e-invoicing via DigiTax — gated by FirsConfig.is_enrolled
     "apps.helpdesk",     # support ticket management
     "apps.pos",          # hospitality POS: tables, orders, KOT
+    "apps.storefront",   # public shop page + QR table ordering (unauthenticated)
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -297,6 +298,8 @@ REST_FRAMEWORK = {
         "mfa_verify": "10/minute",            # MFAVerifyRateThrottle
         "offline_verifier": "5/hour",         # OfflineVerifierRateThrottle — offline re-auth issuance
         # ── Business endpoints ─────────────────────────────────────────────
+        "storefront_browse": "120/minute",  # browsing a public shop
+        "storefront_order": "10/minute",    # placing an order writes to the DB
         "bank_resolve": "20/minute",   # BankResolveRateThrottle — Paystack proxy
         "invitation": "10/hour",       # InvitationRateThrottle — team management
         "webhook": "300/minute",       # WebhookRateThrottle — Paystack inbound events
@@ -449,6 +452,21 @@ CELERY_BEAT_SCHEDULE = {
     "run-monthly-depreciation": {
         "task": "accounting.run_monthly_depreciation",
         "schedule": crontab(hour=1, minute=0, day_of_month=1),
+    },
+    # Accrue leave for the month just ended, on the 1st at 01:15
+    "accrue-monthly-leave": {
+        "task": "payroll.accrue_monthly_leave",
+        "schedule": crontab(hour=1, minute=15, day_of_month=1),
+    },
+    # Log overdue statutory remittances daily at 06:00
+    "flag-overdue-remittances": {
+        "task": "payroll.flag_overdue_remittances",
+        "schedule": crontab(hour=6, minute=0),
+    },
+    # Close out salary advances whose period has already been paid, daily 02:00
+    "expire-stale-advances": {
+        "task": "payroll.expire_stale_advances",
+        "schedule": crontab(hour=2, minute=0),
     },
     # Archive previous month's expenses/income into a named folder on the 1st at 00:20
     "archive-expenses-to-monthly-folders": {

@@ -51,8 +51,12 @@ api_v1_urlpatterns = [
     path("bills/", include("apps.bills.urls")),
     # Accounting (Chart of Accounts, Journal Entries, Fixed Assets)
     path("accounting/", include("apps.accounting.urls")),
-    # Payroll
+    # HR & Payroll. The canonical prefix is /hr/; /payroll/ stays mounted so
+    # existing clients (and the shipped desktop build) keep working.
+    path("hr/", include("apps.payroll.urls")),
     path("payroll/", include("apps.payroll.urls")),
+    # Employee self-service portal — scoped to the caller's own employee record
+    path("me/", include("apps.payroll.ess_urls")),
     # Payment Gateways
     path("payments/", include("apps.payments.urls")),
     # Budgets
@@ -63,7 +67,11 @@ api_v1_urlpatterns = [
     path("einvoicing/", include("apps.einvoicing.urls")),
     path("helpdesk/", include("apps.helpdesk.urls")),
     path("pos/", include("apps.pos.urls")),
+    # Storefront — merchant-side configuration and order handling.
+    path("storefront/", include("apps.storefront.urls")),
 ]
+
+from apps.storefront.urls import public_urlpatterns as _storefront_public
 
 _admin_only = [IsAdminUser]
 
@@ -85,6 +93,10 @@ urlpatterns += [
     # Obfuscated admin path — set ADMIN_URL env var in production
     path(settings.ADMIN_URL, admin.site.urls),
     path("api/v1/", include(api_v1_urlpatterns)),
+    # PUBLIC — no authentication. The tenant is resolved from the slug alone,
+    # so every view under here scopes its own queries. Kept at its own prefix
+    # so it is obvious which routes answer to the open internet.
+    path("api/v1/shop/", include((_storefront_public, "shop"), namespace="shop")),
     # OpenAPI documentation — restricted to Django admin/staff users only
     path("api/schema/", SpectacularAPIView.as_view(permission_classes=_admin_only), name="schema"),
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema", permission_classes=_admin_only), name="swagger-ui"),
