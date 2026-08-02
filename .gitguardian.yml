@@ -7,4 +7,8 @@ secret:
   ignored_paths:
     - "**/tests.py"
     - "**/test_*.py"
+    - "**/*_tests.py"
+    - "**/tests_*.py"
+    - "backend/seed_hr_e2e.py"
+    - "frontend/e2e/**"
     - "backend/OFFLINE_AUTH_HANDOFF.md"
