@@ -1093,6 +1093,16 @@ export const inventoryApi = {
     // the edit form from the detail endpoint, so the slim list is safe for it).
     api.get('/inventory/products/', { params: { slim: '1', ...(params ?? {}) } }),
   product: (id: string) => api.get(`/inventory/products/${id}/`),
+  /** Modifier groups to ask about when this product is added to a sale. */
+  modifierGroupsFor: (productId: string) =>
+    api.get('/inventory/modifier-groups/for_product/', { params: { product: productId } }),
+  modifierGroups: (params?: object) => api.get('/inventory/modifier-groups/', { params }),
+  createModifierGroup: (data: object) => api.post('/inventory/modifier-groups/', data),
+  updateModifierGroup: (id: string, data: object) => api.patch(`/inventory/modifier-groups/${id}/`, data),
+  deleteModifierGroup: (id: string) => api.delete(`/inventory/modifier-groups/${id}/`),
+  createModifierOption: (data: object) => api.post('/inventory/modifier-options/', data),
+  updateModifierOption: (id: string, data: object) => api.patch(`/inventory/modifier-options/${id}/`, data),
+  deleteModifierOption: (id: string) => api.delete(`/inventory/modifier-options/${id}/`),
   createProduct: (data: object) => api.post('/inventory/products/', data),
   updateProduct: (id: string, data: object) => api.patch(`/inventory/products/${id}/`, data),
   deleteProduct: (id: string) => api.delete(`/inventory/products/${id}/`),

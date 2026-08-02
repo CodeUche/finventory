@@ -17,7 +17,7 @@ class POSOrderItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = POSOrderItem
         fields = ["id", "product", "product_name", "quantity", "unit_price",
-                  "notes", "kitchen_status", "line_total"]
+                  "notes", "modifiers", "kitchen_status", "line_total"]
         read_only_fields = ["id", "product_name", "line_total"]
 
 

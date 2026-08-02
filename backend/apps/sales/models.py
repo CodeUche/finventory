@@ -271,6 +271,9 @@ class SaleItem(TenantAwareModel):
     line_total = MoneyField(help_text="After discount and tax")
     cost_of_goods = MoneyField(help_text="Cost at time of sale for COGS tracking")
 
+    # Chosen modifier options, snapshotted at sale time — see POSOrderItem.
+    modifiers = models.JSONField(default=list, blank=True)
+
     class Meta(TenantAwareModel.Meta):
         pass
 

@@ -13,6 +13,8 @@ export interface ReceiptLine {
   qty: number | string
   unit_price: number | string
   line_total: number | string
+  /** Chosen modifier names, e.g. ["Large", "Extra chicken"] — printed under the line. */
+  modifiers?: string[]
 }
 
 export interface ReceiptPayment {
@@ -66,6 +68,10 @@ export function buildReceiptHtml(d: ReceiptData): string {
     <tr>
       <td colspan="2" class="nm">${escape(l.name)}</td>
     </tr>
+    ${l.modifiers?.length ? `
+    <tr>
+      <td colspan="2" class="mod">${escape(l.modifiers.join(', '))}</td>
+    </tr>` : ''}
     <tr>
       <td class="qty">${money(l.qty)} × ${money(l.unit_price)}</td>
       <td class="amt">${money(l.line_total)}</td>
@@ -94,6 +100,7 @@ export function buildReceiptHtml(d: ReceiptData): string {
   td { padding: 0; vertical-align: top; }
   .amt { text-align: right; white-space: nowrap; }
   .qty { color: #333; padding-left: 3mm; }
+  .mod { color: #333; font-size: 10px; padding-left: 3mm; font-style: italic; }
   .nm { padding-top: 2px; }
   .tot td { font-size: 13px; font-weight: 700; padding-top: 3px; }
   .small { font-size: 9.5px; }

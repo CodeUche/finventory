@@ -188,6 +188,15 @@ export interface Invoice {
   firs_qr_code?: string
 }
 
+/** A chosen modifier option, snapshotted at sale time — see backend
+ *  apps/inventory/modifier_services.py. Price is fixed at the moment of sale,
+ *  so a later price change on the option never rewrites a past receipt. */
+export interface SaleItemModifier {
+  group: string
+  name: string
+  price_delta: string
+}
+
 export interface SaleItem {
   id: string
   product: string
@@ -197,6 +206,7 @@ export interface SaleItem {
   quantity_returned: string
   unit_price: string
   line_total: string
+  modifiers?: SaleItemModifier[]
 }
 
 // ─── Warehouse ────────────────────────────────────────────────────────────────

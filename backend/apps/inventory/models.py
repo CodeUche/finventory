@@ -306,3 +306,8 @@ class StockMovement(TenantAwareModel):
     def __str__(self):
         sku = self.product.sku if self.product_id else "[deleted product]"
         return f"{self.movement_type} {self.quantity} × {sku}"
+
+
+# Product modifiers live in their own module for clarity; re-exported so Django
+# discovers them and existing imports keep working.
+from .modifier_models import ModifierGroup, ModifierOption  # noqa: E402,F401

@@ -234,8 +234,20 @@ class SaleService:
             id=item_data["product_id"], organisation=organisation
         )
         quantity = Decimal(str(item_data["quantity"]))
-        unit_price = Decimal(str(item_data.get("unit_price", product.selling_price)))
+        base_price = Decimal(str(item_data.get("unit_price", product.selling_price)))
         discount_pct = Decimal(str(item_data.get("discount_percent", 0)))
+
+        # Modifier prices are resolved here, never taken from the caller — the
+        # same rule as the POS order path (see POSOrderService.create_order).
+        modifiers = []
+        modifier_ids = item_data.get("modifiers") or item_data.get("modifier_options")
+        if modifier_ids:
+            from apps.inventory.modifier_services import ModifierService
+            unit_price, modifiers = ModifierService.unit_price(
+                product, modifier_ids, base_price=base_price,
+            )
+        else:
+            unit_price = base_price
 
         subtotal = round_money(quantity * unit_price)
         discount_amount = round_money(subtotal * discount_pct / Decimal("100"))
@@ -275,6 +287,7 @@ class SaleService:
             tax_amount=tax_amount,
             line_total=line_total,
             cost_of_goods=round_money(quantity * product.cost_price),
+            modifiers=modifiers,
         )
 
         return {

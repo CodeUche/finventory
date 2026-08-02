@@ -21,8 +21,26 @@ import { formatCurrency, formatDate } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
 import type { Product } from '@/types'
 
-interface Line { product: Product; quantity: number; unit_price: number }
+interface ModOption { id: string; name: string; price_delta: string; is_default: boolean; is_active: boolean }
+interface ModGroup {
+  id: string; name: string; is_required: boolean
+  min_choices: number; max_choices: number; options: ModOption[]
+}
+
+// A line key folds in the chosen options, so "Jollof — Large" and
+// "Jollof — Regular" sit as two separate rows rather than merging.
+interface Line {
+  key: string
+  product: Product
+  quantity: number
+  unit_price: number
+  optionIds: string[]
+  modifierNames: string[]
+}
 interface HeldBasket { id: string; label: string; at: string; lines: Line[] }
+
+const lineKey = (productId: string, optionIds: string[]) =>
+  `${productId}::${[...optionIds].sort().join(',')}`
 
 /** Tenders a cashier may take. Credit is absent on purpose — extending credit
  *  is an owner decision, not something to do at a busy counter. */
@@ -73,23 +91,104 @@ export default function PosRegisterPage() {
     return () => clearTimeout(t)
   }, [query])
 
-  // ── Basket ──────────────────────────────────────────────────────────────
-  const add = (product: Product) => {
-    setLines((prev) => {
-      const found = prev.find((l) => l.product.id === product.id)
-      if (found) {
-        return prev.map((l) => l.product.id === product.id ? { ...l, quantity: l.quantity + 1 } : l)
-      }
-      return [...prev, { product, quantity: 1, unit_price: parseFloat(product.selling_price) }]
-    })
-    setQuery(''); setResults([]); refocus()
+  // ── Modifiers ───────────────────────────────────────────────────────────
+  // Cached per product: most menus reuse "Size" / "Extras" across many items,
+  // so this avoids a round trip on every single add.
+  const modifierCache = useRef<Map<string, ModGroup[]>>(new Map())
+  const [picking, setPicking] = useState<{ product: Product; groups: ModGroup[] } | null>(null)
+  const [picked, setPicked] = useState<Record<string, string[]>>({})
+
+  const loadGroups = async (product: Product): Promise<ModGroup[]> => {
+    const cached = modifierCache.current.get(product.id)
+    if (cached) return cached
+    try {
+      const { data } = await inventoryApi.modifierGroupsFor(product.id)
+      const groups: ModGroup[] = data.results ?? []
+      modifierCache.current.set(product.id, groups)
+      return groups
+    } catch {
+      return []   // a lookup failure must never block a sale
+    }
   }
 
-  const setQty = (id: string, qty: number) =>
-    setLines((prev) => prev.map((l) => l.product.id === id ? { ...l, quantity: qty } : l)
+  const addLine = (product: Product, optionIds: string[], modifierNames: string[], delta: number) => {
+    const key = lineKey(product.id, optionIds)
+    setLines((prev) => {
+      const found = prev.find((l) => l.key === key)
+      if (found) {
+        return prev.map((l) => l.key === key ? { ...l, quantity: l.quantity + 1 } : l)
+      }
+      return [...prev, {
+        key, product, quantity: 1,
+        unit_price: parseFloat(product.selling_price) + delta,
+        optionIds, modifierNames,
+      }]
+    })
+  }
+
+  // ── Basket ──────────────────────────────────────────────────────────────
+  const add = async (product: Product) => {
+    const groups = await loadGroups(product)
+    if (groups.length === 0) {
+      addLine(product, [], [], 0)
+      setQuery(''); setResults([]); refocus()
+      return
+    }
+    // Pre-select each group's default option, so a cashier who agrees with the
+    // defaults can just press Add without touching anything.
+    const defaults: Record<string, string[]> = {}
+    for (const g of groups) {
+      const def = g.options.find((o) => o.is_default && o.is_active)
+      defaults[g.id] = def ? [def.id] : []
+    }
+    setPicked(defaults)
+    setPicking({ product, groups })
+    setQuery(''); setResults([])
+  }
+
+  const toggleOption = (group: ModGroup, optionId: string) => {
+    setPicked((prev) => {
+      const current = prev[group.id] ?? []
+      const isSingle = group.max_choices === 1
+      if (isSingle) {
+        return { ...prev, [group.id]: current.includes(optionId) ? [] : [optionId] }
+      }
+      const has = current.includes(optionId)
+      if (has) return { ...prev, [group.id]: current.filter((id) => id !== optionId) }
+      if (group.max_choices && current.length >= group.max_choices) {
+        toast.error(`Choose up to ${group.max_choices} from ${group.name}`)
+        return prev
+      }
+      return { ...prev, [group.id]: [...current, optionId] }
+    })
+  }
+
+  const confirmPicking = () => {
+    if (!picking) return
+    const missing = picking.groups.find(
+      (g) => g.is_required && (picked[g.id] ?? []).length < Math.max(1, g.min_choices),
+    )
+    if (missing) { toast.error(`Please choose ${missing.name.toLowerCase()}`); return }
+
+    const allIds = picking.groups.flatMap((g) => picked[g.id] ?? [])
+    const names: string[] = []
+    let delta = 0
+    for (const g of picking.groups) {
+      for (const id of (picked[g.id] ?? [])) {
+        const opt = g.options.find((o) => o.id === id)
+        if (opt) { names.push(opt.name); delta += parseFloat(opt.price_delta) || 0 }
+      }
+    }
+    addLine(picking.product, allIds, names, delta)
+    setPicking(null)
+    refocus()
+  }
+
+  const setQty = (key: string, qty: number) =>
+    setLines((prev) => prev.map((l) => l.key === key ? { ...l, quantity: qty } : l)
       .filter((l) => l.quantity > 0))
 
-  const removeLine = (id: string) => setLines((prev) => prev.filter((l) => l.product.id !== id))
+  const removeLine = (key: string) => setLines((prev) => prev.filter((l) => l.key !== key))
 
   const total = useMemo(
     () => lines.reduce((sum, l) => sum + l.unit_price * l.quantity, 0),
@@ -159,7 +258,12 @@ export default function PosRegisterPage() {
         items: lines.map((l) => ({
           product: l.product.id,
           quantity: String(l.quantity),
-          unit_price: l.unit_price.toFixed(2),
+          // The base selling price, NOT unit_price — unit_price already
+          // includes the modifier delta, and the backend recomputes that
+          // delta itself from optionIds. Sending the modified price as the
+          // base would double-count it.
+          unit_price: l.product.selling_price,
+          modifiers: l.optionIds,
         })),
       })
       toast.success(method === 'cash' && change > 0 ? `Change ${formatCurrency(change)}` : 'Paid')
@@ -175,6 +279,7 @@ export default function PosRegisterPage() {
         lines: lines.map((l) => ({
           name: l.product.name, qty: l.quantity,
           unit_price: l.unit_price, line_total: l.unit_price * l.quantity,
+          modifiers: l.modifierNames,
         })),
         subtotal: total, total,
         payments: [{ method, amount: total }],
@@ -284,31 +389,38 @@ export default function PosRegisterPage() {
             {lines.length === 0 ? (
               <p className="py-12 text-center text-sm text-slate-600">Scan an item to begin</p>
             ) : lines.map((l) => (
-              <div key={l.product.id} className="border-b border-surface-800 py-2.5">
+              <div key={l.key} className="border-b border-surface-800 py-2.5">
                 <div className="flex items-start gap-2">
-                  <span className="flex-1 text-[13px] font-semibold text-white">{l.product.name}</span>
+                  <div className="flex-1">
+                    <span className="text-[13px] font-semibold text-white">{l.product.name}</span>
+                    {l.modifierNames.length > 0 && (
+                      <span className="block text-[11px] italic text-slate-500">
+                        {l.modifierNames.join(', ')}
+                      </span>
+                    )}
+                  </div>
                   <span className="font-mono text-[13px] text-white">
                     {formatCurrency(l.unit_price * l.quantity)}
                   </span>
                   <button
-                    onClick={() => removeLine(l.product.id)}
+                    onClick={() => removeLine(l.key)}
                     className="text-slate-600 hover:text-red-400" aria-label="Remove"
                   >
                     <Trash2 size={13} />
                   </button>
                 </div>
                 <div className="mt-1.5 flex items-center gap-2">
-                  <button onClick={() => setQty(l.product.id, l.quantity - 1)} className="btn-ghost p-1"><Minus size={12} /></button>
+                  <button onClick={() => setQty(l.key, l.quantity - 1)} className="btn-ghost p-1"><Minus size={12} /></button>
                   {/* Decimal: weighed goods are rung up as 1.42 kg. */}
                   <input
                     className="input w-20 py-1 text-center text-xs" inputMode="decimal"
                     value={l.quantity}
                     onChange={(e) => {
                       const v = parseFloat(e.target.value)
-                      if (!isNaN(v) && v > 0) setQty(l.product.id, v)
+                      if (!isNaN(v) && v > 0) setQty(l.key, v)
                     }}
                   />
-                  <button onClick={() => setQty(l.product.id, l.quantity + 1)} className="btn-ghost p-1"><Plus size={12} /></button>
+                  <button onClick={() => setQty(l.key, l.quantity + 1)} className="btn-ghost p-1"><Plus size={12} /></button>
                   <span className="ml-auto font-mono text-[11px] text-slate-500">
                     @ {formatCurrency(l.unit_price)}
                   </span>
@@ -356,6 +468,62 @@ export default function PosRegisterPage() {
           </div>
         </aside>
       </div>
+
+      {/* ── Modifier picker ─────────────────────────────────────────── */}
+      {picking && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/70" onClick={() => setPicking(null)} />
+          <div className="relative flex max-h-[85vh] w-full max-w-md flex-col rounded-2xl bg-surface-900 border border-surface-700">
+            <div className="flex items-center gap-2 border-b border-surface-700 px-5 py-3.5">
+              <h2 className="font-semibold text-white">{picking.product.name}</h2>
+              <button onClick={() => setPicking(null)} className="ml-auto text-slate-400" aria-label="Close">
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="flex-1 space-y-5 overflow-y-auto px-5 py-4">
+              {picking.groups.map((g) => (
+                <div key={g.id}>
+                  <div className="mb-2 flex items-center gap-2">
+                    <span className="text-sm font-semibold text-white">{g.name}</span>
+                    {g.is_required && <span className="text-[10px] uppercase tracking-wide text-amber-400">Required</span>}
+                    {!g.is_required && g.max_choices !== 1 && (
+                      <span className="text-[11px] text-slate-500">
+                        pick up to {g.max_choices || 'any'}
+                      </span>
+                    )}
+                  </div>
+                  <div className="space-y-1.5">
+                    {g.options.filter((o) => o.is_active).map((o) => {
+                      const on = (picked[g.id] ?? []).includes(o.id)
+                      const delta = parseFloat(o.price_delta) || 0
+                      return (
+                        <button
+                          key={o.id} onClick={() => toggleOption(g, o.id)}
+                          className={`flex w-full items-center justify-between rounded-xl border px-3.5 py-2.5 text-left text-sm ${
+                            on ? 'border-brand-500 bg-brand-500/10 text-white' : 'border-surface-700 text-slate-300'
+                          }`}
+                        >
+                          <span>{o.name}</span>
+                          <span className="font-mono text-xs text-slate-400">
+                            {delta !== 0 ? `${delta > 0 ? '+' : ''}${formatCurrency(delta)}` : '—'}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="border-t border-surface-700 p-4">
+              <button onClick={confirmPicking} className="btn-primary w-full py-2.5 justify-center">
+                Add to basket
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

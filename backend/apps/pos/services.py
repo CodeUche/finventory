@@ -46,13 +46,22 @@ class POSOrderService:
             warehouse=warehouse,
             created_by=created_by,
         )
+        from apps.inventory.modifier_services import ModifierService
         for it in (items or []):
             product = Product.objects.get(id=it["product_id"], organisation=organisation)
             qty = Decimal(str(it.get("quantity") or 1))
-            unit_price = Decimal(str(it.get("unit_price") if it.get("unit_price") is not None else product.selling_price))
+            base = Decimal(str(
+                it.get("unit_price") if it.get("unit_price") is not None else product.selling_price
+            ))
+            # Modifier prices are resolved here, never taken from the caller —
+            # otherwise "extra chicken" could be sent through as free.
+            unit_price, modifiers = ModifierService.unit_price(
+                product, it.get("modifiers") or it.get("modifier_options"), base_price=base,
+            )
             POSOrderItem.objects.create(
                 organisation=organisation, order=order, product=product,
                 quantity=qty, unit_price=unit_price, notes=it.get("notes", ""),
+                modifiers=modifiers,
             )
         if table:
             table.status = RestaurantTable.Status.OCCUPIED

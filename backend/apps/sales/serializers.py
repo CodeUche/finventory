@@ -58,7 +58,7 @@ class SaleItemSerializer(serializers.ModelSerializer):
             "id", "product", "product_name", "product_sku",
             "batch", "quantity", "quantity_returned", "unit_price",
             "discount_percent", "discount_amount",
-            "tax_rate", "tax_amount", "line_total", "cost_of_goods",
+            "tax_rate", "tax_amount", "line_total", "cost_of_goods", "modifiers",
         ]
         read_only_fields = ["id", "quantity_returned", "discount_amount", "tax_amount", "line_total", "cost_of_goods"]
 

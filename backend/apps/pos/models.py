@@ -184,7 +184,11 @@ class POSOrderItem(TenantAwareModel):
     product = models.ForeignKey("inventory.Product", on_delete=models.PROTECT, related_name="pos_order_items")
     quantity = models.DecimalField(max_digits=12, decimal_places=2, default=1)
     unit_price = MoneyField()
-    notes = models.CharField(max_length=255, blank=True)   # kitchen notes / modifiers
+    notes = models.CharField(max_length=255, blank=True)   # free-text kitchen note
+    # Chosen options, snapshotted at order time: [{group, name, price_delta}].
+    # A snapshot rather than a foreign key because a customer must be charged
+    # what they were quoted, even if the merchant re-prices the option later.
+    modifiers = models.JSONField(default=list, blank=True)
     kitchen_status = models.CharField(max_length=12, choices=KitchenStatus.choices, default=KitchenStatus.PENDING)
 
     class Meta(TenantAwareModel.Meta):

@@ -526,6 +526,7 @@ export default function SalesPage() {
         qty: it.quantity,
         unit_price: it.unit_price,
         line_total: it.line_total,
+        modifiers: it.modifiers?.map((m) => m.name),
       })),
       subtotal: inv.subtotal,
       tax: inv.tax_amount,
