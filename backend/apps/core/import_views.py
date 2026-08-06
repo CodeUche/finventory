@@ -4,6 +4,7 @@ CSV bulk-import endpoints.
 POST /api/v1/import/products/        — multipart form with `file` field (CSV)
 POST /api/v1/import/customers/       — multipart form with `file` field (CSV)
 POST /api/v1/import/accounts/        — multipart form with `file` field (CSV)
+POST /api/v1/import/employees/       — multipart form with `file` field (CSV)
 POST /api/v1/import/suggest-mapping/ — AI column-name mapper
 GET  /api/v1/import/template/<entity>/ — download a CSV template
 
@@ -26,6 +27,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.permissions import IsManagerOrSuperuser, IsVerified, _get_or_resolve_org
+from apps.payroll.constants import STATE_CHOICES
 
 
 # ---------------------------------------------------------------------------
@@ -52,6 +54,27 @@ CUSTOMER_ALL = CUSTOMER_REQUIRED + CUSTOMER_OPTIONAL
 ACCOUNT_REQUIRED = ["code", "name", "account_type"]
 ACCOUNT_OPTIONAL = ["description"]
 ACCOUNT_ALL = ACCOUNT_REQUIRED + ACCOUNT_OPTIONAL
+
+EMPLOYEE_REQUIRED = ["first_name", "last_name", "job_title", "hire_date"]
+EMPLOYEE_OPTIONAL = [
+    "email", "phone", "department", "employment_type",
+    "date_of_birth", "gender", "marital_status", "nin", "address",
+    "next_of_kin_name", "next_of_kin_phone", "next_of_kin_relationship",
+    "emergency_contact_name", "emergency_contact_phone", "grade",
+    "bank_name", "bank_code", "account_number", "account_name",
+    "pfa_name", "pfa_number", "pension_pin", "tin", "state_of_residence",
+    "basic_salary", "housing_allowance", "transport_allowance",
+    "leave_allowance", "other_allowances",
+]
+EMPLOYEE_ALL = EMPLOYEE_REQUIRED + EMPLOYEE_OPTIONAL
+
+VALID_EMPLOYMENT_TYPES = ["full_time", "part_time", "contract"]
+VALID_GENDERS = ["male", "female", ""]
+VALID_MARITAL_STATUSES = ["single", "married", "divorced", "widowed", ""]
+EMPLOYEE_MONEY_FIELDS = [
+    "basic_salary", "housing_allowance", "transport_allowance",
+    "leave_allowance", "other_allowances",
+]
 
 VALID_ACCOUNT_TYPES = [
     "asset", "liability", "equity", "revenue",
@@ -230,6 +253,22 @@ def _missing_required(row, required, errors, row_num):
         if not row.get(col):
             errors.append({"row": row_num, "field": col, "message": "Required field is empty"})
     return any(not row.get(col) for col in required)
+
+
+def _date_val(val, field, errors, row_num):
+    """Parse a date string (YYYY-MM-DD, DD/MM/YYYY or MM/DD/YYYY); append to errors on failure."""
+    from datetime import datetime
+
+    val = (val or "").strip()
+    if not val:
+        return None
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y"):
+        try:
+            return datetime.strptime(val, fmt).date()
+        except ValueError:
+            continue
+    errors.append({"row": row_num, "field": field, "message": f"Invalid date '{val}' — use YYYY-MM-DD"})
+    return None
 
 
 def _normalize_ws(s: str) -> str:
@@ -795,6 +834,193 @@ class ImportAccountsView(APIView):
 
 
 # ---------------------------------------------------------------------------
+# Employee import
+# ---------------------------------------------------------------------------
+
+class ImportEmployeesView(APIView):
+    """
+    Bulk-create/update Employee records from a CSV file.
+
+    Follows the same shape as ImportCustomersView/ImportAccountsView above
+    (parse -> quota check -> required-column check -> per-row validate+write),
+    but with a twist on the upsert key: Employee has no natural unique field
+    other than the system-generated `employee_id` (assigned in Employee.save()),
+    so we match existing rows by `email` (case-insensitive) when the CSV
+    supplies one, and always create a new employee when it doesn't — matching
+    how a bare "no email on file" employee has no reliable identity to update.
+
+    `employee_id` itself is intentionally NOT an importable column: it is
+    `editable=False` and auto-generated per-organisation, so importers must
+    never try to set it directly.
+    """
+
+    permission_classes = [IsAuthenticated, IsVerified, IsManagerOrSuperuser]
+
+    def post(self, request):
+        org = _get_or_resolve_org(request)
+        if not org:
+            return Response({"error": "Organisation not found"}, status=400)
+
+        file_obj = request.FILES.get("file")
+        if not file_obj:
+            return Response({"error": "No file uploaded"}, status=400)
+
+        try:
+            headers, rows = _parse_csv(file_obj)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=400)
+
+        ok, used = _check_import_quota(org, len(rows))
+        if not ok:
+            return Response(
+                {"error": f"Daily import quota exceeded ({DAILY_IMPORT_ROW_QUOTA:,} rows/day, {used:,} already used today). Try again tomorrow."},
+                status=429,
+            )
+
+        missing_cols = [c for c in EMPLOYEE_REQUIRED if c not in headers]
+        if missing_cols:
+            return Response(
+                {"error": f"CSV missing required columns: {', '.join(missing_cols)}"},
+                status=400,
+            )
+
+        from apps.payroll.models import Employee
+
+        created = 0
+        updated = 0
+        errors = []
+
+        for idx, row in enumerate(rows, start=2):
+            row_num = idx
+            # First/last name, job title and hire date are the only fields the
+            # Employee model itself requires (see models.py) — everything else
+            # below is optional and simply defaults to blank/zero if omitted.
+            if _missing_required(row, EMPLOYEE_REQUIRED, errors, row_num):
+                continue
+
+            # hire_date is a required, non-nullable DateField on the model, so a
+            # row with an unparsable date can't be saved at all — skip it (the
+            # error is already recorded by _date_val).
+            hire_date = _date_val(row.get("hire_date"), "hire_date", errors, row_num)
+            if hire_date is None:
+                continue
+
+            # date_of_birth is optional — only attempt to parse it if a value
+            # was actually supplied, so blank cells don't generate spurious
+            # "invalid date" errors.
+            date_of_birth = _date_val(row.get("date_of_birth"), "date_of_birth", errors, row_num) \
+                if row.get("date_of_birth") else None
+
+            # Choice-field values: fall back to a safe default rather than
+            # rejecting the whole row for a typo'd employment type, and only
+            # hard-error on state_of_residence since an invalid PAYE state
+            # would silently misroute statutory remittances downstream.
+            employment_type = row.get("employment_type", "full_time").lower().replace(" ", "_")
+            if employment_type not in VALID_EMPLOYMENT_TYPES:
+                employment_type = "full_time"
+
+            gender = row.get("gender", "").lower()
+            if gender not in VALID_GENDERS:
+                gender = ""
+
+            marital_status = row.get("marital_status", "").lower()
+            if marital_status not in VALID_MARITAL_STATUSES:
+                marital_status = ""
+
+            # state_of_residence drives which State IRS receives this
+            # employee's PAYE (see Employee.state_of_residence docstring in
+            # models.py) — reject rather than silently defaulting, since a
+            # wrong state would misroute a statutory remittance.
+            state_of_residence = row.get("state_of_residence", "").upper()
+            if state_of_residence and state_of_residence not in dict(STATE_CHOICES):
+                errors.append({
+                    "row": row_num, "field": "state_of_residence",
+                    "message": f"Unknown state code '{state_of_residence}'",
+                })
+                state_of_residence = ""
+
+            # Parse every salary-component column that was actually supplied;
+            # blank cells default to the model's MoneyField default (0) by
+            # simply being absent from `money_vals`/`defaults`.
+            money_vals = {}
+            money_error = False
+            for f in EMPLOYEE_MONEY_FIELDS:
+                if row.get(f):
+                    v = _money(row[f], f, errors, row_num)
+                    if v is None:
+                        money_error = True
+                        continue
+                    money_vals[f] = v
+            if money_error:
+                continue
+
+            defaults = {
+                "last_name": row["last_name"],
+                "job_title": row["job_title"],
+                "hire_date": hire_date,
+                "phone": row.get("phone", ""),
+                "department": row.get("department", ""),
+                "employment_type": employment_type,
+                "date_of_birth": date_of_birth,
+                "gender": gender,
+                "marital_status": marital_status,
+                "nin": row.get("nin", ""),
+                "address": row.get("address", ""),
+                "next_of_kin_name": row.get("next_of_kin_name", ""),
+                "next_of_kin_phone": row.get("next_of_kin_phone", ""),
+                "next_of_kin_relationship": row.get("next_of_kin_relationship", ""),
+                "emergency_contact_name": row.get("emergency_contact_name", ""),
+                "emergency_contact_phone": row.get("emergency_contact_phone", ""),
+                "grade": row.get("grade", ""),
+                "bank_name": row.get("bank_name", ""),
+                "bank_code": row.get("bank_code", ""),
+                "account_number": row.get("account_number", ""),
+                "account_name": row.get("account_name", ""),
+                "pfa_name": row.get("pfa_name", ""),
+                "pfa_number": row.get("pfa_number", ""),
+                "pension_pin": row.get("pension_pin", ""),
+                "tin": row.get("tin", ""),
+                "state_of_residence": state_of_residence,
+                **money_vals,
+            }
+
+            # Upsert key: match an existing employee by email (case-insensitive)
+            # when the CSV supplies one. Employee.email has no DB unique
+            # constraint, so we can't use update_or_create()/get_or_create()
+            # here (those require the lookup kwargs to be a real constraint) —
+            # a manual filter().first() plus explicit save() does the same job.
+            # Rows with no email always create a brand-new employee, since
+            # there is nothing reliable to match them against.
+            email = row.get("email", "").strip()
+            existing = (
+                Employee.objects.filter(organisation=org, email__iexact=email).first()
+                if email else None
+            )
+            if existing:
+                existing.first_name = row["first_name"]
+                existing.email = email
+                for k, v in defaults.items():
+                    setattr(existing, k, v)
+                existing.save()
+                updated += 1
+            else:
+                Employee.objects.create(
+                    organisation=org,
+                    first_name=row["first_name"],
+                    email=email,
+                    **defaults,
+                )
+                created += 1
+
+        return Response({
+            "created": created,
+            "updated": updated,
+            "errors": errors,
+            "total_rows": len(rows),
+        })
+
+
+# ---------------------------------------------------------------------------
 # Template download
 # ---------------------------------------------------------------------------
 
@@ -802,6 +1028,7 @@ TEMPLATES = {
     "products": PRODUCT_ALL,
     "customers": CUSTOMER_ALL,
     "accounts": ACCOUNT_ALL,
+    "employees": EMPLOYEE_ALL,
 }
 
 SAMPLE_ROWS = {
@@ -817,6 +1044,17 @@ SAMPLE_ROWS = {
         ["6000", "Office Supplies", "expense", "General office supplies expense"],
         ["1050", "Petty Cash", "asset", "Petty cash on hand"],
     ],
+    # Column order must match EMPLOYEE_ALL = EMPLOYEE_REQUIRED + EMPLOYEE_OPTIONAL above.
+    "employees": [
+        ["Adaeze", "Okafor", "Sales Executive", "2024-01-15", "adaeze.okafor@example.com", "08012345678",
+         "Sales", "full_time", "1995-06-20", "female", "single", "", "12 Allen Avenue, Lagos",
+         "", "", "", "", "", "", "Guaranty Trust Bank", "058", "0123456789", "Adaeze Okafor",
+         "ARM Pension", "", "", "", "LA", "150000.00", "50000.00", "20000.00", "0.00", "0.00"],
+        ["Tunde", "Balogun", "Warehouse Supervisor", "2023-09-01", "tunde.balogun@example.com", "08087654321",
+         "Operations", "full_time", "1990-03-11", "male", "married", "", "45 Ikorodu Road, Lagos",
+         "", "", "", "", "", "", "Zenith Bank", "057", "0987654321", "Tunde Balogun",
+         "", "", "", "", "LA", "200000.00", "60000.00", "25000.00", "10000.00", "0.00"],
+    ],
 }
 
 
@@ -827,7 +1065,7 @@ class ImportTemplateView(APIView):
         from django.http import HttpResponse
 
         if entity not in TEMPLATES:
-            return Response({"error": f"Unknown entity '{entity}'. Choose: products, customers, accounts"}, status=400)
+            return Response({"error": f"Unknown entity '{entity}'. Choose: products, customers, accounts, employees"}, status=400)
 
         columns = TEMPLATES[entity]
         sample_rows = SAMPLE_ROWS.get(entity, [])

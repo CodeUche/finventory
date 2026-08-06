@@ -10,13 +10,16 @@ All report endpoints are GET-only and accept:
 The ?format param is handled by each view via _export_or_json().
 """
 
+import io
+
+from django.http import HttpResponse
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.permissions import IsStaff
+from apps.core.permissions import IsManagerOrSuperuser, IsStaff
 
-from .exporters import dispatch_export
+from .exporters import _org_display_name, _write_report_sheet, dispatch_export, flatten_for_export
 from .period_utils import period_label, resolve_period
 from .services import ReportService
 
@@ -783,22 +786,27 @@ class ReportDispatchView(BaseDateRangeView):
         except Exception as e:
             return Response({"error": str(e)}, status=422)
 
-        # Generic export: any resolver returning a flat "rows" list can be
-        # exported to Excel/PDF without a bespoke row_fn per report.
+        # Generic export: flatten_for_export() knows how to turn every shape
+        # the registry's resolvers return (flat rows, bare lists, nested
+        # per-account/per-entry sections, summary-figure dicts, ...) into a
+        # plain headers/rows/totals table, so export works uniformly across
+        # all 30+ reports instead of only the ones that happen to return a
+        # top-level `rows` list. See apps/reports/exporters.py for the shape
+        # catalogue.
         fmt = request.query_params.get("format", "json").lower()
         if fmt in ("excel", "pdf"):
-            rows_data = data.get("rows") if isinstance(data, dict) else None
-            if isinstance(rows_data, list) and rows_data and isinstance(rows_data[0], dict):
-                headers = list(rows_data[0].keys())
-                pretty = [h.replace("_", " ").title() for h in headers]
+            flattened = flatten_for_export(data)
+            if flattened is not None:
+                headers, rows, totals = flattened
                 response = dispatch_export(
                     fmt=fmt,
-                    headers=pretty,
-                    rows=[[r.get(h) for h in headers] for r in rows_data],
+                    headers=headers,
+                    rows=rows,
                     title=rd.label,
                     subtitle=self.get_period_label(request, date_from, date_to),
                     filename_base=rd.key,
                     org=org,
+                    totals=totals,
                 )
                 if response is not None:
                     return response
@@ -808,3 +816,227 @@ class ReportDispatchView(BaseDateRangeView):
             "period_label": self.get_period_label(request, date_from, date_to),
             "data": data,
         })
+
+
+class ReportBulkExportView(BaseDateRangeView):
+    """
+    POST /reports/export-bulk/ — export several registry reports at once.
+
+    Body:
+        {
+          "keys": ["profit-loss", "balance-sheet", ...],  # report keys from /reports/catalog/
+          "period": "year", "date_from": "...", "date_to": "...",  # same period params as /reports/r/<key>/
+          "combine": true | false,   # true = one .xlsx with one sheet per report; false = a .zip of separate .xlsx files
+          "email_to": "someone@example.com"   # optional — if present, email the file instead of returning it
+        }
+
+    Runs every requested report's resolver, normalises each one via
+    flatten_for_export() (same normaliser the single-report export uses — see
+    ReportDispatchView above), and either bundles them into one multi-sheet
+    workbook or zips one file per report. A report that fails to run or can't
+    be flattened is skipped and reported back in `skipped`, rather than
+    failing the whole export — a typo'd key or a resolver that errors on this
+    org's data shouldn't block exporting the other 20 reports the user asked for.
+
+    Requires IsManagerOrSuperuser (write-adjacent — this is the same
+    permission class the CSV importers use), rather than the read-only
+    IsStaff that plain report viewing uses.
+    """
+
+    permission_classes = [IsAuthenticated, IsManagerOrSuperuser]
+
+    def post(self, request):
+        keys = request.data.get("keys")
+        if not isinstance(keys, list) or not keys:
+            return Response({"error": "keys must be a non-empty list of report keys"}, status=400)
+
+        org = self.get_organisation()
+        if org is None:
+            return Response({"error": "Organisation not found"}, status=400)
+
+        # Period comes from the request body here (not query params) since
+        # this is a POST with a JSON payload — resolve it the same way
+        # BaseDateRangeView.get_date_range()/get_period_label() do for GET.
+        from .period_utils import period_label as _period_label, resolve_period as _resolve_period
+        period = request.data.get("period", "custom")
+        date_from, date_to = _resolve_period(
+            period, request.data.get("date_from"), request.data.get("date_to"))
+        subtitle = _period_label(period, date_from, date_to)
+
+        combine = bool(request.data.get("combine", True))
+        email_to = (request.data.get("email_to") or "").strip()
+
+        # ── Run every requested report and flatten it for export ──────────────
+        sheets: list[dict] = []   # {key, label, headers, rows, totals}
+        skipped: list[dict] = []  # {key, reason}
+        for key in keys:
+            rd = report_registry.get(key)
+            if rd is None:
+                skipped.append({"key": key, "reason": "Unknown report"})
+                continue
+            try:
+                data = rd.resolver(org, date_from, date_to)
+            except Exception as e:
+                skipped.append({"key": key, "reason": str(e)})
+                continue
+            flattened = flatten_for_export(data)
+            if flattened is None:
+                skipped.append({"key": key, "reason": "This report has no tabular export"})
+                continue
+            headers, rows, totals = flattened
+            sheets.append({"key": rd.key, "label": rd.label, "headers": headers, "rows": rows, "totals": totals})
+
+        if not sheets:
+            return Response({"error": "None of the requested reports could be exported", "skipped": skipped}, status=422)
+
+        # ── Build the file(s) ───────────────────────────────────────────────────
+        org_name = _org_display_name(org)
+        if combine:
+            file_bytes = self._build_workbook(sheets, org_name, subtitle)
+            filename = "audity-reports.xlsx"
+            content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        else:
+            file_bytes = self._build_zip(sheets, org_name, subtitle)
+            filename = "audity-reports.zip"
+            content_type = "application/zip"
+
+        # ── Email or download ────────────────────────────────────────────────────
+        if email_to:
+            return self._email_file(request, org, email_to, filename, content_type, file_bytes, skipped)
+
+        response = HttpResponse(file_bytes, content_type=content_type)
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        if skipped:
+            # Surface partial-failure info without failing the download —
+            # the browser ignores unknown response headers, the frontend can
+            # read this one to show a "N reports skipped" toast after saving.
+            import json as _json
+            response["X-Reports-Skipped"] = _json.dumps(skipped)[:4000]
+        return response
+
+    @staticmethod
+    def _build_workbook(sheets: "list[dict]", org_name: str, subtitle: str) -> bytes:
+        """One workbook, one sheet per report — see _write_report_sheet() in exporters.py."""
+        import openpyxl
+
+        wb = openpyxl.Workbook()
+        used_names: set = set()
+        for i, s in enumerate(sheets):
+            ws = wb.active if i == 0 else wb.create_sheet()
+            ws.title = _unique_sheet_name(s["label"], used_names)
+            _write_report_sheet(
+                ws, s["headers"], s["rows"],
+                title=s["label"], subtitle=subtitle, org_name=org_name, totals=s["totals"],
+            )
+        buf = io.BytesIO()
+        wb.save(buf)
+        return buf.getvalue()
+
+    @staticmethod
+    def _build_zip(sheets: "list[dict]", org_name: str, subtitle: str) -> bytes:
+        """One .xlsx per report, zipped together (stdlib zipfile — no new dependency).
+        Each file is built the same way _build_workbook() builds a sheet (via
+        _write_report_sheet, passing org_name directly) rather than through
+        export_excel()'s `org=` object param, so both bulk-export modes share
+        one code path for the header block/totals row instead of two."""
+        import zipfile
+
+        import openpyxl
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            used_names: set = set()
+            for s in sheets:
+                wb = openpyxl.Workbook()
+                ws = wb.active
+                ws.title = s["label"][:31]
+                _write_report_sheet(
+                    ws, s["headers"], s["rows"],
+                    title=s["label"], subtitle=subtitle, org_name=org_name, totals=s["totals"],
+                )
+                sheet_buf = io.BytesIO()
+                wb.save(sheet_buf)
+                arcname = _unique_sheet_name(s["key"], used_names, ext=".xlsx")
+                zf.writestr(arcname, sheet_buf.getvalue())
+        return buf.getvalue()
+
+    def _email_file(self, request, org, email_to, filename, content_type, file_bytes, skipped):
+        """Send the export as an email attachment via the org's configured SMTP.
+        Mirrors QuoteViewSet.send_email (apps/quotes/views.py) — same config
+        lookup, same MIME construction, same error responses — so failures
+        read consistently across the app regardless of which feature sent them."""
+        import smtplib
+        import ssl as _ssl
+        from email import encoders
+        from email.mime.base import MIMEBase
+        from email.mime.multipart import MIMEMultipart
+        from email.mime.text import MIMEText
+
+        try:
+            email_cfg = org.email_config
+            if not email_cfg.is_active:
+                return Response({"error": "Email is not configured. Go to Settings → Email."}, status=422)
+        except Exception:
+            return Response({"error": "Email is not configured. Go to Settings → Email."}, status=422)
+
+        from_name = email_cfg.from_name or org.name
+        from_email = email_cfg.from_email or email_cfg.smtp_username
+
+        msg = MIMEMultipart("mixed")
+        msg["Subject"] = f"Reports export from {from_name}"
+        msg["From"] = f"{from_name} <{from_email}>"
+        msg["To"] = email_to
+
+        alt = MIMEMultipart("alternative")
+        alt.attach(MIMEText(
+            f"<p>Attached: {filename} — {len(file_bytes):,} bytes, "
+            f"{'a workbook with one sheet per report' if filename.endswith('.xlsx') else 'a zip of one file per report'}.</p>",
+            "html",
+        ))
+        msg.attach(alt)
+
+        part = MIMEBase(*content_type.split("/", 1))
+        part.set_payload(file_bytes)
+        encoders.encode_base64(part)
+        part.add_header("Content-Disposition", "attachment", filename=filename)
+        msg.attach(part)
+
+        try:
+            ctx = _ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = _ssl.CERT_NONE
+            if email_cfg.use_tls:
+                conn = smtplib.SMTP(email_cfg.smtp_host, email_cfg.smtp_port, timeout=30)
+                conn.ehlo(); conn.starttls(context=ctx); conn.ehlo()
+            else:
+                conn = smtplib.SMTP_SSL(email_cfg.smtp_host, email_cfg.smtp_port, timeout=30, context=ctx)
+                conn.ehlo()
+            conn.login(email_cfg.smtp_username, email_cfg.smtp_password)
+            conn.sendmail(from_email, [email_to], msg.as_string())
+            try:
+                conn.quit()
+            except Exception:
+                pass
+            return Response({"message": f"Reports sent to {email_to}", "skipped": skipped})
+        except smtplib.SMTPAuthenticationError:
+            return Response({"error": "SMTP authentication failed. Check your username and password in Settings → Email."}, status=422)
+        except Exception:
+            import logging as _log
+            _log.getLogger(__name__).exception("Bulk report email send failed")
+            return Response({"error": "Failed to send email. Please check your SMTP settings."}, status=422)
+
+
+def _unique_sheet_name(label: str, used: set, ext: str = "") -> str:
+    """Excel sheet names (and our zip entry names, for tidiness) must be <=31
+    chars and unique within the file — truncate and de-dupe with a numeric
+    suffix if two report labels collide after truncation."""
+    max_len = 31 - len(ext) if ext else 31
+    base = (label or "Report")[:max_len]
+    name = f"{base}{ext}"
+    n = 2
+    while name.lower() in used:
+        suffix = f" ({n}){ext}"
+        name = f"{base[:max_len - len(suffix) + len(ext)]}{suffix}"
+        n += 1
+    used.add(name.lower())
+    return name

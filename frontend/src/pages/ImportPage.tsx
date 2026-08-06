@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { api, bypassNextGets } from '@/services/api'
-import { Upload, Download, CheckCircle, XCircle, AlertTriangle, FileText, Users, BookOpen, Loader2, Maximize2, X, Sparkles, ChevronDown, ChevronUp } from 'lucide-react'
+import { Upload, Download, CheckCircle, XCircle, AlertTriangle, FileText, Users, BookOpen, UsersRound, Loader2, Maximize2, X, Sparkles, ChevronDown, ChevronUp } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { importApi } from '@/services/api'
 import { save } from '@tauri-apps/plugin-dialog'
@@ -64,7 +64,7 @@ function parseCSV(text: string): string[][] {
   return [cleanHeaders, ...dataRows]
 }
 
-type Entity = 'products' | 'customers' | 'accounts'
+type Entity = 'products' | 'customers' | 'accounts' | 'employees'
 type ImportError = { row: number; field: string; message: string }
 type ImportResult = { created: number; updated: number; errors: ImportError[]; total_rows: number; warehouses_created?: number; stock_assigned?: number }
 
@@ -110,6 +110,20 @@ const ENTITIES: { key: Entity; label: string; icon: React.ReactNode; description
     icon: <BookOpen size={20} />,
     description: 'Import additional GL accounts into your chart of accounts.',
     columns: 'code*, name*, account_type*, description',
+  },
+  {
+    key: 'employees',
+    label: 'Employees',
+    icon: <UsersRound size={20} />,
+    description: 'Bulk-add staff records — personal details, salary and bank info. Employee IDs are assigned automatically.',
+    // Required fields marked with * — mirrors EMPLOYEE_REQUIRED/OPTIONAL in
+    // backend/apps/core/import_views.py; keep these two lists in sync if the
+    // importable field set ever changes on either side.
+    columns: 'first_name*, last_name*, job_title*, hire_date*, email, phone, department, employment_type, '
+      + 'date_of_birth, gender, marital_status, nin, address, next_of_kin_name, next_of_kin_phone, '
+      + 'next_of_kin_relationship, emergency_contact_name, emergency_contact_phone, grade, bank_name, '
+      + 'bank_code, account_number, account_name, pfa_name, pfa_number, pension_pin, tin, state_of_residence, '
+      + 'basic_salary, housing_allowance, transport_allowance, leave_allowance, other_allowances',
   },
 ]
 
@@ -274,8 +288,9 @@ export default function ImportPage() {
         <p className="text-sm text-slate-400 mt-0.5">Bulk-import records from a CSV file. Existing records are updated by their unique key (SKU / code).</p>
       </div>
 
-      {/* Entity selector */}
-      <div className="grid grid-cols-3 gap-3">
+      {/* Entity selector — 4 cards now that Employees was added, so this wraps
+          to 2x2 on small screens instead of squeezing a 4th column in. */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {ENTITIES.map(e => (
           <button
             key={e.key}

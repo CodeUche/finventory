@@ -100,6 +100,7 @@ export default function EmployeesPage() {
     bankCode, setBankCode,
     accountName: resolvedAccountName,
     resolving,
+    resolveError,
   } = useResolveBankAccount({
     resolver: async (accountNumber, code) => {
       const { data } = await payrollApi.resolveAccount(accountNumber, code)
@@ -643,6 +644,12 @@ export default function EmployeesPage() {
                   </label>
                   <input className="input" placeholder={resolving ? 'Resolving…' : 'Auto-filled or type manually'} value={form.account_name}
                     onChange={(e) => setForm((f) => ({ ...f, account_name: e.target.value }))} readOnly={resolving} />
+                  {/* Persistent, in-form trace of a failed lookup — a toast alone
+                      is easy to miss on a multi-tab form, and disappears after a
+                      few seconds even if the user is still looking elsewhere. */}
+                  {resolveError && !resolving && (
+                    <p className="text-[11px] text-amber-400 mt-1">{resolveError}</p>
+                  )}
                 </div>
               </div>
             )}

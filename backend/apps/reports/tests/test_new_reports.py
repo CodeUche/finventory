@@ -395,13 +395,43 @@ class CatalogTreeMatchesSpec(NewReportsBase):
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res["Content-Type"], "application/pdf")
 
-    def test_non_row_report_falls_back_to_json(self):
-        """Nested reports (no flat rows) must still return JSON, not crash."""
+    def test_non_row_report_json_shape_unaffected(self):
+        """Nested reports (no flat top-level `rows`) still return their normal
+        nested JSON shape when format=json — only the export path changed."""
+        self._auth()
+        url = reverse("report-dispatch", kwargs={"key": "gl-detail"})
+        res = self.client.get(url, PERIOD)
+        self.assertEqual(res.status_code, 200)
+        self.assertIn("data", res.data)
+        self.assertIn("accounts", res.data["data"])
+
+    def test_nested_report_now_exports_to_excel(self):
+        """flatten_for_export() (apps/reports/exporters.py) knows how to turn
+        gl-detail's nested {accounts: [{..., lines: [...]}]} shape into a flat
+        table, so this — previously JSON-only — now exports a real workbook
+        instead of silently falling back to JSON."""
         self._auth()
         url = reverse("report-dispatch", kwargs={"key": "gl-detail"})
         res = self.client.get(url, {**PERIOD, "format": "excel"})
         self.assertEqual(res.status_code, 200)
-        self.assertIn("data", res.data)
+        self.assertIn("spreadsheetml", res["Content-Type"])
+
+        import io
+        import openpyxl
+        wb = openpyxl.load_workbook(io.BytesIO(res.content))
+        ws = wb.active
+        cell_values = [c.value for row in ws.iter_rows() for c in row if c.value is not None]
+        # The Cash on Hand account (code 1000) from setUpTestData should
+        # appear somewhere in the flattened sheet.
+        self.assertTrue(any(v == "1000" for v in cell_values))
+
+    def test_nested_report_now_exports_to_pdf(self):
+        """Same normalisation also unblocks the PDF export path."""
+        self._auth()
+        url = reverse("report-dispatch", kwargs={"key": "gl-detail"})
+        res = self.client.get(url, {**PERIOD, "format": "pdf"})
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res["Content-Type"], "application/pdf")
 
     def test_tenant_isolation(self):
         """Another org's user must see empty data, not ours."""

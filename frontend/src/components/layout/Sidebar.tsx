@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { NavLink, Link, useNavigate, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard, Package, Boxes, Layers,
@@ -15,6 +15,8 @@ import { useAuthStore } from '@/store/authStore'
 import { authApi } from '@/services/api'
 import { cn } from '@/lib/utils'
 import { FEATURES } from '@/lib/featureFlags'
+import { CATEGORY_ORDER } from '@/lib/reportCategories'
+import { useReportCatalog } from '@/hooks/useReportCatalog'
 import type { ModuleKey } from '@/types'
 
 // ─── Navigation structure ─────────────────────────────────────────────────────
@@ -103,17 +105,12 @@ export const navGroups: { label: string | null; alwaysGroup?: boolean; items: { 
       { name: 'Income & Expense', href: '/expenses', icon: ArrowDownCircle, module: 'expenses' },
     ],
   },
-  {
-    label: 'GENERAL REPORTS',
-    items: [
-      { name: 'All Reports', href: '/reports/all', icon: BookMarked, module: 'reports' },
-      { name: 'Financial Statements', href: '/reports', icon: BarChart3, module: 'reports' },
-      { name: 'Balance Sheet', href: '/reports/balance-sheet', icon: Scale, module: 'accounting' },
-      { name: 'Stock Reports', href: '/reports/stock', icon: ClipboardCheck, module: 'inventory' },
-      { name: 'Sales by Customer', href: '/reports/sales-by-customer', icon: Users, module: 'reports' },
-      { name: 'Sales by Product', href: '/reports/sales-by-product', icon: ShoppingCart, module: 'reports' },
-    ],
-  },
+  // NOTE: "GENERAL REPORTS" used to be a plain navGroups entry here (a flat
+  // list of 6 links). It's now rendered as its own bespoke block below (see
+  // REPORTS_FIXED_LINKS + the "Reports sub-nav" section near the Settings
+  // sub-nav), because it needs a two-level category tree the generic
+  // navGroups renderer doesn't support — the same reason Settings gets its
+  // own bespoke block instead of living in this array.
   {
     label: 'COMPLIANCE',
     items: [
@@ -138,6 +135,22 @@ export const navGroups: { label: string | null; alwaysGroup?: boolean; items: { 
   // NOTE: no ANALYTICS group here — Owner Analytics is rendered by the dedicated
   // owner-only section further down (under the OWNER heading). Adding it here too
   // produced two "Owners Analytics" entries in the sidebar.
+]
+
+// The "GENERAL REPORTS" section's fixed links — these are separate, richer
+// pages (charts, drill-down, dedicated layouts) rather than registry entries,
+// so they stay as plain links above the fetched category tree instead of
+// being replaced by it. (Sales By Customer/Product and Balance Sheet all have
+// a same-named counterpart inside the registry tree too — that's expected;
+// the tree entry runs the generic report engine, these links open the
+// purpose-built page for that report.)
+const REPORTS_FIXED_LINKS: { name: string; href: string; icon: React.ElementType; module?: ModuleKey }[] = [
+  { name: 'All Reports', href: '/reports/all', icon: BookMarked, module: 'reports' },
+  { name: 'Financial Statements', href: '/reports', icon: BarChart3, module: 'reports' },
+  { name: 'Balance Sheet', href: '/reports/balance-sheet', icon: Scale, module: 'accounting' },
+  { name: 'Stock Reports', href: '/reports/stock', icon: ClipboardCheck, module: 'inventory' },
+  { name: 'Sales by Customer', href: '/reports/sales-by-customer', icon: Users, module: 'reports' },
+  { name: 'Sales by Product', href: '/reports/sales-by-product', icon: ShoppingCart, module: 'reports' },
 ]
 
 interface SidebarProps {
@@ -255,6 +268,28 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
   })
   const toggleSettingsGroup = (g: string) =>
     setSettingsGroupsOpen((prev) => ({ ...prev, [g]: !prev[g] }))
+
+  // ─── Reports sub-nav — same collapsible-tree pattern as Settings above ────
+  const { catalog: reportCatalog } = useReportCatalog()
+  const activeReportKey = pathname === '/reports/all' ? new URLSearchParams(search).get('report') : null
+  const reportsGrouped = CATEGORY_ORDER
+    .map((c) => ({ ...c, reports: reportCatalog.filter((r) => r.category === c.name) }))
+    .filter((c) => c.reports.length > 0)
+
+  const [reportsOpen, setReportsOpen] = useState(() => pathname.startsWith('/reports'))
+  const [reportGroupsOpen, setReportGroupsOpen] = useState<Record<string, boolean>>({})
+  const toggleReportGroup = (g: string) =>
+    setReportGroupsOpen((prev) => ({ ...prev, [g]: !prev[g] }))
+  // Auto-expand whichever category holds the currently-selected report, once
+  // the catalog has loaded enough to know which category that is. Runs after
+  // the catalog fetch resolves (reportsGrouped is empty until then), so a
+  // sidebar link click that lands on /reports/all?report=<key> reveals its
+  // own category instead of requiring the user to hunt for it.
+  useEffect(() => {
+    if (!activeReportKey || reportsGrouped.length === 0) return
+    const activeGroup = reportsGrouped.find((c) => c.reports.some((r) => r.key === activeReportKey))?.name
+    if (activeGroup) setReportGroupsOpen((prev) => (prev[activeGroup] ? prev : { ...prev, [activeGroup]: true }))
+  }, [activeReportKey, reportsGrouped.length])
 
   return (
     <aside
@@ -375,6 +410,89 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
             </div>
           )
         })}
+
+        {/* GENERAL REPORTS sub-nav — fixed links to the dedicated report
+            pages, then a fetched, collapsible category tree mirroring
+            AllReportsPage.tsx's "General Reports" hub (/reports/all), same
+            two-level pattern as the SETTINGS sub-nav below. */}
+        {!billingOnly && canSeeItem('reports') && (
+          <div>
+            <button
+              onClick={() => setReportsOpen((v) => !v)}
+              className="side-mini-hide w-full flex items-center justify-between px-3 pt-4 pb-1 text-left group"
+            >
+              <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-400 group-hover:text-slate-300 transition-colors">
+                GENERAL REPORTS
+              </span>
+              {reportsOpen
+                ? <ChevronDown size={12} className="text-slate-400 group-hover:text-slate-300 transition-colors" />
+                : <ChevronRight size={12} className="text-slate-400 group-hover:text-slate-300 transition-colors" />
+              }
+            </button>
+
+            {reportsOpen && !mini && (
+              <>
+                {/* Fixed links to the dedicated, richer report pages. */}
+                {REPORTS_FIXED_LINKS
+                  .filter((item) => canSeeItem(item.module))
+                  .map((item) => (
+                    <NavLink
+                      key={item.href}
+                      to={item.href}
+                      end={item.href === '/reports/all'}
+                      title={item.name}
+                      className={({ isActive }) => isActive ? 'sidebar-item-active' : 'sidebar-item'}
+                    >
+                      <item.icon size={16} className="shrink-0" />
+                      <span className="truncate">{item.name}</span>
+                    </NavLink>
+                  ))}
+
+                {/* Fetched category tree — every report in the registry,
+                    grouped exactly like the All Reports page. */}
+                {reportsGrouped.map((cat) => {
+                  const isGroupOpen = reportGroupsOpen[cat.name] ?? false
+                  return (
+                    <div key={cat.name} className="pl-2">
+                      <button
+                        onClick={() => toggleReportGroup(cat.name)}
+                        className="w-full flex items-center justify-between px-2 py-1.5 text-left group/rg rounded-lg hover:bg-surface-700/40 transition-colors"
+                      >
+                        <span className="flex items-center gap-1.5 text-[9px] font-semibold uppercase tracking-widest text-slate-500 group-hover/rg:text-slate-400 transition-colors">
+                          <cat.icon size={11} className="shrink-0" />
+                          {cat.name}
+                        </span>
+                        {isGroupOpen
+                          ? <ChevronDown size={10} className="text-slate-600 group-hover/rg:text-slate-400 transition-colors" />
+                          : <ChevronRight size={10} className="text-slate-600 group-hover/rg:text-slate-400 transition-colors" />
+                        }
+                      </button>
+
+                      {isGroupOpen && cat.reports.map((r) => {
+                        const isActive = activeReportKey === r.key
+                        return (
+                          <Link
+                            key={r.key}
+                            to={`/reports/all?report=${r.key}`}
+                            title={r.description}
+                            className={cn(
+                              'flex items-center gap-2.5 pl-4 pr-3 py-2 rounded-xl text-sm transition-colors',
+                              isActive
+                                ? 'bg-brand-500/15 text-brand-300 font-medium border-l-2 border-brand-500 ml-1'
+                                : 'text-slate-400 hover:text-slate-200 hover:bg-surface-700/50 ml-1',
+                            )}
+                          >
+                            <span className="truncate">{r.label}</span>
+                          </Link>
+                        )
+                      })}
+                    </div>
+                  )
+                })}
+              </>
+            )}
+          </div>
+        )}
 
         {/* Owner-only analytics — hidden in billing-only mode */}
         {!billingOnly && isOwnerOrAdmin && canSeeItem('owner_analytics') && (

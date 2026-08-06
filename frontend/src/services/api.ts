@@ -1235,6 +1235,23 @@ export const reportApi = {
    */
   download: (endpoint: string, params: object) =>
     api.get(endpoint, { params, responseType: 'blob' }),
+
+  /**
+   * Export several reports at once (POST /reports/export-bulk/ — see
+   * ReportBulkExportView in backend/apps/reports/views.py). `combine: true`
+   * returns one .xlsx with a sheet per report; `combine: false` returns a
+   * .zip of separate .xlsx files. Returns a Blob for saveBlobFile().
+   */
+  exportBulkDownload: (body: {
+    keys: string[]; period: string; date_from?: string; date_to?: string; combine: boolean
+  }) => api.post('/reports/export-bulk/', body, { responseType: 'blob' }),
+
+  /** Same as exportBulkDownload, but emails the file via the org's configured
+   * SMTP instead of returning it — pass `email_to`. Returns a normal JSON
+   * {message} / {error} response, not a blob. */
+  exportBulkEmail: (body: {
+    keys: string[]; period: string; date_from?: string; date_to?: string; combine: boolean; email_to: string
+  }) => api.post('/reports/export-bulk/', body),
 }
 
 export const taxApi = {
@@ -1872,11 +1889,14 @@ export const importApi = {
   products: (file: File, mapping?: Record<string, string>) => _importPost('/import/products/', file, mapping),
   customers: (file: File) => _importPost('/import/customers/', file),
   accounts: (file: File) => _importPost('/import/accounts/', file),
+  // Employee bulk import — same shape as customers/accounts (no AI column
+  // mapping needed for this one), see ImportEmployeesView on the backend.
+  employees: (file: File) => _importPost('/import/employees/', file),
   /** POST /import/suggest-mapping/ — AI column name mapper */
   suggestMapping: (entity: string, headers: string[]) =>
     api.post('/import/suggest-mapping/', { entity, headers }),
   /** GET /import/template/<entity>/ — download CSV template */
-  templateUrl: (entity: 'products' | 'customers' | 'accounts') =>
+  templateUrl: (entity: 'products' | 'customers' | 'accounts' | 'employees') =>
     `/import/template/${entity}/`,
 }
 

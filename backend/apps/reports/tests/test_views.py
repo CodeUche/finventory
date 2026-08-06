@@ -581,7 +581,15 @@ class TestVATSummaryView(BaseReportTestCase):
 
 
 class TestPeriodLabelInExport(BaseReportTestCase):
-    """When exporting, the subtitle row must reflect the chosen period."""
+    """When exporting, the subtitle row must reflect the chosen period.
+
+    Excel exports now lead with a small header block — company name, then
+    report title, then the period/subtitle row — matching the reference
+    sample reports (see _write_report_sheet() in apps/reports/exporters.py).
+    Row 1 = org name, Row 2 = title, Row 3 = subtitle/period, Row 4 = column
+    headers. Every legacy view (like ProfitAndLossView here) always supplies
+    both an org and a title, so the subtitle is reliably on row 3.
+    """
 
     def test_excel_export_has_subtitle_for_month_period(self):
         import io
@@ -589,8 +597,7 @@ class TestPeriodLabelInExport(BaseReportTestCase):
         resp = self._get("report-pnl", period="month", format="excel")
         wb = openpyxl.load_workbook(io.BytesIO(resp.content))
         ws = wb.active
-        # Row 1 = subtitle (period label), Row 2 = header
-        subtitle_val = ws.cell(row=1, column=1).value
+        subtitle_val = ws.cell(row=3, column=1).value
         self.assertIsNotNone(subtitle_val)
         self.assertIn("Month", subtitle_val)
 
@@ -602,7 +609,7 @@ class TestPeriodLabelInExport(BaseReportTestCase):
                          format="excel")
         wb = openpyxl.load_workbook(io.BytesIO(resp.content))
         ws = wb.active
-        subtitle_val = ws.cell(row=1, column=1).value
+        subtitle_val = ws.cell(row=3, column=1).value
         self.assertIsNotNone(subtitle_val)
         self.assertIn("Jan 2025", subtitle_val)
 
