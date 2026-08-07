@@ -6,6 +6,7 @@ import { useAuthStore } from '@/store/authStore'
 import { orgApi, inventoryApi, salesApi, customerApi, authApi, bypassNextGets } from '@/services/api'
 import { setActiveCurrency, formatCurrency } from '@/lib/utils'
 import NotificationBell from '@/components/NotificationBell'
+import MessagesBell from '@/components/MessagesBell'
 import { SyncStatusBadge } from '@/components/SyncStatusBadge'
 import { getStoredTheme, setTheme, type Theme } from '@/hooks/useTheme'
 
@@ -337,6 +338,9 @@ export default function TopBar({ onMenuClick }: TopBarProps) {
 
         {/* Offline sync queue status (hidden when the queue is empty) */}
         <SyncStatusBadge />
+
+        {/* In-app messaging (Track B) — unread badge + quick-reply panel */}
+        <MessagesBell />
 
         {/* Real-time notifications bell */}
         <NotificationBell />

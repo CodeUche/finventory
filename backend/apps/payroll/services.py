@@ -5,14 +5,16 @@ from decimal import Decimal
 from django.db import transaction
 
 from .constants import (
-    DEFAULT_LEAVE_TYPES, ITF_DUE_DAY, ITF_DUE_MONTH, NIGERIAN_STATES,
-    REMITTANCE_DEADLINE_DAY, STATE_LOOKUP,
+    DEFAULT_LEAVE_TYPES, FIXED_DATE_PUBLIC_HOLIDAYS, ITF_DUE_DAY, ITF_DUE_MONTH,
+    NIGERIAN_STATES, REMITTANCE_DEADLINE_DAY, STATE_LOOKUP, WORKING_DAYS_PER_MONTH,
 )
 from .models import (
-    AdvancePolicy, AdvanceRequest, Attendance, BenefitPlan, Bonus, CompensationRecord,
-    Employee, EmployeeBenefit, EmployeeLoan, EmployeePenalty, EmployeeTaxProfile,
-    LeaveBalance, LeaveRequest, LeaveType, PayrollAdjustment, PayrollRun,
-    PayrollSettings, PayslipLine, StatutoryRemittance, TaxAuthority,
+    AdvancePolicy, AdvanceRequest, Attendance, BenefitPlan, Bonus, ClearanceChecklistItem,
+    CompensationRecord, DEFAULT_OFFBOARDING_CHECKLIST_ITEMS, Employee, EmployeeBenefit,
+    EmployeeDocument, EmployeeLoan, EmployeePenalty, EmployeeTaxProfile, ExitInterview,
+    LeaveBalance, LeaveRequest, LeaveType, OffboardingCase, OffboardingChecklistTemplate,
+    PayrollAdjustment, PayrollRun, PayrollSettings, PayslipLine, PublicHoliday,
+    StatutoryRemittance, TaxAuthority,
 )
 
 ZERO = Decimal('0')
@@ -150,26 +152,33 @@ class ProrationService:
     """
 
     @staticmethod
-    def working_days(start, end):
+    def working_days(start, end, holiday_dates: 'set' = frozenset()):
+        """
+        Count Mon–Fri days in [start, end], excluding any date present in
+        ``holiday_dates``. Callers processing many employees in a loop MUST
+        preload ``holiday_dates`` once (a set of ``date``) before the loop —
+        never query per-employee here, following the same preload pattern
+        already used for tax_profiles/comp_records in ``run_payroll``.
+        """
         if not start or not end or end < start:
             return 0
         total = 0
         cur = start
         while cur <= end:
-            if cur.weekday() < 5:
+            if cur.weekday() < 5 and cur not in holiday_dates:
                 total += 1
             cur += timedelta(days=1)
         return total
 
     @classmethod
-    def factor_for(cls, employee, period_start, period_end):
+    def factor_for(cls, employee, period_start, period_end, holiday_dates: 'set' = frozenset()):
         """
         Return (factor, days_worked, days_in_period).
 
         factor is 1 for anyone employed for the whole period; it never exceeds
         1 and never goes below 0.
         """
-        days_in_period = cls.working_days(period_start, period_end)
+        days_in_period = cls.working_days(period_start, period_end, holiday_dates)
         if days_in_period == 0:
             return Decimal('1'), ZERO, ZERO
 
@@ -185,12 +194,58 @@ class ProrationService:
         if effective_end < effective_start:
             return ZERO, ZERO, Decimal(str(days_in_period))
 
-        days_worked = cls.working_days(effective_start, effective_end)
+        days_worked = cls.working_days(effective_start, effective_end, holiday_dates)
         factor = (Decimal(str(days_worked)) / Decimal(str(days_in_period))).quantize(
             Decimal('0.0001')
         )
         factor = max(ZERO, min(Decimal('1'), factor))
         return factor, Decimal(str(days_worked)), Decimal(str(days_in_period))
+
+
+class PublicHolidayService:
+    """Seeds fixed-date Nigerian public holidays and loads them for proration."""
+
+    @staticmethod
+    def seed_fixed_dates(organisation, year):
+        """
+        Idempotently create the fixed-date holidays for one calendar year.
+
+        Moveable Islamic/Christian dates are never computed — only the six
+        fixed-date holidays in FIXED_DATE_PUBLIC_HOLIDAYS are seeded here.
+        """
+        settings_row = get_settings(organisation)
+        seeded_years = list(settings_row.public_holidays_seeded_years or [])
+        if year in seeded_years:
+            return PublicHoliday.objects.filter(organisation=organisation, date__year=year)
+
+        existing = set(
+            PublicHoliday.objects.filter(organisation=organisation, date__year=year)
+            .values_list('date', 'name')
+        )
+        to_create = []
+        for month, day, name in FIXED_DATE_PUBLIC_HOLIDAYS:
+            d = date(year, month, day)
+            if (d, name) not in existing:
+                to_create.append(PublicHoliday(
+                    organisation=organisation, date=d, name=name,
+                    is_recurring_annually=True, applies_to_states=[],
+                ))
+        if to_create:
+            PublicHoliday.objects.bulk_create(to_create)
+
+        seeded_years.append(year)
+        settings_row.public_holidays_seeded_years = seeded_years
+        settings_row.save(update_fields=['public_holidays_seeded_years'])
+        return PublicHoliday.objects.filter(organisation=organisation, date__year=year)
+
+    @staticmethod
+    def holiday_dates_for(organisation, start, end):
+        """Return a set of ``date`` for every holiday overlapping [start, end]. One query."""
+        return set(
+            PublicHoliday.objects.filter(
+                organisation=organisation, date__gte=start, date__lte=end,
+            ).values_list('date', flat=True)
+        )
 
 
 class PayrollService:
@@ -231,10 +286,19 @@ class PayrollService:
             tax += taxable_in_bracket * rate
         return tax
 
+    # Run types whose extra_gross is a one-off payment rather than a recurring
+    # monthly entitlement. These must NOT be taxed by independent-month
+    # annualisation (× 12) — see calculate_employee_paye's ytd_* params.
+    NON_RECURRING_RUN_TYPES = (
+        PayrollRun.THIRTEENTH, PayrollRun.SUPPLEMENTARY,
+        PayrollRun.OFF_CYCLE, PayrollRun.FINAL_SETTLEMENT,
+    )
+
     @classmethod
     def calculate_employee_paye(
         cls, employee, extra_gross=Decimal('0'), tax_profile=None,
         components=None, proration_factor=None,
+        ytd_taxable_prior=None, ytd_paye_withheld_prior=None,
     ):
         """
         Calculate full payroll figures for one employee (NTA 2025 rules).
@@ -246,10 +310,25 @@ class PayrollService:
                            are earned events, not time-based entitlements.
         extra_gross:       bonus + overtime + adjustments added on top.
 
-        Tax methodology note: PAYE is computed by annualising the *actual*
-        monthly taxable pay (including any proration), consistent with how this
-        engine has always worked. For a mid-month joiner this slightly
-        under-deducts in month one and self-corrects across the year.
+        Tax methodology — two modes:
+
+        1. Regular monthly runs (ytd_taxable_prior is None): PAYE is computed
+           by annualising the *actual* monthly taxable pay (× 12), consistent
+           with how this engine has always worked. For a mid-month joiner this
+           slightly under-deducts in month one and self-corrects across the
+           year. This mode is UNCHANGED.
+
+        2. Non-recurring payments — 13th month, bonus, arrears, encashment,
+           off-cycle/supplementary runs (ytd_taxable_prior is not None):
+           independent-month annualisation is WRONG here. Multiplying a
+           one-off ₦500,000 December bonus by 12 taxes it as if the employee
+           earns ₦6,000,000/year for the whole year, pushing it into a far
+           higher bracket than it belongs in. Instead this uses cumulative
+           top-slicing: tax is computed on the employee's actual cumulative
+           taxable income for the tax year to date (``ytd_taxable_prior``)
+           plus this payment, under the same PAYE bracket table; the tax
+           already withheld year-to-date (``ytd_paye_withheld_prior``) is
+           then subtracted, and only the difference is withheld now.
         """
         comp = components or {
             f: _d(getattr(employee, f, 0)) for f in CompensationService.COMPONENTS
@@ -288,10 +367,21 @@ class PayrollService:
             ZERO,
             gross - employee_pension - nhf - monthly_rent_relief - life_assurance,
         )
-        annual_paye = cls.calculate_annual_paye(taxable_income * 12)
-        # Quantize once at the annual total, then divide — no per-bracket rounding drift
-        annual_paye = annual_paye.quantize(CENTS, rounding='ROUND_HALF_UP')
-        monthly_paye = (annual_paye / 12).quantize(CENTS, rounding='ROUND_HALF_UP')
+
+        if ytd_taxable_prior is not None:
+            # ── Cumulative top-slicing for non-recurring payments ────────────
+            ytd_prior = _d(ytd_taxable_prior)
+            withheld_prior = _d(ytd_paye_withheld_prior)
+            cumulative_taxable = ytd_prior + taxable_income
+            tax_on_cumulative = cls.calculate_annual_paye(cumulative_taxable).quantize(
+                CENTS, rounding='ROUND_HALF_UP'
+            )
+            monthly_paye = max(ZERO, tax_on_cumulative - withheld_prior)
+        else:
+            annual_paye = cls.calculate_annual_paye(taxable_income * 12)
+            # Quantize once at the annual total, then divide — no per-bracket rounding drift
+            annual_paye = annual_paye.quantize(CENTS, rounding='ROUND_HALF_UP')
+            monthly_paye = (annual_paye / 12).quantize(CENTS, rounding='ROUND_HALF_UP')
 
         # Exempt employees (diplomatic, approved expatriate relief)
         if tax_profile and tax_profile.paye_exempt:
@@ -315,6 +405,27 @@ class PayrollService:
             'total_deductions': total_deductions,
             'net_salary': net,
         }
+
+    @staticmethod
+    def _months_served_in_year(employee, year, as_of):
+        """
+        Whole calendar months served within ``year`` up to ``as_of``, capped
+        at 12 and floored at 0. An employee hired mid-year accrues a
+        proportionate 13th-month payout rather than a full month's worth
+        regardless of tenure.
+        """
+        hire = employee.hire_date
+        if not hire:
+            return 0
+        year_start = date(year, 1, 1)
+        effective_start = max(hire, year_start)
+        if effective_start > as_of:
+            return 0
+        months = (as_of.year - effective_start.year) * 12 + (as_of.month - effective_start.month)
+        if as_of.day < effective_start.day:
+            months -= 1
+        months += 1  # inclusive of the start month once a full month has elapsed
+        return max(0, min(12, months))
 
     @classmethod
     def _calc_overtime_pay(cls, basic_salary, overtime_hours):
@@ -478,11 +589,64 @@ class PayrollService:
             a.state_code: a for a in TaxAuthority.objects.filter(organisation=org)
         }
 
+        # Preloaded once, matching the tax_profiles/comp_records pattern above —
+        # no per-employee holiday query inside the loop.
+        holiday_dates = PublicHolidayService.holiday_dates_for(org, period_start, period_end)
+
+        # ── YTD figures for non-recurring payment types (A.4) ────────────────
+        # 13th month / bonus / arrears / off-cycle / supplementary / final-
+        # settlement runs must NOT annualise the payment independently — see
+        # calculate_employee_paye's cumulative top-slicing mode. One aggregate
+        # query for every employee in this run, never per-employee.
+        is_non_recurring = payroll_run.run_type in cls.NON_RECURRING_RUN_TYPES
+        thirteenth_basis = get_settings(org).thirteenth_month_basis
+
+        # A PENDING leave-encashment adjustment landing in an otherwise
+        # REGULAR run is a one-off payment too — same over-annualisation risk
+        # as a 13th-month/bonus run, just for a single employee instead of
+        # the whole run. Determined per-employee (a REGULAR run stays
+        # REGULAR for everyone else in it); pending_adjustments/
+        # adjustments_by_emp are already preloaded above.
+        encashment_emp_ids = {
+            adj.employee_id for adj in pending_adjustments
+            if adj.adjustment_type == PayrollAdjustment.ENCASHMENT
+        }
+        # Employees needing cumulative top-slicing this run: every employee
+        # if the run itself is non-recurring, plus (for a REGULAR/other run)
+        # anyone carrying a pending encashment this period.
+        top_slicing_emp_ids = (
+            set(emp_ids) if is_non_recurring else encashment_emp_ids
+        )
+
+        ytd_taxable_by_emp: dict = {}
+        ytd_paye_by_emp: dict = {}
+        if top_slicing_emp_ids:
+            from django.db.models import Sum as _Sum
+            ytd_rows = (
+                PayslipLine.objects
+                .filter(
+                    organisation=org, employee_id__in=top_slicing_emp_ids,
+                    payroll_run__period_year=year,
+                    # Only count runs that actually reached a committed state.
+                    # DRAFT/PROCESSING runs can be previewed and abandoned, but
+                    # run_payroll() writes PayslipLine rows on every calculation
+                    # (delete-and-recreate) well before approval — an abandoned
+                    # preview run must not inflate YTD PAYE already withheld.
+                    payroll_run__status__in=[PayrollRun.APPROVED, PayrollRun.PAID],
+                )
+                .exclude(payroll_run=payroll_run)
+                .values('employee_id')
+                .annotate(taxable=_Sum('taxable_income'), paye=_Sum('paye_tax'))
+            )
+            for row in ytd_rows:
+                ytd_taxable_by_emp[row['employee_id']] = _d(row['taxable'])
+                ytd_paye_by_emp[row['employee_id']] = _d(row['paye'])
+
         totals = {
             'gross': ZERO, 'deductions': ZERO, 'net': ZERO,
             'paye': ZERO, 'pension_emp': ZERO, 'pension_employer': ZERO,
             'nhf': ZERO, 'nsitf': ZERO, 'bonus': ZERO, 'overtime': ZERO,
-            'benefits': ZERO, 'benefits_er': ZERO,
+            'benefits': ZERO, 'benefits_er': ZERO, 'encashment': ZERO,
         }
 
         payslips = []
@@ -495,7 +659,7 @@ class PayrollService:
         for emp in employees:
             components = CompensationService.components_as_of(emp, period_end, comp_records)
             factor, days_worked, days_in_period = ProrationService.factor_for(
-                emp, period_start, period_end
+                emp, period_start, period_end, holiday_dates
             )
 
             # Bonuses — paid in full, not prorated
@@ -506,9 +670,20 @@ class PayrollService:
                 b.applied_in_run = payroll_run
                 bonuses_to_update.append(b)
 
-            # Arrears / back-pay — taxed in the period paid
+            # Arrears / back-pay / encashment — taxed in the period paid.
+            # Encashment is tracked as its own sub-total (not just folded into
+            # adjustment_total) because it is a settlement of the Accrued Leave
+            # liability (GL account 2850), not fresh payroll expense — see
+            # AccountingService.post_leave_encashment_settlement. It still adds
+            # to extra_gross/PAYE like any other adjustment (the employee is
+            # taxed on the cash they receive); only the GL routing differs.
             emp_adjustments = adjustments_by_emp.get(emp.id, [])
             adjustment_total = sum((_d(a.amount) for a in emp_adjustments), ZERO)
+            encashment_total = sum(
+                (_d(a.amount) for a in emp_adjustments
+                 if a.adjustment_type == PayrollAdjustment.ENCASHMENT),
+                ZERO,
+            )
             for a in emp_adjustments:
                 a.status = PayrollAdjustment.APPLIED
                 a.applied_in_run = payroll_run
@@ -519,12 +694,49 @@ class PayrollService:
 
             extra_gross = bonus_total + overtime_pay + adjustment_total
 
+            # 13th-month pro-rata (A.4): months_served/12 × basic-or-gross,
+            # instead of paying a full month regardless of tenure. Salary
+            # components are zeroed for this run type (the payout itself
+            # becomes the sole earnings line via extra_gross) so the payslip
+            # cannot double-count a regular month's basic pay.
+            if payroll_run.run_type == PayrollRun.THIRTEENTH:
+                # basis_value must be computed from the UNPRORATED, full
+                # monthly components — this run type pays a fraction of a
+                # full month's basic/gross, not a fraction of an
+                # already-prorated figure.
+                months_served = cls._months_served_in_year(emp, year, period_end)
+                basis_value = (
+                    components['basic_salary'] if thirteenth_basis == PayrollSettings.THIRTEENTH_BASIC
+                    else sum(components.values(), ZERO)
+                )
+                thirteenth_month_amount = (
+                    basis_value * Decimal(months_served) / Decimal('12')
+                ).quantize(CENTS)
+                # Stored as bonus_amount so it is visible on the payslip as its
+                # own line, not buried inside gross_salary.
+                bonus_total += thirteenth_month_amount
+                extra_gross += thirteenth_month_amount
+                # Salary components themselves are not re-paid in a 13th-month run.
+                factor = ZERO
+                components = {k: ZERO for k in components}
+
+            # Per-employee determination: this employee's PAYE routes through
+            # cumulative top-slicing if either the whole run is non-recurring,
+            # or — for an otherwise-REGULAR run — THIS employee specifically
+            # carries a pending leave-encashment adjustment this period. Other
+            # employees in the same REGULAR run are unaffected.
+            paye_kwargs = {}
+            if emp.id in top_slicing_emp_ids:
+                paye_kwargs['ytd_taxable_prior'] = ytd_taxable_by_emp.get(emp.id, ZERO)
+                paye_kwargs['ytd_paye_withheld_prior'] = ytd_paye_by_emp.get(emp.id, ZERO)
+
             calc = cls.calculate_employee_paye(
                 emp,
                 extra_gross=extra_gross,
                 tax_profile=tax_profiles.get(emp.id),
                 components=components,
                 proration_factor=factor,
+                **paye_kwargs,
             )
 
             absent_days = att_absent_by_emp.get(emp.id, ZERO)
@@ -612,6 +824,7 @@ class PayrollService:
             totals['overtime'] += overtime_pay
             totals['benefits'] += benefit_emp
             totals['benefits_er'] += benefit_er
+            totals['encashment'] += encashment_total
 
         PayslipLine.objects.bulk_create(payslips)
 
@@ -652,6 +865,7 @@ class PayrollService:
         payroll_run.total_benefits_employer = totals['benefits_er']
         payroll_run.total_bonus = totals['bonus']
         payroll_run.total_overtime = totals['overtime']
+        payroll_run.total_encashment = totals['encashment']
         payroll_run.status = PayrollRun.PROCESSING
         payroll_run.save()
 
@@ -1070,6 +1284,114 @@ class LeaveService:
         balance.save(update_fields=['taken_days', 'pending_days'])
         return leave_request
 
+    @classmethod
+    def carry_forward_year_end(cls, organisation, prior_year, new_year):
+        """
+        Recompute-and-SET (never increment) new_year's ``carried_forward`` for
+        every employee/paid-leave-type balance to
+        min(prior_year_available_days, leave_type.carry_forward_max).
+
+        Safe to re-run: since this always overwrites rather than adds, running
+        it twice for the same year pair is a no-op the second time (assuming
+        no new leave activity happened in between).
+        """
+        prior_balances = list(
+            LeaveBalance.objects.filter(organisation=organisation, year=prior_year)
+            .select_related('leave_type', 'employee')
+        )
+        updated = 0
+        for prior in prior_balances:
+            if not prior.leave_type.is_paid:
+                continue
+            carry = min(max(ZERO, prior.available_days), _d(prior.leave_type.carry_forward_max))
+            new_balance = cls.get_or_create_balance(prior.employee, prior.leave_type, new_year)
+            if _d(new_balance.carried_forward) != carry:
+                new_balance.carried_forward = carry
+                new_balance.save(update_fields=['carried_forward'])
+                updated += 1
+        return updated
+
+    @classmethod
+    def carry_forward_preview(cls, organisation, prior_year):
+        """
+        Read-only preview of what a carry-forward run would set for each
+        employee/leave-type, without writing anything. Powers the frontend's
+        year-end review table.
+        """
+        prior_balances = (
+            LeaveBalance.objects.filter(
+                organisation=organisation, year=prior_year, leave_type__is_paid=True,
+            )
+            .select_related('leave_type', 'employee')
+        )
+        rows = []
+        for prior in prior_balances:
+            carry = min(max(ZERO, prior.available_days), _d(prior.leave_type.carry_forward_max))
+            if carry <= ZERO:
+                continue
+            rows.append({
+                'employee_id': str(prior.employee_id),
+                'employee_name': prior.employee.full_name,
+                'leave_type': prior.leave_type.name,
+                'available_days': prior.available_days,
+                'carry_forward_max': prior.leave_type.carry_forward_max,
+                'projected_carried_forward': carry,
+            })
+        return rows
+
+
+class LeaveEncashmentService:
+    """
+    Leave encashment: converting unused paid-leave days into cash, via the
+    existing PayrollAdjustment mechanism (ENCASHMENT type) so it flows into
+    PayrollService's extra_gross the same way arrears/back-pay already do.
+    """
+
+    @staticmethod
+    def daily_rate(employee):
+        """Gross monthly salary / WORKING_DAYS_PER_MONTH — the standard Nigerian
+        payroll convention for a daily-rate conversion. Shares its divisor with
+        AccountingService.post_leave_accrual_true_up's daily-rate calc via the
+        single canonical constant in constants.py, so the two can never
+        silently diverge."""
+        gross = _d(employee.gross_salary)
+        return (gross / Decimal(WORKING_DAYS_PER_MONTH)).quantize(CENTS)
+
+    @classmethod
+    @transaction.atomic
+    def request_encashment(cls, employee, leave_type, days, reason=''):
+        """
+        Create a pending PayrollAdjustment(ENCASHMENT) for ``days`` of the
+        given paid leave type, and hold those days against the balance
+        (mirrors how a leave request holds pending_days).
+        """
+        if not leave_type.is_paid:
+            raise ValueError('Only paid leave types can be encashed.')
+        days = _d(days)
+        if days <= ZERO:
+            raise ValueError('Days must be greater than zero.')
+
+        balance = LeaveService.get_or_create_balance(employee, leave_type, date.today().year)
+        if days > balance.available_days:
+            raise ValueError(
+                f'Only {balance.available_days} days are available to encash.'
+            )
+
+        rate = cls.daily_rate(employee)
+        amount = (rate * days).quantize(CENTS)
+
+        adjustment = PayrollAdjustment.objects.create(
+            organisation=employee.organisation,
+            employee=employee,
+            adjustment_type=PayrollAdjustment.ENCASHMENT,
+            amount=amount,
+            reason=reason or f'Leave encashment — {leave_type.name} ({days} days)',
+            status=PayrollAdjustment.PENDING,
+        )
+        balance.taken_days = _d(balance.taken_days) + days
+        balance.save(update_fields=['taken_days'])
+        return adjustment
+
 
 class EWAService:
     """
@@ -1219,3 +1541,188 @@ class EWAService:
             days_worked_at_request=info['days_worked'],
             status=AdvanceRequest.PENDING if policy.require_approval else AdvanceRequest.APPROVED,
         )
+
+
+class OffboardingService:
+    """Employee exit workflow: case creation, clearance checklist, final settlement, revocation."""
+
+    @staticmethod
+    def seed_checklist_template(organisation):
+        """Idempotently create the org's default checklist template items."""
+        existing = set(
+            OffboardingChecklistTemplate.objects.filter(organisation=organisation)
+            .values_list('item_name', flat=True)
+        )
+        to_create = [
+            OffboardingChecklistTemplate(
+                organisation=organisation, item_name=name, department=dept, order=i,
+            )
+            for i, (name, dept) in enumerate(DEFAULT_OFFBOARDING_CHECKLIST_ITEMS)
+            if name not in existing
+        ]
+        if to_create:
+            OffboardingChecklistTemplate.objects.bulk_create(to_create)
+        return OffboardingChecklistTemplate.objects.filter(organisation=organisation)
+
+    @classmethod
+    @transaction.atomic
+    def create_case(cls, employee, initiated_by, reason, last_working_day, notice_period_days=0, notes=''):
+        """Create a case and populate its checklist from the org's template."""
+        case = OffboardingCase.objects.create(
+            organisation=employee.organisation,
+            employee=employee,
+            initiated_by=initiated_by,
+            reason=reason,
+            last_working_day=last_working_day,
+            notice_period_days=notice_period_days,
+            notes=notes,
+        )
+        templates = cls.seed_checklist_template(employee.organisation)
+        items = [
+            ClearanceChecklistItem(
+                organisation=employee.organisation, case=case,
+                item_name=t.item_name, department=t.department, order=t.order,
+            )
+            for t in templates
+        ]
+        if items:
+            ClearanceChecklistItem.objects.bulk_create(items)
+        return case
+
+    @staticmethod
+    def compute_gratuity(employee, settings_row, last_working_day):
+        """
+        Gratuity = gratuity_rate_per_year × completed years of service.
+
+        There is NO universal Nigerian statutory gratuity formula, so this is
+        purely a per-org policy figure (PayrollSettings.gratuity_rate_per_year,
+        default 0 = off). Routed as fully taxable ordinary income — no
+        exemption logic is applied here, pending practitioner confirmation of
+        whether any portion of gratuity qualifies for tax-exempt treatment
+        under NTA 2025.
+        """
+        rate = _d(settings_row.gratuity_rate_per_year)
+        if rate <= ZERO or not employee.hire_date:
+            return ZERO
+        days_served = (last_working_day - employee.hire_date).days
+        completed_years = max(0, days_served // 365)
+        return (rate * completed_years).quantize(CENTS)
+
+    @classmethod
+    @transaction.atomic
+    def run_final_settlement(cls, case, processed_by):
+        """
+        Raise a FINAL_SETTLEMENT payroll run for the departing employee,
+        including: pro-rated final pay (via the normal run engine, since
+        termination_date bounds proration automatically), unused-leave
+        encashment (positive balance) or recovery (negative balance — a
+        NEGATIVE balance at exit is deducted, never written off), and
+        gratuity if the org has a policy rate configured.
+        """
+        employee = case.employee
+        org = employee.organisation
+        settings_row = get_settings(org)
+        year, month = case.last_working_day.year, case.last_working_day.month
+
+        # Unused leave payout / recovery across every paid leave type the
+        # employee could plausibly carry a balance for. ``is_active`` only
+        # gates whether a leave type accepts NEW bookings/accruals going
+        # forward — it must NOT gate whether an already-accrued balance is
+        # honoured at exit. A type deactivated after the employee accrued
+        # against it would otherwise be silently skipped here, and the
+        # employee would lose real encashable days with no payout and no
+        # error. So: every leave type the employee has a LeaveBalance row for
+        # this year, plus every currently-active paid type (covers a type the
+        # employee never touched but is still entitled to at exit), unioned
+        # and de-duplicated — filtered only by is_paid, never by is_active.
+        existing_balance_type_ids = set(
+            LeaveBalance.objects.filter(
+                organisation=org, employee=employee, year=year, leave_type__is_paid=True,
+            ).values_list('leave_type_id', flat=True)
+        )
+        active_paid_type_ids = set(
+            LeaveType.objects.filter(
+                organisation=org, is_paid=True, is_active=True,
+            ).values_list('id', flat=True)
+        )
+        leave_type_ids = existing_balance_type_ids | active_paid_type_ids
+        for leave_type in LeaveType.objects.filter(organisation=org, id__in=leave_type_ids):
+            balance = LeaveService.get_or_create_balance(employee, leave_type, year)
+            available = balance.available_days
+            if available == ZERO:
+                continue
+            rate = LeaveEncashmentService.daily_rate(employee)
+            if available > ZERO:
+                amount = (rate * available).quantize(CENTS)
+                reason = f'Final settlement — unused {leave_type.name} payout ({available} days)'
+            else:
+                # Negative balance: recovered (deducted), not written off.
+                amount = (rate * available).quantize(CENTS)  # available is negative → amount negative
+                reason = f'Final settlement — {leave_type.name} recovery (overdrawn {-available} days)'
+            PayrollAdjustment.objects.create(
+                organisation=org, employee=employee,
+                adjustment_type=PayrollAdjustment.ENCASHMENT,
+                amount=amount, reason=reason, status=PayrollAdjustment.PENDING,
+            )
+
+        gratuity = cls.compute_gratuity(employee, settings_row, case.last_working_day)
+        if gratuity > ZERO:
+            PayrollAdjustment.objects.create(
+                organisation=org, employee=employee,
+                adjustment_type=PayrollAdjustment.BACKPAY,
+                amount=gratuity,
+                reason=(
+                    f'Gratuity — {gratuity} (taxable ordinary income; '
+                    f'exemption treatment pending practitioner sign-off)'
+                ),
+                status=PayrollAdjustment.PENDING,
+            )
+
+        last = (
+            PayrollRun.objects
+            .filter(organisation=org, period_year=year, period_month=month, run_type=PayrollRun.FINAL_SETTLEMENT)
+            .order_by('-sequence').first()
+        )
+        next_seq = (last.sequence + 1) if last else 1
+        run = PayrollRun.objects.create(
+            organisation=org, period_year=year, period_month=month,
+            run_type=PayrollRun.FINAL_SETTLEMENT, sequence=next_seq,
+            processed_by=processed_by,
+            period_start=date(year, month, 1),
+            period_end=case.last_working_day,
+            pay_frequency=settings_row.default_pay_frequency,
+        )
+        run = PayrollService.run_payroll(run)
+        case.final_settlement_run = run
+        case.save(update_fields=['final_settlement_run'])
+        return run
+
+    @classmethod
+    @transaction.atomic
+    def complete(cls, case, user=None):
+        """
+        Finalize an offboarding case: deactivate the Membership row for THIS
+        organisation only — never the User account, since a user may hold
+        memberships in other organisations. This is only ever triggered by an
+        explicit finalize action, never by merely setting termination_date
+        (HR routinely back-plans a future termination date without meaning to
+        revoke access yet).
+        """
+        from apps.tenancy.models import Membership
+
+        employee = case.employee
+        employee.termination_date = employee.termination_date or case.last_working_day
+        employee.is_active = False
+        employee.save(update_fields=['termination_date', 'is_active'])
+
+        if employee.user_id:
+            Membership.objects.filter(
+                organisation=employee.organisation, user=employee.user,
+            ).update(is_active=False)
+
+        from django.utils import timezone
+        case.status = OffboardingCase.COMPLETED
+        case.completed_by = user
+        case.completed_at = timezone.now()
+        case.save(update_fields=['status', 'completed_by', 'completed_at'])
+        return case

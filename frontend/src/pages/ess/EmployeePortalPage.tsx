@@ -1,19 +1,32 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Banknote, Briefcase, CalendarDays, FileText, Loader2, LogOut, Plus,
-  ShieldCheck, User as UserIcon, Wallet, X,
+  Banknote, Briefcase, CalendarDays, Download, FileText, Loader2, LogOut, Plus,
+  ShieldCheck, Upload, User as UserIcon, Wallet, X,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 import DateInput from '@/components/DateInput'
 import { confirmDialog } from '@/lib/dialog'
 import { essApi } from '@/services/api'
+import { hrEssApi } from '@/services/hrApi'
+import { saveBlobFile } from '@/lib/saveBlobFile'
 import { formatCurrency, formatDate, setActiveCurrency } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
 import type {
   AdvanceRequest, EmployeeBenefit, EmployeeDocument, EssSummary,
   LeaveBalance, LeaveRequest, LeaveType, PayslipLine,
 } from '@/types'
+
+// Document types an employee may self-upload from the portal — mirrors
+// EmployeeDocument.EMPLOYEE_UPLOADABLE_TYPES on the backend (never 'contract').
+const EMPLOYEE_UPLOADABLE_TYPES: { value: string; label: string }[] = [
+  { value: 'cv', label: 'CV / Resume' },
+  { value: 'id', label: 'ID / Passport' },
+  { value: 'certificate', label: 'Certificate' },
+  { value: 'work_permit', label: 'Work Permit / Visa' },
+  { value: 'professional_licence', label: 'Professional Licence' },
+  { value: 'other', label: 'Other' },
+]
 
 type Tab = 'overview' | 'payslips' | 'leave' | 'benefits' | 'documents' | 'advances'
 
@@ -71,6 +84,15 @@ export default function EmployeePortalPage() {
   const [benefits, setBenefits] = useState<EmployeeBenefit[]>([])
   const [documents, setDocuments] = useState<EmployeeDocument[]>([])
   const [advances, setAdvances] = useState<AdvanceRequest[]>([])
+
+  // Document self-upload (A.5)
+  const [uploadDocType, setUploadDocType] = useState('cv')
+  const [uploadDocFile, setUploadDocFile] = useState<File | null>(null)
+  const [uploadingDoc, setUploadingDoc] = useState(false)
+  const uploadFileRef = useRef<HTMLInputElement>(null)
+
+  // Payslip PDF download (A.5)
+  const [downloadingSlip, setDownloadingSlip] = useState<string | null>(null)
 
   const [showLeave, setShowLeave] = useState(false)
   const [leaveForm, setLeaveForm] = useState({
@@ -190,6 +212,39 @@ export default function EmployeePortalPage() {
       await loadTab('leave')
     } catch {
       toast.error('Could not cancel the request')
+    }
+  }
+
+  async function downloadPayslip(p: PayslipRow) {
+    setDownloadingSlip(p.id)
+    try {
+      const res = await hrEssApi.downloadPayslipPdf(p.id)
+      saveBlobFile(res.data, `Payslip-${p.period_year}${String(p.period_month).padStart(2, '0')}.pdf`)
+    } catch {
+      toast.error('Could not download the payslip')
+    } finally {
+      setDownloadingSlip(null)
+    }
+  }
+
+  async function uploadDocument() {
+    if (!uploadDocFile) { toast.error('Select a file first'); return }
+    setUploadingDoc(true)
+    try {
+      await hrEssApi.uploadDocument(uploadDocFile, { document_type: uploadDocType, name: uploadDocFile.name })
+      toast.success('Document uploaded — pending HR review')
+      setUploadDocFile(null)
+      if (uploadFileRef.current) uploadFileRef.current.value = ''
+      setDocuments([])
+      await loadTab('documents')
+    } catch (err: unknown) {
+      const apiErr = (err as { response?: { data?: { error?: unknown } } })?.response?.data?.error
+      const msg = typeof apiErr === 'string'
+        ? apiErr
+        : ((apiErr as { message?: string })?.message ?? 'Could not upload the document')
+      toast.error(msg)
+    } finally {
+      setUploadingDoc(false)
     }
   }
 
@@ -450,9 +505,22 @@ export default function EmployeePortalPage() {
                           {formatCurrency(p.net_salary)}
                         </td>
                         <td className="px-4 py-3 text-right">
-                          <button onClick={() => setViewSlip(p)} className="text-xs text-brand-400 hover:underline">
-                            View
-                          </button>
+                          <div className="flex items-center justify-end gap-3">
+                            <button onClick={() => setViewSlip(p)} className="text-xs text-brand-400 hover:underline">
+                              View
+                            </button>
+                            <button
+                              onClick={() => downloadPayslip(p)}
+                              disabled={downloadingSlip === p.id}
+                              className="text-xs text-slate-400 hover:text-white flex items-center gap-1 disabled:opacity-50"
+                              title="Download PDF"
+                            >
+                              {downloadingSlip === p.id
+                                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                : <Download className="w-3.5 h-3.5" />}
+                              PDF
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -557,37 +625,89 @@ export default function EmployeePortalPage() {
         )}
 
         {tab === 'documents' && (
-          <div className="card overflow-hidden">
-            {documents.length === 0 ? (
-              <p className="p-10 text-center text-sm text-slate-400">No documents on file.</p>
-            ) : (
-              <table className="w-full text-sm">
-                <thead className="bg-white/[0.03]">
-                  <tr className="text-left text-xs uppercase tracking-wider text-slate-400">
-                    <th className="px-4 py-3">Name</th>
-                    <th className="px-4 py-3">Type</th>
-                    <th className="px-4 py-3">Size</th>
-                    <th className="px-4 py-3"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {documents.map((d) => (
-                    <tr key={d.id} className="border-t border-white/5">
-                      <td className="px-4 py-3 text-white">{d.name}</td>
-                      <td className="px-4 py-3 text-slate-300 capitalize">{d.document_type}</td>
-                      <td className="px-4 py-3 text-slate-400 font-mono text-xs">{d.file_size_display}</td>
-                      <td className="px-4 py-3 text-right">
-                        {d.file_url && (
-                          <a href={d.file_url} target="_blank" rel="noreferrer" className="text-xs text-brand-400 hover:underline">
-                            Open
-                          </a>
-                        )}
-                      </td>
+          <div className="space-y-4">
+            <div className="card p-4 space-y-3">
+              <p className="text-sm font-semibold text-white flex items-center gap-2">
+                <Upload className="w-4 h-4 text-brand-400" /> Upload a document
+              </p>
+              <p className="text-xs text-slate-500">
+                Self-uploaded documents are flagged for HR review — they don&rsquo;t replace official records.
+                Employment contracts cannot be uploaded here.
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <select className="input max-w-[220px]" value={uploadDocType} onChange={(e) => setUploadDocType(e.target.value)}>
+                  {EMPLOYEE_UPLOADABLE_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+                </select>
+                <input
+                  ref={uploadFileRef}
+                  type="file"
+                  className="hidden"
+                  onChange={(e) => setUploadDocFile(e.target.files?.[0] ?? null)}
+                />
+                <button
+                  type="button"
+                  onClick={() => uploadFileRef.current?.click()}
+                  className="input text-left text-slate-400 hover:text-white flex items-center gap-2 max-w-[240px]"
+                >
+                  <FileText className="w-4 h-4 shrink-0" />
+                  <span className="truncate">{uploadDocFile ? uploadDocFile.name : 'Choose file…'}</span>
+                </button>
+                <button
+                  onClick={uploadDocument}
+                  disabled={uploadingDoc || !uploadDocFile}
+                  className="btn-primary text-sm flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  {uploadingDoc ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+                  Upload
+                </button>
+              </div>
+            </div>
+
+            <div className="card overflow-hidden">
+              {documents.length === 0 ? (
+                <p className="p-10 text-center text-sm text-slate-400">No documents on file.</p>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead className="bg-white/[0.03]">
+                    <tr className="text-left text-xs uppercase tracking-wider text-slate-400">
+                      <th className="px-4 py-3">Name</th>
+                      <th className="px-4 py-3">Type</th>
+                      <th className="px-4 py-3">Size</th>
+                      <th className="px-4 py-3">Source</th>
+                      <th className="px-4 py-3"></th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
+                  </thead>
+                  <tbody>
+                    {documents.map((d) => {
+                      const anyDoc = d as unknown as { uploaded_by_employee?: boolean; reviewed_at?: string | null }
+                      return (
+                        <tr key={d.id} className="border-t border-white/5">
+                          <td className="px-4 py-3 text-white">{d.name}</td>
+                          <td className="px-4 py-3 text-slate-300 capitalize">{d.document_type.replace(/_/g, ' ')}</td>
+                          <td className="px-4 py-3 text-slate-400 font-mono text-xs">{d.file_size_display}</td>
+                          <td className="px-4 py-3">
+                            {anyDoc.uploaded_by_employee ? (
+                              <span className={`text-[10px] px-1.5 py-0.5 rounded ${anyDoc.reviewed_at ? 'bg-emerald-500/15 text-emerald-400' : 'bg-amber-500/15 text-amber-400'}`}>
+                                {anyDoc.reviewed_at ? 'Reviewed' : 'Pending review'}
+                              </span>
+                            ) : (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-slate-400">Official record</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            {d.file_url && (
+                              <a href={d.file_url} target="_blank" rel="noreferrer" className="text-xs text-brand-400 hover:underline">
+                                Open
+                              </a>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
           </div>
         )}
 

@@ -736,11 +736,41 @@ def depreciation_method_report(organisation, date_from: date, date_to: date, **_
 # ── Payroll & HR ─────────────────────────────────────────────────────────────
 
 def employee_list(organisation, date_from: date, date_to: date, **_):
-    from apps.payroll.models import Employee
+    """
+    Employee roster. Widened (A.7) to include state_of_residence, manager name,
+    and an offboarding-aware status column: an active offboarding case is
+    surfaced by name rather than the row being silently dropped mid-exit —
+    the previous is_active=True filter would have hidden a leaver entirely
+    for as long as their case was open but Employee.is_active hadn't yet been
+    flipped by OffboardingService.complete.
+    """
+    from apps.payroll.models import Employee, OffboardingCase
+
+    employees = list(
+        Employee.objects.filter(organisation=organisation)
+        .select_related('manager')
+        .order_by("last_name", "first_name")
+    )
+    open_cases = {
+        c.employee_id: c
+        for c in OffboardingCase.objects.filter(
+            organisation=organisation, employee__in=employees,
+        ).exclude(status=OffboardingCase.CANCELLED).order_by('-created_at')
+    }
 
     rows = []
-    for e in Employee.objects.filter(
-            organisation=organisation, is_active=True).order_by("last_name", "first_name"):
+    for e in employees:
+        case = open_cases.get(e.id)
+        if not e.is_active and case is None:
+            # Fully deactivated with no offboarding trail at all (e.g. a
+            # legacy record) — keep excluding these, matching prior behaviour.
+            continue
+        if case is not None:
+            employment_status = f"Offboarding — {case.get_status_display()}"
+        elif e.is_active:
+            employment_status = 'Active'
+        else:
+            employment_status = 'Inactive'
         rows.append({
             "employee_id": e.employee_id,
             "name": f"{e.first_name} {e.last_name}".strip(),
@@ -748,6 +778,9 @@ def employee_list(organisation, date_from: date, date_to: date, **_):
             "employment_type": e.employment_type,
             "hire_date": str(e.hire_date),
             "basic_salary": e.basic_salary,
+            "state_of_residence": e.get_state_of_residence_display() if e.state_of_residence else '',
+            "manager": f"{e.manager.first_name} {e.manager.last_name}".strip() if e.manager else '',
+            "status": employment_status,
         })
     return {"rows": rows}
 
@@ -769,12 +802,16 @@ def payroll_report(organisation, date_from: date, date_to: date, **_):
         rows.append({
             "run_number": r.run_number,
             "period": f"{r.period_year}-{r.period_month:02d}",
+            "run_type": r.get_run_type_display(),
             "status": r.status,
             "gross": r.total_gross, "deductions": r.total_deductions,
             "net": r.total_net, "paye": r.total_paye,
             "pension_employee": r.total_pension_employee,
             "pension_employer": r.total_pension_employer,
             "nhf": r.total_nhf,
+            "total_itf": r.total_itf,
+            "total_benefits": r.total_benefits,
+            "total_benefits_employer": r.total_benefits_employer,
         })
         totals["gross"] += Decimal(str(r.total_gross or 0))
         totals["deductions"] += Decimal(str(r.total_deductions or 0))
@@ -785,9 +822,25 @@ def payroll_report(organisation, date_from: date, date_to: date, **_):
 
 
 def attendance_summary(organisation, date_from: date, date_to: date, **_):
-    """Attendance counts per employee for the period."""
+    """
+    Attendance counts per employee for the period.
+
+    Widened (A.7): reuses PublicHolidayService.holiday_dates_for — the exact
+    same holiday-aware day set the payroll engine loads in run_payroll — so
+    this report's classification of a day can never drift from what payroll
+    actually paid for. A public-holiday date that also has an Attendance row
+    is called out via is_holiday on that row rather than re-deriving holidays
+    from scratch here.
+
+    Also splits the single 'leave' bucket into paid vs unpaid: approved PAID
+    leave writes Attendance.status='leave' (LeaveService._write_attendance);
+    unpaid leave writes status='absent'. The previous version bucketed both
+    under whatever raw status string appeared, silently merging paid leave
+    with true absence under 'absent'. This surfaces them as separate columns.
+    """
     from collections import defaultdict
     from apps.payroll.models import Attendance
+    from apps.payroll.services import PublicHolidayService
 
     qs = Attendance.objects.filter(organisation=organisation).select_related("employee")
     if date_from:
@@ -795,15 +848,32 @@ def attendance_summary(organisation, date_from: date, date_to: date, **_):
     if date_to:
         qs = qs.filter(date__lte=date_to)
 
+    holiday_dates = (
+        PublicHolidayService.holiday_dates_for(organisation, date_from, date_to)
+        if date_from and date_to else set()
+    )
+
     agg: "dict[str, dict]" = defaultdict(lambda: {
-        "present": 0, "absent": 0, "half_day": 0, "leave": 0, "holiday": 0,
+        "present": 0, "paid_leave": 0, "unpaid_leave_absent": 0,
+        "half_day": 0, "holiday": 0, "public_holiday_overlap": 0,
         "overtime_hours": Decimal("0")})
     for a in qs:
         key = str(a.employee_id)
         row = agg[key]
         row["employee"] = (f"{a.employee.first_name} {a.employee.last_name}".strip()
                            if a.employee else "")
-        row[a.status] = row.get(a.status, 0) + 1
+        if a.status == Attendance.LEAVE:
+            row["paid_leave"] += 1
+        elif a.status == Attendance.ABSENT:
+            row["unpaid_leave_absent"] += 1
+        elif a.status == Attendance.HALF_DAY:
+            row["half_day"] += 1
+        elif a.status == Attendance.HOLIDAY:
+            row["holiday"] += 1
+        else:
+            row["present"] += 1
+        if a.date in holiday_dates:
+            row["public_holiday_overlap"] += 1
         row["overtime_hours"] += Decimal(str(a.overtime_hours or 0))
     return {"period_start": str(date_from), "period_end": str(date_to),
             "rows": sorted(agg.values(), key=lambda r: r.get("employee", ""))}

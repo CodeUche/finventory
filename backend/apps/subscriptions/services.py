@@ -248,144 +248,69 @@ class PaystackSubscriptionService:
         """
         Initialize a Paystack transaction for a subscription plan.
 
+        Delegates to PaymentEngine.initiate — kept as a thin wrapper so
+        existing callers (SubscriptionViewSet.initiate_payment action) don't
+        need to change. Public signature/return shape unchanged.
+
         Returns:
             { "authorization_url": "...", "reference": "...", "access_code": "..." }
 
         Raises:
             ValueError on Paystack API error or missing config.
         """
-        reference = f"SUB-{uuid.uuid4().hex[:16].upper()}"
-        # Paystack amounts are in kobo (1 NGN = 100 kobo)
-        amount_kobo = int(plan.price * 100)
+        from .models import PaymentHistory as _PH
+        from .payment_engine import PaymentEngine
 
-        payload = {
-            "email": user_email,
-            "amount": amount_kobo,
-            "reference": reference,
-            "currency": "NGN",
-            "metadata": {
-                "plan_id": str(plan.id),
-                "plan_slug": plan.slug,
-                "org_id": str(organisation.id),
-            },
-        }
-
-        try:
-            resp = requests.post(
-                f"{_PAYSTACK_API}/transaction/initialize",
-                json=payload,
-                headers=PaystackSubscriptionService._headers(),
-                timeout=15,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-        except requests.RequestException as e:
-            logger.error("Paystack initialize transaction failed for org %s: %s", organisation.id, e)
-            raise ValueError("Could not connect to Paystack. Please try again.") from e
-
-        if not data.get("status"):
-            msg = data.get("message", "Unknown Paystack error")
-            logger.error("Paystack initialize failed: %s", msg)
-            raise ValueError(f"Paystack error: {msg}")
-
-        # Record a pending payment so we can match the webhook/verify later
-        sub = _get_sub(organisation)
-        if sub:
-            PaymentHistory.objects.create(
-                subscription=sub,
-                amount=plan.price,
-                currency="NGN",
-                status=PaymentHistory.Status.FAILED,  # will be updated on success
-                provider_payment_id=reference,
-                description=f"Pending payment for {plan.name} plan",
-            )
-
-        logger.info(
-            "Paystack transaction initialized for org %s, plan %s, ref %s",
-            organisation.id, plan.slug, reference,
-        )
-        public_key = getattr(settings, "PAYSTACK_PUBLIC_KEY", "")
-        return {
-            "authorization_url": data["data"]["authorization_url"],
-            "reference": reference,
-            "access_code": data["data"].get("access_code", ""),
-            "public_key": public_key,
-            "amount_kobo": amount_kobo,
-            "email": user_email,
-        }
+        return PaymentEngine.initiate(organisation, _PH.Kind.SUBSCRIPTION, plan, user_email)
 
     @staticmethod
     def verify_payment(organisation, reference: str) -> Subscription:
         """
         Verify a Paystack transaction by reference and activate the subscription
-        if successful.
+        if successful. Delegates to PaymentEngine.activate — kept as a thin
+        wrapper so existing callers don't need to change.
 
         Called when the user returns to the app after completing payment.
 
         Raises:
-            ValueError if payment failed or reference not found.
+            ValueError if payment failed, reference not found, or the
+            reference does not belong to this organisation.
         """
-        try:
-            resp = requests.get(
-                f"{_PAYSTACK_API}/transaction/verify/{reference}",
-                headers=PaystackSubscriptionService._headers(),
-                timeout=15,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-        except requests.RequestException as e:
-            logger.error("Paystack verify transaction failed for ref %s: %s", reference, e)
-            raise ValueError("Could not verify payment with Paystack. Please try again.") from e
+        from .payment_engine import PaymentEngine
 
-        if not data.get("status") or data["data"].get("status") != "success":
-            raise ValueError("Payment was not successful. Please try again or contact support.")
-
-        tx = data["data"]
-        plan_id = tx.get("metadata", {}).get("plan_id")
-        try:
-            plan = Plan.objects.get(id=plan_id, is_active=True)
-        except Plan.DoesNotExist:
-            raise ValueError("Plan not found for this payment reference.")
-
-        return PaystackSubscriptionService._activate_subscription(
-            organisation, plan, reference, tx.get("amount", 0)
-        )
+        payment = PaymentEngine.activate(reference)
+        if payment.organisation_id and organisation is not None and payment.organisation_id != organisation.id:
+            raise ValueError("This payment reference does not belong to your organisation.")
+        # Refresh: `organisation` is the caller's in-memory instance and may
+        # have a stale cached `subscription` FK from before activation
+        # mutated (or newly created) the Subscription row.
+        organisation.refresh_from_db(fields=["subscription"])
+        sub = _get_sub(organisation)
+        if sub is None:
+            raise ValueError("Subscription not found after activation.")
+        return sub
 
     @staticmethod
     def activate_from_webhook(event_data: dict) -> None:
         """
         Activate a subscription from a Paystack charge.success webhook event.
         Called by the webhook view — must not raise (errors are logged only).
+
+        Delegates to PaymentEngine.activate. NOTE: the real webhook route
+        (apps/payments/views.py::_handle_webhook) now calls
+        PaymentEngine.activate directly for platform-signed events and no
+        longer routes through this method — this wrapper remains for any
+        direct/legacy callers and test coverage of the old behavior.
         """
         try:
             reference = event_data.get("reference", "")
-            metadata = event_data.get("metadata", {})
-            org_id = metadata.get("org_id")
-            plan_id = metadata.get("plan_id")
-            amount_kobo = event_data.get("amount", 0)
-
-            if not org_id or not plan_id:
-                logger.warning(
-                    "charge.success webhook missing org_id or plan_id in metadata: %s",
-                    metadata,
-                )
+            if not reference:
+                logger.warning("activate_from_webhook: missing reference in event_data: %s", event_data)
                 return
 
-            from apps.tenancy.models import Organisation
-            try:
-                org = Organisation.objects.select_related("subscription").get(id=org_id)
-                plan = Plan.objects.get(id=plan_id, is_active=True)
-            except (Organisation.DoesNotExist, Plan.DoesNotExist) as e:
-                logger.error("Webhook activation: org or plan not found (%s)", e)
-                return
-
-            PaystackSubscriptionService._activate_subscription(
-                org, plan, reference, amount_kobo
-            )
-            logger.info(
-                "Subscription activated via webhook for org %s, plan %s, ref %s",
-                org_id, plan_id, reference,
-            )
+            from .payment_engine import PaymentEngine
+            PaymentEngine.activate(reference)
+            logger.info("Subscription activated via webhook for ref %s", reference)
         except Exception as e:
             logger.error("Unexpected error in activate_from_webhook: %s", e, exc_info=True)
 

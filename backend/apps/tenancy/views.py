@@ -713,10 +713,17 @@ class OrganisationViewSet(viewsets.ModelViewSet):
             link.is_active = True
             link.save(update_fields=["is_active"])
 
-        # Provision accountant membership for the partner user
+        # Provision membership for the partner user. scope='messaging_only'
+        # grants ONLY a PARTNER_CONTACT membership (in-app messaging, nothing
+        # else); scope in ('operational', 'both') preserves the pre-existing
+        # accountant-role provisioning behaviour unchanged.
         # Accept optional custom permissions dict from the request body
         custom_permissions = request.data.get("permissions")
-        _provision_partner_membership(partner_profile.user, org, custom_permissions=custom_permissions)
+        _provision_partner_membership(
+            partner_profile.user, org,
+            custom_permissions=custom_permissions,
+            scope=req.scope,
+        )
 
         _audit_partner_event(request, org, "partner_access_approved",
                              f"Owner {request.user.email} approved access for {partner_profile.user.email}")
@@ -902,14 +909,56 @@ class OrganisationViewSet(viewsets.ModelViewSet):
 
 # ── Partner helper utilities ────────────────────────────────────────────────────
 
-def _provision_partner_membership(partner_user, org, custom_permissions=None):
+def _provision_partner_membership(partner_user, org, custom_permissions=None, scope=None):
     """
-    Create or reactivate an ACCOUNTANT membership for partner_user in org.
+    Create or reactivate a membership for partner_user in org.
+
+    scope='messaging_only' provisions a PARTNER_CONTACT membership only —
+    messaging access, nothing else — and returns early without touching
+    ModulePermission rows (PARTNER_CONTACT never reaches module-gated
+    endpoints; it sits below viewer in ROLE_HIERARCHY by construction).
+
+    Any other scope (None, 'operational', 'both') preserves the original
+    behaviour: an ACCOUNTANT membership with the standard/custom module
+    permission matrix applied.
+
+    Every path also stamps Membership.granted_scope with the incoming scope
+    value (defaulting to 'operational' when scope is falsy/None, matching
+    PartnerAccessRequest.Scope's own default). This is what
+    IsConversationParticipant checks to deny messaging to an
+    operational-scope ACCOUNTANT grant — role alone can't distinguish it from
+    a messaging_only/both grant, since 'operational' also uses the ACCOUNTANT
+    role for its non-messaging (payroll/salary) workflows.
 
     custom_permissions: optional dict {module_key: access_level} sent by the
     org owner via the approval modal. Falls back to the standard matrix if None.
     """
     from django.utils import timezone as tz
+
+    effective_scope = scope or "operational"
+
+    if scope == "messaging_only":
+        membership, _created = Membership.objects.get_or_create(
+            user=partner_user,
+            organisation=org,
+            defaults={
+                "role": Membership.Role.PARTNER_CONTACT,
+                "is_active": True,
+                "joined_at": tz.now(),
+                "granted_scope": effective_scope,
+            },
+        )
+        if (
+            not membership.is_active
+            or membership.role != Membership.Role.PARTNER_CONTACT
+            or membership.granted_scope != effective_scope
+        ):
+            membership.is_active = True
+            membership.role = Membership.Role.PARTNER_CONTACT
+            membership.granted_scope = effective_scope
+            membership.save(update_fields=["is_active", "role", "granted_scope"])
+        return membership
+
     EDIT_MODULES = {"reports", "accounting", "tax", "budget"}
     VIEW_MODULES = {
         "sales", "purchases", "bills", "expenses", "customers",
@@ -924,12 +973,14 @@ def _provision_partner_membership(partner_user, org, custom_permissions=None):
             "role": Membership.Role.ACCOUNTANT,
             "is_active": True,
             "joined_at": tz.now(),
+            "granted_scope": effective_scope,
         },
     )
-    if not membership.is_active:
+    if not membership.is_active or membership.granted_scope != effective_scope:
         membership.is_active = True
         membership.role = Membership.Role.ACCOUNTANT
-        membership.save(update_fields=["is_active", "role"])
+        membership.granted_scope = effective_scope
+        membership.save(update_fields=["is_active", "role", "granted_scope"])
 
     if custom_permissions and isinstance(custom_permissions, dict):
         # Owner specified a custom matrix — apply it directly; force settings=none
@@ -1252,9 +1303,9 @@ class PartnerViewSet(viewsets.ViewSet):
             return Response(serializer.data)
         return Response(PartnerProfileSerializer(profile).data)
 
-    def _provision_membership(self, partner_user, org):
+    def _provision_membership(self, partner_user, org, scope=None):
         """Delegate to module-level helper (defined after OrganisationViewSet)."""
-        return _provision_partner_membership(partner_user, org)
+        return _provision_partner_membership(partner_user, org, scope=scope)
 
     def _revoke_membership(self, partner_user, org):
         """Deactivate the partner's membership in the client org."""
@@ -1543,7 +1594,7 @@ class PartnerViewSet(viewsets.ViewSet):
                 link.is_active = True
                 link.save(update_fields=["is_active"])
 
-        self._provision_membership(request.user, req.organisation)
+        self._provision_membership(request.user, req.organisation, scope=req.scope)
 
         _audit_partner_event(request, req.organisation, "partner_access_approved_via_token",
                              f"Partner {request.user.email} accepted invite to {req.organisation.name}")

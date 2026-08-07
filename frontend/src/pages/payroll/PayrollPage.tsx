@@ -5,10 +5,12 @@ import {
   ChevronDown, ChevronUp, Banknote, Loader2, ExternalLink, Send, CheckCircle,
   XCircle, AlertTriangle, Building2, CreditCard, RotateCcw, Download, Clock,
   Users, TrendingUp, RefreshCw, Plus, Trash2, Calendar, Gift, X, Shield,
+  Receipt, BarChart2,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { openExternal } from '@/lib/openExternal'
 import { payrollApi, bypassNextGets } from '@/services/api'
+import { hrApi } from '@/services/hrApi'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import AmountInput from '@/components/AmountInput'
 import { saveBlobFile } from '@/lib/saveBlobFile'
@@ -66,7 +68,30 @@ interface Bonus {
   status: string
 }
 
-type PageTab = 'runs' | 'attendance' | 'bonuses' | 'paye'
+type PageTab = 'runs' | 'attendance' | 'bonuses' | 'paye' | 'annual_tax' | 'register'
+
+interface AnnualPayeRow {
+  employee_id: string
+  employee_code: string
+  employee_name: string
+  actual_taxable_income: string
+  actual_paye_withheld: string
+  correct_annual_paye: string
+  variance: string
+  variance_direction: 'over-withheld' | 'under-withheld' | 'exact'
+}
+
+interface RegisterRow {
+  id: string
+  run_number: string
+  period_month: number
+  status: string
+  total_gross: string
+  total_net: string
+  total_paye: string
+  total_deductions: string
+  variance_from_prior_month_pct: number | null
+}
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -222,6 +247,37 @@ export default function PayrollPage() {
   const [pensionProvider, setPensionProvider] = useState(organisation?.pension_provider ?? '')
   const [activePaymentKey, setActivePaymentKey] = useState<string | null>(null)
   const [exportingBankFile, setExportingBankFile] = useState<string | null>(null)
+
+  // ── Annual PAYE reconciliation + Register (A.4) ──────────────────────────────
+  const [annualPayeRows, setAnnualPayeRows] = useState<AnnualPayeRow[]>([])
+  const [annualPayeLoading, setAnnualPayeLoading] = useState(false)
+  const [registerRows, setRegisterRows] = useState<RegisterRow[]>([])
+  const [registerLoading, setRegisterLoading] = useState(false)
+  const [analyticsYear, setAnalyticsYear] = useState(new Date().getFullYear())
+
+  const loadAnnualPaye = useCallback(async () => {
+    setAnnualPayeLoading(true)
+    try {
+      const { data } = await hrApi.annualPayeReconciliation(analyticsYear)
+      setAnnualPayeRows(data.rows)
+    } catch { toast.error('Failed to load annual PAYE reconciliation') }
+    finally { setAnnualPayeLoading(false) }
+  }, [analyticsYear])
+
+  const loadRegister = useCallback(async () => {
+    setRegisterLoading(true)
+    try {
+      const { data } = await hrApi.payrollRegister(analyticsYear)
+      setRegisterRows(data.rows)
+    } catch { toast.error('Failed to load payroll register') }
+    finally { setRegisterLoading(false) }
+  }, [analyticsYear])
+
+  useEffect(() => {
+    if (pageTab === 'annual_tax') void loadAnnualPaye()
+    if (pageTab === 'register') void loadRegister()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageTab, analyticsYear])
 
   // ── PAYE Remittance state ────────────────────────────────────────────────────
   const [payeRemittances, setPayeRemittances] = useState<PAYERemittance[]>([])
@@ -601,6 +657,8 @@ export default function PayrollPage() {
           ['attendance', 'Attendance', Calendar],
           ['bonuses', 'Bonuses', Gift],
           ['paye', 'PAYE Remittance', Shield],
+          ['annual_tax', 'Annual Tax', Receipt],
+          ['register', 'Register', BarChart2],
         ] as [PageTab, string, any][]).map(([t, label, Icon]) => (
           <button
             key={t}
@@ -1467,6 +1525,122 @@ export default function PayrollPage() {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* ── ANNUAL TAX TAB (A.4) ── */}
+      {pageTab === 'annual_tax' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <h2 className="text-white font-semibold">Annual PAYE Reconciliation</h2>
+              <p className="text-slate-500 text-xs mt-0.5">
+                Compares actual monthly PAYE withheld per employee against the correct tax on their
+                actual annual income. Corrections apply via the existing arrears/correction adjustment flow.
+              </p>
+            </div>
+            <YearFilter
+              selectedYear={analyticsYear === new Date().getFullYear() ? null : analyticsYear}
+              onChange={(y) => setAnalyticsYear(y ?? new Date().getFullYear())}
+            />
+          </div>
+
+          {annualPayeLoading ? (
+            <div className="card p-8 text-center text-slate-500">Loading…</div>
+          ) : annualPayeRows.length === 0 ? (
+            <div className="card p-12 text-center">
+              <Receipt size={36} className="mx-auto text-slate-600 mb-3" />
+              <p className="text-slate-400 font-medium">No payroll runs found for {analyticsYear}</p>
+            </div>
+          ) : (
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {annualPayeRows.map((r) => {
+                // Flagged/outlier styling uses the app's existing semantic
+                // amber/red convention for variance, never the brand accent.
+                const varianceAbs = Math.abs(parseFloat(r.variance))
+                const tone = r.variance_direction === 'exact' || varianceAbs < 100
+                  ? 'text-emerald-400'
+                  : r.variance_direction === 'under-withheld' ? 'text-red-400' : 'text-amber-400'
+                return (
+                  <div key={r.employee_id} className="card p-4 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-semibold text-white">{r.employee_name}</p>
+                      <span className="text-[10px] font-mono text-slate-500">{r.employee_code}</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div><p className="text-slate-500">Actual taxable</p><p className="font-mono text-slate-200">{formatCurrency(r.actual_taxable_income)}</p></div>
+                      <div><p className="text-slate-500">Withheld YTD</p><p className="font-mono text-slate-200">{formatCurrency(r.actual_paye_withheld)}</p></div>
+                      <div><p className="text-slate-500">Correct annual PAYE</p><p className="font-mono text-slate-200">{formatCurrency(r.correct_annual_paye)}</p></div>
+                      <div>
+                        <p className="text-slate-500">Variance</p>
+                        <p className={`font-mono font-semibold ${tone}`}>
+                          {formatCurrency(r.variance)} <span className="capitalize">({r.variance_direction})</span>
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── PAYROLL REGISTER TAB (A.4) ── */}
+      {pageTab === 'register' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <h2 className="text-white font-semibold">Payroll Register</h2>
+              <p className="text-slate-500 text-xs mt-0.5">Month-on-month variance across regular payroll runs.</p>
+            </div>
+            <YearFilter
+              selectedYear={analyticsYear === new Date().getFullYear() ? null : analyticsYear}
+              onChange={(y) => setAnalyticsYear(y ?? new Date().getFullYear())}
+            />
+          </div>
+
+          {registerLoading ? (
+            <div className="card p-8 text-center text-slate-500">Loading…</div>
+          ) : registerRows.length === 0 ? (
+            <div className="card p-12 text-center">
+              <BarChart2 size={36} className="mx-auto text-slate-600 mb-3" />
+              <p className="text-slate-400 font-medium">No regular payroll runs for {analyticsYear}</p>
+            </div>
+          ) : (
+            <div className="card overflow-hidden">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-surface-700">
+                    {['Run', 'Status', 'Gross', 'Deductions', 'PAYE', 'Net', 'MoM Variance'].map((h) => (
+                      <th key={h} className="px-5 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-surface-700">
+                  {registerRows.map((r) => {
+                    const variance = r.variance_from_prior_month_pct
+                    const varianceTone = variance === null
+                      ? 'text-slate-500'
+                      : Math.abs(variance) >= 20 ? 'text-red-400' : Math.abs(variance) >= 10 ? 'text-amber-400' : 'text-slate-300'
+                    return (
+                      <tr key={r.id}>
+                        <td className="px-5 py-3 text-white font-mono">{r.run_number}</td>
+                        <td className="px-5 py-3 capitalize text-slate-300">{r.status}</td>
+                        <td className="px-5 py-3 font-mono text-slate-200">{formatCurrency(r.total_gross)}</td>
+                        <td className="px-5 py-3 font-mono text-slate-200">{formatCurrency(r.total_deductions)}</td>
+                        <td className="px-5 py-3 font-mono text-red-400">{formatCurrency(r.total_paye)}</td>
+                        <td className="px-5 py-3 font-mono text-emerald-400">{formatCurrency(r.total_net)}</td>
+                        <td className={`px-5 py-3 font-mono font-semibold ${varianceTone}`}>
+                          {variance === null ? '—' : `${variance > 0 ? '+' : ''}${variance}%`}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 

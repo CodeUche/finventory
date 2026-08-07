@@ -6,6 +6,13 @@ const PAYMENTS_STORAGE_STATE = './e2e/.auth/payments.json'
 // The payments stack runs on its own ports so it can point at a throwaway
 // database without disturbing whatever is already using :3000/:8000.
 const PAYMENTS_URL = process.env.E2E_PAYMENTS_URL || 'http://localhost:3010'
+// "today" — a real-browser click-through pass for features built in this
+// session (HR-to-10, messaging, payment engine, integrations marketplace).
+// Same isolated-stack pattern as `payments`: its own throwaway-DB-backed dev
+// server on its own ports (:5183/:8010 rather than :3000/:8000), its own
+// login/user, own storage state.
+const TODAY_STORAGE_STATE = './e2e/.auth/today.json'
+const TODAY_URL = process.env.E2E_TODAY_URL || 'http://localhost:5183'
 
 // Browser E2E against the running dev app (Vite :3000 proxies /api → Django :8000).
 export default defineConfig({
@@ -44,6 +51,16 @@ export default defineConfig({
       testMatch: /payments\.spec\.ts/,
       dependencies: ['payments-setup'],
       use: { storageState: PAYMENTS_STORAGE_STATE, baseURL: PAYMENTS_URL },
+    },
+
+    // Today's-session click-through: its own throwaway stack, own login.
+    //   E2E_TODAY_URL=http://localhost:5183 npx playwright test --project=today
+    { name: 'today-setup', testMatch: /today\.setup\.ts/, use: { baseURL: TODAY_URL } },
+    {
+      name: 'today',
+      testMatch: /today\..*\.spec\.ts/,
+      dependencies: ['today-setup'],
+      use: { storageState: TODAY_STORAGE_STATE, baseURL: TODAY_URL },
     },
   ],
 })

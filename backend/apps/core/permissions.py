@@ -27,6 +27,13 @@ ROLE_HIERARCHY = {
     # IsStaff / IsViewer gate refuses it — an employee reaches their own data
     # through IsEmployeeSelf on the /me endpoints and nowhere else.
     "employee": 5,
+    # Partner contact (messaging-only). Deliberately below viewer (and even
+    # below employee — the exact position relative to employee doesn't matter,
+    # only that it stays under viewer=10) so every existing IsStaff / IsViewer /
+    # role-gated endpoint refuses it automatically — a partner_contact
+    # membership reaches conversations through IsConversationParticipant in
+    # apps.messaging and nowhere else.
+    "partner_contact": 8,
 }
 
 

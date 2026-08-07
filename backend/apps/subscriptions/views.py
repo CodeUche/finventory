@@ -12,7 +12,8 @@ from rest_framework.response import Response
 
 from apps.core.permissions import IsOwnerOrAdmin
 
-from .models import PaymentHistory, Plan, Subscription
+from .models import IntegrationProduct, PaymentHistory, Plan, Subscription
+from .payment_engine import PaymentEngine
 from .serializers import PaymentHistorySerializer, PlanSerializer, SubscriptionSerializer
 from .services import PaystackSubscriptionService, SubscriptionService
 
@@ -313,6 +314,71 @@ class SubscriptionViewSet(viewsets.GenericViewSet):
             return Response({"error": str(e)}, status=400)
 
         return Response(SubscriptionSerializer(sub).data)
+
+    @action(detail=False, methods=["post"], url_path=r"integrations/(?P<product_key>[\w-]+)/purchase")
+    def purchase_integration(self, request, product_key=None):
+        """
+        POST /api/v1/subscriptions/integrations/{product_key}/purchase/
+
+        Initialises a Paystack transaction for a one-time integration
+        marketplace purchase. Mirrors initiate_payment's request/response
+        shape. Org resolution follows `current`/`payments` — request.organisation
+        is already resolved by middleware for this authenticated, onboarded action.
+        """
+        org = getattr(request, "organisation", None)
+        if org is None:
+            return Response({"error": "Organisation not found. Please log out and back in, then try again."}, status=400)
+
+        try:
+            product = IntegrationProduct.objects.get(key=product_key, is_active=True)
+        except IntegrationProduct.DoesNotExist:
+            return Response({"error": "Integration not found."}, status=400)
+
+        try:
+            result = PaymentEngine.initiate(
+                org, PaymentHistory.Kind.INTEGRATION, product, request.user.email,
+            )
+        except ValueError as e:
+            return Response({"error": str(e)}, status=400)
+        except Exception:
+            logger.exception(
+                "Unexpected error purchasing integration %s for org %s", product_key, org.id,
+            )
+            return Response(
+                {"error": "Payment initialization failed. Please try again."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        return Response(result, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=["post"], url_path="integrations/verify-payment")
+    def verify_integration_payment(self, request):
+        """
+        POST /api/v1/subscriptions/integrations/verify-payment/
+        Body: { "reference": "INT-XXXXXXXX" }
+
+        Mirrors verify-payment's request/response/error shape, including its
+        cross-org ownership check (see PaystackSubscriptionService.verify_payment
+        in services.py): PaymentEngine.activate() genuinely verifies the
+        reference with Paystack regardless of which org calls it, so without
+        an ownership check an authenticated caller who merely observed another
+        org's INT-XXXXXXXX reference could force-settle that org's payment and
+        have its amount/description returned to them. 404 (not 403) is used to
+        avoid confirming the reference's existence to an unauthorized caller.
+        """
+        reference = request.data.get("reference", "").strip()
+        if not reference:
+            return Response({"error": "reference is required."}, status=400)
+
+        try:
+            payment = PaymentEngine.activate(reference)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=400)
+
+        if payment.organisation_id != request.organisation.id:
+            return Response({"detail": "Not found."}, status=404)
+
+        return Response(PaymentHistorySerializer(payment).data)
 
     @action(detail=False, methods=["get"], url_path="check-payment")
     def check_payment(self, request):

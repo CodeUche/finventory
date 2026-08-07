@@ -16,7 +16,20 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:3000",
     "http://127.0.0.1:5173",
+    # :5183/:8010 is the throwaway browser-E2E stack (kept off :3000/:8000 so
+    # it never collides with whatever else is already running on the default
+    # ports) — see finventory/frontend/e2e/today.setup.ts.
+    "http://localhost:5183",
+    "http://127.0.0.1:5183",
     "tauri://localhost",
+    # Tauri v2's actual runtime origin is the http://tauri.localhost custom
+    # hostname, not the tauri://localhost URL-scheme string Tauri v1 used —
+    # the old entry above never matches a real v2 app's Origin header, which
+    # silently breaks the local desktop build's login (fetch falls back from
+    # the Rust IPC proxy to a plain WebView fetch and hits CORS). Discovered
+    # while browser-CDP-testing the desktop build; kept the v1 entry too in
+    # case anything still relies on it.
+    "http://tauri.localhost",
     "capacitor://localhost",
 ]
 

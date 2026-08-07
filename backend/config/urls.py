@@ -69,6 +69,10 @@ api_v1_urlpatterns = [
     path("pos/", include("apps.pos.urls")),
     # Storefront — merchant-side configuration and order handling.
     path("storefront/", include("apps.storefront.urls")),
+    # In-app instant messaging (Track B) — REST only, no WebSockets/Channels
+    path("messaging/", include("apps.messaging.urls")),
+    # Paid integrations marketplace: webhooks + Zapier-compatible API (Track C)
+    path("integrations/", include("apps.integrations.urls")),
 ]
 
 from apps.storefront.urls import public_urlpatterns as _storefront_public

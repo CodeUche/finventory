@@ -51,6 +51,7 @@ const PayrollPage = React.lazy(() => import('@/pages/payroll/PayrollPage'))
 const LeavePage = React.lazy(() => import('@/pages/payroll/LeavePage'))
 const CompliancePage = React.lazy(() => import('@/pages/payroll/CompliancePage'))
 const OrgChartPage = React.lazy(() => import('@/pages/payroll/OrgChartPage'))
+const HRAnalyticsPage = React.lazy(() => import('@/pages/payroll/HRAnalyticsPage'))
 const EmployeePortalPage = React.lazy(() => import('@/pages/ess/EmployeePortalPage'))
 const BudgetPage = React.lazy(() => import('@/pages/BudgetPage'))
 const ReportsPage = React.lazy(() => import('@/pages/reports/ReportsPage'))
@@ -61,9 +62,11 @@ const AllReportsPage = React.lazy(() => import('@/pages/reports/AllReportsPage')
 const OwnerAnalyticsPage = React.lazy(() => import('@/pages/dashboard/OwnerAnalyticsPage'))
 const TaxPage = React.lazy(() => import('@/pages/TaxPage'))
 const AuditLogPage = React.lazy(() => import('@/pages/AuditLogPage'))
+const MessagesPage = React.lazy(() => import('@/pages/messaging/MessagesPage'))
 const SettingsPage = React.lazy(() => import('@/pages/SettingsPage'))
 const PlatformAdminPage = React.lazy(() => import('@/pages/PlatformAdminPage'))
 const BillingPage = React.lazy(() => import('@/pages/BillingPage'))
+const IntegrationsPage = React.lazy(() => import('@/pages/settings/IntegrationsPage'))
 const TicketsPage = React.lazy(() => import('@/pages/TicketsPage'))
 const RestaurantPOSPage = React.lazy(() => import('@/pages/pos/RestaurantPOSPage'))
 const TransferConfirmationsPage = React.lazy(() => import('@/pages/payments/TransferConfirmationsPage'))
@@ -373,6 +376,7 @@ export default function App() {
         <Route path="hr/runs"        element={<ModuleRoute module="payroll"><PayrollPage /></ModuleRoute>} />
         <Route path="hr/org-chart"   element={<ModuleRoute module="payroll"><OrgChartPage /></ModuleRoute>} />
         <Route path="hr/leave"       element={<ModuleRoute module="payroll"><LeavePage /></ModuleRoute>} />
+        <Route path="hr/analytics"   element={<ModuleRoute module="payroll"><HRAnalyticsPage /></ModuleRoute>} />
         <Route path="hr/compliance"  element={<ModuleRoute module="payroll"><CompliancePage /></ModuleRoute>} />
         <Route path="payroll/employees" element={<Navigate to="/hr/employees" replace />} />
         <Route path="payroll/runs"      element={<Navigate to="/hr/runs" replace />} />
@@ -392,6 +396,7 @@ export default function App() {
         <Route path="tax"       element={<ModuleRoute module="tax"><TaxPage /></ModuleRoute>} />
         <Route path="audit-log" element={<AuditLogPage />} />
         <Route path="helpdesk" element={<TicketsPage />} />
+        <Route path="messages" element={<MessagesPage />} />
         <Route path="payments/transfers" element={<ModuleRoute module="sales"><TransferConfirmationsPage /></ModuleRoute>} />
         <Route path="payments/settlement" element={<ModuleRoute module="sales"><SettlementPage /></ModuleRoute>} />
         <Route path="pos/till" element={<ModuleRoute module="sales"><TillSessionPage /></ModuleRoute>} />
@@ -400,6 +405,7 @@ export default function App() {
         {/* Settings — always accessible for personal profile/security; org tabs filtered inside the page */}
         <Route path="settings" element={<SettingsPage />} />
         <Route path="billing"  element={<ModuleRoute module="settings"><BillingPage /></ModuleRoute>} />
+        <Route path="integrations" element={<ModuleRoute module="settings"><IntegrationsPage /></ModuleRoute>} />
         <Route path="import"   element={<WriteModuleRoute module="settings"><ImportPage /></WriteModuleRoute>} />
         <Route path="partner"           element={<PartnerRoute><PartnerDashboardPage /></PartnerRoute>} />
         <Route path="partner/report"    element={<PartnerRoute><PartnerReportPage /></PartnerRoute>} />

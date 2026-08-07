@@ -169,6 +169,21 @@ class SaleService:
         invoice.save()
         logger.info("Invoice %s created by %s for org %s", invoice.invoice_number, created_by, organisation.id)
 
+        # Outbox event for the paid integrations marketplace (Track C) — same
+        # transaction as the invoice write above, so a rolled-back sale never
+        # leaves a dangling "invoice.created" event.
+        from apps.integrations.services import IntegrationEventService
+        IntegrationEventService.emit(
+            organisation, "invoice.created",
+            {
+                "invoice_id": str(invoice.id),
+                "invoice_number": invoice.invoice_number,
+                "total_amount": str(invoice.total_amount),
+                "customer_id": str(customer.id) if customer else None,
+                "status": invoice.status,
+            },
+        )
+
         # Deduct store credit from customer balance (atomic with the transaction)
         if credit_to_apply > Decimal("0") and customer:
             from apps.customers.models import Customer as CustomerModel
@@ -484,6 +499,21 @@ class SaleService:
                 invoice.status = Invoice.Status.PARTIALLY_PAID
 
             invoice.save(update_fields=["amount_paid", "amount_due", "status", "updated_at"])
+
+            # Outbox event for the paid integrations marketplace (Track C) —
+            # same transaction as the payment + invoice update above.
+            from apps.integrations.services import IntegrationEventService
+            IntegrationEventService.emit(
+                invoice.organisation, "payment.received",
+                {
+                    "invoice_id": str(invoice.id),
+                    "invoice_number": invoice.invoice_number,
+                    "payment_id": str(payment.id),
+                    "amount": str(amount),
+                    "method": method,
+                    "invoice_status": invoice.status,
+                },
+            )
 
         # Post credit ledger entry + GL journal + reduce outstanding balance (non-blocking)
         if invoice.payment_method == Invoice.PaymentMethod.CREDIT and invoice.customer:

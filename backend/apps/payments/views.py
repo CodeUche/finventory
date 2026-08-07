@@ -12,9 +12,12 @@ We answer 200 to anything we deliberately drop. Providers retry aggressively on
 non-2xx, and a retry storm against a spoofed event helps nobody.
 """
 
+import hashlib
+import hmac
 import json
 import logging
 
+from django.conf import settings
 from rest_framework import status, viewsets
 from rest_framework.decorators import action, api_view, permission_classes, throttle_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -187,12 +190,60 @@ def _org_id_from_payload(provider_slug, payload):
     return None
 
 
+def _verify_platform_signature(raw_body: bytes, headers) -> bool:
+    """
+    Verify a webhook against Audity's OWN Paystack secret (platform-level
+    billing — subscriptions and integration purchases), as opposed to a
+    merchant's own PaymentGatewayConfig secret (their customer sales).
+
+    There is deliberately no PaymentGatewayConfig row for Audity's own
+    account (that table is for merchants' keys), so platform-signed events
+    could never verify via the per-merchant loop below — that was the bug:
+    activate_from_webhook was unreachable from the real webhook route.
+    """
+    secret = getattr(settings, "PAYSTACK_SECRET_KEY", "")
+    received = (headers.get("HTTP_X_PAYSTACK_SIGNATURE") or "").strip()
+    if not secret or not received:
+        return False
+    expected = hmac.new(secret.encode(), msg=raw_body, digestmod=hashlib.sha512).hexdigest()
+    try:
+        return hmac.compare_digest(expected, received)
+    except (TypeError, ValueError):
+        return False
+
+
 def _handle_webhook(request, provider_slug):
     raw_body = request.body
     try:
         payload = json.loads(raw_body or b'{}')
     except ValueError:
         return Response({'status': 'ignored'})
+
+    # Platform trust-domain check FIRST — cheap (one HMAC compute) and, when
+    # it verifies, completely bypasses the per-merchant-config loop below
+    # since a platform-billing event has nothing to do with any merchant.
+    if provider_slug == 'paystack' and _verify_platform_signature(raw_body, request.META):
+        try:
+            from apps.subscriptions.payment_engine import PaymentEngine
+
+            event = payload.get('event') or ''
+            data = payload.get('data') or {}
+
+            if event.startswith('refund.'):
+                PaymentEngine.handle_refund_webhook(data)
+                return Response({'status': 'refund_processed'})
+
+            payment_kind = (data.get('metadata') or {}).get('payment_kind')
+            if payment_kind in ('subscription', 'integration'):
+                reference = data.get('reference', '')
+                PaymentEngine.activate(reference)
+                return Response({'status': payment_kind})
+
+            logger.info("Platform paystack webhook event=%s ignored (no matching handler)", event)
+            return Response({'status': 'ignored'})
+        except Exception:
+            logger.exception("Platform webhook handling failed for provider=%s", provider_slug)
+            return Response({'status': 'error_logged'})
 
     org_id = _org_id_from_payload(provider_slug, payload)
     configs = PaymentGatewayConfig.objects.filter(provider=provider_slug, is_active=True)

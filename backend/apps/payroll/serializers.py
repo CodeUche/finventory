@@ -3,11 +3,12 @@ from decimal import Decimal
 from rest_framework import serializers
 
 from .models import (
-    AdvancePolicy, AdvanceRequest, Attendance, BenefitPlan, Bonus, CompensationRecord,
-    Employee, EmployeeBenefit, EmployeeDocument, EmployeeLoan, EmployeePenalty,
-    EmployeeTaxProfile, LeaveBalance, LeaveRequest, LeaveType, PayrollAdjustment,
-    PayrollRun, PayrollSettings, PayslipDelivery, PayslipLine, StatutoryRemittance,
-    TaxAuthority,
+    AdvancePolicy, AdvanceRequest, Attendance, BenefitPlan, Bonus, ClearanceChecklistItem,
+    CompensationRecord, Employee, EmployeeBenefit, EmployeeDocument, EmployeeLoan,
+    EmployeePenalty, EmployeeTaxProfile, ExitInterview, LeaveBalance, LeaveRequest,
+    LeaveType, OffboardingCase, OffboardingChecklistTemplate, PayrollAdjustment,
+    PayrollRun, PayrollSettings, PayslipDelivery, PayslipLine, PublicHoliday,
+    StatutoryRemittance, TaxAuthority,
 )
 
 
@@ -126,9 +127,13 @@ class EmployeeDocumentSerializer(serializers.ModelSerializer):
         model = EmployeeDocument
         fields = [
             'id', 'employee', 'name', 'document_type', 'file', 'file_url',
-            'file_size', 'file_size_display', 'created_at',
+            'file_size', 'file_size_display', 'expiry_date',
+            'uploaded_by_employee', 'reviewed_by', 'reviewed_at', 'created_at',
         ]
-        read_only_fields = ['id', 'file_url', 'file_size', 'file_size_display', 'created_at']
+        read_only_fields = [
+            'id', 'file_url', 'file_size', 'file_size_display',
+            'uploaded_by_employee', 'reviewed_by', 'reviewed_at', 'created_at',
+        ]
 
     def get_file_url(self, obj):
         request = self.context.get('request')
@@ -243,11 +248,12 @@ class LeaveRequestSerializer(serializers.ModelSerializer):
             'id', 'employee', 'employee_name', 'leave_type', 'leave_type_name', 'is_paid',
             'start_date', 'end_date', 'days', 'reason', 'status',
             'approver', 'decided_by', 'decided_by_name', 'decided_at', 'decision_note',
-            'attachment', 'balance_after', 'created_at',
+            'attachment', 'balance_after', 'is_overbooked', 'overbooked_days', 'created_at',
         ]
         read_only_fields = [
             'id', 'employee_name', 'leave_type_name', 'is_paid', 'days',
-            'decided_by', 'decided_by_name', 'decided_at', 'balance_after', 'created_at',
+            'decided_by', 'decided_by_name', 'decided_at', 'balance_after',
+            'is_overbooked', 'overbooked_days', 'created_at',
         ]
 
     def get_employee_name(self, obj):
@@ -564,5 +570,83 @@ class PayrollSettingsSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'itf_applicable', 'itf_auto_assert', 'nsitf_applicable',
             'default_pay_frequency', 'leave_seeded', 'tax_authorities_seeded',
+            'thirteenth_month_basis', 'gratuity_rate_per_year',
+            'leave_accrual_last_posted_amount', 'leave_accrual_last_posted_at',
         ]
-        read_only_fields = ['id', 'leave_seeded', 'tax_authorities_seeded']
+        read_only_fields = [
+            'id', 'leave_seeded', 'tax_authorities_seeded',
+            'leave_accrual_last_posted_amount', 'leave_accrual_last_posted_at',
+        ]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Public holidays (A.1)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class PublicHolidaySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PublicHoliday
+        fields = ['id', 'date', 'name', 'is_recurring_annually', 'applies_to_states']
+        read_only_fields = ['id']
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Offboarding (A.3)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class ClearanceChecklistItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ClearanceChecklistItem
+        fields = [
+            'id', 'case', 'item_name', 'department', 'is_cleared',
+            'cleared_by', 'cleared_at', 'order', 'notes',
+        ]
+        read_only_fields = ['id', 'cleared_by', 'cleared_at']
+
+
+class ExitInterviewSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ExitInterview
+        fields = [
+            'id', 'case', 'conducted_by', 'reasons_for_leaving',
+            'would_recommend', 'feedback', 'is_confidential',
+        ]
+        read_only_fields = ['id']
+
+
+class OffboardingCaseSerializer(serializers.ModelSerializer):
+    employee_name = serializers.SerializerMethodField()
+    checklist_items = ClearanceChecklistItemSerializer(many=True, read_only=True)
+    exit_interview = ExitInterviewSerializer(read_only=True)
+    clearance_progress = serializers.SerializerMethodField()
+
+    class Meta:
+        model = OffboardingCase
+        fields = [
+            'id', 'employee', 'employee_name', 'initiated_by', 'reason',
+            'last_working_day', 'notice_period_days', 'status',
+            'completed_by', 'completed_at', 'notes', 'final_settlement_run',
+            'checklist_items', 'exit_interview', 'clearance_progress', 'created_at',
+        ]
+        read_only_fields = [
+            'id', 'employee_name', 'initiated_by', 'status', 'completed_by',
+            'completed_at', 'final_settlement_run', 'checklist_items',
+            'exit_interview', 'clearance_progress', 'created_at',
+        ]
+
+    def get_employee_name(self, obj):
+        return obj.employee.full_name
+
+    def get_clearance_progress(self, obj):
+        items = list(obj.checklist_items.all())
+        if not items:
+            return {'cleared': 0, 'total': 0}
+        cleared = sum(1 for i in items if i.is_cleared)
+        return {'cleared': cleared, 'total': len(items)}
+
+
+class OffboardingChecklistTemplateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OffboardingChecklistTemplate
+        fields = ['id', 'item_name', 'department', 'order', 'is_active']
+        read_only_fields = ['id']

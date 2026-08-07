@@ -194,6 +194,12 @@ class Membership(TimeStampedModel):
         # operator UI — an EMPLOYEE membership grants access to /me and nothing
         # else, enforced by IsEmployeeSelf rather than by ModulePermission.
         EMPLOYEE = "employee", "Employee (self-service)"
+        # Messaging-only access for a partner contact who has NOT been granted
+        # full advisory/accountant access to this client org. Sits below viewer
+        # (see ROLE_HIERARCHY) so every existing role-gated endpoint refuses it
+        # automatically — a PARTNER_CONTACT membership only ever reaches the
+        # in-app messaging endpoints, enforced by IsConversationParticipant.
+        PARTNER_CONTACT = "partner_contact", "Partner Contact (messaging only)"
 
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -215,6 +221,14 @@ class Membership(TimeStampedModel):
         related_name="sent_invitations",
     )
     joined_at = models.DateTimeField(null=True, blank=True)
+    # Only ever set for memberships provisioned via the partner-access flow
+    # (_provision_partner_membership in tenancy/views.py) — records the
+    # PartnerAccessRequest.Scope this membership was granted under, so
+    # messaging permission checks can tell an 'operational'-scope ACCOUNTANT
+    # grant (payroll/salary access, no messaging) apart from a
+    # 'messaging_only'/'both'-scope one, even though both can carry the same
+    # role value. Blank for ordinary (non-partner) memberships.
+    granted_scope = models.CharField(max_length=20, blank=True, default="")
 
     class Meta:
         unique_together = [["user", "organisation"]]
@@ -516,6 +530,23 @@ class PartnerAccessRequest(TimeStampedModel):
         related_name="partner_access_requests_reviewed",
     )
     reviewed_at = models.DateTimeField(null=True, blank=True)
+
+    class Scope(models.TextChoices):
+        OPERATIONAL     = "operational",     "Operational (full advisory access)"
+        MESSAGING_ONLY  = "messaging_only",  "Messaging Only"
+        BOTH            = "both",            "Operational + Messaging"
+
+    scope = models.CharField(
+        max_length=20,
+        choices=Scope.choices,
+        default=Scope.OPERATIONAL,
+        help_text=(
+            "What access this request grants once approved. 'messaging_only' "
+            "provisions a PARTNER_CONTACT membership (in-app messaging only, no "
+            "operational data access); 'operational' and 'both' preserve the "
+            "existing accountant-role provisioning behaviour."
+        ),
+    )
 
     class Meta(TimeStampedModel.Meta):
         unique_together = [["partner", "organisation"]]

@@ -127,6 +127,8 @@ LOCAL_APPS = [
     "apps.helpdesk",     # support ticket management
     "apps.pos",          # hospitality POS: tables, orders, KOT
     "apps.storefront",   # public shop page + QR table ordering (unauthenticated)
+    "apps.messaging",    # isolated in-app instant messaging (Track B)
+    "apps.integrations", # paid integrations marketplace: webhooks + Zapier (Track C)
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -458,10 +460,26 @@ CELERY_BEAT_SCHEDULE = {
         "task": "payroll.accrue_monthly_leave",
         "schedule": crontab(hour=1, minute=15, day_of_month=1),
     },
+    # Post the leave-accrual GL true-up (delta vs last-posted, to account 2850
+    # Accrued Leave) on the 1st at 01:20 — right after accrue-monthly-leave
+    # updates the balances it reads. Without this the leave liability never
+    # posts to the balance sheet (IFRS-for-SMEs Section 28: accrued-but-unpaid
+    # short-term compensated absences must be recognised as a liability as
+    # earned).
+    "post-leave-accrual-true-up": {
+        "task": "payroll.post_leave_accrual_true_up",
+        "schedule": crontab(hour=1, minute=20, day_of_month=1),
+    },
     # Log overdue statutory remittances daily at 06:00
     "flag-overdue-remittances": {
         "task": "payroll.flag_overdue_remittances",
         "schedule": crontab(hour=6, minute=0),
+    },
+    # Weekly document-expiry sweep (60/30/7-day thresholds), Monday 06:30 —
+    # was fully built but never registered here, so it never fired.
+    "flag-expiring-documents-weekly": {
+        "task": "payroll.flag_expiring_documents",
+        "schedule": crontab(hour=6, minute=30, day_of_week=1),
     },
     # Close out salary advances whose period has already been paid, daily 02:00
     "expire-stale-advances": {
@@ -525,6 +543,13 @@ CELERY_BEAT_SCHEDULE = {
     "flag-overdue-tax-obligations": {
         "task": "tax.flag_overdue_tax_obligations",
         "schedule": crontab(hour=6, minute=0),
+    },
+    # ── Integrations marketplace (Track C) ────────────────────────────────────
+    # Webhook delivery should feel near-real-time, unlike the jobs above —
+    # every 2 minutes rather than daily/weekly.
+    "deliver-pending-webhooks": {
+        "task": "integrations.deliver_pending_webhooks",
+        "schedule": timedelta(minutes=2),
     },
 }
 

@@ -4,9 +4,11 @@ import { useDataRefresh } from '@/hooks/useDataRefresh'
 import {
   Plus, X, UsersRound, Loader2, Search, Edit2, ChevronDown, CheckCircle2,
   AlertTriangle, CreditCard, Trash2, Ban, FileText, Upload, Eye, Download, Mail, RefreshCw,
+  LogOut, Clock,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { payrollApi, bypassNextGets } from '@/services/api'
+import { hrApi } from '@/services/hrApi'
 import { formatCurrency, formatAmountInput, stripCommas, formatDate } from '@/lib/utils'
 import AmountInput from '@/components/AmountInput'
 import type { Employee, EmployeeDocument, EmployeePenalty, EmployeeLoan } from '@/types'
@@ -17,6 +19,7 @@ import Pagination from '@/components/Pagination'
 import { NIGERIAN_BANKS } from '@/lib/banks'
 import { NIGERIAN_STATES } from '@/lib/nigerianStates'
 import { useResolveBankAccount } from '@/hooks/useResolveBankAccount'
+import OffboardingDrawer from '@/components/OffboardingDrawer'
 
 interface EmployeeForm {
   first_name: string; last_name: string; email: string; phone: string
@@ -61,11 +64,13 @@ type FormTab = 'personal' | 'salary' | 'banking' | 'statutory' | 'penalties' | '
 
 const DOC_TYPE_LABELS: Record<string, string> = {
   cv: 'CV / Resume', id: 'ID / Passport', certificate: 'Certificate',
-  contract: 'Contract', other: 'Other',
+  contract: 'Contract', work_permit: 'Work Permit / Visa',
+  professional_licence: 'Professional Licence', other: 'Other',
 }
 const DOC_TYPE_BADGE: Record<string, string> = {
   cv: 'badge-blue', id: 'badge-orange', certificate: 'badge-green',
-  contract: 'badge-slate', other: 'badge-slate',
+  contract: 'badge-slate', work_permit: 'badge-orange',
+  professional_licence: 'badge-green', other: 'badge-slate',
 }
 
 // ── Loan calculation preview (mirrors backend logic) ───────────────────────────
@@ -134,6 +139,10 @@ export default function EmployeesPage() {
   const [docFile, setDocFile] = useState<File | null>(null)
   const [viewingDoc, setViewingDoc] = useState<EmployeeDocument | null>(null)
   const docFileRef = useRef<HTMLInputElement>(null)
+  const [docExpiry, setDocExpiry] = useState('')
+
+  // Offboarding drawer (A.3)
+  const [offboardingEmployee, setOffboardingEmployee] = useState<Employee | null>(null)
 
   const load = async () => {
     setLoading(true)
@@ -184,7 +193,7 @@ export default function EmployeesPage() {
     setBankSearch(''); setBankCode(''); setBankOpen(false)
     setPenalties([]); setLoans([]); setDocuments([])
     setPenaltyForm(BLANK_PENALTY); setLoanForm(BLANK_LOAN)
-    setDocName(''); setDocType('other'); setDocFile(null)
+    setDocName(''); setDocType('other'); setDocFile(null); setDocExpiry('')
     setShowModal(true)
   }
 
@@ -214,7 +223,7 @@ export default function EmployeesPage() {
     setBankOpen(false)
     setPenalties([]); setLoans([]); setDocuments([])
     setPenaltyForm(BLANK_PENALTY); setLoanForm(BLANK_LOAN)
-    setDocName(''); setDocType('other'); setDocFile(null)
+    setDocName(''); setDocType('other'); setDocFile(null); setDocExpiry('')
     setFormTab('personal')
     setShowModal(true)
   }
@@ -323,17 +332,28 @@ export default function EmployeesPage() {
     if (!docName.trim()) { toast.error('Document name is required'); return }
     setUploadingDoc(true)
     try {
-      await payrollApi.uploadDocument(docFile, {
+      await hrApi.uploadDocumentWithExpiry(docFile, {
         employee: editId!,
         name: docName.trim(),
         document_type: docType,
+        expiry_date: docExpiry || undefined,
       })
       toast.success('Document uploaded')
-      setDocName(''); setDocType('other'); setDocFile(null)
+      setDocName(''); setDocType('other'); setDocFile(null); setDocExpiry('')
       if (docFileRef.current) docFileRef.current.value = ''
       await loadDocs()
     } catch { toast.error('Failed to upload document') }
     finally { setUploadingDoc(false) }
+  }
+
+  /** Expiry pill styling: red once expired, amber inside 30 days, otherwise none. */
+  const expiryPill = (doc: EmployeeDocument) => {
+    const anyDoc = doc as unknown as { expiry_date?: string | null }
+    if (!anyDoc.expiry_date) return null
+    const days = Math.ceil((new Date(anyDoc.expiry_date).getTime() - Date.now()) / 86400000)
+    if (days < 0) return <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/15 text-red-400 flex items-center gap-1"><Clock size={10} /> Expired {formatDate(anyDoc.expiry_date)}</span>
+    if (days <= 30) return <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 flex items-center gap-1"><Clock size={10} /> Expires {formatDate(anyDoc.expiry_date)}</span>
+    return <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-slate-400 flex items-center gap-1"><Clock size={10} /> Expires {formatDate(anyDoc.expiry_date)}</span>
   }
 
   const handleDeleteDoc = async (id: string) => {
@@ -497,7 +517,16 @@ export default function EmployeesPage() {
                     <div className="flex items-center gap-1.5">
                       <button onClick={() => openEdit(e)} className="p-1.5 text-slate-500 hover:text-white hover:bg-surface-600 rounded-lg transition-colors"><Edit2 size={14} /></button>
                       {e.is_active && (
-                        <button onClick={() => handleDeactivate(e)} className="text-xs px-2.5 py-1 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors">Deactivate</button>
+                        <>
+                          <button
+                            onClick={() => setOffboardingEmployee(e)}
+                            className="p-1.5 text-slate-500 hover:text-amber-400 hover:bg-amber-500/10 rounded-lg transition-colors"
+                            title="Offboard"
+                          >
+                            <LogOut size={14} />
+                          </button>
+                          <button onClick={() => handleDeactivate(e)} className="text-xs px-2.5 py-1 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors">Deactivate</button>
+                        </>
                       )}
                       <button onClick={() => handleDelete(e)} className="p-1.5 text-slate-600 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors" title="Delete employee permanently"><Trash2 size={14} /></button>
                     </div>
@@ -861,6 +890,12 @@ export default function EmployeesPage() {
                       </select>
                     </div>
                     <div>
+                      <label className="text-xs text-slate-400 mb-1 block flex items-center gap-1">
+                        Expiry date<FieldTooltip text="For work permits, professional licences and other time-limited documents. Leave blank if not applicable." />
+                      </label>
+                      <DateInput value={docExpiry} onChange={setDocExpiry} />
+                    </div>
+                    <div className="col-span-2">
                       <label className="text-xs text-slate-400 mb-1 block">File *</label>
                       <input ref={docFileRef} type="file" accept="*/*" className="hidden" onChange={(e) => setDocFile(e.target.files?.[0] ?? null)} />
                       <button type="button" onClick={() => docFileRef.current?.click()} className="input text-left text-slate-400 hover:text-white flex items-center gap-2 w-full">
@@ -892,6 +927,7 @@ export default function EmployeesPage() {
                           </div>
                         </div>
                         <div className="flex items-center gap-1 shrink-0">
+                          {expiryPill(doc)}
                           <span className={DOC_TYPE_BADGE[doc.document_type] ?? 'badge-slate'}>{DOC_TYPE_LABELS[doc.document_type]}</span>
                           {doc.file_url && (
                             <>
@@ -959,6 +995,15 @@ export default function EmployeesPage() {
             />
           )}
         </div>
+      )}
+
+      {offboardingEmployee && (
+        <OffboardingDrawer
+          employeeId={offboardingEmployee.id}
+          employeeName={offboardingEmployee.full_name}
+          onClose={() => setOffboardingEmployee(null)}
+          onChanged={() => load()}
+        />
       )}
     </div>
   )

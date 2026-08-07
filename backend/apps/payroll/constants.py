@@ -69,6 +69,15 @@ ITF_DUE_MONTH = 4
 ITF_DUE_DAY = 1
 
 
+# ── Daily-rate conversion ─────────────────────────────────────────────────────
+# Standard Nigerian payroll convention for converting a monthly gross salary to
+# a daily rate (used by leave encashment and the leave-accrual GL true-up).
+# Single canonical constant so the two call sites can never silently diverge —
+# see LeaveEncashmentService.daily_rate (apps/payroll/services.py) and
+# AccountingService.post_leave_accrual_true_up (apps/accounting/services.py).
+WORKING_DAYS_PER_MONTH = 26
+
+
 # ── Default Nigerian leave entitlements ───────────────────────────────────────
 # Labour Act s.18: a worker is entitled to at least 6 working days of paid
 # annual leave after 12 months of continuous service. Most employers offer more,
@@ -81,4 +90,18 @@ DEFAULT_LEAVE_TYPES = [
     ('Paternity Leave', 14.0, 'annual_grant',    True,  0.0, 'male'),
     ('Compassionate',   3.0,  'annual_grant',    True,  0.0, ''),
     ('Unpaid Leave',    0.0,  'annual_grant',    False, 0.0, ''),
+]
+
+
+# ── Fixed-date Nigerian public holidays ───────────────────────────────────────
+# (month, day, name). Moveable Islamic (Eid-el-Fitr, Eid-el-Kabir, Eid-el-Maulud)
+# and Christian (Good Friday, Easter Monday) dates are NEVER computed here —
+# they must be entered manually per year by an admin.
+FIXED_DATE_PUBLIC_HOLIDAYS = [
+    (1, 1,  "New Year's Day"),
+    (5, 1,  "Workers' Day"),
+    (6, 12, "Democracy Day"),
+    (10, 1, "Independence Day"),
+    (12, 25, "Christmas Day"),
+    (12, 26, "Boxing Day"),
 ]

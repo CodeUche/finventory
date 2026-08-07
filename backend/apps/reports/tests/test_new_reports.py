@@ -331,7 +331,10 @@ class PayrollReports(NewReportsBase):
         self.assertEqual(len(rows), 1)
         row = rows[0]
         self.assertEqual(row["present"], 1)
-        self.assertEqual(row["absent"], 1)
+        # A.7: the 'absent' bucket was split into paid_leave / unpaid_leave_absent
+        # to distinguish approved paid leave (Attendance.status='leave') from
+        # true unpaid absence (Attendance.status='absent').
+        self.assertEqual(row["unpaid_leave_absent"], 1)
         self.assertEqual(Decimal(str(row["overtime_hours"])), Decimal("2.5"))
 
 

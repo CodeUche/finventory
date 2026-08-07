@@ -123,8 +123,11 @@ class PaystackSubscriptionServiceTests(TestCase):
         self.assertIn("reference", result)
         self.assertTrue(result["reference"].startswith("SUB-"))
 
-    @patch("apps.subscriptions.services.requests.post")
+    @patch("apps.subscriptions.payment_engine.requests.post")
     def test_initiate_payment_paystack_error_raises(self, mock_post):
+        # NOTE: initiate_payment now delegates to PaymentEngine, which makes
+        # its Paystack HTTP calls from apps.subscriptions.payment_engine, not
+        # apps.subscriptions.services — patch target updated accordingly.
         mock_resp = MagicMock(status_code=200)
         mock_resp.raise_for_status.return_value = None
         mock_resp.json.return_value = {"status": False, "message": "Invalid key"}
@@ -136,38 +139,55 @@ class PaystackSubscriptionServiceTests(TestCase):
             )
         self.assertIn("Paystack error", str(ctx.exception))
 
-    @patch("apps.subscriptions.services.requests.get")
-    def test_verify_payment_success(self, mock_get):
-        mock_resp = MagicMock(status_code=200)
-        mock_resp.raise_for_status.return_value = None
-        mock_resp.json.return_value = {
+    @patch("apps.subscriptions.payment_engine.requests.get")
+    @patch("apps.subscriptions.payment_engine.requests.post")
+    def test_verify_payment_success(self, mock_post, mock_get):
+        # NOTE: verify_payment now delegates to PaymentEngine.activate, which
+        # requires a PaymentHistory row to already exist (created by
+        # initiate_payment) — row-locked idempotent settlement replaces the
+        # old get_or_create-on-verify behavior. Realistic flow: initiate then verify.
+        init_resp = MagicMock(status_code=200)
+        init_resp.raise_for_status.return_value = None
+        init_resp.json.return_value = {
+            "status": True,
+            "data": {
+                "authorization_url": "https://checkout.paystack.com/test",
+                "access_code": "abc123",
+                "reference": "SUB-VERIFY123",
+            },
+        }
+        mock_post.return_value = init_resp
+
+        with patch("apps.subscriptions.payment_engine.uuid.uuid4") as mock_uuid:
+            mock_uuid.return_value.hex = "VERIFY123000000"
+            PaystackSubscriptionService.initiate_payment(self.org, self.plan, "paystack@example.com")
+
+        verify_resp = MagicMock(status_code=200)
+        verify_resp.raise_for_status.return_value = None
+        verify_resp.json.return_value = {
             "status": True,
             "data": {
                 "status": "success",
-                "reference": "SUB-VERIFY123",
-                "amount": 1500000,
+                "reference": "SUB-VERIFY123000000",
+                "amount": int(self.plan.price * 100),
                 "metadata": {
                     "plan_id": str(self.plan.id),
                     "org_id": str(self.org.id),
                 },
             },
         }
-        mock_get.return_value = mock_resp
+        mock_get.return_value = verify_resp
 
-        sub = PaystackSubscriptionService.verify_payment(self.org, "SUB-VERIFY123")
+        sub = PaystackSubscriptionService.verify_payment(self.org, "SUB-VERIFY123000000")
         self.assertEqual(sub.status, Subscription.Status.ACTIVE)
         self.assertEqual(sub.plan.slug, "professional")
         self.assertEqual(sub.provider, "paystack")
 
-    @patch("apps.subscriptions.services.requests.get")
-    def test_verify_payment_failed_raises(self, mock_get):
-        mock_resp = MagicMock(status_code=200)
-        mock_resp.raise_for_status.return_value = None
-        mock_resp.json.return_value = {"status": True, "data": {"status": "failed"}}
-        mock_get.return_value = mock_resp
-
+    def test_verify_payment_unknown_reference_raises(self):
+        # A reference never created via initiate_payment cannot be verified —
+        # PaymentEngine.activate requires the PaymentHistory row to pre-exist.
         with self.assertRaises(ValueError):
-            PaystackSubscriptionService.verify_payment(self.org, "SUB-FAIL")
+            PaystackSubscriptionService.verify_payment(self.org, "SUB-NEVER-INITIATED")
 
     def test_activate_from_webhook_missing_metadata_is_silent(self):
         # Should not raise even with bad data

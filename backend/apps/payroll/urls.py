@@ -10,9 +10,11 @@ from .views import (
     AdvancePolicyViewSet, AdvanceRequestViewSet, AttendanceViewSet, BenefitPlanViewSet,
     BonusViewSet, CompensationRecordViewSet, EmployeeBenefitViewSet,
     EmployeeDocumentViewSet, EmployeeLoanViewSet, EmployeePenaltyViewSet,
-    EmployeeTaxProfileViewSet, EmployeeViewSet, LeaveBalanceViewSet, LeaveRequestViewSet,
-    LeaveTypeViewSet, PayrollAdjustmentViewSet, PayrollRunViewSet, PayrollSettingsViewSet,
-    StatutoryRemittanceViewSet, TaxAuthorityViewSet,
+    EmployeeTaxProfileViewSet, EmployeeViewSet, HRAnalyticsViewSet,
+    LeaveBalanceViewSet, LeaveCarryForwardViewSet, LeaveRequestViewSet,
+    LeaveTypeViewSet, OffboardingCaseViewSet, OffboardingChecklistTemplateViewSet,
+    PayrollAdjustmentViewSet, PayrollRunViewSet, PayrollSettingsViewSet,
+    PublicHolidayViewSet, StatutoryRemittanceViewSet, TaxAuthorityViewSet,
 )
 
 router = DefaultRouter()
@@ -33,10 +35,17 @@ router.register('settings', PayrollSettingsViewSet, basename='payroll-settings')
 router.register('leave-types', LeaveTypeViewSet, basename='leave-type')
 router.register('leave-balances', LeaveBalanceViewSet, basename='leave-balance')
 router.register('leave-requests', LeaveRequestViewSet, basename='leave-request')
+router.register('leave-carry-forward', LeaveCarryForwardViewSet, basename='leave-carry-forward')
+router.register('public-holidays', PublicHolidayViewSet, basename='public-holiday')
 router.register('benefit-plans', BenefitPlanViewSet, basename='benefit-plan')
 router.register('employee-benefits', EmployeeBenefitViewSet, basename='employee-benefit')
 router.register('advances', AdvanceRequestViewSet, basename='advance-request')
 router.register('advance-policy', AdvancePolicyViewSet, basename='advance-policy')
+# Offboarding (A.3)
+router.register('offboarding-cases', OffboardingCaseViewSet, basename='offboarding-case')
+router.register('offboarding-checklist-templates', OffboardingChecklistTemplateViewSet, basename='offboarding-checklist-template')
+# HR Analytics (A.6)
+router.register('hr-analytics', HRAnalyticsViewSet, basename='hr-analytics')
 
 # Employee self-service portal — mounted separately at /api/v1/me/
 ess_router = DefaultRouter()

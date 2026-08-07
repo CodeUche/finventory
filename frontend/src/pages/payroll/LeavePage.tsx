@@ -1,24 +1,57 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   CalendarDays, Check, ClipboardList, Loader2, Plus, RefreshCw, X, XCircle,
+  Gift, ArrowLeftRight, Banknote, Trash2,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 import DateInput from '@/components/DateInput'
 import { FieldTooltip } from '@/components/FieldTooltip'
-import { confirmDialog } from '@/lib/dialog'
+import { confirmDialog, promptDialog } from '@/lib/dialog'
 import { payrollApi } from '@/services/api'
+import { hrApi } from '@/services/hrApi'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import type { Employee, LeaveBalance, LeaveRequest, LeaveType } from '@/types'
 
-type Tab = 'requests' | 'balances' | 'calendar' | 'policies'
+type Tab = 'requests' | 'balances' | 'calendar' | 'policies' | 'holidays' | 'carry_forward' | 'encashment'
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'requests', label: 'Requests' },
   { key: 'balances', label: 'Balances' },
   { key: 'calendar', label: 'Calendar' },
   { key: 'policies', label: 'Policies' },
+  { key: 'holidays', label: 'Public Holidays' },
+  { key: 'carry_forward', label: 'Carry-Forward' },
+  { key: 'encashment', label: 'Encashment' },
 ]
+
+interface PublicHoliday {
+  id: string
+  date: string
+  name: string
+  is_recurring_annually: boolean
+  applies_to_states: string[]
+}
+
+interface CarryForwardRow {
+  employee_id: string
+  employee_name: string
+  leave_type: string
+  available_days: string
+  carry_forward_max: string
+  projected_carried_forward: string
+}
+
+interface EncashmentAdjustment {
+  id: string
+  employee: string
+  employee_name: string
+  adjustment_type: string
+  amount: string
+  reason: string
+  status: string
+  created_at: string
+}
 
 const STATUS_STYLE: Record<string, string> = {
   pending: 'bg-amber-500/15 text-amber-400',
@@ -92,14 +125,32 @@ export default function LeavePage() {
   const [typeForm, setTypeForm] = useState<TypeForm>(BLANK_TYPE)
   const [editingType, setEditingType] = useState<string | null>(null)
 
+  // ── Public Holidays tab ──────────────────────────────────────────────────
+  const [holidays, setHolidays] = useState<PublicHoliday[]>([])
+  const [showHoliday, setShowHoliday] = useState(false)
+  const [holidayForm, setHolidayForm] = useState({ date: today, name: '', is_recurring_annually: true })
+  const [editingHoliday, setEditingHoliday] = useState<string | null>(null)
+
+  // ── Carry-Forward tab ────────────────────────────────────────────────────
+  const [carryForwardRows, setCarryForwardRows] = useState<CarryForwardRow[]>([])
+  const [carryForwardLoading, setCarryForwardLoading] = useState(false)
+  const [applyingCarryForward, setApplyingCarryForward] = useState(false)
+
+  // ── Encashment tab ───────────────────────────────────────────────────────
+  const [encashments, setEncashments] = useState<EncashmentAdjustment[]>([])
+  const [showEncashment, setShowEncashment] = useState(false)
+  const [encashForm, setEncashForm] = useState({ employee: '', leave_type: '', days: '', reason: '' })
+
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [reqRes, balRes, typeRes, empRes] = await Promise.all([
+      const [reqRes, balRes, typeRes, empRes, holRes, encashRes] = await Promise.all([
         payrollApi.leaveRequests(statusFilter ? { status: statusFilter } : undefined),
         payrollApi.leaveBalances({ year }),
         payrollApi.leaveTypes(),
         payrollApi.employees({ page_size: 500 }),
+        hrApi.publicHolidays(year),
+        payrollApi.adjustments({ status: '' }),
       ])
       const unwrap = <T,>(d: unknown): T[] =>
         (Array.isArray(d) ? d : ((d as { results?: T[] })?.results ?? [])) as T[]
@@ -107,6 +158,9 @@ export default function LeavePage() {
       setBalances(unwrap<LeaveBalance>(balRes.data))
       setTypes(unwrap<LeaveType>(typeRes.data))
       setEmployees(unwrap<Employee>(empRes.data))
+      setHolidays(unwrap<PublicHoliday>(holRes.data))
+      const allAdjustments = unwrap<EncashmentAdjustment>(encashRes.data)
+      setEncashments(allAdjustments.filter((a) => a.adjustment_type === 'encashment'))
     } catch (err: unknown) {
       const apiErr = (err as { response?: { data?: { error?: unknown } } })?.response?.data?.error
       const msg = typeof apiErr === 'string'
@@ -119,6 +173,22 @@ export default function LeavePage() {
   }, [statusFilter, year])
 
   useEffect(() => { void load() }, [load])
+
+  const loadCarryForwardPreview = useCallback(async () => {
+    setCarryForwardLoading(true)
+    try {
+      const res = await hrApi.carryForwardPreview(year - 1)
+      setCarryForwardRows(res.data)
+    } catch {
+      toast.error('Could not load the carry-forward preview')
+    } finally {
+      setCarryForwardLoading(false)
+    }
+  }, [year])
+
+  useEffect(() => {
+    if (tab === 'carry_forward') void loadCarryForwardPreview()
+  }, [tab, loadCarryForwardPreview])
 
   const pendingCount = useMemo(
     () => requests.filter((r) => r.status === 'pending').length,
@@ -159,9 +229,45 @@ export default function LeavePage() {
       toast.error('Choose an employee and a leave type')
       return
     }
+
+    // Warn-and-allow: this is the HR-facing endpoint, which never hard-blocks
+    // on balance — it flags an overbook (is_overbooked/overbooked_days in the
+    // response) and, if the request would cross into a negative balance,
+    // requires a mandatory reason. We pre-empt that server round trip with a
+    // local estimate so the two-tier dialog reads naturally, but the server
+    // is still the source of truth (a 400 with {error} covers races).
+    const balance = balances.find(
+      (b) => b.employee === form.employee && b.leave_type === form.leave_type,
+    )
+    const available = balance ? parseFloat(balance.available_days || '0') : null
+    let reasonOverride: string | undefined
+    if (available !== null && requestedDays > available) {
+      const projected = available - requestedDays
+      if (projected < 0) {
+        // Tier 2 — hard warn: crossing into negative balance. Mandatory reason.
+        const reason = await promptDialog(
+          `This request of ${requestedDays} day(s) would take the balance to ${projected} `
+          + `(negative). A reason is required to proceed.`,
+          { optional: false, title: 'Overbooking requires a reason', danger: true },
+        )
+        if (reason === null) return
+        reasonOverride = reason
+      } else {
+        // Tier 1 — soft warn: exceeds a raw threshold but stays >= 0.
+        const ok = await confirmDialog(
+          `This request of ${requestedDays} day(s) exceeds the usual entitlement, but the `
+          + `balance will remain ${projected} after approval. Continue?`,
+          { title: 'Leave exceeds typical entitlement', danger: true, confirmText: 'Continue' },
+        )
+        if (!ok) return
+      }
+    }
+
     setSaving(true)
     try {
-      await payrollApi.createLeaveRequest(form)
+      await payrollApi.createLeaveRequest(
+        reasonOverride !== undefined ? { ...form, reason: reasonOverride } : form,
+      )
       toast.success('Leave request recorded')
       setShowRequest(false)
       setForm(BLANK_REQUEST)
@@ -174,6 +280,106 @@ export default function LeavePage() {
       toast.error(msg)
     } finally {
       setSaving(false)
+    }
+  }
+
+  // ── Public Holidays ───────────────────────────────────────────────────────
+  async function saveHoliday(e: React.FormEvent) {
+    e.preventDefault()
+    if (!holidayForm.date || !holidayForm.name) { toast.error('Date and name are required'); return }
+    setSaving(true)
+    try {
+      if (editingHoliday) await hrApi.updatePublicHoliday(editingHoliday, holidayForm)
+      else await hrApi.createPublicHoliday(holidayForm)
+      toast.success(editingHoliday ? 'Holiday updated' : 'Holiday added')
+      setShowHoliday(false)
+      setEditingHoliday(null)
+      setHolidayForm({ date: today, name: '', is_recurring_annually: true })
+      await load()
+    } catch {
+      toast.error('Could not save the holiday')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function deleteHoliday(h: PublicHoliday) {
+    const ok = await confirmDialog(`Delete "${h.name}" (${formatDate(h.date)})?`, { danger: true })
+    if (!ok) return
+    try {
+      await hrApi.deletePublicHoliday(h.id)
+      toast.success('Holiday deleted')
+      await load()
+    } catch {
+      toast.error('Could not delete the holiday')
+    }
+  }
+
+  async function seedFixedHolidays() {
+    try {
+      await hrApi.seedPublicHolidays(year)
+      toast.success('Fixed-date holidays seeded for this year')
+      await load()
+    } catch {
+      toast.error('Could not seed holidays')
+    }
+  }
+
+  // ── Carry-Forward ─────────────────────────────────────────────────────────
+  async function applyCarryForward() {
+    const ok = await confirmDialog(
+      `Apply carry-forward from ${year - 1} into ${year} for ${carryForwardRows.length} balance(s)? `
+      + `This SETS each balance's carried-forward figure (safe to re-run).`,
+      { confirmText: 'Apply carry-forward' },
+    )
+    if (!ok) return
+    setApplyingCarryForward(true)
+    try {
+      const res = await hrApi.carryForwardApply(year - 1, year)
+      toast.success(`Carry-forward applied to ${res.data.updated} balance(s)`)
+      await loadCarryForwardPreview()
+      await load()
+    } catch {
+      toast.error('Could not apply carry-forward')
+    } finally {
+      setApplyingCarryForward(false)
+    }
+  }
+
+  // ── Encashment ────────────────────────────────────────────────────────────
+  async function submitEncashment(e: React.FormEvent) {
+    e.preventDefault()
+    if (!encashForm.employee || !encashForm.leave_type || !encashForm.days) {
+      toast.error('Employee, leave type and days are required')
+      return
+    }
+    setSaving(true)
+    try {
+      await hrApi.requestEncashment(encashForm)
+      toast.success('Encashment request created — will apply in the next payroll run')
+      setShowEncashment(false)
+      setEncashForm({ employee: '', leave_type: '', days: '', reason: '' })
+      await load()
+    } catch (err: unknown) {
+      const apiErr = (err as { response?: { data?: { error?: unknown } } })?.response?.data?.error
+      const msg = typeof apiErr === 'string'
+        ? apiErr
+        : ((apiErr as { message?: string })?.message ?? 'Could not create the encashment request')
+      toast.error(msg)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function cancelEncashment(a: EncashmentAdjustment) {
+    const ok = await confirmDialog(`Cancel this encashment request for ${a.employee_name}?`, { danger: true })
+    if (!ok) return
+    try {
+      await payrollApi.cancelAdjustment(a.id)
+      toast.success('Encashment cancelled')
+      await load()
+    } catch {
+      toast.error('Could not cancel the encashment')
     }
   }
 
@@ -544,6 +750,171 @@ export default function LeavePage() {
               </div>
             </div>
           )}
+
+          {tab === 'holidays' && (
+            <div className="space-y-3">
+              <div className="flex justify-end gap-2">
+                <button onClick={seedFixedHolidays} className="btn-secondary flex items-center gap-1.5 text-sm">
+                  <Gift className="w-4 h-4" /> Seed {year} fixed-date holidays
+                </button>
+                <button
+                  onClick={() => { setEditingHoliday(null); setHolidayForm({ date: today, name: '', is_recurring_annually: true }); setShowHoliday(true) }}
+                  className="btn-primary flex items-center gap-1.5 text-sm"
+                >
+                  <Plus className="w-4 h-4" /> Add holiday
+                </button>
+              </div>
+              <p className="text-xs text-slate-500">
+                Fixed-date holidays (New Year, Workers&rsquo; Day, Democracy Day, Independence Day, Christmas, Boxing Day)
+                can be seeded automatically. Moveable dates (Eid, Good Friday, etc.) must be added manually.
+              </p>
+              <div className="card overflow-hidden">
+                {holidays.length === 0 ? (
+                  <div className="p-10 text-center text-slate-400 text-sm">No public holidays recorded for {year}.</div>
+                ) : (
+                  <table className="w-full text-sm">
+                    <thead className="bg-white/[0.03]">
+                      <tr className="text-left text-xs uppercase tracking-wider text-slate-400">
+                        <th className="px-4 py-3">Date</th>
+                        <th className="px-4 py-3">Name</th>
+                        <th className="px-4 py-3">Recurs annually</th>
+                        <th className="px-4 py-3"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {holidays.sort((a, b) => a.date.localeCompare(b.date)).map((h) => (
+                        <tr key={h.id} className="border-t border-white/5">
+                          <td className="px-4 py-3 text-white font-mono">{formatDate(h.date)}</td>
+                          <td className="px-4 py-3 text-slate-200">{h.name}</td>
+                          <td className="px-4 py-3 text-slate-400">{h.is_recurring_annually ? 'Yes' : 'No'}</td>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center justify-end gap-1">
+                              <button
+                                onClick={() => {
+                                  setEditingHoliday(h.id)
+                                  setHolidayForm({ date: h.date, name: h.name, is_recurring_annually: h.is_recurring_annually })
+                                  setShowHoliday(true)
+                                }}
+                                className="text-xs text-brand-400 hover:underline"
+                              >
+                                Edit
+                              </button>
+                              <button onClick={() => deleteHoliday(h)} title="Delete" className="p-1.5 rounded hover:bg-red-500/10 text-red-400">
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          )}
+
+          {tab === 'carry_forward' && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-slate-400">
+                  Year-end review: unused paid leave from {year - 1} projected to carry into {year}, capped at each type&rsquo;s carry-forward maximum.
+                </p>
+                <button
+                  onClick={applyCarryForward}
+                  disabled={applyingCarryForward || carryForwardRows.length === 0}
+                  className="btn-primary flex items-center gap-1.5 text-sm shrink-0"
+                >
+                  {applyingCarryForward ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowLeftRight className="w-4 h-4" />}
+                  Apply carry-forward
+                </button>
+              </div>
+              <div className="card overflow-hidden">
+                {carryForwardLoading ? (
+                  <div className="flex items-center justify-center py-16">
+                    <Loader2 className="w-6 h-6 animate-spin text-brand-400" />
+                  </div>
+                ) : carryForwardRows.length === 0 ? (
+                  <div className="p-10 text-center text-slate-400 text-sm">
+                    Nothing to carry forward from {year - 1}.
+                  </div>
+                ) : (
+                  <table className="w-full text-sm">
+                    <thead className="bg-white/[0.03]">
+                      <tr className="text-left text-xs uppercase tracking-wider text-slate-400">
+                        <th className="px-4 py-3">Employee</th>
+                        <th className="px-4 py-3">Leave type</th>
+                        <th className="px-4 py-3 text-right">Available ({year - 1})</th>
+                        <th className="px-4 py-3 text-right">Cap</th>
+                        <th className="px-4 py-3 text-right">Projected carry-forward ({year})</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {carryForwardRows.map((r, i) => (
+                        <tr key={`${r.employee_id}-${r.leave_type}-${i}`} className="border-t border-white/5">
+                          <td className="px-4 py-3 text-white font-medium">{r.employee_name}</td>
+                          <td className="px-4 py-3 text-slate-300">{r.leave_type}</td>
+                          <td className="px-4 py-3 text-right font-mono text-slate-200">{r.available_days}</td>
+                          <td className="px-4 py-3 text-right font-mono text-slate-400">{r.carry_forward_max}</td>
+                          <td className="px-4 py-3 text-right font-mono text-emerald-400">{r.projected_carried_forward}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          )}
+
+          {tab === 'encashment' && (
+            <div className="space-y-3">
+              <div className="flex justify-end">
+                <button
+                  onClick={() => { setEncashForm({ employee: '', leave_type: '', days: '', reason: '' }); setShowEncashment(true) }}
+                  className="btn-primary flex items-center gap-1.5 text-sm"
+                >
+                  <Banknote className="w-4 h-4" /> Request encashment
+                </button>
+              </div>
+              <div className="card overflow-hidden">
+                {encashments.length === 0 ? (
+                  <div className="p-10 text-center text-slate-400 text-sm">No encashment requests yet.</div>
+                ) : (
+                  <table className="w-full text-sm">
+                    <thead className="bg-white/[0.03]">
+                      <tr className="text-left text-xs uppercase tracking-wider text-slate-400">
+                        <th className="px-4 py-3">Employee</th>
+                        <th className="px-4 py-3 text-right">Amount</th>
+                        <th className="px-4 py-3">Reason</th>
+                        <th className="px-4 py-3">Status</th>
+                        <th className="px-4 py-3"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {encashments.map((a) => (
+                        <tr key={a.id} className="border-t border-white/5">
+                          <td className="px-4 py-3 text-white font-medium">{a.employee_name}</td>
+                          <td className="px-4 py-3 text-right font-mono text-slate-200">{formatCurrency(a.amount)}</td>
+                          <td className="px-4 py-3 text-slate-400">{a.reason}</td>
+                          <td className="px-4 py-3">
+                            <span className={`text-xs px-2 py-0.5 rounded capitalize ${STATUS_STYLE[a.status] ?? 'bg-slate-500/15 text-slate-400'}`}>
+                              {a.status}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            {a.status === 'pending' && (
+                              <button onClick={() => cancelEncashment(a)} title="Cancel" className="p-1.5 rounded hover:bg-white/5 text-slate-400">
+                                <X className="w-4 h-4" />
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          )}
         </>
       )}
 
@@ -736,6 +1107,113 @@ export default function LeavePage() {
               <button type="submit" disabled={saving} className="btn-primary flex items-center gap-1.5">
                 {saving && <Loader2 className="w-4 h-4 animate-spin" />}
                 Save
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {showHoliday && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <form onSubmit={saveHoliday} className="card w-full max-w-md p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold text-white">{editingHoliday ? 'Edit holiday' : 'Add holiday'}</h2>
+              <button type="button" onClick={() => setShowHoliday(false)} className="text-slate-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">Date</label>
+              <DateInput value={holidayForm.date} onChange={(v) => setHolidayForm({ ...holidayForm, date: v })} />
+            </div>
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">Name</label>
+              <input
+                className="input"
+                value={holidayForm.name}
+                onChange={(e) => setHolidayForm({ ...holidayForm, name: e.target.value })}
+                required
+              />
+            </div>
+            <label className="flex items-center gap-2 text-sm text-slate-300">
+              <input
+                type="checkbox"
+                checked={holidayForm.is_recurring_annually}
+                onChange={(e) => setHolidayForm({ ...holidayForm, is_recurring_annually: e.target.checked })}
+              />
+              Recurs annually (fixed-date holiday)
+            </label>
+            <div className="flex justify-end gap-2 pt-1">
+              <button type="button" onClick={() => setShowHoliday(false)} className="btn-secondary">Cancel</button>
+              <button type="submit" disabled={saving} className="btn-primary flex items-center gap-1.5">
+                {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+                Save
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {showEncashment && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <form onSubmit={submitEncashment} className="card w-full max-w-md p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold text-white">Request leave encashment</h2>
+              <button type="button" onClick={() => setShowEncashment(false)} className="text-slate-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">Employee</label>
+              <select
+                className="input"
+                value={encashForm.employee}
+                onChange={(e) => setEncashForm({ ...encashForm, employee: e.target.value })}
+                required
+              >
+                <option value="">Select an employee…</option>
+                {employees.map((e) => (
+                  <option key={e.id} value={e.id}>{e.full_name} — {e.employee_id}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">Leave type</label>
+              <select
+                className="input"
+                value={encashForm.leave_type}
+                onChange={(e) => setEncashForm({ ...encashForm, leave_type: e.target.value })}
+                required
+              >
+                <option value="">Select a paid leave type…</option>
+                {types.filter((t) => t.is_paid).map((t) => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">Days to encash</label>
+              <input
+                type="text" inputMode="decimal" className="input"
+                value={encashForm.days}
+                onChange={(e) => setEncashForm({ ...encashForm, days: e.target.value })}
+                required
+              />
+            </div>
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">Reason</label>
+              <input
+                className="input"
+                placeholder="Optional"
+                value={encashForm.reason}
+                onChange={(e) => setEncashForm({ ...encashForm, reason: e.target.value })}
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <button type="button" onClick={() => setShowEncashment(false)} className="btn-secondary">Cancel</button>
+              <button type="submit" disabled={saving} className="btn-primary flex items-center gap-1.5">
+                {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+                Submit
               </button>
             </div>
           </form>

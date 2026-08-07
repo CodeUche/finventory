@@ -22,25 +22,29 @@ from apps.core.permissions import IsManager, IsStaff, IsOwnerOrAdmin, plan_requi
 
 _PlanPayroll = plan_requires('payroll')
 from .models import (
-    AdvancePolicy, AdvanceRequest, Attendance, BenefitPlan, Bonus, CompensationRecord,
-    Employee, EmployeeBenefit, EmployeeDocument, EmployeeLoan, EmployeePenalty,
-    EmployeeTaxProfile, LeaveBalance, LeaveRequest, LeaveType, PayrollAdjustment,
-    PayrollRun, PayrollSettings, PayslipDelivery, PayslipLine, StatutoryRemittance,
-    TaxAuthority,
+    AdvancePolicy, AdvanceRequest, Attendance, BenefitPlan, Bonus, ClearanceChecklistItem,
+    CompensationRecord, Employee, EmployeeBenefit, EmployeeDocument, EmployeeLoan,
+    EmployeePenalty, EmployeeTaxProfile, ExitInterview, LeaveBalance, LeaveRequest,
+    LeaveType, OffboardingCase, OffboardingChecklistTemplate, PayrollAdjustment,
+    PayrollRun, PayrollSettings, PayslipDelivery, PayslipLine, PublicHoliday,
+    StatutoryRemittance, TaxAuthority,
 )
 from .serializers import (
     AdvancePolicySerializer, AdvanceRequestSerializer, AttendanceSerializer,
-    BenefitPlanSerializer, BonusSerializer, CompensationRecordSerializer,
-    EmployeeBenefitSerializer, EmployeeDocumentSerializer, EmployeeLoanSerializer,
-    EmployeePenaltySerializer, EmployeeSerializer, EmployeeTaxProfileSerializer,
-    LeaveBalanceSerializer, LeaveRequestSerializer, LeaveTypeSerializer,
-    PayrollAdjustmentSerializer, PayrollRunSerializer, PayrollSettingsSerializer,
-    PayslipDeliverySerializer, PayslipLineSerializer, StatutoryRemittanceSerializer,
+    BenefitPlanSerializer, BonusSerializer, ClearanceChecklistItemSerializer,
+    CompensationRecordSerializer, EmployeeBenefitSerializer, EmployeeDocumentSerializer,
+    EmployeeLoanSerializer, EmployeePenaltySerializer, EmployeeSerializer,
+    EmployeeTaxProfileSerializer, ExitInterviewSerializer, LeaveBalanceSerializer,
+    LeaveRequestSerializer, LeaveTypeSerializer, OffboardingCaseSerializer,
+    OffboardingChecklistTemplateSerializer, PayrollAdjustmentSerializer,
+    PayrollRunSerializer, PayrollSettingsSerializer, PayslipDeliverySerializer,
+    PayslipLineSerializer, PublicHolidaySerializer, StatutoryRemittanceSerializer,
     TaxAuthoritySerializer,
 )
 from .services import (
-    CompensationService, EWAService, LeaveService, PayrollService,
-    RemittanceService, TaxAuthorityService, get_settings,
+    CompensationService, EWAService, LeaveEncashmentService, LeaveService,
+    OffboardingService, PayrollService, PublicHolidayService, RemittanceService,
+    TaxAuthorityService, get_settings,
 )
 
 
@@ -68,6 +72,28 @@ class EmployeeViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
     def get_queryset(self):
         org = self._get_organisation()
         return Employee.objects.filter(organisation=org)
+
+    def perform_create(self, serializer):
+        # ATOMIC_REQUESTS is not enabled globally in this codebase, so wrap
+        # explicitly: TenantFilterMixin.perform_create's save() and the
+        # outbox emit() below must commit-or-rollback together (outbox
+        # pattern guarantee — see apps.integrations.services).
+        from django.db import transaction
+        with transaction.atomic():
+            super().perform_create(serializer)
+            employee = serializer.instance
+            from apps.integrations.services import IntegrationEventService
+            IntegrationEventService.emit(
+                employee.organisation, "employee.onboarded",
+                {
+                    "employee_id": str(employee.id),
+                    "employee_code": employee.employee_id,
+                    "full_name": f"{employee.first_name} {employee.last_name}".strip(),
+                    "job_title": employee.job_title,
+                    "department": employee.department,
+                    "hire_date": str(employee.hire_date) if employee.hire_date else None,
+                },
+            )
 
     @action(detail=False, methods=["post"])
     def resolve_account(self, request):
@@ -230,6 +256,65 @@ class EmployeeViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
         employee.save(update_fields=['user'])
         return Response({'employee': str(employee.id), 'revoked': True})
 
+    @action(detail=False, methods=['get'])
+    def lifecycle_alerts(self, request):
+        """
+        GET /payroll/employees/lifecycle_alerts/?within_days=30
+
+        Aggregates three kinds of live-computed alerts from existing Employee
+        fields — no new models: probation ending soon (confirmation_date),
+        contract ending soon (contract_end_date + employment_type=CONTRACT),
+        and work anniversaries (hire_date). One query per kind.
+        """
+        from datetime import timedelta as _td
+
+        from django.utils import timezone
+
+        org = self._get_organisation()
+        try:
+            within_days = int(request.query_params.get('within_days', 30))
+        except (TypeError, ValueError):
+            within_days = 30
+        today = timezone.localdate()
+        horizon = today + _td(days=within_days)
+
+        probation_ending = list(
+            Employee.objects.filter(
+                organisation=org, is_active=True,
+                confirmation_date__gte=today, confirmation_date__lte=horizon,
+            ).values('id', 'employee_id', 'first_name', 'last_name', 'confirmation_date', 'department')
+        )
+        contract_ending = list(
+            Employee.objects.filter(
+                organisation=org, is_active=True, employment_type=Employee.CONTRACT,
+                contract_end_date__gte=today, contract_end_date__lte=horizon,
+            ).values('id', 'employee_id', 'first_name', 'last_name', 'contract_end_date', 'department')
+        )
+
+        anniversaries = []
+        for emp in Employee.objects.filter(
+            organisation=org, is_active=True, hire_date__isnull=False,
+        ).values('id', 'employee_id', 'first_name', 'last_name', 'hire_date', 'department'):
+            hire = emp['hire_date']
+            this_year_anniv = hire.replace(year=today.year)
+            if this_year_anniv < today:
+                this_year_anniv = hire.replace(year=today.year + 1)
+            if today <= this_year_anniv <= horizon:
+                years = this_year_anniv.year - hire.year
+                anniversaries.append({**emp, 'anniversary_date': this_year_anniv, 'years': years})
+
+        def _fmt(rows, date_key):
+            for r in rows:
+                r['id'] = str(r['id'])
+                r['name'] = f"{r['first_name']} {r['last_name']}".strip()
+            return sorted(rows, key=lambda r: r[date_key])
+
+        return Response({
+            'probation_ending': _fmt(probation_ending, 'confirmation_date'),
+            'contract_ending': _fmt(contract_ending, 'contract_end_date'),
+            'work_anniversaries': _fmt(anniversaries, 'anniversary_date'),
+        })
+
 
 class EmployeeDocumentViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     serializer_class = EmployeeDocumentSerializer
@@ -247,6 +332,30 @@ class EmployeeDocumentViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         file = self.request.FILES.get('file')
         size = file.size if file else 0
         serializer.save(organisation=self._get_organisation(), file_size=size)
+
+    @action(detail=False, methods=['get'])
+    def expiring(self, request):
+        """GET /payroll/documents/expiring/?within_days=30 — soonest-first."""
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        org = self._get_organisation()
+        try:
+            within_days = int(request.query_params.get('within_days', 30))
+        except (TypeError, ValueError):
+            within_days = 30
+        today = timezone.localdate()
+        horizon = today + timedelta(days=within_days)
+        qs = (
+            EmployeeDocument.objects.filter(
+                organisation=org, expiry_date__isnull=False,
+                expiry_date__gte=today, expiry_date__lte=horizon,
+            )
+            .select_related('employee')
+            .order_by('expiry_date')
+        )
+        return Response(EmployeeDocumentSerializer(qs, many=True, context={'request': request}).data)
 
 
 class EmployeePenaltyViewSet(TenantFilterMixin, viewsets.ModelViewSet):
@@ -1514,6 +1623,93 @@ class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         return response
 
     @action(detail=False, methods=['get'])
+    def register(self, request):
+        """
+        GET /payroll/runs/register/?year=<int>
+
+        Payroll register with month-on-month variance. Pure aggregation over
+        PayrollRun's existing denormalized total columns — no per-payslip
+        iteration.
+        """
+        from decimal import Decimal
+
+        org = self._get_organisation()
+        year = int(request.query_params.get('year') or PayrollRun.objects.filter(
+            organisation=org).order_by('-period_year').values_list('period_year', flat=True).first() or 0)
+
+        runs = list(
+            PayrollRun.objects.filter(organisation=org, period_year=year, run_type=PayrollRun.REGULAR)
+            .order_by('period_month')
+            .values(
+                'id', 'run_number', 'period_month', 'status',
+                'total_gross', 'total_net', 'total_paye', 'total_deductions',
+            )
+        )
+        rows = []
+        prev_net = None
+        for r in runs:
+            net = Decimal(str(r['total_net'] or 0))
+            variance_pct = None
+            if prev_net is not None and prev_net != 0:
+                variance_pct = round(float((net - prev_net) / prev_net) * 100, 2)
+            rows.append({
+                **r, 'id': str(r['id']),
+                'variance_from_prior_month_pct': variance_pct,
+            })
+            prev_net = net
+        return Response({'year': year, 'rows': rows})
+
+    @action(detail=False, methods=['get'])
+    def annual_paye_reconciliation(self, request):
+        """
+        GET /payroll/runs/annual_paye_reconciliation/?year=<int>
+
+        Read-only: compares actual monthly PayslipLine.paye_tax sums per
+        employee for the tax year against the correct annual tax on their
+        actual annual taxable income, surfacing the variance. Corrections
+        apply via the existing PayrollAdjustment CORRECTION type — this
+        endpoint only reports, it never writes.
+        """
+        from datetime import date as _date
+        from decimal import Decimal
+
+        from django.db.models import Sum
+
+        CENTS = Decimal('0.01')
+        org = self._get_organisation()
+        year = int(request.query_params.get('year') or _date.today().year)
+
+        rows = (
+            PayslipLine.objects
+            .filter(organisation=org, payroll_run__period_year=year)
+            .values('employee_id', 'employee__first_name', 'employee__last_name', 'employee__employee_id')
+            .annotate(
+                actual_taxable=Sum('taxable_income'),
+                actual_paye_withheld=Sum('paye_tax'),
+            )
+            .order_by('employee__last_name')
+        )
+        results = []
+        for r in rows:
+            actual_taxable = Decimal(str(r['actual_taxable'] or 0))
+            correct_annual_paye = PayrollService.calculate_annual_paye(actual_taxable).quantize(CENTS, rounding='ROUND_HALF_UP')
+            withheld = Decimal(str(r['actual_paye_withheld'] or 0))
+            variance = withheld - correct_annual_paye
+            results.append({
+                'employee_id': str(r['employee_id']),
+                'employee_code': r['employee__employee_id'],
+                'employee_name': f"{r['employee__first_name']} {r['employee__last_name']}".strip(),
+                'actual_taxable_income': actual_taxable,
+                'actual_paye_withheld': withheld,
+                'correct_annual_paye': correct_annual_paye,
+                'variance': variance,
+                'variance_direction': (
+                    'over-withheld' if variance > 0 else 'under-withheld' if variance < 0 else 'exact'
+                ),
+            })
+        return Response({'year': year, 'rows': results})
+
+    @action(detail=False, methods=['get'])
     def pending_approvals(self, request):
         """GET /payroll/runs/pending_approvals/ — runs awaiting approval (for notification badge)."""
         org = self._get_organisation()
@@ -1616,6 +1812,45 @@ class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         return Response({
             'sent': sent, 'failed': failed, 'skipped': skipped, 'results': results,
         })
+
+    @action(detail=True, methods=['post'])
+    def send_payslips_server_rendered(self, request, pk=None):
+        """
+        POST /payroll/runs/{id}/send_payslips_server_rendered/
+        Body (optional): { employee_ids: [...] }
+
+        Queues send_payslips_async — server renders and emails every payslip
+        PDF itself, no client rendering required. Falls back to a synchronous
+        call if Celery is not configured/eager in this environment.
+        """
+        run = self.get_object()
+        employee_ids = request.data.get('employee_ids') or None
+        from .tasks import send_payslips_async
+
+        try:
+            async_result = send_payslips_async.delay(str(run.id), employee_ids)
+            return Response({'queued': True, 'task_id': async_result.id})
+        except Exception:
+            # No broker available (e.g. local/dev without Celery running) —
+            # run synchronously so the feature still works end-to-end.
+            result = send_payslips_async(str(run.id), employee_ids)
+            return Response({'queued': False, **result})
+
+    @action(detail=True, methods=['get'], url_path='payslip-pdf/(?P<employee_id>[^/.]+)')
+    def payslip_pdf(self, request, pk=None, employee_id=None):
+        """GET /payroll/runs/{id}/payslip-pdf/{employee_id}/ — one payslip as a downloadable PDF."""
+        from .pdf import build_payslip_pdf
+
+        run = self.get_object()
+        try:
+            payslip = run.payslips.select_related('employee', 'organisation').get(employee_id=employee_id)
+        except PayslipLine.DoesNotExist:
+            return Response({'error': 'Payslip not found for this employee in this run.'}, status=404)
+        pdf_bytes = build_payslip_pdf(payslip)
+        filename = f"Payslip-{payslip.employee.employee_id}-{run.period_year}{run.period_month:02d}.pdf"
+        response = HttpResponse(pdf_bytes, content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
 
     @action(detail=True, methods=['get'])
     def deliveries(self, request, pk=None):
@@ -1891,6 +2126,33 @@ class PayrollAdjustmentViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         adjustment.save(update_fields=['status'])
         return Response(PayrollAdjustmentSerializer(adjustment).data)
 
+    @action(detail=False, methods=['post'])
+    def request_encashment(self, request):
+        """
+        POST /payroll/adjustments/request_encashment/
+        Body: { employee: <id>, leave_type: <id>, days: <decimal>, reason: '' }
+
+        Creates a pending PayrollAdjustment(ENCASHMENT), mirroring the existing
+        Requests-tab approval pattern — it stays PENDING until picked up by a
+        payroll run, same as arrears/back-pay.
+        """
+        org = self._get_organisation()
+        try:
+            employee = Employee.objects.get(organisation=org, id=request.data.get('employee'))
+        except (Employee.DoesNotExist, ValueError, TypeError):
+            return Response({'error': 'Employee not found in this organisation.'}, status=404)
+        try:
+            leave_type = LeaveType.objects.get(organisation=org, id=request.data.get('leave_type'))
+        except (LeaveType.DoesNotExist, ValueError, TypeError):
+            return Response({'error': 'Leave type not found in this organisation.'}, status=404)
+        try:
+            adjustment = LeaveEncashmentService.request_encashment(
+                employee, leave_type, request.data.get('days'), request.data.get('reason', ''),
+            )
+        except ValueError as exc:
+            return Response({'error': str(exc)}, status=400)
+        return Response(PayrollAdjustmentSerializer(adjustment).data, status=201)
+
 
 class PayrollSettingsViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     """GET/PATCH /payroll/settings/ — org-level payroll configuration."""
@@ -1931,6 +2193,65 @@ class LeaveTypeViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(organisation=self._get_organisation())
+
+
+class PublicHolidayViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+    """CRUD /payroll/public-holidays/ — org-recognised public holidays."""
+    serializer_class = PublicHolidaySerializer
+    permission_classes = [IsAuthenticated, IsStaff, _PlanPayroll]
+
+    def get_queryset(self):
+        org = self._get_organisation()
+        qs = PublicHoliday.objects.filter(organisation=org)
+        year = self.request.query_params.get('year')
+        if year:
+            qs = qs.filter(date__year=year)
+        return qs
+
+    def perform_create(self, serializer):
+        serializer.save(organisation=self._get_organisation())
+
+    @action(detail=False, methods=['post'])
+    def seed(self, request):
+        """POST /payroll/public-holidays/seed/ — seed fixed-date holidays for a year."""
+        org = self._get_organisation()
+        try:
+            year = int(request.data.get('year'))
+        except (TypeError, ValueError):
+            return Response({'error': 'year is required.'}, status=400)
+        qs = PublicHolidayService.seed_fixed_dates(org, year)
+        return Response(PublicHolidaySerializer(qs, many=True).data)
+
+
+class LeaveCarryForwardViewSet(TenantFilterMixin, viewsets.ViewSet):
+    """
+    Read-only preview + apply actions for year-end leave carry-forward.
+    Not a ModelViewSet — this is a workflow, not a CRUD resource.
+    """
+    permission_classes = [IsAuthenticated, IsOwnerOrAdmin, _PlanPayroll]
+
+    @action(detail=False, methods=['get'])
+    def preview(self, request):
+        """GET /payroll/leave-carry-forward/preview/?year=<prior_year>"""
+        org = self._get_organisation()
+        try:
+            prior_year = int(request.query_params.get('year'))
+        except (TypeError, ValueError):
+            return Response({'error': 'year (the prior/source year) is required.'}, status=400)
+        rows = LeaveService.carry_forward_preview(org, prior_year)
+        return Response(rows)
+
+    @action(detail=False, methods=['post'])
+    def apply(self, request):
+        """POST /payroll/leave-carry-forward/apply/ Body: { prior_year, new_year }"""
+        org = self._get_organisation()
+        try:
+            prior_year = int(request.data.get('prior_year'))
+            new_year = int(request.data.get('new_year'))
+        except (TypeError, ValueError):
+            return Response({'error': 'prior_year and new_year are required.'}, status=400)
+        updated = LeaveService.carry_forward_year_end(org, prior_year, new_year)
+        return Response({'updated': updated, 'prior_year': prior_year, 'new_year': new_year})
 
 
 class LeaveBalanceViewSet(TenantFilterMixin, viewsets.ReadOnlyModelViewSet):
@@ -1981,28 +2302,69 @@ class LeaveRequestViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             qs = qs.filter(start_date__year=params['year'])
         return qs
 
-    def perform_create(self, serializer):
+    def create(self, request, *args, **kwargs):
+        """
+        HR-facing leave request creation — warn-and-allow, never hard-block.
+
+        Unlike the ESS-facing endpoint (ess_views.MeLeaveRequestViewSet, which
+        still hard-blocks), HR raising a request on an employee's behalf may
+        knowingly over-book:
+          - Tier 1 (soft warn): days exceed available_days but the balance
+            stays >= 0 after — allowed, flagged, no reason required.
+          - Tier 2 (hard warn): the request would push the balance negative —
+            allowed, but a non-blank ``reason`` is mandatory (400 if blank).
+        """
+        from decimal import Decimal as _Dec
+
         org = self._get_organisation()
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
         employee = serializer.validated_data['employee']
         leave_type = serializer.validated_data['leave_type']
         days = LeaveRequest.working_days_between(
             serializer.validated_data['start_date'], serializer.validated_data['end_date']
         )
+
+        balance = LeaveService.get_or_create_balance(
+            employee, leave_type, serializer.validated_data['start_date'].year
+        )
+        is_overbooked = False
+        overbooked_days = _Dec('0')
+        if leave_type.is_paid and days > balance.available_days:
+            is_overbooked = True
+            overbooked_days = days - balance.available_days
+            projected_balance = balance.available_days - days
+            if projected_balance < 0:
+                reason = (request.data.get('reason') or '').strip()
+                if not reason:
+                    return Response(
+                        {'error': (
+                            f'This request of {days} days would take the balance to '
+                            f'{projected_balance} (negative). A reason is required to proceed.'
+                        )},
+                        status=400,
+                    )
+
         # Route the approval to the employee's manager where one is recorded.
         approver = employee.manager.user if (employee.manager and employee.manager.user_id) else None
         instance = serializer.save(
             organisation=org, days=days, approver=approver,
             status=LeaveRequest.PENDING if leave_type.requires_approval else LeaveRequest.APPROVED,
-        )
-        balance = LeaveService.get_or_create_balance(
-            employee, leave_type, instance.start_date.year
+            is_overbooked=is_overbooked,
+            overbooked_by=request.user if is_overbooked else None,
+            overbooked_days=overbooked_days,
         )
         if instance.status == LeaveRequest.PENDING:
-            from decimal import Decimal as _Dec
             balance.pending_days = _Dec(str(balance.pending_days)) + days
             balance.save(update_fields=['pending_days'])
         else:
             LeaveService.approve(instance, user=self.request.user)
+
+        headers = self.get_success_headers(serializer.data)
+        return Response(
+            self.get_serializer(instance).data, status=status.HTTP_201_CREATED, headers=headers,
+        )
 
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
@@ -2038,6 +2400,63 @@ class LeaveRequestViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             organisation=org, status=LeaveRequest.PENDING
         ).count()
         return Response({'count': count})
+
+    @action(detail=False, methods=['get'])
+    def team_coverage(self, request):
+        """
+        GET /payroll/leave-requests/team_coverage/?employee=<id>&start_date=&end_date=
+
+        Who else on this employee's team is off over the requested window —
+        approved or pending requests for anyone sharing the same manager or
+        department, overlapping [start_date, end_date]. One query.
+        """
+        org = self._get_organisation()
+        employee_id = request.query_params.get('employee')
+        start_date = request.query_params.get('start_date')
+        end_date = request.query_params.get('end_date')
+        if not employee_id or not start_date or not end_date:
+            return Response(
+                {'error': 'employee, start_date and end_date are required.'}, status=400,
+            )
+        try:
+            employee = Employee.objects.get(organisation=org, id=employee_id)
+        except Employee.DoesNotExist:
+            return Response({'error': 'Employee not found.'}, status=404)
+
+        from django.db.models import Q
+
+        if not employee.department and not employee.manager_id:
+            return Response([])
+
+        peer_filter = Q(employee__department=employee.department) if employee.department else Q()
+        if employee.manager_id:
+            peer_filter |= Q(employee__manager_id=employee.manager_id)
+
+        rows = (
+            LeaveRequest.objects
+            .filter(
+                organisation=org,
+                status__in=[LeaveRequest.APPROVED, LeaveRequest.PENDING],
+                start_date__lte=end_date,
+                end_date__gte=start_date,
+            )
+            .filter(peer_filter)
+            .exclude(employee_id=employee.id)
+            .select_related('employee', 'leave_type')
+        )
+        data = [
+            {
+                'employee_id': str(r.employee_id),
+                'employee_name': r.employee.full_name,
+                'department': r.employee.department,
+                'leave_type': r.leave_type.name,
+                'start_date': r.start_date,
+                'end_date': r.end_date,
+                'status': r.status,
+            }
+            for r in rows
+        ]
+        return Response(data)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2184,3 +2603,280 @@ class AdvancePolicyViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Offboarding (A.3)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class OffboardingCaseViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+    serializer_class = OffboardingCaseSerializer
+    permission_classes = [IsAuthenticated, IsManager, _PlanPayroll]
+
+    def get_queryset(self):
+        org = self._get_organisation()
+        qs = (
+            OffboardingCase.objects.filter(organisation=org)
+            .select_related('employee', 'initiated_by', 'completed_by')
+            .prefetch_related('checklist_items', 'exit_interview')
+        )
+        if self.request.query_params.get('status'):
+            qs = qs.filter(status=self.request.query_params['status'])
+        if self.request.query_params.get('employee'):
+            qs = qs.filter(employee_id=self.request.query_params['employee'])
+        return qs
+
+    def create(self, request, *args, **kwargs):
+        org = self._get_organisation()
+        try:
+            employee = Employee.objects.get(organisation=org, id=request.data.get('employee'))
+        except (Employee.DoesNotExist, ValueError, TypeError):
+            return Response({'error': 'Employee not found in this organisation.'}, status=404)
+        reason = request.data.get('reason')
+        valid_reasons = [c for c, _ in OffboardingCase.REASON_CHOICES]
+        if reason not in valid_reasons:
+            return Response({'error': f"reason must be one of: {', '.join(valid_reasons)}"}, status=400)
+        last_working_day = request.data.get('last_working_day')
+        if not last_working_day:
+            return Response({'error': 'last_working_day is required.'}, status=400)
+        case = OffboardingService.create_case(
+            employee=employee, initiated_by=request.user, reason=reason,
+            last_working_day=last_working_day,
+            notice_period_days=request.data.get('notice_period_days', 0) or 0,
+            notes=request.data.get('notes', ''),
+        )
+        return Response(OffboardingCaseSerializer(case).data, status=201)
+
+    @action(detail=True, methods=['post'], url_path='clear-item/(?P<item_id>[^/.]+)')
+    def clear_item(self, request, pk=None, item_id=None):
+        """POST /payroll/offboarding-cases/{id}/clear-item/{item_id}/"""
+        from django.utils import timezone
+
+        case = self.get_object()
+        try:
+            item = case.checklist_items.get(id=item_id)
+        except ClearanceChecklistItem.DoesNotExist:
+            return Response({'error': 'Checklist item not found on this case.'}, status=404)
+        item.is_cleared = True
+        item.cleared_by = request.user
+        item.cleared_at = timezone.now()
+        item.save(update_fields=['is_cleared', 'cleared_by', 'cleared_at'])
+        if case.status == OffboardingCase.INITIATED:
+            case.status = OffboardingCase.IN_PROGRESS
+            case.save(update_fields=['status'])
+        return Response(ClearanceChecklistItemSerializer(item).data)
+
+    @action(detail=True, methods=['post'])
+    def run_final_settlement(self, request, pk=None):
+        """POST /payroll/offboarding-cases/{id}/run_final_settlement/"""
+        case = self.get_object()
+        if case.final_settlement_run_id:
+            return Response({'error': 'A final settlement run already exists for this case.'}, status=400)
+        run = OffboardingService.run_final_settlement(case, processed_by=request.user)
+        return Response(PayrollRunSerializer(run).data, status=201)
+
+    @action(detail=True, methods=['post'])
+    def complete(self, request, pk=None):
+        """
+        POST /payroll/offboarding-cases/{id}/complete/
+
+        Finalizes the case: deactivates the Membership for THIS org only.
+        Never touches the User account or other orgs' memberships.
+        """
+        case = self.get_object()
+        if case.status == OffboardingCase.COMPLETED:
+            return Response({'error': 'This case is already completed.'}, status=400)
+        case = OffboardingService.complete(case, user=request.user)
+        return Response(OffboardingCaseSerializer(case).data)
+
+    @action(detail=True, methods=['put', 'patch'])
+    def exit_interview(self, request, pk=None):
+        """PUT/PATCH /payroll/offboarding-cases/{id}/exit_interview/ — upsert."""
+        case = self.get_object()
+        interview, _ = ExitInterview.objects.get_or_create(
+            organisation=case.organisation, case=case,
+        )
+        serializer = ExitInterviewSerializer(interview, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(conducted_by=request.user)
+        return Response(serializer.data)
+
+
+class OffboardingChecklistTemplateViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+    serializer_class = OffboardingChecklistTemplateSerializer
+    permission_classes = [IsAuthenticated, IsOwnerOrAdmin, _PlanPayroll]
+
+    def get_queryset(self):
+        org = self._get_organisation()
+        if not OffboardingChecklistTemplate.objects.filter(organisation=org).exists():
+            OffboardingService.seed_checklist_template(org)
+        return OffboardingChecklistTemplate.objects.filter(organisation=org)
+
+    def perform_create(self, serializer):
+        serializer.save(organisation=self._get_organisation())
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# HR Analytics (A.6)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class HRAnalyticsViewSet(TenantFilterMixin, viewsets.ViewSet):
+    """
+    Read-only aggregation endpoints. Every query here is a server-side
+    .values().annotate() aggregation — never a per-employee Python loop (this
+    report class has a documented prior 6.7s N+1 incident on exactly this
+    shape elsewhere in the codebase; the same mistake is not repeated here).
+    """
+    permission_classes = [IsAuthenticated, IsManager, _PlanPayroll]
+
+    # NDPR-motivated: demographic/tenure buckets under this size are suppressed.
+    MIN_BUCKET_SIZE = 5
+
+    @staticmethod
+    def _suppress_small(counts: dict):
+        """Return counts with any bucket < MIN_BUCKET_SIZE replaced by None."""
+        return {
+            k: (v if v >= HRAnalyticsViewSet.MIN_BUCKET_SIZE else None)
+            for k, v in counts.items()
+        }
+
+    @action(detail=False, methods=['get'])
+    def headcount_turnover(self, request):
+        """GET /payroll/hr-analytics/headcount_turnover/?year=<int>"""
+        from datetime import date as _date
+
+        from django.db.models.functions import TruncMonth
+        from django.db.models import Count
+
+        org = self._get_organisation()
+        year = int(request.query_params.get('year') or _date.today().year)
+
+        joiners = (
+            Employee.objects.filter(organisation=org, hire_date__year=year)
+            .annotate(month=TruncMonth('hire_date'))
+            .values('month').annotate(count=Count('id')).order_by('month')
+        )
+        leavers = (
+            Employee.objects.filter(organisation=org, termination_date__year=year)
+            .annotate(month=TruncMonth('termination_date'))
+            .values('month').annotate(count=Count('id')).order_by('month')
+        )
+        headcount_start = Employee.all_objects.filter(
+            organisation=org, hire_date__lt=_date(year, 1, 1),
+        ).exclude(termination_date__lt=_date(year, 1, 1)).count()
+        total_joiners = Employee.objects.filter(organisation=org, hire_date__year=year).count()
+        total_leavers = Employee.objects.filter(organisation=org, termination_date__year=year).count()
+        avg_headcount = headcount_start + (total_joiners - total_leavers) / 2
+        attrition_pct = (
+            round((total_leavers / avg_headcount) * 100, 2) if avg_headcount > 0 else 0
+        )
+        def _month_str(m):
+            return str(m.date()) if hasattr(m, 'date') else str(m)
+
+        return Response({
+            'year': year,
+            'headcount_start_of_year': headcount_start,
+            'joiners_by_month': [{'month': _month_str(r['month']), 'count': r['count']} for r in joiners],
+            'leavers_by_month': [{'month': _month_str(r['month']), 'count': r['count']} for r in leavers],
+            'total_joiners': total_joiners,
+            'total_leavers': total_leavers,
+            'attrition_percent': attrition_pct,
+        })
+
+    @action(detail=False, methods=['get'])
+    def cost_by_department(self, request):
+        """GET /payroll/hr-analytics/cost_by_department/?year=&month="""
+        from django.db.models import Count, Sum
+
+        org = self._get_organisation()
+        qs = PayslipLine.objects.filter(organisation=org)
+        year = request.query_params.get('year')
+        month = request.query_params.get('month')
+        if year:
+            qs = qs.filter(payroll_run__period_year=year)
+        if month:
+            qs = qs.filter(payroll_run__period_month=month)
+        rows = (
+            qs.values('employee__department')
+            .annotate(total_gross=Sum('gross_salary'), total_net=Sum('net_salary'), headcount=Count('employee', distinct=True))
+            .order_by('-total_gross')
+        )
+        return Response([
+            {
+                'department': r['employee__department'] or 'Unassigned',
+                'total_gross': r['total_gross'], 'total_net': r['total_net'],
+                'headcount': r['headcount'],
+            }
+            for r in rows
+        ])
+
+    @action(detail=False, methods=['get'])
+    def absence_summary(self, request):
+        """GET /payroll/hr-analytics/absence_summary/?year=&month="""
+        from django.db.models import Count
+
+        org = self._get_organisation()
+        qs = Attendance.objects.filter(organisation=org)
+        year = request.query_params.get('year')
+        month = request.query_params.get('month')
+        if year:
+            qs = qs.filter(date__year=year)
+        if month:
+            qs = qs.filter(date__month=month)
+        rows = qs.values('status').annotate(count=Count('id')).order_by('status')
+        return Response({r['status']: r['count'] for r in rows})
+
+    @action(detail=False, methods=['get'])
+    def tenure_demographics(self, request):
+        """
+        GET /payroll/hr-analytics/tenure_demographics/
+
+        Tenure and gender/marital-status buckets. Any bucket with fewer than
+        MIN_BUCKET_SIZE people is suppressed (returned as null) — NDPR
+        requirement, not optional.
+        """
+        from datetime import date as _date
+
+        from django.db.models import Count
+
+        org = self._get_organisation()
+        today = _date.today()
+
+        gender_rows = (
+            Employee.objects.filter(organisation=org, is_active=True)
+            .values('gender').annotate(count=Count('id'))
+        )
+        gender_counts = self._suppress_small({r['gender'] or 'unspecified': r['count'] for r in gender_rows})
+
+        marital_rows = (
+            Employee.objects.filter(organisation=org, is_active=True)
+            .values('marital_status').annotate(count=Count('id'))
+        )
+        marital_counts = self._suppress_small(
+            {r['marital_status'] or 'unspecified': r['count'] for r in marital_rows}
+        )
+
+        # Tenure buckets computed via a single annotated query (years-of-service
+        # expressed in days, bucketed in Python from the aggregated counts —
+        # still one query, no per-employee loop).
+        employees = Employee.objects.filter(organisation=org, is_active=True, hire_date__isnull=False).values(
+            'hire_date'
+        )
+        buckets = {'<1yr': 0, '1-3yr': 0, '3-5yr': 0, '5yr+': 0}
+        for row in employees:
+            days = (today - row['hire_date']).days
+            if days < 365:
+                buckets['<1yr'] += 1
+            elif days < 3 * 365:
+                buckets['1-3yr'] += 1
+            elif days < 5 * 365:
+                buckets['3-5yr'] += 1
+            else:
+                buckets['5yr+'] += 1
+        tenure_buckets = self._suppress_small(buckets)
+
+        return Response({
+            'gender': gender_counts,
+            'marital_status': marital_counts,
+            'tenure_buckets': tenure_buckets,
+        })

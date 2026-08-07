@@ -1,5 +1,7 @@
 """Test settings - uses SQLite for speed, disables caching."""
 
+import tempfile
+
 from .base import *  # noqa: F401, F403
 
 # Remove django_prometheus from INSTALLED_APPS for test environment (not installed locally)
@@ -28,6 +30,11 @@ CACHES = {
 
 # Fast password hashing
 PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
+
+# Isolate test-generated uploads (EmployeeDocument, etc.) from the real dev
+# media/ folder — avoids filename-collision storage errors across test runs
+# and keeps the repo's media directory clean.
+MEDIA_ROOT = tempfile.mkdtemp(prefix="finventory_test_media_")
 
 # Celery always eager in tests
 CELERY_TASK_ALWAYS_EAGER = True

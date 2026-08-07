@@ -52,6 +52,26 @@ class PayrollSettings(TenantAwareModel):
     )
     leave_seeded = models.BooleanField(default=False)
     tax_authorities_seeded = models.BooleanField(default=False)
+    public_holidays_seeded_years = models.JSONField(
+        default=list, blank=True,
+        help_text="Years for which fixed-date public holidays have been seeded",
+    )
+    # 13th-month pro-rata basis (A.4): months_served/12 × this figure.
+    THIRTEENTH_BASIC = 'basic'; THIRTEENTH_GROSS = 'gross'
+    THIRTEENTH_BASIS_CHOICES = [(THIRTEENTH_BASIC, 'Basic salary'), (THIRTEENTH_GROSS, 'Gross salary')]
+    thirteenth_month_basis = models.CharField(
+        max_length=10, choices=THIRTEENTH_BASIS_CHOICES, default=THIRTEENTH_BASIC,
+    )
+    # Gratuity (A.3 offboarding) — no universal Nigerian statutory formula, so
+    # this is an explicit per-org policy. 0 = gratuity is off. Rate is applied
+    # per completed year of service against final basic salary. Routed as
+    # fully taxable ordinary income pending practitioner sign-off on any
+    # tax-exemption treatment — do NOT add exemption logic without that
+    # confirmation (see OffboardingService.compute_gratuity).
+    gratuity_rate_per_year = MoneyField(default=0)
+    # Leave-accrual GL true-up idempotency marker (A.6)
+    leave_accrual_last_posted_amount = MoneyField(default=0)
+    leave_accrual_last_posted_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         verbose_name_plural = 'Payroll settings'
@@ -246,6 +266,14 @@ class PayrollRun(TenantAwareModel):
     total_benefits_employer = MoneyField(default=0)
     total_bonus = MoneyField(default=0)
     total_overtime = MoneyField(default=0)
+    # Leave-encashment portion of PayrollAdjustment(ENCASHMENT) applied in this
+    # run. Tracked separately from total_gross/total_bonus so post_payroll_journal
+    # can carve it out of the Salaries & Wages Expense debit and route it
+    # instead through AccountingService.post_leave_encashment_settlement as a
+    # DR Accrued Leave / CR Bank liability settlement — encashing accrued leave
+    # is paying out a liability already recognised by the accrual true-up, not
+    # a fresh expense.
+    total_encashment = MoneyField(default=0)
     processed_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name='payroll_runs_processed')
     approved_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='payroll_runs_approved')
     # Multi-level approval: HR/Manager submits → Owner/Admin approves
@@ -620,11 +648,12 @@ class PayrollAdjustment(TenantAwareModel):
     already-filed returns.
     """
 
-    ARREARS = 'arrears'; BACKPAY = 'backpay'; CORRECTION = 'correction'
+    ARREARS = 'arrears'; BACKPAY = 'backpay'; CORRECTION = 'correction'; ENCASHMENT = 'encashment'
     TYPE_CHOICES = [
         (ARREARS, 'Salary arrears'),
         (BACKPAY, 'Back pay'),
         (CORRECTION, 'Correction'),
+        (ENCASHMENT, 'Leave encashment'),
     ]
     PENDING = 'pending'; APPLIED = 'applied'; CANCELLED = 'cancelled'
     STATUS_CHOICES = [(PENDING, 'Pending'), (APPLIED, 'Applied'), (CANCELLED, 'Cancelled')]
@@ -685,20 +714,42 @@ class EmployeeDocument(TenantAwareModel):
     ID = 'id'
     CERTIFICATE = 'certificate'
     CONTRACT = 'contract'
+    WORK_PERMIT = 'work_permit'
+    PROFESSIONAL_LICENCE = 'professional_licence'
     OTHER = 'other'
     TYPE_CHOICES = [
         (CV, 'CV / Resume'),
         (ID, 'ID Card / Passport'),
         (CERTIFICATE, 'Certificate / Qualification'),
         (CONTRACT, 'Employment Contract'),
+        (WORK_PERMIT, 'Work Permit / Visa'),
+        (PROFESSIONAL_LICENCE, 'Professional Licence'),
         (OTHER, 'Other'),
     ]
+    # Document types an employee may self-upload via the portal. Contracts and
+    # other HR-authored records are deliberately excluded.
+    EMPLOYEE_UPLOADABLE_TYPES = [CV, ID, CERTIFICATE, WORK_PERMIT, PROFESSIONAL_LICENCE, OTHER]
 
     employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name='documents')
     name = models.CharField(max_length=300)
     document_type = models.CharField(max_length=20, choices=TYPE_CHOICES, default=OTHER)
-    file = models.FileField(upload_to=_employee_doc_path)
+    file = models.FileField(upload_to=_employee_doc_path, max_length=255)
     file_size = models.PositiveIntegerField(default=0, help_text="File size in bytes")
+    expiry_date = models.DateField(null=True, blank=True)
+    # ESS self-upload tracking (A.5): distinguishes HR-authored records from
+    # employee self-uploads pending review.
+    uploaded_by_employee = models.BooleanField(default=False)
+    reviewed_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name='employee_documents_reviewed',
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    # Dedup for flag_expiring_documents (payroll.flag_expiring_documents): which
+    # of the [60, 30, 7]-day thresholds have already triggered an alert email
+    # for THIS document, so a range/catch-up query (needed to survive a missed
+    # weekly run) never re-alerts the same threshold twice. Same lightweight
+    # "list of already-done markers" pattern as
+    # PayrollSettings.public_holidays_seeded_years.
+    expiry_alert_thresholds_sent = models.JSONField(blank=True, default=list)
 
     class Meta:
         ordering = ['document_type', 'name']
@@ -822,6 +873,14 @@ class LeaveRequest(TenantAwareModel):
     decided_at = models.DateTimeField(null=True, blank=True)
     decision_note = models.CharField(max_length=500, blank=True)
     attachment = models.FileField(upload_to='leave_documents/', null=True, blank=True)
+    # Warn-and-allow overbooking (A.1). The HR-facing endpoint never hard-blocks
+    # a paid-leave request that exceeds the balance; it flags it instead. The
+    # ESS-facing endpoint is unchanged and still hard-blocks.
+    is_overbooked = models.BooleanField(default=False)
+    overbooked_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name='leave_requests_overbooked',
+    )
+    overbooked_days = models.DecimalField(max_digits=6, decimal_places=2, default=0)
 
     class Meta:
         ordering = ['-start_date']
@@ -830,15 +889,20 @@ class LeaveRequest(TenantAwareModel):
         return f"{self.employee} — {self.leave_type} {self.start_date}→{self.end_date}"
 
     @staticmethod
-    def working_days_between(start, end):
-        """Count Mon–Fri days inclusive. Public holidays are handled by Attendance."""
+    def working_days_between(start, end, holiday_dates=frozenset()):
+        """
+        Count Mon–Fri days inclusive, excluding any date in ``holiday_dates``.
+
+        ``holiday_dates`` should be preloaded once by the caller (a set of
+        ``date`` objects) — never queried per-row here.
+        """
         from datetime import timedelta
         if not start or not end or end < start:
             return Decimal('0')
         days = 0
         cur = start
         while cur <= end:
-            if cur.weekday() < 5:
+            if cur.weekday() < 5 and cur not in holiday_dates:
                 days += 1
             cur += timedelta(days=1)
         return Decimal(str(days))
@@ -847,6 +911,34 @@ class LeaveRequest(TenantAwareModel):
         if not self.days:
             self.days = self.working_days_between(self.start_date, self.end_date)
         super().save(*args, **kwargs)
+
+
+class PublicHoliday(TenantAwareModel):
+    """
+    An org-recognised public holiday.
+
+    Fixed-date Nigerian holidays (New Year, Workers' Day, Democracy Day,
+    Independence Day, Christmas, Boxing Day) are seeded per year by
+    ``PublicHolidayService.seed_fixed_dates``. Moveable Islamic/Christian dates
+    (Eid, Good Friday, etc.) are NEVER auto-calculated — they are added here
+    manually by an admin.
+    """
+
+    date = models.DateField()
+    name = models.CharField(max_length=200)
+    is_recurring_annually = models.BooleanField(
+        default=True, help_text="Fixed-date holiday that recurs every year on this month/day",
+    )
+    # Blank/empty = applies to all states. Some states declare additional
+    # local holidays (e.g. a state creation anniversary).
+    applies_to_states = models.JSONField(default=list, blank=True)
+
+    class Meta:
+        ordering = ['date']
+        unique_together = [('organisation', 'date', 'name')]
+
+    def __str__(self):
+        return f"{self.name} ({self.date})"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1005,3 +1097,148 @@ class AdvanceRequest(TenantAwareModel):
         if not self.total_recoverable:
             self.total_recoverable = Decimal(str(self.amount)) + Decimal(str(self.fee or 0))
         super().save(*args, **kwargs)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Offboarding
+# ══════════════════════════════════════════════════════════════════════════════
+
+class OffboardingCase(TenantAwareModel):
+    """
+    Tracks an employee's exit from initiation through to completion.
+
+    Creating a case (even with a future ``last_working_day``) does NOT revoke
+    anything — HR often back-plans an exit weeks ahead. Only an explicit
+    ``OffboardingService.complete(case)`` call revokes portal access, because
+    that is the point at which the exit is actually final.
+    """
+
+    RESIGNATION = 'resignation'
+    DISMISSAL_MISCONDUCT = 'dismissal_misconduct'
+    DISMISSAL_PERFORMANCE = 'dismissal_performance'
+    REDUNDANCY = 'redundancy'
+    CONTRACT_END = 'contract_end'
+    RETIREMENT = 'retirement'
+    DEATH_IN_SERVICE = 'death_in_service'
+    REASON_CHOICES = [
+        (RESIGNATION, 'Resignation'),
+        (DISMISSAL_MISCONDUCT, 'Dismissal — misconduct'),
+        (DISMISSAL_PERFORMANCE, 'Dismissal — performance'),
+        (REDUNDANCY, 'Redundancy'),
+        (CONTRACT_END, 'Contract end'),
+        (RETIREMENT, 'Retirement'),
+        (DEATH_IN_SERVICE, 'Death in service'),
+    ]
+
+    INITIATED = 'initiated'; IN_PROGRESS = 'in_progress'; COMPLETED = 'completed'; CANCELLED = 'cancelled'
+    STATUS_CHOICES = [
+        (INITIATED, 'Initiated'), (IN_PROGRESS, 'In progress'),
+        (COMPLETED, 'Completed'), (CANCELLED, 'Cancelled'),
+    ]
+
+    employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name='offboarding_cases')
+    initiated_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='offboarding_cases_initiated')
+    reason = models.CharField(max_length=30, choices=REASON_CHOICES)
+    last_working_day = models.DateField()
+    notice_period_days = models.PositiveIntegerField(default=0)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=INITIATED)
+    completed_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='offboarding_cases_completed')
+    completed_at = models.DateTimeField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+    # Set once the final-settlement PayrollRun has been created for this case
+    final_settlement_run = models.ForeignKey(
+        PayrollRun, null=True, blank=True, on_delete=models.SET_NULL, related_name='offboarding_cases',
+    )
+
+    class Meta:
+        ordering = ['-last_working_day']
+
+    def __str__(self):
+        return f"{self.employee} — {self.get_reason_display()} ({self.status})"
+
+
+class OffboardingChecklistTemplate(TenantAwareModel):
+    """Org-level ordered default checklist items applied to every new case."""
+
+    item_name = models.CharField(max_length=300)
+    department = models.CharField(max_length=200, blank=True)
+    order = models.PositiveIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['order', 'item_name']
+
+    def __str__(self):
+        return self.item_name
+
+
+DEFAULT_OFFBOARDING_CHECKLIST_ITEMS = [
+    ('Company property return', ''),
+    ('System / access deprovisioning', 'IT'),
+    ('Handover', ''),
+    ('Outstanding loans / advances check', 'Finance'),
+    ('Statutory sign-off', 'Finance'),
+    ('Certificate of service', 'HR'),
+    ('Final settlement', 'Finance'),
+    ('Exit interview', 'HR'),
+]
+
+
+class ClearanceChecklistItem(TenantAwareModel):
+    """One clearance line item for an offboarding case."""
+
+    case = models.ForeignKey(OffboardingCase, on_delete=models.CASCADE, related_name='checklist_items')
+    item_name = models.CharField(max_length=300)
+    department = models.CharField(max_length=200, blank=True)
+    is_cleared = models.BooleanField(default=False)
+    cleared_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='clearance_items_cleared')
+    cleared_at = models.DateTimeField(null=True, blank=True)
+    order = models.PositiveIntegerField(default=0)
+    notes = models.CharField(max_length=500, blank=True)
+
+    class Meta:
+        ordering = ['order', 'item_name']
+
+    def __str__(self):
+        return f"{self.case} — {self.item_name}"
+
+
+class ExitInterview(TenantAwareModel):
+    """Structured exit interview, one per offboarding case."""
+
+    COMPENSATION = 'compensation'
+    CAREER_GROWTH = 'career_growth'
+    MANAGEMENT = 'management'
+    WORK_LIFE_BALANCE = 'work_life_balance'
+    RELOCATION = 'relocation'
+    HEALTH = 'health'
+    OTHER_OFFER = 'other_offer'
+    BUSINESS_REASON = 'business_reason'
+    OTHER = 'other'
+    REASON_CHOICES = [
+        (COMPENSATION, 'Compensation'),
+        (CAREER_GROWTH, 'Career growth'),
+        (MANAGEMENT, 'Management'),
+        (WORK_LIFE_BALANCE, 'Work/life balance'),
+        (RELOCATION, 'Relocation'),
+        (HEALTH, 'Health'),
+        (OTHER_OFFER, 'Another offer'),
+        (BUSINESS_REASON, 'Business reason (redundancy etc.)'),
+        (OTHER, 'Other'),
+    ]
+
+    case = models.OneToOneField(OffboardingCase, on_delete=models.CASCADE, related_name='exit_interview')
+    conducted_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='exit_interviews_conducted')
+    reasons_for_leaving = models.JSONField(default=list, blank=True, help_text="List of REASON_CHOICES values")
+    would_recommend = models.BooleanField(null=True, blank=True)
+    feedback = models.TextField(blank=True)
+    is_confidential = models.BooleanField(
+        default=True,
+        help_text="If True, feedback is visible only to HR/owner/admin roles, never to the employee's manager",
+    )
+
+    class Meta:
+        pass
+
+    def __str__(self):
+        return f"Exit interview — {self.case.employee}"

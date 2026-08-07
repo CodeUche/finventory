@@ -94,6 +94,7 @@ export const navGroups: { label: string | null; alwaysGroup?: boolean; items: { 
       { name: 'Leave', href: '/hr/leave', icon: CalendarDays, module: 'payroll' },
       { name: 'Payroll Runs', href: '/hr/runs', icon: Banknote, module: 'payroll' },
       { name: 'Compliance & Remittances', href: '/hr/compliance', icon: ShieldCheck, module: 'payroll' },
+      { name: 'HR Analytics', href: '/hr/analytics', icon: BarChart3, module: 'payroll' },
     ],
   },
   {
@@ -124,6 +125,7 @@ export const navGroups: { label: string | null; alwaysGroup?: boolean; items: { 
       { name: 'Current Plan', href: '/billing#current-plan', icon: CreditCard, ownerOnly: true },
       { name: 'Change Plan', href: '/billing#plans-section', icon: Zap, ownerOnly: true },
       { name: 'Billing & Invoices', href: '/billing#payment-history', icon: Receipt, ownerOnly: true },
+      { name: 'Integrations', href: '/integrations', icon: Globe, ownerOnly: true },
     ],
   },
   {

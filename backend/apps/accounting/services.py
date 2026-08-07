@@ -1748,7 +1748,7 @@ class AccountingService:
         rejected by post_journal_entry's balance check. The employee-side
         deductions each need their own credit line:
 
-        DR Salaries & Wages Expense        = total_gross (incl. bonus/overtime/arrears)
+        DR Salaries & Wages Expense        = total_gross LESS leave encashment (see below)
         DR Employer Pension Expense        = total_pension_employer
         DR NSITF Expense                   = total_nsitf
         DR ITF Expense                     = total_itf
@@ -1764,17 +1764,31 @@ class AccountingService:
         CR Employee Loans Receivable       = loan installments recovered
         CR Other Income                    = penalties withheld
         CR Salaries & Wages Expense        = attendance deductions (cost not incurred)
-        CR Bank / Net Pay                  = total_net
+        CR Bank / Net Pay                  = total_net LESS leave encashment (see below)
+
+        Leave encashment (total_encashment) is carved OUT of both the Salaries
+        & Wages Expense debit and the Bank/Net-Pay credit here, and posted
+        instead as its own DR Accrued Leave (2850) / CR Bank entry by
+        post_leave_encashment_settlement — encashing accrued leave settles a
+        liability the accrual true-up already recognised; it is not a fresh
+        expense. Splitting it into a second entry (rather than adding a third
+        line to this one) keeps this journal's total_gross/total_net
+        reconciliation intact while still producing a fully balanced pair:
+        this entry's Bank credit is short by exactly total_encashment, and the
+        settlement entry's own Bank credit makes up the difference, so the
+        combined cash credited across both entries still equals total_net.
         """
         zero            = Decimal('0')
-        gross           = Decimal(str(payroll_run.total_gross or 0))
+        gross_raw       = Decimal(str(payroll_run.total_gross or 0))
+        encashment      = Decimal(str(getattr(payroll_run, 'total_encashment', 0) or 0))
+        gross           = gross_raw - encashment
         paye            = Decimal(str(payroll_run.total_paye or 0))
         pension_emp     = Decimal(str(payroll_run.total_pension_employee or 0))
         pension_empr    = Decimal(str(payroll_run.total_pension_employer or 0))
         total_pension   = pension_emp + pension_empr
         nhf             = Decimal(str(payroll_run.total_nhf or 0))
         nsitf           = Decimal(str(payroll_run.total_nsitf or 0))
-        net             = Decimal(str(payroll_run.total_net or 0))
+        net             = Decimal(str(payroll_run.total_net or 0)) - encashment
         itf             = Decimal(str(getattr(payroll_run, 'total_itf', 0) or 0))
         benefit_emp     = Decimal(str(getattr(payroll_run, 'total_benefits', 0) or 0))
         benefit_er      = Decimal(str(getattr(payroll_run, 'total_benefits_employer', 0) or 0))
@@ -1871,7 +1885,7 @@ class AccountingService:
             # business never incurred, so credit the expense back.
             lines.append((salary_acct, zero, attendance))
 
-        return AccountingService.post_journal_entry(
+        entry = AccountingService.post_journal_entry(
             organisation,
             f"Payroll {payroll_run.period_year}-{payroll_run.period_month:02d}",
             payroll_run.payment_date or payroll_run.created_at.date(),
@@ -1880,6 +1894,75 @@ class AccountingService:
             source_type='payroll',
             source_ref=str(payroll_run.id),
         )
+
+        if encashment > zero:
+            AccountingService.post_leave_encashment_settlement(organisation, payroll_run, user)
+
+        return entry
+
+    @staticmethod
+    def post_leave_encashment_settlement(organisation, payroll_run, user=None):
+        """
+        Settle the leave-encashment portion of a payroll run against the
+        Accrued Leave liability, as its own entry separate from the ordinary
+        payroll journal's gross-expense entry:
+
+        DR Accrued Leave (2850)   = payroll_run.total_encashment
+        CR Bank                   = payroll_run.total_encashment
+
+        This is a liability settlement (cash paid out against a liability
+        already recognised by post_leave_accrual_true_up), not payroll
+        expense — post_payroll_journal has already carved this amount out of
+        both its Salaries & Wages Expense debit and its Bank/Net-Pay credit,
+        so this entry supplies the missing Bank credit and relieves 2850 by
+        the same amount, keeping the combined cash movement across both
+        entries equal to total_net.
+
+        Also decrements PayrollSettings.leave_accrual_last_posted_amount by
+        the settled amount, keeping post_leave_accrual_true_up's baseline in
+        sync with the GL: available_days already drops the moment
+        LeaveEncashmentService.request_encashment increments taken_days, so
+        the true-up's day-count-based liability calc would already compute
+        the lower post-encashment figure on its own — but without this
+        decrement its *delta* (current_liability - last_posted) would also
+        try to relieve the same amount a second time, double-crediting the
+        expense account. Decrementing the baseline here makes delta land on
+        zero for days already settled through this entry.
+        """
+        zero = Decimal('0')
+        amount = Decimal(str(getattr(payroll_run, 'total_encashment', 0) or 0))
+        if amount <= zero:
+            return None
+
+        from apps.payroll.models import PayrollSettings
+        from apps.payroll.services import get_settings as get_payroll_settings
+
+        bank_acct = AccountMappingService.resolve(organisation, 'bank_account')
+        accrued_leave_acct = AccountingService._get_or_create_account(
+            organisation, '2850', 'Accrued Leave', AccountType.LIABILITY
+        )
+
+        lines = [
+            (accrued_leave_acct, amount, zero),   # DR Accrued Leave — relieve liability
+            (bank_acct, zero, amount),            # CR Bank — cash paid out
+        ]
+
+        entry = AccountingService.post_journal_entry(
+            organisation,
+            f"Leave encashment settlement — {payroll_run.period_year}-{payroll_run.period_month:02d}",
+            payroll_run.payment_date or payroll_run.created_at.date(),
+            lines, user,
+            ref=f"LEAVE-ENCASH-{payroll_run.id}",
+            source_type='leave_encashment',
+            source_ref=str(payroll_run.id),
+        )
+        if entry:
+            settings_row = get_payroll_settings(organisation)
+            settings_row.leave_accrual_last_posted_amount = (
+                Decimal(str(settings_row.leave_accrual_last_posted_amount or 0)) - amount
+            )
+            settings_row.save(update_fields=['leave_accrual_last_posted_amount'])
+        return entry
 
     @staticmethod
     def post_remittance_clearing(remittance, user=None):
@@ -1997,6 +2080,100 @@ class AccountingService:
             ).aggregate(d=Sum('debit'), c=Sum('credit'))
             total += Decimal(str(agg['d'] or 0)) - Decimal(str(agg['c'] or 0))
         return total
+
+    @staticmethod
+    def post_leave_accrual_true_up(organisation, as_of, user=None):
+        """
+        Post ONLY the delta between the current computed leave liability and
+        the last-posted figure, to GL account 2850 'Accrued Leave'.
+
+        current liability = Σ available_days × daily_rate, across every paid
+        LeaveType/LeaveBalance for the org's current-year balances. The delta
+        (never the full amount) is posted so re-running this monthly never
+        double-counts; the last-posted amount and timestamp are tracked on
+        PayrollSettings for idempotency.
+
+        DR/CR Salaries & Wages Expense vs 2850 Accrued Leave, sized to the
+        signed delta (a shrinking liability credits the liability account
+        back down and debits the expense in reverse).
+        """
+        from apps.payroll.constants import WORKING_DAYS_PER_MONTH
+        from apps.payroll.models import Employee, LeaveBalance, LeaveType, PayrollSettings
+        from apps.payroll.services import get_settings as get_payroll_settings, _d as _pd
+
+        zero = Decimal('0')
+        year = as_of.year
+
+        # available_days already reflects taken_days, which
+        # LeaveEncashmentService.request_encashment increments the moment an
+        # encashment is requested (before it is even paid) — so a settled
+        # encashment is already excluded from this liability sum by the time
+        # this runs. This is what keeps the true-up from double-relieving days
+        # already settled via post_leave_encashment_settlement's dedicated
+        # DR-2850/CR-Bank entry: that entry never touches available_days, it
+        # only moves cash and closes out the liability side, so the two never
+        # compete over the same days.
+        balances = (
+            LeaveBalance.objects
+            .filter(organisation=organisation, year=year, leave_type__is_paid=True)
+            .select_related('employee', 'leave_type')
+        )
+        current_liability = zero
+        for b in balances:
+            available = b.available_days
+            if available <= 0:
+                continue
+            gross = Decimal(str(b.employee.gross_salary or 0))
+            daily_rate = (gross / Decimal(WORKING_DAYS_PER_MONTH)).quantize(Decimal('0.01'))
+            current_liability += (daily_rate * available).quantize(Decimal('0.01'))
+
+        # Lock the PayrollSettings row for the read-compute-write span below,
+        # matching the select_for_update() convention used throughout
+        # apps/subscriptions/payment_engine.py (e.g. its activate() /
+        # handle_refund_webhook() paths). Without this, a scheduled monthly
+        # run racing a manual backfill for the same org could both read the
+        # same last_posted figure, both compute a delta against it, both post
+        # a GL entry, and then stomp each other's write-back — this closes
+        # that TOCTOU window. get_payroll_settings() does its own
+        # get_or_create first (outside the lock) so the row is guaranteed to
+        # exist before we lock it here.
+        with transaction.atomic():
+            settings_row = get_payroll_settings(organisation)
+            settings_row = PayrollSettings.objects.select_for_update().get(pk=settings_row.pk)
+            last_posted = Decimal(str(settings_row.leave_accrual_last_posted_amount or 0))
+            delta = (current_liability - last_posted).quantize(Decimal('0.01'))
+
+            if delta == zero:
+                return None
+
+            salary_acct = AccountMappingService.resolve(organisation, 'salary_expense_account')
+            accrued_leave_acct = AccountingService._get_or_create_account(
+                organisation, '2850', 'Accrued Leave', AccountType.LIABILITY
+            )
+
+            if delta > zero:
+                lines = [(salary_acct, delta, zero), (accrued_leave_acct, zero, delta)]
+            else:
+                reverse = -delta
+                lines = [(accrued_leave_acct, reverse, zero), (salary_acct, zero, reverse)]
+
+            entry = AccountingService.post_journal_entry(
+                organisation,
+                f"Leave accrual true-up — {as_of.strftime('%Y-%m')}",
+                as_of,
+                lines, user,
+                ref=f"LEAVE-ACCRUAL-{organisation.id}-{as_of.strftime('%Y%m')}",
+                source_type='leave_accrual',
+                source_ref=f"{organisation.id}-{as_of.strftime('%Y%m%d')}",
+            )
+            if entry:
+                from django.utils import timezone as _tz
+                settings_row.leave_accrual_last_posted_amount = current_liability
+                settings_row.leave_accrual_last_posted_at = _tz.now()
+                settings_row.save(update_fields=[
+                    'leave_accrual_last_posted_amount', 'leave_accrual_last_posted_at',
+                ])
+            return entry
 
     @staticmethod
     def post_deferred_tax_journal(organisation, deferred_item, user=None):

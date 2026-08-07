@@ -173,6 +173,18 @@ function buildTauriAdapter(): AxiosAdapter {
     if (_auth.access)  headers['Authorization']     = `Bearer ${_auth.access}`
     if (_orgId)        headers['X-Organisation-ID'] = _orgId
     else               delete headers['X-Organisation-ID']
+    // Last line of defense against a stale/re-merged Content-Type on a
+    // FormData body. The request interceptor already tries to strip this
+    // (config.headers.delete('Content-Type') when config.data is FormData),
+    // but axios re-merges instance.defaults.headers (this client defaults to
+    // 'application/json') back into the per-request AxiosHeaders at dispatch
+    // time in a way the interceptor's edit doesn't survive — confirmed live:
+    // a real multipart upload still carried Content-Type through to this
+    // point despite the interceptor's delete, and the boundary-less/wrong
+    // Content-Type made Django reject it with a 415. Since `headers` here is
+    // the actual plain object hitting fetch()/tauriHttpFetch(), stripping it
+    // at this final point is the one place guaranteed not to be re-merged.
+    if (config.data instanceof FormData) delete headers['Content-Type']
     // Second fallback: also send org as ?org= query param.
     // Tauri's reqwest layer can silently drop custom request headers on some
     // platforms/OS versions.  RLSMiddleware checks the header first, then falls
@@ -473,7 +485,26 @@ async function _writeThroughCache(url: string, method: string, responseData: unk
   // ?org=<uuid> query params that _patchCacheList doesn't know about.
   // invalidatePrefix wipes all variants (with and without params) so the next request
   // goes straight to the server and re-caches the authoritative server response.
-  const listUrl = buildListUrl(url)
+  //
+  // buildListUrl only strips a trailing UUID (e.g. /x/{id}/ → /x/), so it is a
+  // no-op for a COLLECTION-level RPC action with no UUID anywhere in the path,
+  // e.g. POST /messaging/conversations/get_or_create_direct/. Detected here:
+  // (a) nothing was stripped, (b) this is a POST, and (c) the URL has more
+  // than one segment, so the actual list root is that URL with its last
+  // segment dropped (…/get_or_create_direct/ → …/conversations/). Without
+  // this, such an action's invalidatePrefix call targets a URL nothing else
+  // ever requests, and the real list (fetched moments later by the caller,
+  // e.g. MessagesPage.startConversationWith's refreshList()) keeps serving
+  // its pre-mutation fresh-cache entry — the new row silently doesn't appear
+  // until the cache naturally expires 5 minutes later. Confirmed live via a
+  // real browser: get_or_create_direct returned 201 with the new conversation,
+  // but the sidebar list stayed empty until this fix.
+  let listUrl = buildListUrl(url)
+  if (listUrl === url && method === 'post') {
+    const withoutTrailingSlash = url.replace(/\/$/, '')
+    const lastSlash = withoutTrailingSlash.lastIndexOf('/')
+    if (lastSlash > 0) listUrl = withoutTrailingSlash.slice(0, lastSlash + 1)
+  }
   // Set bypass flag SYNCHRONOUSLY before any await — the component's .then() runs
   // before async invalidation completes, so the flag must be present immediately.
   _pendingCacheBypass.add(listUrl)
@@ -508,9 +539,17 @@ api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
     }
   }
   // FormData must NOT have Content-Type set — the browser adds the correct
-  // multipart/form-data boundary automatically. Remove the global JSON default.
+  // multipart/form-data boundary automatically. Remove the global JSON default
+  // AND any boundary-less 'multipart/form-data' a caller may have set
+  // explicitly (a real bug found live: messagingApi.uploadAttachment did this
+  // and the server 415'd, unable to parse a multipart Content-Type with no
+  // boundary parameter). config.headers is an AxiosHeaders instance — its
+  // header-name matching is case-insensitive via .delete()/.has(), but plain
+  // `delete config.headers['Content-Type']` bracket access is NOT guaranteed
+  // to hit the same case-normalized slot, so use the real API instead of
+  // relying on the exact casing a caller happened to use.
   if (config.data instanceof FormData) {
-    delete config.headers['Content-Type']
+    config.headers.delete('Content-Type')
   }
 
   // ── Offline optimistic mutations ────────────────────────────────────────────
@@ -632,7 +671,7 @@ const processQueue = (error: AxiosError | null, token: string | null = null) => 
 type ExtConfig = InternalAxiosRequestConfig & { _fromCache?: boolean; _dedupeKey?: string; _retry?: boolean }
 
 api.interceptors.response.use(
-  (res) => {
+  async (res) => {
     const cfg = res.config as ExtConfig
 
     if (!cfg._fromCache) {
@@ -671,10 +710,22 @@ api.interceptors.response.use(
       // ── Cache write-through for mutations ───────────────────────────────────
       // After a successful online mutation, patch the cached list so offline
       // reads stay current without waiting for a full list refresh.
+      //
+      // MUST be awaited here, not fired-and-forgotten: callers do
+      // `await api.post(...); await load()` (see e.g. LeavePage.submitRequest),
+      // and load() immediately re-GETs the same list URL. _writeThroughCache
+      // does an async localStore.upsert BEFORE it sets the cache-bypass flag
+      // (_pendingCacheBypass), so if this response resolves before that flag
+      // is set, the component's very next GET can win the race and read the
+      // fresh-cache gate's still-stale (pre-mutation) entry — the create/edit/
+      // delete silently doesn't appear until the next unrelated cache expiry
+      // or manual refresh. Awaiting it guarantees the bypass flag (and the
+      // cache invalidation itself) is in place before this promise — and thus
+      // any `await`ing caller — resolves.
       const isOnlineMutation = ['post', 'put', 'patch', 'delete'].includes(method)
       const isRetry = (cfg.headers as Record<string, string>)?.['X-Offline-Retry'] === '1'
       if (isOnlineMutation && !isRetry && !isActionEndpoint(url)) {
-        _writeThroughCache(url, method, res.data, cfg.data).catch(() => {/* non-fatal */})
+        await _writeThroughCache(url, method, res.data, cfg.data).catch(() => {/* non-fatal */})
       }
 
       _signalOnline()

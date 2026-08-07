@@ -8,6 +8,7 @@ is deliberate: the header is client-supplied, the OneToOne is not.
 
 from datetime import date
 
+from django.http import HttpResponse
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -91,6 +92,19 @@ class MePayslipViewSet(viewsets.ReadOnlyModelViewSet):
             row['payment_date'] = run.payment_date
             data.append(row)
         return Response(data)
+
+    @action(detail=True, methods=['get'])
+    def pdf(self, request, pk=None):
+        """GET /me/payslips/{id}/pdf/ — server-rendered payslip download."""
+        from .pdf import build_payslip_pdf
+
+        payslip = self.get_object()
+        pdf_bytes = build_payslip_pdf(payslip)
+        run = payslip.payroll_run
+        filename = f"Payslip-{payslip.employee.employee_id}-{run.period_year}{run.period_month:02d}.pdf"
+        response = HttpResponse(pdf_bytes, content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
 
 
 class MeLeaveRequestViewSet(viewsets.ModelViewSet):
@@ -207,14 +221,51 @@ class MeLeaveTypeView(APIView):
         return Response(LeaveTypeSerializer(allowed, many=True).data)
 
 
-class MeDocumentViewSet(viewsets.ReadOnlyModelViewSet):
-    """GET /me/documents/ — own HR documents."""
+class MeDocumentViewSet(viewsets.ModelViewSet):
+    """
+    GET /me/documents/ — own HR documents.
+    POST /me/documents/ — employee-initiated upload, restricted to a subset of
+    document types (never 'contract' — that stays an HR-authored record type).
+    Self-uploads are flagged uploaded_by_employee=True and start unreviewed, so
+    HR can tell an official record from something an employee submitted.
+    """
 
     serializer_class = EmployeeDocumentSerializer
     permission_classes = [IsAuthenticated, IsEmployeeSelf]
+    http_method_names = ['get', 'post', 'head', 'options']
 
     def get_queryset(self):
         return EmployeeDocument.objects.filter(employee=self.request.employee)
+
+    def create(self, request, *args, **kwargs):
+        employee = request.employee
+        document_type = request.data.get('document_type', EmployeeDocument.OTHER)
+        if document_type not in EmployeeDocument.EMPLOYEE_UPLOADABLE_TYPES:
+            return Response(
+                {'error': (
+                    f"You may only upload these document types from the portal: "
+                    f"{', '.join(EmployeeDocument.EMPLOYEE_UPLOADABLE_TYPES)}"
+                )},
+                status=400,
+            )
+        file = request.FILES.get('file')
+        if not file:
+            return Response({'error': 'A file is required.'}, status=400)
+
+        doc = EmployeeDocument.objects.create(
+            organisation=employee.organisation,
+            employee=employee,
+            name=request.data.get('name') or file.name,
+            document_type=document_type,
+            file=file,
+            file_size=file.size,
+            expiry_date=request.data.get('expiry_date') or None,
+            uploaded_by_employee=True,
+        )
+        return Response(
+            EmployeeDocumentSerializer(doc, context={'request': request}).data,
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class MeLoanView(APIView):

@@ -196,7 +196,7 @@ class PartnerAccessRequestSerializer(serializers.ModelSerializer):
         from apps.tenancy.models import PartnerAccessRequest
         model = PartnerAccessRequest
         fields = [
-            "id", "status", "request_message", "rejection_reason",
+            "id", "status", "scope", "request_message", "rejection_reason",
             "partner_email", "partner_firm_name", "partner_tier",
             "org_name", "organisation",
             "invite_token", "invite_token_used",
