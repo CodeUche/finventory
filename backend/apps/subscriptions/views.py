@@ -380,6 +380,49 @@ class SubscriptionViewSet(viewsets.GenericViewSet):
 
         return Response(PaymentHistorySerializer(payment).data)
 
+    @action(detail=False, methods=["post"], url_path=r"integrations/(?P<product_key>[\w-]+)/restore")
+    def restore_integration_payment(self, request, product_key=None):
+        """
+        POST /api/v1/subscriptions/integrations/{product_key}/restore/
+
+        Re-verifies the CALLING ORG's own most recent pending payment for this
+        integration product against Paystack — no reference required from the
+        client. Exists for the Tauri desktop flow: the hosted Paystack checkout
+        opens in the *system* browser (WebView2 can't render its iframe), and
+        there is no OS-level deep-link back into the app, so a completed
+        payment there never reaches `verify_integration_payment` on its own.
+        This lets the frontend recover automatically (background poll) or the
+        user recover manually ("Restore access" button) without ever handling
+        the raw reference — it's looked up server-side, scoped to
+        request.organisation, so one org can never probe or settle another's
+        pending payment through this endpoint.
+        """
+        org = getattr(request, "organisation", None)
+        if org is None:
+            return Response({"error": "Organisation not found."}, status=400)
+
+        try:
+            product = IntegrationProduct.objects.get(key=product_key, is_active=True)
+        except IntegrationProduct.DoesNotExist:
+            return Response({"error": "Integration not found."}, status=400)
+
+        payment = PaymentHistory.objects.filter(
+            kind=PaymentHistory.Kind.INTEGRATION,
+            organisation=org,
+            integration_entitlement__product=product,
+            status=PaymentHistory.Status.PENDING,
+        ).order_by("-created_at").first()
+
+        if payment is None:
+            return Response({"error": "No pending purchase found for this integration."}, status=404)
+
+        try:
+            payment = PaymentEngine.activate(payment.provider_payment_id)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=400)
+
+        return Response(PaymentHistorySerializer(payment).data)
+
     @action(detail=False, methods=["get"], url_path="check-payment")
     def check_payment(self, request):
         """

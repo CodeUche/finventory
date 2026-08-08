@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import toast from 'react-hot-toast'
-import { Globe, Loader2, CheckCircle, ExternalLink, Trash2, Send, Key, Copy, Plus } from 'lucide-react'
+import { Globe, Loader2, CheckCircle, ExternalLink, Trash2, Send, Key, Copy, Plus, RefreshCw } from 'lucide-react'
 import { confirmDialog } from '@/lib/dialog'
 import { openExternal } from '@/lib/openExternal'
 import {
@@ -59,7 +59,24 @@ export default function IntegrationsPage() {
   const [apiKeys, setApiKeys] = useState<OrganisationAPIKey[]>([])
   const [loading, setLoading] = useState(true)
   const [purchasing, setPurchasing] = useState<string | null>(null)
+  const [restoring, setRestoring] = useState<string | null>(null)
   const hasLoadedOnce = useRef(false)
+  // One poll interval per product key — a user can have both Webhooks and
+  // Zapier purchases in flight at once, each needs its own timer.
+  const pollTimers = useRef<Record<string, ReturnType<typeof setInterval>>>({})
+  // Products we've already silently auto-restore-checked once this page
+  // visit, so re-renders/refetches don't re-fire it in a loop.
+  const autoChecked = useRef<Set<string>>(new Set())
+
+  const stopPolling = (productKey: string) => {
+    const t = pollTimers.current[productKey]
+    if (t) { clearInterval(t); delete pollTimers.current[productKey] }
+  }
+
+  useEffect(() => {
+    // Stop every in-flight poll on unmount so a closed page never leaks timers.
+    return () => { Object.keys(pollTimers.current).forEach(stopPolling) }
+  }, [])
 
   const load = useCallback(async () => {
     // Only show the full-page blocking spinner on the very first load.
@@ -75,7 +92,21 @@ export default function IntegrationsPage() {
         integrationsApi.listWebhooks(),
         integrationsApi.listApiKeys(),
       ])
-      if (productsRes.status === 'fulfilled') setProducts(productsRes.value.data)
+      if (productsRes.status === 'fulfilled') {
+        const fresh = unwrapList(productsRes.value.data)
+        setProducts(fresh)
+        // Silent one-shot recovery: if a product is still 'pending' (e.g. the
+        // desktop checkout was completed in the system browser in an earlier
+        // session and the app was closed before it could be detected), try
+        // once per page visit — no toast on failure, the "Restore access"
+        // button stays available either way.
+        fresh
+          .filter((p) => p.entitlement_status === 'pending' && !autoChecked.current.has(p.key))
+          .forEach((p) => {
+            autoChecked.current.add(p.key)
+            integrationsApi.restorePurchase(p.key).then(() => load()).catch(() => {/* still pending — silent */})
+          })
+      }
       if (webhooksRes.status === 'fulfilled') setWebhooks(unwrapList(webhooksRes.value.data))
       if (keysRes.status === 'fulfilled') setApiKeys(unwrapList(keysRes.value.data))
     } finally {
@@ -97,6 +128,39 @@ export default function IntegrationsPage() {
     }
   }, [load])
 
+  /** Background poll after opening the external checkout — no user action needed
+   *  if they return to the app while it's still open. Caps at 5 min (100 * 3s). */
+  const startPolling = (product: IntegrationProduct) => {
+    stopPolling(product.key)
+    let attempts = 0
+    pollTimers.current[product.key] = setInterval(async () => {
+      attempts++
+      if (attempts > 100) { stopPolling(product.key); return }
+      try {
+        await integrationsApi.restorePurchase(product.key)
+        stopPolling(product.key)
+        toast.success(`${product.name} purchase confirmed! It's now active.`)
+        load()
+      } catch { /* not paid yet — keep polling */ }
+    }, 3000)
+  }
+
+  /** Manual fallback ("Restore access") — for when the poll already timed out,
+   *  or payment was completed in an earlier app session entirely. */
+  const handleRestore = async (product: IntegrationProduct) => {
+    setRestoring(product.id)
+    try {
+      await integrationsApi.restorePurchase(product.key)
+      toast.success(`${product.name} is now active.`)
+      stopPolling(product.key)
+      load()
+    } catch (err: any) {
+      toast.error(errMsg(err, "No completed payment found yet. If you've already paid, wait a moment and try again."))
+    } finally {
+      setRestoring(null)
+    }
+  }
+
   const handlePurchase = async (product: IntegrationProduct) => {
     setPurchasing(product.id)
     try {
@@ -110,7 +174,9 @@ export default function IntegrationsPage() {
 
       if (isTauri) {
         await openExternal(authorization_url)
-        toast('Payment page opened in your browser. Return here once done.', { duration: 8000 })
+        toast('Payment page opened in your browser. Come back here once done — access is granted automatically.', { duration: 8000 })
+        startPolling(product)
+        load()  // refresh so the button flips to "Restore access" while the poll runs
         return
       }
 
@@ -173,10 +239,35 @@ export default function IntegrationsPage() {
                       <CheckCircle size={12} /> Purchased
                     </span>
                   )}
+                  {isPending && (
+                    <span className="text-xs font-medium px-2 py-0.5 rounded-full text-amber-400 bg-amber-400/10 flex items-center gap-1 shrink-0">
+                      Payment pending
+                    </span>
+                  )}
                 </div>
+                {isPending && (
+                  <p className="text-xs text-slate-500 -mt-1">
+                    Already paid? Click "Restore access" below — no need to pay again.
+                  </p>
+                )}
                 <div className="flex items-center justify-between">
                   <span className="text-lg font-bold text-white tabular-nums">{fmt(product.price)}</span>
-                  {!isActive && (
+                  {!isActive && isPending && (
+                    <button
+                      onClick={() => handleRestore(product)}
+                      disabled={restoring === product.id}
+                      className="btn-primary text-sm flex items-center gap-1.5"
+                      title="Already paid? Re-check your payment status and grant access."
+                    >
+                      {restoring === product.id ? (
+                        <Loader2 size={14} className="animate-spin" />
+                      ) : (
+                        <RefreshCw size={14} />
+                      )}
+                      Restore access
+                    </button>
+                  )}
+                  {!isActive && !isPending && (
                     <button
                       onClick={() => handlePurchase(product)}
                       disabled={purchasing === product.id}
@@ -187,7 +278,7 @@ export default function IntegrationsPage() {
                       ) : (
                         <ExternalLink size={14} />
                       )}
-                      {isPending ? 'Complete purchase' : `Purchase — ${fmt(product.price)}`}
+                      {`Purchase — ${fmt(product.price)}`}
                     </button>
                   )}
                 </div>

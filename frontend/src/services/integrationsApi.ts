@@ -76,6 +76,12 @@ export const integrationsApi = {
       `/subscriptions/integrations/${productKey}/purchase/`,
     ),
   verifyPurchase: (reference: string) => api.post('/subscriptions/integrations/verify-payment/', { reference }),
+  /**
+   * Re-verifies THIS org's own pending payment for a product — no reference
+   * needed, looked up server-side. Used both for auto-poll (after opening the
+   * external checkout on desktop) and the manual "Restore access" fallback.
+   */
+  restorePurchase: (productKey: string) => api.post(`/subscriptions/integrations/${productKey}/restore/`),
 
   // ── Webhook subscriptions ─────────────────────────────────────────────────
   listWebhooks: () => api.get<WebhookSubscription[] | { results: WebhookSubscription[] }>('/integrations/webhooks/'),
