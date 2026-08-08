@@ -5,6 +5,8 @@ from datetime import date, timedelta
 
 from celery import shared_task
 
+from apps.core.tenant_context import for_each_organisation
+
 logger = logging.getLogger(__name__)
 
 
@@ -17,8 +19,6 @@ def accrue_monthly_leave():
     an employee's balance reflects service already given rather than service
     they are about to give.
     """
-    from apps.tenancy.models import Organisation
-
     from .services import LeaveService
 
     today = date.today()
@@ -27,12 +27,13 @@ def accrue_monthly_leave():
     else:
         year, month = today.year, today.month - 1
 
-    total = 0
-    for org in Organisation.objects.filter(is_active=True):
-        try:
-            total += LeaveService.accrue_month(org, year, month)
-        except Exception as exc:
-            logger.exception("Leave accrual failed for org %s: %s", org.id, exc)
+    # Per-org RLS context — accrue_month reads payroll_employee, which is
+    # RLS-protected and returns zero rows under the SENTINEL (NEW-7).
+    result = for_each_organisation(
+        lambda org: LeaveService.accrue_month(org, year, month),
+        task_name="payroll.accrue_monthly_leave",
+    )
+    total = result["processed"]
     logger.info("Leave accrual %s-%02d: %d balances updated", year, month, total)
     return total
 
@@ -127,21 +128,19 @@ def carry_forward_leave():
     Wrapped per-org so one organisation's failure does not stop the batch —
     the same pattern as accrue_monthly_leave above.
     """
-    from apps.tenancy.models import Organisation
-
-    from .models import LeaveBalance, LeaveType
     from .services import LeaveService
 
     today = date.today()
     new_year = today.year
     prior_year = new_year - 1
 
-    total_updated = 0
-    for org in Organisation.objects.filter(is_active=True):
-        try:
-            total_updated += LeaveService.carry_forward_year_end(org, prior_year, new_year)
-        except Exception as exc:
-            logger.exception("Leave carry-forward failed for org %s: %s", org.id, exc)
+    # Per-org RLS context (NEW-7) — the helper already isolates per-org
+    # failures, which is the behaviour this task's docstring describes.
+    result = for_each_organisation(
+        lambda org: LeaveService.carry_forward_year_end(org, prior_year, new_year),
+        task_name="payroll.carry_forward_leave",
+    )
+    total_updated = result["processed"]
     logger.info("Leave carry-forward %s→%s: %d balances updated", prior_year, new_year, total_updated)
     return total_updated
 
@@ -167,74 +166,74 @@ def flag_expiring_documents():
     from django.core.mail import EmailMultiAlternatives
     from django.utils import timezone
 
-    from apps.tenancy.models import Organisation
-
     from .models import EmployeeDocument
 
     today = timezone.localdate()
     thresholds = [60, 30, 7]
-    total_flagged = 0
-    for org in Organisation.objects.filter(is_active=True):
-        try:
-            rows = []
-            docs_to_update = []
-            for threshold in thresholds:
-                target = today + timedelta(days=threshold)
-                # Catch-up range: anything expiring between today and the
-                # threshold horizon (inclusive) that hasn't already been
-                # alerted AT THIS THRESHOLD.
-                docs = list(
-                    EmployeeDocument.objects.filter(
-                        organisation=org,
-                        expiry_date__gte=today,
-                        expiry_date__lte=target,
-                    ).select_related('employee')
-                )
-                for d in docs:
-                    sent = d.expiry_alert_thresholds_sent or []
-                    if threshold in sent:
-                        continue
-                    rows.append((threshold, d))
-                    sent.append(threshold)
-                    d.expiry_alert_thresholds_sent = sent
-                    docs_to_update.append(d)
-            if not rows:
-                continue
-            total_flagged += len(rows)
-            logger.warning(
-                "%d employee document(s) expiring soon for org %s", len(rows), org.id,
+
+    # Per-org RLS context (NEW-7): payroll_employeedocument is RLS-protected,
+    # so under the SENTINEL this scanned zero documents every week.
+    def _flag(org):
+        rows = []
+        docs_to_update = []
+        for threshold in thresholds:
+            target = today + timedelta(days=threshold)
+            # Catch-up range: anything expiring between today and the
+            # threshold horizon (inclusive) that hasn't already been
+            # alerted AT THIS THRESHOLD.
+            docs = list(
+                EmployeeDocument.objects.filter(
+                    organisation=org,
+                    expiry_date__gte=today,
+                    expiry_date__lte=target,
+                ).select_related('employee')
             )
-            hr_emails = list(
-                org.memberships.filter(
-                    is_active=True, role__in=['owner', 'admin'],
-                ).values_list('user__email', flat=True)
-            )
-            hr_emails = [e for e in hr_emails if e]
-            if hr_emails:
-                lines = [
-                    f"- {d.employee.full_name}: {d.get_document_type_display()} "
-                    f"'{d.name}' expires {d.expiry_date} (in {threshold} days)"
-                    for threshold, d in rows
-                ]
-                body = "The following employee documents are expiring soon:\n\n" + "\n".join(lines)
-                try:
-                    msg = EmailMultiAlternatives(
-                        subject=f"Employee documents expiring soon — {org.name}",
-                        body=body, to=hr_emails,
-                    )
-                    msg.send(fail_silently=True)
-                except Exception:
-                    pass
-            # Mark thresholds as sent regardless of whether an email address
-            # was on file — the alert was raised (logged) either way, and we
-            # must not re-log the same document/threshold every week.
-            if docs_to_update:
-                EmployeeDocument.objects.bulk_update(
-                    docs_to_update, ['expiry_alert_thresholds_sent'],
+            for d in docs:
+                sent = d.expiry_alert_thresholds_sent or []
+                if threshold in sent:
+                    continue
+                rows.append((threshold, d))
+                sent.append(threshold)
+                d.expiry_alert_thresholds_sent = sent
+                docs_to_update.append(d)
+        if not rows:
+            return 0
+        logger.warning(
+            "%d employee document(s) expiring soon for org %s", len(rows), org.id,
+        )
+        hr_emails = list(
+            org.memberships.filter(
+                is_active=True, role__in=['owner', 'admin'],
+            ).values_list('user__email', flat=True)
+        )
+        hr_emails = [e for e in hr_emails if e]
+        if hr_emails:
+            lines = [
+                f"- {d.employee.full_name}: {d.get_document_type_display()} "
+                f"'{d.name}' expires {d.expiry_date} (in {threshold} days)"
+                for threshold, d in rows
+            ]
+            body = "The following employee documents are expiring soon:\n\n" + "\n".join(lines)
+            try:
+                msg = EmailMultiAlternatives(
+                    subject=f"Employee documents expiring soon — {org.name}",
+                    body=body, to=hr_emails,
                 )
-        except Exception as exc:
-            logger.exception("Document expiry check failed for org %s: %s", org.id, exc)
-    return total_flagged
+                msg.send(fail_silently=True)
+            except Exception:
+                pass
+        # Mark thresholds as sent regardless of whether an email address
+        # was on file — the alert was raised (logged) either way, and we
+        # must not re-log the same document/threshold every week.
+        if docs_to_update:
+            EmployeeDocument.objects.bulk_update(
+                docs_to_update, ['expiry_alert_thresholds_sent'],
+            )
+        return len(rows)
+
+    return for_each_organisation(
+        _flag, task_name="payroll.flag_expiring_documents",
+    )["processed"]
 
 
 @shared_task(name="payroll.post_leave_accrual_true_up")
@@ -245,14 +244,16 @@ def post_leave_accrual_true_up_task():
     from apps.accounting.services import AccountingService
 
     today = date.today()
-    posted = 0
-    for org in Organisation.objects.filter(is_active=True):
-        try:
-            entry = AccountingService.post_leave_accrual_true_up(org, today)
-            if entry:
-                posted += 1
-        except Exception as exc:
-            logger.exception("Leave accrual true-up failed for org %s: %s", org.id, exc)
+
+    # Per-org RLS context (NEW-7). This task posts to accounting_journalentry,
+    # which is RLS-protected: under the SENTINEL the INSERT is refused by the
+    # policy's WITH CHECK, so the leave liability never reached the balance
+    # sheet at all — the exact failure this task's docstring warns about.
+    result = for_each_organisation(
+        lambda org: 1 if AccountingService.post_leave_accrual_true_up(org, today) else 0,
+        task_name="payroll.post_leave_accrual_true_up",
+    )
+    posted = result["processed"]
     logger.info("Leave accrual true-up: %d org(s) posted", posted)
     return posted
 
@@ -288,26 +289,41 @@ def expire_stale_advances():
     from .models import AdvanceRequest, PayrollRun
 
     today = date.today()
-    cancelled = 0
-    stale = AdvanceRequest.objects.filter(status=AdvanceRequest.PENDING)
-    for advance in stale.select_related('organisation'):
-        period_over = (
-            advance.period_year < today.year
-            or (advance.period_year == today.year and advance.period_month < today.month)
+
+    # Swept per organisation because the PayrollRun lookup below reads
+    # payroll_payrollrun, which IS RLS-protected: under the SENTINEL it always
+    # returned False, so `run_done` never fired and no stale advance was ever
+    # cancelled. AdvanceRequest itself is not RLS-protected, which is why the
+    # outer query looked healthy while the decision it fed was always wrong
+    # (NEW-7).
+    def _expire(org):
+        cancelled = 0
+        stale = AdvanceRequest.objects.filter(
+            organisation=org, status=AdvanceRequest.PENDING,
         )
-        if not period_over:
-            continue
-        run_done = PayrollRun.objects.filter(
-            organisation=advance.organisation,
-            period_year=advance.period_year,
-            period_month=advance.period_month,
-            status__in=[PayrollRun.APPROVED, PayrollRun.PAID],
-        ).exists()
-        if run_done:
-            advance.status = AdvanceRequest.CANCELLED
-            advance.decision_note = 'Auto-cancelled: payroll for the period has been processed.'
-            advance.save(update_fields=['status', 'decision_note'])
-            cancelled += 1
+        for advance in stale.select_related('organisation'):
+            period_over = (
+                advance.period_year < today.year
+                or (advance.period_year == today.year and advance.period_month < today.month)
+            )
+            if not period_over:
+                continue
+            run_done = PayrollRun.objects.filter(
+                organisation=advance.organisation,
+                period_year=advance.period_year,
+                period_month=advance.period_month,
+                status__in=[PayrollRun.APPROVED, PayrollRun.PAID],
+            ).exists()
+            if run_done:
+                advance.status = AdvanceRequest.CANCELLED
+                advance.decision_note = 'Auto-cancelled: payroll for the period has been processed.'
+                advance.save(update_fields=['status', 'decision_note'])
+                cancelled += 1
+        return cancelled
+
+    cancelled = for_each_organisation(
+        _expire, task_name="payroll.expire_stale_advances",
+    )["processed"]
     if cancelled:
         logger.info("Auto-cancelled %d stale salary advance request(s)", cancelled)
     return cancelled
