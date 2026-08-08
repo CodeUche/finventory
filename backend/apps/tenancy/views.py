@@ -12,7 +12,7 @@ from rest_framework.response import Response
 
 logger = logging.getLogger(__name__)
 
-from apps.core.permissions import IsOwnerOrAdmin
+from apps.core.permissions import IsOwnerOrAdmin, has_minimum_role
 from apps.core.throttles import BankResolveRateThrottle, InvitationRateThrottle
 
 # Nigerian NUBAN account numbers are exactly 10 digits.
@@ -69,6 +69,106 @@ class OrganisationViewSet(viewsets.ModelViewSet):
 
     serializer_class = OrganisationSerializer
     permission_classes = [IsAuthenticated]
+
+    # C-1 — fields on the org object that are privileged rather than cosmetic.
+    #
+    # Changing the payout bank account is a direct fraud vector (money moves to
+    # a different account, and `validate_bank_account_number` happily accepts any
+    # well-formed NUBAN). Flipping `is_active` false has the same blast radius as
+    # DELETE: `resolve_organisation()` requires is_active=True, so it locks every
+    # member — including the owner — out of all business data.
+    #
+    # Everything NOT listed here (name, address, phone, currency, logo, invoice
+    # template, onboarding_completed, …) stays writable by any active member,
+    # because the product depends on that: TopBar's currency switcher and the
+    # onboarding flow both PATCH this endpoint with no role gate of their own.
+    #
+    # Widening/narrowing either boundary is deliberately a one-line change here.
+    #
+    # Bank details sit at admin+, not owner-only, because SettingsPage.tsx:99
+    # treats admin as owner-equivalent (`isOwner = role === 'owner' || role ===
+    # 'admin'`) and renders an editable bank form for both. Owner-only would give
+    # every admin a silent 403 on a form the UI shows as editable. admin+ still
+    # closes the reported hole: viewer/employee/staff/accountant/manager are all
+    # refused, and admin is an explicitly granted, high-trust role.
+    ADMIN_ONLY_FIELDS = frozenset({
+        "bank_account_number", "bank_name", "bank_account_name", "bank_sort_code",
+    })
+    # `is_active` stays owner-only: no UI anywhere sends it for an organisation
+    # (every frontend `is_active` write targets email config, Paystack config or a
+    # Membership), so the tighter gate costs nothing and its blast radius is
+    # identical to DELETE.
+    OWNER_ONLY_FIELDS = frozenset({"is_active"})
+    # Fields worth recording old→new values for, individually.
+    AUDITED_FIELDS = ADMIN_ONLY_FIELDS
+
+    def _require_role(self, org, minimum_role, message):
+        """Raise PermissionDenied unless caller holds `minimum_role` (superusers pass)."""
+        from rest_framework.exceptions import PermissionDenied
+
+        if getattr(self.request.user, "is_superuser", False):
+            return
+        if not has_minimum_role(self.request.user, org, minimum_role):
+            raise PermissionDenied(message)
+
+    def update(self, request, *args, **kwargs):
+        org = self.get_object()
+        keys = request.data.keys()
+
+        if self.OWNER_ONLY_FIELDS.intersection(keys):
+            self._require_role(
+                org, "owner",
+                "Only the organisation owner can activate or deactivate the organisation.",
+            )
+        touched = self.ADMIN_ONLY_FIELDS.intersection(keys)
+        if touched:
+            self._require_role(
+                org, "admin",
+                "Only an owner or admin can change the organisation's bank details.",
+            )
+
+        before = {f: getattr(org, f, None) for f in self.AUDITED_FIELDS.intersection(touched)}
+        response = super().update(request, *args, **kwargs)
+
+        if before and 200 <= response.status_code < 300:
+            org.refresh_from_db()
+            changes = {
+                f: {"from": old, "to": getattr(org, f, None)}
+                for f, old in before.items()
+                if old != getattr(org, f, None)
+            }
+            if changes:
+                # AuditTrailMiddleware only records *that* the org was PATCHed; it
+                # never populates `changes`. Log the field-level before/after here
+                # so a bank-detail change is individually traceable. Passing
+                # `request` sets _audit_logged, which suppresses the generic
+                # middleware entry so this doesn't double-log.
+                from apps.core.models import AuditLog
+
+                AuditLog.log(
+                    action=AuditLog.UPDATE,
+                    user=request.user,
+                    organisation=org,
+                    model_name="tenancy/organisations",
+                    object_id=str(org.id),
+                    object_repr=org.name,
+                    changes=changes,
+                    request=request,
+                    # Same semantics as AuditTrailMiddleware: true only when the
+                    # actor really is the org owner. An admin changing bank
+                    # details must not be recorded as an owner action.
+                    is_owner_action=(getattr(org, "owner_id", None) == request.user.id),
+                )
+        return response
+
+    def destroy(self, request, *args, **kwargs):
+        # No frontend path deletes an organisation, so owner-only costs nothing
+        # and prevents a single request from locking out every member.
+        self._require_role(
+            self.get_object(), "owner",
+            "Only the organisation owner can delete the organisation.",
+        )
+        return super().destroy(request, *args, **kwargs)
 
     def get_queryset(self):
         # Set user identity FIRST so the membership_select RLS SENTINEL branch
