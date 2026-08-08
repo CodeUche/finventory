@@ -388,18 +388,38 @@ class PaymentEngine:
             logger.error("Paystack verify transaction failed for ref %s: %s", reference, e)
             raise ValueError("Could not verify payment with Paystack. Please try again.") from e
 
-        if not data.get("status") or data.get("data", {}).get("status") != "success":
-            PaymentEngine._mark_failed(payment)
+        ps_status = data.get("data", {}).get("status") if data.get("status") else None
+        if ps_status != "success":
+            # Only a genuinely TERMINAL Paystack status may poison this row.
+            # This function is now polled repeatedly (background poll right
+            # after checkout opens, a silent check on every page load, plus
+            # the manual "Restore access" button) — the very first tick
+            # typically fires while the customer hasn't finished paying yet,
+            # long before a real "success". Marking FAILED on that first
+            # transient "abandoned"/"pending"/"processing" read permanently
+            # bricks a payment that goes on to genuinely succeed minutes
+            # later, since every subsequent check then finds no PENDING row
+            # left to re-verify. A confirmed production incident: a real
+            # ₦15k bank-transfer payment succeeded 6 minutes after checkout
+            # opened, well past the first poll tick, and was wrongly marked
+            # FAILED by this exact line before this fix.
+            if ps_status in ("failed", "reversed"):
+                PaymentEngine._mark_failed(payment)
             raise ValueError("Payment was not successful. Please try again or contact support.")
 
         tx = data["data"]
 
         expected_kobo = int((payment.expected_amount or payment.amount) * 100)
         actual_kobo = int(tx.get("amount") or 0)
-        if actual_kobo != expected_kobo:
+        # >= not != : Paystack can add its own convenience fee on top of the
+        # amount we initialized with (seen on the bank_transfer channel) and
+        # passes that fee's cost to the customer, so a genuine successful
+        # payment can legitimately come back slightly ABOVE what we expected.
+        # Only genuine underpayment is a real mismatch worth rejecting.
+        if actual_kobo < expected_kobo:
             PaymentEngine._mark_failed(payment)
             raise ValueError(
-                f"Amount mismatch for payment {reference}: expected {expected_kobo} kobo, "
+                f"Amount mismatch for payment {reference}: expected at least {expected_kobo} kobo, "
                 f"got {actual_kobo} kobo."
             )
 

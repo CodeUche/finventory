@@ -181,11 +181,13 @@ class PaymentEngineActivateTests(TestCase):
             )
 
     @patch("apps.subscriptions.payment_engine.requests.get")
-    def test_amount_mismatch_rejected(self, mock_get):
+    def test_underpayment_rejected(self, mock_get):
+        """Genuine underpayment (actual < expected) is the real risk this
+        check exists for — reject it and mark the row FAILED."""
         self._create_pending_subscription_payment("SUB-BADAMT")
-        wrong_amount_kobo = int(self.plan.price * 100) + 500000  # way off
+        short_amount_kobo = int(self.plan.price * 100) - 500000  # way short
         mock_get.return_value = _paystack_verify_success(
-            wrong_amount_kobo, self.org.id, plan_id=self.plan.id, reference="SUB-BADAMT",
+            short_amount_kobo, self.org.id, plan_id=self.plan.id, reference="SUB-BADAMT",
         )
 
         with self.assertRaises(ValueError) as ctx:
@@ -193,6 +195,77 @@ class PaymentEngineActivateTests(TestCase):
         self.assertIn("Amount mismatch", str(ctx.exception))
 
         payment = PaymentHistory.objects.get(provider_payment_id="SUB-BADAMT")
+        self.assertEqual(payment.status, PaymentHistory.Status.FAILED)
+
+    @patch("apps.subscriptions.payment_engine.requests.get")
+    def test_overpayment_accepted(self, mock_get):
+        """Regression test for a confirmed production incident: Paystack can
+        add its own convenience fee on top of the initialized amount (seen on
+        the bank_transfer channel — a real ₦15,000 integration purchase came
+        back as ₦15,329.95) and passes that cost to the customer, so a
+        genuinely successful payment can legitimately verify ABOVE what we
+        expected. That must succeed, not be rejected as a "mismatch" — only
+        underpayment is a real risk."""
+        payment, entitlement = self._create_pending_integration_payment("INT-OVERPAID")
+        over_amount_kobo = int(self.product.price * 100) + 32995  # Paystack fee on top
+        mock_get.return_value = _paystack_verify_success(
+            over_amount_kobo, self.org.id, product_key=self.product.key, reference="INT-OVERPAID",
+        )
+
+        result = PaymentEngine.activate("INT-OVERPAID")
+
+        self.assertEqual(result.status, PaymentHistory.Status.SUCCEEDED)
+        entitlement.refresh_from_db()
+        self.assertEqual(entitlement.status, OrganisationIntegrationEntitlement.Status.ACTIVE)
+
+    @patch("apps.subscriptions.payment_engine.requests.get")
+    def test_transient_not_yet_successful_status_does_not_poison_payment(self, mock_get):
+        """Regression test for the other half of the same production
+        incident: activate() is now polled repeatedly (background poll right
+        after checkout opens, a silent check on every page load, the manual
+        "Restore access" button) and the very first tick typically fires
+        before the customer has finished paying. A transient Paystack status
+        (still "abandoned"/pending at that moment) must leave the row PENDING
+        so a later, genuine success can still be recorded — not permanently
+        mark it FAILED on the first premature check."""
+        payment, entitlement = self._create_pending_integration_payment("INT-NOTYET")
+        resp = MagicMock(status_code=200)
+        resp.raise_for_status.return_value = None
+        resp.json.return_value = {"status": True, "data": {"status": "abandoned"}}
+        mock_get.return_value = resp
+
+        with self.assertRaises(ValueError):
+            PaymentEngine.activate("INT-NOTYET")
+
+        payment.refresh_from_db()
+        self.assertEqual(payment.status, PaymentHistory.Status.PENDING)
+
+        # The genuine success arrives later — activate() must still be able
+        # to settle it, proving the row was never poisoned.
+        amount_kobo = int(self.product.price * 100)
+        mock_get.return_value = _paystack_verify_success(
+            amount_kobo, self.org.id, product_key=self.product.key, reference="INT-NOTYET",
+        )
+        result = PaymentEngine.activate("INT-NOTYET")
+        self.assertEqual(result.status, PaymentHistory.Status.SUCCEEDED)
+        entitlement.refresh_from_db()
+        self.assertEqual(entitlement.status, OrganisationIntegrationEntitlement.Status.ACTIVE)
+
+    @patch("apps.subscriptions.payment_engine.requests.get")
+    def test_explicit_failed_status_still_marks_payment_failed(self, mock_get):
+        """A genuinely TERMINAL Paystack status ("failed") is still allowed
+        to poison the row — only the transient/ambiguous statuses were the
+        bug."""
+        payment, _entitlement = self._create_pending_integration_payment("INT-REALLYFAILED")
+        resp = MagicMock(status_code=200)
+        resp.raise_for_status.return_value = None
+        resp.json.return_value = {"status": True, "data": {"status": "failed"}}
+        mock_get.return_value = resp
+
+        with self.assertRaises(ValueError):
+            PaymentEngine.activate("INT-REALLYFAILED")
+
+        payment.refresh_from_db()
         self.assertEqual(payment.status, PaymentHistory.Status.FAILED)
 
     @patch("apps.subscriptions.payment_engine.requests.get")
