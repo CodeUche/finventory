@@ -137,9 +137,54 @@ class IntegrationHandler(PaymentKindHandler):
             )
 
 
+class ConnectorAddonHandler(PaymentKindHandler):
+    """
+    Activates/renews a ConnectorAddonSubscription (apps.connectors) — the
+    ₦4,500/connector/month recurring add-on purchased once an org exceeds
+    its plan's connector quota (see apps.connectors.services.
+    ConnectorConnectionService.start_connect_session). Mirrors
+    SubscriptionHandler's period-rolling logic (status -> ACTIVE,
+    current_period_start/end set from `interval`) rather than
+    IntegrationHandler's one-time-unlock semantics, because this is a
+    renewing obligation, not a single purchase.
+    """
+
+    def apply_success(self, payment: PaymentHistory) -> None:
+        from datetime import timedelta
+
+        from apps.connectors.models import ConnectorAddonSubscription
+
+        addon = payment.connector_addon_subscription
+        now = timezone.now()
+        days = 365 if addon.interval == ConnectorAddonSubscription.Interval.ANNUAL else 30
+        addon.status = ConnectorAddonSubscription.Status.ACTIVE
+        addon.provider = "paystack"
+        addon.current_period_start = now
+        addon.current_period_end = now + timedelta(days=days)
+        addon.save(update_fields=[
+            "status", "provider", "current_period_start", "current_period_end", "updated_at",
+        ])
+
+    def apply_refund(self, payment: PaymentHistory, full: bool) -> None:
+        from apps.connectors.models import ConnectorAddonSubscription
+
+        addon = payment.connector_addon_subscription
+        if full:
+            addon.status = ConnectorAddonSubscription.Status.CANCELED
+            addon.canceled_at = timezone.now()
+            addon.save(update_fields=["status", "canceled_at", "updated_at"])
+        else:
+            logger.warning(
+                "Partial refund on connector-addon payment ref=%s (addon=%s) — "
+                "add-on left ACTIVE; no automatic action taken.",
+                payment.provider_payment_id, addon.id,
+            )
+
+
 HANDLERS = {
     PaymentHistory.Kind.SUBSCRIPTION: SubscriptionHandler(),
     PaymentHistory.Kind.INTEGRATION: IntegrationHandler(),
+    PaymentHistory.Kind.CONNECTOR_ADDON: ConnectorAddonHandler(),
 }
 
 
@@ -171,13 +216,99 @@ class PaymentEngine:
     def initiate(organisation, kind: str, target, user_email: str) -> dict:
         """
         target = Plan instance when kind == PaymentHistory.Kind.SUBSCRIPTION,
-                 IntegrationProduct instance when kind == PaymentHistory.Kind.INTEGRATION.
+                 IntegrationProduct instance when kind == PaymentHistory.Kind.INTEGRATION,
+                 (connector_key, interval) tuple when kind == PaymentHistory.Kind.CONNECTOR_ADDON
+                 — there is no separate catalog model for the flat ₦4,500/mo
+                 add-on price (see apps.connectors.pricing), so this takes
+                 primitives instead of a persisted row like the other two kinds.
         """
         if kind == PaymentHistory.Kind.INTEGRATION:
             return PaymentEngine._initiate_integration(organisation, target, user_email)
         if kind == PaymentHistory.Kind.SUBSCRIPTION:
             return PaymentEngine._initiate_subscription(organisation, target, user_email)
+        if kind == PaymentHistory.Kind.CONNECTOR_ADDON:
+            connector_key, interval = target
+            return PaymentEngine._initiate_connector_addon(organisation, connector_key, interval, user_email)
         raise ValueError(f"Unknown payment kind: {kind}")
+
+    @staticmethod
+    def _initiate_connector_addon(organisation, connector_key: str, interval: str, user_email: str) -> dict:
+        """
+        Recurring ₦4,500/connector/month (or /year) add-on purchase — see
+        apps.connectors.models.ConnectorAddonSubscription and
+        ConnectorAddonHandler above. Mirrors _initiate_integration's
+        select_for_update + in-flight-payment guard against a double-click/
+        two-tab race minting two references for one add-on, adapted to the
+        renewing (not one-time) target model.
+        """
+        from apps.connectors.models import Connector, ConnectorAddonSubscription
+        from apps.connectors.pricing import price_for_interval
+
+        if connector_key not in Connector.values:
+            raise ValueError(f"Unknown connector: {connector_key!r}")
+        if interval not in ConnectorAddonSubscription.Interval.values:
+            raise ValueError(f"Unknown billing interval: {interval!r}")
+
+        amount = price_for_interval(interval)
+        amount_kobo = int(amount * 100)
+        reference = f"ADDON-{uuid.uuid4().hex[:16].upper()}"
+
+        with transaction.atomic():
+            addon, created = ConnectorAddonSubscription.objects.get_or_create(
+                organisation=organisation,
+                connector_key=connector_key,
+                defaults={
+                    "status": ConnectorAddonSubscription.Status.INCOMPLETE,
+                    "interval": interval,
+                    "amount": amount,
+                },
+            )
+            if not created:
+                addon = ConnectorAddonSubscription.objects.select_for_update().get(pk=addon.pk)
+                if addon.is_active:
+                    raise ValueError(f"This organisation already has an active {connector_key} add-on.")
+                # Renewing/upgrading an existing (lapsed/canceled) row rather
+                # than creating a second one — the unique_together
+                # (organisation, connector_key) constraint would reject a
+                # second row anyway, but re-using it also preserves history.
+                addon.interval = interval
+                addon.amount = amount
+                addon.save(update_fields=["interval", "amount", "updated_at"])
+
+            has_pending_payment = PaymentHistory.objects.filter(
+                connector_addon_subscription=addon,
+                status=PaymentHistory.Status.PENDING,
+            ).exists()
+            if has_pending_payment:
+                raise ValueError(
+                    "A payment for this connector add-on is already in progress. "
+                    "Please complete or wait for it to finish before trying again."
+                )
+
+            payment = PaymentHistory.objects.create(
+                kind=PaymentHistory.Kind.CONNECTOR_ADDON,
+                organisation=organisation,
+                connector_addon_subscription=addon,
+                expected_amount=amount,
+                amount=amount,
+                status=PaymentHistory.Status.PENDING,
+                provider_payment_id=reference,
+                description=f"Pending payment for {connector_key} connector add-on ({interval})",
+            )
+
+        payload = {
+            "email": user_email,
+            "amount": amount_kobo,
+            "reference": reference,
+            "currency": "NGN",
+            "metadata": {
+                "payment_kind": "connector_addon",
+                "connector_key": connector_key,
+                "interval": interval,
+                "org_id": str(organisation.id),
+            },
+        }
+        return PaymentEngine._call_initialize(payment, payload, user_email, amount_kobo)
 
     @staticmethod
     def _initiate_subscription(organisation, plan: Plan, user_email: str) -> dict:

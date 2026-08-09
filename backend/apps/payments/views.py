@@ -234,7 +234,7 @@ def _handle_webhook(request, provider_slug):
                 return Response({'status': 'refund_processed'})
 
             payment_kind = (data.get('metadata') or {}).get('payment_kind')
-            if payment_kind in ('subscription', 'integration'):
+            if payment_kind in ('subscription', 'integration', 'connector_addon'):
                 reference = data.get('reference', '')
                 PaymentEngine.activate(reference)
                 return Response({'status': payment_kind})
