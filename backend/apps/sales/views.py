@@ -263,13 +263,26 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
 
         # Only allow safe metadata fields — never allow changing financial amounts
         ALLOWED_FIELDS = {"notes", "due_date", "issue_date", "payment_method", "folder", "status"}
-        # Status can only be changed between non-financial states
+        # Status can only be changed between non-financial states.
+        # CONFIRMED belongs here as much as PAID: confirm_proforma() is the only
+        # path that deducts stock via InventoryService.record_movement, so
+        # setting it directly produced a confirmed sale with inventory never
+        # reduced — the stock and sales ledgers silently disagreeing (M-1).
         if "status" in request.data:
             new_status = request.data.get("status")
-            forbidden_transitions = {Invoice.Status.PAID, Invoice.Status.VOIDED}
+            forbidden_transitions = {
+                Invoice.Status.CONFIRMED,
+                Invoice.Status.PAID,
+                Invoice.Status.PARTIALLY_PAID,
+                Invoice.Status.VOIDED,
+            }
             if new_status in forbidden_transitions:
                 return Response(
-                    {"error": "Status cannot be set to 'paid' or 'voided' via edit. Use the Pay or Void actions."},
+                    {"error": (
+                        "This status is set by recording the actual event. Use the "
+                        "Confirm, Pay or Void action so stock and the ledger are "
+                        "updated with it."
+                    )},
                     status=422,
                 )
 
