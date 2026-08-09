@@ -174,9 +174,29 @@ class BillViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
 
         return Response(BillSerializer(bill).data, status=status.HTTP_201_CREATED)
 
+    # Statuses that only the dedicated approve / pay / void actions may set,
+    # because each carries side effects this endpoint does not perform:
+    # amount_paid, the BillPayment records and the GL posting. Writing them
+    # directly leaves the bill claiming a settlement that never happened (H-4).
+    ACTION_DRIVEN_STATUSES = {
+        Bill.APPROVED, Bill.PAID, Bill.PARTIALLY_PAID, Bill.VOIDED,
+    }
+
     def partial_update(self, request, *args, **kwargs):
         """PATCH with only header fields (folder, status, notes, etc.) — no items required."""
         bill = self.get_object()
+
+        new_status = request.data.get('status')
+        if new_status and new_status in self.ACTION_DRIVEN_STATUSES:
+            return Response(
+                {"error": {"message": (
+                    "This status is set by recording the actual event. Use the "
+                    "Approve, Pay or Void action so the amount paid, the payment "
+                    "record and the ledger stay consistent."
+                )}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         allowed = {'folder', 'status', 'notes', 'reference', 'issue_date', 'due_date', 'tax_amount'}
         data = {k: v for k, v in request.data.items() if k in allowed}
         org = self._get_organisation()
