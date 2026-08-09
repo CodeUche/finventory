@@ -97,3 +97,110 @@ class PurchaseReturnTests(TestCase):
         data = rd.resolver(self.org, date(2026, 1, 1), date(2026, 12, 31))
         self.assertEqual(len(data["rows"]), 1)
         self.assertEqual(data["total"], Decimal("322.50"))  # 300 + 22.50 VAT
+
+
+class PurchaseOrderStatusBypassTests(TestCase):
+    """
+    Finding H-5.
+
+    ``receive_purchase_order()`` is the only path that moves stock and creates
+    the supplier Bill. ``status`` was writable on PurchaseOrderSerializer with
+    no override of the default ModelViewSet update, so a plain PATCH could mark
+    a PO "received" with no stock movement, no Bill and no GL posting — books
+    reconciled against goods that never arrived.
+
+    The UI's edit dialog legitimately PATCHes status (PurchasesPage.tsx), so the
+    fix blocks only the two states that carry side effects and leaves the
+    administrative ones working.
+    """
+
+    def setUp(self):
+        self.user = _make_user("postatus_owner@example.com")
+        self.org = _make_org(self.user, "PO Status Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+        self.supplier = Supplier.objects.create(organisation=self.org, name="Supplier X")
+        self.warehouse = Warehouse.objects.create(
+            organisation=self.org, name="Main", is_default=True,
+        )
+        self.product = Product.objects.create(
+            organisation=self.org, sku="PS-1", name="Thing", product_type="physical",
+            cost_price=Decimal("50"), selling_price=Decimal("80"),
+        )
+        self.po = PurchaseOrder.objects.create(
+            organisation=self.org, supplier=self.supplier, warehouse=self.warehouse,
+            po_number="PO-STATUS-1", order_date=date.today(),
+            status=PurchaseOrder.Status.SENT, created_by=self.user,
+        )
+        PurchaseOrderItem.objects.create(
+            organisation=self.org, purchase_order=self.po, product=self.product,
+            quantity_ordered=10, unit_cost=Decimal("50"),
+        )
+
+    def _patch(self, payload):
+        return self.client.patch(
+            f"/api/v1/purchases/orders/{self.po.id}/", payload, format="json",
+        )
+
+    def test_cannot_mark_received_via_patch(self):
+        res = self._patch({"status": PurchaseOrder.Status.RECEIVED})
+        self.assertIn(
+            res.status_code, (400, 422),
+            "PATCH set PO status to 'received' — stock never moved and no Bill "
+            "was created, but the books show the goods as arrived (H-5)",
+        )
+        self.po.refresh_from_db()
+        self.assertEqual(self.po.status, PurchaseOrder.Status.SENT)
+
+    def test_cannot_mark_partially_received_via_patch(self):
+        res = self._patch({"status": PurchaseOrder.Status.PARTIALLY_RECEIVED})
+        self.assertIn(res.status_code, (400, 422))
+        self.po.refresh_from_db()
+        self.assertEqual(self.po.status, PurchaseOrder.Status.SENT)
+
+    def test_no_stock_is_created_by_the_bypass_attempt(self):
+        """The reason this matters: the bypass would desync stock from purchasing."""
+        self._patch({"status": PurchaseOrder.Status.RECEIVED})
+        self.assertFalse(
+            StockItem.objects.filter(product=self.product).exists(),
+            "stock existed after a status-only PATCH",
+        )
+
+    # --- the administrative transitions the UI relies on must keep working ---
+
+    def test_can_still_set_administrative_statuses(self):
+        for status in (
+            PurchaseOrder.Status.DRAFT,
+            PurchaseOrder.Status.SENT,
+            PurchaseOrder.Status.CLOSED,
+            PurchaseOrder.Status.CANCELED,
+        ):
+            with self.subTest(status=status):
+                res = self._patch({"status": status})
+                self.assertEqual(
+                    res.status_code, 200,
+                    f"blocking '{status}' breaks the PO edit dialog in PurchasesPage.tsx",
+                )
+                self.po.refresh_from_db()
+                self.assertEqual(self.po.status, status)
+
+    def test_can_still_edit_non_status_fields(self):
+        res = self._patch({"notes": "Chasing the supplier"})
+        self.assertEqual(res.status_code, 200)
+        self.po.refresh_from_db()
+        self.assertEqual(self.po.notes, "Chasing the supplier")
+
+    def test_receive_action_still_sets_received(self):
+        """The legitimate path must remain the way to reach 'received'."""
+        res = self.client.post(
+            f"/api/v1/purchases/orders/{self.po.id}/receive/",
+            {"items": [{"item_id": str(self.po.items.first().id), "quantity_received": 10}]},
+            format="json",
+        )
+        self.assertIn(res.status_code, (200, 201), res.content[:300])
+        self.po.refresh_from_db()
+        self.assertEqual(self.po.status, PurchaseOrder.Status.RECEIVED)
+        self.assertTrue(
+            StockItem.objects.filter(product=self.product).exists(),
+            "receive action did not move stock",
+        )

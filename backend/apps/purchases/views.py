@@ -47,6 +47,42 @@ class PurchaseOrderViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet
             qs = qs.filter(order_date__lte=date_to)
         return qs
 
+    # Statuses that may only be reached through receive_purchase_order(), which
+    # is the sole path that records the stock movement and creates the supplier
+    # Bill. Setting either directly would leave the PO reading as delivered
+    # while no goods entered inventory and nothing reached the ledger (H-5).
+    RECEIPT_DRIVEN_STATUSES = {
+        PurchaseOrder.Status.RECEIVED,
+        PurchaseOrder.Status.PARTIALLY_RECEIVED,
+    }
+
+    def update(self, request, *args, **kwargs):
+        self._reject_receipt_driven_status(request)
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        self._reject_receipt_driven_status(request)
+        return super().partial_update(request, *args, **kwargs)
+
+    def _reject_receipt_driven_status(self, request):
+        """
+        Block direct writes to receipt-driven statuses.
+
+        Only these two are refused: the PO edit dialog legitimately PATCHes
+        status for draft/sent/closed/canceled, so rejecting the whole field
+        would break an existing screen for no security gain.
+        """
+        new_status = request.data.get("status")
+        if new_status and new_status in self.RECEIPT_DRIVEN_STATUSES:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({
+                "status": (
+                    "Goods receipt cannot be recorded by editing the status. "
+                    "Use the Receive action so stock and the supplier bill are "
+                    "updated together."
+                )
+            })
+
     def perform_create(self, serializer):
         import logging
         logger = logging.getLogger(__name__)
