@@ -2,6 +2,7 @@ from django.urls import path
 
 from .views import (
     ConnectorAddonInitiateView,
+    ConnectorAddonRestoreView,
     ConnectorAddonVerifyView,
     ConnectorConfigView,
     ConnectorConnectView,
@@ -22,4 +23,5 @@ urlpatterns = [
     path("<str:connector_key>/disconnect/", ConnectorDisconnectView.as_view(), name="connector-disconnect"),
     path("<str:connector_key>/config/", ConnectorConfigView.as_view(), name="connector-config"),
     path("<str:connector_key>/addon/initiate/", ConnectorAddonInitiateView.as_view(), name="connector-addon-initiate"),
+    path("<str:connector_key>/addon/restore/", ConnectorAddonRestoreView.as_view(), name="connector-addon-restore"),
 ]

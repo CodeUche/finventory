@@ -125,7 +125,13 @@ export const navGroups: { label: string | null; alwaysGroup?: boolean; items: { 
       { name: 'Current Plan', href: '/billing#current-plan', icon: CreditCard, ownerOnly: true },
       { name: 'Change Plan', href: '/billing#plans-section', icon: Zap, ownerOnly: true },
       { name: 'Billing & Invoices', href: '/billing#payment-history', icon: Receipt, ownerOnly: true },
-      { name: 'Integrations', href: '/integrations', icon: Globe, ownerOnly: true },
+      // Replaces the old "Integrations" (raw webhooks + Zapier) nav entry —
+      // that page still exists and its route still works (see App.tsx),
+      // it's just no longer linked from anywhere in the default nav. This
+      // is a deliberate product decision, not an oversight: one existing
+      // paying customer (McEva International) reaches it via a direct URL
+      // from support instead.
+      { name: 'Connectors', href: '/connectors', icon: Globe, ownerOnly: true },
     ],
   },
   {

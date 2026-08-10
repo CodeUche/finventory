@@ -66,7 +66,12 @@ const MessagesPage = React.lazy(() => import('@/pages/messaging/MessagesPage'))
 const SettingsPage = React.lazy(() => import('@/pages/SettingsPage'))
 const PlatformAdminPage = React.lazy(() => import('@/pages/PlatformAdminPage'))
 const BillingPage = React.lazy(() => import('@/pages/BillingPage'))
+// IntegrationsPage (raw webhooks + Zapier marketplace) is superseded by
+// ConnectorsPage on the default nav — kept mounted, unlinked, so the one
+// existing paying customer (McEva International) can still reach it via
+// direct URL. See Sidebar.tsx: it is deliberately absent from navGroups.
 const IntegrationsPage = React.lazy(() => import('@/pages/settings/IntegrationsPage'))
+const ConnectorsPage = React.lazy(() => import('@/pages/settings/ConnectorsPage'))
 const TicketsPage = React.lazy(() => import('@/pages/TicketsPage'))
 const RestaurantPOSPage = React.lazy(() => import('@/pages/pos/RestaurantPOSPage'))
 const TransferConfirmationsPage = React.lazy(() => import('@/pages/payments/TransferConfirmationsPage'))
@@ -405,6 +410,10 @@ export default function App() {
         {/* Settings — always accessible for personal profile/security; org tabs filtered inside the page */}
         <Route path="settings" element={<SettingsPage />} />
         <Route path="billing"  element={<ModuleRoute module="settings"><BillingPage /></ModuleRoute>} />
+        <Route path="connectors" element={<ModuleRoute module="settings"><ConnectorsPage /></ModuleRoute>} />
+        {/* Unlisted (no Sidebar link) — route intentionally kept alive so
+            McEva International, an existing paying webhooks/Zapier customer,
+            can still reach it via a direct URL from support. */}
         <Route path="integrations" element={<ModuleRoute module="settings"><IntegrationsPage /></ModuleRoute>} />
         <Route path="import"   element={<WriteModuleRoute module="settings"><ImportPage /></WriteModuleRoute>} />
         <Route path="partner"           element={<PartnerRoute><PartnerDashboardPage /></PartnerRoute>} />

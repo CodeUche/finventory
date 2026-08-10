@@ -325,6 +325,50 @@ class ConnectorAddonVerifyView(APIView):
         return Response(PaymentHistorySerializer(payment).data)
 
 
+class ConnectorAddonRestoreView(APIView):
+    """
+    POST /connectors/{connector_key}/addon/restore/
+
+    Re-verifies the CALLING ORG's own most recent pending ₦4,500/mo add-on
+    payment for this connector — no reference required from the client.
+    Exists for the exact same reason SubscriptionViewSet.
+    restore_integration_payment does: on desktop the Paystack checkout opens
+    in the system browser and there's no deep-link back into the app, so a
+    completed payment there never reaches ConnectorAddonVerifyView on its
+    own if the reference was lost (e.g. the app was closed mid-flow). Lets
+    the frontend recover automatically (background poll) or the user
+    recover manually ("Restore" fallback) without ever handling the raw
+    reference.
+    """
+
+    permission_classes = [IsAuthenticated, IsOwnerOrAdmin]
+
+    def post(self, request, connector_key=None):
+        from apps.subscriptions.payment_engine import PaymentEngine
+        from apps.subscriptions.serializers import PaymentHistorySerializer
+
+        org = _get_or_resolve_org(request)
+        if org is None:
+            return _err("Organisation not found.")
+
+        payment = PaymentHistory.objects.filter(
+            kind=PaymentHistory.Kind.CONNECTOR_ADDON,
+            organisation=org,
+            connector_addon_subscription__connector_key=connector_key,
+            status=PaymentHistory.Status.PENDING,
+        ).order_by("-created_at").first()
+
+        if payment is None:
+            return _err("No pending add-on purchase found for this connector.", 404)
+
+        try:
+            payment = PaymentEngine.activate(payment.provider_payment_id)
+        except ValueError as exc:
+            return _err(str(exc), 400)
+
+        return Response(PaymentHistorySerializer(payment).data)
+
+
 # ── Nango webhook (server-to-server, no user session) ───────────────────────
 
 @api_view(["POST"])

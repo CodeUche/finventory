@@ -6,43 +6,12 @@ import toast from 'react-hot-toast'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { subscriptionApi, orgApi, bypassNextGets, partnerApi, authApi } from '@/services/api'
 import { openExternal } from '@/lib/openExternal'
+import { loadPaystackScript } from '@/lib/paystack'
 
 const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 import { useAuthStore } from '@/store/authStore'
 import type { Plan, Subscription, SubscriptionPayment } from '@/types'
 import { FEATURES } from '@/lib/featureFlags'
-
-// Paystack Inline JS type declaration
-declare global {
-  interface Window {
-    PaystackPop: {
-      setup(opts: {
-        key: string
-        email: string
-        amount: number
-        ref: string
-        currency?: string
-        onClose: () => void
-        callback: (response: { reference: string }) => void
-      }): { openIframe(): void }
-    }
-  }
-}
-
-/** Dynamically load the Paystack Inline JS once per session. */
-function loadPaystackScript(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (window.PaystackPop) { resolve(); return }
-    const existing = document.getElementById('paystack-inline-js')
-    if (existing) { existing.addEventListener('load', () => resolve()); return }
-    const script = document.createElement('script')
-    script.id = 'paystack-inline-js'
-    script.src = 'https://js.paystack.co/v1/inline.js'
-    script.onload = () => resolve()
-    script.onerror = () => reject(new Error('Failed to load Paystack script'))
-    document.head.appendChild(script)
-  })
-}
 
 const PLAN_ICONS: Record<string, React.ElementType> = {
   free: Zap,

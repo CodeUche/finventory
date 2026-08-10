@@ -3,6 +3,7 @@ import toast from 'react-hot-toast'
 import { Globe, Loader2, CheckCircle, ExternalLink, Trash2, Send, Key, Copy, Plus, RefreshCw } from 'lucide-react'
 import { confirmDialog } from '@/lib/dialog'
 import { openExternal } from '@/lib/openExternal'
+import { loadPaystackScript } from '@/lib/paystack'
 import {
   integrationsApi,
   unwrapList,
@@ -13,36 +14,6 @@ import {
 } from '@/services/integrationsApi'
 
 const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
-
-declare global {
-  interface Window {
-    PaystackPop: {
-      setup(opts: {
-        key: string
-        email: string
-        amount: number
-        ref: string
-        currency?: string
-        onClose: () => void
-        callback: (response: { reference: string }) => void
-      }): { openIframe(): void }
-    }
-  }
-}
-
-function loadPaystackScript(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (window.PaystackPop) { resolve(); return }
-    const existing = document.getElementById('paystack-inline-js')
-    if (existing) { existing.addEventListener('load', () => resolve()); return }
-    const script = document.createElement('script')
-    script.id = 'paystack-inline-js'
-    script.src = 'https://js.paystack.co/v1/inline.js'
-    script.onload = () => resolve()
-    script.onerror = () => reject(new Error('Failed to load Paystack script'))
-    document.head.appendChild(script)
-  })
-}
 
 function fmt(amount: string) {
   return '₦' + parseFloat(amount).toLocaleString('en-NG', { minimumFractionDigits: 2 })
