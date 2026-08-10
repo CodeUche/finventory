@@ -17,11 +17,13 @@ Aug 2026):
       API's response verbatim.
     - Outgoing webhooks are signed with header `X-Nango-Hmac-Sha256`:
       hex(hmac_sha256(webhook_signing_key, raw_body)).
-None of this has been exercised against a live Nango account — NANGO_SECRET_KEY
-/ NANGO_PUBLIC_KEY are not yet provisioned (see settings). Every entry point
-below fails loudly (NangoNotConfiguredError) rather than silently no-op-ing
-when the keys are absent, so the gap is visible in logs/API responses instead
-of masquerading as "it just doesn't work."
+Auth is a single NANGO_SECRET_KEY (server-side only) — Nango's current
+Connect-Sessions API has no separate client-facing "public key" the way
+Paystack does; the frontend instead uses a short-lived session token minted
+here via the secret key. Every entry point below fails loudly
+(NangoNotConfiguredError) rather than silently no-op-ing when the key is
+absent, so a missing key is visible in logs/API responses instead of
+masquerading as "it just doesn't work."
 """
 
 from __future__ import annotations

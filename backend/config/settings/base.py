@@ -47,21 +47,28 @@ PAYSTACK_PUBLIC_KEY = config("PAYSTACK_PUBLIC_KEY", default="")
 FLUTTERWAVE_SECRET_KEY = config("FLUTTERWAVE_SECRET_KEY", default="")
 
 # Nango (nango.dev) — embedded auth + API-proxy for the Connectors feature
-# (Slack, Google Sheets). NOT YET PROVISIONED as of this writing — no Nango
-# account exists. apps.connectors.nango fails loudly (NangoNotConfiguredError,
-# surfaced as a clear 503 from the API) rather than silently no-op-ing when
-# these are unset, so the gap is visible instead of masquerading as "it just
-# doesn't work". Create an account at https://nango.dev, then set:
-#   NANGO_SECRET_KEY, NANGO_PUBLIC_KEY  — from Nango's Environment Settings
-#   NANGO_WEBHOOK_SECRET                — the "webhook signing key" from the
-#                                          same page (falls back to
-#                                          NANGO_SECRET_KEY if unset)
+# (Slack, Google Sheets). apps.connectors.nango fails loudly
+# (NangoNotConfiguredError, surfaced as a clear 503 from the API) rather than
+# silently no-op-ing when these are unset, so the gap is visible instead of
+# masquerading as "it just doesn't work". Set:
+#   NANGO_SECRET_KEY     — from Nango's Environment Settings. This is the
+#                           only key Nango's current Connect-Sessions API
+#                           needs server-side; there is no separate
+#                           client-facing "public key" in Nango's current
+#                           auth model (unlike Paystack) — the frontend uses
+#                           a short-lived session token minted server-side
+#                           via this secret key instead. NANGO_PUBLIC_KEY
+#                           below is kept only in case a future Nango API
+#                           version reintroduces one; it is not read by any
+#                           code path today.
+#   NANGO_WEBHOOK_SECRET  — the "webhook signing key" from the same page
+#                           (falls back to NANGO_SECRET_KEY if unset)
 #   NANGO_SLACK_INTEGRATION_ID, NANGO_GOOGLE_SHEETS_INTEGRATION_ID — must
 #     match the integration IDs configured in the Nango dashboard for the
 #     already-registered Slack/Google OAuth apps (defaults: "slack",
 #     "google-sheets").
 NANGO_SECRET_KEY = config("NANGO_SECRET_KEY", default="")
-NANGO_PUBLIC_KEY = config("NANGO_PUBLIC_KEY", default="")
+NANGO_PUBLIC_KEY = config("NANGO_PUBLIC_KEY", default="")  # currently unused — see note above
 NANGO_WEBHOOK_SECRET = config("NANGO_WEBHOOK_SECRET", default="")
 NANGO_SLACK_INTEGRATION_ID = config("NANGO_SLACK_INTEGRATION_ID", default="slack")
 NANGO_GOOGLE_SHEETS_INTEGRATION_ID = config("NANGO_GOOGLE_SHEETS_INTEGRATION_ID", default="google-sheets")
