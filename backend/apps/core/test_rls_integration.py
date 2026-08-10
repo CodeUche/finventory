@@ -173,3 +173,63 @@ class MissingOrgContextTests(TestCase):
             "precisely the NEW-7 regression",
         )
         self.assertEqual(result["failed"], 0)
+
+
+@unittest.skipUnless(rls_available(), "PostgreSQL required — RLS cannot be tested on SQLite")
+@tag("rls")
+class RlsCoverageTests(TestCase):
+    """
+    Guards the failure mode that nearly shipped: migrations recorded as applied
+    having protected nothing.
+
+    The rollout migrations log-and-continue per table so one bad table cannot
+    abort the batch. The cost of that is silence — the first rehearsal enabled
+    8 of 68 tables and still reported success, because the batches ran before
+    the owning apps had created their tables. Only asserting on the end state
+    catches it.
+    """
+
+    def _tables_from(self, migration_glob):
+        import glob as _glob
+        import os
+        import re as _re
+        base = os.path.join(os.path.dirname(__file__), "migrations")
+        path = _glob.glob(os.path.join(base, migration_glob))[0]
+        src = open(path, encoding="utf-8").read()
+        return _re.findall(r'"([a-z0-9_]+)"', src.split("TABLES = [")[1].split("]")[0])
+
+    def _rls_state(self, tables):
+        with connection.cursor() as cur:
+            cur.execute(
+                "SELECT relname, relrowsecurity FROM pg_class WHERE relname = ANY(%s)",
+                [list(tables)],
+            )
+            return dict(cur.fetchall())
+
+    def test_every_table_in_each_batch_actually_has_rls(self):
+        for glob_pat, label in (
+            ("0013_*.py", "R-2"), ("0014_*.py", "R-3"), ("0015_*.py", "R-4"),
+        ):
+            tables = self._tables_from(glob_pat)
+            state = self._rls_state(tables)
+            missing = [t for t in tables if not state.get(t)]
+            self.assertEqual(
+                missing, [],
+                f"{label}: RLS is not enabled on {missing} — the migration "
+                f"reported success but protected nothing on those tables",
+            )
+
+    def test_bootstrap_tables_remain_unprotected(self):
+        """
+        tenancy_membership and tenancy_organisation must stay RLS-free.
+
+        Org discovery reads membership before app.current_org_id can be known,
+        so a policy there returns zero rows and sends every user to /onboarding.
+        Migrations 0006-0008 exist because that happened in production.
+        """
+        state = self._rls_state(["tenancy_membership", "tenancy_organisation"])
+        for table in ("tenancy_membership", "tenancy_organisation"):
+            self.assertFalse(
+                state.get(table),
+                f"RLS was enabled on {table} — login will break for every user",
+            )
