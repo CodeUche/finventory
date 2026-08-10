@@ -990,9 +990,13 @@ export interface EmployeeLoan {
   monthly_installment: string
   amount_repaid: string
   balance_remaining: string
-  status: 'active' | 'settled' | 'cancelled'
+  // Loans start 'pending' and only deduct once a manager approves them.
+  status: 'pending' | 'active' | 'settled' | 'cancelled' | 'rejected'
   notes: string
   created_at: string
+  approved_by?: string | null
+  approved_at?: string | null
+  decision_note?: string
 }
 
 export interface EmployeeDocument {
