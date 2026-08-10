@@ -58,6 +58,12 @@ const BLANK = {
   notes: '',
 }
 
+// Statuses a user may set by editing the order. 'received' and
+// 'partially_received' are absent on purpose — those are reached through the
+// Receive action, which records the stock movement and the supplier bill
+// alongside the status change.
+const PO_EDITABLE_STATUSES = ['draft', 'sent', 'closed', 'canceled']
+
 export default function PurchasesPage() {
   const [searchParams] = useSearchParams()
   const [orders, setOrders] = useState<PurchaseOrder[]>([])
@@ -517,9 +523,25 @@ export default function PurchasesPage() {
                   value={editForm.status}
                   onChange={(e) => setEditForm((f) => ({ ...f, status: e.target.value }))}
                 >
-                  {['draft', 'sent', 'partially_received', 'received', 'closed', 'canceled'].map((s) => (
-                    <option key={s} value={s}>{s.replace('_', ' ')}</option>
-                  ))}
+                  {(() => {
+                    // 'received' and 'partially_received' are deliberately not
+                    // offered: goods receipt is recorded through the Receive
+                    // action, which moves stock and raises the supplier bill at
+                    // the same time. Setting the status here would claim the
+                    // goods arrived without any of that happening, so the API
+                    // refuses it — no point offering an action we reject.
+                    const options = PO_EDITABLE_STATUSES.includes(editForm.status)
+                      ? PO_EDITABLE_STATUSES
+                      : [editForm.status, ...PO_EDITABLE_STATUSES]
+                    return options.map((s) => {
+                      const locked = !PO_EDITABLE_STATUSES.includes(s)
+                      return (
+                        <option key={s} value={s} disabled={locked}>
+                          {s.replace('_', ' ')}{locked ? ' — set by receiving' : ''}
+                        </option>
+                      )
+                    })
+                  })()}
                 </select>
               </div>
               <div>
