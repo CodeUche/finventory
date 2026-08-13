@@ -3,7 +3,7 @@ import { useDataRefresh } from '@/hooks/useDataRefresh'
 import {
   CheckSquare, Square, RefreshCw, CheckCircle2, Upload, FileText,
   Sparkles, Zap, ChevronDown, ChevronRight, AlertTriangle, XCircle, Check, X,
-  Trash2, Pencil, Unlock,
+  Trash2, Pencil, Plus, Unlock,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { accountingApi, bypassNextGets } from '@/services/api'
@@ -13,7 +13,28 @@ import DateInput from '@/components/DateInput'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface Account { id: string; code: string; name: string }
+interface Account {
+  id: string
+  code: string
+  name: string
+  account_group?: string
+  sub_type_name?: string | null
+  is_bankable?: boolean
+}
+
+/** Only cash/bank style accounts can be reconciled against a bank statement.
+ *  Deliberately inclusive and tolerant of an older backend that doesn't send
+ *  is_bankable: the seeded chart gives every asset account_group='Asset', so
+ *  matching on the group alone would empty the picker for most organisations. */
+const BANKABLE_CODES = new Set(['1001', '1002'])
+const BANKABLE_SUB_TYPES = new Set(['bank', 'cash', 'credit card', 'mobile money'])
+
+function isBankable(a: Account): boolean {
+  if (typeof a.is_bankable === 'boolean') return a.is_bankable
+  if (a.account_group === 'Cash & Cash Equivalent') return true
+  if (BANKABLE_CODES.has(a.code)) return true
+  return BANKABLE_SUB_TYPES.has((a.sub_type_name ?? '').trim().toLowerCase())
+}
 
 interface ReconLine {
   id: string
@@ -116,6 +137,8 @@ export default function BankReconciliationPage() {
   const [reconciling, setReconciling] = useState(false)
   const [rowBusy, setRowBusy] = useState<Record<string, boolean>>({})
   const [editingLine, setEditingLine] = useState<ReconLine | null>(null)
+  const [showAddLine, setShowAddLine] = useState(false)
+  const [addingLine, setAddingLine] = useState(false)
 
   // ── GL posting ──
   const [postingGL, setPostingGL] = useState(false)
@@ -130,7 +153,10 @@ export default function BankReconciliationPage() {
         accountingApi.reconciliations(),
       ])
       const allAccounts: Account[] = acRes.data.results ?? acRes.data
-      setAccounts(allAccounts.filter((a) => a.code.startsWith('1')))
+      // Previously `code.startsWith('1')`, which offered Inventory, Fixed Assets,
+      // Accumulated Depreciation and VAT Receivable as reconciliation targets.
+      const bankable = allAccounts.filter(isBankable)
+      setAccounts(bankable.length ? bankable : allAccounts.filter((a) => a.code.startsWith('1')))
       const recs: Reconciliation[] = recRes.data.results ?? recRes.data
       setReconciliations(recs)
     } catch {
@@ -300,6 +326,11 @@ export default function BankReconciliationPage() {
 
   // ─── Manual reconcile ──────────────────────────────────────────────────────
 
+  const selectAll = () =>
+    setClearedIds(new Set((activeRecon?.lines ?? []).map((l) => l.id)))
+
+  const deselectAll = () => setClearedIds(new Set())
+
   const toggleLine = (lineId: string) => {
     setClearedIds((prev) => {
       const next = new Set(prev)
@@ -307,6 +338,32 @@ export default function BankReconciliationPage() {
       else next.add(lineId)
       return next
     })
+  }
+
+  // ─── Add a transaction by hand ──────────────────────────────────────────────
+  // The endpoint and API client already existed but nothing ever called them, so a
+  // user without a CSV (or whose CSV wouldn't parse) had no way to enter anything.
+
+  const handleAddLine = async (patch: { description: string; transaction_date: string; amount: string }) => {
+    if (!activeRecon) return
+    setAddingLine(true)
+    try {
+      await accountingApi.addReconLine(activeRecon.id, {
+        description: patch.description,
+        transaction_date: patch.transaction_date,
+        amount: patch.amount.replace(/,/g, ''),
+        is_cleared: false,
+      })
+      toast.success('Transaction added')
+      setShowAddLine(false)
+      await refreshActiveRecon()
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { error?: unknown } } }
+      const msg = e?.response?.data?.error
+      toast.error(typeof msg === 'string' ? msg : 'Failed to add transaction')
+    } finally {
+      setAddingLine(false)
+    }
   }
 
   // ─── Escape hatch: correct or remove a bad line / discard the reconciliation ──
@@ -549,7 +606,8 @@ export default function BankReconciliationPage() {
                   <FileText size={36} className="mx-auto mb-3 text-slate-600" />
                   <p className="text-white font-medium mb-1">No bank statement imported yet</p>
                   <p className="text-sm text-slate-400 mb-4">
-                    Click <strong>Import CSV</strong> above to upload your bank statement before running AI matching.
+                    Click <strong>Import CSV</strong> above to upload your bank statement before running matching —
+                    or switch to <strong>Manual</strong> to enter transactions by hand.
                   </p>
                   <p className="text-xs text-slate-500">
                     Expected columns: <code className="bg-surface-700 px-1 rounded">date, description, debit, credit</code> or <code className="bg-surface-700 px-1 rounded">amount</code>
@@ -832,27 +890,49 @@ export default function BankReconciliationPage() {
               </div>
 
               <div className="card p-0 overflow-hidden">
-                <div className="px-5 py-4 border-b border-surface-700 flex items-center justify-between">
+                <div className="px-5 py-4 border-b border-surface-700 flex items-center justify-between flex-wrap gap-3">
                   <h3 className="text-white font-semibold">
                     Transactions — {formatDate(activeRecon.period_start)} to {formatDate(activeRecon.period_end)}
                   </h3>
-                  <button
-                    onClick={handleManualReconcile}
-                    disabled={reconciling || !manualCanReconcile}
-                    className="btn-primary text-sm px-4 disabled:opacity-50 flex items-center gap-2"
-                  >
-                    <CheckCircle2 size={15} />
-                    {reconciling ? 'Reconciling…' : 'Mark as Reconciled'}
-                  </button>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {activeRecon.lines.length > 0 && (
+                      <>
+                        <button onClick={selectAll} className="btn-ghost text-sm px-3">Select All</button>
+                        <button onClick={deselectAll} className="btn-ghost text-sm px-3">Deselect All</button>
+                      </>
+                    )}
+                    <button
+                      onClick={() => setShowAddLine(true)}
+                      className="btn-ghost text-sm px-3 flex items-center gap-1.5"
+                    >
+                      <Plus size={14} />
+                      Add Transaction
+                    </button>
+                    <button
+                      onClick={handleManualReconcile}
+                      disabled={reconciling || !manualCanReconcile}
+                      className="btn-primary text-sm px-4 disabled:opacity-50 flex items-center gap-2"
+                    >
+                      <CheckCircle2 size={15} />
+                      {reconciling ? 'Reconciling…' : 'Mark as Reconciled'}
+                    </button>
+                  </div>
                 </div>
                 <div className="divide-y divide-surface-700">
                   {activeRecon.lines.length === 0 ? (
                     <div className="px-5 py-10 text-center">
                       <FileText size={32} className="mx-auto mb-3 text-slate-600" />
                       <p className="text-sm text-slate-400 mb-1">No transactions yet</p>
-                      <p className="text-xs text-slate-500">
-                        Click <strong>Import CSV</strong> to upload your bank statement.
+                      <p className="text-xs text-slate-500 mb-4">
+                        Import your bank statement, or add transactions one at a time — no file needed.
                       </p>
+                      <button
+                        onClick={() => setShowAddLine(true)}
+                        className="btn-ghost text-sm px-3 inline-flex items-center gap-1.5"
+                      >
+                        <Plus size={14} />
+                        Add Transaction
+                      </button>
                     </div>
                   ) : (
                     activeRecon.lines.map((line) => {
@@ -910,13 +990,25 @@ export default function BankReconciliationPage() {
         </div>
       )}
 
-      {/* ── Edit-line modal ── */}
+      {/* ── Add / edit line modals ── */}
       {editingLine && (
-        <EditLineModal
+        <LineFormModal
+          title="Edit statement line"
+          saveLabel="Save changes"
           line={editingLine}
           busy={!!rowBusy[editingLine.id]}
           onCancel={() => setEditingLine(null)}
           onSave={handleSaveEditedLine}
+        />
+      )}
+      {showAddLine && (
+        <LineFormModal
+          title="Add transaction"
+          saveLabel="Add transaction"
+          defaultDate={activeRecon?.period_end}
+          busy={addingLine}
+          onCancel={() => setShowAddLine(false)}
+          onSave={handleAddLine}
         />
       )}
 
@@ -1001,24 +1093,27 @@ export default function BankReconciliationPage() {
 // Lets a mis-imported or mis-typed statement row be corrected in place, so a bad
 // import never leaves the reconciliation permanently unbalanceable.
 
-interface EditLineModalProps {
-  line: ReconLine
+interface LineFormModalProps {
+  title: string
+  saveLabel: string
+  line?: ReconLine | null
+  defaultDate?: string
   busy: boolean
   onCancel: () => void
   onSave: (patch: { description: string; transaction_date: string; amount: string }) => void
 }
 
-function EditLineModal({ line, busy, onCancel, onSave }: EditLineModalProps) {
-  const [description, setDescription] = useState(line.description)
-  const [date, setDate] = useState(line.transaction_date)
-  const [amount, setAmount] = useState(line.amount)
+function LineFormModal({ title, saveLabel, line, defaultDate, busy, onCancel, onSave }: LineFormModalProps) {
+  const [description, setDescription] = useState(line?.description ?? '')
+  const [date, setDate] = useState(line?.transaction_date ?? defaultDate ?? today)
+  const [amount, setAmount] = useState(line?.amount ?? '')
 
   const valid = description.trim().length > 0 && !!date && !Number.isNaN(parseFloat(amount.replace(/,/g, '')))
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-label="Edit statement line">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-label={title}>
       <div className="card w-full max-w-md p-6 space-y-4">
-        <h3 className="text-base font-semibold text-white">Edit statement line</h3>
+        <h3 className="text-base font-semibold text-white">{title}</h3>
         <div>
           <label className="text-xs text-slate-400 mb-1 block">Description</label>
           <input className="input" value={description} onChange={(e) => setDescription(e.target.value)} />
@@ -1046,7 +1141,7 @@ function EditLineModal({ line, busy, onCancel, onSave }: EditLineModalProps) {
             disabled={busy || !valid}
             className="btn-primary text-sm px-4 disabled:opacity-50"
           >
-            {busy ? 'Saving…' : 'Save changes'}
+            {busy ? 'Saving…' : saveLabel}
           </button>
         </div>
       </div>

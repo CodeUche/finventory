@@ -1121,6 +1121,15 @@ class BankReconciliationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         org = self._get_organisation()
         return BankReconciliation.objects.filter(organisation=org).prefetch_related('lines')
 
+    def list(self, request, *args, **kwargs):
+        """Refresh the stored book balance of in-progress reconciliations before
+        listing. Without this the 'Book Bal' column reads a value nothing ever
+        wrote and shows 0.00 for every reconciliation."""
+        from apps.accounting.services import ReconciliationMatchingService
+        for recon in self.filter_queryset(self.get_queryset()).filter(is_reconciled=False):
+            ReconciliationMatchingService.refresh_book_balance(recon)
+        return super().list(request, *args, **kwargs)
+
     def create(self, request, *args, **kwargs):
         """Start a reconciliation. If one already exists for this account + period,
         resume it (return it) instead of erroring with a unique-constraint 500."""
@@ -1144,6 +1153,8 @@ class BankReconciliationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                 {'error': 'A reconciliation for this account and period already exists.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        from apps.accounting.services import ReconciliationMatchingService
+        ReconciliationMatchingService.refresh_book_balance(recon)
         return Response(self.get_serializer(recon).data, status=status.HTTP_201_CREATED)
 
     def perform_create(self, serializer):
@@ -1167,6 +1178,9 @@ class BankReconciliationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         recon = self.get_object()
         if recon.is_reconciled:
             return Response({'error': 'Already reconciled'}, status=400)
+        # Snapshot the book balance at sign-off, then freeze it.
+        from apps.accounting.services import ReconciliationMatchingService
+        ReconciliationMatchingService.refresh_book_balance(recon)
         recon.is_reconciled = True
         recon.reconciled_by = request.user
         recon.reconciled_at = tz.now()

@@ -38,6 +38,8 @@ class AccountSerializer(serializers.ModelSerializer):
     sub_type_name = serializers.CharField(source='sub_type.name', read_only=True)
     parent_code = serializers.CharField(source='parent.code', read_only=True)
     parent_name = serializers.CharField(source='parent.name', read_only=True)
+    # True for cash/bank style accounts — the only valid bank-reconciliation targets.
+    is_bankable = serializers.SerializerMethodField()
 
     class Meta:
         model = Account
@@ -46,8 +48,14 @@ class AccountSerializer(serializers.ModelSerializer):
             'parent', 'parent_code', 'parent_name', 'description', 'normal_balance',
             'is_active', 'allow_posting', 'is_control_account',
             'opening_balance', 'opening_balance_date', 'attachment', 'is_system', 'balance',
+            'is_bankable',
         ]
-        read_only_fields = ['id', 'is_system', 'sub_type_name', 'parent_code', 'parent_name']
+        read_only_fields = ['id', 'is_system', 'sub_type_name', 'parent_code', 'parent_name',
+                            'is_bankable']
+
+    def get_is_bankable(self, obj):
+        from apps.accounting.services import ReconciliationMatchingService
+        return ReconciliationMatchingService.is_bankable_account(obj)
 
     def get_balance(self, obj):
         # AccountViewSet annotates `gl_balance` so listing the chart is one query.

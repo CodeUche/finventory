@@ -3252,6 +3252,65 @@ class ReconciliationMatchingService:
 
     DATE_TOLERANCE_DAYS = 4
 
+    # Account codes / sub-types that represent real cash-at-bank style accounts —
+    # the only things a bank statement can be reconciled against. Used to keep the
+    # account picker from offering Inventory, Fixed Assets, Accumulated Depreciation
+    # and friends as reconciliation targets.
+    BANKABLE_CODES = {'1001', '1002'}
+    BANKABLE_SUB_TYPES = {'bank', 'cash', 'credit card', 'mobile money'}
+
+    @staticmethod
+    def is_bankable_account(account) -> bool:
+        """True if `account` is a cash/bank style account.
+
+        Deliberately INCLUSIVE: the seeded chart assigns account_group='Asset' to
+        every asset (including 1001/1002), and only a user who re-classifies an
+        account through the COA screen ever gets 'Cash & Cash Equivalent'. Matching
+        on group alone would therefore hide the bank accounts of almost every
+        organisation and leave the picker empty.
+        """
+        if account.account_group == 'Cash & Cash Equivalent':
+            return True
+        if account.code in ReconciliationMatchingService.BANKABLE_CODES:
+            return True
+        sub = getattr(account, 'sub_type', None)
+        if sub and (sub.name or '').strip().lower() in ReconciliationMatchingService.BANKABLE_SUB_TYPES:
+            return True
+        return False
+
+    @staticmethod
+    def compute_book_balance(reconciliation):
+        """The account's GL balance as at period_end — what the books say the bank
+        holds, to be compared against the statement's closing balance.
+
+        Cumulative from inception (a bank balance is a running total, not a period
+        movement) and posted entries only.
+        """
+        from django.db.models import Sum
+        from .models import JournalLine
+        agg = JournalLine.objects.filter(
+            journal_entry__organisation=reconciliation.organisation,
+            journal_entry__status='posted',
+            journal_entry__entry_date__lte=reconciliation.period_end,
+            account=reconciliation.account,
+        ).aggregate(d=Sum('debit'), c=Sum('credit'))
+        debits = agg['d'] or Decimal('0')
+        credits = agg['c'] or Decimal('0')
+        # Bank/cash accounts are debit-normal: a debit is money in.
+        return debits - credits
+
+    @staticmethod
+    def refresh_book_balance(reconciliation, force=False):
+        """Recompute and store book_balance. Frozen once the reconciliation is
+        completed so a signed-off record keeps the figure it was agreed against."""
+        if reconciliation.is_reconciled and not force:
+            return reconciliation.book_balance
+        value = ReconciliationMatchingService.compute_book_balance(reconciliation)
+        if reconciliation.book_balance != value:
+            reconciliation.book_balance = value
+            reconciliation.save(update_fields=['book_balance'])
+        return value
+
     @staticmethod
     def _book_signed(jl):
         # On an asset/bank account, a debit is money IN, a credit is money OUT — mirror

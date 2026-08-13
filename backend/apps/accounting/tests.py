@@ -3728,3 +3728,131 @@ class BankReconciliationEscapeHatchTests(TestCase):
         self.assertFalse(
             BankReconciliation.objects.filter(id=self.recon.id, is_deleted=False).exists()
         )
+
+
+class BankReconciliationBookBalanceAndPickerTests(TestCase):
+    """book_balance must reflect the real ledger, and only cash/bank accounts may be
+    offered as reconciliation targets.
+
+    Regression cover for two live-UI defects: the 'Book Bal' column showed 0.00 for
+    every reconciliation because nothing ever wrote the field, and the account picker
+    offered Inventory / Fixed Assets / Accumulated Depreciation / VAT Receivable
+    because it filtered on code.startswith('1').
+    """
+
+    def setUp(self):
+        import datetime
+        self.user = _make_user("recon_bookbal@example.com")
+        self.org = _make_org(self.user, "Recon BookBal Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+        self.bank = Account.objects.get(organisation=self.org, code="1002")
+        self.rev = Account.objects.get(organisation=self.org, code="4001")
+        self.exp = Account.objects.get(organisation=self.org, code="6100")
+        self.d = datetime.date
+
+    def _post(self, amount, day, inflow=True):
+        amt = Decimal(str(amount))
+        Z = Decimal("0")
+        lines = ([(self.bank, amt, Z), (self.rev, Z, amt)] if inflow
+                 else [(self.exp, amt, Z), (self.bank, Z, amt)])
+        return AccountingService.post_journal_entry(
+            self.org, f"move {amount}", self.d(2026, 7, day), lines, self.user,
+            source_type="bb", source_ref=f"{amount}-{day}-{inflow}",
+        )
+
+    def _recon(self, closing="0"):
+        from apps.accounting.models import BankReconciliation
+        return BankReconciliation.objects.create(
+            organisation=self.org, account=self.bank,
+            period_start=self.d(2026, 7, 1), period_end=self.d(2026, 7, 31),
+            statement_closing_balance=Decimal(closing),
+        )
+
+    # ── book_balance ────────────────────────────────────────────────────────────
+    def test_book_balance_matches_the_ledger(self):
+        from apps.accounting.services import ReconciliationMatchingService
+        self._post("250000.00", 3)
+        self._post("120500.50", 9)
+        self._post("80000.00", 15, inflow=False)
+        recon = self._recon()
+        value = ReconciliationMatchingService.compute_book_balance(recon)
+        self.assertEqual(value, Decimal("290500.50"))
+
+    def test_book_balance_is_persisted_and_served_by_the_list_endpoint(self):
+        self._post("250000.00", 3)
+        self._post("80000.00", 15, inflow=False)
+        self._recon()
+        res = self.client.get("/api/v1/accounting/reconciliations/")
+        self.assertEqual(res.status_code, 200)
+        rows = res.data.get("results", res.data)
+        self.assertEqual(Decimal(str(rows[0]["book_balance"])), Decimal("170000.00"))
+
+    def test_book_balance_excludes_entries_after_period_end(self):
+        from apps.accounting.services import ReconciliationMatchingService
+        import datetime
+        self._post("100000.00", 10)
+        AccountingService.post_journal_entry(
+            self.org, "August money", datetime.date(2026, 8, 5),
+            [(self.bank, Decimal("999999"), Decimal("0")), (self.rev, Decimal("0"), Decimal("999999"))],
+            self.user, source_type="bb", source_ref="august",
+        )
+        recon = self._recon()
+        self.assertEqual(
+            ReconciliationMatchingService.compute_book_balance(recon), Decimal("100000.00")
+        )
+
+    def test_book_balance_frozen_once_reconciled(self):
+        from apps.accounting.services import ReconciliationMatchingService
+        self._post("100000.00", 10)
+        recon = self._recon()
+        ReconciliationMatchingService.refresh_book_balance(recon)
+        self.assertEqual(recon.book_balance, Decimal("100000.00"))
+        recon.is_reconciled = True
+        recon.save(update_fields=["is_reconciled"])
+        self._post("50000.00", 20)
+        ReconciliationMatchingService.refresh_book_balance(recon)
+        recon.refresh_from_db()
+        self.assertEqual(recon.book_balance, Decimal("100000.00"),
+                         "a signed-off reconciliation must keep the figure it was agreed against")
+
+    # ── account picker ──────────────────────────────────────────────────────────
+    def test_only_cash_and_bank_accounts_are_bankable(self):
+        from apps.accounting.services import ReconciliationMatchingService as R
+        for code in ("1001", "1002"):
+            self.assertTrue(R.is_bankable_account(Account.objects.get(organisation=self.org, code=code)),
+                            f"{code} should be reconcilable")
+        for code in ("1100", "1200", "1300", "1400", "1500", "1510", "1600"):
+            self.assertFalse(R.is_bankable_account(Account.objects.get(organisation=self.org, code=code)),
+                             f"{code} must NOT be offered as a bank-reconciliation target")
+
+    def test_is_bankable_is_exposed_on_the_accounts_endpoint(self):
+        res = self.client.get("/api/v1/accounting/accounts/")
+        self.assertEqual(res.status_code, 200)
+        rows = res.data.get("results", res.data)
+        by_code = {r["code"]: r for r in rows}
+        self.assertTrue(by_code["1002"]["is_bankable"])
+        self.assertFalse(by_code["1500"]["is_bankable"])
+
+    def test_reclassified_account_becomes_bankable(self):
+        """A user-created account moved into Cash & Cash Equivalent must qualify."""
+        from apps.accounting.services import ReconciliationMatchingService as R
+        acct = Account.objects.create(
+            organisation=self.org, code="1050", name="Moniepoint Wallet",
+            account_type="asset", account_group="Cash & Cash Equivalent",
+        )
+        self.assertTrue(R.is_bankable_account(acct))
+
+    # ── manual add_line (the no-CSV path) ───────────────────────────────────────
+    def test_add_line_lets_a_user_build_a_reconciliation_without_a_csv(self):
+        recon = self._recon(closing="15000")
+        res = self.client.post(
+            f"/api/v1/accounting/reconciliations/{recon.id}/add_line/",
+            {"description": "Cash deposit", "transaction_date": "2026-07-10", "amount": "15000"},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        self.assertEqual(recon.lines.count(), 1)
+        line = recon.lines.first()
+        self.assertEqual(line.amount, Decimal("15000"))
+        self.assertEqual(line.description, "Cash deposit")
