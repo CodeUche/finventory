@@ -1,5 +1,8 @@
 """
-Celery beat task: deliver pending connector events (Slack / Google Sheets).
+Celery beat task: deliver pending connector events (Slack / Google Sheets /
+Telegram / Google Calendar) + upload_pdf_to_drive (Google Drive's PDF
+auto-save, dispatched on-demand rather than on this task's schedule — see
+its own docstring below).
 
 Mirrors apps.integrations.tasks.deliver_pending_webhooks exactly (same
 backoff shape, same due-for-retry math) — deliberately not reusing that
@@ -15,7 +18,7 @@ from django.utils import timezone
 
 from apps.integrations.models import DomainEvent
 
-from .models import ConnectorConnection, ConnectorEventDelivery
+from .models import Connector, ConnectorConnection, ConnectorEventDelivery
 from .services import ConnectorDeliveryService
 
 logger = logging.getLogger(__name__)
@@ -30,12 +33,20 @@ def _due_for_retry(delivery: ConnectorEventDelivery) -> bool:
     return (timezone.now() - delivery.last_attempted_at).total_seconds() >= backoff
 
 
-# Every active connection only ever cares about events relevant to what it's
-# for — both current connectors want the same two events (invoice.created,
-# payment.received); this is not hardcoded further per-connector since
-# there's no per-connection event-type selection in v1 (unlike
-# WebhookSubscription.event_types, which IS user-configurable).
-RELEVANT_EVENT_TYPES = ["invoice.created", "payment.received"]
+# Which DomainEvent types each connector cares about — per-connector now
+# (not a single flat list) because Calendar's use case (schedule a due-date
+# event) doesn't fit "payment.received" the way a chat notification does,
+# and Drive doesn't participate in this event-replay pipeline at all (see
+# GOOGLE_DRIVE's absence from _DELIVERERS in services.py — it's a
+# PDF-upload sink triggered at generation time, not a notification target).
+# Still not user-configurable per-connection in v1 (unlike
+# WebhookSubscription.event_types).
+CONNECTOR_EVENT_TYPES = {
+    Connector.SLACK: ["invoice.created", "payment.received"],
+    Connector.GOOGLE_SHEETS: ["invoice.created", "payment.received"],
+    Connector.TELEGRAM: ["invoice.created", "payment.received"],
+    Connector.GOOGLE_CALENDAR: ["invoice.created", "tax_obligation.upcoming"],
+}
 
 
 @shared_task(name="connectors.deliver_pending_connector_events")
@@ -49,9 +60,13 @@ def deliver_pending_connector_events():
     ).select_related("organisation")
 
     for connection in connections:
+        relevant_event_types = CONNECTOR_EVENT_TYPES.get(connection.connector_key)
+        if not relevant_event_types:
+            continue  # e.g. GOOGLE_DRIVE — not part of this delivery pipeline
+
         events = DomainEvent.objects.filter(
             organisation=connection.organisation,
-            event_type__in=RELEVANT_EVENT_TYPES,
+            event_type__in=relevant_event_types,
         ).exclude(
             connector_deliveries__connection=connection,
             connector_deliveries__status=ConnectorEventDelivery.Status.DELIVERED,
@@ -87,3 +102,51 @@ def deliver_pending_connector_events():
         delivered, failed, skipped,
     )
     return {"delivered": delivered, "failed": failed, "skipped": skipped}
+
+
+@shared_task(name="connectors.upload_pdf_to_drive", bind=True, max_retries=3, default_retry_delay=60)
+def upload_pdf_to_drive(self, organisation_id: str, filename: str, pdf_base64: str):
+    """
+    Dispatched on-demand (not on a beat schedule) by
+    apps.connectors.services.maybe_save_pdf_to_drive at the moment a PDF is
+    actually generated server-side (payslip / report export / invoice
+    email attachment) — there is no DomainEvent-replay path for this
+    because the PDF bytes only exist momentarily at generation time, not as
+    something a beat task could reconstruct later from a JSON payload.
+
+    Retries on transient failure (Drive/Nango hiccup) up to 3 times with a
+    60s backoff; a final failure is only logged — Drive auto-save is a
+    convenience, never something that should page anyone or block the
+    document's primary delivery path.
+    """
+    import base64
+
+    from apps.tenancy.models import Organisation
+
+    from . import nango
+    from .drive import GoogleDriveService
+    from .models import Connector, ConnectorConnection
+
+    try:
+        organisation = Organisation.objects.get(id=organisation_id)
+    except Organisation.DoesNotExist:
+        logger.warning("upload_pdf_to_drive: organisation %s not found", organisation_id)
+        return
+
+    connection = ConnectorConnection.objects.filter(
+        organisation=organisation, connector_key=Connector.GOOGLE_DRIVE,
+        status=ConnectorConnection.Status.ACTIVE,
+    ).first()
+    if connection is None:
+        logger.info("upload_pdf_to_drive: org %s no longer has an active Drive connection — skipping", organisation_id)
+        return
+
+    pdf_bytes = base64.b64decode(pdf_base64)
+    try:
+        ok, error = GoogleDriveService.upload_pdf(connection, filename, pdf_bytes)
+    except (nango.NangoNotConfiguredError, nango.NangoAPIError) as exc:
+        raise self.retry(exc=exc)
+
+    if not ok:
+        logger.warning("upload_pdf_to_drive: failed for org=%s file=%s: %s", organisation_id, filename, error)
+    return {"ok": ok}

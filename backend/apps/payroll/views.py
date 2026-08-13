@@ -1848,6 +1848,10 @@ class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             return Response({'error': 'Payslip not found for this employee in this run.'}, status=404)
         pdf_bytes = build_payslip_pdf(payslip)
         filename = f"Payslip-{payslip.employee.employee_id}-{run.period_year}{run.period_month:02d}.pdf"
+
+        from apps.connectors.services import maybe_save_pdf_to_drive
+        maybe_save_pdf_to_drive(run.organisation, filename, pdf_bytes)
+
         response = HttpResponse(pdf_bytes, content_type='application/pdf')
         response['Content-Disposition'] = f'attachment; filename="{filename}"'
         return response

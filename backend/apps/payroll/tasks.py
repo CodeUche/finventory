@@ -80,6 +80,12 @@ def send_payslips_async(run_id, employee_ids=None):
             continue
         try:
             pdf_bytes = build_payslip_pdf(payslip)
+
+            from apps.connectors.services import maybe_save_pdf_to_drive
+            maybe_save_pdf_to_drive(
+                run.organisation, f"Payslip-{employee.employee_id}-{period}.pdf", pdf_bytes,
+            )
+
             subject = f"Payslip for {period} — {org_name}"
             body = (
                 f"Dear {employee.first_name},\n\nYour payslip for {period} is attached.\n\n"

@@ -181,6 +181,12 @@ class SaleService:
                 "total_amount": str(invoice.total_amount),
                 "customer_id": str(customer.id) if customer else None,
                 "status": invoice.status,
+                # Consumed by the Google Calendar connector deliverer
+                # (apps.connectors.services._deliver_to_calendar) to create
+                # a due-date event — None/absent for invoices with no due
+                # date (e.g. proforma), which that deliverer treats as
+                # "nothing to schedule", not a failure.
+                "due_date": invoice.due_date.isoformat() if invoice.due_date else None,
             },
         )
 

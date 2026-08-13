@@ -47,10 +47,17 @@ REQUEST_TIMEOUT = (5, 15)  # (connect, read) seconds — mirrors apps.integratio
 _INTEGRATION_ID_SETTINGS = {
     "slack": "NANGO_SLACK_INTEGRATION_ID",
     "google_sheets": "NANGO_GOOGLE_SHEETS_INTEGRATION_ID",
+    "google_drive": "NANGO_GOOGLE_DRIVE_INTEGRATION_ID",
+    "google_calendar": "NANGO_GOOGLE_CALENDAR_INTEGRATION_ID",
+    # "telegram" is deliberately absent — Telegram never goes through Nango
+    # (no OAuth grant exists to proxy). Calling integration_id_for("telegram")
+    # correctly raises ValueError; see apps.connectors.telegram instead.
 }
 _INTEGRATION_ID_DEFAULTS = {
     "slack": "slack",
     "google_sheets": "google-sheets",
+    "google_drive": "google-drive",
+    "google_calendar": "google-calendar",
 }
 
 
@@ -268,14 +275,23 @@ def delete_connection(*, nango_connection_id: str, connector_key: str) -> None:
 
 
 def proxy(*, method: str, path: str, nango_connection_id: str, connector_key: str,
-          json_body: dict | None = None, params: dict | None = None) -> requests.Response:
+          json_body: dict | None = None, params: dict | None = None,
+          data: bytes | None = None, content_type: str | None = None) -> requests.Response:
     """
     POST/GET https://api.nango.dev/proxy/{path} — the ONE place Audity makes
-    an authenticated call to Slack/Google Sheets on an org's behalf. Nango
-    injects the real OAuth token; Audity never sees or stores it. `path` is
-    the target API's own endpoint (e.g. "chat.postMessage" for Slack,
-    "v4/spreadsheets/{id}/values/{range}:append" for Sheets) — see
-    apps.connectors.services for the actual per-connector calls.
+    an authenticated call to Slack/Google Sheets/Drive/Calendar on an org's
+    behalf. Nango injects the real OAuth token; Audity never sees or stores
+    it. `path` is the target API's own endpoint (e.g. "chat.postMessage" for
+    Slack, "v4/spreadsheets/{id}/values/{range}:append" for Sheets,
+    "upload/drive/v3/files/{id}" for a Drive content upload) — see
+    apps.connectors.services / apps.connectors.drive for the actual
+    per-connector calls.
+
+    `data`/`content_type` are for raw-bytes bodies (e.g. uploading a PDF's
+    actual bytes to Drive, where the body is the file content, not JSON) —
+    mutually exclusive with `json_body`. Existing json_body-only callers are
+    unaffected (data defaults to None, so the json= branch is used exactly
+    as before).
     """
     integration_id = integration_id_for(connector_key)
     headers = {
@@ -283,11 +299,14 @@ def proxy(*, method: str, path: str, nango_connection_id: str, connector_key: st
         "Connection-Id": nango_connection_id,
         "Provider-Config-Key": integration_id,
     }
+    if content_type:
+        headers["Content-Type"] = content_type
     try:
         resp = requests.request(
             method,
             f"{_NANGO_API_BASE}/proxy/{path.lstrip('/')}",
-            json=json_body,
+            json=json_body if data is None else None,
+            data=data,
             params=params,
             headers=headers,
             timeout=REQUEST_TIMEOUT,

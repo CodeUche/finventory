@@ -40,11 +40,13 @@ def generate_monthly_vat_obligations():
     year, month = _prior_month()
     due_date = date(date.today().year, date.today().month, 21)
 
+    from apps.integrations.services import IntegrationEventService
+
     orgs = Organisation.objects.filter(is_active=True)
     created = 0
     for org in orgs:
         label = f"VAT Return — {MONTHS[month]} {year}"
-        _, was_created = TaxObligation.objects.get_or_create(
+        obligation, was_created = TaxObligation.objects.get_or_create(
             organisation=org,
             obligation_type=TaxObligation.VAT,
             period_year=year,
@@ -58,6 +60,23 @@ def generate_monthly_vat_obligations():
         )
         if was_created:
             created += 1
+            # Consumed by the Google Calendar connector (see
+            # apps.connectors.services._deliver_to_calendar /
+            # apps.connectors.tasks.CONNECTOR_EVENT_TYPES) to add this
+            # deadline to an org's calendar. Emitted unconditionally for
+            # every org, same as invoice.created — the beat task that
+            # replays these only does anything for orgs with an ACTIVE
+            # Calendar connection.
+            IntegrationEventService.emit(
+                org, "tax_obligation.upcoming",
+                {
+                    "obligation_id": str(obligation.id),
+                    "obligation_type": obligation.obligation_type,
+                    "label": obligation.label,
+                    "due_date": obligation.due_date.isoformat(),
+                    "amount_due": str(obligation.amount_due),
+                },
+            )
 
     logger.info("Generated VAT obligations for %d/%d: %d new", year, month, created)
     return created
@@ -80,6 +99,8 @@ def generate_monthly_paye_obligations():
     year, month = _prior_month()
     due_date = date(date.today().year, date.today().month, 10)
 
+    from apps.integrations.services import IntegrationEventService
+
     orgs = Organisation.objects.filter(is_active=True)
     created = 0
     for org in orgs:
@@ -98,6 +119,18 @@ def generate_monthly_paye_obligations():
         )
         if was_created:
             created += 1
+            # See the matching comment in generate_monthly_vat_obligations —
+            # same Calendar-connector consumption.
+            IntegrationEventService.emit(
+                org, "tax_obligation.upcoming",
+                {
+                    "obligation_id": str(obligation.id),
+                    "obligation_type": obligation.obligation_type,
+                    "label": obligation.label,
+                    "due_date": obligation.due_date.isoformat(),
+                    "amount_due": str(obligation.amount_due),
+                },
+            )
 
         # PAYE is now split across the State IRS of each employee's residence,
         # so the obligation total is the sum of every authority's row for the

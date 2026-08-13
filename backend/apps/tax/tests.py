@@ -951,6 +951,61 @@ class StatutoryRemittanceTests(TestCase):
         self.assertEqual(total, Decimal("15000"))
 
 
+class TaxObligationCalendarEventEmissionTests(TestCase):
+    """
+    The Google Calendar connector (apps.connectors.services._deliver_to_
+    calendar) consumes a "tax_obligation.upcoming" DomainEvent to add a
+    deadline to an org's calendar — these tasks are the only place that
+    event is emitted, so this actually RUNS the real Celery task bodies
+    (not mocked) and checks the outbox row, rather than trusting that
+    "the rest of the suite still passes" proves this new code path works.
+    """
+
+    def setUp(self):
+        self.user = _make_user("taxcal@example.com")
+        self.org = _make_org(self.user, "Tax Calendar Org")
+
+    def test_vat_obligation_generation_emits_calendar_event(self):
+        from apps.integrations.models import DomainEvent
+        from apps.tax.tasks import generate_monthly_vat_obligations
+
+        created = generate_monthly_vat_obligations()
+        self.assertGreaterEqual(created, 1)
+
+        event = DomainEvent.objects.filter(
+            organisation=self.org, event_type="tax_obligation.upcoming",
+        ).first()
+        self.assertIsNotNone(event)
+        self.assertEqual(event.payload["obligation_type"], "vat")
+        self.assertTrue(event.payload["due_date"])  # a real ISO date string
+        self.assertIn("VAT Return", event.payload["label"])
+
+    def test_paye_obligation_generation_emits_calendar_event(self):
+        from apps.integrations.models import DomainEvent
+        from apps.tax.tasks import generate_monthly_paye_obligations
+
+        generate_monthly_paye_obligations()
+
+        event = DomainEvent.objects.filter(
+            organisation=self.org, event_type="tax_obligation.upcoming",
+        ).first()
+        self.assertIsNotNone(event)
+        self.assertEqual(event.payload["obligation_type"], "paye")
+
+    def test_rerunning_the_task_does_not_duplicate_the_event(self):
+        """get_or_create's was_created gate means a second run (e.g. beat
+        firing twice) must not emit a second event for the same period."""
+        from apps.integrations.models import DomainEvent
+        from apps.tax.tasks import generate_monthly_vat_obligations
+
+        generate_monthly_vat_obligations()
+        generate_monthly_vat_obligations()
+
+        self.assertEqual(
+            DomainEvent.objects.filter(organisation=self.org, event_type="tax_obligation.upcoming").count(), 1,
+        )
+
+
 # ── ExciseDuty Tests ───────────────────────────────────────────────────────────
 
 class ExciseDutyTests(TestCase):

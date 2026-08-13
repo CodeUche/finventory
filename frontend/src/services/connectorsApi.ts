@@ -1,5 +1,13 @@
 /**
- * Connectors — one-click OAuth integrations (Slack, Google Sheets) via Nango.
+ * Connectors — one-click OAuth integrations (Slack, Google Sheets, Google
+ * Drive, Google Calendar) via Nango, plus Telegram (its own shared-bot
+ * linking flow — no OAuth, see backend apps.connectors.telegram's module
+ * docstring). Every connector — Telegram included — returns the identical
+ * { connect_link, expires_at } shape from `connect()`, so this client and
+ * ConnectorsPage.tsx's poll/restore/disconnect mechanism need ZERO
+ * connector-specific branching: Telegram's connect_link is simply a
+ * t.me/<bot>?start=<code> URL instead of a Nango Connect URL, opened via
+ * the exact same openExternal()/new-tab path.
  *
  * Replaces the technical webhooks/Zapier marketplace on the default nav (see
  * pages/settings/ConnectorsPage.tsx). The old IntegrationsPage.tsx + its API
@@ -12,7 +20,7 @@
  */
 import { api } from './api'
 
-export type ConnectorKey = 'slack' | 'google_sheets'
+export type ConnectorKey = 'slack' | 'google_sheets' | 'google_drive' | 'google_calendar' | 'telegram'
 export type ConnectorConnectionStatus = 'pending' | 'active' | 'revoked'
 export type ConnectorBillingMode = 'plan_quota' | 'paid_addon'
 export type BillingInterval = 'monthly' | 'annual'
@@ -98,6 +106,10 @@ export const connectorsApi = {
     api.patch<ConnectorConnection>(`/connectors/${connectorKey}/config/`, config),
 
   slackChannels: () => api.get<{ channels: { id: string; name: string }[] }>('/connectors/slack/channels/'),
+
+  /** Best-effort folder list for the Drive config picker — same "always
+   *  fall back to manual entry" contract as slackChannels. */
+  googleDriveFolders: () => api.get<{ folders: { id: string; name: string }[] }>('/connectors/google-drive/folders/'),
 
   /** Beyond-quota purchase — same Paystack-inline / openExternal handoff as subscriptions/integrations. */
   initiateAddon: (connectorKey: ConnectorKey, interval: BillingInterval) =>

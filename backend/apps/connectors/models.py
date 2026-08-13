@@ -39,10 +39,23 @@ from apps.core.models import MoneyField, TenantAwareModel
 
 class Connector(models.TextChoices):
     """Launch connectors only — see module docstring. No placeholders for
-    LinkedIn/ATS/ERP/WhatsApp; those were explicitly cut from v1."""
+    LinkedIn/ATS/ERP/WhatsApp; those were explicitly cut from v1.
+
+    GOOGLE_DRIVE and GOOGLE_CALENDAR follow the exact same Nango-OAuth model
+    as SLACK/GOOGLE_SHEETS. TELEGRAM is the one deliberate exception — see
+    apps.connectors.services' TelegramLinkService docstring and
+    apps.connectors.telegram module docstring: there is no per-org OAuth
+    grant for Telegram, just one shared bot correlated to an org via a
+    linking code. `choices=` here is Python/DRF-level validation only (no DB
+    CHECK constraint was ever added on connector_key — see 0001_initial),
+    so adding members here needs no migration.
+    """
 
     SLACK = "slack", "Slack"
     GOOGLE_SHEETS = "google_sheets", "Google Sheets"
+    GOOGLE_DRIVE = "google_drive", "Google Drive"
+    GOOGLE_CALENDAR = "google_calendar", "Google Calendar"
+    TELEGRAM = "telegram", "Telegram"
 
 
 class ConnectorConnection(TenantAwareModel):

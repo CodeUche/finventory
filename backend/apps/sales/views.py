@@ -632,6 +632,17 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
                         filename=f"Invoice-{invoice.invoice_number}.pdf",
                     )
                     msg.attach(pdf_part)
+
+                    # Auto-save to Google Drive if connected — this is the
+                    # only point the backend ever sees actual invoice PDF
+                    # bytes server-side (invoice PDFs are otherwise rendered
+                    # client-side; see apps.reports.exporters' docstring
+                    # note on the client-side pdfUtils template). Never
+                    # raises — a Drive hiccup must not stop the email send.
+                    from apps.connectors.services import maybe_save_pdf_to_drive
+                    maybe_save_pdf_to_drive(
+                        request.organisation, f"Invoice-{invoice.invoice_number}.pdf", pdf_bytes,
+                    )
                 except Exception:
                     pass  # skip attachment on decode error — still send the email
 

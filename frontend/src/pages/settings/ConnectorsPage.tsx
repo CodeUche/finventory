@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 import {
-  MessageSquare, FileSpreadsheet, Loader2, CheckCircle2, LogOut, Pencil, RefreshCw,
+  MessageSquare, FileSpreadsheet, HardDrive, CalendarDays, Send,
+  Loader2, CheckCircle2, LogOut, Pencil, RefreshCw,
 } from 'lucide-react'
 import { confirmDialog } from '@/lib/dialog'
 import { openExternal } from '@/lib/openExternal'
@@ -19,11 +20,23 @@ const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 const ICONS: Record<ConnectorKey, React.ElementType> = {
   slack: MessageSquare,
   google_sheets: FileSpreadsheet,
+  google_drive: HardDrive,
+  google_calendar: CalendarDays,
+  telegram: Send,
 }
 const ICON_STYLES: Record<ConnectorKey, string> = {
   slack: 'bg-gold-500/10 text-gold-400',
   google_sheets: 'bg-green-500/10 text-green-400',
+  google_drive: 'bg-blue-500/10 text-blue-400',
+  google_calendar: 'bg-purple-500/10 text-purple-400',
+  telegram: 'bg-sky-500/10 text-sky-400',
 }
+
+// Connectors with user-editable settings (shows the Pencil/config drawer).
+// Telegram has none — its only "config" (chat_id) is set exclusively by the
+// /start webhook handshake server-side, never through this UI (mirrors the
+// backend's ConnectorConfigView.ALLOWED_KEYS, which has no telegram entry).
+const CONFIGURABLE_CONNECTORS: ConnectorKey[] = ['slack', 'google_sheets', 'google_drive', 'google_calendar']
 
 function errMsg(err: unknown, fallback: string): string {
   const apiErr = (err as { response?: { data?: { error?: unknown } } })?.response?.data?.error
@@ -49,6 +62,8 @@ interface ConfigDraft {
   channel_id?: string
   spreadsheet_id?: string
   sheet_range?: string
+  folder_id?: string
+  calendar_id?: string
 }
 
 export default function ConnectorsPage() {
@@ -66,6 +81,7 @@ export default function ConnectorsPage() {
   const [configDraft, setConfigDraft] = useState<ConfigDraft>({})
   const [savingConfig, setSavingConfig] = useState(false)
   const [slackChannels, setSlackChannels] = useState<{ id: string; name: string }[]>([])
+  const [driveFolders, setDriveFolders] = useState<{ id: string; name: string }[]>([])
 
   // Two independent poll timers per connector: one for the Nango connect
   // session, one for the ₦4,500/mo add-on's Paystack checkout — a user can
@@ -168,7 +184,16 @@ export default function ConnectorsPage() {
       } else {
         window.open(connect_link, '_blank', 'noopener,noreferrer')
       }
-      toast('Sign-in opened in your browser. Come back here once done — the connection activates automatically.', { duration: 8000 })
+      // Telegram's connect_link opens the Telegram app/web to a chat with
+      // Audity's bot rather than an OAuth sign-in screen — same
+      // openExternal()/new-tab mechanism either way (see connectorsApi.ts's
+      // module docstring), just different copy.
+      toast(
+        key === 'telegram'
+          ? 'Telegram opened — send the pre-filled /start message to the bot. Come back here once done.'
+          : 'Sign-in opened in your browser. Come back here once done — the connection activates automatically.',
+        { duration: 8000 },
+      )
       startConnectPolling(key)
       load() // refresh so the button flips to "Connecting…" while the poll runs
     } catch (err) {
@@ -267,6 +292,8 @@ export default function ConnectorsPage() {
       channel_id: entry.connection?.config?.channel_id ?? '',
       spreadsheet_id: entry.connection?.config?.spreadsheet_id ?? '',
       sheet_range: entry.connection?.config?.sheet_range ?? '',
+      folder_id: entry.connection?.config?.folder_id ?? '',
+      calendar_id: entry.connection?.config?.calendar_id ?? '',
     })
     if (entry.connector_key === 'slack' && slackChannels.length === 0) {
       try {
@@ -274,17 +301,31 @@ export default function ConnectorsPage() {
         setSlackChannels(res.data.channels)
       } catch { /* fall back to manual channel-ID entry, no toast needed */ }
     }
+    if (entry.connector_key === 'google_drive' && driveFolders.length === 0) {
+      try {
+        const res = await connectorsApi.googleDriveFolders()
+        setDriveFolders(res.data.folders)
+      } catch { /* fall back to manual folder-ID entry, no toast needed */ }
+    }
   }
 
   const saveConfig = async (key: ConnectorKey) => {
     setSavingConfig(true)
     try {
-      const payload: Record<string, string> = key === 'slack'
-        ? { channel_id: configDraft.channel_id ?? '' }
-        : {
-            spreadsheet_id: extractSpreadsheetId(configDraft.spreadsheet_id ?? ''),
-            sheet_range: configDraft.sheet_range || 'Sheet1',
-          }
+      let payload: Record<string, string>
+      if (key === 'slack') {
+        payload = { channel_id: configDraft.channel_id ?? '' }
+      } else if (key === 'google_sheets') {
+        payload = {
+          spreadsheet_id: extractSpreadsheetId(configDraft.spreadsheet_id ?? ''),
+          sheet_range: configDraft.sheet_range || 'Sheet1',
+        }
+      } else if (key === 'google_drive') {
+        payload = { folder_id: configDraft.folder_id ?? '' }
+      } else {
+        // google_calendar — "primary" (the org's own default calendar) if left blank
+        payload = { calendar_id: configDraft.calendar_id || 'primary' }
+      }
       await connectorsApi.updateConfig(key, payload)
       toast.success('Settings saved.')
       setConfigOpenKey(null)
@@ -388,7 +429,9 @@ export default function ConnectorsPage() {
                       Connected{conn?.external_account_label ? ` as ${conn.external_account_label}` : ''}
                     </span>
                   ) : isPending ? (
-                    <span className="text-xs text-slate-500">Waiting for sign-in to complete…</span>
+                    <span className="text-xs text-slate-500">
+                      {entry.connector_key === 'telegram' ? 'Waiting for /start in Telegram…' : 'Waiting for sign-in to complete…'}
+                    </span>
                   ) : needsAddon ? (
                     <span className="text-xs text-slate-500">Beyond your plan's quota</span>
                   ) : (
@@ -398,13 +441,15 @@ export default function ConnectorsPage() {
                   <div className="flex items-center gap-2 shrink-0">
                     {isActive && (
                       <>
-                        <button
-                          onClick={() => (configOpenKey === entry.connector_key ? setConfigOpenKey(null) : openConfig(entry))}
-                          className="p-2 rounded-lg border border-surface-600 text-slate-400 hover:text-white hover:border-surface-500 transition-colors"
-                          title="Configure"
-                        >
-                          <Pencil size={14} />
-                        </button>
+                        {CONFIGURABLE_CONNECTORS.includes(entry.connector_key) && (
+                          <button
+                            onClick={() => (configOpenKey === entry.connector_key ? setConfigOpenKey(null) : openConfig(entry))}
+                            className="p-2 rounded-lg border border-surface-600 text-slate-400 hover:text-white hover:border-surface-500 transition-colors"
+                            title="Configure"
+                          >
+                            <Pencil size={14} />
+                          </button>
+                        )}
                         <button
                           onClick={() => handleDisconnect(entry)}
                           disabled={disconnectingKey === entry.connector_key}
@@ -479,7 +524,7 @@ export default function ConnectorsPage() {
                           />
                         )}
                       </>
-                    ) : (
+                    ) : entry.connector_key === 'google_sheets' ? (
                       <>
                         <label className="text-xs text-slate-400 block">Google Sheet URL or ID</label>
                         <input
@@ -488,6 +533,41 @@ export default function ConnectorsPage() {
                           value={configDraft.spreadsheet_id ?? ''}
                           onChange={(e) => setConfigDraft((d) => ({ ...d, spreadsheet_id: e.target.value }))}
                         />
+                      </>
+                    ) : entry.connector_key === 'google_drive' ? (
+                      <>
+                        <label className="text-xs text-slate-400 block">Folder to save PDFs into</label>
+                        {driveFolders.length > 0 ? (
+                          <select
+                            className="input"
+                            value={configDraft.folder_id ?? ''}
+                            onChange={(e) => setConfigDraft((d) => ({ ...d, folder_id: e.target.value }))}
+                          >
+                            <option value="">Select a folder…</option>
+                            {driveFolders.map((f) => (
+                              <option key={f.id} value={f.id}>{f.name}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input
+                            className="input"
+                            placeholder="Google Drive folder ID"
+                            value={configDraft.folder_id ?? ''}
+                            onChange={(e) => setConfigDraft((d) => ({ ...d, folder_id: e.target.value }))}
+                          />
+                        )}
+                        <p className="text-[11px] text-slate-500">Invoice, payslip, and report PDFs will be saved here automatically.</p>
+                      </>
+                    ) : (
+                      <>
+                        <label className="text-xs text-slate-400 block">Calendar to add deadlines to</label>
+                        <input
+                          className="input"
+                          placeholder="primary (your default calendar), or a calendar's email address"
+                          value={configDraft.calendar_id ?? ''}
+                          onChange={(e) => setConfigDraft((d) => ({ ...d, calendar_id: e.target.value }))}
+                        />
+                        <p className="text-[11px] text-slate-500">Leave blank to use your main Google Calendar.</p>
                       </>
                     )}
                     <div className="flex items-center gap-2">

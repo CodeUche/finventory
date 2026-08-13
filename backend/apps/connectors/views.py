@@ -26,7 +26,8 @@ from apps.core.permissions import IsOwnerOrAdmin, IsStaff, _get_or_resolve_org
 from apps.core.throttles import WebhookRateThrottle
 from apps.subscriptions.models import PaymentHistory
 
-from . import nango
+from . import nango, telegram
+from .drive import GoogleDriveService
 from .models import Connector, ConnectorAddonSubscription, ConnectorConnection
 from .pricing import price_for_interval
 from .serializers import ConnectorAddonSubscriptionSerializer, ConnectorConnectionSerializer
@@ -35,6 +36,7 @@ from .services import (
     ConnectorConnectionService,
     ConnectorQuotaService,
     QuotaExceededError,
+    TelegramLinkService,
 )
 
 logger = logging.getLogger(__name__)
@@ -54,6 +56,21 @@ CONNECTOR_CATALOG = [
         "connector_key": Connector.GOOGLE_SHEETS,
         "name": "Google Sheets",
         "description": "Every sale and invoice appended live to a spreadsheet you pick.",
+    },
+    {
+        "connector_key": Connector.GOOGLE_DRIVE,
+        "name": "Google Drive",
+        "description": "Auto-save every invoice, payslip, and report PDF into a folder you pick.",
+    },
+    {
+        "connector_key": Connector.GOOGLE_CALENDAR,
+        "name": "Google Calendar",
+        "description": "Invoice due dates and tax deadlines added to a calendar you pick.",
+    },
+    {
+        "connector_key": Connector.TELEGRAM,
+        "name": "Telegram",
+        "description": "Get notified in Telegram when invoices are created and payments land.",
     },
 ]
 
@@ -126,6 +143,9 @@ class ConnectorConnectView(APIView):
         except nango.NangoAPIError as exc:
             logger.error("Connector connect failed calling Nango: %s", exc)
             return _err(str(exc), 502)
+        except telegram.TelegramNotConfiguredError as exc:
+            logger.error("Connector connect blocked — Telegram not configured: %s", exc)
+            return _err(str(exc), 503)
 
         return Response(result, status=status.HTTP_200_OK)
 
@@ -189,6 +209,11 @@ class ConnectorConfigView(APIView):
     ALLOWED_KEYS = {
         Connector.SLACK: {"channel_id"},
         Connector.GOOGLE_SHEETS: {"spreadsheet_id", "sheet_range"},
+        Connector.GOOGLE_DRIVE: {"folder_id"},
+        Connector.GOOGLE_CALENDAR: {"calendar_id"},
+        # TELEGRAM is deliberately absent — its only "config" is chat_id,
+        # which is set exclusively by the /start webhook handshake
+        # (TelegramLinkService.handle_start), never user-editable here.
     }
 
     def patch(self, request, connector_key=None):
@@ -253,6 +278,29 @@ class SlackChannelsView(APIView):
             channels = []
 
         return Response({"channels": channels})
+
+
+class GoogleDriveFoldersView(APIView):
+    """
+    GET /connectors/google-drive/folders/ — best-effort folder list for the
+    config picker (same "always fall back to manual entry" contract as
+    SlackChannelsView).
+    """
+
+    permission_classes = [IsAuthenticated, IsStaff]
+
+    def get(self, request):
+        org = _get_or_resolve_org(request)
+        if org is None:
+            return _err("Organisation not found.")
+
+        conn = ConnectorConnection.objects.filter(
+            organisation=org, connector_key=Connector.GOOGLE_DRIVE, status=ConnectorConnection.Status.ACTIVE,
+        ).first()
+        if conn is None:
+            return Response({"folders": []})
+
+        return Response({"folders": GoogleDriveService.list_folders(conn)})
 
 
 class ConnectorAddonInitiateView(APIView):
@@ -398,6 +446,55 @@ def nango_webhook(request):
         ConnectorConnectionService.apply_webhook(payload)
     except Exception:
         logger.exception("Unexpected error handling Nango webhook.")
+        return Response({"status": "error_logged"})
+
+    return Response({"status": "ok"})
+
+
+# ── Telegram webhook (server-to-server, no user session) ────────────────────
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@throttle_classes([WebhookRateThrottle])
+def telegram_webhook(request):
+    """
+    POST /connectors/webhook/telegram/
+
+    Receives EVERY incoming message sent to Audity's single shared Telegram
+    bot (see apps.connectors.telegram's module docstring — this is the one
+    connector NOT brokered by Nango). Only "/start <code>" messages are
+    meaningful here; everything else is silently ignored. Always answers 200
+    — same "never retry-storm us on a payload shape we didn't anticipate"
+    discipline as nango_webhook above (Telegram, like Nango, retries
+    aggressively on non-2xx).
+
+    Verifies X-Telegram-Bot-Api-Secret-Token when TELEGRAM_WEBHOOK_SECRET is
+    configured (see telegram.verify_webhook_secret's docstring for why this
+    is defense-in-depth rather than the sole gate — the /start code itself
+    is the real secret).
+    """
+    received_secret = request.META.get("HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN", "")
+    if not telegram.verify_webhook_secret(received_secret):
+        logger.warning("Telegram webhook secret token verification failed.")
+        return Response({"status": "invalid_signature"}, status=401)
+
+    try:
+        update = request.data if isinstance(request.data, dict) else {}
+        message = update.get("message") or update.get("edited_message") or {}
+        text = (message.get("text") or "").strip()
+        chat = message.get("chat") or {}
+        chat_id = chat.get("id")
+
+        if text.startswith("/start") and chat_id is not None:
+            # Deep link produces exactly "/start <code>" — Telegram strips
+            # the bot-username suffix form (/start@BotName <code>) down to
+            # this same shape for a direct message, so a plain split is fine.
+            parts = text.split(maxsplit=1)
+            code = parts[1].strip() if len(parts) > 1 else ""
+            label = chat.get("username") or chat.get("title") or chat.get("first_name") or ""
+            TelegramLinkService.handle_start(code=code, chat_id=chat_id, label=label)
+    except Exception:
+        logger.exception("Unexpected error handling Telegram webhook.")
         return Response({"status": "error_logged"})
 
     return Response({"status": "ok"})

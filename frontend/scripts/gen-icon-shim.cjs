@@ -36,6 +36,7 @@ const MAP = {
   RotateCcw:'ArrowCounterClockwise', Scale:'Scales', Search:'MagnifyingGlass', Send:'PaperPlaneTilt',
   Shield:'Shield', ShieldCheck:'ShieldCheck', ShoppingCart:'ShoppingCart', Sparkles:'Sparkle', Star:'Star',
   Sun:'Sun', Table2:'Table', Trash2:'Trash', TrendingDown:'TrendDown', TrendingUp:'TrendUp', Truck:'Truck',
+  HardDrive:'HardDrive',
   Unlock:'LockOpen', Upload:'UploadSimple', UploadCloud:'UploadSimple', User:'User', UserCheck:'UserCheck',
   UserPlus:'UserPlus', Users:'Users', UsersRound:'UsersThree', Wallet:'Wallet', Warehouse:'Warehouse',
   Wifi:'WifiHigh', WifiOff:'WifiSlash', X:'X', XCircle:'XCircle', Zap:'Lightning',
