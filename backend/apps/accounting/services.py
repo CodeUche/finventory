@@ -3312,6 +3312,63 @@ class ReconciliationMatchingService:
         return value
 
     @staticmethod
+    @transaction.atomic
+    def populate_from_ledger(reconciliation):
+        """Bring the account's posted book entries into the reconciliation as lines.
+
+        This is how Sage One/50/200 actually work: you tick off the transactions you
+        have already recorded, and importing a statement file is an optional
+        accelerant rather than the only way in. Rows created here carry the
+        journal_line FK (the field the schema always had but nothing ever used),
+        which is what distinguishes them from imported statement lines everywhere
+        else — see the journal_line__isnull=True guards in the matchers.
+
+        Idempotent: safe to call repeatedly. Skips journal lines that are already
+        represented, and journal lines already tied to a CONFIRMED statement match,
+        so a transaction can never be counted twice in the cleared total.
+        """
+        from .models import AIReconMatch, BankReconciliationLine, JournalLine
+
+        org = reconciliation.organisation
+        already = set(
+            reconciliation.lines.filter(journal_line__isnull=False)
+            .values_list('journal_line_id', flat=True)
+        )
+        # A book entry already matched to an imported statement line is accounted for
+        # by that line — adding it again would double-count it in the cleared total.
+        confirmed = set(
+            AIReconMatch.objects.filter(
+                reconciliation=reconciliation, status='confirmed', book_line__isnull=False,
+            ).values_list('book_line_id', flat=True)
+        )
+        book = JournalLine.objects.filter(
+            journal_entry__organisation=org,
+            journal_entry__status='posted',
+            account=reconciliation.account,
+            journal_entry__entry_date__gte=reconciliation.period_start,
+            journal_entry__entry_date__lte=reconciliation.period_end,
+        ).select_related('journal_entry')
+
+        created = 0
+        for jl in book:
+            if jl.id in already or jl.id in confirmed:
+                continue
+            je = jl.journal_entry
+            BankReconciliationLine.objects.create(
+                organisation=org,
+                reconciliation=reconciliation,
+                journal_line=jl,
+                description=(jl.description or je.description or 'Ledger entry')[:500],
+                transaction_date=je.entry_date,
+                # Mirror the statement sign convention: positive = money in.
+                amount=ReconciliationMatchingService._book_signed(jl),
+                reference=(je.reference or '')[:100],
+                is_cleared=False,
+            )
+            created += 1
+        return {'created': created, 'skipped': len(already) + len(confirmed)}
+
+    @staticmethod
     def _book_signed(jl):
         # On an asset/bank account, a debit is money IN, a credit is money OUT — mirror
         # the bank statement's signed amount (positive = inflow/deposit).
@@ -3339,7 +3396,11 @@ class ReconciliationMatchingService:
         # Drop prior unconfirmed proposals so re-running is clean; keep confirmed ones.
         AIReconMatch.objects.filter(reconciliation=reconciliation, status='proposed').delete()
 
-        bank_lines = list(reconciliation.lines.filter(is_cleared=False))
+        # journal_line__isnull=True is essential: a reconciliation may also hold
+        # LEDGER-DERIVED lines (rows that already point at a book entry). Those are
+        # the book side of the reconciliation, not statement lines — feeding them
+        # back in would have the matcher pair book entries against themselves.
+        bank_lines = list(reconciliation.lines.filter(is_cleared=False, journal_line__isnull=True))
         start = reconciliation.period_start - timedelta(days=tol)
         end = reconciliation.period_end + timedelta(days=tol)
         book = list(

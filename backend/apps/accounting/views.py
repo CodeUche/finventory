@@ -1267,6 +1267,50 @@ class BankReconciliationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         line.delete()
         return Response({'deleted': str(line_id)}, status=status.HTTP_200_OK)
 
+    @action(detail=True, methods=['post'], url_path='populate_from_ledger')
+    def populate_from_ledger(self, request, pk=None):
+        """Pull the account's posted book entries in as reconciliation lines, so the
+        user can tick off what has cleared without needing a statement file at all
+        (how Sage One/50/200 work)."""
+        from apps.accounting.services import ReconciliationMatchingService
+        recon = self.get_object()
+        if recon.is_reconciled:
+            return Response(
+                {'error': 'This reconciliation is already completed. Re-open it first.'},
+                status=400,
+            )
+        summary = ReconciliationMatchingService.populate_from_ledger(recon)
+        ReconciliationMatchingService.refresh_book_balance(recon)
+        return Response({
+            **summary,
+            'reconciliation': BankReconciliationSerializer(recon).data,
+        })
+
+    @action(detail=True, methods=['post'], url_path='bulk_set_cleared')
+    def bulk_set_cleared(self, request, pk=None):
+        """Set the cleared flag on many lines in ONE request.
+
+        The UI previously issued a PATCH per line, so reconciling a 300-line
+        statement meant 300 requests against a 10s client timeout and an hourly
+        rate limit. Body: {"line_ids": [...], "is_cleared": true} or
+        {"all": true, "is_cleared": false}.
+        """
+        recon = self.get_object()
+        if recon.is_reconciled:
+            return Response(
+                {'error': 'This reconciliation is already completed. Re-open it first.'},
+                status=400,
+            )
+        is_cleared = bool(request.data.get('is_cleared', True))
+        if request.data.get('all'):
+            updated = recon.lines.all().update(is_cleared=is_cleared)
+        else:
+            line_ids = request.data.get('line_ids') or []
+            if not isinstance(line_ids, list):
+                return Response({'error': 'line_ids must be a list.'}, status=400)
+            updated = recon.lines.filter(id__in=line_ids).update(is_cleared=is_cleared)
+        return Response({'updated': updated, 'is_cleared': is_cleared})
+
     @action(detail=True, methods=['post'], url_path='reopen')
     def reopen(self, request, pk=None):
         """Re-open a completed reconciliation so it can be corrected."""
@@ -1487,8 +1531,10 @@ class BankReconciliationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                 status=status.HTTP_422_UNPROCESSABLE_ENTITY,
             )
 
-        # Only the lines the deterministic pass left uncleared — never re-match cleared ones.
-        bank_lines = list(recon.lines.filter(is_cleared=False))
+        # Only the lines the deterministic pass left uncleared — never re-match cleared
+        # ones. journal_line__isnull=True excludes ledger-derived rows (the book side),
+        # which must never be offered to the matcher as statement lines.
+        bank_lines = list(recon.lines.filter(is_cleared=False, journal_line__isnull=True))
         if not bank_lines:
             return Response({'error': 'No unmatched bank statement lines. Import a statement, or everything is already matched.'}, status=400)
 

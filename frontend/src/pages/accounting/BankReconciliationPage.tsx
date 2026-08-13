@@ -3,7 +3,7 @@ import { useDataRefresh } from '@/hooks/useDataRefresh'
 import {
   CheckSquare, Square, RefreshCw, CheckCircle2, Upload, FileText,
   Sparkles, Zap, ChevronDown, ChevronRight, AlertTriangle, XCircle, Check, X,
-  Trash2, Pencil, Plus, Unlock,
+  Trash2, Pencil, Plus, Unlock, BookOpen,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { accountingApi, bypassNextGets } from '@/services/api'
@@ -139,6 +139,7 @@ export default function BankReconciliationPage() {
   const [editingLine, setEditingLine] = useState<ReconLine | null>(null)
   const [showAddLine, setShowAddLine] = useState(false)
   const [addingLine, setAddingLine] = useState(false)
+  const [populating, setPopulating] = useState(false)
 
   // ── GL posting ──
   const [postingGL, setPostingGL] = useState(false)
@@ -366,6 +367,25 @@ export default function BankReconciliationPage() {
     }
   }
 
+  // ─── Load the account's own book entries (Sage-style ledger reconciliation) ──
+
+  const handlePopulateFromLedger = async () => {
+    if (!activeRecon) return
+    setPopulating(true)
+    try {
+      const { data } = await accountingApi.populateFromLedger(activeRecon.id)
+      if (data.created) toast.success(`Loaded ${data.created} ledger transaction${data.created !== 1 ? 's' : ''}`)
+      else toast('No new ledger transactions for this period', { icon: 'ℹ️' })
+      await refreshActiveRecon()
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { error?: unknown } } }
+      const msg = e?.response?.data?.error
+      toast.error(typeof msg === 'string' ? msg : 'Failed to load ledger transactions')
+    } finally {
+      setPopulating(false)
+    }
+  }
+
   // ─── Escape hatch: correct or remove a bad line / discard the reconciliation ──
   // Without these a single mis-imported or duplicated row leaves the reconciliation
   // permanently unbalanceable, with no way out from the UI.
@@ -453,11 +473,12 @@ export default function BankReconciliationPage() {
     if (!activeRecon) return
     setReconciling(true)
     try {
-      await Promise.all(
-        activeRecon.lines.map((line) =>
-          accountingApi.updateReconLine(activeRecon.id, { line_id: line.id, is_cleared: clearedIds.has(line.id) })
-        )
-      )
+      // Two bulk calls instead of one PATCH per line — a 300-line statement used to
+      // fire 300 requests against a 10s timeout and an hourly rate limit.
+      const cleared = activeRecon.lines.filter((l) => clearedIds.has(l.id)).map((l) => l.id)
+      const uncleared = activeRecon.lines.filter((l) => !clearedIds.has(l.id)).map((l) => l.id)
+      if (cleared.length) await accountingApi.bulkSetCleared(activeRecon.id, { line_ids: cleared, is_cleared: true })
+      if (uncleared.length) await accountingApi.bulkSetCleared(activeRecon.id, { line_ids: uncleared, is_cleared: false })
       await accountingApi.markReconciled(activeRecon.id)
       toast.success('Reconciliation completed!')
       setActiveRecon(null)
@@ -495,6 +516,15 @@ export default function BankReconciliationPage() {
     : 0
   const manualDiff = statementBal - clearedTotal
   const manualCanReconcile = Math.abs(manualDiff) < 0.01
+
+  // Sage-style presentation: the un-ticked items are what explains the gap between
+  // the statement and the books, so show them explicitly rather than leaving the
+  // user to work out why "Difference" is non-zero.
+  const outstandingLines = activeRecon
+    ? activeRecon.lines.filter((l) => !clearedIds.has(l.id))
+    : []
+  const outstandingTotal = outstandingLines.reduce((s, l) => s + parseFloat(l.amount), 0)
+  const bookBal = parseFloat(activeRecon?.book_balance ?? '0')
 
   // ─── Render ────────────────────────────────────────────────────────────────
 
@@ -871,7 +901,7 @@ export default function BankReconciliationPage() {
           {/* ══════════════════════════ MANUAL TAB ══════════════════════════ */}
           {activeTab === 'manual' && (
             <div className="space-y-4">
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
                 <div className="card p-5">
                   <p className="text-xs text-slate-400">Statement Balance</p>
                   <p className="text-xl font-bold text-white mt-1">{formatCurrency(statementBal)}</p>
@@ -879,6 +909,16 @@ export default function BankReconciliationPage() {
                 <div className="card p-5">
                   <p className="text-xs text-slate-400">Cleared Items Total</p>
                   <p className="text-xl font-bold text-brand-400 mt-1">{formatCurrency(clearedTotal)}</p>
+                </div>
+                <div className="card p-5">
+                  <p className="text-xs text-slate-400">Outstanding ({outstandingLines.length})</p>
+                  <p className="text-xl font-bold text-amber-400 mt-1">{formatCurrency(Math.abs(outstandingTotal))}</p>
+                  <p className="text-[11px] text-slate-500 mt-0.5">Not yet ticked</p>
+                </div>
+                <div className="card p-5">
+                  <p className="text-xs text-slate-400">Book Balance</p>
+                  <p className="text-xl font-bold text-white mt-1">{formatCurrency(bookBal)}</p>
+                  <p className="text-[11px] text-slate-500 mt-0.5">Per your ledger</p>
                 </div>
                 <div className={`card p-5 border ${manualCanReconcile ? 'border-emerald-500/40 bg-emerald-500/5' : 'border-red-500/30 bg-red-500/5'}`}>
                   <p className="text-xs text-slate-400">Difference</p>
@@ -901,6 +941,15 @@ export default function BankReconciliationPage() {
                         <button onClick={deselectAll} className="btn-ghost text-sm px-3">Deselect All</button>
                       </>
                     )}
+                    <button
+                      onClick={handlePopulateFromLedger}
+                      disabled={populating}
+                      title="Bring in the transactions already recorded against this account"
+                      className="btn-ghost text-sm px-3 flex items-center gap-1.5 disabled:opacity-50"
+                    >
+                      <BookOpen size={14} />
+                      {populating ? 'Loading…' : 'Load from Ledger'}
+                    </button>
                     <button
                       onClick={() => setShowAddLine(true)}
                       className="btn-ghost text-sm px-3 flex items-center gap-1.5"

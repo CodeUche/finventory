@@ -3856,3 +3856,164 @@ class BankReconciliationBookBalanceAndPickerTests(TestCase):
         line = recon.lines.first()
         self.assertEqual(line.amount, Decimal("15000"))
         self.assertEqual(line.description, "Cash deposit")
+
+
+class LedgerDrivenReconciliationTests(TestCase):
+    """Reconcile straight from the ledger (Sage One/50/200 behaviour): tick off the
+    transactions you already recorded, with a statement file optional.
+
+    The critical invariant: ledger-derived lines carry a journal_line FK and must
+    NEVER be fed to the matchers as statement lines, or book entries would be paired
+    against themselves.
+    """
+
+    def setUp(self):
+        import datetime
+        self.user = _make_user("recon_ledger@example.com")
+        self.org = _make_org(self.user, "Recon Ledger Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+        self.bank = Account.objects.get(organisation=self.org, code="1002")
+        self.rev = Account.objects.get(organisation=self.org, code="4001")
+        self.exp = Account.objects.get(organisation=self.org, code="6100")
+        self.d = datetime.date
+        from apps.accounting.models import BankReconciliation
+        self.recon = BankReconciliation.objects.create(
+            organisation=self.org, account=self.bank,
+            period_start=self.d(2026, 7, 1), period_end=self.d(2026, 7, 31),
+            statement_closing_balance=Decimal("170000"),
+        )
+
+    def _post(self, amount, day, inflow=True, desc="entry"):
+        amt = Decimal(str(amount))
+        Z = Decimal("0")
+        lines = ([(self.bank, amt, Z), (self.rev, Z, amt)] if inflow
+                 else [(self.exp, amt, Z), (self.bank, Z, amt)])
+        return AccountingService.post_journal_entry(
+            self.org, desc, self.d(2026, 7, day), lines, self.user,
+            source_type="ld", source_ref=f"{desc}-{day}-{amount}-{inflow}",
+        )
+
+    def _url(self, a):
+        return f"/api/v1/accounting/reconciliations/{self.recon.id}/{a}/"
+
+    def test_populate_pulls_posted_entries_with_correct_signs(self):
+        self._post("250000", 3, desc="Customer payment")
+        self._post("80000", 15, inflow=False, desc="Rent")
+        res = self.client.post(self._url("populate_from_ledger"), {}, format="json")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.assertEqual(res.data["created"], 2)
+        amounts = sorted(l.amount for l in self.recon.lines.all())
+        self.assertEqual(amounts, [Decimal("-80000.0000"), Decimal("250000.0000")])
+        self.assertTrue(all(l.journal_line_id for l in self.recon.lines.all()))
+
+    def test_populate_is_idempotent(self):
+        self._post("250000", 3)
+        self.client.post(self._url("populate_from_ledger"), {}, format="json")
+        second = self.client.post(self._url("populate_from_ledger"), {}, format="json")
+        self.assertEqual(second.data["created"], 0)
+        self.assertEqual(self.recon.lines.count(), 1)
+
+    def test_populate_excludes_entries_outside_the_period(self):
+        import datetime
+        self._post("100000", 10)
+        AccountingService.post_journal_entry(
+            self.org, "August", datetime.date(2026, 8, 3),
+            [(self.bank, Decimal("5000"), Decimal("0")), (self.rev, Decimal("0"), Decimal("5000"))],
+            self.user, source_type="ld", source_ref="aug",
+        )
+        self.client.post(self._url("populate_from_ledger"), {}, format="json")
+        self.assertEqual(self.recon.lines.count(), 1)
+
+    # THE GUARD: ledger lines must never be matched as statement lines
+    def test_auto_match_ignores_ledger_derived_lines(self):
+        """Without the journal_line__isnull guard the matcher would pair each book
+        entry with itself and report bogus matches."""
+        from apps.accounting.models import AIReconMatch
+        self._post("250000", 3)
+        self._post("80000", 15, inflow=False)
+        self.client.post(self._url("populate_from_ledger"), {}, format="json")
+        res = self.client.post(self._url("auto_match"), {}, format="json")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        # Nothing to match: every line is a book line, there are no statement lines.
+        self.assertEqual(res.data["summary"]["bank_lines"], 0)
+        self.assertEqual(AIReconMatch.objects.filter(reconciliation=self.recon).count(), 0)
+
+    def test_auto_match_still_matches_real_statement_lines_alongside_ledger_lines(self):
+        """A mixed reconciliation still behaves: the imported line matches its book
+        entry, and the ledger-derived rows are left alone."""
+        from apps.accounting.models import BankReconciliationLine
+        self._post("250000", 3, desc="Customer payment")
+        self.client.post(self._url("populate_from_ledger"), {}, format="json")
+        BankReconciliationLine.objects.create(
+            organisation=self.org, reconciliation=self.recon,
+            description="NIP/TRF/CUSTOMER", transaction_date=self.d(2026, 7, 3),
+            amount=Decimal("250000"),
+        )
+        res = self.client.post(self._url("auto_match"), {}, format="json")
+        self.assertEqual(res.data["summary"]["bank_lines"], 1)
+        self.assertEqual(res.data["summary"]["matched"], 1)
+
+    def test_populate_skips_book_lines_already_confirmed_against_a_statement_line(self):
+        """Double-count protection: a book entry already tied to a confirmed
+        statement match must not also arrive as its own ledger line."""
+        from apps.accounting.models import AIReconMatch, BankReconciliationLine
+        je = self._post("250000", 3)
+        book_line = je.lines.get(account=self.bank)
+        stmt = BankReconciliationLine.objects.create(
+            organisation=self.org, reconciliation=self.recon,
+            description="NIP/TRF", transaction_date=self.d(2026, 7, 3), amount=Decimal("250000"),
+        )
+        AIReconMatch.objects.create(
+            organisation=self.org, reconciliation=self.recon, bank_line=stmt,
+            book_line=book_line, confidence=1.0, match_type="exact", status="confirmed",
+        )
+        res = self.client.post(self._url("populate_from_ledger"), {}, format="json")
+        self.assertEqual(res.data["created"], 0)
+        self.assertEqual(self.recon.lines.count(), 1)
+
+    def test_populate_refused_on_a_completed_reconciliation(self):
+        self.recon.is_reconciled = True
+        self.recon.save(update_fields=["is_reconciled"])
+        res = self.client.post(self._url("populate_from_ledger"), {}, format="json")
+        self.assertEqual(res.status_code, 400)
+
+    # Bulk clear (replaces the one-PATCH-per-line storm)
+    def test_bulk_set_cleared_by_ids(self):
+        self._post("250000", 3)
+        self._post("80000", 15, inflow=False)
+        self.client.post(self._url("populate_from_ledger"), {}, format="json")
+        ids = [str(l.id) for l in self.recon.lines.all()]
+        res = self.client.post(self._url("bulk_set_cleared"),
+                               {"line_ids": ids, "is_cleared": True}, format="json")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data["updated"], 2)
+        self.assertEqual(self.recon.lines.filter(is_cleared=True).count(), 2)
+
+    def test_bulk_set_cleared_all_then_none(self):
+        self._post("250000", 3)
+        self._post("80000", 15, inflow=False)
+        self.client.post(self._url("populate_from_ledger"), {}, format="json")
+        self.client.post(self._url("bulk_set_cleared"), {"all": True, "is_cleared": True}, format="json")
+        self.assertEqual(self.recon.lines.filter(is_cleared=True).count(), 2)
+        self.client.post(self._url("bulk_set_cleared"), {"all": True, "is_cleared": False}, format="json")
+        self.assertEqual(self.recon.lines.filter(is_cleared=True).count(), 0)
+
+    def test_bulk_set_cleared_rejects_bad_payload(self):
+        res = self.client.post(self._url("bulk_set_cleared"),
+                               {"line_ids": "not-a-list", "is_cleared": True}, format="json")
+        self.assertEqual(res.status_code, 400)
+
+    def test_full_no_statement_journey_reconciles_to_zero(self):
+        """The Sage journey end to end: no CSV at all."""
+        self._post("250000", 3)
+        self._post("80000", 15, inflow=False)
+        self.client.post(self._url("populate_from_ledger"), {}, format="json")
+        self.client.post(self._url("bulk_set_cleared"), {"all": True, "is_cleared": True}, format="json")
+        total = sum(l.amount for l in self.recon.lines.filter(is_cleared=True))
+        self.assertEqual(total, Decimal("170000.0000"))
+        self.assertEqual(total, self.recon.statement_closing_balance)
+        res = self.client.post(self._url("mark_reconciled"), {}, format="json")
+        self.assertEqual(res.status_code, 200)
+        self.recon.refresh_from_db()
+        self.assertTrue(self.recon.is_reconciled)
