@@ -1,8 +1,12 @@
 /**
  * Connectors — one-click OAuth integrations (Slack, Google Sheets, Google
- * Drive, Google Calendar) via Nango, plus Telegram (its own shared-bot
- * linking flow — no OAuth, see backend apps.connectors.telegram's module
- * docstring). Every connector — Telegram included — returns the identical
+ * Drive, Google Calendar, Gmail) via Nango, plus Telegram (its own
+ * shared-bot linking flow — no OAuth, see backend apps.connectors.telegram's
+ * module docstring). Gmail is a notification channel (same category as
+ * Slack/Telegram: invoice.created/payment.received -> a short email sent
+ * via the org's own connected Gmail account) — unrelated to Audity's
+ * existing SMTP/Brevo invoice-email pathway. Every connector — Telegram
+ * included — returns the identical
  * { connect_link, expires_at } shape from `connect()`, so this client and
  * ConnectorsPage.tsx's poll/restore/disconnect mechanism need ZERO
  * connector-specific branching: Telegram's connect_link is simply a
@@ -20,7 +24,7 @@
  */
 import { api } from './api'
 
-export type ConnectorKey = 'slack' | 'google_sheets' | 'google_drive' | 'google_calendar' | 'telegram'
+export type ConnectorKey = 'slack' | 'google_sheets' | 'google_drive' | 'google_calendar' | 'telegram' | 'gmail'
 export type ConnectorConnectionStatus = 'pending' | 'active' | 'revoked'
 export type ConnectorBillingMode = 'plan_quota' | 'paid_addon'
 export type BillingInterval = 'monthly' | 'annual'

@@ -24,7 +24,7 @@ from datetime import timedelta
 from django.db import transaction
 from django.utils import timezone
 
-from . import nango, telegram
+from . import gmail, nango, telegram
 from .drive import GoogleDriveService
 from .models import Connector, ConnectorAddonSubscription, ConnectorConnection, ConnectorEventDelivery
 
@@ -97,7 +97,7 @@ def _extract_label(connector_key: str, data: dict) -> str:
         if connector_key == Connector.SLACK:
             team = metadata.get("team") or {}
             return team.get("name") or metadata.get("team_name") or metadata.get("workspace_name") or ""
-        if connector_key in (Connector.GOOGLE_SHEETS, Connector.GOOGLE_DRIVE, Connector.GOOGLE_CALENDAR):
+        if connector_key in (Connector.GOOGLE_SHEETS, Connector.GOOGLE_DRIVE, Connector.GOOGLE_CALENDAR, Connector.GMAIL):
             user = metadata.get("user") or {}
             return user.get("email") or metadata.get("email") or ""
     except Exception:
@@ -607,11 +607,54 @@ def _deliver_to_calendar(connection: ConnectorConnection, event) -> tuple[bool, 
     return ok, resp.status_code, error
 
 
+def _gmail_subject_and_body(event) -> tuple[str, str]:
+    """
+    Deliberately the same content/occasions as _slack_message/
+    _telegram_message, reworded for a plain-text email (no chat markdown) —
+    a short notification, not a copy of the invoice/payslip itself. This has
+    nothing to do with apps.payroll.tasks' SMTP/Brevo invoice-email sending;
+    it is the Gmail notification-channel deliverer only.
+    """
+    payload = event.payload or {}
+    if event.event_type == "invoice.created":
+        subject = f"New invoice {payload.get('invoice_number', '')} created"
+        body = (
+            f"A new invoice ({payload.get('invoice_number', '')}) for "
+            f"₦{payload.get('total_amount', '')} was created in Audity."
+        )
+        return subject, body
+    if event.event_type == "payment.received":
+        subject = f"Payment received on invoice {payload.get('invoice_number', '')}"
+        body = (
+            f"A payment of ₦{payload.get('amount', payload.get('total_amount', ''))} was received "
+            f"on invoice {payload.get('invoice_number', '')} in Audity."
+        )
+        return subject, body
+    return f"Audity event: {event.event_type}", f"Audity event: {event.event_type}"
+
+
+def _deliver_to_gmail(connection: ConnectorConnection, event) -> tuple[bool, int | None, str]:
+    """
+    Sends a notification email via the org's OWN connected Gmail account
+    (nango.proxy -> gmail/v1/users/me/messages/send, see apps.connectors.
+    gmail.GmailService.send_email) to the recipient the org configured
+    (config["notify_email"] — set via ConnectorConfigView, same shape as
+    Drive's folder_id/Calendar's calendar_id). Mirrors _deliver_to_calendar's
+    "check config, bail out with a clear error if unset" gate exactly.
+    """
+    notify_email = (connection.config or {}).get("notify_email")
+    if not notify_email:
+        return False, None, "No notification email configured for this connection."
+    subject, body = _gmail_subject_and_body(event)
+    return gmail.GmailService.send_email(connection, to_email=notify_email, subject=subject, body_text=body)
+
+
 _DELIVERERS = {
     Connector.SLACK: _deliver_to_slack,
     Connector.GOOGLE_SHEETS: _deliver_to_sheets,
     Connector.TELEGRAM: _deliver_to_telegram,
     Connector.GOOGLE_CALENDAR: _deliver_to_calendar,
+    Connector.GMAIL: _deliver_to_gmail,
     # GOOGLE_DRIVE is deliberately absent — Drive isn't a business-event
     # notification target, it's a PDF-upload sink triggered at PDF
     # generation time (see maybe_save_pdf_to_drive above), not by

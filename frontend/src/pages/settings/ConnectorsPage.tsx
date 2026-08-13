@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 import {
-  MessageSquare, FileSpreadsheet, HardDrive, CalendarDays, Send,
+  MessageSquare, FileSpreadsheet, HardDrive, CalendarDays, Send, Mail,
   Loader2, CheckCircle2, LogOut, Pencil, RefreshCw,
 } from 'lucide-react'
 import { confirmDialog } from '@/lib/dialog'
@@ -23,6 +23,7 @@ const ICONS: Record<ConnectorKey, React.ElementType> = {
   google_drive: HardDrive,
   google_calendar: CalendarDays,
   telegram: Send,
+  gmail: Mail,
 }
 const ICON_STYLES: Record<ConnectorKey, string> = {
   slack: 'bg-gold-500/10 text-gold-400',
@@ -30,13 +31,16 @@ const ICON_STYLES: Record<ConnectorKey, string> = {
   google_drive: 'bg-blue-500/10 text-blue-400',
   google_calendar: 'bg-purple-500/10 text-purple-400',
   telegram: 'bg-sky-500/10 text-sky-400',
+  gmail: 'bg-red-500/10 text-red-400',
 }
 
 // Connectors with user-editable settings (shows the Pencil/config drawer).
 // Telegram has none — its only "config" (chat_id) is set exclusively by the
 // /start webhook handshake server-side, never through this UI (mirrors the
 // backend's ConnectorConfigView.ALLOWED_KEYS, which has no telegram entry).
-const CONFIGURABLE_CONNECTORS: ConnectorKey[] = ['slack', 'google_sheets', 'google_drive', 'google_calendar']
+// Gmail DOES need one — its notify_email recipient address — same "connected
+// but not yet configured" gap Drive's folder_id/Calendar's calendar_id have.
+const CONFIGURABLE_CONNECTORS: ConnectorKey[] = ['slack', 'google_sheets', 'google_drive', 'google_calendar', 'gmail']
 
 function errMsg(err: unknown, fallback: string): string {
   const apiErr = (err as { response?: { data?: { error?: unknown } } })?.response?.data?.error
@@ -64,6 +68,7 @@ interface ConfigDraft {
   sheet_range?: string
   folder_id?: string
   calendar_id?: string
+  notify_email?: string
 }
 
 export default function ConnectorsPage() {
@@ -294,6 +299,7 @@ export default function ConnectorsPage() {
       sheet_range: entry.connection?.config?.sheet_range ?? '',
       folder_id: entry.connection?.config?.folder_id ?? '',
       calendar_id: entry.connection?.config?.calendar_id ?? '',
+      notify_email: entry.connection?.config?.notify_email ?? '',
     })
     if (entry.connector_key === 'slack' && slackChannels.length === 0) {
       try {
@@ -322,9 +328,12 @@ export default function ConnectorsPage() {
         }
       } else if (key === 'google_drive') {
         payload = { folder_id: configDraft.folder_id ?? '' }
-      } else {
-        // google_calendar — "primary" (the org's own default calendar) if left blank
+      } else if (key === 'google_calendar') {
+        // "primary" (the org's own default calendar) if left blank
         payload = { calendar_id: configDraft.calendar_id || 'primary' }
+      } else {
+        // gmail — the only other configurable connector (telegram has no config UI)
+        payload = { notify_email: (configDraft.notify_email ?? '').trim() }
       }
       await connectorsApi.updateConfig(key, payload)
       toast.success('Settings saved.')
@@ -558,7 +567,7 @@ export default function ConnectorsPage() {
                         )}
                         <p className="text-[11px] text-slate-500">Invoice, payslip, and report PDFs will be saved here automatically.</p>
                       </>
-                    ) : (
+                    ) : entry.connector_key === 'google_calendar' ? (
                       <>
                         <label className="text-xs text-slate-400 block">Calendar to add deadlines to</label>
                         <input
@@ -568,6 +577,20 @@ export default function ConnectorsPage() {
                           onChange={(e) => setConfigDraft((d) => ({ ...d, calendar_id: e.target.value }))}
                         />
                         <p className="text-[11px] text-slate-500">Leave blank to use your main Google Calendar.</p>
+                      </>
+                    ) : (
+                      <>
+                        <label className="text-xs text-slate-400 block">Email address to notify</label>
+                        <input
+                          type="email"
+                          className="input"
+                          placeholder="accountant@yourbusiness.com"
+                          value={configDraft.notify_email ?? ''}
+                          onChange={(e) => setConfigDraft((d) => ({ ...d, notify_email: e.target.value }))}
+                        />
+                        <p className="text-[11px] text-slate-500">
+                          Sent from your own connected Gmail account when invoices are created and payments land.
+                        </p>
                       </>
                     )}
                     <div className="flex items-center gap-2">

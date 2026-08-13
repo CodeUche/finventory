@@ -72,6 +72,11 @@ CONNECTOR_CATALOG = [
         "name": "Telegram",
         "description": "Get notified in Telegram when invoices are created and payments land.",
     },
+    {
+        "connector_key": Connector.GMAIL,
+        "name": "Gmail",
+        "description": "Get an email from your own Gmail when invoices are created and payments land.",
+    },
 ]
 
 
@@ -211,6 +216,7 @@ class ConnectorConfigView(APIView):
         Connector.GOOGLE_SHEETS: {"spreadsheet_id", "sheet_range"},
         Connector.GOOGLE_DRIVE: {"folder_id"},
         Connector.GOOGLE_CALENDAR: {"calendar_id"},
+        Connector.GMAIL: {"notify_email"},
         # TELEGRAM is deliberately absent — its only "config" is chat_id,
         # which is set exclusively by the /start webhook handshake
         # (TelegramLinkService.handle_start), never user-editable here.
@@ -232,6 +238,21 @@ class ConnectorConfigView(APIView):
         incoming = {k: v for k, v in (request.data or {}).items() if k in allowed}
         if not incoming:
             return _err(f"No valid config keys provided. Allowed: {sorted(allowed)}")
+
+        if connector_key == Connector.GMAIL and "notify_email" in incoming:
+            # Gmail has no "list of valid recipients" to fetch (unlike
+            # Slack's channel list or Drive's folder list) — it's a plain
+            # text field the org types into, so the only validation possible
+            # here is a plausible-email-shape check. Uses Django's own
+            # validator rather than a hand-rolled regex, per project policy.
+            from django.core.exceptions import ValidationError
+            from django.core.validators import validate_email
+
+            try:
+                validate_email((incoming["notify_email"] or "").strip())
+            except ValidationError:
+                return _err("notify_email must be a valid email address.")
+            incoming["notify_email"] = incoming["notify_email"].strip()
 
         conn.config = {**(conn.config or {}), **incoming}
         conn.save(update_fields=["config", "updated_at"])

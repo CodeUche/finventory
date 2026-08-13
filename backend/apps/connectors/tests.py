@@ -27,6 +27,10 @@ Covers:
       tax_obligation.upcoming routing.
     - Google Drive: two-step upload (metadata + content), folder-required
       gating, maybe_save_pdf_to_drive's fire-and-forget dispatch contract.
+    - Gmail: MIME-building + base64url encoding round-trips to a well-formed
+      message (build_raw_message), the deliverer's Nango proxy call shape
+      (method/path/body), notify_email-required gating, config endpoint's
+      validate_email rejection of malformed addresses.
 """
 
 import base64
@@ -50,6 +54,7 @@ from apps.tenancy.services import OrganisationService
 
 from . import nango, telegram
 from .drive import GoogleDriveService
+from .gmail import GmailService, build_raw_message
 from .models import Connector, ConnectorAddonSubscription, ConnectorConnection, ConnectorEventDelivery
 from .pricing import CONNECTOR_ADDON_ANNUAL_PRICE, CONNECTOR_ADDON_MONTHLY_PRICE, price_for_interval
 from .services import (
@@ -59,6 +64,7 @@ from .services import (
     QuotaExceededError,
     TelegramLinkService,
     _deliver_to_calendar,
+    _deliver_to_gmail,
     _deliver_to_telegram,
     maybe_save_pdf_to_drive,
 )
@@ -846,6 +852,156 @@ class ConnectorEventTypeRoutingTests(TestCase):
             set(CONNECTOR_EVENT_TYPES[Connector.TELEGRAM]), set(CONNECTOR_EVENT_TYPES[Connector.SLACK]),
         )
 
+    def test_gmail_subscribes_to_same_events_as_slack(self):
+        from .tasks import CONNECTOR_EVENT_TYPES
+        self.assertEqual(
+            set(CONNECTOR_EVENT_TYPES[Connector.GMAIL]), set(CONNECTOR_EVENT_TYPES[Connector.SLACK]),
+        )
+
+
+class GmailBuildRawMessageTests(TestCase):
+    """Pure MIME-building + base64url-encoding logic — no network, no DB
+    writes needed, but kept as a TestCase for consistency with the rest of
+    this module. Per the task's own verification boundary: we do NOT send a
+    real Gmail message anywhere (that needs a live human OAuth grant); we
+    instead prove the encoding round-trips to a well-formed RFC 2822
+    message, which is the part that's fully verifiable offline."""
+
+    def test_encodes_as_urlsafe_base64_without_padding(self):
+        raw = build_raw_message(to_email="accountant@thebusiness.com", subject="Hi", body_text="Body")
+        # urlsafe alphabet uses '-'/'_' instead of '+'/'/' — assert none of
+        # the standard-base64-only characters leaked through, and that no
+        # '=' padding was left on (Gmail's own examples strip it).
+        self.assertNotIn("+", raw)
+        self.assertNotIn("/", raw)
+        self.assertNotIn("=", raw)
+
+    def test_round_trips_to_a_well_formed_mime_message(self):
+        raw = build_raw_message(
+            to_email="accountant@thebusiness.com",
+            subject="New invoice INV-001 created",
+            body_text="A new invoice (INV-001) for ₦50,000.00 was created in Audity.",
+        )
+        # Reverse Gmail's own expected encoding: pad back out, urlsafe-decode.
+        padded = raw + "=" * (-len(raw) % 4)
+        decoded_bytes = base64.urlsafe_b64decode(padded)
+
+        from email import message_from_bytes
+        parsed = message_from_bytes(decoded_bytes)
+        self.assertEqual(parsed["To"], "accountant@thebusiness.com")
+        self.assertEqual(parsed["Subject"], "New invoice INV-001 created")
+        self.assertEqual(parsed.get_content_type(), "text/plain")
+        body = parsed.get_payload(decode=True).decode(parsed.get_content_charset() or "utf-8")
+        self.assertIn("INV-001", body)
+        self.assertIn("₦50,000.00", body)
+
+    def test_non_ascii_body_and_subject_survive_the_round_trip(self):
+        """The ₦ sign (and any other non-ASCII) must not corrupt the
+        base64url encoding or get mangled by MIMEText's default encoder."""
+        raw = build_raw_message(
+            to_email="x@example.com", subject="₦ payment received", body_text="Amount: ₦1,234,567.89",
+        )
+        padded = raw + "=" * (-len(raw) % 4)
+        from email import message_from_bytes
+        parsed = message_from_bytes(base64.urlsafe_b64decode(padded))
+        body = parsed.get_payload(decode=True).decode(parsed.get_content_charset() or "utf-8")
+        self.assertIn("₦1,234,567.89", body)
+
+
+class GmailDelivererTests(TestCase):
+    def setUp(self):
+        self.user = _make_user("gmaildeliver@example.com")
+        self.org = _make_org(self.user)
+        self.conn = ConnectorConnection.objects.create(
+            organisation=self.org, connector_key=Connector.GMAIL,
+            status=ConnectorConnection.Status.ACTIVE, nango_connection_id="conn_gmail_1",
+            config={"notify_email": "accountant@thebusiness.com"},
+        )
+
+    def test_no_notify_email_configured_fails_without_any_api_call(self):
+        other_user = _make_user("gmaildeliver2@example.com")
+        other_org = _make_org(other_user, "Gmail Deliverer Org B")
+        conn = ConnectorConnection.objects.create(
+            organisation=other_org, connector_key=Connector.GMAIL,
+            status=ConnectorConnection.Status.ACTIVE, config={},
+        )
+        event = DomainEvent.objects.create(organisation=other_org, event_type="invoice.created", payload={})
+        ok, status_code, error = _deliver_to_gmail(conn, event)
+        self.assertFalse(ok)
+        self.assertIsNone(status_code)
+        self.assertIn("email", error.lower())
+
+    @override_settings(NANGO_SECRET_KEY="test_secret")
+    @patch("apps.connectors.nango.requests.request")
+    def test_delivers_invoice_created_via_gmail_send_proxy(self, mock_request):
+        mock_request.return_value = MagicMock(status_code=200, text="{}", json=lambda: {"id": "msg_1"})
+        event = DomainEvent.objects.create(
+            organisation=self.org, event_type="invoice.created",
+            payload={"invoice_number": "INV-010", "total_amount": "5000.00"},
+        )
+        ok, status_code, error = _deliver_to_gmail(self.conn, event)
+        self.assertTrue(ok)
+        self.assertEqual(status_code, 200)
+
+        # Verify the Nango proxy call itself: correct method, correct Gmail
+        # send path, and a body shaped as {"raw": <str>} — not a Slack-style
+        # plain JSON payload.
+        call_args, call_kwargs = mock_request.call_args
+        method, url = call_args[0], call_args[1]
+        self.assertEqual(method, "POST")
+        self.assertIn("gmail/v1/users/me/messages/send", url)
+        self.assertIn("raw", call_kwargs["json"])
+        self.assertIsInstance(call_kwargs["json"]["raw"], str)
+        self.assertEqual(call_kwargs["headers"]["Connection-Id"], "conn_gmail_1")
+        self.assertEqual(call_kwargs["headers"]["Provider-Config-Key"], "google-mail")
+
+        # And that the encoded raw message actually addresses the org's
+        # configured notify_email with invoice content in the body.
+        padded = call_kwargs["json"]["raw"] + "=" * (-len(call_kwargs["json"]["raw"]) % 4)
+        from email import message_from_bytes
+        parsed = message_from_bytes(base64.urlsafe_b64decode(padded))
+        self.assertEqual(parsed["To"], "accountant@thebusiness.com")
+        self.assertIn("INV-010", parsed.get_payload(decode=True).decode("utf-8"))
+
+    @override_settings(NANGO_SECRET_KEY="test_secret")
+    @patch("apps.connectors.nango.requests.request")
+    def test_delivers_payment_received_via_gmail_send_proxy(self, mock_request):
+        mock_request.return_value = MagicMock(status_code=200, text="{}", json=lambda: {"id": "msg_2"})
+        event = DomainEvent.objects.create(
+            organisation=self.org, event_type="payment.received",
+            payload={"invoice_number": "INV-011", "amount": "2500.00"},
+        )
+        ok, status_code, error = _deliver_to_gmail(self.conn, event)
+        self.assertTrue(ok)
+
+    @override_settings(NANGO_SECRET_KEY="test_secret")
+    @patch("apps.connectors.nango.requests.request")
+    def test_gmail_api_error_response_is_reported_as_failure(self, mock_request):
+        mock_request.return_value = MagicMock(status_code=403, text='{"error": "insufficient scope"}')
+        event = DomainEvent.objects.create(
+            organisation=self.org, event_type="invoice.created",
+            payload={"invoice_number": "INV-012", "total_amount": "1.00"},
+        )
+        ok, status_code, error = _deliver_to_gmail(self.conn, event)
+        self.assertFalse(ok)
+        self.assertEqual(status_code, 403)
+        self.assertIn("insufficient scope", error)
+
+    @override_settings(NANGO_SECRET_KEY="test_secret")
+    @patch("apps.connectors.nango.requests.request")
+    def test_gmail_service_send_email_called_directly(self, mock_request):
+        """GmailService.send_email is the reusable client method
+        (apps.connectors.gmail, parallel to GoogleDriveService.upload_pdf) —
+        confirms it works standalone, independent of the deliverer's
+        config-gating layer above."""
+        mock_request.return_value = MagicMock(status_code=200, text="{}", json=lambda: {"id": "msg_3"})
+        ok, status_code, error = GmailService.send_email(
+            self.conn, to_email="direct@example.com", subject="Test", body_text="Hello",
+        )
+        self.assertTrue(ok)
+        self.assertEqual(status_code, 200)
+        self.assertEqual(error, "")
+
 
 class GoogleDriveServiceTests(TestCase):
     def setUp(self):
@@ -947,11 +1103,13 @@ class NewConnectorsGalleryAndConfigAPITests(TestCase):
         _set_plan(self.org, "enterprise")  # quota=5, room for all 5 connectors
         self.client = _auth_client(self.user, self.org)
 
-    def test_gallery_lists_all_five_connectors(self):
+    def test_gallery_lists_all_six_connectors(self):
         resp = self.client.get("/api/v1/connectors/")
         self.assertEqual(resp.status_code, 200)
         keys = {c["connector_key"] for c in resp.data["connectors"]}
-        self.assertEqual(keys, {"slack", "google_sheets", "google_drive", "google_calendar", "telegram"})
+        self.assertEqual(
+            keys, {"slack", "google_sheets", "google_drive", "google_calendar", "telegram", "gmail"},
+        )
 
     def test_quota_pool_is_shared_across_connector_types(self):
         """Connecting one of each of 3 different connector types consumes 3
@@ -988,6 +1146,27 @@ class NewConnectorsGalleryAndConfigAPITests(TestCase):
         )
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.data["config"]["calendar_id"], "team@x.com")
+
+    def test_config_endpoint_accepts_valid_notify_email(self):
+        ConnectorConnection.objects.create(
+            organisation=self.org, connector_key=Connector.GMAIL,
+            status=ConnectorConnection.Status.ACTIVE,
+        )
+        resp = self.client.patch(
+            "/api/v1/connectors/gmail/config/", {"notify_email": "accountant@thebusiness.com"}, format="json",
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data["config"]["notify_email"], "accountant@thebusiness.com")
+
+    def test_config_endpoint_rejects_malformed_notify_email(self):
+        ConnectorConnection.objects.create(
+            organisation=self.org, connector_key=Connector.GMAIL,
+            status=ConnectorConnection.Status.ACTIVE,
+        )
+        resp = self.client.patch(
+            "/api/v1/connectors/gmail/config/", {"notify_email": "not-an-email"}, format="json",
+        )
+        self.assertEqual(resp.status_code, 400)
 
     def test_telegram_has_no_configurable_keys(self):
         """Telegram's only 'config' (chat_id) is set exclusively by the
@@ -1031,6 +1210,10 @@ class NewConnectorsTenantIsolationTests(TestCase):
             organisation=self.org_b, connector_key=Connector.TELEGRAM,
             status=ConnectorConnection.Status.ACTIVE, config={"chat_id": 111},
         )
+        self.conn_b_gmail = ConnectorConnection.objects.create(
+            organisation=self.org_b, connector_key=Connector.GMAIL,
+            status=ConnectorConnection.Status.ACTIVE, config={"notify_email": "orgb@thebusiness.com"},
+        )
         self.client_a = _auth_client(self.user_a, self.org_a)
 
     def test_org_a_cannot_read_org_bs_drive_or_telegram_connection(self):
@@ -1038,6 +1221,21 @@ class NewConnectorsTenantIsolationTests(TestCase):
         by_key = {c["connector_key"]: c for c in resp.data["connectors"]}
         self.assertIsNone(by_key["google_drive"]["connection"])
         self.assertIsNone(by_key["telegram"]["connection"])
+        self.assertIsNone(by_key["gmail"]["connection"])
+
+    def test_org_a_cannot_reconfigure_org_bs_gmail_notify_email(self):
+        resp = self.client_a.patch(
+            "/api/v1/connectors/gmail/config/", {"notify_email": "hacked@evil.com"}, format="json",
+        )
+        self.assertEqual(resp.status_code, 400)  # org A has no active Gmail connection of its own
+        self.conn_b_gmail.refresh_from_db()
+        self.assertEqual(self.conn_b_gmail.config["notify_email"], "orgb@thebusiness.com")  # untouched
+
+    def test_org_a_cannot_disconnect_org_bs_gmail(self):
+        resp = self.client_a.post("/api/v1/connectors/gmail/disconnect/")
+        self.assertEqual(resp.status_code, 404)
+        self.conn_b_gmail.refresh_from_db()
+        self.assertEqual(self.conn_b_gmail.status, ConnectorConnection.Status.ACTIVE)
 
     def test_org_a_cannot_reconfigure_org_bs_drive_folder(self):
         resp = self.client_a.patch(

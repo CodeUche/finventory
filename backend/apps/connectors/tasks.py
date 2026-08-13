@@ -46,6 +46,7 @@ CONNECTOR_EVENT_TYPES = {
     Connector.GOOGLE_SHEETS: ["invoice.created", "payment.received"],
     Connector.TELEGRAM: ["invoice.created", "payment.received"],
     Connector.GOOGLE_CALENDAR: ["invoice.created", "tax_obligation.upcoming"],
+    Connector.GMAIL: ["invoice.created", "payment.received"],
 }
 
 

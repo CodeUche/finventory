@@ -49,6 +49,7 @@ _INTEGRATION_ID_SETTINGS = {
     "google_sheets": "NANGO_GOOGLE_SHEETS_INTEGRATION_ID",
     "google_drive": "NANGO_GOOGLE_DRIVE_INTEGRATION_ID",
     "google_calendar": "NANGO_GOOGLE_CALENDAR_INTEGRATION_ID",
+    "gmail": "NANGO_GOOGLE_MAIL_INTEGRATION_ID",
     # "telegram" is deliberately absent — Telegram never goes through Nango
     # (no OAuth grant exists to proxy). Calling integration_id_for("telegram")
     # correctly raises ValueError; see apps.connectors.telegram instead.
@@ -58,6 +59,7 @@ _INTEGRATION_ID_DEFAULTS = {
     "google_sheets": "google-sheets",
     "google_drive": "google-drive",
     "google_calendar": "google-calendar",
+    "gmail": "google-mail",
 }
 
 

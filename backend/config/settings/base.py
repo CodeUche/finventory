@@ -64,15 +64,18 @@ FLUTTERWAVE_SECRET_KEY = config("FLUTTERWAVE_SECRET_KEY", default="")
 #   NANGO_WEBHOOK_SECRET  — the "webhook signing key" from the same page
 #                           (falls back to NANGO_SECRET_KEY if unset)
 #   NANGO_SLACK_INTEGRATION_ID, NANGO_GOOGLE_SHEETS_INTEGRATION_ID,
-#   NANGO_GOOGLE_DRIVE_INTEGRATION_ID, NANGO_GOOGLE_CALENDAR_INTEGRATION_ID —
+#   NANGO_GOOGLE_DRIVE_INTEGRATION_ID, NANGO_GOOGLE_CALENDAR_INTEGRATION_ID,
+#   NANGO_GOOGLE_MAIL_INTEGRATION_ID —
 #     must match the integration IDs (unique_key) configured in the Nango
 #     dashboard for the already-registered Slack/Google OAuth apps
-#     (defaults: "slack", "google-sheets", "google-drive", "google-calendar"
-#     — confirmed live against the real Nango API during implementation,
-#     Aug 2026: create_connect_session succeeds for both Google Drive and
-#     Google Calendar using these exact default integration IDs, so no env
-#     var override is actually needed unless the product owner renamed them
-#     in the Nango dashboard).
+#     (defaults: "slack", "google-sheets", "google-drive", "google-calendar",
+#     "google-mail" — confirmed live against the real Nango API during
+#     implementation, Aug 2026: create_connect_session succeeds for Google
+#     Drive, Google Calendar, and Gmail using these exact default
+#     integration IDs, so no env var override is actually needed unless the
+#     product owner renamed them in the Nango dashboard. Gmail reuses the
+#     SAME Google OAuth client already live for Sheets/Drive/Calendar — no
+#     new Google Cloud console work was needed for it).
 NANGO_SECRET_KEY = config("NANGO_SECRET_KEY", default="")
 NANGO_PUBLIC_KEY = config("NANGO_PUBLIC_KEY", default="")  # currently unused — see note above
 NANGO_WEBHOOK_SECRET = config("NANGO_WEBHOOK_SECRET", default="")
@@ -80,6 +83,7 @@ NANGO_SLACK_INTEGRATION_ID = config("NANGO_SLACK_INTEGRATION_ID", default="slack
 NANGO_GOOGLE_SHEETS_INTEGRATION_ID = config("NANGO_GOOGLE_SHEETS_INTEGRATION_ID", default="google-sheets")
 NANGO_GOOGLE_DRIVE_INTEGRATION_ID = config("NANGO_GOOGLE_DRIVE_INTEGRATION_ID", default="google-drive")
 NANGO_GOOGLE_CALENDAR_INTEGRATION_ID = config("NANGO_GOOGLE_CALENDAR_INTEGRATION_ID", default="google-calendar")
+NANGO_GOOGLE_MAIL_INTEGRATION_ID = config("NANGO_GOOGLE_MAIL_INTEGRATION_ID", default="google-mail")
 
 # Telegram (api.telegram.org) — the Telegram connector, apps.connectors.
 # telegram. NOT brokered by Nango (there's no per-org OAuth grant here — see
