@@ -3484,3 +3484,124 @@ class FixedAssetMasterConventionUsageTransferTests(TestCase):
         x = AssetTransfer.objects.get(organisation=self.org, asset_id=asset_id)
         self.assertEqual(str(x.from_asset_type_id), str(at_a.id))
         self.assertEqual(str(x.to_asset_type_id), str(at_b.id))
+
+
+class BankStatementImportIntegrityTests(TestCase):
+    """CSV import must be all-or-nothing, survive ragged rows, and never double-count
+    a re-imported statement.
+
+    Regression cover for the live-UI defect where a ragged row raised an unhandled
+    AttributeError mid-loop: the rows already written stayed behind (no transaction),
+    so re-importing the corrected file duplicated them and left the reconciliation
+    permanently unbalanced with no way to fix it from the UI.
+    """
+
+    def setUp(self):
+        import datetime
+        self.user = _make_user("recon_import@example.com")
+        self.org = _make_org(self.user, "Recon Import Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+        self.bank = Account.objects.get(organisation=self.org, code="1002")
+        from apps.accounting.models import BankReconciliation
+        self.recon = BankReconciliation.objects.create(
+            organisation=self.org, account=self.bank,
+            period_start=datetime.date(2026, 7, 1),
+            period_end=datetime.date(2026, 7, 31),
+            statement_closing_balance=Decimal("311500.32"),
+        )
+
+    def _import(self, csv_text, name="stmt.csv"):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        f = SimpleUploadedFile(name, csv_text.encode("utf-8"), content_type="text/csv")
+        return self.client.post(
+            f"/api/v1/accounting/reconciliations/{self.recon.id}/import_statement/",
+            {"file": f}, format="multipart",
+        )
+
+    def _count(self):
+        return self.recon.lines.count()
+
+    CLEAN = (
+        "date,description,debit,credit\n"
+        "03/07/2026,NIP/TRF/Falcon Ltd,,250000.00\n"
+        "15/07/2026,RENT PAYMENT JULY,80000.00,\n"
+    )
+
+    # ── Ragged rows must not 500 and must not partially import ──────────────────
+    def test_ragged_row_does_not_500(self):
+        """A short row (missing trailing columns) and a row with EXTRA columns are the
+        most common real-world bank-export defects. Neither may raise."""
+        ragged = (
+            "date,description,debit,credit\n"
+            "03/07/2026,Falcon Ltd,,250000\n"
+            "09/07/2026,Short row missing trailing cols\n"
+            "15/07/2026,Rent July,80000,,EXTRA,COLS\n"
+        )
+        res = self._import(ragged)
+        self.assertNotEqual(res.status_code, 500)
+        self.assertIn(res.status_code, (201, 400), msg=str(getattr(res, "data", "")))
+
+    def test_ragged_rows_still_import_the_good_ones(self):
+        ragged = (
+            "date,description,debit,credit\n"
+            "03/07/2026,Falcon Ltd,,250000\n"
+            "09/07/2026,Short row\n"
+            "15/07/2026,Rent July,80000,\n"
+        )
+        res = self._import(ragged)
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        # The two well-formed rows land; the short row is tolerated (restval='').
+        self.assertGreaterEqual(res.data["lines_created"], 2)
+
+    def test_no_partial_import_when_every_row_is_unusable(self):
+        """Zero usable rows → 400 and NOTHING written (the anti-orphan guarantee)."""
+        junk = "date,description,debit,credit\nnot-a-date,junk,abc,def\n"
+        res = self._import(junk)
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(self._count(), 0)
+
+    def test_missing_header_is_rejected_cleanly(self):
+        res = self._import("")
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(self._count(), 0)
+
+    # ── Re-import must not double-count ─────────────────────────────────────────
+    def test_reimport_same_statement_does_not_duplicate(self):
+        first = self._import(self.CLEAN)
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(self._count(), 2)
+
+        second = self._import(self.CLEAN)
+        self.assertEqual(second.status_code, 201)
+        self.assertEqual(second.data["lines_created"], 0)
+        self.assertEqual(second.data["duplicates_skipped"], 2)
+        self.assertEqual(self._count(), 2, "re-importing the same statement double-counted")
+
+    def test_recovery_after_bad_import_reaches_zero_difference(self):
+        """The reviewer's exact journey: a ragged file, then the corrected file.
+        The reconciliation must end able to balance — not stuck with a duplicate."""
+        ragged = (
+            "date,description,debit,credit\n"
+            "03/07/2026,NIP/TRF/Falcon Ltd,,250000.00\n"
+            "09/07/2026,Short row that breaks the parse\n"
+        )
+        self._import(ragged)
+        self._import(self.CLEAN)
+        # 250,000 must appear exactly once despite being in both files.
+        falcon = self.recon.lines.filter(description__icontains="Falcon")
+        self.assertEqual(falcon.count(), 1, "the corrected re-import duplicated a line")
+        total = sum(l.amount for l in self.recon.lines.all())
+        self.assertEqual(total, Decimal("170000.00"))
+
+    def test_genuine_same_day_repeat_transaction_is_kept(self):
+        """Two identical transactions in ONE file are legitimate — keep both."""
+        twice = (
+            "date,description,debit,credit\n"
+            "03/07/2026,POS PURCHASE,5000.00,\n"
+            "03/07/2026,POS PURCHASE,5000.00,\n"
+        )
+        res = self._import(twice)
+        self.assertEqual(res.status_code, 201)
+        self.assertEqual(res.data["lines_created"], 2)
+        self.assertEqual(self._count(), 2)

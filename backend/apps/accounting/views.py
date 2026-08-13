@@ -1191,6 +1191,9 @@ class BankReconciliationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         Creates one BankReconciliationLine per row.
         """
         import csv, io
+        from collections import Counter
+        from decimal import Decimal
+        from django.db import transaction as _txn
         recon = self.get_object()
         csv_file = request.FILES.get('file')
         if not csv_file:
@@ -1210,8 +1213,18 @@ class BankReconciliationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         except UnicodeDecodeError:
             return Response({'error': 'File encoding not supported. Please save as UTF-8.'}, status=400)
 
-        reader = csv.DictReader(io.StringIO(text))
-        headers = [h.strip().lower() for h in (reader.fieldnames or [])]
+        # restval='' so a SHORT row (missing trailing columns — very common in real
+        # bank exports) yields '' rather than None. restkey collects any EXTRA columns
+        # beyond the header under a single key, which we ignore. Together with the
+        # defensive normalisation below this stops a ragged row from raising an
+        # unhandled AttributeError and 500-ing the entire import.
+        reader = csv.DictReader(io.StringIO(text), restval='', restkey='__extra__')
+        headers = [h.strip().lower() for h in (reader.fieldnames or []) if h is not None]
+        if not headers:
+            return Response(
+                {'error': 'The CSV has no header row. Expected columns: date, description, debit, credit (or amount).'},
+                status=400,
+            )
 
         # Normalise header names (accept variations)
         def _col(row, *keys):
@@ -1221,10 +1234,21 @@ class BankReconciliationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                         return row.get(h, '').strip()
             return ''
 
-        lines_created = []
+        # ── Phase 1: parse EVERY row first. No database writes happen in this loop, so
+        # a malformed row can never leave a half-imported statement behind (the bug
+        # that let a 500 mid-loop orphan rows and produce duplicates on re-import).
+        parsed = []
         errors = []
         for i, row in enumerate(reader, start=2):  # row 1 is header
-            row_lower = {k.strip().lower(): v.strip() for k, v in row.items()}
+            # Defensive normalisation: a ragged row can give a None key (extra columns,
+            # collected under restkey) or a list/None value. Never let it raise.
+            row_lower = {}
+            for k, v in row.items():
+                if k is None or k == '__extra__':
+                    continue
+                if isinstance(v, list):
+                    v = v[0] if v else ''
+                row_lower[str(k).strip().lower()] = (v or '').strip()
             try:
                 from decimal import Decimal
                 date_str = _col(row_lower, 'date', 'transaction date', 'txn date', 'value date')
@@ -1266,21 +1290,58 @@ class BankReconciliationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
                 # Signed amount: credit (inflow) = positive, debit (outflow) = negative
                 signed_amount = credit - debit
-                line = BankReconciliationLine.objects.create(
-                    organisation=recon.organisation,
-                    reconciliation=recon,
-                    transaction_date=txn_date,
-                    description=description or 'Imported transaction',
-                    amount=signed_amount,
-                    is_cleared=False,
-                )
-                lines_created.append(line)
+                parsed.append({
+                    'transaction_date': txn_date,
+                    'description': description or 'Imported transaction',
+                    'amount': signed_amount,
+                })
             except Exception as e:
                 errors.append(f"Row {i}: {e}")
+
+        if not parsed:
+            return Response(
+                {'error': 'No usable rows found in the CSV.', 'errors': errors},
+                status=400,
+            )
+
+        # ── Phase 2: skip rows already present in THIS reconciliation. Re-importing the
+        # same statement (e.g. after fixing a few bad rows) must not double-count.
+        # Matched as a multiset, so a statement that genuinely contains the same
+        # transaction twice still imports both.
+        def _key(d, desc, amt):
+            return (d, (desc or '').strip().lower(), Decimal(str(amt)))
+
+        existing = Counter(
+            _key(l.transaction_date, l.description, l.amount)
+            for l in recon.lines.all()
+        )
+        to_create, duplicates = [], []
+        for p in parsed:
+            k = _key(p['transaction_date'], p['description'], p['amount'])
+            if existing.get(k, 0) > 0:
+                existing[k] -= 1
+                duplicates.append(f"{p['transaction_date']} {p['description']} {p['amount']}")
+                continue
+            to_create.append(p)
+
+        # ── Phase 3: single atomic write — all rows land or none do.
+        lines_created = []
+        with _txn.atomic():
+            for p in to_create:
+                lines_created.append(BankReconciliationLine.objects.create(
+                    organisation=recon.organisation,
+                    reconciliation=recon,
+                    transaction_date=p['transaction_date'],
+                    description=p['description'],
+                    amount=p['amount'],
+                    is_cleared=False,
+                ))
 
         return Response({
             'lines_created': len(lines_created),
             'errors': errors,
+            'duplicates_skipped': len(duplicates),
+            'duplicates': duplicates[:20],
             'lines': BankReconciliationLineSerializer(lines_created, many=True).data,
         }, status=status.HTTP_201_CREATED)
 
