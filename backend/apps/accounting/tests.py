@@ -3594,6 +3594,30 @@ class BankStatementImportIntegrityTests(TestCase):
         total = sum(l.amount for l in self.recon.lines.all())
         self.assertEqual(total, Decimal("170000.00"))
 
+
+    def test_amountless_row_is_reported_not_imported_as_zero(self):
+        """A truncated row used to parse to 0.00 and land as a meaningless line that
+        silently padded the reconciliation. It must be reported as an error instead."""
+        ragged = (
+            "date,description,debit,credit\n"
+            "03/07/2026,Real transaction,,250000\n"
+            "09/07/2026,Truncated row with no amount\n"
+        )
+        res = self._import(ragged)
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        self.assertEqual(res.data["lines_created"], 1)
+        self.assertEqual(self._count(), 1)
+        self.assertFalse(self.recon.lines.filter(amount=0).exists(),
+                         "a zero-amount line must never be imported")
+        self.assertTrue(any("no amount" in e for e in res.data["errors"]), str(res.data["errors"]))
+
+    def test_explicit_zero_amount_row_is_rejected(self):
+        res = self._import(
+            "date,description,debit,credit\n03/07/2026,Nothing happened,0,0\n"
+        )
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(self._count(), 0)
+
     def test_genuine_same_day_repeat_transaction_is_kept(self):
         """Two identical transactions in ONE file are legitimate — keep both."""
         twice = (

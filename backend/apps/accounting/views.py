@@ -1431,6 +1431,14 @@ class BankReconciliationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
                 # Signed amount: credit (inflow) = positive, debit (outflow) = negative
                 signed_amount = credit - debit
+                # A statement row carrying no amount is not a transaction. Report it
+                # rather than importing a meaningless 0.00 line that silently pads the
+                # reconciliation (a truncated row used to land here as a zero).
+                if signed_amount == 0:
+                    errors.append(
+                        f"Row {i}: no amount found (expected a debit, credit or amount value)"
+                    )
+                    continue
                 parsed.append({
                     'transaction_date': txn_date,
                     'description': description or 'Imported transaction',
