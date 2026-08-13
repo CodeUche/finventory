@@ -46,6 +46,33 @@ PAYSTACK_PUBLIC_KEY = config("PAYSTACK_PUBLIC_KEY", default="")
 # Get yours at https://dashboard.flutterwave.com/settings/apis
 FLUTTERWAVE_SECRET_KEY = config("FLUTTERWAVE_SECRET_KEY", default="")
 
+# Nango (nango.dev) — embedded auth + API-proxy for the Connectors feature
+# (Slack, Google Sheets). apps.connectors.nango fails loudly
+# (NangoNotConfiguredError, surfaced as a clear 503 from the API) rather than
+# silently no-op-ing when these are unset, so the gap is visible instead of
+# masquerading as "it just doesn't work". Set:
+#   NANGO_SECRET_KEY     — from Nango's Environment Settings. This is the
+#                           only key Nango's current Connect-Sessions API
+#                           needs server-side; there is no separate
+#                           client-facing "public key" in Nango's current
+#                           auth model (unlike Paystack) — the frontend uses
+#                           a short-lived session token minted server-side
+#                           via this secret key instead. NANGO_PUBLIC_KEY
+#                           below is kept only in case a future Nango API
+#                           version reintroduces one; it is not read by any
+#                           code path today.
+#   NANGO_WEBHOOK_SECRET  — the "webhook signing key" from the same page
+#                           (falls back to NANGO_SECRET_KEY if unset)
+#   NANGO_SLACK_INTEGRATION_ID, NANGO_GOOGLE_SHEETS_INTEGRATION_ID — must
+#     match the integration IDs configured in the Nango dashboard for the
+#     already-registered Slack/Google OAuth apps (defaults: "slack",
+#     "google-sheets").
+NANGO_SECRET_KEY = config("NANGO_SECRET_KEY", default="")
+NANGO_PUBLIC_KEY = config("NANGO_PUBLIC_KEY", default="")  # currently unused — see note above
+NANGO_WEBHOOK_SECRET = config("NANGO_WEBHOOK_SECRET", default="")
+NANGO_SLACK_INTEGRATION_ID = config("NANGO_SLACK_INTEGRATION_ID", default="slack")
+NANGO_GOOGLE_SHEETS_INTEGRATION_ID = config("NANGO_GOOGLE_SHEETS_INTEGRATION_ID", default="google-sheets")
+
 # Frontend base URL (kept for reference; verify-email now uses backend URL directly)
 FRONTEND_URL = config("FRONTEND_URL", default="http://localhost:3000")
 # Backend public URL — used to build email verification links for desktop app
@@ -128,7 +155,8 @@ LOCAL_APPS = [
     "apps.pos",          # hospitality POS: tables, orders, KOT
     "apps.storefront",   # public shop page + QR table ordering (unauthenticated)
     "apps.messaging",    # isolated in-app instant messaging (Track B)
-    "apps.integrations", # paid integrations marketplace: webhooks + Zapier (Track C)
+    "apps.integrations", # paid integrations marketplace: webhooks + Zapier (Track C) — hidden from nav in v1, kept alive for existing paying customers
+    "apps.connectors",   # one-click OAuth connectors (Slack, Google Sheets) via Nango
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -549,6 +577,11 @@ CELERY_BEAT_SCHEDULE = {
     # every 2 minutes rather than daily/weekly.
     "deliver-pending-webhooks": {
         "task": "integrations.deliver_pending_webhooks",
+        "schedule": timedelta(minutes=2),
+    },
+    # ── Connectors (Slack / Google Sheets via Nango) ──────────────────────────
+    "deliver-pending-connector-events": {
+        "task": "connectors.deliver_pending_connector_events",
         "schedule": timedelta(minutes=2),
     },
 }

@@ -3,39 +3,9 @@ import { Lock, RefreshCw, CheckCircle, LayoutGrid } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { subscriptionApi, bypassNextGets } from '@/services/api'
 import { openExternal } from '@/lib/openExternal'
+import { loadPaystackScript } from '@/lib/paystack'
 
 const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
-
-// Paystack Inline JS type declaration (same as BillingPage)
-declare global {
-  interface Window {
-    PaystackPop: {
-      setup(opts: {
-        key: string
-        email: string
-        amount: number
-        ref: string
-        currency?: string
-        onClose: () => void
-        callback: (response: { reference: string }) => void
-      }): { openIframe(): void }
-    }
-  }
-}
-
-function loadPaystackScript(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (window.PaystackPop) { resolve(); return }
-    const existing = document.getElementById('paystack-inline-js')
-    if (existing) { existing.addEventListener('load', () => resolve()); return }
-    const script = document.createElement('script')
-    script.id = 'paystack-inline-js'
-    script.src = 'https://js.paystack.co/v1/inline.js'
-    script.onload = () => resolve()
-    script.onerror = () => reject(new Error('Failed to load Paystack script'))
-    document.head.appendChild(script)
-  })
-}
 
 interface SubscriptionData {
   is_trial: boolean
@@ -143,7 +113,7 @@ export default function SubscriptionPaywall({ subscription, onDismiss, onGoToBil
         email,
         amount: amount_kobo,
         ref,
-        ...(access_code ? { accessCode: access_code } as any : {}),
+        ...(access_code ? { accessCode: access_code } : {}),
         currency: 'NGN',
         onClose: () => {
           toast('Payment cancelled.', { icon: '🚫' })

@@ -160,6 +160,7 @@ class PaymentHistory(TimeStampedModel):
     class Kind(models.TextChoices):
         SUBSCRIPTION = "subscription", "Subscription"
         INTEGRATION = "integration", "Integration purchase"
+        CONNECTOR_ADDON = "connector_addon", "Connector add-on subscription"
 
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"
@@ -182,6 +183,14 @@ class PaymentHistory(TimeStampedModel):
     )
     integration_entitlement = models.ForeignKey(
         "OrganisationIntegrationEntitlement", on_delete=models.PROTECT, related_name="payments",
+        null=True, blank=True,
+    )
+    # String FK to apps.connectors — deliberately no Python import of that
+    # app anywhere in this module (only this lazy string reference), so
+    # apps.connectors can freely import apps.subscriptions (e.g. Plan) with
+    # no import cycle. See apps.connectors.models module docstring.
+    connector_addon_subscription = models.ForeignKey(
+        "connectors.ConnectorAddonSubscription", on_delete=models.PROTECT, related_name="payments",
         null=True, blank=True,
     )
 
@@ -207,8 +216,18 @@ class PaymentHistory(TimeStampedModel):
             models.CheckConstraint(
                 check=(
                     Q(status="pending")
-                    | Q(kind="subscription", subscription__isnull=False, integration_entitlement__isnull=True)
-                    | Q(kind="integration", integration_entitlement__isnull=False, subscription__isnull=True)
+                    | Q(
+                        kind="subscription", subscription__isnull=False,
+                        integration_entitlement__isnull=True, connector_addon_subscription__isnull=True,
+                    )
+                    | Q(
+                        kind="integration", integration_entitlement__isnull=False,
+                        subscription__isnull=True, connector_addon_subscription__isnull=True,
+                    )
+                    | Q(
+                        kind="connector_addon", connector_addon_subscription__isnull=False,
+                        subscription__isnull=True, integration_entitlement__isnull=True,
+                    )
                 ),
                 name="payment_history_exactly_one_target_when_settled",
             ),

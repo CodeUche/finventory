@@ -72,7 +72,11 @@ api_v1_urlpatterns = [
     # In-app instant messaging (Track B) — REST only, no WebSockets/Channels
     path("messaging/", include("apps.messaging.urls")),
     # Paid integrations marketplace: webhooks + Zapier-compatible API (Track C)
+    # — hidden from nav in v1 (superseded by Connectors below), route kept
+    # alive for existing paying customers (see frontend Sidebar.tsx).
     path("integrations/", include("apps.integrations.urls")),
+    # One-click OAuth connectors (Slack, Google Sheets) via Nango.
+    path("connectors/", include("apps.connectors.urls")),
 ]
 
 from apps.storefront.urls import public_urlpatterns as _storefront_public
