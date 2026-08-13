@@ -113,7 +113,12 @@ class PurchaseOrderViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet
         serializer = ReceiveItemSerializer(data=request.data.get("items", []), many=True)
         serializer.is_valid(raise_exception=True)
 
-        po = PurchaseService.receive_purchase_order(po, serializer.validated_data, request.user)
+        try:
+            po = PurchaseService.receive_purchase_order(po, serializer.validated_data, request.user)
+        except ValueError as exc:
+            # Over-receipt or a closed order — the service is the single place
+            # both receive paths are checked (NEW-12).
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(PurchaseOrderSerializer(po).data)
 
     @action(detail=True, methods=["post"], url_path="quick-receive")
@@ -137,7 +142,13 @@ class PurchaseOrderViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet
         if not items:
             return Response({"error": "All items on this PO have already been received."}, status=status.HTTP_400_BAD_REQUEST)
 
-        po = PurchaseService.receive_purchase_order(po, items, request.user)
+        try:
+            po = PurchaseService.receive_purchase_order(po, items, request.user)
+        except ValueError as exc:
+            # This path computes its own remaining quantities and already screens
+            # closed orders, so it should not trip the service guard — caught so
+            # that if it ever does, the caller gets the reason rather than a 500.
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(PurchaseOrderSerializer(po).data)
 
     @action(detail=False, methods=["get"], url_path="eta-alerts")

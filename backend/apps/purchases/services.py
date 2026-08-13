@@ -30,6 +30,22 @@ class PurchaseService:
         - Auto-creates or updates a Bill so the receipt appears in AP aging.
         - Posts the GL journal (DR Inventory / CR Accounts Payable) via AccountingService.
         """
+        # A closed order cannot take delivery. Without this, receiving could be
+        # replayed against an already-received PO and add the stock again, each
+        # call also re-running _upsert_bill_for_po and inflating AP with it.
+        # quick_receive() checked this; the plain receive() path did not, so the
+        # guard lives here where both share it (NEW-12).
+        closed = {
+            PurchaseOrder.Status.RECEIVED,
+            PurchaseOrder.Status.CLOSED,
+            PurchaseOrder.Status.CANCELED,
+        }
+        if po.status in closed:
+            raise ValueError(
+                f"This purchase order is already {po.status} and cannot receive "
+                f"more goods."
+            )
+
         all_received = True
         batch_subtotal = Decimal("0")
 
@@ -42,6 +58,18 @@ class PurchaseService:
                 continue
 
             qty = Decimal(str(item_data["quantity_received"]))
+
+            # Cap at what is actually outstanding. quantity_received was
+            # previously incremented by whatever the caller sent, so a single
+            # request could book 9,999 units against an order of 10 — inflating
+            # both stock and the supplier bill, with no upper bound and no error.
+            outstanding = Decimal(str(item.quantity_ordered)) - Decimal(str(item.quantity_received))
+            if qty > outstanding:
+                raise ValueError(
+                    f"Cannot receive {qty} of {item.product.name}: only "
+                    f"{outstanding} outstanding on this order."
+                )
+
             item.quantity_received += qty
             item.save(update_fields=["quantity_received", "updated_at"])
 
