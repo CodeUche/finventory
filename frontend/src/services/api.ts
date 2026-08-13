@@ -1513,6 +1513,10 @@ export const accountingApi = {
   markReconciled: (id: string) => api.post(`/accounting/reconciliations/${id}/mark_reconciled/`),
   addReconLine: (id: string, data: object) => api.post(`/accounting/reconciliations/${id}/add_line/`, data),
   updateReconLine: (id: string, data: object) => api.patch(`/accounting/reconciliations/${id}/update_line/`, data),
+  deleteReconLine: (id: string, lineId: string) =>
+    api.post(`/accounting/reconciliations/${id}/delete_line/`, { line_id: lineId }),
+  deleteReconciliation: (id: string) => api.delete(`/accounting/reconciliations/${id}/`),
+  reopenReconciliation: (id: string) => api.post(`/accounting/reconciliations/${id}/reopen/`),
   importStatement: (id: string, file: File) => _importPost(`/accounting/reconciliations/${id}/import_statement/`, file),
   autoMatch: (id: string) => api.post(`/accounting/reconciliations/${id}/auto_match/`),
   aiReconcile: (id: string) => api.post(`/accounting/reconciliations/${id}/ai_reconcile/`),

@@ -1150,6 +1150,17 @@ class BankReconciliationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         org = self._get_organisation()
         serializer.save(organisation=org)
 
+    def destroy(self, request, *args, **kwargs):
+        """Discard a reconciliation. Completed ones are protected — re-open first, so a
+        signed-off reconciliation is never removed by accident."""
+        recon = self.get_object()
+        if recon.is_reconciled:
+            return Response(
+                {'error': 'This reconciliation is completed. Re-open it before deleting.'},
+                status=400,
+            )
+        return super().destroy(request, *args, **kwargs)
+
     @action(detail=True, methods=['post'])
     def mark_reconciled(self, request, pk=None):
         from django.utils import timezone as tz
@@ -1172,15 +1183,87 @@ class BankReconciliationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
     @action(detail=True, methods=['patch'])
     def update_line(self, request, pk=None):
+        """Update a statement line. Beyond the cleared flag, the line's own details are
+        editable so a mis-typed or mis-imported row can be corrected in place — without
+        it, a bad import can leave a reconciliation permanently unbalanceable."""
+        from decimal import Decimal, InvalidOperation
         recon = self.get_object()
+        if recon.is_reconciled:
+            return Response(
+                {'error': 'This reconciliation is already completed. Re-open it before editing lines.'},
+                status=400,
+            )
         line_id = request.data.get('line_id')
         try:
             line = recon.lines.get(id=line_id)
         except BankReconciliationLine.DoesNotExist:
             return Response({'error': 'Line not found'}, status=404)
-        line.is_cleared = request.data.get('is_cleared', line.is_cleared)
-        line.save(update_fields=['is_cleared'])
+
+        update_fields = []
+        if 'is_cleared' in request.data:
+            line.is_cleared = bool(request.data.get('is_cleared'))
+            update_fields.append('is_cleared')
+        if 'description' in request.data:
+            desc = str(request.data.get('description') or '').strip()
+            if not desc:
+                return Response({'error': 'Description cannot be empty.'}, status=400)
+            line.description = desc[:500]
+            update_fields.append('description')
+        if 'reference' in request.data:
+            line.reference = str(request.data.get('reference') or '').strip()[:100]
+            update_fields.append('reference')
+        if 'transaction_date' in request.data:
+            from datetime import date as _date
+            try:
+                line.transaction_date = _date.fromisoformat(str(request.data.get('transaction_date')))
+            except (TypeError, ValueError):
+                return Response({'error': 'transaction_date must be YYYY-MM-DD.'}, status=400)
+            update_fields.append('transaction_date')
+        if 'amount' in request.data:
+            try:
+                line.amount = Decimal(str(request.data.get('amount')).replace(',', '')).quantize(Decimal('0.01'))
+            except (InvalidOperation, TypeError, ValueError):
+                return Response({'error': 'amount must be a number.'}, status=400)
+            update_fields.append('amount')
+
+        if not update_fields:
+            return Response({'error': 'Nothing to update.'}, status=400)
+        line.save(update_fields=update_fields)
         return Response(BankReconciliationLineSerializer(line).data)
+
+    @action(detail=True, methods=['post'], url_path='delete_line')
+    def delete_line(self, request, pk=None):
+        """Remove a statement line. The escape hatch: without it a duplicated or
+        junk imported row leaves the reconciliation permanently unbalanceable, with
+        no way to recover from the UI."""
+        recon = self.get_object()
+        if recon.is_reconciled:
+            return Response(
+                {'error': 'This reconciliation is already completed. Re-open it before deleting lines.'},
+                status=400,
+            )
+        line_id = request.data.get('line_id')
+        try:
+            line = recon.lines.get(id=line_id)
+        except BankReconciliationLine.DoesNotExist:
+            return Response({'error': 'Line not found'}, status=404)
+        # Drop any match proposals that referenced this line so the AI/auto-match
+        # panels never point at a row that no longer exists.
+        AIReconMatch.objects.filter(reconciliation=recon, bank_line=line).delete()
+        line.delete()
+        return Response({'deleted': str(line_id)}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='reopen')
+    def reopen(self, request, pk=None):
+        """Re-open a completed reconciliation so it can be corrected."""
+        recon = self.get_object()
+        if not recon.is_reconciled:
+            return Response({'error': 'This reconciliation is not completed.'}, status=400)
+        recon.is_reconciled = False
+        recon.reconciled_by = None
+        recon.reconciled_at = None
+        recon.save(update_fields=['is_reconciled', 'reconciled_by', 'reconciled_at'])
+        return Response(BankReconciliationSerializer(recon).data)
 
     @action(detail=True, methods=['post'], url_path='import_statement')
     def import_statement(self, request, pk=None):

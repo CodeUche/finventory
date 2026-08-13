@@ -3605,3 +3605,126 @@ class BankStatementImportIntegrityTests(TestCase):
         self.assertEqual(res.status_code, 201)
         self.assertEqual(res.data["lines_created"], 2)
         self.assertEqual(self._count(), 2)
+
+
+class BankReconciliationEscapeHatchTests(TestCase):
+    """A user must always be able to correct or abandon a reconciliation.
+
+    Regression cover for the live-UI defect where a duplicated imported row left the
+    Difference permanently non-zero, "Mark as Reconciled" disabled, and NO delete or
+    edit control anywhere in the UI — an unrecoverable dead end.
+    """
+
+    def setUp(self):
+        import datetime
+        self.user = _make_user("recon_hatch@example.com")
+        self.org = _make_org(self.user, "Recon Hatch Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+        self.bank = Account.objects.get(organisation=self.org, code="1002")
+        from apps.accounting.models import BankReconciliation
+        self.recon = BankReconciliation.objects.create(
+            organisation=self.org, account=self.bank,
+            period_start=datetime.date(2026, 7, 1),
+            period_end=datetime.date(2026, 7, 31),
+            statement_closing_balance=Decimal("100000"),
+        )
+        self.line = self._line("Duplicated row", "2026-07-03", "250000")
+
+    def _line(self, desc, d, amt):
+        import datetime
+        from apps.accounting.models import BankReconciliationLine
+        return BankReconciliationLine.objects.create(
+            organisation=self.org, reconciliation=self.recon, description=desc,
+            transaction_date=datetime.date.fromisoformat(d), amount=Decimal(amt),
+        )
+
+    def _url(self, action):
+        return f"/api/v1/accounting/reconciliations/{self.recon.id}/{action}/"
+
+    # ── Delete ──────────────────────────────────────────────────────────────────
+    def test_delete_line_removes_it(self):
+        res = self.client.post(self._url("delete_line"), {"line_id": str(self.line.id)}, format="json")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.assertEqual(self.recon.lines.count(), 0)
+
+    def test_delete_line_also_clears_its_match_proposals(self):
+        from apps.accounting.models import AIReconMatch
+        AIReconMatch.objects.create(
+            organisation=self.org, reconciliation=self.recon, bank_line=self.line,
+            book_line=None, confidence=0.0, match_type="uncertain", status="proposed",
+        )
+        self.client.post(self._url("delete_line"), {"line_id": str(self.line.id)}, format="json")
+        self.assertEqual(AIReconMatch.objects.filter(reconciliation=self.recon).count(), 0)
+
+    def test_delete_unknown_line_404s(self):
+        import uuid
+        res = self.client.post(self._url("delete_line"), {"line_id": str(uuid.uuid4())}, format="json")
+        self.assertEqual(res.status_code, 404)
+
+    # ── Edit ────────────────────────────────────────────────────────────────────
+    def test_update_line_edits_amount_date_and_description(self):
+        res = self.client.patch(self._url("update_line"), {
+            "line_id": str(self.line.id), "description": "Corrected",
+            "transaction_date": "2026-07-05", "amount": "1234.56",
+        }, format="json")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.line.refresh_from_db()
+        self.assertEqual(self.line.description, "Corrected")
+        self.assertEqual(str(self.line.transaction_date), "2026-07-05")
+        self.assertEqual(self.line.amount, Decimal("1234.56"))
+
+    def test_update_line_still_toggles_cleared(self):
+        """The original cleared-flag behaviour must keep working."""
+        res = self.client.patch(self._url("update_line"),
+                                {"line_id": str(self.line.id), "is_cleared": True}, format="json")
+        self.assertEqual(res.status_code, 200)
+        self.line.refresh_from_db()
+        self.assertTrue(self.line.is_cleared)
+
+    def test_update_line_rejects_bad_amount(self):
+        res = self.client.patch(self._url("update_line"),
+                                {"line_id": str(self.line.id), "amount": "abc"}, format="json")
+        self.assertEqual(res.status_code, 400)
+
+    def test_update_line_rejects_empty_description(self):
+        res = self.client.patch(self._url("update_line"),
+                                {"line_id": str(self.line.id), "description": "   "}, format="json")
+        self.assertEqual(res.status_code, 400)
+
+    # ── Completed reconciliations are protected ─────────────────────────────────
+    def test_cannot_edit_or_delete_lines_on_a_completed_reconciliation(self):
+        self.recon.is_reconciled = True
+        self.recon.save(update_fields=["is_reconciled"])
+        d = self.client.post(self._url("delete_line"), {"line_id": str(self.line.id)}, format="json")
+        u = self.client.patch(self._url("update_line"),
+                              {"line_id": str(self.line.id), "amount": "1"}, format="json")
+        self.assertEqual(d.status_code, 400)
+        self.assertEqual(u.status_code, 400)
+        self.assertEqual(self.recon.lines.count(), 1)
+
+    def test_cannot_delete_a_completed_reconciliation(self):
+        self.recon.is_reconciled = True
+        self.recon.save(update_fields=["is_reconciled"])
+        res = self.client.delete(f"/api/v1/accounting/reconciliations/{self.recon.id}/")
+        self.assertEqual(res.status_code, 400)
+
+    def test_reopen_then_edit_then_delete(self):
+        """The full recovery path for a completed-but-wrong reconciliation."""
+        self.recon.is_reconciled = True
+        self.recon.save(update_fields=["is_reconciled"])
+        r = self.client.post(self._url("reopen"), {}, format="json")
+        self.assertEqual(r.status_code, 200, msg=str(r.data))
+        self.recon.refresh_from_db()
+        self.assertFalse(self.recon.is_reconciled)
+        self.assertIsNone(self.recon.reconciled_at)
+        d = self.client.post(self._url("delete_line"), {"line_id": str(self.line.id)}, format="json")
+        self.assertEqual(d.status_code, 200)
+
+    def test_discard_in_progress_reconciliation(self):
+        from apps.accounting.models import BankReconciliation
+        res = self.client.delete(f"/api/v1/accounting/reconciliations/{self.recon.id}/")
+        self.assertIn(res.status_code, (204, 200))
+        self.assertFalse(
+            BankReconciliation.objects.filter(id=self.recon.id, is_deleted=False).exists()
+        )
