@@ -9,6 +9,8 @@ from datetime import date
 
 from celery import shared_task
 
+from apps.core.tenant_context import for_each_organisation
+
 logger = logging.getLogger(__name__)
 
 
@@ -26,7 +28,6 @@ def archive_to_monthly_folders(self):
     management from users.
     """
     from django.db import transaction
-    from apps.tenancy.models import Organisation
     from apps.expenses.models import Expense, ExpenseGroup
 
     today = date.today()
@@ -38,11 +39,12 @@ def archive_to_monthly_folders(self):
 
     month_name = date(prev_year, prev_month, 1).strftime("%B %Y")  # e.g. "June 2026"
 
-    orgs = Organisation.objects.filter(is_active=True)
-    total_assigned = 0
-    total_orgs = 0
+    # Per-organisation RLS context: Celery does not run RLSMiddleware, so
+    # without this the Expense query returns zero rows and the ExpenseGroup
+    # INSERT is refused by the policy's WITH CHECK (NEW-7).
+    stats = {"orgs": 0}
 
-    for org in orgs:
+    def _archive(org):
         unfoldered = Expense.objects.filter(
             organisation=org,
             group__isnull=True,
@@ -51,32 +53,31 @@ def archive_to_monthly_folders(self):
         )
         count = unfoldered.count()
         if count == 0:
-            continue
+            return 0
 
-        try:
-            with transaction.atomic():
-                folder, _ = ExpenseGroup.objects.get_or_create(
-                    organisation=org,
-                    name=month_name,
-                    defaults={
-                        "description": f"Auto-archived expenses and income for {month_name}",
-                        "group_date": date(prev_year, prev_month, 1),
-                    },
-                )
-                unfoldered.update(group=folder)
-            total_assigned += count
-            total_orgs += 1
-            logger.info(
-                "archive_to_monthly_folders: org=%s assigned %d records → '%s'",
-                org.id, count, month_name,
+        with transaction.atomic():
+            folder, _ = ExpenseGroup.objects.get_or_create(
+                organisation=org,
+                name=month_name,
+                defaults={
+                    "description": f"Auto-archived expenses and income for {month_name}",
+                    "group_date": date(prev_year, prev_month, 1),
+                },
             )
-        except Exception as exc:
-            logger.error(
-                "archive_to_monthly_folders: org=%s failed: %s", org.id, exc, exc_info=True
-            )
+            unfoldered.update(group=folder)
+        stats["orgs"] += 1
+        logger.info(
+            "archive_to_monthly_folders: org=%s assigned %d records → '%s'",
+            org.id, count, month_name,
+        )
+        return count
+
+    result = for_each_organisation(
+        _archive, task_name="expenses.archive_to_monthly_folders",
+    )
 
     logger.info(
         "archive_to_monthly_folders complete: %d records across %d orgs → '%s'",
-        total_assigned, total_orgs, month_name,
+        result["processed"], stats["orgs"], month_name,
     )
-    return {"assigned": total_assigned, "orgs": total_orgs, "folder_name": month_name}
+    return {"assigned": result["processed"], "orgs": stats["orgs"], "folder_name": month_name}

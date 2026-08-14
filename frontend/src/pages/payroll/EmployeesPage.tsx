@@ -4,7 +4,7 @@ import { useDataRefresh } from '@/hooks/useDataRefresh'
 import {
   Plus, X, UsersRound, Loader2, Search, Edit2, ChevronDown, CheckCircle2,
   AlertTriangle, CreditCard, Trash2, Ban, FileText, Upload, Eye, Download, Mail, RefreshCw,
-  LogOut, Clock,
+  LogOut, Clock, Check,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { payrollApi, bypassNextGets } from '@/services/api'
@@ -391,6 +391,28 @@ export default function EmployeesPage() {
     } catch { toast.error('Failed to cancel') }
   }
 
+  // A loan only starts deducting once a manager approves it. Managers cannot
+  // approve their own, so the error from the API is surfaced verbatim.
+  const handleLoanDecision = async (id: string, decision: 'approve' | 'reject') => {
+    const prompt = decision === 'approve'
+      ? 'Approve this loan? Payroll will begin deducting the monthly instalment.'
+      : 'Reject this loan request?'
+    if (!(await confirmDialog(prompt))) return
+    try {
+      if (decision === 'approve') await payrollApi.approveLoan(id)
+      else await payrollApi.rejectLoan(id)
+      toast.success(decision === 'approve' ? 'Loan approved' : 'Loan rejected')
+      const { data } = await payrollApi.loans(editId!)
+      setLoans(data.results ?? data)
+    } catch (err: unknown) {
+      const apiErr = (err as { response?: { data?: { error?: unknown } } })?.response?.data?.error
+      const msg = typeof apiErr === 'string'
+        ? apiErr
+        : ((apiErr as { message?: string })?.message ?? `Could not ${decision} the loan`)
+      toast.error(msg)
+    }
+  }
+
   const selectBank = (bank: { name: string; code: string }) => {
     setForm((f) => ({ ...f, bank_name: bank.name }))
     setBankCode(bank.code); setBankSearch(bank.name); setBankOpen(false)
@@ -442,7 +464,8 @@ export default function EmployeesPage() {
     pending: 'badge-orange', applied: 'badge-green', waived: 'badge-slate',
   }
   const LOAN_STATUS_COLOR: Record<string, string> = {
-    active: 'badge-blue', settled: 'badge-green', cancelled: 'badge-slate',
+    pending: 'badge-amber', active: 'badge-blue', settled: 'badge-green',
+    cancelled: 'badge-slate', rejected: 'badge-slate',
   }
 
   return (
@@ -847,6 +870,12 @@ export default function EmployeesPage() {
                             </div>
                             <div className="flex items-center gap-2">
                               <span className={LOAN_STATUS_COLOR[loan.status] ?? 'badge-slate'}>{loan.status}</span>
+                              {loan.status === 'pending' && (
+                                <>
+                                  <button onClick={() => handleLoanDecision(loan.id, 'approve')} className="p-1.5 text-slate-500 hover:text-emerald-400 hover:bg-emerald-400/10 rounded-lg transition-colors" title="Approve loan"><Check size={13} /></button>
+                                  <button onClick={() => handleLoanDecision(loan.id, 'reject')} className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-colors" title="Reject loan"><X size={13} /></button>
+                                </>
+                              )}
                               {loan.status === 'active' && (
                                 <button onClick={() => handleCancelLoan(loan.id)} className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-colors" title="Cancel loan"><Ban size={13} /></button>
                               )}

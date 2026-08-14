@@ -170,8 +170,13 @@ class EmployeeLoanSerializer(serializers.ModelSerializer):
             'id', 'employee', 'principal_amount', 'interest_rate', 'duration_months',
             'start_date', 'total_repayable', 'monthly_installment',
             'amount_repaid', 'balance_remaining', 'status', 'notes', 'created_at',
+            'approved_by', 'approved_at', 'decision_note',
         ]
-        read_only_fields = ['id', 'total_repayable', 'monthly_installment', 'amount_repaid', 'created_at']
+        read_only_fields = [
+            'id', 'total_repayable', 'monthly_installment', 'amount_repaid', 'created_at',
+            # Set only by the approve/reject actions, never by a field write.
+            'approved_by', 'approved_at', 'decision_note',
+        ]
 
 
 class BonusSerializer(serializers.ModelSerializer):

@@ -9,6 +9,8 @@ from datetime import date
 
 from celery import shared_task
 
+from apps.core.tenant_context import for_each_organisation
+
 logger = logging.getLogger(__name__)
 
 
@@ -19,7 +21,6 @@ def run_monthly_depreciation(self):
 
     Should be scheduled to run on the 1st of each month for the previous month.
     """
-    from apps.tenancy.models import Organisation
     from .services import AccountingService
 
     today = date.today()
@@ -29,14 +30,17 @@ def run_monthly_depreciation(self):
     else:
         year, month = today.year, today.month - 1
 
-    orgs = Organisation.objects.filter(is_active=True)
-    total_entries = 0
-    for org in orgs:
-        try:
-            entries = AccountingService.run_depreciation(org, year, month)
-            total_entries += len(entries)
-        except Exception as exc:
-            logger.warning("Depreciation failed for org %s: %s", org.id, exc)
+    # This task already iterated organisations, but ran every query under the
+    # SENTINEL org id because Celery does not run RLSMiddleware — so
+    # run_depreciation() saw zero fixed assets and posted nothing (NEW-7).
+    def _depreciate(org):
+        return len(AccountingService.run_depreciation(org, year, month))
 
-    logger.info("run_monthly_depreciation: %d entries created for %d-%02d", total_entries, year, month)
-    return {"entries": total_entries, "year": year, "month": month}
+    result = for_each_organisation(
+        _depreciate, task_name="accounting.run_monthly_depreciation",
+    )
+    logger.info(
+        "run_monthly_depreciation: %d entries created for %d-%02d",
+        result["processed"], year, month,
+    )
+    return {"entries": result["processed"], "year": year, "month": month}
