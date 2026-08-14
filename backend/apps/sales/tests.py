@@ -252,3 +252,70 @@ class ProformaConfirmTests(TestCase):
         self.assertIn(confirm_res.status_code, [200, 201])
         invoice = Invoice.objects.get(id=inv_id)
         self.assertNotEqual(invoice.status, Invoice.Status.PROFORMA)
+
+
+class InvoiceStatusBypassTests(TestCase):
+    """
+    Finding M-1.
+
+    InvoiceViewSet.update allows `status` in ALLOWED_FIELDS and blocked only
+    PAID and VOIDED. CONFIRMED was not blocked, so a proforma could be promoted
+    to a confirmed sale by PATCH — skipping confirm_proforma entirely, which is
+    the only path that deducts stock via InventoryService.record_movement.
+
+    Result: a confirmed sale with inventory never reduced. The stock ledger and
+    the sales ledger disagree, and nothing surfaces the discrepancy.
+    """
+
+    def setUp(self):
+        from datetime import date
+        from decimal import Decimal
+
+        self.user = _make_user("invstatus_owner@example.com")
+        self.org = _make_org(self.user, "Inv Status Org")
+        self.client = _auth_client(self.user, self.org)
+        self.customer = _make_customer(self.org)
+        self.warehouse = _make_warehouse(self.org)
+        self.product = _make_product(self.org)
+        self.invoice = Invoice.objects.create(
+            organisation=self.org, customer=self.customer, warehouse=self.warehouse,
+            invoice_number="INV-STATUS-1", status=Invoice.Status.PROFORMA,
+            issue_date=date.today(), due_date=date.today(),
+            subtotal=Decimal("100"), total_amount=Decimal("100"), created_by=self.user,
+        )
+
+    def _patch(self, payload):
+        return self.client.patch(
+            f"/api/v1/sales/invoices/{self.invoice.id}/", payload, format="json",
+        )
+
+    def test_cannot_confirm_via_patch(self):
+        res = self._patch({"status": Invoice.Status.CONFIRMED})
+        self.assertIn(
+            res.status_code, (400, 422),
+            "PATCH promoted a proforma to confirmed, skipping the stock "
+            "deduction in confirm_proforma (M-1)",
+        )
+        self.invoice.refresh_from_db()
+        self.assertEqual(self.invoice.status, Invoice.Status.PROFORMA)
+
+    def test_cannot_set_partially_paid_via_patch(self):
+        res = self._patch({"status": Invoice.Status.PARTIALLY_PAID})
+        self.assertIn(res.status_code, (400, 422))
+        self.invoice.refresh_from_db()
+        self.assertEqual(self.invoice.status, Invoice.Status.PROFORMA)
+
+    def test_existing_paid_and_voided_guards_still_hold(self):
+        """Regression cover for the guard that was already there."""
+        for bad in (Invoice.Status.PAID, Invoice.Status.VOIDED):
+            with self.subTest(status=bad):
+                res = self._patch({"status": bad})
+                self.assertIn(res.status_code, (400, 422))
+                self.invoice.refresh_from_db()
+                self.assertEqual(self.invoice.status, Invoice.Status.PROFORMA)
+
+    def test_can_still_edit_metadata(self):
+        res = self._patch({"notes": "Customer asked to hold"})
+        self.assertEqual(res.status_code, 200, res.content[:300])
+        self.invoice.refresh_from_db()
+        self.assertEqual(self.invoice.notes, "Customer asked to hold")

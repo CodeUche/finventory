@@ -31,6 +31,8 @@ import logging
 from celery import shared_task
 from django.utils import timezone
 
+from apps.core.tenant_context import for_each_organisation
+
 logger = logging.getLogger(__name__)
 
 # Exponential back-off: 1 min, 2 min, 4 min, 8 min, 16 min
@@ -219,18 +221,23 @@ def report_b2c_invoices(self) -> dict:
     from apps.einvoicing.models import FirsSubmission, FirsConfig
     from apps.einvoicing.services import EInvoicingService, DigiTaxError
 
-    reported = 0
-    failed = 0
+    from apps.tenancy.models import Organisation
+
+    stats = {"reported": 0, "failed": 0}
 
     # Get distinct orgs that have BYPASSED submissions
-    org_ids = (
+    org_ids = list(
         FirsSubmission.objects
         .filter(status=FirsSubmission.Status.BYPASSED)
         .values_list("organisation_id", flat=True)
         .distinct()
     )
 
-    for org_id in org_ids:
+    # Per-org RLS context (NEW-7): the submission queries below select_related
+    # into sales_invoice, which is RLS-protected — under the SENTINEL that
+    # INNER JOIN eliminates every row, so nothing was ever reported to FIRS.
+    def _report_for_org(org):
+        org_id = org.id
         try:
             config = FirsConfig.objects.select_related("organisation").get(
                 organisation_id=org_id, is_enrolled=True
@@ -240,7 +247,7 @@ def report_b2c_invoices(self) -> dict:
                 "report_b2c_invoices: org %s has BYPASSED submissions but no enrolled config",
                 org_id,
             )
-            continue
+            return 0
 
         service = EInvoicingService(config)
 
@@ -281,25 +288,33 @@ def report_b2c_invoices(self) -> dict:
 
                 invoice.firs_status = "reported"
                 invoice.save(update_fields=["firs_status", "updated_at"])
-                reported += 1
+                stats["reported"] += 1
 
             except DigiTaxError as exc:
                 logger.warning(
                     "report_b2c_invoices: failed for invoice %s: %s",
                     invoice.invoice_number, exc.message,
                 )
-                failed += 1
+                stats["failed"] += 1
             except Exception as exc:
                 logger.exception(
                     "report_b2c_invoices: unexpected error for invoice %s: %s",
                     invoice.invoice_number, exc,
                 )
-                failed += 1
+                stats["failed"] += 1
+
+        return stats["reported"]
+
+    for_each_organisation(
+        _report_for_org,
+        task_name="einvoicing.report_b2c_invoices",
+        queryset=Organisation.objects.filter(id__in=org_ids, is_active=True),
+    )
 
     logger.info(
-        "report_b2c_invoices: reported=%d failed=%d", reported, failed
+        "report_b2c_invoices: reported=%d failed=%d", stats["reported"], stats["failed"]
     )
-    return {"reported": reported, "failed": failed}
+    return {"reported": stats["reported"], "failed": stats["failed"]}
 
 
 # ─── Retry failed submissions ─────────────────────────────────────────────────
@@ -322,31 +337,42 @@ def retry_failed_submissions(self) -> dict:
     """
     from apps.einvoicing.models import FirsSubmission
 
-    # Only retry submissions that have failed fewer than MAX_RETRIES times
-    eligible = FirsSubmission.objects.filter(
-        status=FirsSubmission.Status.FAILED,
-        attempt_count__lt=_MAX_RETRIES,
-    ).select_related("invoice__organisation__firs_config")
+    # Per-org RLS context (NEW-7): select_related("invoice__…") INNER JOINs
+    # sales_invoice, which is RLS-protected. Under the SENTINEL that join
+    # eliminated every row, so no failed submission was ever retried.
+    def _retry_for_org(org):
+        # Only retry submissions that have failed fewer than MAX_RETRIES times
+        eligible = FirsSubmission.objects.filter(
+            organisation=org,
+            status=FirsSubmission.Status.FAILED,
+            attempt_count__lt=_MAX_RETRIES,
+        ).select_related("invoice__organisation__firs_config")
 
-    queued = 0
-    for submission in eligible:
-        invoice = submission.invoice
+        queued = 0
+        for submission in eligible:
+            invoice = submission.invoice
 
-        # Skip if the org is no longer enrolled
-        try:
-            config = invoice.organisation.firs_config
-            if not config.is_enrolled:
+            # Skip if the org is no longer enrolled
+            try:
+                config = invoice.organisation.firs_config
+                if not config.is_enrolled:
+                    continue
+            except Exception:
                 continue
-        except Exception:
-            continue
 
-        # Increment attempt_count before re-queuing to prevent tight retry loops
-        submission.attempt_count += 1
-        submission.save(update_fields=["attempt_count", "updated_at"])
+            # Increment attempt_count before re-queuing to prevent tight retry loops
+            submission.attempt_count += 1
+            submission.save(update_fields=["attempt_count", "updated_at"])
 
-        # Queue the standard submission task
-        request_irn.delay(str(invoice.pk))
-        queued += 1
+            # Queue the standard submission task
+            request_irn.delay(str(invoice.pk))
+            queued += 1
+
+        return queued
+
+    queued = for_each_organisation(
+        _retry_for_org, task_name="einvoicing.retry_failed_submissions",
+    )["processed"]
 
     logger.info("retry_failed_submissions: queued %d submissions for retry", queued)
     return {"queued": queued}

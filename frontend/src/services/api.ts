@@ -1575,6 +1575,11 @@ export const payrollApi = {
     api.get('/payroll/loans/', { params: { employee: employeeId } }),
   createLoan: (data: object) => api.post('/payroll/loans/', data),
   cancelLoan: (id: string) => api.post(`/payroll/loans/${id}/cancel/`),
+  // Loans start pending and only deduct once a manager approves them.
+  approveLoan: (id: string, note?: string) =>
+    api.post(`/payroll/loans/${id}/approve/`, note ? { note } : {}),
+  rejectLoan: (id: string, note?: string) =>
+    api.post(`/payroll/loans/${id}/reject/`, note ? { note } : {}),
   // Employee documents
   documents: (employeeId: string) =>
     api.get('/payroll/documents/', { params: { employee: employeeId } }),

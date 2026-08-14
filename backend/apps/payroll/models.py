@@ -432,11 +432,21 @@ class EmployeePenalty(TenantAwareModel):
 
 
 class EmployeeLoan(TenantAwareModel):
-    """Company loan issued to an employee, repaid via monthly payroll deductions."""
+    """
+    Company loan issued to an employee, repaid via monthly payroll deductions.
+
+    Loans start PENDING and only begin deducting once a manager approves them.
+    Before this existed any staff-level user could create a loan for themselves
+    that went straight to ACTIVE — self-issued credit with no second pair of
+    eyes (NEW-10). PayrollService already filters on ACTIVE, so a pending loan
+    is inert until approved.
+    """
+    PENDING = 'pending'
     ACTIVE = 'active'
     SETTLED = 'settled'
     CANCELLED = 'cancelled'
-    STATUS_CHOICES = [(s, s) for s in [ACTIVE, SETTLED, CANCELLED]]
+    REJECTED = 'rejected'
+    STATUS_CHOICES = [(s, s) for s in [PENDING, ACTIVE, SETTLED, CANCELLED, REJECTED]]
 
     employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name='loans')
     principal_amount = MoneyField()
@@ -449,8 +459,16 @@ class EmployeeLoan(TenantAwareModel):
     monthly_installment = MoneyField(default=0)
     # Tracks repayment progress
     amount_repaid = MoneyField(default=0)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=ACTIVE)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=PENDING)
     notes = models.TextField(blank=True)
+    # Who released the money, and when. Nullable because every loan created
+    # before this workflow existed was implicitly already active.
+    approved_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='loans_approved',
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
+    decision_note = models.CharField(max_length=500, blank=True)
 
     class Meta:
         ordering = ['-start_date']

@@ -160,3 +160,144 @@ class MembershipPermissionTests(TestCase):
             {"email": "new@example.com", "role": "staff"},
         )
         self.assertIn(res.status_code, [403, 400])
+
+
+class OrganisationMutationPermissionTests(TestCase):
+    """C-1 — the org object itself is a privileged resource.
+
+    Before the fix, OrganisationViewSet declared only `permission_classes =
+    [IsAuthenticated]` and never overrode the ModelViewSet defaults, so *any*
+    active member — down to `viewer`/`employee` — could rewrite the payout bank
+    account or soft-delete the whole organisation in one request.
+
+    These tests pin the boundary in both directions: privileged fields are
+    refused below the minimum role, and the benign fields the product actually
+    depends on (TopBar currency switch, onboarding completion) still work for
+    ordinary members.
+    """
+
+    # Roles that must NOT be able to rewrite payout bank details.
+    # `admin` is deliberately excluded: SettingsPage renders an editable bank form
+    # for admins, so gating bank details at owner-only would 403 a form the UI
+    # presents as editable. admin+ still closes the reported hole.
+    ROLES_DENIED_BANK = ["viewer", "employee", "staff", "accountant", "manager"]
+    # Deactivate/delete are owner-only — no frontend path exercises either, so the
+    # tighter gate has no UI cost. `admin` IS included here.
+    ROLES_DENIED_DESTRUCTIVE = ROLES_DENIED_BANK + ["admin"]
+
+    def setUp(self):
+        self.owner = _make_user("c1_owner@example.com")
+        self.org = _make_org(self.owner, name="C1 Org")
+        self.org.bank_account_number = "0000000000"
+        self.org.bank_name = "Original Bank"
+        self.org.save(update_fields=["bank_account_number", "bank_name"])
+        self.url = f"/api/v1/tenancy/organisations/{self.org.id}/"
+
+    def _client_with_role(self, role):
+        user = _make_user(f"c1_{role}@example.com")
+        Membership.objects.create(
+            user=user, organisation=self.org, role=role, is_active=True
+        )
+        return _auth_client(user, self.org)
+
+    # ---- bank details -------------------------------------------------
+
+    def test_bank_details_patch_refused_for_every_role_below_admin(self):
+        for role in self.ROLES_DENIED_BANK:
+            with self.subTest(role=role):
+                client = self._client_with_role(role)
+                res = client.patch(
+                    self.url,
+                    {"bank_account_number": "9999999999", "bank_name": "Attacker Bank"},
+                    format="json",
+                )
+                self.assertEqual(
+                    res.status_code, 403,
+                    f"role={role} must not change payout bank details (got {res.status_code})",
+                )
+                self.org.refresh_from_db()
+                self.assertEqual(self.org.bank_account_number, "0000000000")
+                self.assertEqual(self.org.bank_name, "Original Bank")
+
+    def test_bank_details_patch_allowed_for_owner(self):
+        client = _auth_client(self.owner, self.org)
+        res = client.patch(
+            self.url,
+            {"bank_account_number": "1234567890", "bank_name": "New Bank"},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 200)
+        self.org.refresh_from_db()
+        self.assertEqual(self.org.bank_account_number, "1234567890")
+
+    def test_bank_details_patch_allowed_for_admin(self):
+        """SettingsPage shows admins an editable bank form — it must keep working."""
+        client = self._client_with_role("admin")
+        res = client.patch(self.url, {"bank_account_number": "2222222222"}, format="json")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.org.refresh_from_db()
+        self.assertEqual(self.org.bank_account_number, "2222222222")
+
+    def test_bank_detail_change_is_individually_audited(self):
+        from apps.core.models import AuditLog
+
+        client = _auth_client(self.owner, self.org)
+        client.patch(self.url, {"bank_account_number": "5555555555"}, format="json")
+
+        entry = AuditLog.objects.filter(
+            organisation_id=self.org.id, model_name="tenancy/organisations"
+        ).order_by("-created_at").first()
+        self.assertIsNotNone(entry, "bank detail change must write an audit entry")
+        self.assertIn("bank_account_number", entry.changes)
+        self.assertEqual(entry.changes["bank_account_number"]["from"], "0000000000")
+        self.assertEqual(entry.changes["bank_account_number"]["to"], "5555555555")
+
+    # ---- is_active / destroy ------------------------------------------
+
+    def test_is_active_patch_refused_for_every_role_below_owner(self):
+        for role in self.ROLES_DENIED_DESTRUCTIVE:
+            with self.subTest(role=role):
+                client = self._client_with_role(role)
+                res = client.patch(self.url, {"is_active": False}, format="json")
+                self.assertEqual(
+                    res.status_code, 403,
+                    f"role={role} must not be able to deactivate the org (got {res.status_code})",
+                )
+                self.org.refresh_from_db()
+                self.assertTrue(self.org.is_active)
+
+    def test_destroy_refused_for_every_role_below_owner(self):
+        for role in self.ROLES_DENIED_DESTRUCTIVE:
+            with self.subTest(role=role):
+                client = self._client_with_role(role)
+                res = client.delete(self.url)
+                self.assertEqual(
+                    res.status_code, 403,
+                    f"role={role} must not be able to delete the org (got {res.status_code})",
+                )
+                self.assertTrue(
+                    Organisation.objects.filter(id=self.org.id, is_deleted=False).exists()
+                )
+
+    # ---- regression guards: benign fields must keep working ------------
+
+    def test_staff_can_still_patch_currency(self):
+        """TopBar.handleCurrencyChange has no role gate — it must not start 403-ing."""
+        client = self._client_with_role("staff")
+        res = client.patch(self.url, {"currency": "USD"}, format="json")
+        self.assertEqual(res.status_code, 200)
+        self.org.refresh_from_db()
+        self.assertEqual(self.org.currency, "USD")
+
+    def test_staff_can_still_patch_benign_profile_fields(self):
+        client = self._client_with_role("staff")
+        res = client.patch(
+            self.url, {"phone": "+2348012345678", "address": "12 New Road"}, format="json"
+        )
+        self.assertEqual(res.status_code, 200)
+
+    def test_owner_can_still_complete_onboarding(self):
+        """OnboardingPage PATCHes onboarding_completed — must remain available."""
+        client = _auth_client(self.owner, self.org)
+        res = client.patch(self.url, {"onboarding_completed": True}, format="json")
+        self.assertEqual(res.status_code, 200)

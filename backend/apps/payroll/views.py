@@ -387,6 +387,95 @@ class EmployeeLoanViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     serializer_class = EmployeeLoanSerializer
     permission_classes = [IsAuthenticated, IsStaff, _PlanPayroll]
 
+    # SETTLED is reached only by PayrollService, once deductions have actually
+    # repaid the balance. amount_repaid is already read-only, so allowing the
+    # status through let a staff user write off their own outstanding loan and
+    # stop the deduction while the money was still owed (NEW-1). Cancellation
+    # keeps its own action.
+    # SETTLED is payroll's to set; ACTIVE is the approver's. Neither may be
+    # written as a field, or the approval step is decorative (NEW-1, NEW-10).
+    PAYROLL_DRIVEN_STATUSES = {EmployeeLoan.SETTLED, EmployeeLoan.ACTIVE}
+
+    def get_permissions(self):
+        """
+        Issuing company credit is a manager decision.
+
+        Creation was previously open to any staff-level user and produced an
+        immediately-active loan, so an employee could grant themselves money
+        (NEW-10). Reads stay at staff level so employees can still see their
+        own loans.
+        """
+        if self.action in ('create', 'approve', 'reject'):
+            return [IsAuthenticated(), IsManager(), _PlanPayroll()]
+        return super().get_permissions()
+
+    def partial_update(self, request, *args, **kwargs):
+        self._reject_payroll_driven_status(request)
+        return super().partial_update(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        self._reject_payroll_driven_status(request)
+        return super().update(request, *args, **kwargs)
+
+    def _reject_payroll_driven_status(self, request):
+        if request.data.get('status') in self.PAYROLL_DRIVEN_STATUSES:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({'status': (
+                "A loan becomes active when it is approved, and settled when "
+                "payroll finishes recovering it. Use Approve, or cancel the loan."
+            )})
+
+    def _is_own_loan(self, loan, user):
+        """True when the approver is the borrower — Employee.user is the link."""
+        return bool(loan.employee.user_id) and loan.employee.user_id == user.id
+
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        """POST /payroll/loans/{id}/approve/ — release the loan for deduction."""
+        from django.utils import timezone
+
+        loan = self.get_object()
+        if loan.status != EmployeeLoan.PENDING:
+            return Response(
+                {'error': {'message': f'Only a pending loan can be approved (this one is {loan.status}).'}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if self._is_own_loan(loan, request.user):
+            # The whole point of the approval step is a second pair of eyes.
+            return Response(
+                {'error': {'message': 'You cannot approve your own loan. Ask another manager.'}},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        loan.status = EmployeeLoan.ACTIVE
+        loan.approved_by = request.user
+        loan.approved_at = timezone.now()
+        loan.decision_note = (request.data.get('note') or '')[:500]
+        loan.save(update_fields=['status', 'approved_by', 'approved_at', 'decision_note', 'updated_at'])
+        return Response(EmployeeLoanSerializer(loan).data)
+
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        """POST /payroll/loans/{id}/reject/ — decline the request."""
+        from django.utils import timezone
+
+        loan = self.get_object()
+        if loan.status != EmployeeLoan.PENDING:
+            return Response(
+                {'error': {'message': f'Only a pending loan can be rejected (this one is {loan.status}).'}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if self._is_own_loan(loan, request.user):
+            return Response(
+                {'error': {'message': 'You cannot decide on your own loan.'}},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        loan.status = EmployeeLoan.REJECTED
+        loan.approved_by = request.user
+        loan.approved_at = timezone.now()
+        loan.decision_note = (request.data.get('note') or '')[:500]
+        loan.save(update_fields=['status', 'approved_by', 'approved_at', 'decision_note', 'updated_at'])
+        return Response(EmployeeLoanSerializer(loan).data)
+
     def get_queryset(self):
         org = self._get_organisation()
         qs = EmployeeLoan.objects.filter(organisation=org)
@@ -1904,6 +1993,25 @@ class StatutoryRemittanceViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, IsOwnerOrAdmin]
     http_method_names = ['get', 'patch', 'post', 'head', 'options']
 
+    # Settlement is an event, not a field. RemittanceService.mark_remitted()
+    # records the payment AND posts the clearing journal; writing these
+    # directly would leave the liability on the balance sheet forever while
+    # the compliance screen reports the obligation as met (NEW-1).
+    SETTLEMENT_FIELDS = {'status', 'amount_paid', 'remittance_date', 'gl_cleared'}
+
+    def partial_update(self, request, *args, **kwargs):
+        attempted = self.SETTLEMENT_FIELDS & set(request.data.keys())
+        if attempted:
+            return Response(
+                {'error': {'message': (
+                    "Remittance settlement is recorded, not edited. Use Mark "
+                    "Remitted so the payment and the clearing journal are "
+                    "posted together."
+                )}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return super().partial_update(request, *args, **kwargs)
+
     def get_queryset(self):
         org = self._get_organisation()
         qs = (
@@ -2290,6 +2398,29 @@ class LeaveBalanceViewSet(TenantFilterMixin, viewsets.ReadOnlyModelViewSet):
 class LeaveRequestViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     serializer_class = LeaveRequestSerializer
     permission_classes = [IsAuthenticated, IsStaff, _PlanPayroll]
+
+    # A decision on a leave request must go through approve/reject, which
+    # record who decided it. Left writable via PATCH, any staff-level user
+    # could approve their own request — the requester and the approver being
+    # the same person is the thing an approval step exists to prevent (NEW-1).
+    # `cancelled` stays writable so a requester can still withdraw.
+    DECISION_STATUSES = {LeaveRequest.APPROVED, LeaveRequest.REJECTED}
+
+    def partial_update(self, request, *args, **kwargs):
+        self._reject_decision_status(request)
+        return super().partial_update(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        self._reject_decision_status(request)
+        return super().update(request, *args, **kwargs)
+
+    def _reject_decision_status(self, request):
+        if request.data.get('status') in self.DECISION_STATUSES:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({'status': (
+                "Use the Approve or Reject action so the decision is recorded "
+                "against the person who made it."
+            )})
 
     def get_queryset(self):
         org = self._get_organisation()
