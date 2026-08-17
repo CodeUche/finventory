@@ -13,6 +13,8 @@ from datetime import date, timedelta
 from celery import shared_task
 from django.utils import timezone
 
+from apps.core.tenant_context import for_each_organisation, organisation_context
+
 logger = logging.getLogger(__name__)
 
 MONTHS = [
@@ -45,38 +47,43 @@ def generate_monthly_vat_obligations():
     orgs = Organisation.objects.filter(is_active=True)
     created = 0
     for org in orgs:
-        label = f"VAT Return — {MONTHS[month]} {year}"
-        obligation, was_created = TaxObligation.objects.get_or_create(
-            organisation=org,
-            obligation_type=TaxObligation.VAT,
-            period_year=year,
-            period_month=month,
-            defaults={
-                'label': label,
-                'due_date': due_date,
-                'status': TaxObligation.PENDING,
-                'is_auto_generated': True,
-            },
-        )
-        if was_created:
-            created += 1
-            # Consumed by the Google Calendar connector (see
-            # apps.connectors.services._deliver_to_calendar /
-            # apps.connectors.tasks.CONNECTOR_EVENT_TYPES) to add this
-            # deadline to an org's calendar. Emitted unconditionally for
-            # every org, same as invoice.created — the beat task that
-            # replays these only does anything for orgs with an ACTIVE
-            # Calendar connection.
-            IntegrationEventService.emit(
-                org, "tax_obligation.upcoming",
-                {
-                    "obligation_id": str(obligation.id),
-                    "obligation_type": obligation.obligation_type,
-                    "label": obligation.label,
-                    "due_date": obligation.due_date.isoformat(),
-                    "amount_due": str(obligation.amount_due),
+        # Name the company before touching its rows. Without this, once
+        # the tax tables are covered by the database lock-down, the
+        # get_or_create below would be refused and nothing would be
+        # generated — silently (NEW-15).
+        with organisation_context(org.id):
+            label = f"VAT Return — {MONTHS[month]} {year}"
+            obligation, was_created = TaxObligation.objects.get_or_create(
+                organisation=org,
+                obligation_type=TaxObligation.VAT,
+                period_year=year,
+                period_month=month,
+                defaults={
+                    'label': label,
+                    'due_date': due_date,
+                    'status': TaxObligation.PENDING,
+                    'is_auto_generated': True,
                 },
             )
+            if was_created:
+                created += 1
+                # Consumed by the Google Calendar connector (see
+                # apps.connectors.services._deliver_to_calendar /
+                # apps.connectors.tasks.CONNECTOR_EVENT_TYPES) to add this
+                # deadline to an org's calendar. Emitted unconditionally for
+                # every org, same as invoice.created — the beat task that
+                # replays these only does anything for orgs with an ACTIVE
+                # Calendar connection.
+                IntegrationEventService.emit(
+                    org, "tax_obligation.upcoming",
+                    {
+                        "obligation_id": str(obligation.id),
+                        "obligation_type": obligation.obligation_type,
+                        "label": obligation.label,
+                        "due_date": obligation.due_date.isoformat(),
+                        "amount_due": str(obligation.amount_due),
+                    },
+                )
 
     logger.info("Generated VAT obligations for %d/%d: %d new", year, month, created)
     return created
@@ -104,46 +111,51 @@ def generate_monthly_paye_obligations():
     orgs = Organisation.objects.filter(is_active=True)
     created = 0
     for org in orgs:
-        label = f"PAYE Remittance — {MONTHS[month]} {year}"
-        obligation, was_created = TaxObligation.objects.get_or_create(
-            organisation=org,
-            obligation_type=TaxObligation.PAYE,
-            period_year=year,
-            period_month=month,
-            defaults={
-                'label': label,
-                'due_date': due_date,
-                'status': TaxObligation.PENDING,
-                'is_auto_generated': True,
-            },
-        )
-        if was_created:
-            created += 1
-            # See the matching comment in generate_monthly_vat_obligations —
-            # same Calendar-connector consumption.
-            IntegrationEventService.emit(
-                org, "tax_obligation.upcoming",
-                {
-                    "obligation_id": str(obligation.id),
-                    "obligation_type": obligation.obligation_type,
-                    "label": obligation.label,
-                    "due_date": obligation.due_date.isoformat(),
-                    "amount_due": str(obligation.amount_due),
+        # Name the company before touching its rows. Without this, once
+        # the tax tables are covered by the database lock-down, the
+        # get_or_create below would be refused and nothing would be
+        # generated — silently (NEW-15).
+        with organisation_context(org.id):
+            label = f"PAYE Remittance — {MONTHS[month]} {year}"
+            obligation, was_created = TaxObligation.objects.get_or_create(
+                organisation=org,
+                obligation_type=TaxObligation.PAYE,
+                period_year=year,
+                period_month=month,
+                defaults={
+                    'label': label,
+                    'due_date': due_date,
+                    'status': TaxObligation.PENDING,
+                    'is_auto_generated': True,
                 },
             )
+            if was_created:
+                created += 1
+                # See the matching comment in generate_monthly_vat_obligations —
+                # same Calendar-connector consumption.
+                IntegrationEventService.emit(
+                    org, "tax_obligation.upcoming",
+                    {
+                        "obligation_id": str(obligation.id),
+                        "obligation_type": obligation.obligation_type,
+                        "label": obligation.label,
+                        "due_date": obligation.due_date.isoformat(),
+                        "amount_due": str(obligation.amount_due),
+                    },
+                )
 
-        # PAYE is now split across the State IRS of each employee's residence,
-        # so the obligation total is the sum of every authority's row for the
-        # period rather than a single record.
-        total = StatutoryRemittance.objects.filter(
-            organisation=org,
-            remittance_type=StatutoryRemittance.PAYE,
-            period_year=year,
-            period_month=month,
-        ).aggregate(total=Sum('amount_due'))['total']
-        if total is not None and obligation.amount_due != total:
-            obligation.amount_due = Decimal(str(total))
-            obligation.save(update_fields=['amount_due'])
+            # PAYE is now split across the State IRS of each employee's residence,
+            # so the obligation total is the sum of every authority's row for the
+            # period rather than a single record.
+            total = StatutoryRemittance.objects.filter(
+                organisation=org,
+                remittance_type=StatutoryRemittance.PAYE,
+                period_year=year,
+                period_month=month,
+            ).aggregate(total=Sum('amount_due'))['total']
+            if total is not None and obligation.amount_due != total:
+                obligation.amount_due = Decimal(str(total))
+                obligation.save(update_fields=['amount_due'])
 
     logger.info("Generated PAYE obligations for %d/%d: %d new", year, month, created)
     return created
@@ -155,10 +167,20 @@ def flag_overdue_tax_obligations():
     from .models import TaxObligation
 
     today = date.today()
-    updated = TaxObligation.objects.filter(
-        status=TaxObligation.PENDING,
-        due_date__lt=today,
-    ).update(status=TaxObligation.OVERDUE)
+
+    # This one never looped companies at all — it asked for "all pending
+    # obligations" in one go. Once the tax tables are covered by the database
+    # lock-down that update would match nothing and report zero, which reads
+    # exactly like a quiet day (NEW-15).
+    def _flag_for_one_company(org):
+        return TaxObligation.objects.filter(
+            status=TaxObligation.PENDING,
+            due_date__lt=today,
+        ).update(status=TaxObligation.OVERDUE)
+
+    updated = for_each_organisation(
+        _flag_for_one_company, task_name="tax.flag_overdue_tax_obligations",
+    )["processed"]
 
     logger.info("Flagged %d overdue tax obligations", updated)
     return updated
