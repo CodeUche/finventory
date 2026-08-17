@@ -16,8 +16,14 @@ import fs from 'fs'
 import path from 'path'
 import os from 'os'
 
-const EMAIL = 'ui.test@audity.test'
-const PW = 'Passw0rd!123'
+// Credentials for whichever stack this is pointed at (see the bank-recon project
+// in playwright.config.ts). Overridable so the same spec can be run against a
+// local throwaway stack or a deployed environment.
+const EMAIL = process.env.E2E_RECON_EMAIL || 'ui.test@audity.test'
+const PW = process.env.E2E_RECON_PASSWORD || 'Passw0rd!123'
+// Which account to reconcile — matched against the option text. Defaults to the
+// standard bank account code so the run lands on an account with ledger activity.
+const ACCOUNT_HINT = process.env.E2E_RECON_ACCOUNT || '1002'
 
 // One browser context for the whole file: a login per test burns through the
 // authenticated rate limit (user: 1000/hour) and the org fetch starts 429-ing.
@@ -51,13 +57,15 @@ const RAGGED_CSV = [
 ].join('\n')
 
 async function login(page: Page) {
-  await page.goto('/dashboard')
-  if (!/\/dashboard/.test(page.url())) {
-    await page.goto('/')
-    await page.getByPlaceholder('you@company.com').fill(EMAIL)
-    await page.locator('input[type="password"]').first().fill(PW)
-    await page.locator('button[type="submit"]').click()
-  }
+  // Already signed in? Nothing to do — avoids burning the 20/min login throttle.
+  await page.goto('/dashboard', { waitUntil: 'domcontentloaded' })
+  await page.waitForTimeout(1500)
+  if (/\/dashboard/.test(page.url())) return
+
+  await page.goto('/login', { waitUntil: 'domcontentloaded' })
+  await page.locator('input[type="email"]').first().fill(EMAIL)
+  await page.locator('input[type="password"]').first().fill(PW)
+  await page.locator('button[type="submit"]').first().click()
   await expect(page).toHaveURL(/\/dashboard/, { timeout: 45_000 })
 }
 
@@ -77,7 +85,13 @@ async function startReconciliation(page: Page, closingBalance: string) {
     return !!s && s.options.length > 1
   }, { timeout: 20_000 })
 
-  await accountSelect(page).selectOption({ index: 1 })
+  // Reconcile the account that actually carries ledger activity, rather than
+  // whichever happens to sort first — otherwise a legitimately empty account
+  // (petty cash with no entries) makes the Book Balance assertion meaningless.
+  const options = await accountSelect(page).locator('option').allTextContents()
+  const preferred = options.find((o) => o.includes(ACCOUNT_HINT))
+  if (preferred) await accountSelect(page).selectOption({ label: preferred })
+  else await accountSelect(page).selectOption({ index: 1 })
 
   // Period fields are DD/MM/YYYY text inputs (DateInput), not input[type=date].
   const texts = page.locator('input[type="text"]')
@@ -145,7 +159,7 @@ test.describe('Bank Reconciliation', () => {
     expect((body.match(/Falcon/g) || []).length,
       're-importing the corrected file must not duplicate a row').toBe(1)
 
-    await page.getByRole('button', { name: 'Select All' }).click()
+    await page.getByRole('button', { name: 'Select All', exact: true }).click()
     await page.waitForTimeout(1200)
 
     // THE GATE.
@@ -216,7 +230,7 @@ test.describe('Bank Reconciliation', () => {
     page.on('request', (r) => {
       if (r.method() === 'PATCH' && r.url().includes('update_line')) patches.push(r.url())
     })
-    const selectAll = page.getByRole('button', { name: 'Select All' })
+    const selectAll = page.getByRole('button', { name: 'Select All', exact: true })
     if (await selectAll.count()) {
       await selectAll.click()
       await page.waitForTimeout(1500)

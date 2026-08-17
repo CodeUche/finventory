@@ -3618,6 +3618,44 @@ class BankStatementImportIntegrityTests(TestCase):
         self.assertEqual(res.status_code, 400)
         self.assertEqual(self._count(), 0)
 
+
+    def test_reworded_reexport_is_flagged_as_a_possible_duplicate(self):
+        """A bank re-exporting the same statement with different narrations would
+        otherwise silently double the reconciliation. The rows still import (the
+        wording genuinely differs, so they may be separate transactions) but the
+        caller is told, so an unexplained imbalance can't creep in unnoticed."""
+        self._import(
+            "date,description,debit,credit\n"
+            "15/07/2026,Rent July,80000.00,\n"
+        )
+        res = self._import(
+            "date,description,debit,credit\n"
+            "15/07/2026,RENT PAYMENT JULY,80000.00,\n"
+        )
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        self.assertEqual(res.data["lines_created"], 1)
+        self.assertEqual(res.data["duplicates_skipped"], 0)
+        self.assertEqual(res.data["possible_duplicates"], 1,
+                         "a same-date same-amount row with different wording must be flagged")
+
+    def test_identical_reimport_is_a_duplicate_not_a_possible_duplicate(self):
+        """The exact-match path must still skip outright, without also warning."""
+        self._import(self.CLEAN)
+        res = self._import(self.CLEAN)
+        self.assertEqual(res.data["duplicates_skipped"], 2)
+        self.assertEqual(res.data["lines_created"], 0)
+        self.assertEqual(res.data["possible_duplicates"], 0)
+
+    def test_unrelated_rows_are_not_flagged(self):
+        """A genuinely new transaction must not be labelled a possible duplicate."""
+        self._import(self.CLEAN)
+        res = self._import(
+            "date,description,debit,credit\n"
+            "18/07/2026,NEW SUPPLIER PAYMENT,4200.00,\n"
+        )
+        self.assertEqual(res.data["lines_created"], 1)
+        self.assertEqual(res.data["possible_duplicates"], 0)
+
     def test_genuine_same_day_repeat_transaction_is_kept(self):
         """Two identical transactions in ONE file are legitimate — keep both."""
         twice = (

@@ -230,6 +230,13 @@ export default function BankReconciliationPage() {
       toast.success(`Imported ${data.lines_created} transaction${data.lines_created !== 1 ? 's' : ''}`)
       if (data.duplicates_skipped)
         toast(`${data.duplicates_skipped} duplicate row${data.duplicates_skipped !== 1 ? 's' : ''} skipped — already in this reconciliation`, { icon: '♻️' })
+      // Same date and amount, different wording — imported, but flagged, so a
+      // re-worded re-export can't silently double the reconciliation unnoticed.
+      if (data.possible_duplicates)
+        toast(
+          `${data.possible_duplicates} row${data.possible_duplicates !== 1 ? 's' : ''} match an existing line on date and amount but with different wording — check for a double-up`,
+          { icon: '⚠️', duration: 8000 },
+        )
       if (data.errors?.length) toast(`${data.errors.length} rows skipped`, { icon: '⚠️' })
       await refreshActiveRecon()
     } catch (err: unknown) {

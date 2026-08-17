@@ -13,6 +13,9 @@ const PAYMENTS_URL = process.env.E2E_PAYMENTS_URL || 'http://localhost:3010'
 // login/user, own storage state.
 const TODAY_STORAGE_STATE = './e2e/.auth/today.json'
 const TODAY_URL = process.env.E2E_TODAY_URL || 'http://localhost:5183'
+// Bank Reconciliation click-through — runs against whichever stack you point it
+// at (a throwaway-DB dev server locally, or a deployed environment).
+const RECON_URL = process.env.E2E_RECON_URL || 'http://127.0.0.1:5183'
 
 // Browser E2E against the running dev app (Vite :3000 proxies /api → Django :8000).
 export default defineConfig({
@@ -61,6 +64,19 @@ export default defineConfig({
       testMatch: /today\..*\.spec\.ts/,
       dependencies: ['today-setup'],
       use: { storageState: TODAY_STORAGE_STATE, baseURL: TODAY_URL },
+    },
+
+    // Bank Reconciliation click-through. Same isolated-stack pattern: point it at
+    // a throwaway-DB-backed dev server and give it that stack's own login. The
+    // spec signs in itself (serial, one login per file) rather than depending on
+    // a shared storage state, so it can be run against any environment:
+    //   E2E_RECON_URL=http://127.0.0.1:5183 \
+    //   E2E_RECON_EMAIL=... E2E_RECON_PASSWORD=... \
+    //   npx playwright test --project=bank-recon
+    {
+      name: 'bank-recon',
+      testMatch: /bank-reconciliation\.spec\.ts/,
+      use: { baseURL: RECON_URL },
     },
   ],
 })

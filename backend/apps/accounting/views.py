@@ -1460,17 +1460,30 @@ class BankReconciliationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         def _key(d, desc, amt):
             return (d, (desc or '').strip().lower(), Decimal(str(amt)))
 
+        current_lines = list(recon.lines.all())
         existing = Counter(
-            _key(l.transaction_date, l.description, l.amount)
-            for l in recon.lines.all()
+            _key(l.transaction_date, l.description, l.amount) for l in current_lines
         )
-        to_create, duplicates = [], []
+        # Same date + same amount but DIFFERENT wording. Not treated as a duplicate —
+        # the descriptions genuinely differ, so it may well be a separate transaction —
+        # but the user is warned, because a bank re-exporting the same statement with
+        # reworded narrations would otherwise silently double the reconciliation and
+        # leave it out of balance with no visible cause.
+        by_date_amount = Counter(
+            (l.transaction_date, Decimal(str(l.amount))) for l in current_lines
+        )
+
+        to_create, duplicates, possible = [], [], []
         for p in parsed:
             k = _key(p['transaction_date'], p['description'], p['amount'])
             if existing.get(k, 0) > 0:
                 existing[k] -= 1
                 duplicates.append(f"{p['transaction_date']} {p['description']} {p['amount']}")
                 continue
+            da = (p['transaction_date'], Decimal(str(p['amount'])))
+            if by_date_amount.get(da, 0) > 0:
+                by_date_amount[da] -= 1
+                possible.append(f"{p['transaction_date']} {p['description']} {p['amount']}")
             to_create.append(p)
 
         # ── Phase 3: single atomic write — all rows land or none do.
@@ -1491,6 +1504,8 @@ class BankReconciliationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             'errors': errors,
             'duplicates_skipped': len(duplicates),
             'duplicates': duplicates[:20],
+            'possible_duplicates': len(possible),
+            'possible_duplicate_lines': possible[:20],
             'lines': BankReconciliationLineSerializer(lines_created, many=True).data,
         }, status=status.HTTP_201_CREATED)
 
