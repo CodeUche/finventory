@@ -2404,6 +2404,42 @@ class LeaveBalanceViewSet(TenantFilterMixin, viewsets.ReadOnlyModelViewSet):
 
 
 class LeaveRequestViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+
+    def _notify_approvers(self, org, leave_request, employee):
+        """
+        Tell everyone who could act on this: the line manager, plus anyone who
+        can view leave requests.
+
+        Both, not just the manager — a request that lands while the manager is
+        away is exactly the one that sits unanswered. "Can view leave requests"
+        is read from the permission at send time rather than hardcoded, so if
+        the leave tick is later split into finer privileges this follows.
+
+        The requester is excluded: they know they asked.
+        """
+        from apps.notifications.models import Notification
+        from apps.notifications.services import notify_after_commit, recipients_for_module
+
+        manager_user = (
+            employee.manager.user
+            if employee.manager and employee.manager.user_id
+            else None
+        )
+        recipients = recipients_for_module(
+            org, "leave", include_users=[manager_user] if manager_user else [],
+        )
+        notify_after_commit(
+            org,
+            recipients,
+            category=Notification.Category.LEAVE,
+            title=f"{employee.first_name} {employee.last_name} requested leave",
+            body=(
+                f"{leave_request.start_date} to {leave_request.end_date} "
+                f"({leave_request.days} day(s))."
+            ),
+            link="/hr/leave",
+            exclude=self.request.user,
+        )
     serializer_class = LeaveRequestSerializer
     permission_classes = [IsAuthenticated, IsStaff, _PlanPayroll, _LeaveAccess]
 
@@ -2501,6 +2537,7 @@ class LeaveRequestViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         if instance.status == LeaveRequest.PENDING:
             balance.pending_days = _Dec(str(balance.pending_days)) + days
             balance.save(update_fields=['pending_days'])
+            self._notify_approvers(org, instance, employee)
         else:
             LeaveService.approve(instance, user=self.request.user)
 
