@@ -301,3 +301,97 @@ class PlanMemberLimitActive(BasePermission):
         except Exception:
             pass
         return True
+
+
+# ─── Per-person module access (H-2) ──────────────────────────────────────────
+#
+# The owner ticks boxes saying which modules each team member may touch. Those
+# ticks were read by the browser — useModuleAccess.ts hides menu items and
+# blocks routes — but the server checked only two things: does the ORGANISATION
+# pay for the module (plan_requires), and is this person at least `staff`
+# (IsStaff). Neither looks at the ticks.
+#
+# So the ticks were a sign on a door, not a lock. A team member with HR
+# unticked still saw the HR menu disappear, and could still ask the server for
+# the staff list directly and receive salaries, national ID numbers, pension
+# numbers and bank details. Across the whole backend the ticks were consulted
+# in exactly one place (invoice editing in apps/sales/views.py).
+#
+# This mirrors useModuleAccess.ts exactly, deliberately — the browser and the
+# server must not disagree about who may see what:
+#
+#   superuser / owner / admin  → full access, ticks ignored
+#   everyone else              → no record means NO access ("restrictive
+#                                default for sub-accounts", per that file)
+#     none  → nothing
+#     view  → read only
+#     write → read + create
+#     edit  → read + create + change + delete
+#
+# Safe to enforce: owners and admins bypass entirely, and any member who is
+# meant to have narrower access already carries explicit rows.
+
+_READ_METHODS = ("GET", "HEAD", "OPTIONS")
+_CREATE_METHODS = ("POST",)
+
+
+def requires_module(module_key: str):
+    """
+    Permission class factory: gate a viewset on the owner's per-person ticks.
+
+        class EmployeeViewSet(...):
+            permission_classes = [IsAuthenticated, IsStaff, requires_module("payroll")]
+
+    Stacks with the role and plan checks rather than replacing them: role says
+    how senior you are, plan says what the company bought, this says what you
+    personally were granted. All three have to pass.
+    """
+
+    class _ModuleAccess(BasePermission):
+        message = (
+            "You do not have access to this area. Ask an owner or admin to "
+            "grant it in Team settings."
+        )
+
+        def has_permission(self, request, view):
+            user = request.user
+            if not user or not user.is_authenticated:
+                return False
+            if user.is_superuser:
+                _get_or_resolve_org(request)
+                return True
+
+            org = _get_or_resolve_org(request)
+            if not org:
+                return False
+
+            # Owners and admins are unrestricted by design — the ticks exist to
+            # narrow everyone else. Matches useModuleAccess.ts.
+            if has_minimum_role(user, org, "admin"):
+                return True
+
+            from apps.tenancy.models import ModulePermission
+
+            membership = user.memberships.filter(
+                organisation=org, is_active=True,
+            ).first()
+            if not membership:
+                return False
+
+            perm = ModulePermission.objects.filter(
+                membership=membership, module=module_key,
+            ).first()
+            level = perm.access_level if perm else "none"
+
+            if level == "none":
+                return False
+            if request.method in _READ_METHODS:
+                return True
+            if request.method in _CREATE_METHODS:
+                return level in ("write", "edit")
+            # PUT / PATCH / DELETE — changing or removing existing records.
+            return level == "edit"
+
+    _ModuleAccess.__name__ = f"RequiresModule_{module_key}"
+    _ModuleAccess.__qualname__ = _ModuleAccess.__name__
+    return _ModuleAccess

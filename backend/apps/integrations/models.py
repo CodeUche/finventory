@@ -88,6 +88,14 @@ class WebhookSubscription(TenantAwareModel):
 
     class Meta(TenantAwareModel.Meta):
         verbose_name = "Webhook Subscription"
+        # Without a deterministic order, DRF pagination slices an unordered
+        # queryset and PostgreSQL is free to return rows differently between
+        # runs. That made test_webhook_secret_returned_once_on_create_never_on_list
+        # intermittent: two identical runs of the same commit disagreed, which
+        # is the worst kind of test failure — it trains people to re-run rather
+        # than investigate, and that habit is expensive once CI is blocking
+        # (NEW-5). Newest first matches how the list is read.
+        ordering = ["-created_at"]
 
     def save(self, *args, **kwargs):
         if not self.secret:

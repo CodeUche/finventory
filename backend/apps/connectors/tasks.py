@@ -16,6 +16,7 @@ import logging
 from celery import shared_task
 from django.utils import timezone
 
+from apps.core.tenant_context import for_each_organisation
 from apps.integrations.models import DomainEvent
 
 from .models import Connector, ConnectorConnection, ConnectorEventDelivery
@@ -52,57 +53,74 @@ CONNECTOR_EVENT_TYPES = {
 
 @shared_task(name="connectors.deliver_pending_connector_events")
 def deliver_pending_connector_events():
-    delivered = 0
-    failed = 0
-    skipped = 0
+    # Works through the companies one at a time, naming each before it asks
+    # for anything. Without that, once the connector tables are covered by the
+    # database lock-down this job would ask for "all connections", get nothing
+    # back, and report delivered=0 while looking healthy (NEW-15).
+    counts = {"delivered": 0, "failed": 0, "skipped": 0}
 
-    connections = ConnectorConnection.objects.filter(
-        status=ConnectorConnection.Status.ACTIVE,
-    ).select_related("organisation")
+    def _deliver_for_one_company(org):
+        delivered = 0
+        failed = 0
+        skipped = 0
 
-    for connection in connections:
-        relevant_event_types = CONNECTOR_EVENT_TYPES.get(connection.connector_key)
-        if not relevant_event_types:
-            continue  # e.g. GOOGLE_DRIVE — not part of this delivery pipeline
+        connections = ConnectorConnection.objects.filter(
+            organisation=org, status=ConnectorConnection.Status.ACTIVE,
+        ).select_related("organisation")
 
-        events = DomainEvent.objects.filter(
-            organisation=connection.organisation,
-            event_type__in=relevant_event_types,
-        ).exclude(
-            connector_deliveries__connection=connection,
-            connector_deliveries__status=ConnectorEventDelivery.Status.DELIVERED,
-        )
+        for connection in connections:
+            relevant_event_types = CONNECTOR_EVENT_TYPES.get(connection.connector_key)
+            if not relevant_event_types:
+                continue  # e.g. GOOGLE_DRIVE — not part of this delivery pipeline
 
-        for event in events:
-            existing = ConnectorEventDelivery.objects.filter(connection=connection, event=event).first()
-            if existing is not None:
-                if existing.status == ConnectorEventDelivery.Status.FAILED:
+            events = DomainEvent.objects.filter(
+                organisation=connection.organisation,
+                event_type__in=relevant_event_types,
+            ).exclude(
+                connector_deliveries__connection=connection,
+                connector_deliveries__status=ConnectorEventDelivery.Status.DELIVERED,
+            )
+
+            for event in events:
+                existing = ConnectorEventDelivery.objects.filter(connection=connection, event=event).first()
+                if existing is not None:
+                    if existing.status == ConnectorEventDelivery.Status.FAILED:
+                        continue
+                    if not _due_for_retry(existing):
+                        skipped += 1
+                        continue
+
+                try:
+                    delivery = ConnectorDeliveryService.deliver_event_to_connection(connection, event)
+                except Exception:
+                    logger.exception(
+                        "Unexpected error delivering event %s to connector connection %s",
+                        event.id, connection.id,
+                    )
                     continue
-                if not _due_for_retry(existing):
+
+                if delivery.status == ConnectorEventDelivery.Status.DELIVERED:
+                    delivered += 1
+                elif delivery.status == ConnectorEventDelivery.Status.FAILED:
+                    failed += 1
+                else:
                     skipped += 1
-                    continue
 
-            try:
-                delivery = ConnectorDeliveryService.deliver_event_to_connection(connection, event)
-            except Exception:
-                logger.exception(
-                    "Unexpected error delivering event %s to connector connection %s",
-                    event.id, connection.id,
-                )
-                continue
+        counts["delivered"] += delivered
+        counts["failed"] += failed
+        counts["skipped"] += skipped
+        return delivered
 
-            if delivery.status == ConnectorEventDelivery.Status.DELIVERED:
-                delivered += 1
-            elif delivery.status == ConnectorEventDelivery.Status.FAILED:
-                failed += 1
-            else:
-                skipped += 1
+    for_each_organisation(
+        _deliver_for_one_company,
+        task_name="connectors.deliver_pending_connector_events",
+    )
 
     logger.info(
         "deliver_pending_connector_events: delivered=%d failed=%d skipped=%d",
-        delivered, failed, skipped,
+        counts["delivered"], counts["failed"], counts["skipped"],
     )
-    return {"delivered": delivered, "failed": failed, "skipped": skipped}
+    return counts
 
 
 @shared_task(name="connectors.upload_pdf_to_drive", bind=True, max_retries=3, default_retry_delay=60)

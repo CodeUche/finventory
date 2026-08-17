@@ -8,6 +8,12 @@ from rest_framework.response import Response
 
 from apps.core.mixins import TenantFilterMixin
 from apps.core.permissions import IsManager, IsManagerOrSuperuser, IsStaff
+from apps.core.permissions import requires_module
+# The owner's per-person ticks, enforced server-side (H-2). Mirrors
+# useModuleAccess.ts: owners and admins bypass; for everyone else no
+# record means no access, and only what was granted is granted.
+_ModAccess_inventory = requires_module("inventory")
+
 
 from .models import Batch, Category, Product, StockItem, StockMovement, Warehouse
 from .serializers import (
@@ -39,14 +45,14 @@ class ProductFilter(django_filters.FilterSet):
 class CategoryViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     queryset = Category.objects.all()
     serializer_class = CategorySerializer
-    permission_classes = [IsAuthenticated, IsStaff]
+    permission_classes = [IsAuthenticated, IsStaff, _ModAccess_inventory]
     search_fields = ["name"]
 
 
 class WarehouseViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     queryset = Warehouse.objects.filter(is_active=True)
     serializer_class = WarehouseSerializer
-    permission_classes = [IsAuthenticated, IsManager]
+    permission_classes = [IsAuthenticated, IsManager, _ModAccess_inventory]
 
     def create(self, request, *args, **kwargs):
         from django.db import IntegrityError, transaction
@@ -81,7 +87,7 @@ class ProductViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
     queryset = Product.objects.select_related("category", "tax_class")
     serializer_class = ProductSerializer
-    permission_classes = [IsAuthenticated, IsStaff]
+    permission_classes = [IsAuthenticated, IsStaff, _ModAccess_inventory]
     filterset_class = ProductFilter
     search_fields = ["name", "sku", "barcode", "brand"]
     ordering_fields = ["name", "selling_price", "created_at"]
@@ -616,7 +622,7 @@ class ProductViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 class BatchViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     queryset = Batch.objects.select_related("product", "warehouse")
     serializer_class = BatchSerializer
-    permission_classes = [IsAuthenticated, IsStaff]
+    permission_classes = [IsAuthenticated, IsStaff, _ModAccess_inventory]
     filterset_fields = ["product", "warehouse", "is_active"]
     search_fields = ["product__name", "product__sku", "batch_number"]
 
@@ -648,7 +654,7 @@ class StockItemViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
     queryset = StockItem.objects.select_related("product", "warehouse")
     serializer_class = StockItemSerializer
-    permission_classes = [IsAuthenticated, IsStaff]
+    permission_classes = [IsAuthenticated, IsStaff, _ModAccess_inventory]
     filterset_fields = ["product", "warehouse"]
     search_fields = ["product__name", "product__sku"]
     http_method_names = ["get", "delete", "head", "options"]
@@ -802,7 +808,7 @@ class StockMovementViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
     queryset = StockMovement.objects.select_related("product", "warehouse", "batch")
     serializer_class = StockMovementSerializer
-    permission_classes = [IsAuthenticated, IsStaff]
+    permission_classes = [IsAuthenticated, IsStaff, _ModAccess_inventory]
     filterset_fields = ["product", "warehouse", "movement_type"]
     ordering_fields = ["created_at"]
 

@@ -295,6 +295,22 @@ class OrganisationViewSet(viewsets.ModelViewSet):
         if role not in valid_roles:
             return Response({"error": {"message": "Invalid role."}}, status=status.HTTP_400_BAD_REQUEST)
 
+        # OWNER is a valid choice, so the check above lets it through. This
+        # action is open to admins, which meant an admin could invite an
+        # address they control and become a second owner — the role that can
+        # rewrite bank details and delete the organisation (H-1). The same rule
+        # is already enforced in create_subaccount and
+        # MembershipViewSet.partial_update; this was the third path.
+        # Ownership transfer has its own flow and is not done by invitation.
+        if role == Membership.Role.OWNER:
+            return Response(
+                {"error": {"message": (
+                    "An organisation has one owner. Invite an admin instead, "
+                    "or transfer ownership from the team settings."
+                )}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         # Sanitise module_permissions — only allow known module keys and access levels
         _valid_modules = {m[0] for m in ModulePermission.MODULE_CHOICES}
         _valid_levels = {a[0] for a in ModulePermission.ACCESS_CHOICES}

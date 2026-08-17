@@ -165,8 +165,21 @@ class LeaveAndLoanSelfApprovalTests(TestCase):
         self.assertEqual(self.loan.status, EmployeeLoan.ACTIVE)
 
     def test_manager_can_still_use_the_leave_approve_action(self):
-        """The legitimate path must stay open for someone with authority."""
-        _, mgr_client = _add_member(self.org, "appr_mgr@example.com", "manager")
+        """
+        The legitimate path must stay open for someone with authority.
+
+        The manager needs an explicit `leave` grant. Only owners and admins
+        bypass the per-person module ticks (H-2) — for every other role, no
+        record means no access, which is the rule useModuleAccess.ts has always
+        applied in the browser. Before the server enforced it, this test passed
+        with no grant at all; it was asserting access the UI never offered.
+        """
+        mgr_user, mgr_client = _add_member(self.org, "appr_mgr@example.com", "manager")
+        from apps.tenancy.models import ModulePermission
+        ModulePermission.objects.create(
+            membership=Membership.objects.get(user=mgr_user, organisation=self.org),
+            module="leave", access_level="edit",
+        )
         res = mgr_client.post(
             f"/api/v1/payroll/leave-requests/{self.leave.id}/approve/", {}, format="json",
         )

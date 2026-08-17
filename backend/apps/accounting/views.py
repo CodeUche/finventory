@@ -9,6 +9,12 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from apps.core.mixins import TenantFilterMixin
 from apps.core.permissions import IsAccountant, IsOwnerOrAdmin, plan_requires
+from apps.core.permissions import requires_module
+# The owner's per-person ticks, enforced server-side (H-2). Mirrors
+# useModuleAccess.ts: owners and admins bypass; for everyone else no
+# record means no access, and only what was granted is granted.
+_ModAccess_accounting = requires_module("accounting")
+
 
 _PlanAccounting = plan_requires('accounting')
 from .models import (
@@ -29,7 +35,7 @@ from .services import AccountingService, AccountMappingService, safe_post_gl
 
 class AccountViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     serializer_class = AccountSerializer
-    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting, _ModAccess_accounting]
     filterset_fields = [
         'account_type', 'account_group', 'sub_type', 'parent',
         'is_active', 'is_control_account', 'allow_posting',
@@ -406,7 +412,7 @@ class AccountViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 class AccountSubTypeViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     """CRUD for the 'Add Sub Account Type' management screen."""
     serializer_class = AccountSubTypeSerializer
-    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting, _ModAccess_accounting]
 
     def get_queryset(self):
         org = self._get_organisation()
@@ -431,7 +437,7 @@ class AccountSubTypeViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
 class JournalEntryViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     serializer_class = JournalEntrySerializer
-    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting, _ModAccess_accounting]
 
     def get_queryset(self):
         org = self._get_organisation()
@@ -692,7 +698,7 @@ class JournalEntryViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 class AssetTypeViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     """CRUD for asset types (default depreciation settings + GL account mapping)."""
     serializer_class = AssetTypeSerializer
-    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting, _ModAccess_accounting]
 
     def get_queryset(self):
         return AssetType.objects.filter(organisation=self._get_organisation())
@@ -700,7 +706,7 @@ class AssetTypeViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
 class FixedAssetViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     serializer_class = FixedAssetSerializer
-    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting, _ModAccess_accounting]
 
     def get_queryset(self):
         org = self._get_organisation()
@@ -955,7 +961,7 @@ class FixedAssetViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
 class FinancialPeriodViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     serializer_class = FinancialPeriodSerializer
-    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting, _ModAccess_accounting]
 
     def get_queryset(self):
         org = self._get_organisation()
@@ -1115,7 +1121,7 @@ class FinancialPeriodViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
 class BankReconciliationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     serializer_class = BankReconciliationSerializer
-    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting, _ModAccess_accounting]
 
     def get_queryset(self):
         org = self._get_organisation()
@@ -1819,7 +1825,7 @@ class AccountMappingView(APIView):
     GET  /accounting/account-mapping/   — get org's mapping (with suggestions for nulls)
     PUT  /accounting/account-mapping/   — update mapping
     """
-    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting, _ModAccess_accounting]
 
     def _get_org(self, request):
         from apps.core.mixins import TenantFilterMixin
@@ -1883,7 +1889,7 @@ class AccountMappingView(APIView):
 
 class AccountMappingSuggestionsView(APIView):
     """GET /accounting/account-mapping/suggestions/ — get best-guess suggestions for all roles."""
-    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting, _ModAccess_accounting]
 
     def get(self, request):
         org_id = request.META.get('HTTP_X_ORGANISATION_ID')
@@ -1909,7 +1915,7 @@ class AccountMappingSuggestionsView(APIView):
 class BeginningBalancesSummaryView(APIView):
     """GET /accounting/beginning-balances/summary/ — consolidated take-on status
     (suspense plug, GL opening balances, subledger control balances)."""
-    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting, _ModAccess_accounting]
 
     def _get_org(self, request):
         org_id = request.META.get('HTTP_X_ORGANISATION_ID')
@@ -1932,7 +1938,7 @@ class BeginningBalancesSummaryView(APIView):
 class YearEndCloseView(APIView):
     """POST /accounting/year-end-close/  {fiscal_year} — close a fiscal year: zero the
     P&L accounts and crystallise the net result into Retained Earnings."""
-    permission_classes = [IsAuthenticated, IsOwnerOrAdmin, _PlanAccounting]
+    permission_classes = [IsAuthenticated, IsOwnerOrAdmin, _PlanAccounting, _ModAccess_accounting]
 
     def _get_org(self, request):
         org_id = request.META.get('HTTP_X_ORGANISATION_ID')
@@ -1968,7 +1974,7 @@ class YearEndCloseView(APIView):
 
 class GLHealthView(APIView):
     """GET /accounting/gl-health/ — list recent GL failures with retry info."""
-    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting, _ModAccess_accounting]
 
     def _get_org(self, request):
         org_id = request.META.get('HTTP_X_ORGANISATION_ID')
@@ -1990,7 +1996,7 @@ class GLHealthView(APIView):
 
 class GLHealthBulkRetryView(APIView):
     """POST /accounting/gl-health/retry-all/ — retry ALL failed/not_configured GL posts."""
-    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting, _ModAccess_accounting]
 
     def _get_org(self, request):
         org_id = request.META.get('HTTP_X_ORGANISATION_ID')
@@ -2041,7 +2047,7 @@ class GLHealthBulkRetryView(APIView):
 
 class GLHealthRetryView(APIView):
     """POST /accounting/gl-health/{type}/{id}/retry/ — retry a failed GL post."""
-    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting, _ModAccess_accounting]
 
     def post(self, request, model_type, object_id):
         org_id = request.META.get('HTTP_X_ORGANISATION_ID')
