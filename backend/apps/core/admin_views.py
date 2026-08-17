@@ -5,6 +5,8 @@ Provides cross-tenant aggregate statistics.
 from django.db.models import Count, Q, Sum
 from rest_framework import status
 from rest_framework.pagination import PageNumberPagination
+
+from apps.core.pagination import StableOrderingMixin
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -244,7 +246,7 @@ class PlatformStatsView(APIView):
         })
 
 
-class _AdminUserPagination(PageNumberPagination):
+class _AdminUserPagination(StableOrderingMixin, PageNumberPagination):
     page_size = 100
     page_size_query_param = 'page_size'
     max_page_size = 500
