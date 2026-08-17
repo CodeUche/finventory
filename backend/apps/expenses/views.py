@@ -6,6 +6,12 @@ from rest_framework.response import Response
 
 from apps.core.mixins import ExportMixin, TenantFilterMixin
 from apps.core.permissions import IsAccountant, IsStaff
+from apps.core.permissions import requires_module
+# The owner's per-person ticks, enforced server-side (H-2). Mirrors
+# useModuleAccess.ts: owners and admins bypass; for everyone else no
+# record means no access, and only what was granted is granted.
+_ModAccess_expenses = requires_module("expenses")
+
 from apps.core.throttles import FinancialWriteThrottle
 
 from .models import Expense, ExpenseCategory, ExpenseGroup
@@ -31,7 +37,7 @@ class ExpenseGroupViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     GET /expenses/groups/<id>/contents/ → folder + its children + its expenses
     """
     serializer_class = ExpenseGroupSerializer
-    permission_classes = [IsAuthenticated, IsStaff]
+    permission_classes = [IsAuthenticated, IsStaff, _ModAccess_expenses]
 
     def get_queryset(self):
         org = self._get_organisation()
@@ -62,7 +68,7 @@ class ExpenseGroupViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 class ExpenseCategoryViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     queryset = ExpenseCategory.objects.all()
     serializer_class = ExpenseCategorySerializer
-    permission_classes = [IsAuthenticated, IsAccountant]
+    permission_classes = [IsAuthenticated, IsAccountant, _ModAccess_expenses]
 
     def get_queryset(self):
         # Per-row count/total as subqueries — avoids 2 queries per category (N+1).
@@ -95,7 +101,7 @@ class ExpenseViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
     ]
     queryset = Expense.objects.select_related("category", "recorded_by")
     serializer_class = ExpenseSerializer
-    permission_classes = [IsAuthenticated, IsStaff]
+    permission_classes = [IsAuthenticated, IsStaff, _ModAccess_expenses]
     throttle_classes = [FinancialWriteThrottle]
     filterset_class = ExpenseFilter
     search_fields = ["description", "reference"]

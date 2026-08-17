@@ -201,6 +201,7 @@ LOCAL_APPS = [
     "apps.messaging",    # isolated in-app instant messaging (Track B)
     "apps.integrations", # paid integrations marketplace: webhooks + Zapier (Track C) — hidden from nav in v1, kept alive for existing paying customers
     "apps.connectors",   # one-click OAuth connectors (Slack, Google Sheets) via Nango
+    "apps.notifications",  # in-app bell + optional email via the org's own mailbox
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS

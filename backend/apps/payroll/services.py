@@ -1179,6 +1179,41 @@ class LeaveService:
                 updated += 1
         return updated
 
+
+    @staticmethod
+    def _notify_decision(leave_request, decided_by, approved: bool):
+        """
+        Tell the person whose leave it is. They are named explicitly because
+        they almost certainly do not hold the leave permission — the whole
+        point is that the requester hears the outcome.
+
+        Deliberately after commit: if the decision rolls back, nobody should
+        have been told it happened. Never raises — a mail problem must not
+        undo an approval.
+        """
+        from apps.notifications.models import Notification
+        from apps.notifications.services import notify_after_commit
+
+        employee = leave_request.employee
+        requester = getattr(employee, "user", None)
+        if requester is None:
+            return  # no login attached to this employee record
+
+        verb = "approved" if approved else "declined"
+        notify_after_commit(
+            leave_request.organisation,
+            [requester],
+            category=Notification.Category.LEAVE,
+            title=f"Your leave request was {verb}",
+            body=(
+                f"{leave_request.start_date} to {leave_request.end_date} "
+                f"({leave_request.days} day(s)). "
+                + (leave_request.decision_note or "")
+            ).strip(),
+            link="/hr/leave",
+            exclude=decided_by,
+        )
+
     @classmethod
     @transaction.atomic
     def approve(cls, leave_request, user=None, note=''):
@@ -1212,6 +1247,8 @@ class LeaveService:
         balance.pending_days = max(ZERO, _d(balance.pending_days) - days)
         balance.taken_days = _d(balance.taken_days) + days
         balance.save(update_fields=['pending_days', 'taken_days'])
+
+        cls._notify_decision(leave_request, decided_by=user, approved=True)
         return leave_request
 
     @staticmethod
@@ -1257,6 +1294,8 @@ class LeaveService:
         )
         balance.pending_days = max(ZERO, _d(balance.pending_days) - _d(leave_request.days))
         balance.save(update_fields=['pending_days'])
+
+        cls._notify_decision(leave_request, decided_by=user, approved=False)
         return leave_request
 
     @classmethod

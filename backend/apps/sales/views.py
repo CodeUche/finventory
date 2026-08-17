@@ -14,6 +14,15 @@ from rest_framework.response import Response
 from apps.core.idempotency import IdempotencyMixin
 from apps.core.mixins import ExportMixin, TenantFilterMixin
 from apps.core.permissions import IsStaff, IsOwnerOrAdmin, has_minimum_role, plan_requires
+from apps.core.permissions import requires_module
+# The owner's per-person ticks, enforced server-side (H-2). Mirrors
+# useModuleAccess.ts: owners and admins bypass; for everyone else no
+# record means no access, and only what was granted is granted.
+_ModAccess_sales = requires_module("sales")
+# Recurring invoices are a separate tick in the UI (Sidebar + ModuleRoute),
+# so the server asks for the same key rather than lumping them under sales.
+_ModAccess_recurring = requires_module("recurring")
+
 from apps.core.throttles import FinancialWriteThrottle
 
 _PlanRecurring = plan_requires('recurring')
@@ -73,7 +82,7 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
     """
 
     serializer_class = InvoiceSerializer
-    permission_classes = [IsAuthenticated, IsStaff]
+    permission_classes = [IsAuthenticated, IsStaff, _ModAccess_sales]
     throttle_classes = [FinancialWriteThrottle]
     filterset_class = InvoiceFilter
     search_fields = ["invoice_number", "customer__name"]
@@ -982,7 +991,7 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
 
 class InvoiceFolderViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     """CRUD for invoice folders. GET /sales/folders/, POST, PATCH, DELETE."""
-    permission_classes = [IsAuthenticated, IsStaff]
+    permission_classes = [IsAuthenticated, IsStaff, _ModAccess_sales]
 
     def get_serializer_class(self):
         from .serializers import InvoiceFolderSerializer
@@ -1037,7 +1046,7 @@ class SaleReturnViewSet(TenantFilterMixin, viewsets.ReadOnlyModelViewSet):
     """List and retrieve sale returns (credit notes)."""
 
     serializer_class = SaleReturnSerializer
-    permission_classes = [IsAuthenticated, IsStaff]
+    permission_classes = [IsAuthenticated, IsStaff, _ModAccess_sales]
     search_fields = ["return_number", "invoice__invoice_number"]
 
     def get_queryset(self):
@@ -1051,7 +1060,7 @@ class RecurringInvoiceViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     """Manage recurring invoice templates."""
 
     serializer_class = RecurringInvoiceSerializer
-    permission_classes = [IsAuthenticated, IsStaff, _PlanRecurring]
+    permission_classes = [IsAuthenticated, IsStaff, _PlanRecurring, _ModAccess_recurring]
 
     def get_queryset(self):
         org = self._get_organisation()
@@ -1153,7 +1162,7 @@ class LocationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     """CRUD for sales locations / branches."""
 
     serializer_class = LocationSerializer
-    permission_classes = [IsStaff, IsOwnerOrAdmin]
+    permission_classes = [IsStaff, IsOwnerOrAdmin, _ModAccess_sales]
 
     def get_queryset(self):
         return Location.objects.filter(organisation=self._get_organisation())

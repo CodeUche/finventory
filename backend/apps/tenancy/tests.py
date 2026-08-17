@@ -1,11 +1,14 @@
 """Tests for tenancy: organisation creation, invitations, sub-accounts, memberships."""
 
+from datetime import timedelta
+
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.authentication.models import User
-from apps.tenancy.models import Membership, Organisation
+from apps.tenancy.models import Invitation, Membership, Organisation
 from apps.tenancy.services import OrganisationService
 
 
@@ -301,3 +304,97 @@ class OrganisationMutationPermissionTests(TestCase):
         client = _auth_client(self.owner, self.org)
         res = client.patch(self.url, {"onboarding_completed": True}, format="json")
         self.assertEqual(res.status_code, 200)
+
+
+class InviteOwnerEscalationTests(TestCase):
+    """
+    Finding H-1.
+
+    The invite action is open to admins (IsOwnerOrAdmin), and its only role
+    check is `role in Membership.Role.choices` — which OWNER satisfies.
+    accept_invitation() then writes invitation.role onto the membership with no
+    guard of its own, so an admin could mint a second owner by inviting an
+    address they control.
+
+    The same "only one owner" rule is already enforced on the two sibling
+    paths — create_subaccount and MembershipViewSet.partial_update — so this is
+    a gap in one of three, not a missing policy. That is the third time this
+    shape has appeared (C-1, NEW-12, and now here): a control present on one
+    route and absent on its sibling.
+
+    Owner is the role that can rewrite bank details and delete the
+    organisation, so a second one is a full takeover of the tenant.
+    """
+
+    def setUp(self):
+        from apps.accounting.tests import _upgrade_to_business
+
+        self.owner = _make_user("h1_owner@example.com")
+        self.org = _make_org(self.owner, "H1 Org")
+        # The free plan caps members at 1, so every invite returns 400 for a
+        # plan reason. Without this the owner-escalation test passes without
+        # ever reaching the role check — green, and proving nothing.
+        _upgrade_to_business(self.org)
+        self.admin = _make_user("h1_admin@example.com")
+        Membership.objects.create(
+            user=self.admin, organisation=self.org, role="admin", is_active=True,
+        )
+        self.admin_client = _auth_client(self.admin, self.org)
+
+    def test_admin_cannot_invite_someone_as_owner(self):
+        res = self.admin_client.post(
+            f"/api/v1/tenancy/organisations/{self.org.id}/invite/",
+            {"email": "attacker@evil.com", "role": "owner"},
+            format="json",
+        )
+        self.assertIn(
+            res.status_code, (400, 403, 422),
+            "an admin invited a new OWNER — that role can rewrite bank details "
+            "and delete the organisation (H-1)",
+        )
+        self.assertFalse(
+            Invitation.objects.filter(organisation=self.org, role="owner").exists(),
+            "an owner-role invitation was created",
+        )
+
+    def test_accepting_an_owner_invitation_cannot_create_a_second_owner(self):
+        """
+        Defence at the mutation point, not just the endpoint.
+
+        Even if an owner-role Invitation exists — from a pre-fix row, or a
+        future caller that skips the view — accepting it must not produce a
+        second owner.
+        """
+        invitation = Invitation.objects.create(
+            organisation=self.org, email="attacker2@evil.com", role="owner",
+            invited_by=self.admin, expires_at=timezone.now() + timedelta(days=7),
+        )
+        joiner = _make_user("h1_joiner@example.com")
+        try:
+            OrganisationService.accept_invitation(invitation, joiner)
+        except Exception:
+            pass  # rejecting outright is an acceptable outcome
+
+        owners = Membership.objects.filter(
+            organisation=self.org, role="owner", is_active=True,
+        )
+        self.assertEqual(
+            owners.count(), 1,
+            "accepting an owner invitation produced a second owner — the "
+            "one-owner invariant other code relies on is broken",
+        )
+        self.assertEqual(owners.first().user_id, self.owner.id)
+
+    def test_admin_can_still_invite_normal_roles(self):
+        """The gate must not break ordinary team invitations."""
+        for role in ("staff", "manager", "accountant", "viewer"):
+            with self.subTest(role=role):
+                res = self.admin_client.post(
+                    f"/api/v1/tenancy/organisations/{self.org.id}/invite/",
+                    {"email": f"colleague_{role}@example.com", "role": role},
+                    format="json",
+                )
+                self.assertEqual(
+                    res.status_code, 201,
+                    f"inviting a {role} broke — the fix is too broad",
+                )

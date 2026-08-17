@@ -767,6 +767,11 @@ class PayrollGLBalanceTests(TestCase):
             organisation=self.org, employee=self.emp,
             principal_amount=Decimal("120000"), duration_months=12,
             start_date=date(2026, 1, 1),
+            # Loans now start PENDING and only deduct once a manager approves
+            # them (NEW-10). PayrollService filters on ACTIVE, so an unapproved
+            # loan is correctly skipped — this test needs an approved one to
+            # exercise the loan-deduction leg of the GL balance.
+            status=EmployeeLoan.ACTIVE,
         )
         Attendance.objects.create(
             organisation=self.org, employee=self.emp,
