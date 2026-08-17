@@ -100,20 +100,41 @@ class OrganisationService:
                 joined_at=timezone.now(),
             )
 
-        # Auto-assign the Free plan so all features are available immediately
-        OrganisationService._assign_free_plan(org)
+        # Seeding runs AFTER the atomic block above has committed, so the
+        # transaction-local GUCs set at line 59 are already gone by now. The
+        # connection is back on the SENTINEL org, which matches no row, so every
+        # INSERT below was refused by the RLS WITH CHECK clause and every failure
+        # was swallowed by the seeders' own try/except as a warning. New
+        # organisations got no chart of accounts, no tax config and no WHT rates,
+        # silently, and landed on an empty account picker. See NEW-18.
+        #
+        # organisation_context sets app.current_org_id at SESSION level, which is
+        # what RLSMiddleware does for ordinary requests and is therefore known to
+        # hold on this deployment's connections. Session level also means no
+        # transaction is involved: each seeder keeps its own try/except and stays
+        # independent, so one failing cannot poison a shared transaction and take
+        # the rest down with it.
+        #
+        # It restores the SENTINEL on exit — including if a seeder raises — which
+        # is exactly the value the middleware left here during signup, so nothing
+        # downstream sees a changed context.
+        from apps.core.tenant_context import organisation_context
 
-        # Seed chart of accounts so accounting module is ready from day 1 (non-fatal)
-        OrganisationService._seed_chart_of_accounts(org)
+        with organisation_context(org.id):
+            # Auto-assign the Free plan so all features are available immediately
+            OrganisationService._assign_free_plan(org)
 
-        # Auto-create GL account mapping based on seeded COA (non-fatal)
-        OrganisationService._seed_account_mapping(org)
+            # Seed chart of accounts so accounting module is ready from day 1 (non-fatal)
+            OrganisationService._seed_chart_of_accounts(org)
 
-        # Seed country-specific default tax configuration (non-fatal)
-        OrganisationService._seed_tax_config(org)
+            # Auto-create GL account mapping based on seeded COA (non-fatal)
+            OrganisationService._seed_account_mapping(org)
 
-        # Seed WHT 2024 Regulation rates for Nigerian orgs (non-fatal)
-        OrganisationService._seed_wht_rates(org)
+            # Seed country-specific default tax configuration (non-fatal)
+            OrganisationService._seed_tax_config(org)
+
+            # Seed WHT 2024 Regulation rates for Nigerian orgs (non-fatal)
+            OrganisationService._seed_wht_rates(org)
 
         logger.info("Organisation created: %s (owner=%s)", org.id, owner.id)
         return org
