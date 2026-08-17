@@ -4034,6 +4034,65 @@ class LedgerDrivenReconciliationTests(TestCase):
         self.assertEqual(res.data["created"], 0)
         self.assertEqual(self.recon.lines.count(), 1)
 
+
+    def test_ledger_load_does_not_duplicate_an_imported_statement_line(self):
+        """Importing a statement and THEN loading the ledger must not bring both
+        sides of the same transaction into one list. Found on a real desktop
+        click-through: the cleared total silently doubled (624,500.64 against a
+        311,500.32 statement) and the reconciliation could never balance."""
+        from apps.accounting.models import BankReconciliationLine
+        self._post("250000", 3, desc="Customer payment")
+        self._post("80000", 15, inflow=False, desc="Rent")
+        # The statement, imported first.
+        BankReconciliationLine.objects.create(
+            organisation=self.org, reconciliation=self.recon,
+            description="NIP/TRF/CUSTOMER", transaction_date=self.d(2026, 7, 3),
+            amount=Decimal("250000"),
+        )
+        BankReconciliationLine.objects.create(
+            organisation=self.org, reconciliation=self.recon,
+            description="RENT PAYMENT", transaction_date=self.d(2026, 7, 15),
+            amount=Decimal("-80000"),
+        )
+        res = self.client.post(self._url("populate_from_ledger"), {}, format="json")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.assertEqual(res.data["created"], 0)
+        self.assertEqual(res.data["covered_by_statement"], 2)
+        self.assertEqual(self.recon.lines.count(), 2)
+        self.assertEqual(sum(l.amount for l in self.recon.lines.all()), Decimal("170000.0000"))
+
+    def test_ledger_load_still_adds_entries_the_statement_does_not_cover(self):
+        """A book entry with no corresponding statement line must still come in —
+        that is the whole point of the ledger-driven path."""
+        from apps.accounting.models import BankReconciliationLine
+        self._post("250000", 3, desc="Customer payment")
+        self._post("9999", 20, desc="Not on the statement")
+        BankReconciliationLine.objects.create(
+            organisation=self.org, reconciliation=self.recon,
+            description="NIP/TRF/CUSTOMER", transaction_date=self.d(2026, 7, 3),
+            amount=Decimal("250000"),
+        )
+        res = self.client.post(self._url("populate_from_ledger"), {}, format="json")
+        self.assertEqual(res.data["covered_by_statement"], 1)
+        self.assertEqual(res.data["created"], 1)
+        descs = [l.description for l in self.recon.lines.all()]
+        self.assertTrue(any("Not on the statement" in d for d in descs), descs)
+
+    def test_genuine_same_day_same_amount_repeat_still_loads(self):
+        """Two real transactions of the same value on the same day: the statement
+        covers one, so exactly one ledger line should still be added."""
+        from apps.accounting.models import BankReconciliationLine
+        self._post("5000", 12, desc="POS one")
+        self._post("5000", 12, desc="POS two")
+        BankReconciliationLine.objects.create(
+            organisation=self.org, reconciliation=self.recon,
+            description="POS PURCHASE", transaction_date=self.d(2026, 7, 12),
+            amount=Decimal("5000"),
+        )
+        res = self.client.post(self._url("populate_from_ledger"), {}, format="json")
+        self.assertEqual(res.data["covered_by_statement"], 1)
+        self.assertEqual(res.data["created"], 1)
+
     def test_populate_refused_on_a_completed_reconciliation(self):
         self.recon.is_reconciled = True
         self.recon.save(update_fields=["is_reconciled"])

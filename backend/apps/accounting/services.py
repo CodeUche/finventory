@@ -3324,9 +3324,11 @@ class ReconciliationMatchingService:
         else — see the journal_line__isnull=True guards in the matchers.
 
         Idempotent: safe to call repeatedly. Skips journal lines that are already
-        represented, and journal lines already tied to a CONFIRMED statement match,
-        so a transaction can never be counted twice in the cleared total.
+        represented, journal lines already tied to a CONFIRMED statement match, and
+        journal lines an imported statement line already stands for — so a
+        transaction can never be counted twice in the cleared total.
         """
+        from collections import Counter
         from .models import AIReconMatch, BankReconciliationLine, JournalLine
 
         org = reconciliation.organisation
@@ -3341,6 +3343,16 @@ class ReconciliationMatchingService:
                 reconciliation=reconciliation, status='confirmed', book_line__isnull=False,
             ).values_list('book_line_id', flat=True)
         )
+        # …and so is a book entry an UNMATCHED statement line already stands for.
+        # Importing a statement and then loading the ledger would otherwise bring
+        # both sides of the same transaction into one list and silently double the
+        # cleared total — the exact "unbalanced for no visible reason" trap this
+        # module exists to remove. Matched as a multiset on date + signed amount so
+        # a genuine same-day, same-value repeat still comes through.
+        statement_amounts = Counter(
+            (l.transaction_date, Decimal(str(l.amount)))
+            for l in reconciliation.lines.filter(journal_line__isnull=True)
+        )
         book = JournalLine.objects.filter(
             journal_entry__organisation=org,
             journal_entry__status='posted',
@@ -3350,10 +3362,16 @@ class ReconciliationMatchingService:
         ).select_related('journal_entry')
 
         created = 0
+        covered_by_statement = 0
         for jl in book:
             if jl.id in already or jl.id in confirmed:
                 continue
             je = jl.journal_entry
+            key = (je.entry_date, ReconciliationMatchingService._book_signed(jl))
+            if statement_amounts.get(key, 0) > 0:
+                statement_amounts[key] -= 1
+                covered_by_statement += 1
+                continue
             BankReconciliationLine.objects.create(
                 organisation=org,
                 reconciliation=reconciliation,
@@ -3366,7 +3384,11 @@ class ReconciliationMatchingService:
                 is_cleared=False,
             )
             created += 1
-        return {'created': created, 'skipped': len(already) + len(confirmed)}
+        return {
+            'created': created,
+            'skipped': len(already) + len(confirmed),
+            'covered_by_statement': covered_by_statement,
+        }
 
     @staticmethod
     def _book_signed(jl):

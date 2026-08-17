@@ -383,6 +383,13 @@ export default function BankReconciliationPage() {
       const { data } = await accountingApi.populateFromLedger(activeRecon.id)
       if (data.created) toast.success(`Loaded ${data.created} ledger transaction${data.created !== 1 ? 's' : ''}`)
       else toast('No new ledger transactions for this period', { icon: 'ℹ️' })
+      // Explain the ones deliberately left out, so "why did nothing appear?" has
+      // an answer rather than looking like the button did nothing.
+      if (data.covered_by_statement)
+        toast(
+          `${data.covered_by_statement} already covered by an imported statement line — not added again`,
+          { icon: 'ℹ️', duration: 7000 },
+        )
       await refreshActiveRecon()
     } catch (err: unknown) {
       const e = err as { response?: { data?: { error?: unknown } } }
