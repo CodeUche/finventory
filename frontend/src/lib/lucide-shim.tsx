@@ -66,6 +66,7 @@ import {
   Globe as _Globe,
   GraduationCap as _GraduationCap,
   GridFour as _GridFour,
+  HardDrive as _HardDrive,
   House as _House,
   Info as _Info,
   Key as _Key,
@@ -206,6 +207,7 @@ export const Gift = mk(_Gift)
 export const GitBranch = mk(_GitBranch)
 export const Globe = mk(_Globe)
 export const GraduationCap = mk(_GraduationCap)
+export const HardDrive = mk(_HardDrive)
 export const HelpCircle = mk(_Question)
 export const History = mk(_ClockCounterClockwise)
 export const Home = mk(_House)

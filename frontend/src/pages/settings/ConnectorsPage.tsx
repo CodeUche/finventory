@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 import {
-  MessageSquare, FileSpreadsheet, Loader2, CheckCircle2, LogOut, Pencil, RefreshCw,
+  MessageSquare, FileSpreadsheet, HardDrive, CalendarDays, Send, Mail,
+  Loader2, CheckCircle2, LogOut, Pencil, RefreshCw, Search,
 } from 'lucide-react'
 import { confirmDialog } from '@/lib/dialog'
 import { openExternal } from '@/lib/openExternal'
@@ -19,11 +20,27 @@ const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 const ICONS: Record<ConnectorKey, React.ElementType> = {
   slack: MessageSquare,
   google_sheets: FileSpreadsheet,
+  google_drive: HardDrive,
+  google_calendar: CalendarDays,
+  telegram: Send,
+  gmail: Mail,
 }
 const ICON_STYLES: Record<ConnectorKey, string> = {
   slack: 'bg-gold-500/10 text-gold-400',
   google_sheets: 'bg-green-500/10 text-green-400',
+  google_drive: 'bg-blue-500/10 text-blue-400',
+  google_calendar: 'bg-purple-500/10 text-purple-400',
+  telegram: 'bg-sky-500/10 text-sky-400',
+  gmail: 'bg-red-500/10 text-red-400',
 }
+
+// Connectors with user-editable settings (shows the Pencil/config drawer).
+// Telegram has none — its only "config" (chat_id) is set exclusively by the
+// /start webhook handshake server-side, never through this UI (mirrors the
+// backend's ConnectorConfigView.ALLOWED_KEYS, which has no telegram entry).
+// Gmail DOES need one — its notify_email recipient address — same "connected
+// but not yet configured" gap Drive's folder_id/Calendar's calendar_id have.
+const CONFIGURABLE_CONNECTORS: ConnectorKey[] = ['slack', 'google_sheets', 'google_drive', 'google_calendar', 'gmail']
 
 function errMsg(err: unknown, fallback: string): string {
   const apiErr = (err as { response?: { data?: { error?: unknown } } })?.response?.data?.error
@@ -49,6 +66,9 @@ interface ConfigDraft {
   channel_id?: string
   spreadsheet_id?: string
   sheet_range?: string
+  folder_id?: string
+  calendar_id?: string
+  notify_email?: string
 }
 
 export default function ConnectorsPage() {
@@ -61,11 +81,14 @@ export default function ConnectorsPage() {
   const [disconnectingKey, setDisconnectingKey] = useState<string | null>(null)
   const [addonPurchasingKey, setAddonPurchasingKey] = useState<string | null>(null)
   const [addonInterval, setAddonInterval] = useState<Record<string, BillingInterval>>({})
+  const [filterTab, setFilterTab] = useState<'all' | 'connected' | 'not_connected'>('all')
+  const [search, setSearch] = useState('')
 
   const [configOpenKey, setConfigOpenKey] = useState<string | null>(null)
   const [configDraft, setConfigDraft] = useState<ConfigDraft>({})
   const [savingConfig, setSavingConfig] = useState(false)
   const [slackChannels, setSlackChannels] = useState<{ id: string; name: string }[]>([])
+  const [driveFolders, setDriveFolders] = useState<{ id: string; name: string }[]>([])
 
   // Two independent poll timers per connector: one for the Nango connect
   // session, one for the ₦4,500/mo add-on's Paystack checkout — a user can
@@ -168,7 +191,16 @@ export default function ConnectorsPage() {
       } else {
         window.open(connect_link, '_blank', 'noopener,noreferrer')
       }
-      toast('Sign-in opened in your browser. Come back here once done — the connection activates automatically.', { duration: 8000 })
+      // Telegram's connect_link opens the Telegram app/web to a chat with
+      // Audity's bot rather than an OAuth sign-in screen — same
+      // openExternal()/new-tab mechanism either way (see connectorsApi.ts's
+      // module docstring), just different copy.
+      toast(
+        key === 'telegram'
+          ? 'Telegram opened — send the pre-filled /start message to the bot. Come back here once done.'
+          : 'Sign-in opened in your browser. Come back here once done — the connection activates automatically.',
+        { duration: 8000 },
+      )
       startConnectPolling(key)
       load() // refresh so the button flips to "Connecting…" while the poll runs
     } catch (err) {
@@ -267,6 +299,9 @@ export default function ConnectorsPage() {
       channel_id: entry.connection?.config?.channel_id ?? '',
       spreadsheet_id: entry.connection?.config?.spreadsheet_id ?? '',
       sheet_range: entry.connection?.config?.sheet_range ?? '',
+      folder_id: entry.connection?.config?.folder_id ?? '',
+      calendar_id: entry.connection?.config?.calendar_id ?? '',
+      notify_email: entry.connection?.config?.notify_email ?? '',
     })
     if (entry.connector_key === 'slack' && slackChannels.length === 0) {
       try {
@@ -274,17 +309,34 @@ export default function ConnectorsPage() {
         setSlackChannels(res.data.channels)
       } catch { /* fall back to manual channel-ID entry, no toast needed */ }
     }
+    if (entry.connector_key === 'google_drive' && driveFolders.length === 0) {
+      try {
+        const res = await connectorsApi.googleDriveFolders()
+        setDriveFolders(res.data.folders)
+      } catch { /* fall back to manual folder-ID entry, no toast needed */ }
+    }
   }
 
   const saveConfig = async (key: ConnectorKey) => {
     setSavingConfig(true)
     try {
-      const payload: Record<string, string> = key === 'slack'
-        ? { channel_id: configDraft.channel_id ?? '' }
-        : {
-            spreadsheet_id: extractSpreadsheetId(configDraft.spreadsheet_id ?? ''),
-            sheet_range: configDraft.sheet_range || 'Sheet1',
-          }
+      let payload: Record<string, string>
+      if (key === 'slack') {
+        payload = { channel_id: configDraft.channel_id ?? '' }
+      } else if (key === 'google_sheets') {
+        payload = {
+          spreadsheet_id: extractSpreadsheetId(configDraft.spreadsheet_id ?? ''),
+          sheet_range: configDraft.sheet_range || 'Sheet1',
+        }
+      } else if (key === 'google_drive') {
+        payload = { folder_id: configDraft.folder_id ?? '' }
+      } else if (key === 'google_calendar') {
+        // "primary" (the org's own default calendar) if left blank
+        payload = { calendar_id: configDraft.calendar_id || 'primary' }
+      } else {
+        // gmail — the only other configurable connector (telegram has no config UI)
+        payload = { notify_email: (configDraft.notify_email ?? '').trim() }
+      }
       await connectorsApi.updateConfig(key, payload)
       toast.success('Settings saved.')
       setConfigOpenKey(null)
@@ -307,8 +359,17 @@ export default function ConnectorsPage() {
   const { quota, connectors, addon_price } = data
   const quotaPct = quota.max > 0 ? Math.min(100, Math.round((quota.used / quota.max) * 100)) : 0
 
+  const filteredConnectors = connectors.filter((entry) => {
+    const isActive = entry.connection?.status === 'active'
+    if (filterTab === 'connected' && !isActive) return false
+    if (filterTab === 'not_connected' && isActive) return false
+    if (search.trim() && !entry.name.toLowerCase().includes(search.trim().toLowerCase())) return false
+    return true
+  })
+  const connectedCount = connectors.filter((e) => e.connection?.status === 'active').length
+
   return (
-    <div className="space-y-8 w-full">
+    <div className="space-y-5 w-full">
       <div className="flex items-start justify-between gap-5 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold text-white">Connectors</h1>
@@ -317,31 +378,60 @@ export default function ConnectorsPage() {
             no API keys, no webhook URLs.
           </p>
         </div>
-        <div className="flex flex-col gap-2 bg-surface-800 border border-surface-700 rounded-xl px-4 py-3.5 min-w-[230px]">
-          <div className="flex items-baseline justify-between gap-3">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-gold-400">
-              {quota.plan_name ?? 'Free'} plan
-            </span>
-            <span className="text-xs text-slate-400">
-              <b className="text-white tabular-nums">{quota.used}</b> of{' '}
-              <b className="text-white tabular-nums">{quota.max}</b> used
-            </span>
-          </div>
-          <div className="h-1.5 rounded-full bg-surface-700 overflow-hidden">
+        <div className="flex items-center gap-3 bg-surface-800 border border-surface-700 rounded-xl px-4 py-2.5">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-gold-400">
+            {quota.plan_name ?? 'Free'} plan
+          </span>
+          <div className="w-20 h-1.5 rounded-full bg-surface-700 overflow-hidden">
             <div
               className="h-full rounded-full bg-gradient-to-r from-gold-600 to-gold-400 transition-all"
               style={{ width: `${quotaPct}%` }}
             />
           </div>
+          <span className="text-xs text-slate-400 whitespace-nowrap">
+            <b className="text-white tabular-nums">{quota.used}</b>/<b className="text-white tabular-nums">{quota.max}</b> used
+          </span>
         </div>
       </div>
 
-      <div>
-        <h2 className="text-[11px] font-semibold text-slate-500 uppercase tracking-widest mb-3">
-          Available now
-        </h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {connectors.map((entry) => {
+      {/* Search + filter tabs — compact, scannable, scales past a handful of connectors */}
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div className="flex items-center gap-1 bg-surface-800 border border-surface-700 rounded-lg p-1">
+          {([
+            ['all', 'All'],
+            ['connected', `Connected${connectedCount ? ` (${connectedCount})` : ''}`],
+            ['not_connected', 'Not connected'],
+          ] as const).map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setFilterTab(key)}
+              className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${
+                filterTab === key ? 'bg-surface-600 text-white' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="relative w-full sm:w-56">
+          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search connectors…"
+            className="w-full bg-surface-800 border border-surface-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-surface-500"
+          />
+        </div>
+      </div>
+
+      {/* Compact list — small logo, name, status/action inline. Config drawer
+          expands directly under the row it belongs to instead of ballooning
+          the row itself, so the list stays scannable at a glance. */}
+      <div className="bg-surface-800 border border-surface-700 rounded-2xl divide-y divide-surface-700 overflow-hidden">
+        {filteredConnectors.length === 0 && (
+          <p className="text-sm text-slate-500 px-5 py-8 text-center">No connectors match.</p>
+        )}
+        {filteredConnectors.map((entry) => {
             const Icon = ICONS[entry.connector_key]
             const conn = entry.connection
             const isActive = conn?.status === 'active'
@@ -353,65 +443,58 @@ export default function ConnectorsPage() {
             const price = interval === 'annual' ? addon_price.annual : addon_price.monthly
 
             return (
-              <div key={entry.connector_key} className="bg-surface-800 border border-surface-700 rounded-2xl p-5 flex flex-col gap-4 hover:border-surface-600 transition-colors">
-                <div className="flex items-start gap-3">
-                  <div className={`w-[42px] h-[42px] rounded-xl flex items-center justify-center shrink-0 ${ICON_STYLES[entry.connector_key]}`}>
-                    <Icon size={19} />
+              <div key={entry.connector_key}>
+                <div className="flex items-center gap-3 px-4 py-3 hover:bg-surface-700/30 transition-colors">
+                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${ICON_STYLES[entry.connector_key]}`}>
+                    <Icon size={15} />
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[15px] font-bold text-white">{entry.name}</p>
-                    <p className="text-xs text-slate-400 leading-relaxed mt-0.5">{entry.description}</p>
+                  <div className="flex-1 min-w-0 flex items-baseline gap-2">
+                    <p className="text-sm font-semibold text-white truncate">{entry.name}</p>
+                    {isActive && conn?.external_account_label && (
+                      <p className="text-xs text-slate-500 truncate">— {conn.external_account_label}</p>
+                    )}
                   </div>
-                </div>
 
-                {needsAddon && (
-                  <div className="flex items-center gap-1.5 text-xs">
-                    <button
-                      onClick={() => setAddonInterval((prev) => ({ ...prev, [entry.connector_key]: 'monthly' }))}
-                      className={`px-2.5 py-1 rounded-full border transition-colors ${interval === 'monthly' ? 'border-gold-500 text-gold-400 bg-gold-500/10' : 'border-surface-600 text-slate-400 hover:text-slate-200'}`}
-                    >
-                      Monthly
-                    </button>
-                    <button
-                      onClick={() => setAddonInterval((prev) => ({ ...prev, [entry.connector_key]: 'annual' }))}
-                      className={`px-2.5 py-1 rounded-full border transition-colors ${interval === 'annual' ? 'border-gold-500 text-gold-400 bg-gold-500/10' : 'border-surface-600 text-slate-400 hover:text-slate-200'}`}
-                    >
-                      Annual
-                    </button>
-                  </div>
-                )}
-
-                <div className="flex items-center justify-between gap-3 pt-3 border-t border-surface-700 mt-auto">
-                  {isActive ? (
-                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full bg-green-500/10 text-green-400 border border-green-500/25">
-                      <CheckCircle2 size={12} />
-                      Connected{conn?.external_account_label ? ` as ${conn.external_account_label}` : ''}
-                    </span>
-                  ) : isPending ? (
-                    <span className="text-xs text-slate-500">Waiting for sign-in to complete…</span>
-                  ) : needsAddon ? (
-                    <span className="text-xs text-slate-500">Beyond your plan's quota</span>
-                  ) : (
-                    <span className="text-xs text-slate-500">Included in your plan</span>
+                  {needsAddon && (
+                    <div className="hidden md:flex items-center gap-1 text-[11px] shrink-0">
+                      <button
+                        onClick={() => setAddonInterval((prev) => ({ ...prev, [entry.connector_key]: 'monthly' }))}
+                        className={`px-2 py-0.5 rounded-full border transition-colors ${interval === 'monthly' ? 'border-gold-500 text-gold-400 bg-gold-500/10' : 'border-surface-600 text-slate-400 hover:text-slate-200'}`}
+                      >
+                        Monthly
+                      </button>
+                      <button
+                        onClick={() => setAddonInterval((prev) => ({ ...prev, [entry.connector_key]: 'annual' }))}
+                        className={`px-2 py-0.5 rounded-full border transition-colors ${interval === 'annual' ? 'border-gold-500 text-gold-400 bg-gold-500/10' : 'border-surface-600 text-slate-400 hover:text-slate-200'}`}
+                      >
+                        Annual
+                      </button>
+                    </div>
                   )}
 
                   <div className="flex items-center gap-2 shrink-0">
                     {isActive && (
                       <>
-                        <button
-                          onClick={() => (configOpenKey === entry.connector_key ? setConfigOpenKey(null) : openConfig(entry))}
-                          className="p-2 rounded-lg border border-surface-600 text-slate-400 hover:text-white hover:border-surface-500 transition-colors"
-                          title="Configure"
-                        >
-                          <Pencil size={14} />
-                        </button>
+                        <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-green-500/10 text-green-400 border border-green-500/25">
+                          <CheckCircle2 size={11} />
+                          Connected
+                        </span>
+                        {CONFIGURABLE_CONNECTORS.includes(entry.connector_key) && (
+                          <button
+                            onClick={() => (configOpenKey === entry.connector_key ? setConfigOpenKey(null) : openConfig(entry))}
+                            className="p-1.5 rounded-md border border-surface-600 text-slate-400 hover:text-white hover:border-surface-500 transition-colors"
+                            title="Configure"
+                          >
+                            <Pencil size={12} />
+                          </button>
+                        )}
                         <button
                           onClick={() => handleDisconnect(entry)}
                           disabled={disconnectingKey === entry.connector_key}
-                          className="px-3.5 py-2 rounded-lg text-xs font-semibold border border-surface-600 text-slate-300 hover:text-red-400 hover:border-red-500/40 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                          className="p-1.5 rounded-md border border-surface-600 text-slate-400 hover:text-red-400 hover:border-red-500/40 transition-colors disabled:opacity-50"
+                          title="Disconnect"
                         >
-                          {disconnectingKey === entry.connector_key ? <Loader2 size={13} className="animate-spin" /> : <LogOut size={13} />}
-                          Disconnect
+                          {disconnectingKey === entry.connector_key ? <Loader2 size={12} className="animate-spin" /> : <LogOut size={12} />}
                         </button>
                       </>
                     )}
@@ -420,12 +503,12 @@ export default function ConnectorsPage() {
                       <button
                         onClick={() => handleRestore(entry.connector_key)}
                         disabled={restoringKey === entry.connector_key}
-                        className="px-4 py-2 rounded-lg text-sm font-semibold bg-surface-700 text-slate-300 cursor-default flex items-center gap-1.5 disabled:opacity-70"
+                        className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-surface-700 text-slate-300 flex items-center gap-1.5 disabled:opacity-70"
                         title="Restore connection — re-check if sign-in already completed"
                       >
                         {restoringKey === entry.connector_key
-                          ? <Loader2 size={13} className="animate-spin" />
-                          : <RefreshCw size={13} />}
+                          ? <Loader2 size={12} className="animate-spin" />
+                          : <RefreshCw size={12} />}
                         Connecting…
                       </button>
                     )}
@@ -434,9 +517,9 @@ export default function ConnectorsPage() {
                       <button
                         onClick={() => handleConnect(entry.connector_key)}
                         disabled={connectingKey === entry.connector_key}
-                        className="px-4 py-2 rounded-lg text-sm font-semibold bg-gold-500 hover:bg-gold-400 text-surface-950 transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-1.5"
+                        className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-gold-500 hover:bg-gold-400 text-surface-950 transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-1.5"
                       >
-                        {connectingKey === entry.connector_key && <Loader2 size={13} className="animate-spin" />}
+                        {connectingKey === entry.connector_key && <Loader2 size={12} className="animate-spin" />}
                         Connect
                       </button>
                     )}
@@ -445,17 +528,17 @@ export default function ConnectorsPage() {
                       <button
                         onClick={() => handleAddonPurchase(entry.connector_key)}
                         disabled={addonPurchasingKey === entry.connector_key}
-                        className="px-4 py-2 rounded-lg text-sm font-semibold border border-gold-600/40 text-gold-400 hover:bg-gold-500/10 transition-colors disabled:opacity-60 flex items-center gap-1.5"
+                        className="px-3.5 py-1.5 rounded-lg text-xs font-semibold border border-gold-600/40 text-gold-400 hover:bg-gold-500/10 transition-colors disabled:opacity-60 flex items-center gap-1.5 whitespace-nowrap"
                       >
-                        {addonPurchasingKey === entry.connector_key && <Loader2 size={13} className="animate-spin" />}
-                        Add connector — {fmtNaira(price)}/{interval === 'annual' ? 'yr' : 'mo'}
+                        {addonPurchasingKey === entry.connector_key && <Loader2 size={12} className="animate-spin" />}
+                        {fmtNaira(price)}/{interval === 'annual' ? 'yr' : 'mo'}
                       </button>
                     )}
                   </div>
                 </div>
 
                 {isActive && configOpenKey === entry.connector_key && (
-                  <div className="pt-3 border-t border-surface-700 space-y-2.5">
+                  <div className="px-4 pb-4 pl-[52px] space-y-2.5 bg-surface-900/40">
                     {entry.connector_key === 'slack' ? (
                       <>
                         <label className="text-xs text-slate-400 block">Channel to post updates to</label>
@@ -479,7 +562,7 @@ export default function ConnectorsPage() {
                           />
                         )}
                       </>
-                    ) : (
+                    ) : entry.connector_key === 'google_sheets' ? (
                       <>
                         <label className="text-xs text-slate-400 block">Google Sheet URL or ID</label>
                         <input
@@ -488,6 +571,55 @@ export default function ConnectorsPage() {
                           value={configDraft.spreadsheet_id ?? ''}
                           onChange={(e) => setConfigDraft((d) => ({ ...d, spreadsheet_id: e.target.value }))}
                         />
+                      </>
+                    ) : entry.connector_key === 'google_drive' ? (
+                      <>
+                        <label className="text-xs text-slate-400 block">Folder to save PDFs into</label>
+                        {driveFolders.length > 0 ? (
+                          <select
+                            className="input"
+                            value={configDraft.folder_id ?? ''}
+                            onChange={(e) => setConfigDraft((d) => ({ ...d, folder_id: e.target.value }))}
+                          >
+                            <option value="">Select a folder…</option>
+                            {driveFolders.map((f) => (
+                              <option key={f.id} value={f.id}>{f.name}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input
+                            className="input"
+                            placeholder="Google Drive folder ID"
+                            value={configDraft.folder_id ?? ''}
+                            onChange={(e) => setConfigDraft((d) => ({ ...d, folder_id: e.target.value }))}
+                          />
+                        )}
+                        <p className="text-[11px] text-slate-500">Invoice, payslip, and report PDFs will be saved here automatically.</p>
+                      </>
+                    ) : entry.connector_key === 'google_calendar' ? (
+                      <>
+                        <label className="text-xs text-slate-400 block">Calendar to add deadlines to</label>
+                        <input
+                          className="input"
+                          placeholder="primary (your default calendar), or a calendar's email address"
+                          value={configDraft.calendar_id ?? ''}
+                          onChange={(e) => setConfigDraft((d) => ({ ...d, calendar_id: e.target.value }))}
+                        />
+                        <p className="text-[11px] text-slate-500">Leave blank to use your main Google Calendar.</p>
+                      </>
+                    ) : (
+                      <>
+                        <label className="text-xs text-slate-400 block">Email address to notify</label>
+                        <input
+                          type="email"
+                          className="input"
+                          placeholder="accountant@yourbusiness.com"
+                          value={configDraft.notify_email ?? ''}
+                          onChange={(e) => setConfigDraft((d) => ({ ...d, notify_email: e.target.value }))}
+                        />
+                        <p className="text-[11px] text-slate-500">
+                          Sent from your own connected Gmail account when invoices are created and payments land.
+                        </p>
                       </>
                     )}
                     <div className="flex items-center gap-2">
@@ -511,7 +643,6 @@ export default function ConnectorsPage() {
               </div>
             )
           })}
-        </div>
       </div>
     </div>
   )

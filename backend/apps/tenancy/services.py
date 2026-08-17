@@ -472,18 +472,38 @@ class OrganisationService:
     def accept_invitation(invitation: Invitation, user) -> Membership:
         """Accept an invitation, creating or reactivating membership with optional per-module permissions."""
         from .models import ModulePermission
+
+        # Second line of defence for H-1. The invite endpoint now refuses
+        # role=owner, but this is the actual mutation point: an invitation row
+        # created before that guard existed, or any future caller that reaches
+        # the service directly, must not be able to produce a second owner.
+        # Downgraded rather than raised, so an existing pending invitation
+        # still lets the person join — as an admin, which is what an inviter
+        # choosing "owner" almost certainly meant.
+        role = invitation.role
+        if role == Membership.Role.OWNER:
+            logger.warning(
+                "Invitation %s carries role=owner; downgrading to admin on "
+                "acceptance (an organisation has exactly one owner)",
+                invitation.id,
+            )
+            role = Membership.Role.ADMIN
+
         membership, created = Membership.objects.get_or_create(
             user=user,
             organisation=invitation.organisation,
             defaults={
-                "role": invitation.role,
+                "role": role,
                 "invited_by": invitation.invited_by,
                 "is_active": True,
                 "joined_at": timezone.now(),
             },
         )
         if not created:
-            membership.role = invitation.role
+            # `role`, not `invitation.role` — the reactivation path has to
+            # honour the owner guard above too, or rejoining an org is a way
+            # around it.
+            membership.role = role
             membership.is_active = True
             membership.joined_at = timezone.now()
             membership.save()

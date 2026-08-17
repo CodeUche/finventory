@@ -102,6 +102,10 @@ class MePayslipViewSet(viewsets.ReadOnlyModelViewSet):
         pdf_bytes = build_payslip_pdf(payslip)
         run = payslip.payroll_run
         filename = f"Payslip-{payslip.employee.employee_id}-{run.period_year}{run.period_month:02d}.pdf"
+
+        from apps.connectors.services import maybe_save_pdf_to_drive
+        maybe_save_pdf_to_drive(payslip.organisation, filename, pdf_bytes)
+
         response = HttpResponse(pdf_bytes, content_type='application/pdf')
         response['Content-Disposition'] = f'attachment; filename="{filename}"'
         return response
@@ -170,7 +174,54 @@ class MeLeaveRequestViewSet(viewsets.ModelViewSet):
         )
         balance.pending_days = Decimal(str(balance.pending_days)) + days
         balance.save(update_fields=['pending_days'])
+
+        # This is the door employees actually use — /me/leave-requests/. The
+        # manager-facing endpoint notifies too, but almost nobody raises leave
+        # through it, so wiring only that one would have meant a request
+        # arriving with nobody told.
+        self._notify_approvers(employee, instance)
+
         return Response(self.get_serializer(instance).data, status=status.HTTP_201_CREATED)
+
+    @staticmethod
+    def _notify_approvers(employee, leave_request):
+        """
+        Tell the line manager plus anyone who can view leave requests, so a
+        request raised while the manager is away does not sit unanswered.
+        Never raises: failing to tell someone must not fail the request.
+        """
+        try:
+            from apps.notifications.models import Notification
+            from apps.notifications.services import (
+                notify_after_commit, recipients_for_module,
+            )
+
+            org = employee.organisation
+            manager_user = (
+                employee.manager.user
+                if employee.manager and employee.manager.user_id
+                else None
+            )
+            notify_after_commit(
+                org,
+                recipients_for_module(
+                    org, "leave",
+                    include_users=[manager_user] if manager_user else [],
+                ),
+                category=Notification.Category.LEAVE,
+                title=f"{employee.first_name} {employee.last_name} requested leave",
+                body=(
+                    f"{leave_request.start_date} to {leave_request.end_date} "
+                    f"({leave_request.days} day(s))."
+                ),
+                link="/hr/leave",
+                exclude=getattr(employee, "user", None),
+            )
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception(
+                "could not notify approvers for leave request %s", leave_request.id,
+            )
 
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):

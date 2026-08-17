@@ -5,6 +5,12 @@ from rest_framework.response import Response
 
 from apps.core.mixins import ExportMixin, TenantFilterMixin
 from apps.core.permissions import IsStaff, plan_requires
+from apps.core.permissions import requires_module
+# The owner's per-person ticks, enforced server-side (H-2). Mirrors
+# useModuleAccess.ts: owners and admins bypass; for everyone else no
+# record means no access, and only what was granted is granted.
+_ModAccess_purchases = requires_module("purchases")
+
 
 _PlanPurchases = plan_requires('purchases')
 
@@ -31,7 +37,7 @@ class PurchaseOrderViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet
 
     queryset = PurchaseOrder.objects.select_related("supplier", "warehouse").prefetch_related("items__product")
     serializer_class = PurchaseOrderSerializer
-    permission_classes = [IsAuthenticated, IsStaff, _PlanPurchases]
+    permission_classes = [IsAuthenticated, IsStaff, _PlanPurchases, _ModAccess_purchases]
     filterset_fields = ["status", "supplier"]
     search_fields = ["po_number", "supplier__name"]
     ordering_fields = ["order_date", "total_amount"]
@@ -210,7 +216,7 @@ class PurchaseReturnViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     """List/create supplier purchase returns. Returns are immutable once created."""
 
     serializer_class = PurchaseReturnSerializer
-    permission_classes = [IsAuthenticated, IsStaff, _PlanPurchases]
+    permission_classes = [IsAuthenticated, IsStaff, _PlanPurchases, _ModAccess_purchases]
     http_method_names = ["get", "post", "head", "options"]
     filterset_fields = ["supplier", "purchase_order"]
     search_fields = ["return_number"]

@@ -9,6 +9,12 @@ from rest_framework.response import Response
 
 from apps.core.mixins import TenantFilterMixin
 from apps.core.permissions import IsAccountant, IsOwnerOrAdmin
+from apps.core.permissions import requires_module
+# The owner's per-person ticks, enforced server-side (H-2). Mirrors
+# useModuleAccess.ts: owners and admins bypass; for everyone else no
+# record means no access, and only what was granted is granted.
+_ModAccess_tax = requires_module("tax")
+
 
 from .models import (
     CapitalAllowanceClaim, DeferredTaxItem, ExciseDuty,
@@ -42,7 +48,7 @@ class TaxClassViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
     queryset = TaxClass.objects.filter(is_active=True)
     serializer_class = TaxClassSerializer
-    permission_classes = [IsAuthenticated, IsAccountant]
+    permission_classes = [IsAuthenticated, IsAccountant, _ModAccess_tax]
 
 
 class TaxConfigViewSet(TenantFilterMixin, viewsets.ModelViewSet):
@@ -50,7 +56,7 @@ class TaxConfigViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
     queryset = TaxConfig.objects.filter(is_active=True)
     serializer_class = TaxConfigSerializer
-    permission_classes = [IsAuthenticated, IsOwnerOrAdmin]
+    permission_classes = [IsAuthenticated, IsOwnerOrAdmin, _ModAccess_tax]
 
     @action(detail=False, methods=["post"])
     def calculate_income_tax(self, request):
@@ -115,7 +121,7 @@ class TaxReturnViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
     queryset = TaxReturn.objects.select_related("config")
     serializer_class = TaxReturnSerializer
-    permission_classes = [IsAuthenticated, IsAccountant]
+    permission_classes = [IsAuthenticated, IsAccountant, _ModAccess_tax]
 
     @action(detail=True, methods=["post"])
     def file(self, request, pk=None):
@@ -136,7 +142,7 @@ class ExciseDutyViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     """Manage excise duty rates."""
 
     serializer_class = ExciseDutySerializer
-    permission_classes = [IsAuthenticated, IsAccountant]
+    permission_classes = [IsAuthenticated, IsAccountant, _ModAccess_tax]
 
     def get_queryset(self):
         org = self._get_organisation()
@@ -147,7 +153,7 @@ class WHTRateViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     """Manage withholding tax rates."""
 
     serializer_class = WHTRateSerializer
-    permission_classes = [IsAuthenticated, IsAccountant]
+    permission_classes = [IsAuthenticated, IsAccountant, _ModAccess_tax]
 
     def get_queryset(self):
         org = self._get_organisation()
@@ -158,7 +164,7 @@ class WHTTransactionViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     """Manage withholding tax transactions."""
 
     serializer_class = WHTTransactionSerializer
-    permission_classes = [IsAuthenticated, IsAccountant]
+    permission_classes = [IsAuthenticated, IsAccountant, _ModAccess_tax]
 
     def get_queryset(self):
         org = self._get_organisation()
@@ -328,7 +334,7 @@ class WHTTransactionViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 class WHTCertificateViewSet(TenantFilterMixin, viewsets.ReadOnlyModelViewSet):
     """GET /api/v1/tax/wht-certificates/ — list issued WHT credit notes."""
     serializer_class = WHTCertificateSerializer
-    permission_classes = [IsAuthenticated, IsAccountant]
+    permission_classes = [IsAuthenticated, IsAccountant, _ModAccess_tax]
 
     def get_queryset(self):
         org = self._get_organisation()
@@ -338,7 +344,7 @@ class WHTCertificateViewSet(TenantFilterMixin, viewsets.ReadOnlyModelViewSet):
 class VATTransactionViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     """CRUD /api/v1/tax/vat-transactions/ — per-transaction VAT ITC tracking."""
     serializer_class = VATTransactionSerializer
-    permission_classes = [IsAuthenticated, IsAccountant]
+    permission_classes = [IsAuthenticated, IsAccountant, _ModAccess_tax]
 
     def get_queryset(self):
         org = self._get_organisation()
@@ -552,7 +558,7 @@ class TaxObligationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     Auto-generated obligations (VAT, PAYE) are created by Celery Beat.
     """
     serializer_class = TaxObligationSerializer
-    permission_classes = [IsAuthenticated, IsAccountant]
+    permission_classes = [IsAuthenticated, IsAccountant, _ModAccess_tax]
 
     def get_queryset(self):
         org = self._get_organisation()
@@ -620,7 +626,7 @@ class TaxObligationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 class CapitalAllowanceClaimViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     """CRUD /api/v1/tax/capital-allowances/ — capital allowance schedule per asset per year."""
     serializer_class = CapitalAllowanceClaimSerializer
-    permission_classes = [IsAuthenticated, IsAccountant]
+    permission_classes = [IsAuthenticated, IsAccountant, _ModAccess_tax]
 
     def get_queryset(self):
         org = self._get_organisation()
@@ -655,7 +661,7 @@ class CapitalAllowanceClaimViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 class DeferredTaxItemViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     """CRUD /api/v1/tax/deferred-tax/ — deferred tax schedule (IAS 12)."""
     serializer_class = DeferredTaxItemSerializer
-    permission_classes = [IsAuthenticated, IsAccountant]
+    permission_classes = [IsAuthenticated, IsAccountant, _ModAccess_tax]
 
     def get_queryset(self):
         org = self._get_organisation()
@@ -693,7 +699,7 @@ class DeferredTaxItemViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 class RelatedPartyTransactionViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     """CRUD /api/v1/tax/transfer-pricing/ — related party transactions for TP disclosure."""
     serializer_class = RelatedPartyTransactionSerializer
-    permission_classes = [IsAuthenticated, IsOwnerOrAdmin]
+    permission_classes = [IsAuthenticated, IsOwnerOrAdmin, _ModAccess_tax]
 
     def get_queryset(self):
         org = self._get_organisation()

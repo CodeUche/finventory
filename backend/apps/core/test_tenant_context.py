@@ -125,9 +125,21 @@ class ScheduledTasksUseTenantContextTests(TestCase):
     """
 
     # Every scheduled sweep that touches at least one RLS-protected table.
-    # Tasks in integrations/subscriptions/tax are deliberately absent: they
-    # touch no RLS-protected table, so they were never affected by NEW-7 and
-    # converting them would be unnecessary churn.
+    #
+    # The webhook, connector-event and tax sweeps were left off this list
+    # originally, on the stated grounds that they touched no protected table.
+    # That was true when it was written and is no longer: the staged RLS
+    # batches bring integrations_domainevent, integrations_webhookdelivery,
+    # integrations_webhooksubscription, connectors_connectoreventdelivery,
+    # connectors_connectorconnection and tax_taxobligation under policy. The
+    # moment those migrations deploy, all five tasks below would have begun
+    # processing zero rows and reporting success — and the two webhook sweeps
+    # are the busiest jobs on the scheduler, so the silence would have been
+    # expensive. Converted and listed here as NEW-15.
+    #
+    # apps.subscriptions is still absent, and correctly so: it only touches
+    # tenancy_organisation and the plan tables, none of which are RLS-covered
+    # in any batch. Check the batch migrations before adding anything here.
     CROSS_TENANT_TASKS = [
         ("apps.sales.tasks", "mark_overdue_invoices"),
         ("apps.sales.tasks", "generate_recurring_invoices"),
@@ -142,6 +154,12 @@ class ScheduledTasksUseTenantContextTests(TestCase):
         ("apps.payroll.tasks", "expire_stale_advances"),
         ("apps.einvoicing.tasks", "report_b2c_invoices"),
         ("apps.einvoicing.tasks", "retry_failed_submissions"),
+        # NEW-15
+        ("apps.integrations.tasks", "deliver_pending_webhooks"),
+        ("apps.connectors.tasks", "deliver_pending_connector_events"),
+        ("apps.tax.tasks", "generate_monthly_vat_obligations"),
+        ("apps.tax.tasks", "generate_monthly_paye_obligations"),
+        ("apps.tax.tasks", "flag_overdue_tax_obligations"),
     ]
 
     def test_task_module_imports_tenant_context(self):
@@ -152,8 +170,12 @@ class ScheduledTasksUseTenantContextTests(TestCase):
             mod = importlib.import_module(module_name)
             fn = getattr(mod, func_name)
             src = inspect.getsource(fn)
-            self.assertIn(
-                "for_each_organisation", src,
+            # Either helper is acceptable. for_each_organisation is the usual
+            # shape; a task that already had its own organisation loop just
+            # opens organisation_context inside it, which is the same guarantee
+            # with a smaller diff.
+            self.assertTrue(
+                "for_each_organisation" in src or "organisation_context" in src,
                 f"{module_name}.{func_name} sweeps tenant tables without "
                 f"per-organisation RLS context — it will silently process "
                 f"zero rows in production (NEW-7)",

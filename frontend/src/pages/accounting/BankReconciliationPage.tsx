@@ -3,15 +3,38 @@ import { useDataRefresh } from '@/hooks/useDataRefresh'
 import {
   CheckSquare, Square, RefreshCw, CheckCircle2, Upload, FileText,
   Sparkles, Zap, ChevronDown, ChevronRight, AlertTriangle, XCircle, Check, X,
+  Trash2, Pencil, Plus, Unlock, BookOpen,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { accountingApi, bypassNextGets } from '@/services/api'
+import { confirmDialog } from '@/lib/dialog'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import DateInput from '@/components/DateInput'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface Account { id: string; code: string; name: string }
+interface Account {
+  id: string
+  code: string
+  name: string
+  account_group?: string
+  sub_type_name?: string | null
+  is_bankable?: boolean
+}
+
+/** Only cash/bank style accounts can be reconciled against a bank statement.
+ *  Deliberately inclusive and tolerant of an older backend that doesn't send
+ *  is_bankable: the seeded chart gives every asset account_group='Asset', so
+ *  matching on the group alone would empty the picker for most organisations. */
+const BANKABLE_CODES = new Set(['1001', '1002'])
+const BANKABLE_SUB_TYPES = new Set(['bank', 'cash', 'credit card', 'mobile money'])
+
+function isBankable(a: Account): boolean {
+  if (typeof a.is_bankable === 'boolean') return a.is_bankable
+  if (a.account_group === 'Cash & Cash Equivalent') return true
+  if (BANKABLE_CODES.has(a.code)) return true
+  return BANKABLE_SUB_TYPES.has((a.sub_type_name ?? '').trim().toLowerCase())
+}
 
 interface ReconLine {
   id: string
@@ -112,6 +135,11 @@ export default function BankReconciliationPage() {
   // ── Manual tab state ──
   const [clearedIds, setClearedIds] = useState<Set<string>>(new Set())
   const [reconciling, setReconciling] = useState(false)
+  const [rowBusy, setRowBusy] = useState<Record<string, boolean>>({})
+  const [editingLine, setEditingLine] = useState<ReconLine | null>(null)
+  const [showAddLine, setShowAddLine] = useState(false)
+  const [addingLine, setAddingLine] = useState(false)
+  const [populating, setPopulating] = useState(false)
 
   // ── GL posting ──
   const [postingGL, setPostingGL] = useState(false)
@@ -126,7 +154,10 @@ export default function BankReconciliationPage() {
         accountingApi.reconciliations(),
       ])
       const allAccounts: Account[] = acRes.data.results ?? acRes.data
-      setAccounts(allAccounts.filter((a) => a.code.startsWith('1')))
+      // Previously `code.startsWith('1')`, which offered Inventory, Fixed Assets,
+      // Accumulated Depreciation and VAT Receivable as reconciliation targets.
+      const bankable = allAccounts.filter(isBankable)
+      setAccounts(bankable.length ? bankable : allAccounts.filter((a) => a.code.startsWith('1')))
       const recs: Reconciliation[] = recRes.data.results ?? recRes.data
       setReconciliations(recs)
     } catch {
@@ -170,6 +201,26 @@ export default function BankReconciliationPage() {
 
   // ─── CSV Import ────────────────────────────────────────────────────────────
 
+  /** Re-fetch the active reconciliation from the server.
+   *  bypassNextGets() is essential: without it the follow-up GET is served from the
+   *  offline cache and the freshly imported lines never appear — the page keeps
+   *  saying "No bank statement imported yet" after a successful import. */
+  const refreshActiveRecon = async (reconId?: string) => {
+    const id = reconId ?? activeRecon?.id
+    if (!id) return
+    bypassNextGets()
+    const recRes = await accountingApi.reconciliations()
+    const recs: Reconciliation[] = recRes.data.results ?? recRes.data
+    setReconciliations(recs)
+    const updated = recs.find((r) => r.id === id)
+    if (updated) {
+      setActiveRecon(updated)
+      setClearedIds(new Set(updated.lines.filter((l) => l.is_cleared).map((l) => l.id)))
+      setAiMatches(updated.ai_matches ?? [])
+    }
+    return updated
+  }
+
   const handleImportCSV = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file || !activeRecon) return
@@ -177,15 +228,10 @@ export default function BankReconciliationPage() {
     try {
       const { data } = await accountingApi.importStatement(activeRecon.id, file)
       toast.success(`Imported ${data.lines_created} transaction${data.lines_created !== 1 ? 's' : ''}`)
+      if (data.duplicates_skipped)
+        toast(`${data.duplicates_skipped} duplicate row${data.duplicates_skipped !== 1 ? 's' : ''} skipped — already in this reconciliation`, { icon: '♻️' })
       if (data.errors?.length) toast(`${data.errors.length} rows skipped`, { icon: '⚠️' })
-      const recRes = await accountingApi.reconciliations()
-      const recs: Reconciliation[] = recRes.data.results ?? recRes.data
-      const updated = recs.find((r) => r.id === activeRecon.id)
-      if (updated) {
-        setActiveRecon(updated)
-        setClearedIds(new Set(updated.lines.filter((l) => l.is_cleared).map((l) => l.id)))
-        setAiMatches(updated.ai_matches ?? [])
-      }
+      await refreshActiveRecon()
     } catch (err: unknown) {
       const e = err as { response?: { data?: { error?: unknown } } }
       const msg = e?.response?.data?.error ?? 'Import failed'
@@ -281,6 +327,11 @@ export default function BankReconciliationPage() {
 
   // ─── Manual reconcile ──────────────────────────────────────────────────────
 
+  const selectAll = () =>
+    setClearedIds(new Set((activeRecon?.lines ?? []).map((l) => l.id)))
+
+  const deselectAll = () => setClearedIds(new Set())
+
   const toggleLine = (lineId: string) => {
     setClearedIds((prev) => {
       const next = new Set(prev)
@@ -290,15 +341,144 @@ export default function BankReconciliationPage() {
     })
   }
 
+  // ─── Add a transaction by hand ──────────────────────────────────────────────
+  // The endpoint and API client already existed but nothing ever called them, so a
+  // user without a CSV (or whose CSV wouldn't parse) had no way to enter anything.
+
+  const handleAddLine = async (patch: { description: string; transaction_date: string; amount: string }) => {
+    if (!activeRecon) return
+    setAddingLine(true)
+    try {
+      await accountingApi.addReconLine(activeRecon.id, {
+        description: patch.description,
+        transaction_date: patch.transaction_date,
+        amount: patch.amount.replace(/,/g, ''),
+        is_cleared: false,
+      })
+      toast.success('Transaction added')
+      setShowAddLine(false)
+      await refreshActiveRecon()
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { error?: unknown } } }
+      const msg = e?.response?.data?.error
+      toast.error(typeof msg === 'string' ? msg : 'Failed to add transaction')
+    } finally {
+      setAddingLine(false)
+    }
+  }
+
+  // ─── Load the account's own book entries (Sage-style ledger reconciliation) ──
+
+  const handlePopulateFromLedger = async () => {
+    if (!activeRecon) return
+    setPopulating(true)
+    try {
+      const { data } = await accountingApi.populateFromLedger(activeRecon.id)
+      if (data.created) toast.success(`Loaded ${data.created} ledger transaction${data.created !== 1 ? 's' : ''}`)
+      else toast('No new ledger transactions for this period', { icon: 'ℹ️' })
+      await refreshActiveRecon()
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { error?: unknown } } }
+      const msg = e?.response?.data?.error
+      toast.error(typeof msg === 'string' ? msg : 'Failed to load ledger transactions')
+    } finally {
+      setPopulating(false)
+    }
+  }
+
+  // ─── Escape hatch: correct or remove a bad line / discard the reconciliation ──
+  // Without these a single mis-imported or duplicated row leaves the reconciliation
+  // permanently unbalanceable, with no way out from the UI.
+
+  const handleDeleteLine = async (line: ReconLine) => {
+    if (!activeRecon) return
+    const ok = await confirmDialog(
+      `Delete “${line.description}” (${formatCurrency(Math.abs(parseFloat(line.amount)))})? This only removes the statement line — your ledger is untouched.`,
+      { title: 'Delete statement line', confirmText: 'Delete', danger: true },
+    )
+    if (!ok) return
+    setRowBusy((p) => ({ ...p, [line.id]: true }))
+    try {
+      await accountingApi.deleteReconLine(activeRecon.id, line.id)
+      toast.success('Line deleted')
+      await refreshActiveRecon()
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { error?: unknown } } }
+      const msg = e?.response?.data?.error
+      toast.error(typeof msg === 'string' ? msg : 'Failed to delete line')
+    } finally {
+      setRowBusy((p) => ({ ...p, [line.id]: false }))
+    }
+  }
+
+  const handleSaveEditedLine = async (patch: { description: string; transaction_date: string; amount: string }) => {
+    if (!activeRecon || !editingLine) return
+    setRowBusy((p) => ({ ...p, [editingLine.id]: true }))
+    try {
+      await accountingApi.updateReconLine(activeRecon.id, {
+        line_id: editingLine.id,
+        description: patch.description,
+        transaction_date: patch.transaction_date,
+        amount: patch.amount.replace(/,/g, ''),
+      })
+      toast.success('Line updated')
+      setEditingLine(null)
+      await refreshActiveRecon()
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { error?: unknown } } }
+      const msg = e?.response?.data?.error
+      toast.error(typeof msg === 'string' ? msg : 'Failed to update line')
+    } finally {
+      setRowBusy((p) => ({ ...p, [editingLine.id]: false }))
+    }
+  }
+
+  const handleDeleteReconciliation = async (recon: Reconciliation) => {
+    const ok = await confirmDialog(
+      `Discard the reconciliation for ${recon.account_name ?? 'this account'} (${formatDate(recon.period_start)} – ${formatDate(recon.period_end)})? Imported statement lines are removed; your ledger is untouched.`,
+      { title: 'Discard reconciliation', confirmText: 'Discard', danger: true },
+    )
+    if (!ok) return
+    try {
+      await accountingApi.deleteReconciliation(recon.id)
+      toast.success('Reconciliation discarded')
+      if (activeRecon?.id === recon.id) setActiveRecon(null)
+      bypassNextGets()
+      load()
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { error?: unknown } } }
+      const msg = e?.response?.data?.error
+      toast.error(typeof msg === 'string' ? msg : 'Failed to discard reconciliation')
+    }
+  }
+
+  const handleReopen = async (recon: Reconciliation) => {
+    const ok = await confirmDialog(
+      'Re-open this completed reconciliation so it can be corrected?',
+      { title: 'Re-open reconciliation', confirmText: 'Re-open' },
+    )
+    if (!ok) return
+    try {
+      await accountingApi.reopenReconciliation(recon.id)
+      toast.success('Reconciliation re-opened')
+      await refreshActiveRecon(recon.id)
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { error?: unknown } } }
+      const msg = e?.response?.data?.error
+      toast.error(typeof msg === 'string' ? msg : 'Failed to re-open')
+    }
+  }
+
   const handleManualReconcile = async () => {
     if (!activeRecon) return
     setReconciling(true)
     try {
-      await Promise.all(
-        activeRecon.lines.map((line) =>
-          accountingApi.updateReconLine(activeRecon.id, { line_id: line.id, is_cleared: clearedIds.has(line.id) })
-        )
-      )
+      // Two bulk calls instead of one PATCH per line — a 300-line statement used to
+      // fire 300 requests against a 10s timeout and an hourly rate limit.
+      const cleared = activeRecon.lines.filter((l) => clearedIds.has(l.id)).map((l) => l.id)
+      const uncleared = activeRecon.lines.filter((l) => !clearedIds.has(l.id)).map((l) => l.id)
+      if (cleared.length) await accountingApi.bulkSetCleared(activeRecon.id, { line_ids: cleared, is_cleared: true })
+      if (uncleared.length) await accountingApi.bulkSetCleared(activeRecon.id, { line_ids: uncleared, is_cleared: false })
       await accountingApi.markReconciled(activeRecon.id)
       toast.success('Reconciliation completed!')
       setActiveRecon(null)
@@ -336,6 +516,15 @@ export default function BankReconciliationPage() {
     : 0
   const manualDiff = statementBal - clearedTotal
   const manualCanReconcile = Math.abs(manualDiff) < 0.01
+
+  // Sage-style presentation: the un-ticked items are what explains the gap between
+  // the statement and the books, so show them explicitly rather than leaving the
+  // user to work out why "Difference" is non-zero.
+  const outstandingLines = activeRecon
+    ? activeRecon.lines.filter((l) => !clearedIds.has(l.id))
+    : []
+  const outstandingTotal = outstandingLines.reduce((s, l) => s + parseFloat(l.amount), 0)
+  const bookBal = parseFloat(activeRecon?.book_balance ?? '0')
 
   // ─── Render ────────────────────────────────────────────────────────────────
 
@@ -447,7 +636,8 @@ export default function BankReconciliationPage() {
                   <FileText size={36} className="mx-auto mb-3 text-slate-600" />
                   <p className="text-white font-medium mb-1">No bank statement imported yet</p>
                   <p className="text-sm text-slate-400 mb-4">
-                    Click <strong>Import CSV</strong> above to upload your bank statement before running AI matching.
+                    Click <strong>Import CSV</strong> above to upload your bank statement before running matching —
+                    or switch to <strong>Manual</strong> to enter transactions by hand.
                   </p>
                   <p className="text-xs text-slate-500">
                     Expected columns: <code className="bg-surface-700 px-1 rounded">date, description, debit, credit</code> or <code className="bg-surface-700 px-1 rounded">amount</code>
@@ -711,7 +901,7 @@ export default function BankReconciliationPage() {
           {/* ══════════════════════════ MANUAL TAB ══════════════════════════ */}
           {activeTab === 'manual' && (
             <div className="space-y-4">
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
                 <div className="card p-5">
                   <p className="text-xs text-slate-400">Statement Balance</p>
                   <p className="text-xl font-bold text-white mt-1">{formatCurrency(statementBal)}</p>
@@ -719,6 +909,16 @@ export default function BankReconciliationPage() {
                 <div className="card p-5">
                   <p className="text-xs text-slate-400">Cleared Items Total</p>
                   <p className="text-xl font-bold text-brand-400 mt-1">{formatCurrency(clearedTotal)}</p>
+                </div>
+                <div className="card p-5">
+                  <p className="text-xs text-slate-400">Outstanding ({outstandingLines.length})</p>
+                  <p className="text-xl font-bold text-amber-400 mt-1">{formatCurrency(Math.abs(outstandingTotal))}</p>
+                  <p className="text-[11px] text-slate-500 mt-0.5">Not yet ticked</p>
+                </div>
+                <div className="card p-5">
+                  <p className="text-xs text-slate-400">Book Balance</p>
+                  <p className="text-xl font-bold text-white mt-1">{formatCurrency(bookBal)}</p>
+                  <p className="text-[11px] text-slate-500 mt-0.5">Per your ledger</p>
                 </div>
                 <div className={`card p-5 border ${manualCanReconcile ? 'border-emerald-500/40 bg-emerald-500/5' : 'border-red-500/30 bg-red-500/5'}`}>
                   <p className="text-xs text-slate-400">Difference</p>
@@ -730,35 +930,67 @@ export default function BankReconciliationPage() {
               </div>
 
               <div className="card p-0 overflow-hidden">
-                <div className="px-5 py-4 border-b border-surface-700 flex items-center justify-between">
+                <div className="px-5 py-4 border-b border-surface-700 flex items-center justify-between flex-wrap gap-3">
                   <h3 className="text-white font-semibold">
                     Transactions — {formatDate(activeRecon.period_start)} to {formatDate(activeRecon.period_end)}
                   </h3>
-                  <button
-                    onClick={handleManualReconcile}
-                    disabled={reconciling || !manualCanReconcile}
-                    className="btn-primary text-sm px-4 disabled:opacity-50 flex items-center gap-2"
-                  >
-                    <CheckCircle2 size={15} />
-                    {reconciling ? 'Reconciling…' : 'Mark as Reconciled'}
-                  </button>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {activeRecon.lines.length > 0 && (
+                      <>
+                        <button onClick={selectAll} className="btn-ghost text-sm px-3">Select All</button>
+                        <button onClick={deselectAll} className="btn-ghost text-sm px-3">Deselect All</button>
+                      </>
+                    )}
+                    <button
+                      onClick={handlePopulateFromLedger}
+                      disabled={populating}
+                      title="Bring in the transactions already recorded against this account"
+                      className="btn-ghost text-sm px-3 flex items-center gap-1.5 disabled:opacity-50"
+                    >
+                      <BookOpen size={14} />
+                      {populating ? 'Loading…' : 'Load from Ledger'}
+                    </button>
+                    <button
+                      onClick={() => setShowAddLine(true)}
+                      className="btn-ghost text-sm px-3 flex items-center gap-1.5"
+                    >
+                      <Plus size={14} />
+                      Add Transaction
+                    </button>
+                    <button
+                      onClick={handleManualReconcile}
+                      disabled={reconciling || !manualCanReconcile}
+                      className="btn-primary text-sm px-4 disabled:opacity-50 flex items-center gap-2"
+                    >
+                      <CheckCircle2 size={15} />
+                      {reconciling ? 'Reconciling…' : 'Mark as Reconciled'}
+                    </button>
+                  </div>
                 </div>
                 <div className="divide-y divide-surface-700">
                   {activeRecon.lines.length === 0 ? (
                     <div className="px-5 py-10 text-center">
                       <FileText size={32} className="mx-auto mb-3 text-slate-600" />
                       <p className="text-sm text-slate-400 mb-1">No transactions yet</p>
-                      <p className="text-xs text-slate-500">
-                        Click <strong>Import CSV</strong> to upload your bank statement.
+                      <p className="text-xs text-slate-500 mb-4">
+                        Import your bank statement, or add transactions one at a time — no file needed.
                       </p>
+                      <button
+                        onClick={() => setShowAddLine(true)}
+                        className="btn-ghost text-sm px-3 inline-flex items-center gap-1.5"
+                      >
+                        <Plus size={14} />
+                        Add Transaction
+                      </button>
                     </div>
                   ) : (
                     activeRecon.lines.map((line) => {
                       const isCleared = clearedIds.has(line.id)
+                      const busy = rowBusy[line.id]
                       return (
                         <div
                           key={line.id}
-                          className={`flex items-center gap-4 px-5 py-3.5 cursor-pointer transition-colors ${isCleared ? 'bg-emerald-500/5' : 'hover:bg-surface-700/30'}`}
+                          className={`group flex items-center gap-4 px-5 py-3.5 cursor-pointer transition-colors ${isCleared ? 'bg-emerald-500/5' : 'hover:bg-surface-700/30'} ${busy ? 'opacity-50' : ''}`}
                           onClick={() => toggleLine(line.id)}
                         >
                           <div className={`shrink-0 ${isCleared ? 'text-emerald-400' : 'text-slate-600'}`}>
@@ -775,6 +1007,27 @@ export default function BankReconciliationPage() {
                           <span className={`font-semibold text-sm ${parseFloat(line.amount) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                             {formatCurrency(Math.abs(parseFloat(line.amount)))}
                           </span>
+                          {/* Escape hatch — correct or remove a bad row */}
+                          <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                            <button
+                              title="Edit this line"
+                              aria-label={`Edit ${line.description}`}
+                              disabled={busy}
+                              onClick={(e) => { e.stopPropagation(); setEditingLine(line) }}
+                              className="p-1.5 rounded text-slate-400 hover:text-white hover:bg-surface-700 disabled:opacity-50"
+                            >
+                              <Pencil size={14} />
+                            </button>
+                            <button
+                              title="Delete this line"
+                              aria-label={`Delete ${line.description}`}
+                              disabled={busy}
+                              onClick={(e) => { e.stopPropagation(); handleDeleteLine(line) }}
+                              className="p-1.5 rounded text-slate-400 hover:text-red-400 hover:bg-surface-700 disabled:opacity-50"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
                         </div>
                       )
                     })
@@ -784,6 +1037,28 @@ export default function BankReconciliationPage() {
             </div>
           )}
         </div>
+      )}
+
+      {/* ── Add / edit line modals ── */}
+      {editingLine && (
+        <LineFormModal
+          title="Edit statement line"
+          saveLabel="Save changes"
+          line={editingLine}
+          busy={!!rowBusy[editingLine.id]}
+          onCancel={() => setEditingLine(null)}
+          onSave={handleSaveEditedLine}
+        />
+      )}
+      {showAddLine && (
+        <LineFormModal
+          title="Add transaction"
+          saveLabel="Add transaction"
+          defaultDate={activeRecon?.period_end}
+          busy={addingLine}
+          onCancel={() => setShowAddLine(false)}
+          onSave={handleAddLine}
+        />
       )}
 
       {/* ── Past reconciliations ── */}
@@ -796,8 +1071,8 @@ export default function BankReconciliationPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-surface-700">
-                {['Account', 'Period', 'Statement Bal', 'Book Bal', 'Status'].map((h) => (
-                  <th key={h} className="px-5 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
+                {['Account', 'Period', 'Statement Bal', 'Book Bal', 'Status', ''].map((h, i) => (
+                  <th key={h || `actions-${i}`} className="px-5 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
                 ))}
               </tr>
             </thead>
@@ -805,7 +1080,7 @@ export default function BankReconciliationPage() {
               {loading
                 ? Array.from({ length: 3 }).map((_, i) => (
                     <tr key={i}>
-                      {Array.from({ length: 5 }).map((_, j) => (
+                      {Array.from({ length: 6 }).map((_, j) => (
                         <td key={j} className="px-5 py-3"><div className="h-4 bg-surface-700 rounded animate-pulse w-20" /></td>
                       ))}
                     </tr>
@@ -830,12 +1105,95 @@ export default function BankReconciliationPage() {
                           ? <span className="badge-green">Reconciled</span>
                           : <span className="badge-yellow">In Progress</span>}
                       </td>
+                      <td className="px-5 py-3 text-right" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-end gap-1">
+                          {r.is_reconciled ? (
+                            <button
+                              title="Re-open this reconciliation"
+                              aria-label="Re-open reconciliation"
+                              onClick={() => handleReopen(r)}
+                              className="p-1.5 rounded text-slate-400 hover:text-white hover:bg-surface-700"
+                            >
+                              <Unlock size={14} />
+                            </button>
+                          ) : (
+                            <button
+                              title="Discard this reconciliation"
+                              aria-label="Discard reconciliation"
+                              onClick={() => handleDeleteReconciliation(r)}
+                              className="p-1.5 rounded text-slate-400 hover:text-red-400 hover:bg-surface-700"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          )}
+                        </div>
+                      </td>
                     </tr>
                   ))}
             </tbody>
           </table>
         </div>
       )}
+    </div>
+  )
+}
+
+// ─── Edit-line modal ──────────────────────────────────────────────────────────
+// Lets a mis-imported or mis-typed statement row be corrected in place, so a bad
+// import never leaves the reconciliation permanently unbalanceable.
+
+interface LineFormModalProps {
+  title: string
+  saveLabel: string
+  line?: ReconLine | null
+  defaultDate?: string
+  busy: boolean
+  onCancel: () => void
+  onSave: (patch: { description: string; transaction_date: string; amount: string }) => void
+}
+
+function LineFormModal({ title, saveLabel, line, defaultDate, busy, onCancel, onSave }: LineFormModalProps) {
+  const [description, setDescription] = useState(line?.description ?? '')
+  const [date, setDate] = useState(line?.transaction_date ?? defaultDate ?? today)
+  const [amount, setAmount] = useState(line?.amount ?? '')
+
+  const valid = description.trim().length > 0 && !!date && !Number.isNaN(parseFloat(amount.replace(/,/g, '')))
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-label={title}>
+      <div className="card w-full max-w-md p-6 space-y-4">
+        <h3 className="text-base font-semibold text-white">{title}</h3>
+        <div>
+          <label className="text-xs text-slate-400 mb-1 block">Description</label>
+          <input className="input" value={description} onChange={(e) => setDescription(e.target.value)} />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">Date</label>
+            <DateInput value={date} onChange={setDate} />
+          </div>
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">Amount</label>
+            <input
+              className="input"
+              inputMode="decimal"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+            />
+            <p className="text-[11px] text-slate-500 mt-1">Positive = money in, negative = money out</p>
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 pt-1">
+          <button onClick={onCancel} disabled={busy} className="btn-ghost text-sm px-4">Cancel</button>
+          <button
+            onClick={() => onSave({ description: description.trim(), transaction_date: date, amount })}
+            disabled={busy || !valid}
+            className="btn-primary text-sm px-4 disabled:opacity-50"
+          >
+            {busy ? 'Saving…' : saveLabel}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

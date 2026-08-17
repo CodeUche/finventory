@@ -712,8 +712,15 @@ def export_pdf(
 
     doc.build(elements, canvasmaker=_HFCanvas)
     buf.seek(0)
+    pdf_bytes = buf.getvalue()
 
-    response = HttpResponse(buf.getvalue(), content_type="application/pdf")
+    if org is not None:
+        # maybe_save_pdf_to_drive never raises (see its own docstring) — a
+        # Drive/Celery hiccup must never break a report download.
+        from apps.connectors.services import maybe_save_pdf_to_drive
+        maybe_save_pdf_to_drive(org, filename, pdf_bytes)
+
+    response = HttpResponse(pdf_bytes, content_type="application/pdf")
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
     return response
 

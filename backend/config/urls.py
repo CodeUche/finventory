@@ -71,6 +71,8 @@ api_v1_urlpatterns = [
     path("storefront/", include("apps.storefront.urls")),
     # In-app instant messaging (Track B) — REST only, no WebSockets/Channels
     path("messaging/", include("apps.messaging.urls")),
+    # Notification bell + per-person delivery preferences
+    path("notifications/", include("apps.notifications.urls")),
     # Paid integrations marketplace: webhooks + Zapier-compatible API (Track C)
     # — hidden from nav in v1 (superseded by Connectors below), route kept
     # alive for existing paying customers (see frontend Sidebar.tsx).

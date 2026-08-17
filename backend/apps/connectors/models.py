@@ -39,10 +39,31 @@ from apps.core.models import MoneyField, TenantAwareModel
 
 class Connector(models.TextChoices):
     """Launch connectors only — see module docstring. No placeholders for
-    LinkedIn/ATS/ERP/WhatsApp; those were explicitly cut from v1."""
+    LinkedIn/ATS/ERP/WhatsApp; those were explicitly cut from v1.
+
+    GOOGLE_DRIVE, GOOGLE_CALENDAR, and GMAIL all follow the exact same
+    Nango-OAuth model as SLACK/GOOGLE_SHEETS — GMAIL reuses the SAME Google
+    OAuth client already live for Sheets/Drive/Calendar (Nango unique_key
+    "google-mail"), no new console work. GMAIL is a notification channel in
+    the same category as SLACK/TELEGRAM (invoice.created/payment.received
+    -> a short email sent via the org's OWN connected Gmail account) — it is
+    NOT related to and does not touch Audity's existing invoice/payslip
+    SMTP/Brevo email-sending pathway (apps.payroll.tasks, apps.notifications).
+    TELEGRAM is the one deliberate exception — see
+    apps.connectors.services' TelegramLinkService docstring and
+    apps.connectors.telegram module docstring: there is no per-org OAuth
+    grant for Telegram, just one shared bot correlated to an org via a
+    linking code. `choices=` here is Python/DRF-level validation only (no DB
+    CHECK constraint was ever added on connector_key — see 0001_initial),
+    so adding members here needs no migration.
+    """
 
     SLACK = "slack", "Slack"
     GOOGLE_SHEETS = "google_sheets", "Google Sheets"
+    GOOGLE_DRIVE = "google_drive", "Google Drive"
+    GOOGLE_CALENDAR = "google_calendar", "Google Calendar"
+    TELEGRAM = "telegram", "Telegram"
+    GMAIL = "gmail", "Gmail"
 
 
 class ConnectorConnection(TenantAwareModel):

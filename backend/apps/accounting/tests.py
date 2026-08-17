@@ -3484,3 +3484,560 @@ class FixedAssetMasterConventionUsageTransferTests(TestCase):
         x = AssetTransfer.objects.get(organisation=self.org, asset_id=asset_id)
         self.assertEqual(str(x.from_asset_type_id), str(at_a.id))
         self.assertEqual(str(x.to_asset_type_id), str(at_b.id))
+
+
+class BankStatementImportIntegrityTests(TestCase):
+    """CSV import must be all-or-nothing, survive ragged rows, and never double-count
+    a re-imported statement.
+
+    Regression cover for the live-UI defect where a ragged row raised an unhandled
+    AttributeError mid-loop: the rows already written stayed behind (no transaction),
+    so re-importing the corrected file duplicated them and left the reconciliation
+    permanently unbalanced with no way to fix it from the UI.
+    """
+
+    def setUp(self):
+        import datetime
+        self.user = _make_user("recon_import@example.com")
+        self.org = _make_org(self.user, "Recon Import Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+        self.bank = Account.objects.get(organisation=self.org, code="1002")
+        from apps.accounting.models import BankReconciliation
+        self.recon = BankReconciliation.objects.create(
+            organisation=self.org, account=self.bank,
+            period_start=datetime.date(2026, 7, 1),
+            period_end=datetime.date(2026, 7, 31),
+            statement_closing_balance=Decimal("311500.32"),
+        )
+
+    def _import(self, csv_text, name="stmt.csv"):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        f = SimpleUploadedFile(name, csv_text.encode("utf-8"), content_type="text/csv")
+        return self.client.post(
+            f"/api/v1/accounting/reconciliations/{self.recon.id}/import_statement/",
+            {"file": f}, format="multipart",
+        )
+
+    def _count(self):
+        return self.recon.lines.count()
+
+    CLEAN = (
+        "date,description,debit,credit\n"
+        "03/07/2026,NIP/TRF/Falcon Ltd,,250000.00\n"
+        "15/07/2026,RENT PAYMENT JULY,80000.00,\n"
+    )
+
+    # ── Ragged rows must not 500 and must not partially import ──────────────────
+    def test_ragged_row_does_not_500(self):
+        """A short row (missing trailing columns) and a row with EXTRA columns are the
+        most common real-world bank-export defects. Neither may raise."""
+        ragged = (
+            "date,description,debit,credit\n"
+            "03/07/2026,Falcon Ltd,,250000\n"
+            "09/07/2026,Short row missing trailing cols\n"
+            "15/07/2026,Rent July,80000,,EXTRA,COLS\n"
+        )
+        res = self._import(ragged)
+        self.assertNotEqual(res.status_code, 500)
+        self.assertIn(res.status_code, (201, 400), msg=str(getattr(res, "data", "")))
+
+    def test_ragged_rows_still_import_the_good_ones(self):
+        ragged = (
+            "date,description,debit,credit\n"
+            "03/07/2026,Falcon Ltd,,250000\n"
+            "09/07/2026,Short row\n"
+            "15/07/2026,Rent July,80000,\n"
+        )
+        res = self._import(ragged)
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        # The two well-formed rows land; the short row is tolerated (restval='').
+        self.assertGreaterEqual(res.data["lines_created"], 2)
+
+    def test_no_partial_import_when_every_row_is_unusable(self):
+        """Zero usable rows → 400 and NOTHING written (the anti-orphan guarantee)."""
+        junk = "date,description,debit,credit\nnot-a-date,junk,abc,def\n"
+        res = self._import(junk)
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(self._count(), 0)
+
+    def test_missing_header_is_rejected_cleanly(self):
+        res = self._import("")
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(self._count(), 0)
+
+    # ── Re-import must not double-count ─────────────────────────────────────────
+    def test_reimport_same_statement_does_not_duplicate(self):
+        first = self._import(self.CLEAN)
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(self._count(), 2)
+
+        second = self._import(self.CLEAN)
+        self.assertEqual(second.status_code, 201)
+        self.assertEqual(second.data["lines_created"], 0)
+        self.assertEqual(second.data["duplicates_skipped"], 2)
+        self.assertEqual(self._count(), 2, "re-importing the same statement double-counted")
+
+    def test_recovery_after_bad_import_reaches_zero_difference(self):
+        """The reviewer's exact journey: a ragged file, then the corrected file.
+        The reconciliation must end able to balance — not stuck with a duplicate."""
+        ragged = (
+            "date,description,debit,credit\n"
+            "03/07/2026,NIP/TRF/Falcon Ltd,,250000.00\n"
+            "09/07/2026,Short row that breaks the parse\n"
+        )
+        self._import(ragged)
+        self._import(self.CLEAN)
+        # 250,000 must appear exactly once despite being in both files.
+        falcon = self.recon.lines.filter(description__icontains="Falcon")
+        self.assertEqual(falcon.count(), 1, "the corrected re-import duplicated a line")
+        total = sum(l.amount for l in self.recon.lines.all())
+        self.assertEqual(total, Decimal("170000.00"))
+
+
+    def test_amountless_row_is_reported_not_imported_as_zero(self):
+        """A truncated row used to parse to 0.00 and land as a meaningless line that
+        silently padded the reconciliation. It must be reported as an error instead."""
+        ragged = (
+            "date,description,debit,credit\n"
+            "03/07/2026,Real transaction,,250000\n"
+            "09/07/2026,Truncated row with no amount\n"
+        )
+        res = self._import(ragged)
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        self.assertEqual(res.data["lines_created"], 1)
+        self.assertEqual(self._count(), 1)
+        self.assertFalse(self.recon.lines.filter(amount=0).exists(),
+                         "a zero-amount line must never be imported")
+        self.assertTrue(any("no amount" in e for e in res.data["errors"]), str(res.data["errors"]))
+
+    def test_explicit_zero_amount_row_is_rejected(self):
+        res = self._import(
+            "date,description,debit,credit\n03/07/2026,Nothing happened,0,0\n"
+        )
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(self._count(), 0)
+
+    def test_genuine_same_day_repeat_transaction_is_kept(self):
+        """Two identical transactions in ONE file are legitimate — keep both."""
+        twice = (
+            "date,description,debit,credit\n"
+            "03/07/2026,POS PURCHASE,5000.00,\n"
+            "03/07/2026,POS PURCHASE,5000.00,\n"
+        )
+        res = self._import(twice)
+        self.assertEqual(res.status_code, 201)
+        self.assertEqual(res.data["lines_created"], 2)
+        self.assertEqual(self._count(), 2)
+
+
+class BankReconciliationEscapeHatchTests(TestCase):
+    """A user must always be able to correct or abandon a reconciliation.
+
+    Regression cover for the live-UI defect where a duplicated imported row left the
+    Difference permanently non-zero, "Mark as Reconciled" disabled, and NO delete or
+    edit control anywhere in the UI — an unrecoverable dead end.
+    """
+
+    def setUp(self):
+        import datetime
+        self.user = _make_user("recon_hatch@example.com")
+        self.org = _make_org(self.user, "Recon Hatch Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+        self.bank = Account.objects.get(organisation=self.org, code="1002")
+        from apps.accounting.models import BankReconciliation
+        self.recon = BankReconciliation.objects.create(
+            organisation=self.org, account=self.bank,
+            period_start=datetime.date(2026, 7, 1),
+            period_end=datetime.date(2026, 7, 31),
+            statement_closing_balance=Decimal("100000"),
+        )
+        self.line = self._line("Duplicated row", "2026-07-03", "250000")
+
+    def _line(self, desc, d, amt):
+        import datetime
+        from apps.accounting.models import BankReconciliationLine
+        return BankReconciliationLine.objects.create(
+            organisation=self.org, reconciliation=self.recon, description=desc,
+            transaction_date=datetime.date.fromisoformat(d), amount=Decimal(amt),
+        )
+
+    def _url(self, action):
+        return f"/api/v1/accounting/reconciliations/{self.recon.id}/{action}/"
+
+    # ── Delete ──────────────────────────────────────────────────────────────────
+    def test_delete_line_removes_it(self):
+        res = self.client.post(self._url("delete_line"), {"line_id": str(self.line.id)}, format="json")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.assertEqual(self.recon.lines.count(), 0)
+
+    def test_delete_line_also_clears_its_match_proposals(self):
+        from apps.accounting.models import AIReconMatch
+        AIReconMatch.objects.create(
+            organisation=self.org, reconciliation=self.recon, bank_line=self.line,
+            book_line=None, confidence=0.0, match_type="uncertain", status="proposed",
+        )
+        self.client.post(self._url("delete_line"), {"line_id": str(self.line.id)}, format="json")
+        self.assertEqual(AIReconMatch.objects.filter(reconciliation=self.recon).count(), 0)
+
+    def test_delete_unknown_line_404s(self):
+        import uuid
+        res = self.client.post(self._url("delete_line"), {"line_id": str(uuid.uuid4())}, format="json")
+        self.assertEqual(res.status_code, 404)
+
+    # ── Edit ────────────────────────────────────────────────────────────────────
+    def test_update_line_edits_amount_date_and_description(self):
+        res = self.client.patch(self._url("update_line"), {
+            "line_id": str(self.line.id), "description": "Corrected",
+            "transaction_date": "2026-07-05", "amount": "1234.56",
+        }, format="json")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.line.refresh_from_db()
+        self.assertEqual(self.line.description, "Corrected")
+        self.assertEqual(str(self.line.transaction_date), "2026-07-05")
+        self.assertEqual(self.line.amount, Decimal("1234.56"))
+
+    def test_update_line_still_toggles_cleared(self):
+        """The original cleared-flag behaviour must keep working."""
+        res = self.client.patch(self._url("update_line"),
+                                {"line_id": str(self.line.id), "is_cleared": True}, format="json")
+        self.assertEqual(res.status_code, 200)
+        self.line.refresh_from_db()
+        self.assertTrue(self.line.is_cleared)
+
+    def test_update_line_rejects_bad_amount(self):
+        res = self.client.patch(self._url("update_line"),
+                                {"line_id": str(self.line.id), "amount": "abc"}, format="json")
+        self.assertEqual(res.status_code, 400)
+
+    def test_update_line_rejects_empty_description(self):
+        res = self.client.patch(self._url("update_line"),
+                                {"line_id": str(self.line.id), "description": "   "}, format="json")
+        self.assertEqual(res.status_code, 400)
+
+    # ── Completed reconciliations are protected ─────────────────────────────────
+    def test_cannot_edit_or_delete_lines_on_a_completed_reconciliation(self):
+        self.recon.is_reconciled = True
+        self.recon.save(update_fields=["is_reconciled"])
+        d = self.client.post(self._url("delete_line"), {"line_id": str(self.line.id)}, format="json")
+        u = self.client.patch(self._url("update_line"),
+                              {"line_id": str(self.line.id), "amount": "1"}, format="json")
+        self.assertEqual(d.status_code, 400)
+        self.assertEqual(u.status_code, 400)
+        self.assertEqual(self.recon.lines.count(), 1)
+
+    def test_cannot_delete_a_completed_reconciliation(self):
+        self.recon.is_reconciled = True
+        self.recon.save(update_fields=["is_reconciled"])
+        res = self.client.delete(f"/api/v1/accounting/reconciliations/{self.recon.id}/")
+        self.assertEqual(res.status_code, 400)
+
+    def test_reopen_then_edit_then_delete(self):
+        """The full recovery path for a completed-but-wrong reconciliation."""
+        self.recon.is_reconciled = True
+        self.recon.save(update_fields=["is_reconciled"])
+        r = self.client.post(self._url("reopen"), {}, format="json")
+        self.assertEqual(r.status_code, 200, msg=str(r.data))
+        self.recon.refresh_from_db()
+        self.assertFalse(self.recon.is_reconciled)
+        self.assertIsNone(self.recon.reconciled_at)
+        d = self.client.post(self._url("delete_line"), {"line_id": str(self.line.id)}, format="json")
+        self.assertEqual(d.status_code, 200)
+
+    def test_discard_in_progress_reconciliation(self):
+        from apps.accounting.models import BankReconciliation
+        res = self.client.delete(f"/api/v1/accounting/reconciliations/{self.recon.id}/")
+        self.assertIn(res.status_code, (204, 200))
+        self.assertFalse(
+            BankReconciliation.objects.filter(id=self.recon.id, is_deleted=False).exists()
+        )
+
+
+class BankReconciliationBookBalanceAndPickerTests(TestCase):
+    """book_balance must reflect the real ledger, and only cash/bank accounts may be
+    offered as reconciliation targets.
+
+    Regression cover for two live-UI defects: the 'Book Bal' column showed 0.00 for
+    every reconciliation because nothing ever wrote the field, and the account picker
+    offered Inventory / Fixed Assets / Accumulated Depreciation / VAT Receivable
+    because it filtered on code.startswith('1').
+    """
+
+    def setUp(self):
+        import datetime
+        self.user = _make_user("recon_bookbal@example.com")
+        self.org = _make_org(self.user, "Recon BookBal Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+        self.bank = Account.objects.get(organisation=self.org, code="1002")
+        self.rev = Account.objects.get(organisation=self.org, code="4001")
+        self.exp = Account.objects.get(organisation=self.org, code="6100")
+        self.d = datetime.date
+
+    def _post(self, amount, day, inflow=True):
+        amt = Decimal(str(amount))
+        Z = Decimal("0")
+        lines = ([(self.bank, amt, Z), (self.rev, Z, amt)] if inflow
+                 else [(self.exp, amt, Z), (self.bank, Z, amt)])
+        return AccountingService.post_journal_entry(
+            self.org, f"move {amount}", self.d(2026, 7, day), lines, self.user,
+            source_type="bb", source_ref=f"{amount}-{day}-{inflow}",
+        )
+
+    def _recon(self, closing="0"):
+        from apps.accounting.models import BankReconciliation
+        return BankReconciliation.objects.create(
+            organisation=self.org, account=self.bank,
+            period_start=self.d(2026, 7, 1), period_end=self.d(2026, 7, 31),
+            statement_closing_balance=Decimal(closing),
+        )
+
+    # ── book_balance ────────────────────────────────────────────────────────────
+    def test_book_balance_matches_the_ledger(self):
+        from apps.accounting.services import ReconciliationMatchingService
+        self._post("250000.00", 3)
+        self._post("120500.50", 9)
+        self._post("80000.00", 15, inflow=False)
+        recon = self._recon()
+        value = ReconciliationMatchingService.compute_book_balance(recon)
+        self.assertEqual(value, Decimal("290500.50"))
+
+    def test_book_balance_is_persisted_and_served_by_the_list_endpoint(self):
+        self._post("250000.00", 3)
+        self._post("80000.00", 15, inflow=False)
+        self._recon()
+        res = self.client.get("/api/v1/accounting/reconciliations/")
+        self.assertEqual(res.status_code, 200)
+        rows = res.data.get("results", res.data)
+        self.assertEqual(Decimal(str(rows[0]["book_balance"])), Decimal("170000.00"))
+
+    def test_book_balance_excludes_entries_after_period_end(self):
+        from apps.accounting.services import ReconciliationMatchingService
+        import datetime
+        self._post("100000.00", 10)
+        AccountingService.post_journal_entry(
+            self.org, "August money", datetime.date(2026, 8, 5),
+            [(self.bank, Decimal("999999"), Decimal("0")), (self.rev, Decimal("0"), Decimal("999999"))],
+            self.user, source_type="bb", source_ref="august",
+        )
+        recon = self._recon()
+        self.assertEqual(
+            ReconciliationMatchingService.compute_book_balance(recon), Decimal("100000.00")
+        )
+
+    def test_book_balance_frozen_once_reconciled(self):
+        from apps.accounting.services import ReconciliationMatchingService
+        self._post("100000.00", 10)
+        recon = self._recon()
+        ReconciliationMatchingService.refresh_book_balance(recon)
+        self.assertEqual(recon.book_balance, Decimal("100000.00"))
+        recon.is_reconciled = True
+        recon.save(update_fields=["is_reconciled"])
+        self._post("50000.00", 20)
+        ReconciliationMatchingService.refresh_book_balance(recon)
+        recon.refresh_from_db()
+        self.assertEqual(recon.book_balance, Decimal("100000.00"),
+                         "a signed-off reconciliation must keep the figure it was agreed against")
+
+    # ── account picker ──────────────────────────────────────────────────────────
+    def test_only_cash_and_bank_accounts_are_bankable(self):
+        from apps.accounting.services import ReconciliationMatchingService as R
+        for code in ("1001", "1002"):
+            self.assertTrue(R.is_bankable_account(Account.objects.get(organisation=self.org, code=code)),
+                            f"{code} should be reconcilable")
+        for code in ("1100", "1200", "1300", "1400", "1500", "1510", "1600"):
+            self.assertFalse(R.is_bankable_account(Account.objects.get(organisation=self.org, code=code)),
+                             f"{code} must NOT be offered as a bank-reconciliation target")
+
+    def test_is_bankable_is_exposed_on_the_accounts_endpoint(self):
+        res = self.client.get("/api/v1/accounting/accounts/")
+        self.assertEqual(res.status_code, 200)
+        rows = res.data.get("results", res.data)
+        by_code = {r["code"]: r for r in rows}
+        self.assertTrue(by_code["1002"]["is_bankable"])
+        self.assertFalse(by_code["1500"]["is_bankable"])
+
+    def test_reclassified_account_becomes_bankable(self):
+        """A user-created account moved into Cash & Cash Equivalent must qualify."""
+        from apps.accounting.services import ReconciliationMatchingService as R
+        acct = Account.objects.create(
+            organisation=self.org, code="1050", name="Moniepoint Wallet",
+            account_type="asset", account_group="Cash & Cash Equivalent",
+        )
+        self.assertTrue(R.is_bankable_account(acct))
+
+    # ── manual add_line (the no-CSV path) ───────────────────────────────────────
+    def test_add_line_lets_a_user_build_a_reconciliation_without_a_csv(self):
+        recon = self._recon(closing="15000")
+        res = self.client.post(
+            f"/api/v1/accounting/reconciliations/{recon.id}/add_line/",
+            {"description": "Cash deposit", "transaction_date": "2026-07-10", "amount": "15000"},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        self.assertEqual(recon.lines.count(), 1)
+        line = recon.lines.first()
+        self.assertEqual(line.amount, Decimal("15000"))
+        self.assertEqual(line.description, "Cash deposit")
+
+
+class LedgerDrivenReconciliationTests(TestCase):
+    """Reconcile straight from the ledger (Sage One/50/200 behaviour): tick off the
+    transactions you already recorded, with a statement file optional.
+
+    The critical invariant: ledger-derived lines carry a journal_line FK and must
+    NEVER be fed to the matchers as statement lines, or book entries would be paired
+    against themselves.
+    """
+
+    def setUp(self):
+        import datetime
+        self.user = _make_user("recon_ledger@example.com")
+        self.org = _make_org(self.user, "Recon Ledger Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+        self.bank = Account.objects.get(organisation=self.org, code="1002")
+        self.rev = Account.objects.get(organisation=self.org, code="4001")
+        self.exp = Account.objects.get(organisation=self.org, code="6100")
+        self.d = datetime.date
+        from apps.accounting.models import BankReconciliation
+        self.recon = BankReconciliation.objects.create(
+            organisation=self.org, account=self.bank,
+            period_start=self.d(2026, 7, 1), period_end=self.d(2026, 7, 31),
+            statement_closing_balance=Decimal("170000"),
+        )
+
+    def _post(self, amount, day, inflow=True, desc="entry"):
+        amt = Decimal(str(amount))
+        Z = Decimal("0")
+        lines = ([(self.bank, amt, Z), (self.rev, Z, amt)] if inflow
+                 else [(self.exp, amt, Z), (self.bank, Z, amt)])
+        return AccountingService.post_journal_entry(
+            self.org, desc, self.d(2026, 7, day), lines, self.user,
+            source_type="ld", source_ref=f"{desc}-{day}-{amount}-{inflow}",
+        )
+
+    def _url(self, a):
+        return f"/api/v1/accounting/reconciliations/{self.recon.id}/{a}/"
+
+    def test_populate_pulls_posted_entries_with_correct_signs(self):
+        self._post("250000", 3, desc="Customer payment")
+        self._post("80000", 15, inflow=False, desc="Rent")
+        res = self.client.post(self._url("populate_from_ledger"), {}, format="json")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.assertEqual(res.data["created"], 2)
+        amounts = sorted(l.amount for l in self.recon.lines.all())
+        self.assertEqual(amounts, [Decimal("-80000.0000"), Decimal("250000.0000")])
+        self.assertTrue(all(l.journal_line_id for l in self.recon.lines.all()))
+
+    def test_populate_is_idempotent(self):
+        self._post("250000", 3)
+        self.client.post(self._url("populate_from_ledger"), {}, format="json")
+        second = self.client.post(self._url("populate_from_ledger"), {}, format="json")
+        self.assertEqual(second.data["created"], 0)
+        self.assertEqual(self.recon.lines.count(), 1)
+
+    def test_populate_excludes_entries_outside_the_period(self):
+        import datetime
+        self._post("100000", 10)
+        AccountingService.post_journal_entry(
+            self.org, "August", datetime.date(2026, 8, 3),
+            [(self.bank, Decimal("5000"), Decimal("0")), (self.rev, Decimal("0"), Decimal("5000"))],
+            self.user, source_type="ld", source_ref="aug",
+        )
+        self.client.post(self._url("populate_from_ledger"), {}, format="json")
+        self.assertEqual(self.recon.lines.count(), 1)
+
+    # THE GUARD: ledger lines must never be matched as statement lines
+    def test_auto_match_ignores_ledger_derived_lines(self):
+        """Without the journal_line__isnull guard the matcher would pair each book
+        entry with itself and report bogus matches."""
+        from apps.accounting.models import AIReconMatch
+        self._post("250000", 3)
+        self._post("80000", 15, inflow=False)
+        self.client.post(self._url("populate_from_ledger"), {}, format="json")
+        res = self.client.post(self._url("auto_match"), {}, format="json")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        # Nothing to match: every line is a book line, there are no statement lines.
+        self.assertEqual(res.data["summary"]["bank_lines"], 0)
+        self.assertEqual(AIReconMatch.objects.filter(reconciliation=self.recon).count(), 0)
+
+    def test_auto_match_still_matches_real_statement_lines_alongside_ledger_lines(self):
+        """A mixed reconciliation still behaves: the imported line matches its book
+        entry, and the ledger-derived rows are left alone."""
+        from apps.accounting.models import BankReconciliationLine
+        self._post("250000", 3, desc="Customer payment")
+        self.client.post(self._url("populate_from_ledger"), {}, format="json")
+        BankReconciliationLine.objects.create(
+            organisation=self.org, reconciliation=self.recon,
+            description="NIP/TRF/CUSTOMER", transaction_date=self.d(2026, 7, 3),
+            amount=Decimal("250000"),
+        )
+        res = self.client.post(self._url("auto_match"), {}, format="json")
+        self.assertEqual(res.data["summary"]["bank_lines"], 1)
+        self.assertEqual(res.data["summary"]["matched"], 1)
+
+    def test_populate_skips_book_lines_already_confirmed_against_a_statement_line(self):
+        """Double-count protection: a book entry already tied to a confirmed
+        statement match must not also arrive as its own ledger line."""
+        from apps.accounting.models import AIReconMatch, BankReconciliationLine
+        je = self._post("250000", 3)
+        book_line = je.lines.get(account=self.bank)
+        stmt = BankReconciliationLine.objects.create(
+            organisation=self.org, reconciliation=self.recon,
+            description="NIP/TRF", transaction_date=self.d(2026, 7, 3), amount=Decimal("250000"),
+        )
+        AIReconMatch.objects.create(
+            organisation=self.org, reconciliation=self.recon, bank_line=stmt,
+            book_line=book_line, confidence=1.0, match_type="exact", status="confirmed",
+        )
+        res = self.client.post(self._url("populate_from_ledger"), {}, format="json")
+        self.assertEqual(res.data["created"], 0)
+        self.assertEqual(self.recon.lines.count(), 1)
+
+    def test_populate_refused_on_a_completed_reconciliation(self):
+        self.recon.is_reconciled = True
+        self.recon.save(update_fields=["is_reconciled"])
+        res = self.client.post(self._url("populate_from_ledger"), {}, format="json")
+        self.assertEqual(res.status_code, 400)
+
+    # Bulk clear (replaces the one-PATCH-per-line storm)
+    def test_bulk_set_cleared_by_ids(self):
+        self._post("250000", 3)
+        self._post("80000", 15, inflow=False)
+        self.client.post(self._url("populate_from_ledger"), {}, format="json")
+        ids = [str(l.id) for l in self.recon.lines.all()]
+        res = self.client.post(self._url("bulk_set_cleared"),
+                               {"line_ids": ids, "is_cleared": True}, format="json")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data["updated"], 2)
+        self.assertEqual(self.recon.lines.filter(is_cleared=True).count(), 2)
+
+    def test_bulk_set_cleared_all_then_none(self):
+        self._post("250000", 3)
+        self._post("80000", 15, inflow=False)
+        self.client.post(self._url("populate_from_ledger"), {}, format="json")
+        self.client.post(self._url("bulk_set_cleared"), {"all": True, "is_cleared": True}, format="json")
+        self.assertEqual(self.recon.lines.filter(is_cleared=True).count(), 2)
+        self.client.post(self._url("bulk_set_cleared"), {"all": True, "is_cleared": False}, format="json")
+        self.assertEqual(self.recon.lines.filter(is_cleared=True).count(), 0)
+
+    def test_bulk_set_cleared_rejects_bad_payload(self):
+        res = self.client.post(self._url("bulk_set_cleared"),
+                               {"line_ids": "not-a-list", "is_cleared": True}, format="json")
+        self.assertEqual(res.status_code, 400)
+
+    def test_full_no_statement_journey_reconciles_to_zero(self):
+        """The Sage journey end to end: no CSV at all."""
+        self._post("250000", 3)
+        self._post("80000", 15, inflow=False)
+        self.client.post(self._url("populate_from_ledger"), {}, format="json")
+        self.client.post(self._url("bulk_set_cleared"), {"all": True, "is_cleared": True}, format="json")
+        total = sum(l.amount for l in self.recon.lines.filter(is_cleared=True))
+        self.assertEqual(total, Decimal("170000.0000"))
+        self.assertEqual(total, self.recon.statement_closing_balance)
+        res = self.client.post(self._url("mark_reconciled"), {}, format="json")
+        self.assertEqual(res.status_code, 200)
+        self.recon.refresh_from_db()
+        self.assertTrue(self.recon.is_reconciled)

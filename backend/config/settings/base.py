@@ -63,15 +63,59 @@ FLUTTERWAVE_SECRET_KEY = config("FLUTTERWAVE_SECRET_KEY", default="")
 #                           code path today.
 #   NANGO_WEBHOOK_SECRET  — the "webhook signing key" from the same page
 #                           (falls back to NANGO_SECRET_KEY if unset)
-#   NANGO_SLACK_INTEGRATION_ID, NANGO_GOOGLE_SHEETS_INTEGRATION_ID — must
-#     match the integration IDs configured in the Nango dashboard for the
-#     already-registered Slack/Google OAuth apps (defaults: "slack",
-#     "google-sheets").
+#   NANGO_SLACK_INTEGRATION_ID, NANGO_GOOGLE_SHEETS_INTEGRATION_ID,
+#   NANGO_GOOGLE_DRIVE_INTEGRATION_ID, NANGO_GOOGLE_CALENDAR_INTEGRATION_ID,
+#   NANGO_GOOGLE_MAIL_INTEGRATION_ID —
+#     must match the integration IDs (unique_key) configured in the Nango
+#     dashboard for the already-registered Slack/Google OAuth apps
+#     (defaults: "slack", "google-sheets", "google-drive", "google-calendar",
+#     "google-mail" — confirmed live against the real Nango API during
+#     implementation, Aug 2026: create_connect_session succeeds for Google
+#     Drive, Google Calendar, and Gmail using these exact default
+#     integration IDs, so no env var override is actually needed unless the
+#     product owner renamed them in the Nango dashboard. Gmail reuses the
+#     SAME Google OAuth client already live for Sheets/Drive/Calendar — no
+#     new Google Cloud console work was needed for it).
 NANGO_SECRET_KEY = config("NANGO_SECRET_KEY", default="")
 NANGO_PUBLIC_KEY = config("NANGO_PUBLIC_KEY", default="")  # currently unused — see note above
 NANGO_WEBHOOK_SECRET = config("NANGO_WEBHOOK_SECRET", default="")
 NANGO_SLACK_INTEGRATION_ID = config("NANGO_SLACK_INTEGRATION_ID", default="slack")
 NANGO_GOOGLE_SHEETS_INTEGRATION_ID = config("NANGO_GOOGLE_SHEETS_INTEGRATION_ID", default="google-sheets")
+NANGO_GOOGLE_DRIVE_INTEGRATION_ID = config("NANGO_GOOGLE_DRIVE_INTEGRATION_ID", default="google-drive")
+NANGO_GOOGLE_CALENDAR_INTEGRATION_ID = config("NANGO_GOOGLE_CALENDAR_INTEGRATION_ID", default="google-calendar")
+NANGO_GOOGLE_MAIL_INTEGRATION_ID = config("NANGO_GOOGLE_MAIL_INTEGRATION_ID", default="google-mail")
+
+# Telegram (api.telegram.org) — the Telegram connector, apps.connectors.
+# telegram. NOT brokered by Nango (there's no per-org OAuth grant here — see
+# that module's docstring): one shared bot token for the whole platform,
+# correlated to a specific org via a linking code exchanged over Telegram's
+# own /start deep-link convention. apps.connectors.telegram fails loudly
+# (TelegramNotConfiguredError) when TELEGRAM_BOT_TOKEN is unset, same
+# discipline as Nango's settings above. Set:
+#   TELEGRAM_BOT_TOKEN     — from @BotFather. Already provisioned as a
+#                            Railway env var on audity-backend in production
+#                            (bot: @AudityNotifyBot, confirmed live via
+#                            getMe during implementation, Aug 2026).
+#   TELEGRAM_BOT_USERNAME  — for building the t.me/<username>?start=<code>
+#                            deep link (default: "AudityNotifyBot", matches
+#                            production).
+#   TELEGRAM_WEBHOOK_SECRET — optional defense-in-depth; if set, Telegram
+#                            echoes it back on every webhook call and
+#                            apps.connectors.views.telegram_webhook rejects
+#                            anything that doesn't match. NOT required for
+#                            the feature to work correctly (see
+#                            telegram.verify_webhook_secret's docstring) —
+#                            but if set here, the SAME value must also be
+#                            passed to the one-time `setup_telegram_webhook`
+#                            management command's --secret flag, run AFTER
+#                            this backend revision is deployed (setWebhook
+#                            reconfigures the live bot's single global
+#                            webhook target immediately — see that
+#                            management command's docstring for why it must
+#                            never run against a not-yet-deployed URL).
+TELEGRAM_BOT_TOKEN = config("TELEGRAM_BOT_TOKEN", default="")
+TELEGRAM_BOT_USERNAME = config("TELEGRAM_BOT_USERNAME", default="AudityNotifyBot")
+TELEGRAM_WEBHOOK_SECRET = config("TELEGRAM_WEBHOOK_SECRET", default="")
 
 # Frontend base URL (kept for reference; verify-email now uses backend URL directly)
 FRONTEND_URL = config("FRONTEND_URL", default="http://localhost:3000")
@@ -157,6 +201,7 @@ LOCAL_APPS = [
     "apps.messaging",    # isolated in-app instant messaging (Track B)
     "apps.integrations", # paid integrations marketplace: webhooks + Zapier (Track C) — hidden from nav in v1, kept alive for existing paying customers
     "apps.connectors",   # one-click OAuth connectors (Slack, Google Sheets) via Nango
+    "apps.notifications",  # in-app bell + optional email via the org's own mailbox
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS

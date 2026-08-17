@@ -9,6 +9,12 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from apps.core.mixins import TenantFilterMixin
 from apps.core.permissions import IsAccountant, IsOwnerOrAdmin, plan_requires
+from apps.core.permissions import requires_module
+# The owner's per-person ticks, enforced server-side (H-2). Mirrors
+# useModuleAccess.ts: owners and admins bypass; for everyone else no
+# record means no access, and only what was granted is granted.
+_ModAccess_accounting = requires_module("accounting")
+
 
 _PlanAccounting = plan_requires('accounting')
 from .models import (
@@ -29,7 +35,7 @@ from .services import AccountingService, AccountMappingService, safe_post_gl
 
 class AccountViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     serializer_class = AccountSerializer
-    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting, _ModAccess_accounting]
     filterset_fields = [
         'account_type', 'account_group', 'sub_type', 'parent',
         'is_active', 'is_control_account', 'allow_posting',
@@ -406,7 +412,7 @@ class AccountViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 class AccountSubTypeViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     """CRUD for the 'Add Sub Account Type' management screen."""
     serializer_class = AccountSubTypeSerializer
-    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting, _ModAccess_accounting]
 
     def get_queryset(self):
         org = self._get_organisation()
@@ -431,7 +437,7 @@ class AccountSubTypeViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
 class JournalEntryViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     serializer_class = JournalEntrySerializer
-    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting, _ModAccess_accounting]
 
     def get_queryset(self):
         org = self._get_organisation()
@@ -692,7 +698,7 @@ class JournalEntryViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 class AssetTypeViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     """CRUD for asset types (default depreciation settings + GL account mapping)."""
     serializer_class = AssetTypeSerializer
-    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting, _ModAccess_accounting]
 
     def get_queryset(self):
         return AssetType.objects.filter(organisation=self._get_organisation())
@@ -700,7 +706,7 @@ class AssetTypeViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
 class FixedAssetViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     serializer_class = FixedAssetSerializer
-    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting, _ModAccess_accounting]
 
     def get_queryset(self):
         org = self._get_organisation()
@@ -955,7 +961,7 @@ class FixedAssetViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
 class FinancialPeriodViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     serializer_class = FinancialPeriodSerializer
-    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting, _ModAccess_accounting]
 
     def get_queryset(self):
         org = self._get_organisation()
@@ -1115,11 +1121,20 @@ class FinancialPeriodViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
 class BankReconciliationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     serializer_class = BankReconciliationSerializer
-    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting, _ModAccess_accounting]
 
     def get_queryset(self):
         org = self._get_organisation()
         return BankReconciliation.objects.filter(organisation=org).prefetch_related('lines')
+
+    def list(self, request, *args, **kwargs):
+        """Refresh the stored book balance of in-progress reconciliations before
+        listing. Without this the 'Book Bal' column reads a value nothing ever
+        wrote and shows 0.00 for every reconciliation."""
+        from apps.accounting.services import ReconciliationMatchingService
+        for recon in self.filter_queryset(self.get_queryset()).filter(is_reconciled=False):
+            ReconciliationMatchingService.refresh_book_balance(recon)
+        return super().list(request, *args, **kwargs)
 
     def create(self, request, *args, **kwargs):
         """Start a reconciliation. If one already exists for this account + period,
@@ -1144,11 +1159,24 @@ class BankReconciliationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                 {'error': 'A reconciliation for this account and period already exists.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        from apps.accounting.services import ReconciliationMatchingService
+        ReconciliationMatchingService.refresh_book_balance(recon)
         return Response(self.get_serializer(recon).data, status=status.HTTP_201_CREATED)
 
     def perform_create(self, serializer):
         org = self._get_organisation()
         serializer.save(organisation=org)
+
+    def destroy(self, request, *args, **kwargs):
+        """Discard a reconciliation. Completed ones are protected — re-open first, so a
+        signed-off reconciliation is never removed by accident."""
+        recon = self.get_object()
+        if recon.is_reconciled:
+            return Response(
+                {'error': 'This reconciliation is completed. Re-open it before deleting.'},
+                status=400,
+            )
+        return super().destroy(request, *args, **kwargs)
 
     @action(detail=True, methods=['post'])
     def mark_reconciled(self, request, pk=None):
@@ -1156,6 +1184,9 @@ class BankReconciliationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         recon = self.get_object()
         if recon.is_reconciled:
             return Response({'error': 'Already reconciled'}, status=400)
+        # Snapshot the book balance at sign-off, then freeze it.
+        from apps.accounting.services import ReconciliationMatchingService
+        ReconciliationMatchingService.refresh_book_balance(recon)
         recon.is_reconciled = True
         recon.reconciled_by = request.user
         recon.reconciled_at = tz.now()
@@ -1172,15 +1203,131 @@ class BankReconciliationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
     @action(detail=True, methods=['patch'])
     def update_line(self, request, pk=None):
+        """Update a statement line. Beyond the cleared flag, the line's own details are
+        editable so a mis-typed or mis-imported row can be corrected in place — without
+        it, a bad import can leave a reconciliation permanently unbalanceable."""
+        from decimal import Decimal, InvalidOperation
         recon = self.get_object()
+        if recon.is_reconciled:
+            return Response(
+                {'error': 'This reconciliation is already completed. Re-open it before editing lines.'},
+                status=400,
+            )
         line_id = request.data.get('line_id')
         try:
             line = recon.lines.get(id=line_id)
         except BankReconciliationLine.DoesNotExist:
             return Response({'error': 'Line not found'}, status=404)
-        line.is_cleared = request.data.get('is_cleared', line.is_cleared)
-        line.save(update_fields=['is_cleared'])
+
+        update_fields = []
+        if 'is_cleared' in request.data:
+            line.is_cleared = bool(request.data.get('is_cleared'))
+            update_fields.append('is_cleared')
+        if 'description' in request.data:
+            desc = str(request.data.get('description') or '').strip()
+            if not desc:
+                return Response({'error': 'Description cannot be empty.'}, status=400)
+            line.description = desc[:500]
+            update_fields.append('description')
+        if 'reference' in request.data:
+            line.reference = str(request.data.get('reference') or '').strip()[:100]
+            update_fields.append('reference')
+        if 'transaction_date' in request.data:
+            from datetime import date as _date
+            try:
+                line.transaction_date = _date.fromisoformat(str(request.data.get('transaction_date')))
+            except (TypeError, ValueError):
+                return Response({'error': 'transaction_date must be YYYY-MM-DD.'}, status=400)
+            update_fields.append('transaction_date')
+        if 'amount' in request.data:
+            try:
+                line.amount = Decimal(str(request.data.get('amount')).replace(',', '')).quantize(Decimal('0.01'))
+            except (InvalidOperation, TypeError, ValueError):
+                return Response({'error': 'amount must be a number.'}, status=400)
+            update_fields.append('amount')
+
+        if not update_fields:
+            return Response({'error': 'Nothing to update.'}, status=400)
+        line.save(update_fields=update_fields)
         return Response(BankReconciliationLineSerializer(line).data)
+
+    @action(detail=True, methods=['post'], url_path='delete_line')
+    def delete_line(self, request, pk=None):
+        """Remove a statement line. The escape hatch: without it a duplicated or
+        junk imported row leaves the reconciliation permanently unbalanceable, with
+        no way to recover from the UI."""
+        recon = self.get_object()
+        if recon.is_reconciled:
+            return Response(
+                {'error': 'This reconciliation is already completed. Re-open it before deleting lines.'},
+                status=400,
+            )
+        line_id = request.data.get('line_id')
+        try:
+            line = recon.lines.get(id=line_id)
+        except BankReconciliationLine.DoesNotExist:
+            return Response({'error': 'Line not found'}, status=404)
+        # Drop any match proposals that referenced this line so the AI/auto-match
+        # panels never point at a row that no longer exists.
+        AIReconMatch.objects.filter(reconciliation=recon, bank_line=line).delete()
+        line.delete()
+        return Response({'deleted': str(line_id)}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='populate_from_ledger')
+    def populate_from_ledger(self, request, pk=None):
+        """Pull the account's posted book entries in as reconciliation lines, so the
+        user can tick off what has cleared without needing a statement file at all
+        (how Sage One/50/200 work)."""
+        from apps.accounting.services import ReconciliationMatchingService
+        recon = self.get_object()
+        if recon.is_reconciled:
+            return Response(
+                {'error': 'This reconciliation is already completed. Re-open it first.'},
+                status=400,
+            )
+        summary = ReconciliationMatchingService.populate_from_ledger(recon)
+        ReconciliationMatchingService.refresh_book_balance(recon)
+        return Response({
+            **summary,
+            'reconciliation': BankReconciliationSerializer(recon).data,
+        })
+
+    @action(detail=True, methods=['post'], url_path='bulk_set_cleared')
+    def bulk_set_cleared(self, request, pk=None):
+        """Set the cleared flag on many lines in ONE request.
+
+        The UI previously issued a PATCH per line, so reconciling a 300-line
+        statement meant 300 requests against a 10s client timeout and an hourly
+        rate limit. Body: {"line_ids": [...], "is_cleared": true} or
+        {"all": true, "is_cleared": false}.
+        """
+        recon = self.get_object()
+        if recon.is_reconciled:
+            return Response(
+                {'error': 'This reconciliation is already completed. Re-open it first.'},
+                status=400,
+            )
+        is_cleared = bool(request.data.get('is_cleared', True))
+        if request.data.get('all'):
+            updated = recon.lines.all().update(is_cleared=is_cleared)
+        else:
+            line_ids = request.data.get('line_ids') or []
+            if not isinstance(line_ids, list):
+                return Response({'error': 'line_ids must be a list.'}, status=400)
+            updated = recon.lines.filter(id__in=line_ids).update(is_cleared=is_cleared)
+        return Response({'updated': updated, 'is_cleared': is_cleared})
+
+    @action(detail=True, methods=['post'], url_path='reopen')
+    def reopen(self, request, pk=None):
+        """Re-open a completed reconciliation so it can be corrected."""
+        recon = self.get_object()
+        if not recon.is_reconciled:
+            return Response({'error': 'This reconciliation is not completed.'}, status=400)
+        recon.is_reconciled = False
+        recon.reconciled_by = None
+        recon.reconciled_at = None
+        recon.save(update_fields=['is_reconciled', 'reconciled_by', 'reconciled_at'])
+        return Response(BankReconciliationSerializer(recon).data)
 
     @action(detail=True, methods=['post'], url_path='import_statement')
     def import_statement(self, request, pk=None):
@@ -1191,6 +1338,9 @@ class BankReconciliationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         Creates one BankReconciliationLine per row.
         """
         import csv, io
+        from collections import Counter
+        from decimal import Decimal
+        from django.db import transaction as _txn
         recon = self.get_object()
         csv_file = request.FILES.get('file')
         if not csv_file:
@@ -1210,8 +1360,18 @@ class BankReconciliationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         except UnicodeDecodeError:
             return Response({'error': 'File encoding not supported. Please save as UTF-8.'}, status=400)
 
-        reader = csv.DictReader(io.StringIO(text))
-        headers = [h.strip().lower() for h in (reader.fieldnames or [])]
+        # restval='' so a SHORT row (missing trailing columns — very common in real
+        # bank exports) yields '' rather than None. restkey collects any EXTRA columns
+        # beyond the header under a single key, which we ignore. Together with the
+        # defensive normalisation below this stops a ragged row from raising an
+        # unhandled AttributeError and 500-ing the entire import.
+        reader = csv.DictReader(io.StringIO(text), restval='', restkey='__extra__')
+        headers = [h.strip().lower() for h in (reader.fieldnames or []) if h is not None]
+        if not headers:
+            return Response(
+                {'error': 'The CSV has no header row. Expected columns: date, description, debit, credit (or amount).'},
+                status=400,
+            )
 
         # Normalise header names (accept variations)
         def _col(row, *keys):
@@ -1221,10 +1381,21 @@ class BankReconciliationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                         return row.get(h, '').strip()
             return ''
 
-        lines_created = []
+        # ── Phase 1: parse EVERY row first. No database writes happen in this loop, so
+        # a malformed row can never leave a half-imported statement behind (the bug
+        # that let a 500 mid-loop orphan rows and produce duplicates on re-import).
+        parsed = []
         errors = []
         for i, row in enumerate(reader, start=2):  # row 1 is header
-            row_lower = {k.strip().lower(): v.strip() for k, v in row.items()}
+            # Defensive normalisation: a ragged row can give a None key (extra columns,
+            # collected under restkey) or a list/None value. Never let it raise.
+            row_lower = {}
+            for k, v in row.items():
+                if k is None or k == '__extra__':
+                    continue
+                if isinstance(v, list):
+                    v = v[0] if v else ''
+                row_lower[str(k).strip().lower()] = (v or '').strip()
             try:
                 from decimal import Decimal
                 date_str = _col(row_lower, 'date', 'transaction date', 'txn date', 'value date')
@@ -1266,21 +1437,66 @@ class BankReconciliationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
                 # Signed amount: credit (inflow) = positive, debit (outflow) = negative
                 signed_amount = credit - debit
-                line = BankReconciliationLine.objects.create(
-                    organisation=recon.organisation,
-                    reconciliation=recon,
-                    transaction_date=txn_date,
-                    description=description or 'Imported transaction',
-                    amount=signed_amount,
-                    is_cleared=False,
-                )
-                lines_created.append(line)
+                # A statement row carrying no amount is not a transaction. Report it
+                # rather than importing a meaningless 0.00 line that silently pads the
+                # reconciliation (a truncated row used to land here as a zero).
+                if signed_amount == 0:
+                    errors.append(
+                        f"Row {i}: no amount found (expected a debit, credit or amount value)"
+                    )
+                    continue
+                parsed.append({
+                    'transaction_date': txn_date,
+                    'description': description or 'Imported transaction',
+                    'amount': signed_amount,
+                })
             except Exception as e:
                 errors.append(f"Row {i}: {e}")
+
+        if not parsed:
+            return Response(
+                {'error': 'No usable rows found in the CSV.', 'errors': errors},
+                status=400,
+            )
+
+        # ── Phase 2: skip rows already present in THIS reconciliation. Re-importing the
+        # same statement (e.g. after fixing a few bad rows) must not double-count.
+        # Matched as a multiset, so a statement that genuinely contains the same
+        # transaction twice still imports both.
+        def _key(d, desc, amt):
+            return (d, (desc or '').strip().lower(), Decimal(str(amt)))
+
+        existing = Counter(
+            _key(l.transaction_date, l.description, l.amount)
+            for l in recon.lines.all()
+        )
+        to_create, duplicates = [], []
+        for p in parsed:
+            k = _key(p['transaction_date'], p['description'], p['amount'])
+            if existing.get(k, 0) > 0:
+                existing[k] -= 1
+                duplicates.append(f"{p['transaction_date']} {p['description']} {p['amount']}")
+                continue
+            to_create.append(p)
+
+        # ── Phase 3: single atomic write — all rows land or none do.
+        lines_created = []
+        with _txn.atomic():
+            for p in to_create:
+                lines_created.append(BankReconciliationLine.objects.create(
+                    organisation=recon.organisation,
+                    reconciliation=recon,
+                    transaction_date=p['transaction_date'],
+                    description=p['description'],
+                    amount=p['amount'],
+                    is_cleared=False,
+                ))
 
         return Response({
             'lines_created': len(lines_created),
             'errors': errors,
+            'duplicates_skipped': len(duplicates),
+            'duplicates': duplicates[:20],
             'lines': BankReconciliationLineSerializer(lines_created, many=True).data,
         }, status=status.HTTP_201_CREATED)
 
@@ -1329,8 +1545,10 @@ class BankReconciliationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                 status=status.HTTP_422_UNPROCESSABLE_ENTITY,
             )
 
-        # Only the lines the deterministic pass left uncleared — never re-match cleared ones.
-        bank_lines = list(recon.lines.filter(is_cleared=False))
+        # Only the lines the deterministic pass left uncleared — never re-match cleared
+        # ones. journal_line__isnull=True excludes ledger-derived rows (the book side),
+        # which must never be offered to the matcher as statement lines.
+        bank_lines = list(recon.lines.filter(is_cleared=False, journal_line__isnull=True))
         if not bank_lines:
             return Response({'error': 'No unmatched bank statement lines. Import a statement, or everything is already matched.'}, status=400)
 
@@ -1607,7 +1825,7 @@ class AccountMappingView(APIView):
     GET  /accounting/account-mapping/   — get org's mapping (with suggestions for nulls)
     PUT  /accounting/account-mapping/   — update mapping
     """
-    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting, _ModAccess_accounting]
 
     def _get_org(self, request):
         from apps.core.mixins import TenantFilterMixin
@@ -1671,7 +1889,7 @@ class AccountMappingView(APIView):
 
 class AccountMappingSuggestionsView(APIView):
     """GET /accounting/account-mapping/suggestions/ — get best-guess suggestions for all roles."""
-    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting, _ModAccess_accounting]
 
     def get(self, request):
         org_id = request.META.get('HTTP_X_ORGANISATION_ID')
@@ -1697,7 +1915,7 @@ class AccountMappingSuggestionsView(APIView):
 class BeginningBalancesSummaryView(APIView):
     """GET /accounting/beginning-balances/summary/ — consolidated take-on status
     (suspense plug, GL opening balances, subledger control balances)."""
-    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting, _ModAccess_accounting]
 
     def _get_org(self, request):
         org_id = request.META.get('HTTP_X_ORGANISATION_ID')
@@ -1720,7 +1938,7 @@ class BeginningBalancesSummaryView(APIView):
 class YearEndCloseView(APIView):
     """POST /accounting/year-end-close/  {fiscal_year} — close a fiscal year: zero the
     P&L accounts and crystallise the net result into Retained Earnings."""
-    permission_classes = [IsAuthenticated, IsOwnerOrAdmin, _PlanAccounting]
+    permission_classes = [IsAuthenticated, IsOwnerOrAdmin, _PlanAccounting, _ModAccess_accounting]
 
     def _get_org(self, request):
         org_id = request.META.get('HTTP_X_ORGANISATION_ID')
@@ -1756,7 +1974,7 @@ class YearEndCloseView(APIView):
 
 class GLHealthView(APIView):
     """GET /accounting/gl-health/ — list recent GL failures with retry info."""
-    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting, _ModAccess_accounting]
 
     def _get_org(self, request):
         org_id = request.META.get('HTTP_X_ORGANISATION_ID')
@@ -1778,7 +1996,7 @@ class GLHealthView(APIView):
 
 class GLHealthBulkRetryView(APIView):
     """POST /accounting/gl-health/retry-all/ — retry ALL failed/not_configured GL posts."""
-    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting, _ModAccess_accounting]
 
     def _get_org(self, request):
         org_id = request.META.get('HTTP_X_ORGANISATION_ID')
@@ -1829,7 +2047,7 @@ class GLHealthBulkRetryView(APIView):
 
 class GLHealthRetryView(APIView):
     """POST /accounting/gl-health/{type}/{id}/retry/ — retry a failed GL post."""
-    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting]
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting, _ModAccess_accounting]
 
     def post(self, request, model_type, object_id):
         org_id = request.META.get('HTTP_X_ORGANISATION_ID')
