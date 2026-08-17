@@ -928,9 +928,16 @@ class HRAnalyticsTests(TestCase):
         # queries the endpoint itself issues — the point of this test is that
         # nothing scales with employee count (no per-employee loop), which a
         # fixed bound like this still catches.
+        #
+        # Raised from 14 to 18 for row-level security. Under the Postgres test
+        # settings RLSMiddleware issues four extra statements per request to set
+        # app.current_org_id and app.current_user_id. Those are per-request, not
+        # per-employee, so the property this test guards is untouched — the old
+        # bound simply predated RLS being active in tests and failed there while
+        # passing on SQLite. Measured, not guessed: 18 on Postgres, 14 on SQLite.
         with CaptureQueriesContext(connection) as ctx:
             resp = self.client.get("/api/v1/payroll/hr-analytics/headcount_turnover/", {"year": 2026})
-        self.assertLessEqual(len(ctx.captured_queries), 14, "should be a fixed handful of queries, not one per employee")
+        self.assertLessEqual(len(ctx.captured_queries), 18, "should be a fixed handful of queries, not one per employee")
         self.assertEqual(resp.status_code, 200, resp.data)
         self.assertEqual(resp.data["total_joiners"], 3)
 
@@ -941,7 +948,7 @@ class HRAnalyticsTests(TestCase):
         PayrollService.run_payroll(run)
         with CaptureQueriesContext(connection) as ctx:
             resp = self.client.get("/api/v1/payroll/hr-analytics/cost_by_department/", {"year": 2026})
-        self.assertLessEqual(len(ctx.captured_queries), 10, "should be a fixed handful of queries, not one per employee")
+        self.assertLessEqual(len(ctx.captured_queries), 14, "should be a fixed handful of queries, not one per employee")  # 10 + 4 RLS statements per request
         self.assertEqual(resp.status_code, 200, resp.data)
         depts = {r["department"] for r in resp.data}
         self.assertEqual(depts, {"Finance", "Engineering"})
@@ -952,7 +959,7 @@ class HRAnalyticsTests(TestCase):
         Attendance.objects.create(organisation=self.org, employee=emp, date=date(2026, 6, 2), status=Attendance.PRESENT)
         with CaptureQueriesContext(connection) as ctx:
             resp = self.client.get("/api/v1/payroll/hr-analytics/absence_summary/", {"year": 2026})
-        self.assertLessEqual(len(ctx.captured_queries), 10, "should be a fixed handful of queries, not one per row")
+        self.assertLessEqual(len(ctx.captured_queries), 14, "should be a fixed handful of queries, not one per row")  # 10 + 4 RLS statements per request
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.data.get("absent"), 1)
 
