@@ -139,6 +139,38 @@ class PagedEndpointsAreOrdered(TestCase):
                 "rows sharing a sort key can move between pages",
             )
 
+    def test_the_ui_sort_control_still_gets_a_tiebreak(self):
+        """
+        The real path. Sales, Bills, Products, Customers and Stock all send
+        ?ordering= from their sort dropdown, so the server-side default never
+        applies there — but "-issue_date" is not unique either. Invoices raised
+        on the same day can still swap between pages unless the primary key is
+        appended after the chosen column.
+
+        This is what stops the sort control and this fix from being mistaken
+        for the same thing: the control picks which column, it does not make
+        the order unambiguous.
+        """
+        with CaptureQueriesContext(connection) as captured:
+            res = self.client_.get(
+                "/api/v1/sales/invoices/?ordering=-issue_date&page_size=2"
+            )
+            self.assertEqual(res.status_code, 200, res.content[:300])
+
+        paged = [
+            q["sql"] for q in captured.captured_queries
+            if "sales_invoice" in q["sql"] and "ORDER BY" in q["sql"] and "LIMIT" in q["sql"]
+        ]
+        self.assertTrue(paged, "no ordered, paged query was issued")
+        for sql in paged:
+            tail = sql.split("ORDER BY")[-1]
+            self.assertIn("issue_date", tail, "the chosen sort column was dropped")
+            self.assertIn(
+                '"id"', tail,
+                "the sort column chosen in the UI was not given a tiebreak, so "
+                "invoices sharing an issue date can still move between pages",
+            )
+
     def test_paging_right_through_returns_every_row_exactly_once(self):
         seen = []
         for page in (1, 2, 3):
