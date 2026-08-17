@@ -7,7 +7,7 @@ import toast from 'react-hot-toast'
 import { customerApi, bypassNextGets } from '@/services/api'
 import ExportButton from '@/components/ExportButton'
 import SortSelect from '@/components/SortSelect'
-import { formatCurrency, formatDate, getStatusColor } from '@/lib/utils'
+import { formatCurrency, formatDate, getStatusColor, stripCommas, normalizeAmountStr } from '@/lib/utils'
 import AmountInput from '@/components/AmountInput'
 import DateInput from '@/components/DateInput'
 import { FieldTooltip } from '@/components/FieldTooltip'
@@ -75,7 +75,15 @@ const BLANK: NewCustomerForm = {
 }
 
 // A blank GL override means "use the organisation default" — send null, not "".
-const toPayload = (f: NewCustomerForm) => ({ ...f, receivable_account: f.receivable_account || null })
+// credit_limit is held comma-formatted for display (AmountInput) — strip before
+// sending or the DecimalField rejects it ("A valid number is required"). An
+// empty string is equally invalid: AmountInput blanks a zero field on focus, so
+// clicking in and tabbing out with no input leaves "" — send 0, the field default.
+const toPayload = (f: NewCustomerForm) => ({
+  ...f,
+  receivable_account: f.receivable_account || null,
+  credit_limit: stripCommas(f.credit_limit).trim() || '0',
+})
 
 export default function CustomersPage() {
   const { organisation } = useAuthStore()
@@ -165,7 +173,10 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
       email: c.email ?? '',
       phone: c.phone ?? '',
       address: c.address ?? '',
-      credit_limit: c.credit_limit,
+      // Server sends DECIMAL(15,4) as a bare "20000000.0000" — normalize it so
+      // the edit modal shows the same commas the create modal does, without the
+      // trailing zeros.
+      credit_limit: normalizeAmountStr(c.credit_limit),
       receivable_account: c.receivable_account ?? '',
     })
     setShowEditModal(true)

@@ -11,7 +11,7 @@ import toast from 'react-hot-toast'
 import { openExternal } from '@/lib/openExternal'
 import { payrollApi, bypassNextGets } from '@/services/api'
 import { hrApi } from '@/services/hrApi'
-import { formatCurrency, formatDate } from '@/lib/utils'
+import { formatCurrency, formatDate, stripCommas, normalizeAmountStr } from '@/lib/utils'
 import AmountInput from '@/components/AmountInput'
 import { saveBlobFile } from '@/lib/saveBlobFile'
 import type { PayrollRun, PAYERemittance, EmployeeTaxProfile } from '@/types'
@@ -378,7 +378,7 @@ export default function PayrollPage() {
     try {
       const { data } = await payrollApi.taxProfile(emp.id)
       setTaxProfile(data)
-      setTaxProfileForm({ nhf_enrolled: data.nhf_enrolled, voluntary_pension: data.voluntary_pension, life_assurance_premium: data.life_assurance_premium, paye_exempt: data.paye_exempt, notes: data.notes })
+      setTaxProfileForm({ nhf_enrolled: data.nhf_enrolled, voluntary_pension: normalizeAmountStr(data.voluntary_pension), life_assurance_premium: normalizeAmountStr(data.life_assurance_premium), paye_exempt: data.paye_exempt, notes: data.notes })
     } catch {
       setTaxProfile(null)
       setTaxProfileForm({ nhf_enrolled: true, voluntary_pension: '0', life_assurance_premium: '0', paye_exempt: false, notes: '' })
@@ -392,8 +392,12 @@ export default function PayrollPage() {
     try {
       await payrollApi.saveTaxProfile(taxProfileEmployee.id, {
         nhf_enrolled: taxProfileForm.nhf_enrolled,
-        voluntary_pension: parseFloat(taxProfileForm.voluntary_pension) || 0,
-        life_assurance_premium: parseFloat(taxProfileForm.life_assurance_premium) || 0,
+        // stripCommas is NOT optional here: these are held comma-formatted for
+        // display, and parseFloat("50,000") silently returns 50 — it stops at the
+        // first comma rather than failing, so an unstripped value saves a wrong
+        // number with no error at all.
+        voluntary_pension: parseFloat(stripCommas(taxProfileForm.voluntary_pension)) || 0,
+        life_assurance_premium: parseFloat(stripCommas(taxProfileForm.life_assurance_premium)) || 0,
         paye_exempt: taxProfileForm.paye_exempt,
         notes: taxProfileForm.notes,
       })
@@ -589,7 +593,8 @@ export default function PayrollPage() {
     }
     setSavingBonus(true)
     try {
-      await payrollApi.createBonus(bonusForm)
+      // amount is comma-formatted for display — strip before sending.
+      await payrollApi.createBonus({ ...bonusForm, amount: stripCommas(bonusForm.amount) })
       toast.success('Bonus added — will be applied in the next payroll run')
       setShowBonusModal(false)
       setBonusForm({ employee: '', amount: '', bonus_type: 'performance', reason: '', period_year: selectedYear, period_month: selectedMonth })
@@ -1673,7 +1678,7 @@ export default function PayrollPage() {
                   if (!remittingPayeId) return
                   setSavingPayeRemit(true)
                   try {
-                    await payrollApi.markRemitted(remittingPayeId, { reference: payeRemitForm.reference, amount_paid: parseFloat(payeRemitForm.amount_paid) || 0, notes: payeRemitForm.notes })
+                    await payrollApi.markRemitted(remittingPayeId, { reference: payeRemitForm.reference, amount_paid: parseFloat(stripCommas(payeRemitForm.amount_paid)) || 0, notes: payeRemitForm.notes })
                     toast.success('PAYE remittance recorded')
                     setShowPayeRemitModal(false); loadPayeRemittances()
                   } catch { toast.error('Failed to record remittance') }
