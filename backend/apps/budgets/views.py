@@ -5,6 +5,12 @@ from rest_framework.response import Response
 from apps.core.mixins import TenantFilterMixin
 from apps.core.models import AuditLog
 from apps.core.permissions import IsManagerOrSuperuser, plan_requires
+from apps.core.permissions import requires_module
+# The owner's per-person ticks, enforced server-side (H-2). Mirrors
+# useModuleAccess.ts: owners and admins bypass; for everyone else no
+# record means no access, and only what was granted is granted.
+_ModAccess_budgets = requires_module("budget")
+
 
 _PlanBudget = plan_requires('budget')
 from .models import Budget, BudgetLine
@@ -14,7 +20,7 @@ from .services import BudgetService
 
 class BudgetViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     serializer_class = BudgetSerializer
-    permission_classes = [IsAuthenticated, IsManagerOrSuperuser, _PlanBudget]
+    permission_classes = [IsAuthenticated, IsManagerOrSuperuser, _PlanBudget, _ModAccess_budgets]
 
     def perform_update(self, serializer):
         before = {f: str(getattr(serializer.instance, f)) for f in ['name', 'period_type', 'status', 'notes', 'fiscal_year']}

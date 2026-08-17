@@ -153,3 +153,73 @@ class HRModuleAccessTests(TestCase):
             self._list(client).status_code, 403,
             "a leave-only grant leaked access to salaries",
         )
+
+
+class ModuleKeysAgreeTests(TestCase):
+    """
+    The tick an owner can set and the tick the server demands must be the same
+    string. If they drift, one of two bad things happens:
+
+      server asks for a key the UI cannot grant  → nobody can ever get access
+      UI grants a key the server ignores         → the tick does nothing
+
+    Both shipped at least once. `leave` was in the model and in the server
+    guard but missing from ALL_MODULES in SettingsPage.tsx, so no owner could
+    grant it and every non-owner would have been locked out of leave for good.
+    Recurring invoices had its own route and tick in the UI while the server
+    gated it under `sales`.
+
+    Reading the real files keeps this honest — a hand-copied list here would
+    drift with everything else.
+    """
+
+    SETTINGS_PAGE = "../frontend/src/pages/SettingsPage.tsx"
+
+    def _ui_grantable_keys(self):
+        import os
+        import re
+        path = os.path.join(os.path.dirname(__file__), "..", "..", self.SETTINGS_PAGE)
+        path = os.path.normpath(path)
+        if not os.path.exists(path):
+            self.skipTest("frontend not present in this checkout")
+        src = open(path, encoding="utf-8").read()
+        # Split on "= [" first: the declaration itself contains "]" in
+        # `{ key: ModuleKey; label: string }[]`, so splitting on "]" alone
+        # slices an empty block and the test passes or fails for the wrong
+        # reason.
+        block = src.split("const ALL_MODULES", 1)[1].split("= [", 1)[1].split("]", 1)[0]
+        return set(re.findall(r"key:\s*'([a-z_]+)'", block))
+
+    def _server_required_keys(self):
+        """Every key any viewset actually demands, read from the source."""
+        import glob
+        import os
+        import re
+        base = os.path.join(os.path.dirname(__file__), "..")
+        keys = set()
+        for f in glob.glob(os.path.join(base, "*", "views.py")):
+            src = open(f, encoding="utf-8").read()
+            keys |= set(re.findall(r'requires_module\(\s*"([a-z_]+)"\s*\)', src))
+        return keys
+
+    def test_every_key_the_server_demands_can_be_granted_in_the_ui(self):
+        server = self._server_required_keys()
+        ui = self._ui_grantable_keys()
+        ungrantable = sorted(server - ui)
+        self.assertEqual(
+            ungrantable, [],
+            f"the server requires {ungrantable} but an owner cannot tick "
+            f"{'it' if len(ungrantable) == 1 else 'them'} in Settings — every "
+            f"non-owner would be locked out of that area permanently. Add it to "
+            f"ALL_MODULES in SettingsPage.tsx.",
+        )
+
+    def test_server_keys_are_real_module_choices(self):
+        """Guards a typo: requires_module('payrol') would silently deny everyone."""
+        valid = {k for k, _ in ModulePermission.MODULE_CHOICES}
+        unknown = sorted(self._server_required_keys() - valid)
+        self.assertEqual(
+            unknown, [],
+            f"{unknown} is not in ModulePermission.MODULE_CHOICES, so no "
+            f"permission row can ever match it and access is denied to all",
+        )

@@ -27,6 +27,9 @@ const ALL_MODULES: { key: ModuleKey; label: string }[] = [
   { key: 'customers', label: 'Customers' },
   { key: 'suppliers', label: 'Suppliers' },
   { key: 'payroll', label: 'Payroll' },
+  // Separate from payroll on purpose: a line manager can approve time off
+  // without being able to see anyone's salary.
+  { key: 'leave', label: 'Leave' },
   { key: 'reports', label: 'Reports' },
   { key: 'accounting', label: 'Accounting' },
   { key: 'tax', label: 'Tax' },
@@ -78,7 +81,7 @@ const MODULE_GROUPS_FOR_PARTNER: {
 }[] = [
   { label: 'Sales & Revenue', description: 'Invoices, quotes and recurring billing', modules: ['sales', 'quotes', 'recurring'], defaultLevel: 'view' },
   { label: 'Money Out', description: 'Bills, purchase orders and expenses', modules: ['bills', 'purchases', 'expenses'], defaultLevel: 'view' },
-  { label: 'People', description: 'Customers, suppliers and payroll records', modules: ['customers', 'suppliers', 'payroll'], defaultLevel: 'view' },
+  { label: 'People', description: 'Customers, suppliers and payroll records', modules: ['customers', 'suppliers', 'payroll', 'leave'], defaultLevel: 'view' },
   { label: 'Inventory', description: 'Stock, products and warehouse management', modules: ['inventory'], defaultLevel: 'view' },
   { label: 'Finance', description: 'Accounting ledger, budgets, reports and tax', modules: ['accounting', 'budget', 'reports', 'tax'], defaultLevel: 'edit' },
 ]
@@ -87,6 +90,7 @@ const PARTNER_DEFAULT_PERMISSIONS: Partial<Record<ModuleKey, AccessLevel>> = {
   sales: 'view', quotes: 'view', recurring: 'view',
   bills: 'view', purchases: 'view', expenses: 'view',
   customers: 'view', suppliers: 'view', payroll: 'view',
+  leave: 'none',
   inventory: 'view',
   accounting: 'edit', budget: 'edit', reports: 'edit', tax: 'edit',
   settings: 'none',

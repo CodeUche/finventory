@@ -270,12 +270,32 @@ class ModulePermission(TimeStampedModel):
     Granular per-module access control for a Membership.
 
     Owners and admins always have full access regardless of these records.
-    For all other roles (manager, accountant, staff, viewer), the admin can
-    override each module individually:
-      none  — module is hidden from the sidebar
+
+    Every other role — manager, accountant, staff, viewer — starts with NO
+    access to anything. There is no sensible default: a team member can reach
+    only what has been explicitly granted to them. Each organisation decides
+    for itself what a manager or an accountant ought to see, rather than
+    inheriting an assumption from us.
+
+      (no record) — no access at all
+      none  — no access; module is hidden from the sidebar
       view  — read-only access
       write — can create new records but cannot edit/delete existing ones
       edit  — full create / edit / delete access
+
+    Enforced in two places that must agree:
+      frontend/src/hooks/useModuleAccess.ts  — hides menus and blocks routes
+      apps/core/permissions.requires_module  — refuses the request itself
+
+    Until H-2 only the browser applied this, so the ticks were a sign on a
+    door rather than a lock: a member with HR unticked could still ask the
+    server for the staff list and receive salaries, national ID numbers,
+    pension numbers and bank details.
+
+    An earlier version of this docstring said the admin "can override each
+    module individually", which read as though access existed by default and
+    ticks removed it. That was never what the product did, and it is not what
+    it does now.
     """
 
     MODULE_CHOICES = [

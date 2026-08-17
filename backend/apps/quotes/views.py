@@ -4,6 +4,12 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from apps.core.mixins import TenantFilterMixin
 from apps.core.permissions import IsStaff, plan_requires
+from apps.core.permissions import requires_module
+# The owner's per-person ticks, enforced server-side (H-2). Mirrors
+# useModuleAccess.ts: owners and admins bypass; for everyone else no
+# record means no access, and only what was granted is granted.
+_ModAccess_quotes = requires_module("quotes")
+
 
 _PlanQuotes = plan_requires('quotes')
 from apps.customers.models import Customer
@@ -16,7 +22,7 @@ from decimal import Decimal
 
 class QuoteViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     serializer_class = QuoteSerializer
-    permission_classes = [IsAuthenticated, IsStaff, _PlanQuotes]
+    permission_classes = [IsAuthenticated, IsStaff, _PlanQuotes, _ModAccess_quotes]
     filterset_fields = ['status']
 
     def get_queryset(self):

@@ -5,6 +5,12 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from apps.core.mixins import ExportMixin, TenantFilterMixin
 from apps.core.permissions import IsStaff, IsManager, plan_requires
+from apps.core.permissions import requires_module
+# The owner's per-person ticks, enforced server-side (H-2). Mirrors
+# useModuleAccess.ts: owners and admins bypass; for everyone else no
+# record means no access, and only what was granted is granted.
+_ModAccess_bills = requires_module("bills")
+
 from apps.core.throttles import FinancialWriteThrottle
 
 _PlanBills = plan_requires('bills')
@@ -17,7 +23,7 @@ from .services import BillService
 class BillFolderViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     """CRUD for bill folders. GET /bills/folders/, POST, PATCH, DELETE."""
     serializer_class = BillFolderSerializer
-    permission_classes = [IsAuthenticated, IsStaff, _PlanBills]
+    permission_classes = [IsAuthenticated, IsStaff, _PlanBills, _ModAccess_bills]
 
     def get_queryset(self):
         from django.db.models import Count, IntegerField, OuterRef, Subquery, Value
@@ -75,7 +81,7 @@ class BillViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
         ('Amount Due', 'amount_due'),
     ]
     serializer_class = BillSerializer
-    permission_classes = [IsAuthenticated, IsStaff, _PlanBills]
+    permission_classes = [IsAuthenticated, IsStaff, _PlanBills, _ModAccess_bills]
     throttle_classes = [FinancialWriteThrottle]
 
     def get_queryset(self):
