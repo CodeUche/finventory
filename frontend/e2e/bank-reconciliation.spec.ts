@@ -113,6 +113,40 @@ async function startReconciliation(page: Page, closingBalance: string) {
 const lineRows = (page: Page) =>
   page.locator('div.divide-y > div').filter({ hasText: '₦' })
 
+/** Clear any reconciliation left behind by an earlier run, through the product's
+ *  own Discard control. Starting the same account and period would otherwise
+ *  RESUME the old one and inherit its rows, so assertions about how many lines
+ *  exist would depend on whatever ran before — including a desktop pass over the
+ *  same account. Uses the UI rather than the database so the suite stays a
+ *  genuine end-to-end test and exercises the escape hatch on the way through. */
+async function discardExistingReconciliations(page: Page) {
+  let removed = 0
+  // Past Reconciliations loads asynchronously — without waiting for it the
+  // helper sees no rows yet, finds nothing to discard and returns immediately,
+  // leaving the old reconciliation in place to be silently resumed.
+  await page.locator('button[aria-label="Discard reconciliation"]').first()
+    .waitFor({ state: 'visible', timeout: 20_000 })
+    .catch(() => { /* genuinely nothing to discard */ })
+  for (let i = 0; i < 6; i++) {
+    const trash = page.locator('button[aria-label="Discard reconciliation"]')
+    if (!(await trash.count())) break
+    await trash.first().click()
+    await page.waitForTimeout(800)
+    const confirm = page.getByRole('button', { name: 'Discard', exact: true })
+    if (!(await confirm.count())) break
+    await confirm.last().click()
+    removed++
+    await page.waitForTimeout(2500)
+  }
+  if (removed) {
+    // The refetch that follows a discard re-renders the form and resets its
+    // fields, so let the page settle before anything is typed into it.
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await page.waitForTimeout(2500)
+  }
+  return removed
+}
+
 test.describe('Bank Reconciliation', () => {
   test('C6 — only cash/bank accounts are offered as reconciliation targets', async ({ page }) => {
     await login(page)
@@ -135,6 +169,7 @@ test.describe('Bank Reconciliation', () => {
   test('C2 — a ragged import then the corrected file reconciles to zero', async ({ page }) => {
     await login(page)
     await gotoRecon(page)
+    await discardExistingReconciliations(page)
     await startReconciliation(page, '311500.32')
 
     // The ragged file must not 500, and must not leave a partial import behind.
