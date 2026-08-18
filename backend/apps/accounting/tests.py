@@ -4093,6 +4093,85 @@ class LedgerDrivenReconciliationTests(TestCase):
         self.assertEqual(res.data["covered_by_statement"], 1)
         self.assertEqual(res.data["created"], 1)
 
+
+    def test_can_start_again_after_discarding(self):
+        """Discarding must not permanently block that account and period.
+
+        The delete is soft, so the row keeps occupying the
+        (organisation, account, period) unique slot while the live-row lookup —
+        which reads through the soft-delete-filtered manager — sees nothing. The
+        create then 400'd forever: a reconciliation you discarded could never be
+        started again. Found on a real desktop click-through.
+        """
+        payload = {
+            "account": str(self.bank.id),
+            "period_start": "2026-07-01",
+            "period_end": "2026-07-31",
+            "statement_closing_balance": "311500.32",
+        }
+        first = self.client.post("/api/v1/accounting/reconciliations/", payload, format="json")
+        self.assertIn(first.status_code, (200, 201), msg=str(first.data))
+        recon_id = first.data["id"]
+
+        drop = self.client.delete(f"/api/v1/accounting/reconciliations/{recon_id}/")
+        self.assertIn(drop.status_code, (200, 204), msg=str(getattr(drop, "data", "")))
+
+        again = self.client.post("/api/v1/accounting/reconciliations/", payload, format="json")
+        self.assertIn(again.status_code, (200, 201),
+                      msg="starting a reconciliation after discarding one must work: %s"
+                          % str(again.data))
+
+    def test_reviving_a_discarded_reconciliation_starts_empty(self):
+        """The discarded working sheet's rows must not reappear underneath the new one."""
+        from apps.accounting.models import BankReconciliationLine
+        payload = {
+            "account": str(self.bank.id),
+            "period_start": "2026-07-01",
+            "period_end": "2026-07-31",
+            "statement_closing_balance": "100.00",
+        }
+        first = self.client.post("/api/v1/accounting/reconciliations/", payload, format="json")
+        recon_id = first.data["id"]
+        BankReconciliationLine.objects.create(
+            organisation=self.org, reconciliation_id=recon_id,
+            description="stale row", transaction_date=self.d(2026, 7, 5),
+            amount=Decimal("999"),
+        )
+        self.client.delete(f"/api/v1/accounting/reconciliations/{recon_id}/")
+
+        payload["statement_closing_balance"] = "311500.32"
+        again = self.client.post("/api/v1/accounting/reconciliations/", payload, format="json")
+        self.assertIn(again.status_code, (200, 201), msg=str(again.data))
+        self.assertEqual(len(again.data.get("lines", [])), 0,
+                         "a revived reconciliation must not carry the discarded rows")
+        self.assertEqual(Decimal(str(again.data["statement_closing_balance"])),
+                         Decimal("311500.32"))
+        self.assertFalse(again.data["is_reconciled"])
+
+    def test_discard_then_restart_then_reconcile_end_to_end(self):
+        """The whole recovery path a user actually walks."""
+        payload = {
+            "account": str(self.bank.id),
+            "period_start": "2026-07-01",
+            "period_end": "2026-07-31",
+            "statement_closing_balance": "170000.00",
+        }
+        first = self.client.post("/api/v1/accounting/reconciliations/", payload, format="json")
+        self.client.delete(f"/api/v1/accounting/reconciliations/{first.data['id']}/")
+
+        again = self.client.post("/api/v1/accounting/reconciliations/", payload, format="json")
+        rid = again.data["id"]
+        self._post("250000", 3)
+        self._post("80000", 15, inflow=False)
+        pop = self.client.post(
+            f"/api/v1/accounting/reconciliations/{rid}/populate_from_ledger/", {}, format="json")
+        self.assertEqual(pop.status_code, 200, msg=str(pop.data))
+        self.client.post(f"/api/v1/accounting/reconciliations/{rid}/bulk_set_cleared/",
+                         {"all": True, "is_cleared": True}, format="json")
+        done = self.client.post(
+            f"/api/v1/accounting/reconciliations/{rid}/mark_reconciled/", {}, format="json")
+        self.assertEqual(done.status_code, 200, msg=str(done.data))
+
     def test_populate_refused_on_a_completed_reconciliation(self):
         self.recon.is_reconciled = True
         self.recon.save(update_fields=["is_reconciled"])

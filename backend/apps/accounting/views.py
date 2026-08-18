@@ -1140,6 +1140,7 @@ class BankReconciliationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         """Start a reconciliation. If one already exists for this account + period,
         resume it (return it) instead of erroring with a unique-constraint 500."""
         from django.db import IntegrityError, transaction as _txn
+        from apps.accounting.services import ReconciliationMatchingService
         org = self._get_organisation()
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -1155,6 +1156,38 @@ class BankReconciliationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             ).first()
             if existing:
                 return Response(self.get_serializer(existing).data, status=status.HTTP_200_OK)
+
+            # A DISCARDED reconciliation still occupies the (organisation, account,
+            # period) unique slot: the delete is soft, so the row stays and the
+            # constraint keeps firing, while the lookup above — which reads through
+            # the soft-delete-filtered manager — sees nothing. Without reviving it,
+            # discarding a reconciliation would permanently block ever starting
+            # another for that account and period. Exactly the dead end this module
+            # exists to remove, so it must not be reintroduced by the escape hatch.
+            archived = BankReconciliation.all_objects.filter(
+                organisation=org, account=acct,
+                period_start=v.get('period_start'), period_end=v.get('period_end'),
+                is_deleted=True,
+            ).first()
+            if archived:
+                archived.restore()
+                # Start genuinely fresh: the discarded working sheet's rows must
+                # not reappear underneath the new reconciliation.
+                AIReconMatch.objects.filter(reconciliation=archived).delete()
+                BankReconciliationLine.objects.filter(reconciliation=archived).delete()
+                archived.statement_closing_balance = v.get(
+                    'statement_closing_balance', archived.statement_closing_balance)
+                archived.is_reconciled = False
+                archived.reconciled_by = None
+                archived.reconciled_at = None
+                archived.save(update_fields=[
+                    'statement_closing_balance', 'is_reconciled',
+                    'reconciled_by', 'reconciled_at',
+                ])
+                ReconciliationMatchingService.refresh_book_balance(archived)
+                return Response(self.get_serializer(archived).data,
+                                status=status.HTTP_201_CREATED)
+
             return Response(
                 {'error': 'A reconciliation for this account and period already exists.'},
                 status=status.HTTP_400_BAD_REQUEST,
