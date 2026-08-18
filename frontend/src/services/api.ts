@@ -246,16 +246,22 @@ function buildTauriAdapter(): AxiosAdapter {
         if (ctrl.signal.aborted) throw timeoutError()
         // Tauri IPC threw — try native fetch as fallback.
         // Two sub-cases:
-        //   A) native fetch succeeds → IPC scope/config issue → show connection warning
+        //   A) native fetch succeeds → IPC scope/config issue, but the request
+        //      itself WORKED, so there is nothing for the user to act on.
         //   B) native fetch also fails → device is truly offline → throw AxiosError with
         //      config attached so the error interceptor can serve cached data / queue the
         //      mutation optimistically. A plain TypeError from fetch() does NOT have
         //      error.config, which would silently bypass all offline handling.
-        if (import.meta.env.DEV) console.error('[Audity] tauriHttpFetch threw:', String(ipcErr))
+        console.warn('[Audity] tauriHttpFetch threw, falling back to fetch:', String(ipcErr))
         try {
           const resp = await fetch(url, { method, headers, body, signal: ctrl.signal } as RequestInit)
-          // Case A: IPC issue but network is reachable — warn and continue
-          toast.error('Connection error — check your internet and try again.', { id: 'ipc-err', duration: 6000 })
+          // Case A: the fallback succeeded, so the user experienced no failure.
+          // This used to raise "Connection error — check your internet and try
+          // again." on the desktop app: alarming, unactionable (the connection
+          // was demonstrably fine), and it fired at login on every launch when
+          // an early request beat the Tauri HTTP plugin's initialisation. The
+          // condition is a developer concern about the IPC route, so it is
+          // logged for diagnosis rather than shown to the user.
           return await responseToAxios(resp, config)
         } catch (fallbackErr) {
           // Real HTTP errors from responseToAxios (401/403/500…) must propagate

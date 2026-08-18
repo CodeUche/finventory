@@ -14,7 +14,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from django.db import connection
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -838,8 +838,14 @@ class PayslipPdfTests(TestCase):
         content = b"".join(resp.streaming_content) if resp.streaming else resp.content
         self.assertTrue(content.startswith(b"%PDF"))
 
+    # Pinned on the test rather than inherited from the settings module: eager
+    # mode is only set in config/settings/testing.py, so under `manage.py test`
+    # (which runs on the development settings) .delay() queued the task instead
+    # of running it and the assertion below failed — a red test that said
+    # nothing about the code, and only in one of the two harnesses.
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True, CELERY_TASK_EAGER_PROPAGATES=True)
     def test_send_payslips_server_rendered_runs_synchronously_in_tests(self):
-        """CELERY_TASK_ALWAYS_EAGER is set in test settings, so .delay() runs inline."""
+        """Eager mode is forced above, so .delay() runs inline."""
         resp = self.client.post(f"/api/v1/payroll/runs/{self.run.id}/send_payslips_server_rendered/")
         self.assertEqual(resp.status_code, 200, resp.data)
         from apps.payroll.models import PayslipDelivery
