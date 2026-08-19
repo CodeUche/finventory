@@ -12,11 +12,13 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   AlertTriangle, Banknote, CreditCard, Landmark, Loader2, LogOut, Minus, Plus,
-  Search, ShoppingCart, Trash2, Wallet, X,
+  Printer, Search, ShoppingCart, Trash2, Wallet, X,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { inventoryApi, salesApi, tillApi } from '@/services/api'
 import { printReceipt } from '@/lib/receipt'
+import type { ReceiptData } from '@/lib/receipt'
+import { useReceiptDefaults } from '@/hooks/useReceiptDefaults'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
 import type { Product } from '@/types'
@@ -54,6 +56,10 @@ export default function PosRegisterPage() {
   const navigate = useNavigate()
   const { user, organisation } = useAuthStore()
   const cashierName = user ? `${user.first_name} ${user.last_name}`.trim() || user.email : ''
+  const receiptDefaults = useReceiptDefaults()
+  // Kept so a cashier can hand over a second copy without re-opening the
+  // sale: the customer asks, the paper jams, the roll runs out mid-print.
+  const [lastReceipt, setLastReceipt] = useState<ReceiptData | null>(null)
 
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<Product[]>([])
@@ -268,11 +274,8 @@ export default function PosRegisterPage() {
       })
       toast.success(method === 'cash' && change > 0 ? `Change ${formatCurrency(change)}` : 'Paid')
 
-      printReceipt({
-        merchant: organisation?.invoice_company_name || organisation?.name || 'Receipt',
-        address: organisation?.address,
-        phone: organisation?.phone,
-        tin: organisation?.tax_id,
+      const receipt: ReceiptData = {
+        ...receiptDefaults,
         invoiceNumber: data?.invoice_number ?? '',
         date: formatDate(data?.issue_date ?? new Date().toISOString()),
         cashier: cashierName,
@@ -287,7 +290,9 @@ export default function PosRegisterPage() {
         change: method === 'cash' && tendered ? change : undefined,
         firsIrn: data?.firs_irn,
         qrCodeBase64: data?.firs_qr_code,
-      })
+      } as ReceiptData
+      setLastReceipt(receipt)
+      void printReceipt(receipt)
 
       setLines([]); setTendered(''); refocus()
     } catch (err) {
@@ -456,6 +461,17 @@ export default function PosRegisterPage() {
                 </button>
               ))}
             </div>
+
+            {lastReceipt && lines.length === 0 && (
+              <button
+                onClick={() => void printReceipt(lastReceipt)}
+                className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl border border-surface-700 py-2.5 text-xs font-semibold text-slate-300 hover:border-surface-500 hover:text-white"
+                title={`Print another copy of ${lastReceipt.invoiceNumber}`}
+              >
+                <Printer size={14} /> Print receipt again
+                <span className="font-mono text-[10px] text-slate-500">{lastReceipt.invoiceNumber}</span>
+              </button>
+            )}
 
             {lines.length > 0 && (
               <button

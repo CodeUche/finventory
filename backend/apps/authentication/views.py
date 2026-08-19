@@ -204,7 +204,8 @@ def _get_user_organisations(user):
                         _cur.execute("SET LOCAL row_security = OFF")
                         _cur.execute(
                             "SELECT id, name, slug, account_type, currency, country,"
-                            " is_active, onboarding_completed"
+                            " is_active, onboarding_completed, address, phone, tax_id,"
+                            " invoice_template, receipt_template, receipt_footer_note"
                             " FROM tenancy_organisation"
                             " WHERE id = %s AND is_active = TRUE",
                             [org_id],
@@ -227,7 +228,8 @@ def _get_user_organisations(user):
                         )
                         _cur.execute(
                             "SELECT id, name, slug, account_type, currency, country,"
-                            " is_active, onboarding_completed"
+                            " is_active, onboarding_completed, address, phone, tax_id,"
+                            " invoice_template, receipt_template, receipt_footer_note"
                             " FROM tenancy_organisation"
                             " WHERE id = %s AND is_active = TRUE",
                             [org_id],
@@ -254,6 +256,12 @@ def _get_user_organisations(user):
                         "country": getattr(_org_obj, "country", "") or "",
                         "is_active": bool(_org_obj.is_active),
                         "onboarding_completed": bool(_org_obj.onboarding_completed),
+                        "address": getattr(_org_obj, "address", "") or "",
+                        "phone": getattr(_org_obj, "phone", "") or "",
+                        "tax_id": getattr(_org_obj, "tax_id", "") or "",
+                        "invoice_template": getattr(_org_obj, "invoice_template", "") or "classic",
+                        "receipt_template": getattr(_org_obj, "receipt_template", "") or "compact",
+                        "receipt_footer_note": getattr(_org_obj, "receipt_footer_note", "") or "",
                     })
                     continue
             except Exception:
@@ -275,6 +283,15 @@ def _get_user_organisations(user):
             "country": row[5] or "",
             "is_active": bool(row[6]),
             "onboarding_completed": bool(row[7]),
+            # Printed on thermal receipts. Without these the receipt header is
+            # just the business name — the store copy of the org is all a
+            # cashier screen has, and it is never re-fetched at print time.
+            "address": row[8] or "",
+            "phone": row[9] or "",
+            "tax_id": row[10] or "",
+            "invoice_template": row[11] or "classic",
+            "receipt_template": row[12] or "compact",
+            "receipt_footer_note": row[13] or "",
         })
 
     return orgs

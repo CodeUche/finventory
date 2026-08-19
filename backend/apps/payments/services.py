@@ -256,9 +256,15 @@ class PaymentService:
         and one-time accounts; a plain bank account gives manual transfer. A
         merchant with neither still sells — they just take cash.
         """
+        # `is_active` alone is not enough: a merchant can tick "enable" and save
+        # before pasting their keys, and a config with an empty secret_key would
+        # otherwise advertise card and one-time-account buttons that throw
+        # "Paystack secret key is missing" the moment they are pressed. Treat a
+        # keyless config as not set up, so the caller shows the setup prompt.
         config = (
             PaymentGatewayConfig.objects
-            .filter(organisation=organisation, is_active=True).first()
+            .filter(organisation=organisation, is_active=True)
+            .exclude(secret_key='').first()
         )
         accounts = list(
             MerchantBankAccount.objects

@@ -45,7 +45,7 @@ class MonnifyProvider(PaymentProvider):
         if not (self.config.public_key and self.config.secret_key):
             raise PaymentProviderError(
                 "Monnify API key and secret are missing. Add them in "
-                "Settings → Payment Gateways."
+                "Settings → Payments."
             )
         basic = base64.b64encode(
             f"{self.config.public_key}:{self.config.secret_key}".encode()
@@ -71,7 +71,7 @@ class MonnifyProvider(PaymentProvider):
                             callback_url: str, metadata: dict) -> CheckoutSession:
         if not self.config.contract_code:
             raise PaymentProviderError(
-                "Monnify contract code is missing. Add it in Settings → Payment Gateways."
+                "Monnify contract code is missing. Add it in Settings → Payments."
             )
         body = self._request(
             "POST", f"{self.base}/api/v1/merchant/transactions/init-transaction",
@@ -103,7 +103,7 @@ class MonnifyProvider(PaymentProvider):
                                customer_email: str, metadata: dict) -> VirtualAccountDetails:
         if not self.config.contract_code:
             raise PaymentProviderError(
-                "Monnify contract code is missing. Add it in Settings → Payment Gateways."
+                "Monnify contract code is missing. Add it in Settings → Payments."
             )
         body = self._request(
             "POST", f"{self.base}/api/v1/bank-transfer/reserved-accounts",

@@ -56,6 +56,8 @@ export interface Organisation {
   company_name_font_underline?: boolean
   show_company_name_on_pdf?: boolean
   invoice_template?: string
+  receipt_template?: string
+  receipt_footer_note?: string
   pension_provider?: string
   ai_custom_context?: string
   managing_firm_name?: string | null

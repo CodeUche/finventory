@@ -100,6 +100,22 @@ class Organisation(SoftDeleteModel):
         max_length=30, default='classic',
         help_text="Invoice PDF layout template: classic, modern, minimal, professional"
     )
+    # Thermal (80mm) POS receipt template. Separate from invoice_template: an
+    # A4 invoice and an 80mm roll have nothing in common beyond the data, so a
+    # merchant picks each independently.
+    receipt_template = models.CharField(
+        max_length=30, default='compact',
+        help_text=(
+            "POS receipt layout: compact, detailed, branded, classic_cash, "
+            "shop_barcode, stay_folio"
+        ),
+    )
+    # Free-text line printed above the sign-off on the 'branded' receipt —
+    # returns policy, thank-you, feedback address. Merchant's own words.
+    receipt_footer_note = models.CharField(
+        max_length=200, blank=True,
+        help_text="Closing message on the branded receipt template",
+    )
     # Payroll — default pension provider (PFA)
     pension_provider = models.CharField(
         max_length=100, blank=True,

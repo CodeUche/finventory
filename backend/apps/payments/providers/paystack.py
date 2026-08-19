@@ -25,7 +25,7 @@ class PaystackProvider(PaymentProvider):
     def _headers(self):
         if not self.config.secret_key:
             raise PaymentProviderError(
-                "Paystack secret key is missing. Add it in Settings → Payment Gateways."
+                "Paystack secret key is missing. Add it in Settings → Payments."
             )
         return {
             "Authorization": f"Bearer {self.config.secret_key}",

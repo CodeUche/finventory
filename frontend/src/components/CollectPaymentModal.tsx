@@ -196,12 +196,24 @@ export default function CollectPaymentModal({
         {!options ? (
           <div className="flex justify-center py-6"><Loader2 size={20} className="animate-spin text-slate-500" /></div>
         ) : nothingConfigured ? (
-          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200/90 flex gap-3">
-            <AlertTriangle size={16} className="shrink-0 mt-0.5" />
-            <span>
-              No online payment method is set up yet. Add your bank account or your gateway keys in
-              <strong> Settings → Payment Gateways</strong>, or take this payment in cash.
-            </span>
+          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200/90 space-y-3">
+            <div className="flex gap-3">
+              <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+              <span>
+                You have not added your payment keys yet, so there is no way to collect this
+                online. Paste your own Paystack keys under <strong>Settings → Payments</strong> and
+                the money settles straight into your bank account.
+              </span>
+            </div>
+            <a
+              href="/settings?tab=payments"
+              className="btn-primary w-full justify-center text-xs no-underline"
+            >
+              Open payment settings
+            </a>
+            <p className="text-xs text-amber-200/70">
+              Nothing to hand? Take this payment in cash or by bank transfer and record it here.
+            </p>
           </div>
         ) : (
           <>

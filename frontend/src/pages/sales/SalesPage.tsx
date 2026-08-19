@@ -4,6 +4,7 @@ import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, Receipt, Search, X, Loader2, CheckCircle, Ban, FileDown, Mail, MessageCircle, RotateCcw, Truck, Pencil, Trash2, CalendarClock, RefreshCw, PackageCheck, AlertTriangle, FileText, Landmark, Printer } from 'lucide-react'
 import CollectPaymentModal from '@/components/CollectPaymentModal'
 import { printReceipt } from '@/lib/receipt'
+import { useReceiptDefaults } from '@/hooks/useReceiptDefaults'
 import SortSelect from '@/components/SortSelect'
 import YearFilter, { yearToDateParams } from '@/components/YearFilter'
 import MonthFilter, { monthToDateParams, type ArchiveMonth } from '@/components/MonthFilter'
@@ -494,6 +495,7 @@ async function buildDeliveryNotePDF(
 export default function SalesPage() {
   const navigate = useNavigate()
   const { organisation, memberRole, user, logoDataUrl, stampDataUrl } = useAuthStore()
+  const receiptDefaults = useReceiptDefaults()
   const { canEdit: canEditSales } = useModuleAccess('sales')
   const isOwnerOrAdmin = memberRole === 'owner' || memberRole === 'admin' || user?.is_superuser === true
   const [invoices, setInvoices] = useState<Invoice[]>([])
@@ -513,13 +515,12 @@ export default function SalesPage() {
     const inv = detail ?? selected
     if (!inv) return
     printReceipt({
-      merchant: organisation?.invoice_company_name || organisation?.name || 'Receipt',
-      address: organisation?.address,
-      phone: organisation?.phone,
-      tin: organisation?.tax_id,
+      ...receiptDefaults,
       invoiceNumber: inv.invoice_number,
       date: formatDate(inv.issue_date),
       cashier: inv.sold_by || undefined,
+      // An invoice is raised at a desk, not served at a till.
+      cashierLabel: 'Raised by',
       customer: inv.customer_name || undefined,
       lines: (inv.items ?? []).map((it) => ({
         name: it.product_name,

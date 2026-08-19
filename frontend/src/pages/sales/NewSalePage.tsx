@@ -4,6 +4,7 @@ import { AlertTriangle, ArrowLeft, Loader2, Minus, Plus, Search, ShoppingCart, T
 import toast from 'react-hot-toast'
 import { customerApi, inventoryApi, locationApi, salesApi, tillApi } from '@/services/api'
 import { printReceipt } from '@/lib/receipt'
+import { useReceiptDefaults } from '@/hooks/useReceiptDefaults'
 import { formatCurrency, formatDate, stripCommas } from '@/lib/utils'
 import AmountInput from '@/components/AmountInput'
 import EditableTotal from '@/components/EditableTotal'
@@ -25,6 +26,7 @@ export default function NewSalePage() {
   const navigate = useNavigate()
   const { refetch: refetchAlerts } = useNotifications()
   const { user, organisation } = useAuthStore()
+  const receiptDefaults = useReceiptDefaults()
 
   const currentUserName = user ? `${user.first_name} ${user.last_name}`.trim() || user.email : ''
 
@@ -322,10 +324,7 @@ export default function NewSalePage() {
       // a proforma, which is a quote and not proof of payment.
       if (!isProforma && created?.id && autoPrint) {
         printReceipt({
-          merchant: organisation?.invoice_company_name || organisation?.name || 'Receipt',
-          address: organisation?.address,
-          phone: organisation?.phone,
-          tin: organisation?.tax_id,
+          ...receiptDefaults,
           invoiceNumber: created.invoice_number ?? '',
           date: formatDate(created.issue_date ?? new Date().toISOString()),
           cashier: currentUserName,
