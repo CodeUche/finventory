@@ -69,19 +69,29 @@ class OrganisationService:
             slug = base_slug
             for _attempt in range(6):
                 try:
-                    org = Organisation.objects.create(
-                        id=org_id,
-                        name=name,
-                        slug=slug,
-                        owner=owner,
-                        account_type=extra.get("account_type", Organisation.AccountType.BUSINESS),
-                        country=extra.get("country", "NG"),
-                        currency=extra.get("currency", "NGN"),
-                        registration_number=extra.get("registration_number", ""),
-                        tax_id=extra.get("tax_id", ""),
-                        phone=extra.get("phone", ""),
-                        email=extra.get("email", ""),
-                    )
+                    # Each attempt needs its OWN savepoint. An IntegrityError marks
+                    # the surrounding atomic block as un-usable, so without this the
+                    # very next query raises TransactionManagementError ("You can't
+                    # execute queries until the end of the 'atomic' block") and the
+                    # retry below could never run — the collision recovery was dead
+                    # on arrival. Seen in production: creating an organisation whose
+                    # name slugified onto an existing slug failed outright with
+                    # "Failed to create organisation". Soft-deleted organisations
+                    # keep holding their slug, so this got more likely over time.
+                    with transaction.atomic():
+                        org = Organisation.objects.create(
+                            id=org_id,
+                            name=name,
+                            slug=slug,
+                            owner=owner,
+                            account_type=extra.get("account_type", Organisation.AccountType.BUSINESS),
+                            country=extra.get("country", "NG"),
+                            currency=extra.get("currency", "NGN"),
+                            registration_number=extra.get("registration_number", ""),
+                            tax_id=extra.get("tax_id", ""),
+                            phone=extra.get("phone", ""),
+                            email=extra.get("email", ""),
+                        )
                     break
                 except IntegrityError as exc:
                     if "slug" not in str(exc) or _attempt >= 5:

@@ -398,3 +398,145 @@ class InviteOwnerEscalationTests(TestCase):
                     res.status_code, 201,
                     f"inviting a {role} broke — the fix is too broad",
                 )
+
+
+class DemoAccountCommandTests(TestCase):
+    """The demo account exists so click-throughs have somewhere to sign in on a
+    real deployment. Its safety rests entirely on never resting in an enabled
+    state with a known password, so the locks are pinned here."""
+
+    EMAIL = "cmd.demo@audity.test"
+
+    def setUp(self):
+        from apps.authentication.models import User
+        self.user = User.objects.create_user(
+            email=self.EMAIL, password="initial-Passw0rd!", first_name="Cmd", last_name="Demo",
+        )
+
+    def _run(self, *args):
+        from io import StringIO
+        from django.core.management import call_command
+        out = StringIO()
+        call_command("demo_account", *args, stdout=out)
+        return out.getvalue()
+
+    def _refresh(self):
+        self.user.refresh_from_db()
+        return self.user
+
+    # ── activate / deactivate ────────────────────────────────────────────────
+    def test_deactivate_restores_every_lock(self):
+        self._run("--deactivate", "--email", self.EMAIL)
+        u = self._refresh()
+        self.assertFalse(u.is_active)
+        self.assertFalse(u.is_verified)
+        self.assertFalse(u.has_usable_password(),
+                         "the old password must stop being a password at all")
+
+    def test_activate_enables_and_prints_a_password_once(self):
+        out = self._run("--activate", "--email", self.EMAIL)
+        u = self._refresh()
+        self.assertTrue(u.is_active)
+        self.assertTrue(u.is_verified)
+        self.assertTrue(u.has_usable_password())
+        self.assertIn("shown ONCE", out)
+
+    def test_each_activation_mints_a_different_password(self):
+        """A reused password is the whole failure mode this command prevents."""
+        first = self._run("--activate", "--email", self.EMAIL)
+        hash_one = self._refresh().password
+        self._run("--deactivate", "--email", self.EMAIL)
+        second = self._run("--activate", "--email", self.EMAIL)
+        hash_two = self._refresh().password
+        self.assertNotEqual(hash_one, hash_two)
+        self.assertNotEqual(first, second)
+
+    def test_password_printed_actually_works_then_stops_working(self):
+        """End to end: the printed password authenticates, and after
+        --deactivate nothing does."""
+        import re
+        from django.contrib.auth import authenticate
+        out = self._run("--activate", "--email", self.EMAIL)
+        m = re.search(r"E2E_RECON_PASSWORD='([^']+)'", out)
+        self.assertIsNotNone(m, out)
+        pw = m.group(1)
+        self.assertIsNotNone(authenticate(username=self.EMAIL, password=pw))
+
+        self._run("--deactivate", "--email", self.EMAIL)
+        self.assertIsNone(authenticate(username=self.EMAIL, password=pw),
+                          "the printed password must be dead after deactivation")
+
+    def test_status_reports_without_changing_anything(self):
+        self._run("--deactivate", "--email", self.EMAIL)
+        before = self._refresh().password
+        out = self._run("--status", "--email", self.EMAIL)
+        self.assertIn("LOCKED", out)
+        self.assertEqual(self._refresh().password, before)
+
+    # ── refusals — these are the guardrails, not niceties ────────────────────
+    def test_refuses_a_real_domain(self):
+        from django.core.management.base import CommandError
+        from apps.authentication.models import User
+        User.objects.create_user(email="real.person@gmail.com", password="x-Passw0rd!1")
+        with self.assertRaises(CommandError):
+            self._run("--deactivate", "--email", "real.person@gmail.com")
+
+    def test_refuses_a_staff_or_superuser_account(self):
+        from django.core.management.base import CommandError
+        self.user.is_staff = True
+        self.user.save(update_fields=["is_staff"])
+        with self.assertRaises(CommandError):
+            self._run("--activate", "--email", self.EMAIL)
+
+    def test_refuses_an_unknown_account(self):
+        from django.core.management.base import CommandError
+        with self.assertRaises(CommandError):
+            self._run("--status", "--email", "nobody@audity.test")
+
+
+class OrganisationSlugCollisionTests(TestCase):
+    """A colliding organisation name must still create, including when the slug is
+    held by a SOFT-DELETED organisation.
+
+    The unique constraint on slug does not exclude soft-deleted rows, so a
+    discarded organisation keeps its slug forever. The retry that is supposed to
+    recover ran inside the caller's atomic block with no savepoint, so the
+    IntegrityError poisoned the transaction and the next query raised
+    TransactionManagementError. Signup failed outright with "Failed to create
+    organisation" — reproduced against production before this was fixed.
+    """
+
+    def setUp(self):
+        self.owner = User.objects.create_user(email="slug.owner@audity.test", password="Passw0rd!123")
+        self.other = User.objects.create_user(email="slug.other@audity.test", password="Passw0rd!123")
+
+    def test_same_name_twice_still_creates(self):
+        a = OrganisationService.create_organisation("Recon Demo Ltd", self.owner)
+        b = OrganisationService.create_organisation("Recon Demo Ltd", self.other)
+        self.assertNotEqual(a.id, b.id)
+        self.assertNotEqual(a.slug, b.slug, "the second organisation needs its own slug")
+
+    def test_slug_held_by_a_soft_deleted_organisation_does_not_block_signup(self):
+        first = OrganisationService.create_organisation("Recon Demo Ltd", self.owner)
+        held = first.slug
+        first.delete()  # soft delete — the row, and its slug, remain
+        self.assertTrue(Organisation.all_objects.filter(slug=held, is_deleted=True).exists())
+
+        again = OrganisationService.create_organisation("Recon Demo Ltd", self.other)
+        self.assertIsNotNone(again.id)
+        self.assertNotEqual(again.slug, held)
+
+    def test_the_new_organisation_is_usable_afterwards(self):
+        """A savepoint rollback must not leave the outer transaction broken —
+        membership creation and chart-of-accounts seeding still have to run."""
+        OrganisationService.create_organisation("Recon Demo Ltd", self.owner)
+        org = OrganisationService.create_organisation("Recon Demo Ltd", self.other)
+        self.assertTrue(
+            Membership.objects.filter(organisation=org, user=self.other, role=Membership.Role.OWNER).exists(),
+            "membership must still be created after a slug retry",
+        )
+        from apps.accounting.models import Account
+        self.assertGreater(
+            Account.objects.filter(organisation=org).count(), 0,
+            "the chart of accounts must still seed after a slug retry",
+        )
