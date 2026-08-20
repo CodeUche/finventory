@@ -33,8 +33,29 @@ def _make_org(user, name="Acc Org"):
 
 
 def _upgrade_to_business(org):
-    """Upgrade org to the Business plan so plan_requires('accounting') passes."""
-    plan = Plan.objects.get(slug="business")
+    """Upgrade org to the Business plan so plan_requires('accounting') passes.
+
+    get_or_create, not get: the Business plan is created by a data migration, and
+    any TransactionTestCase in the run TRUNCATES the tables afterwards without
+    restoring migration data. Every later --keepdb run then died on
+    Plan.DoesNotExist, in tests that have nothing to do with billing — a whole
+    suite failing for a reason that looks nothing like the cause. Seeding it here
+    makes the suite independent of what ran before it.
+    """
+    plan, _ = Plan.objects.get_or_create(
+        slug="business",
+        defaults={
+            "name": "Business",
+            "price": 30000,
+            "interval": "monthly",
+            "features": {"modules": [
+                "invoicing", "sales", "customers", "expenses", "inventory",
+                "suppliers", "purchases", "quotes", "recurring", "budget",
+                "reports", "payroll", "accounting", "owner_analytics",
+                "audit_log", "team", "tax", "bills",
+            ]},
+        },
+    )
     SubscriptionService.upgrade_plan(org, plan)
     org.refresh_from_db()
 
