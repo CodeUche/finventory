@@ -227,3 +227,55 @@ class SoftDeletedKeysRoundTwoTests(TestCase):
                                msg="the ledger's double-post guard was weakened"):
             with transaction.atomic():
                 make()
+
+
+class DuplicateKeyReturnsFriendly400Tests(TestCase):
+    """A duplicate natural key is a typo, not a server fault.
+
+    The organisation half of these unique pairs is set by the view and never
+    sent by the client, so it is not a serializer field and DRF cannot build a
+    UniqueTogetherValidator for it. The duplicate therefore passed validation,
+    reached the database and surfaced as an unhandled IntegrityError — a 500 for
+    a routine mistake, which also buries real outages in the error rate.
+    """
+
+    def setUp(self):
+        from rest_framework.test import APIClient
+        from rest_framework_simplejwt.tokens import RefreshToken
+        self.user = User.objects.create_user(email="dup400@audity.test", password="Passw0rd!123")
+        self.org = OrganisationService.create_organisation("Dup Co", self.user)
+        # Suppliers are not on the Free plan, so the org needs the Business plan
+        # before the endpoint is reachable at all.
+        from apps.subscriptions.models import Plan
+        from apps.subscriptions.services import SubscriptionService
+        plan, _ = Plan.objects.get_or_create(
+            slug="business",
+            defaults={"name": "Business", "price": 30000, "interval": "monthly",
+                      "features": {"modules": ["inventory", "suppliers", "expenses",
+                                               "accounting", "sales", "bills"]}})
+        SubscriptionService.upgrade_plan(self.org, plan)
+        self.client = APIClient()
+        self.client.credentials(
+            HTTP_AUTHORIZATION=f"Bearer {RefreshToken.for_user(self.user).access_token}",
+            HTTP_X_ORGANISATION_ID=str(self.org.id),
+        )
+
+    def _post_twice(self, url, payload):
+        first = self.client.post(url, payload, format="json")
+        self.assertIn(first.status_code, (200, 201), msg=str(first.data)[:200])
+        return self.client.post(url, payload, format="json")
+
+    def test_duplicate_product_sku_is_a_400(self):
+        second = self._post_twice("/api/v1/inventory/products/", {
+            "name": "Dup Widget", "sku": "DUP-SKU", "selling_price": "100.00",
+            "cost_price": "50.00"})
+        self.assertEqual(second.status_code, 400, msg=str(second.data)[:200])
+
+    def test_duplicate_supplier_code_is_a_400(self):
+        second = self._post_twice("/api/v1/suppliers/", {
+            "name": "Dup Supplier", "code": "DUP-SUP"})
+        self.assertEqual(second.status_code, 400, msg=str(second.data)[:200])
+
+    def test_duplicate_expense_category_is_a_400(self):
+        second = self._post_twice("/api/v1/expenses/categories/", {"name": "Dup Travel"})
+        self.assertEqual(second.status_code, 400, msg=str(second.data)[:200])

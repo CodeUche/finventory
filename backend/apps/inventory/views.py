@@ -27,6 +27,7 @@ from .serializers import (
     WarehouseSerializer,
 )
 from .services import InventoryService
+from apps.core.unique_errors import FriendlyUniqueErrorMixin
 
 
 class ProductFilter(django_filters.FilterSet):
@@ -78,12 +79,13 @@ class WarehouseViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             return Response({"error": str(exc)}, status=400)
 
 
-class ProductViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+class ProductViewSet(FriendlyUniqueErrorMixin, TenantFilterMixin, viewsets.ModelViewSet):
     """
     Full CRUD for products / SKUs.
 
     GET /inventory/products/low-stock/ — products below reorder level
     """
+    unique_error_message = "A product with that SKU already exists in your organisation."
 
     queryset = Product.objects.select_related("category", "tax_class")
     serializer_class = ProductSerializer

@@ -16,6 +16,7 @@ from apps.core.throttles import FinancialWriteThrottle
 
 from .models import Expense, ExpenseCategory, ExpenseGroup
 from .serializers import ExpenseCategorySerializer, ExpenseSerializer, ExpenseGroupSerializer
+from apps.core.unique_errors import FriendlyUniqueErrorMixin
 
 
 class ExpenseFilter(django_filters.FilterSet):
@@ -65,7 +66,8 @@ class ExpenseGroupViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         })
 
 
-class ExpenseCategoryViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+class ExpenseCategoryViewSet(FriendlyUniqueErrorMixin, TenantFilterMixin, viewsets.ModelViewSet):
+    unique_error_message = "An expense category with that name already exists in your organisation."
     queryset = ExpenseCategory.objects.all()
     serializer_class = ExpenseCategorySerializer
     permission_classes = [IsAuthenticated, IsAccountant, _ModAccess_expenses]

@@ -12,9 +12,11 @@ _ModAccess_suppliers = requires_module("suppliers")
 _PlanSuppliers = plan_requires('suppliers')
 from .models import Supplier
 from .serializers import SupplierSerializer
+from apps.core.unique_errors import FriendlyUniqueErrorMixin
 
 
-class SupplierViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+class SupplierViewSet(FriendlyUniqueErrorMixin, TenantFilterMixin, viewsets.ModelViewSet):
+    unique_error_message = "A supplier with that code already exists in your organisation."
     queryset = Supplier.objects.filter(is_active=True)
     serializer_class = SupplierSerializer
     permission_classes = [IsAuthenticated, IsStaff, _PlanSuppliers, _ModAccess_suppliers]
