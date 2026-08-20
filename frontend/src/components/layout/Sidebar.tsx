@@ -242,6 +242,10 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
     { id: 'access',            label: 'Accountant Access', icon: ShieldCheck,group: 'WORKSPACE',     ownerOnly: true, partnerRestricted: true },
     { id: 'email',             label: 'Email',             icon: Mail,       group: 'COMMUNICATIONS',ownerOnly: true },
     { id: 'bank',              label: 'Banking',           icon: Landmark,   group: 'FINANCE',       ownerOnly: true },
+    // Where a merchant enters their OWN gateway keys. Without this entry the
+    // tab is only reachable by typing the URL, which is how collecting
+    // payments stayed unfixable from inside the app.
+    { id: 'payments',          label: 'Payments',          icon: CreditCard, group: 'FINANCE',       ownerOnly: true },
     { id: 'gl_mapping',        label: 'GL Mapping',        icon: GitBranch,  group: 'FINANCE',       requiresSettings: true, requiresPlan: 'accounting' },
     { id: 'periods',           label: 'Periods',           icon: Lock,       group: 'FINANCE',       requiresSettings: true, requiresPlan: 'accounting' },
     { id: 'ai',                label: 'AI',                icon: Bot,        group: 'ADVANCED',      ownerOnly: true },

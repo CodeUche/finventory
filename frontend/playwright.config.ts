@@ -16,6 +16,8 @@ const TODAY_URL = process.env.E2E_TODAY_URL || 'http://localhost:5183'
 // Bank Reconciliation click-through — runs against whichever stack you point it
 // at (a throwaway-DB dev server locally, or a deployed environment).
 const RECON_URL = process.env.E2E_RECON_URL || 'http://127.0.0.1:5183'
+// POS receipt click-through — same isolated-stack pattern as bank-recon.
+const RECEIPTS_URL = process.env.E2E_RECEIPTS_URL || 'http://127.0.0.1:5183'
 
 // Browser E2E against the running dev app (Vite :3000 proxies /api → Django :8000).
 export default defineConfig({
@@ -77,6 +79,17 @@ export default defineConfig({
       name: 'bank-recon',
       testMatch: /bank-reconciliation\.spec\.ts/,
       use: { baseURL: RECON_URL },
+    },
+
+    // POS receipt click-through. Same self-signing, point-anywhere pattern as
+    // bank-recon:
+    //   E2E_RECEIPTS_URL=http://127.0.0.1:5183
+    //   E2E_RECEIPTS_EMAIL=<email>  E2E_RECEIPTS_PASSWORD=<password>
+    //   npx playwright test --project=receipts
+    {
+      name: 'receipts',
+      testMatch: /receipts\.spec\.ts/,
+      use: { baseURL: RECEIPTS_URL },
     },
   ],
 })
