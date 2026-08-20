@@ -33,7 +33,17 @@ class Category(TenantAwareModel):
 
     class Meta(TenantAwareModel.Meta):
         verbose_name_plural = "categories"
-        unique_together = [["organisation", "name"]]
+        # Unique among LIVE rows only. Deletion here is a soft delete, so a plain
+        # unique_together kept counting the deleted row: delete a category and
+        # its name was reserved forever, with the API answering "already exists"
+        # about something the user could no longer see anywhere.
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organisation", "name"],
+                condition=models.Q(is_deleted=False),
+                name="uniq_inventory_category_org_name",
+            ),
+        ]
 
     def __str__(self):
         return self.name
@@ -54,7 +64,15 @@ class Warehouse(TenantAwareModel):
     )
 
     class Meta(TenantAwareModel.Meta):
-        unique_together = [["organisation", "name"]]
+        # Live rows only — see Category above. Deleting "Lagos" used to reserve
+        # that warehouse name permanently.
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organisation", "name"],
+                condition=models.Q(is_deleted=False),
+                name="uniq_inventory_warehouse_org_name",
+            ),
+        ]
 
     def __str__(self):
         return self.name
@@ -167,7 +185,15 @@ class Product(TenantAwareModel):
     )
 
     class Meta(TenantAwareModel.Meta):
-        unique_together = [["organisation", "sku"]]
+        # Live rows only — see Category above. A deleted product used to hold its
+        # SKU forever, so re-adding an item you had removed was impossible.
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organisation", "sku"],
+                condition=models.Q(is_deleted=False),
+                name="uniq_inventory_product_org_sku",
+            ),
+        ]
         indexes = [
             models.Index(fields=["organisation", "is_active"]),
             models.Index(fields=["organisation", "category"]),

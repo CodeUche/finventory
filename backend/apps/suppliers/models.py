@@ -29,7 +29,15 @@ class Supplier(TenantAwareModel):
     is_active = models.BooleanField(default=True)
 
     class Meta(TenantAwareModel.Meta):
-        unique_together = [["organisation", "code"]]
+        # Unique among LIVE rows only — deletion is soft, and a plain
+        # unique_together meant a removed supplier held its code permanently.
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organisation", "code"],
+                condition=models.Q(is_deleted=False),
+                name="uniq_supplier_org_code",
+            ),
+        ]
 
     def __str__(self):
         return f"{self.code} – {self.name}"

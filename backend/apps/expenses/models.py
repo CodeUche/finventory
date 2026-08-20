@@ -20,7 +20,15 @@ class ExpenseCategory(TenantAwareModel):
     )
 
     class Meta(TenantAwareModel.Meta):
-        unique_together = [["organisation", "name"]]
+        # Unique among LIVE rows only — deletion is soft, so deleting the
+        # "Travel" category used to make that name unusable from then on.
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organisation", "name"],
+                condition=models.Q(is_deleted=False),
+                name="uniq_expense_category_org_name",
+            ),
+        ]
         verbose_name_plural = "Expense Categories"
 
     def __str__(self):

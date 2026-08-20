@@ -70,7 +70,16 @@ class Customer(TenantAwareModel):
     )
 
     class Meta(TenantAwareModel.Meta):
-        unique_together = [["organisation", "code"]]
+        # Unique among LIVE rows only. Deletion is a soft delete, so a plain
+        # unique_together kept the deleted row in play: a customer code could
+        # never be reused once that customer was removed.
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organisation", "code"],
+                condition=models.Q(is_deleted=False),
+                name="uniq_customer_org_code",
+            ),
+        ]
         indexes = [models.Index(fields=["organisation", "name"])]
         ordering = ["name"]
 

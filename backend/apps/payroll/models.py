@@ -153,7 +153,17 @@ class Employee(TenantAwareModel):
 
     class Meta:
         ordering = ['last_name', 'first_name']
-        unique_together = [('organisation', 'employee_id')]
+        # Unique among LIVE rows only. Deletion is a soft delete, so a plain
+        # unique_together meant an employee_id was burned the moment someone
+        # left — re-hiring a returning employee under their original number was
+        # rejected as a duplicate against a record no longer on the books.
+        constraints = [
+            models.UniqueConstraint(
+                fields=['organisation', 'employee_id'],
+                condition=models.Q(is_deleted=False),
+                name='uniq_employee_org_employee_id',
+            ),
+        ]
 
     def __str__(self):
         return f"{self.employee_id} - {self.first_name} {self.last_name}"
