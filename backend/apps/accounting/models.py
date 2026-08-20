@@ -99,7 +99,18 @@ class Account(TenantAwareModel):
 
     class Meta:
         ordering = ['code']
-        unique_together = [('organisation', 'code')]
+        # Live rows only. Deletion is soft, so a removed account kept its code
+        # reserved: tidying the chart of accounts and re-adding a code was
+        # refused against a row no longer in the chart. This also unblocks
+        # seed_chart_of_accounts, which get_or_creates by code through the
+        # soft-delete manager and so could not see what was blocking it.
+        constraints = [
+            models.UniqueConstraint(
+                fields=['organisation', 'code'],
+                condition=models.Q(is_deleted=False),
+                name='uniq_account_org_code',
+            ),
+        ]
 
     def __str__(self):
         return f"{self.code} - {self.name}"
@@ -343,7 +354,15 @@ class FixedAsset(TenantAwareModel):
 
     class Meta:
         ordering = ['-purchase_date']
-        unique_together = [('organisation', 'asset_code')]
+        # Live rows only — see Account above. A disposed or mistakenly-added
+        # asset used to hold its code forever.
+        constraints = [
+            models.UniqueConstraint(
+                fields=['organisation', 'asset_code'],
+                condition=models.Q(is_deleted=False),
+                name='uniq_fixed_asset_org_asset_code',
+            ),
+        ]
 
     def __str__(self):
         return f"{self.asset_code} - {self.name}"
@@ -418,7 +437,14 @@ class AssetType(TenantAwareModel):
 
     class Meta:
         ordering = ['code']
-        unique_together = [('organisation', 'code')]
+        # Live rows only — see Account above.
+        constraints = [
+            models.UniqueConstraint(
+                fields=['organisation', 'code'],
+                condition=models.Q(is_deleted=False),
+                name='uniq_asset_type_org_code',
+            ),
+        ]
 
     def __str__(self):
         return f"{self.code} - {self.name}"

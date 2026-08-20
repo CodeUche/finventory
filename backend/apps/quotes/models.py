@@ -27,7 +27,15 @@ class Quote(TenantAwareModel):
 
     class Meta:
         ordering = ['-created_at']
-        unique_together = [('organisation', 'quote_number')]
+        # Live rows only — see Bill. A deleted quote used to hold its number
+        # permanently, so the next quote could not reuse it.
+        constraints = [
+            models.UniqueConstraint(
+                fields=['organisation', 'quote_number'],
+                condition=models.Q(is_deleted=False),
+                name='uniq_quote_org_quote_number',
+            ),
+        ]
 
     def __str__(self):
         return f"{self.quote_number}"

@@ -66,7 +66,16 @@ class Bill(TenantAwareModel):
 
     class Meta:
         ordering = ['-created_at']
-        unique_together = [('organisation', 'bill_number')]
+        # Live rows only. Deletion is soft, so a plain unique_together kept the
+        # deleted row in play and a bill number could never be entered again —
+        # including after deleting one that was keyed in wrong.
+        constraints = [
+            models.UniqueConstraint(
+                fields=['organisation', 'bill_number'],
+                condition=models.Q(is_deleted=False),
+                name='uniq_bill_org_bill_number',
+            ),
+        ]
 
     def __str__(self):
         return f"{self.bill_number}"
