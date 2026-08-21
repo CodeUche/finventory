@@ -200,14 +200,26 @@ def run_cmd(
         output = "".join(captured)
         return proc.returncode, output, ""
     else:
-        result = subprocess.run(
-            args,
-            cwd=str(cwd),
-            env=merged_env,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
+        try:
+            result = subprocess.run(
+                args,
+                cwd=str(cwd),
+                env=merged_env,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            # A suite that runs long must fail its own suite, not abort the whole
+            # run. This used to raise out of orchestrate() and kill the process
+            # mid-sweep — and because the traceback escaped the exit-code
+            # bookkeeping, the run still reported 0, so CI read a crashed sweep
+            # as a pass. Report it as a normal non-zero suite instead, keeping
+            # whatever output was produced before the deadline.
+            partial = exc.stdout or b"" if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+            if isinstance(partial, bytes):
+                partial = partial.decode(errors="replace")
+            return 124, partial, f"TIMEOUT after {timeout}s: {' '.join(map(str, args))}"
         return result.returncode, result.stdout, result.stderr
 
 
@@ -300,7 +312,12 @@ class Suites:
             f"--cov-report=html:{ROOT}/test-results/coverage-html",
             f"--junitxml={ROOT}/test-results/backend-api.xml",
         ]
-        return _run_pytest_suite(name, "api", cmd, BACKEND, verbose, max_retries)
+        # Coverage instrumentation roughly doubles this suite's runtime and it
+        # already runs every test, so the shared 600s default is not enough — it
+        # timed out mid-sweep instead of reporting a real result.
+        return _run_pytest_suite(
+            name, "api", cmd, BACKEND, verbose, max_retries, timeout=2400,
+        )
 
     # ── Backend: smoke (fast subset) ──────────────────────────────────────────
     @staticmethod
@@ -588,12 +605,13 @@ def _run_pytest_suite(
     cwd: Path,
     verbose: bool,
     max_retries: int,
+    timeout: int = 600,
 ) -> SuiteResult:
     t0 = time.monotonic()
     attempts = 0
     rc, out, err = 0, "", ""
     while attempts <= max_retries:
-        rc, out, err = run_cmd(cmd, cwd=cwd, verbose=verbose)
+        rc, out, err = run_cmd(cmd, cwd=cwd, verbose=verbose, timeout=timeout)
         if rc == 0:
             break
         attempts += 1
@@ -601,7 +619,7 @@ def _run_pytest_suite(
             print(yellow(f"  ↺ retry {attempts}/{max_retries} — running only last-failed …"))
             # Re-run only the tests that just failed
             retry_cmd = cmd + ["--last-failed", "--last-failed-no-testsfound-skip"]
-            rc, out, err = run_cmd(retry_cmd, cwd=cwd, verbose=verbose)
+            rc, out, err = run_cmd(retry_cmd, cwd=cwd, verbose=verbose, timeout=timeout)
             if rc == 0:
                 break
 
