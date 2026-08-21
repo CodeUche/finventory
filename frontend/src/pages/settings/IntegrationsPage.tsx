@@ -49,6 +49,12 @@ export default function IntegrationsPage() {
     return () => { Object.keys(pollTimers.current).forEach(stopPolling) }
   }, [])
 
+  // React Compiler cannot preserve this memoization, so it skips optimizing
+  // this component. The manual useCallback stays anyway: `load` is a
+  // dependency of the effect below, and an unstable identity re-runs it on
+  // every render — which is exactly the unmount-mid-reveal bug described
+  // inside. A skipped optimization is the cheaper of the two.
+  // eslint-disable-next-line react-hooks/preserve-manual-memoization
   const load = useCallback(async () => {
     // Only show the full-page blocking spinner on the very first load.
     // Refetching after an action (e.g. onChange() from WebhooksSection right

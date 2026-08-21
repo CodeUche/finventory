@@ -150,7 +150,7 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
       searchParams.delete('new')
       setSearchParams(searchParams, { replace: true })
     }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [])
 
   const handleCreate = async () => {
     if (!form.name.trim()) { toast.error('Customer name required'); return }

@@ -140,7 +140,6 @@ export default function ConnectorsPage() {
       hasLoadedOnce.current = true
       setLoading(false)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => { load() }, [load])

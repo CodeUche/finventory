@@ -158,7 +158,7 @@ export default function ExpensesPage() {
       searchParams.delete('new')
       setSearchParams(searchParams, { replace: true })
     }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     budgetApi.list().then(({ data }) => {

@@ -239,7 +239,7 @@ export default function PartnerInvoicesPage() {
     }
   }
 
-  useEffect(() => { load() }, [statusFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load() }, [statusFilter])
   useDataRefresh(load)
 
   const handleMarkPaid = async (inv: PartnerInvoice) => {

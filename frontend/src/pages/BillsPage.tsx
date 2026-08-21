@@ -168,7 +168,7 @@ export default function BillsPage() {
       searchParams.delete('new')
       setSearchParams(searchParams, { replace: true })
     }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [])
 
   const openEdit = (b: Bill) => {
     setEditingBillId(b.id)

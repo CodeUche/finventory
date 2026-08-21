@@ -35,7 +35,6 @@ export default function TermsGateModal() {
       if (current && accepted !== current) setShow(true)
     }).catch(() => {})
     return () => { active = false }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id])
 
   if (!show || !user || user.is_superuser) return null

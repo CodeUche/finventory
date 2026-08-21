@@ -120,7 +120,6 @@ export default function NewInvoicePage() {
       }, 250)
     })
     return () => { timers.forEach((t) => { if (t) clearTimeout(t) }) }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [productQueries])
 
   useEffect(() => {

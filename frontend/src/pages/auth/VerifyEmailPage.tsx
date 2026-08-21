@@ -31,7 +31,7 @@ export default function VerifyEmailPage() {
     // their email is verified and redirect to sign in.
     setState('success')
     setTimeout(() => navigate('/login', { replace: true }), 2500)
-  }, [token]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [token])
 
   const handleResend = async () => {
     if (!email) return

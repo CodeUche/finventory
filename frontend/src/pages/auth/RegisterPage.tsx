@@ -72,7 +72,7 @@ export default function RegisterPage() {
       }
     }, 5000)
     return () => { if (pollRef.current) clearInterval(pollRef.current) }
-  }, [registered]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [registered])
 
   const pwMet = PW_CRITERIA.map(c => c.test(form.password))
   const pwValid = pwMet.every(Boolean)

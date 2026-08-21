@@ -128,7 +128,7 @@ export default function BillingPage() {
     } catch { /* non-fatal */ }
   }
 
-  useEffect(() => { load(); loadCommission() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); loadCommission() }, [])
   useDataRefresh(() => { load(); loadCommission() })
 
   // Deep-link support for the sidebar's Billing sub-items:
@@ -174,7 +174,7 @@ export default function BillingPage() {
       const msg = err?.response?.data?.error ?? 'Payment verification failed'
       toast.error(typeof msg === 'string' ? msg : msg?.message ?? 'Verification failed', { id: 'pay-verify' })
     }
-  }, [organisation?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [organisation?.id])
 
   const handleDowngradeToFree = async () => {
     if (!(await confirmDialog('Downgrade to the Free plan? You will immediately lose access to paid features and your plan limits will be reduced.'))) return

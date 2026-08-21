@@ -49,7 +49,6 @@ export default function AcceptInvitePage({ mode }: { mode: PageMode }) {
     if (mode === 'reject' && invite && invite.status === 'pending') {
       handleReject()
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [invite])
 
   const handleAccept = async () => {
