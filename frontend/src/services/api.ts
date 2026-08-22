@@ -1761,6 +1761,13 @@ export const tillApi = {
   zReport: (id: string) => api.get(`/pos/till-sessions/${id}/z_report/`),
 }
 
+export const notificationApi = {
+  /** Every category with its current email setting, defaults filled in. */
+  getPreferences: () => api.get('/notifications/preferences/mine/'),
+  /** Partial patch — only the categories included are changed. */
+  updatePreferences: (data: Record<string, boolean>) => api.put('/notifications/preferences/mine/', data),
+}
+
 export const paymentGatewayApi = {
   configs: () => api.get('/payments/gateways/'),
   createConfig: (data: object) => api.post('/payments/gateways/', data),

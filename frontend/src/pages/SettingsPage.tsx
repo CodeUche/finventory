@@ -1,9 +1,9 @@
 import { useState, useRef, useEffect } from 'react'
 import { confirmDialog, promptDialog } from '@/lib/dialog'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { User, Building2, Shield, Loader2, Camera, CreditCard, CheckCircle, Mail, Lock, Unlock, LandmarkIcon, UsersRound, UserPlus, X, ChevronDown, ChevronUp, ChevronRight, Bot, Layout, Copy, Trash2, ShieldCheck, Key, Clock, XCircle, Send, Globe, AlertTriangle, Wifi, WifiOff, RefreshCw, Activity, FileText, GitBranch, Upload, GraduationCap } from 'lucide-react'
+import { User, Building2, Shield, Loader2, Camera, CreditCard, CheckCircle, Mail, Lock, Unlock, LandmarkIcon, UsersRound, UserPlus, X, ChevronDown, ChevronUp, ChevronRight, Bot, Layout, Copy, Trash2, ShieldCheck, Key, Clock, XCircle, Send, Globe, AlertTriangle, Wifi, WifiOff, RefreshCw, Activity, FileText, GitBranch, Upload, GraduationCap, Bell } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { authApi, orgApi, paymentGatewayApi, accountingApi, teamApi, urlToDataUrl, partnerApi, einvoicingApi } from '@/services/api'
+import { authApi, orgApi, paymentGatewayApi, accountingApi, teamApi, urlToDataUrl, partnerApi, einvoicingApi, notificationApi } from '@/services/api'
 import ImportPage from '@/pages/ImportPage'
 import type { FirsConfig, FirsStats, FirsSubmission, SandboxProgress, GoLiveChecklist } from '@/types'
 import type { AxiosError } from 'axios'
@@ -71,7 +71,17 @@ const TIMEOUT_OPTIONS: { value: TimeoutOption; label: string }[] = [
   { value: '4h', label: '4 hours (recommended)' },
 ]
 
-type Tab = 'profile' | 'security' | 'payments' | 'email' | 'periods' | 'team' | 'invoice_templates' | 'ai' | 'access' | 'whitelabel' | 'firs' | 'gl_mapping' | 'import' | 'bank'
+type Tab = 'profile' | 'security' | 'payments' | 'email' | 'periods' | 'team' | 'invoice_templates' | 'ai' | 'access' | 'whitelabel' | 'firs' | 'gl_mapping' | 'import' | 'bank' | 'notifications'
+
+const NOTIFICATION_CATEGORIES: { key: string; label: string; hint: string }[] = [
+  { key: 'leave', label: 'Leave', hint: 'Leave requests, approvals and rejections' },
+  { key: 'payroll', label: 'Payroll', hint: 'Payroll runs raised, approved or paid' },
+  { key: 'sales', label: 'Sales', hint: 'Invoices, payments and overdue reminders' },
+  { key: 'bills', label: 'Bills', hint: 'Bills raised and due for payment' },
+  { key: 'inventory', label: 'Inventory', hint: 'Low stock and stock movement alerts' },
+  { key: 'tax', label: 'Tax', hint: 'Filing deadlines and tax status changes' },
+  { key: 'system', label: 'System', hint: 'Account and organisation-level notices' },
+]
 
 const MODULE_GROUPS_FOR_PARTNER: {
   label: string
@@ -256,6 +266,40 @@ export default function SettingsPage() {
       else if (user?.avatar) urlToDataUrl(user.avatar).then((d) => { if (d) { setAvatarPreview(d); setAvatarDataUrl(d) } })
     }
   }, [organisation?.logo, organisation?.company_stamp, user?.avatar])
+
+  // ─── Notification preferences state ────────────────────────────────────────
+  // Per-membership, email-only opt-in. In-app is always on and not shown here.
+  const [notifPrefs, setNotifPrefs] = useState<Record<string, boolean> | null>(null)
+  const [loadingNotifPrefs, setLoadingNotifPrefs] = useState(false)
+  const [savingNotifKey, setSavingNotifKey] = useState<string | null>(null)
+  const notifPrefsLoaded = useRef(false)
+
+  useEffect(() => {
+    if (tab !== 'notifications' || notifPrefsLoaded.current) return
+    notifPrefsLoaded.current = true
+    setLoadingNotifPrefs(true)
+    notificationApi.getPreferences()
+      .then(({ data }) => setNotifPrefs(data))
+      .catch(() => toast.error('Could not load notification preferences'))
+      .finally(() => setLoadingNotifPrefs(false))
+  }, [tab])
+
+  const toggleNotifPref = async (category: string) => {
+    if (!notifPrefs) return
+    const next = !notifPrefs[category]
+    setSavingNotifKey(category)
+    // Optimistic update — reverted below if the save fails.
+    setNotifPrefs((p) => (p ? { ...p, [category]: next } : p))
+    try {
+      const { data } = await notificationApi.updatePreferences({ [category]: next })
+      setNotifPrefs(data)
+    } catch {
+      setNotifPrefs((p) => (p ? { ...p, [category]: !next } : p))
+      toast.error('Could not save this preference')
+    } finally {
+      setSavingNotifKey(null)
+    }
+  }
 
   // ─── Security state ─────────────────────────────────────────────────────────
   const [timeout, setTimeoutState] = useState<TimeoutOption>(getTimeoutPreference())
@@ -1155,6 +1199,7 @@ export default function SettingsPage() {
     { id: 'invoice_templates', label: 'Templates',          icon: Layout,     ownerOnly: true },
     { id: 'team',              label: 'Team',               icon: UsersRound, ownerOnly: true, partnerRestricted: true },
     { id: 'security',          label: 'Security',           icon: Shield,     partnerRestricted: true },
+    { id: 'notifications',     label: 'Notifications',      icon: Bell },
     { id: 'email',             label: 'Email',              icon: Mail,       ownerOnly: true },
     { id: 'bank',              label: 'Banking',            icon: LandmarkIcon, ownerOnly: true },
     { id: 'gl_mapping',        label: 'GL Mapping',         icon: GitBranch,  requiresSettings: true, requiresPlan: 'accounting' },
@@ -2165,6 +2210,48 @@ export default function SettingsPage() {
           <div className="p-4 rounded-xl bg-surface-800 border border-surface-700 text-sm text-slate-400">
             <p><span className="text-white font-semibold">How it works:</span> Invited members receive an email with a sign-up link. Once they join, you can restrict their access per module.
             Owners and admins always retain full access and cannot be restricted.</p>
+          </div>
+        </div>
+      )}
+
+      {/* ── Notification preferences ── */}
+      {activeTab === 'notifications' && (
+        <div className="space-y-4 max-w-3xl">
+          <div className="card p-6 space-y-5">
+            <div>
+              <h3 className="text-base font-semibold text-white mb-1 flex items-center gap-2">
+                <Bell size={16} className="text-brand-400" /> Email Notifications
+              </h3>
+              <p className="text-sm text-slate-400">
+                In-app notifications (the bell) are always on. Choose which categories also email
+                you — sent from your organisation&rsquo;s own connected mailbox.
+              </p>
+            </div>
+            {loadingNotifPrefs || !notifPrefs ? (
+              <div className="flex justify-center py-6"><Loader2 size={20} className="animate-spin text-slate-500" /></div>
+            ) : (
+              <div className="divide-y divide-surface-700">
+                {NOTIFICATION_CATEGORIES.map((cat) => (
+                  <div key={cat.key} className="flex items-center justify-between gap-4 py-3.5 first:pt-0 last:pb-0">
+                    <div>
+                      <p className="text-sm font-medium text-white">{cat.label}</p>
+                      <p className="text-xs text-slate-400 mt-0.5">{cat.hint}</p>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={savingNotifKey === cat.key}
+                      onClick={() => toggleNotifPref(cat.key)}
+                      aria-label={`Toggle email notifications for ${cat.label}`}
+                      className={`relative inline-flex h-6 w-11 shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none disabled:opacity-60 ${notifPrefs[cat.key] ? 'bg-brand-600' : 'bg-slate-600'}`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${notifPrefs[cat.key] ? 'translate-x-5' : 'translate-x-0'}`}
+                      />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
