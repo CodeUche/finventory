@@ -73,6 +73,16 @@ const TIMEOUT_OPTIONS: { value: TimeoutOption; label: string }[] = [
 
 type Tab = 'profile' | 'security' | 'payments' | 'email' | 'periods' | 'team' | 'invoice_templates' | 'ai' | 'access' | 'whitelabel' | 'firs' | 'gl_mapping' | 'import' | 'bank' | 'notifications'
 
+// Tender types offered at POS checkout / invoice collection. Matches the
+// backend's PAYMENT_TYPE_CHOICES (apps/tenancy/models.py) — kept in sync
+// manually since the field itself is deliberately free-form, not enum-backed.
+const PAYMENT_TYPE_OPTIONS: { key: string; label: string; hint: string }[] = [
+  { key: 'cash', label: 'Cash', hint: 'Physical cash at the till' },
+  { key: 'card', label: 'Card', hint: 'Card / POS terminal' },
+  { key: 'bank_transfer', label: 'Bank Transfer', hint: 'Customer transfers into your account' },
+  { key: 'wallet', label: 'Wallet', hint: 'Mobile money or wallet payment' },
+]
+
 const NOTIFICATION_CATEGORIES: { key: string; label: string; hint: string }[] = [
   { key: 'leave', label: 'Leave', hint: 'Leave requests, approvals and rejections' },
   { key: 'payroll', label: 'Payroll', hint: 'Payroll runs raised, approved or paid' },
@@ -298,6 +308,29 @@ export default function SettingsPage() {
       toast.error('Could not save this preference')
     } finally {
       setSavingNotifKey(null)
+    }
+  }
+
+  // ─── Payment types (tender toggles) state ──────────────────────────────────
+  const [savingPaymentType, setSavingPaymentType] = useState<string | null>(null)
+  const enabledPaymentTypes = organisation?.enabled_payment_types ?? PAYMENT_TYPE_OPTIONS.map((o) => o.key)
+
+  const togglePaymentType = async (key: string) => {
+    if (!organisation?.id) return
+    const current = enabledPaymentTypes
+    const next = current.includes(key) ? current.filter((k) => k !== key) : [...current, key]
+    if (next.length === 0) {
+      toast.error('At least one tender type must stay enabled')
+      return
+    }
+    setSavingPaymentType(key)
+    try {
+      const { data } = await orgApi.update(organisation.id, { enabled_payment_types: next })
+      updateOrganisation(data)
+    } catch {
+      toast.error('Failed to update payment types')
+    } finally {
+      setSavingPaymentType(null)
     }
   }
 
@@ -2338,6 +2371,37 @@ export default function SettingsPage() {
               <span className="text-white font-semibold">How payment links work:</span>{' '}
               Once configured, an orange "Send Payment Link" button appears on every invoice. Customers receive a Paystack checkout link and can pay instantly. Invoice auto-marks as paid on successful payment.
             </p>
+          </div>
+
+          {/* Accepted tender types — separate concern from the gateway config
+              above: this controls what a cashier is OFFERED at the till /
+              invoice collection screen, not how customers pay online. */}
+          <div className={`card p-6 space-y-1 ${!isOwner ? 'opacity-60 pointer-events-none select-none' : ''}`}>
+            <h3 className="text-base font-semibold text-white mb-1">Accepted Tender Types</h3>
+            <p className="text-slate-400 text-xs mb-4">
+              Choose which payment methods your team can select at POS checkout and when collecting an invoice payment. A merchant with no card reader, for example, can turn Card off here.
+            </p>
+            <div className="divide-y divide-surface-700">
+              {PAYMENT_TYPE_OPTIONS.map((opt) => (
+                <div key={opt.key} className="flex items-center justify-between gap-4 py-3.5 first:pt-0 last:pb-0">
+                  <div>
+                    <p className="text-sm font-medium text-white">{opt.label}</p>
+                    <p className="text-xs text-slate-400 mt-0.5">{opt.hint}</p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={savingPaymentType === opt.key}
+                    onClick={() => togglePaymentType(opt.key)}
+                    aria-label={`Toggle ${opt.label} as an accepted tender type`}
+                    className={`relative inline-flex h-6 w-11 shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none disabled:opacity-60 ${enabledPaymentTypes.includes(opt.key) ? 'bg-brand-600' : 'bg-slate-600'}`}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${enabledPaymentTypes.includes(opt.key) ? 'translate-x-5' : 'translate-x-0'}`}
+                    />
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}

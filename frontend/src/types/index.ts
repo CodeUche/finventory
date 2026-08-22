@@ -66,6 +66,9 @@ export interface Organisation {
   fixed_asset_capitalisation_threshold?: string
   fixed_asset_revaluation_enabled?: boolean
   capital_allowance_nta2025_enabled?: boolean
+  /** Which tender types POS checkout / invoice collection currently offer.
+   *  Free-form strings (matches TillTenderCount.method), all four enabled by default. */
+  enabled_payment_types?: string[]
 }
 
 // ─── Product ──────────────────────────────────────────────────────────────────

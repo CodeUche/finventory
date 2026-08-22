@@ -20,6 +20,18 @@ from django.db import models
 from apps.core.fields import EncryptedCharField
 from apps.core.models import SoftDeleteModel, TimeStampedModel, MoneyField
 
+# Tender types a cashier may be offered at POS checkout / invoice collection.
+# Kept as a permissive list (not an enum) on purpose: TillTenderCount.method
+# is free-text and must stay backward compatible with any value already
+# recorded. This just controls which options the UI *offers* going forward.
+PAYMENT_TYPE_CHOICES = ["cash", "card", "bank_transfer", "wallet"]
+
+
+def default_enabled_payment_types():
+    """All tender types enabled by default — a fresh org, or one that has
+    never touched this setting, sees exactly the options it always had."""
+    return list(PAYMENT_TYPE_CHOICES)
+
 
 class Organisation(SoftDeleteModel):
     """
@@ -182,6 +194,11 @@ class Organisation(SoftDeleteModel):
     # NTA-2025 capital-allowance engine. OFF until a licensed tax practitioner signs
     # off the rate table + qualifying rules — enabling it drives the CIT computation.
     capital_allowance_nta2025_enabled = models.BooleanField(default=False)
+    # Which tender types POS checkout / invoice collection offer. Free-form
+    # list, not FK/enum-backed, so it stays compatible with whatever is
+    # already stored on TillTenderCount.method. All four enabled by default
+    # so an existing org sees no behaviour change until it opts to restrict.
+    enabled_payment_types = models.JSONField(default=default_enabled_payment_types)
 
     class Meta(SoftDeleteModel.Meta):
         verbose_name = "Organisation"
