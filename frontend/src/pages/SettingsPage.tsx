@@ -83,6 +83,22 @@ const PAYMENT_TYPE_OPTIONS: { key: string; label: string; hint: string }[] = [
   { key: 'wallet', label: 'Wallet', hint: 'Mobile money or wallet payment' },
 ]
 
+// Currencies Audity actually renders and formats correctly today — matches
+// the curated symbol table in lib/utils.ts (getCurrencySymbol). The system
+// isn't hard-gated to NGN anywhere (tax/reporting just default to it), but
+// nothing beyond this set has been exercised, so the dropdown stays short
+// and validated rather than pretending to support the full ISO 4217 list.
+const SUPPORTED_CURRENCIES: { code: string; label: string }[] = [
+  { code: 'NGN', label: 'NGN — Nigerian Naira' },
+  { code: 'USD', label: 'USD — US Dollar' },
+  { code: 'GBP', label: 'GBP — British Pound' },
+  { code: 'EUR', label: 'EUR — Euro' },
+  { code: 'GHS', label: 'GHS — Ghanaian Cedi' },
+  { code: 'KES', label: 'KES — Kenyan Shilling' },
+  { code: 'ZAR', label: 'ZAR — South African Rand' },
+  { code: 'XOF', label: 'XOF — West African CFA Franc' },
+]
+
 const NOTIFICATION_CATEGORIES: { key: string; label: string; hint: string }[] = [
   { key: 'leave', label: 'Leave', hint: 'Leave requests, approvals and rejections' },
   { key: 'payroll', label: 'Payroll', hint: 'Payroll runs raised, approved or paid' },
@@ -1410,7 +1426,20 @@ export default function SettingsPage() {
             </div>
             <div>
               <label className="label">Currency</label>
-              <input className="input" value={company.currency} onChange={(e) => setCompany({ ...company, currency: e.target.value })} placeholder="NGN" />
+              <select
+                className="input"
+                value={company.currency}
+                onChange={(e) => setCompany({ ...company, currency: e.target.value })}
+              >
+                {/* Keeps whatever is already stored selectable even if it falls
+                    outside the curated list, rather than silently changing it. */}
+                {company.currency && !SUPPORTED_CURRENCIES.some((c) => c.code === company.currency) && (
+                  <option value={company.currency}>{company.currency}</option>
+                )}
+                {SUPPORTED_CURRENCIES.map((c) => (
+                  <option key={c.code} value={c.code}>{c.label}</option>
+                ))}
+              </select>
             </div>
             <div>
               <label className="label">Tax ID</label>
