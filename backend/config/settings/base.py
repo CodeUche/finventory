@@ -26,6 +26,13 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 # ─── Core ─────────────────────────────────────────────────────────────────────
 # Never use this default in production — production.py raises ImproperlyConfigured if it detects it
 SECRET_KEY = config("SECRET_KEY", default="change-me-in-production-never-commit-real-key")
+
+# Dedicated key for EncryptedCharField (apps/core/fields.py) — MFA secrets, SMTP
+# passwords, e-invoicing API keys. Empty by default so dev/test keep using the
+# SECRET_KEY fallback fields.py already has; production.py below requires this
+# to be set (finding M-9 — it was never wired to any settings file, so setting
+# the environment variable alone previously did nothing).
+FIELD_ENCRYPTION_KEY = config("FIELD_ENCRYPTION_KEY", default="")
 DEBUG = config("DEBUG", default=False, cast=bool)
 ALLOWED_HOSTS: list[str] = config("ALLOWED_HOSTS", default="localhost,127.0.0.1", cast=Csv())
 
