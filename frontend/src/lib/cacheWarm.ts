@@ -111,6 +111,7 @@ function buildWarmPlan(): WarmTask[] {
     one('expenses', () => expenseApi.categories()),
     one('expenses', () => expenseApi.groups()),
     one('budget', () => budgetApi.list()),
+    one('budget', () => budgetApi.monitoring()),
     one('accounting', () => accountingApi.accounts()),
     one('accounting', () => accountingApi.journal()),
     one('accounting', () => accountingApi.assets()),

@@ -1316,19 +1316,50 @@ export interface BudgetLine {
   category_type: 'expense' | 'revenue'
   period_month: number | null
   budgeted_amount: string
+  unit_price?: string | null
+  quantity?: string
+  description?: string
   actual_amount?: string
   variance?: string
+  /** Optional link to the real Chart of Accounts — additive, never required. */
+  account?: string | null
+  account_code?: string | null
+  account_name?: string | null
 }
 
 export interface Budget {
   id: string
   name: string
   fiscal_year: number
-  period_type: 'monthly' | 'quarterly' | 'annual'
+  period_type: 'daily' | 'weekly' | 'monthly' | 'quarterly' | 'annual'
   status: 'draft' | 'active' | 'closed'
   notes: string
   created_at: string
   lines: BudgetLine[]
+  budget_type: 'operational' | 'capital'
+  start_date: string | null
+  end_date: string | null
+  approved_by: string | null
+  approved_by_name?: string | null
+  approved_at: string | null
+}
+
+/** One row of the flat, cross-budget Budget Monitoring table
+ * (GET /budgets/monitoring/). */
+export interface BudgetMonitoringRow {
+  id: string
+  budget_id: string
+  budget_name: string
+  budget_type: 'operational' | 'capital'
+  budget_status: 'draft' | 'active' | 'closed'
+  category_name: string
+  category_type: 'expense' | 'revenue'
+  period_month: number | null
+  budgeted_amount: string
+  actual_amount: string
+  variance: string
+  over_budget: boolean
+  account: { id: string; code: string; name: string } | null
 }
 
 // Payment gateway

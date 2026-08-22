@@ -1709,6 +1709,11 @@ export const budgetApi = {
   update: (id: string, data: object) => api.patch(`/budgets/${id}/`, data),
   variance: (id: string) => api.get(`/budgets/${id}/variance/`),
   addLine: (id: string, data: object) => api.post(`/budgets/${id}/add_line/`, data),
+  approve: (id: string) => api.post(`/budgets/${id}/approve/`),
+  /** Flat, cross-budget list of every line + its variance data, for the
+   * Budget Monitoring page. params: { budget_type?, status? } — status
+   * defaults server-side to 'active'; pass 'all' to include every status. */
+  monitoring: (params?: object) => api.get('/budgets/monitoring/', { params }),
 }
 
 export const recurringApi = {
