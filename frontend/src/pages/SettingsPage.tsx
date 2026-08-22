@@ -4,6 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { User, Building2, Shield, Loader2, Camera, CreditCard, CheckCircle, Mail, Lock, Unlock, LandmarkIcon, UsersRound, UserPlus, X, ChevronDown, ChevronUp, ChevronRight, Bot, Layout, Copy, Trash2, ShieldCheck, Key, Clock, XCircle, Send, Globe, AlertTriangle, Wifi, WifiOff, RefreshCw, Activity, FileText, GitBranch, Upload, GraduationCap, Bell } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { authApi, orgApi, paymentGatewayApi, accountingApi, teamApi, urlToDataUrl, partnerApi, einvoicingApi, notificationApi } from '@/services/api'
+import { SUPPORTED_CURRENCIES } from '@/lib/utils'
 import ImportPage from '@/pages/ImportPage'
 import type { FirsConfig, FirsStats, FirsSubmission, SandboxProgress, GoLiveChecklist } from '@/types'
 import type { AxiosError } from 'axios'
@@ -83,21 +84,19 @@ const PAYMENT_TYPE_OPTIONS: { key: string; label: string; hint: string }[] = [
   { key: 'wallet', label: 'Wallet', hint: 'Mobile money or wallet payment' },
 ]
 
-// Currencies Audity actually renders and formats correctly today — matches
-// the curated symbol table in lib/utils.ts (getCurrencySymbol). The system
-// isn't hard-gated to NGN anywhere (tax/reporting just default to it), but
-// nothing beyond this set has been exercised, so the dropdown stays short
-// and validated rather than pretending to support the full ISO 4217 list.
-const SUPPORTED_CURRENCIES: { code: string; label: string }[] = [
-  { code: 'NGN', label: 'NGN — Nigerian Naira' },
-  { code: 'USD', label: 'USD — US Dollar' },
-  { code: 'GBP', label: 'GBP — British Pound' },
-  { code: 'EUR', label: 'EUR — Euro' },
-  { code: 'GHS', label: 'GHS — Ghanaian Cedi' },
-  { code: 'KES', label: 'KES — Kenyan Shilling' },
-  { code: 'ZAR', label: 'ZAR — South African Rand' },
-  { code: 'XOF', label: 'XOF — West African CFA Franc' },
-]
+// Same list the TopBar currency quick-switch pill uses (lib/utils.ts) — kept
+// as one shared source so the two surfaces never offer different currencies.
+const CURRENCY_LABELS: Record<string, string> = {
+  NGN: 'Nigerian Naira', USD: 'US Dollar', EUR: 'Euro', GBP: 'British Pound',
+  GHS: 'Ghanaian Cedi', KES: 'Kenyan Shilling', ZAR: 'South African Rand',
+  XOF: 'West African CFA Franc', XAF: 'Central African CFA Franc',
+  EGP: 'Egyptian Pound', MAD: 'Moroccan Dirham', TZS: 'Tanzanian Shilling',
+  UGX: 'Ugandan Shilling', RWF: 'Rwandan Franc', ZMW: 'Zambian Kwacha',
+  BWP: 'Botswana Pula',
+}
+const CURRENCY_OPTIONS: { code: string; label: string }[] = SUPPORTED_CURRENCIES.map((code) => ({
+  code, label: CURRENCY_LABELS[code] ? `${code} — ${CURRENCY_LABELS[code]}` : code,
+}))
 
 const NOTIFICATION_CATEGORIES: { key: string; label: string; hint: string }[] = [
   { key: 'leave', label: 'Leave', hint: 'Leave requests, approvals and rejections' },
@@ -1433,10 +1432,10 @@ export default function SettingsPage() {
               >
                 {/* Keeps whatever is already stored selectable even if it falls
                     outside the curated list, rather than silently changing it. */}
-                {company.currency && !SUPPORTED_CURRENCIES.some((c) => c.code === company.currency) && (
+                {company.currency && !CURRENCY_OPTIONS.some((c) => c.code === company.currency) && (
                   <option value={company.currency}>{company.currency}</option>
                 )}
-                {SUPPORTED_CURRENCIES.map((c) => (
+                {CURRENCY_OPTIONS.map((c) => (
                   <option key={c.code} value={c.code}>{c.label}</option>
                 ))}
               </select>
