@@ -32,6 +32,9 @@ export interface ShopInfo {
   accent_colour: string
   accepts_orders: boolean
   minimum_order: string
+  /** Null means no free-delivery rule is configured. */
+  free_delivery_threshold: string | null
+  fixed_delivery_charge: string
   payment: {
     card: boolean
     virtual_account: boolean

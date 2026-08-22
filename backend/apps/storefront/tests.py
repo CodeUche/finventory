@@ -405,3 +405,89 @@ class MerchantSettingsTests(StorefrontTestBase):
             cost_price=Decimal("1"), selling_price=Decimal("2"),
         )
         self.assertFalse(product.is_published)
+
+
+class DeliveryChargeTests(StorefrontTestBase):
+    """Scoped delivery pricing: a flat fee, optionally waived above a
+    subtotal threshold. No per-km pricing — see apps/storefront/models.py.
+
+    Every order here is 2 × Rice 5kg @ 9,200 = 18,400 subtotal, from
+    StorefrontTestBase._order_payload.
+    """
+
+    def _deliver(self, **overrides):
+        return self._place(fulfilment="delivery", delivery_address="12 Allen Ave, Ikeja", **overrides)
+
+    def test_fields_unset_means_no_charge_at_all(self):
+        """Old free-text-only behaviour: nothing added unless the merchant configures it."""
+        self.assertIsNone(self.shop.free_delivery_threshold)
+        self.assertEqual(self.shop.fixed_delivery_charge, 0)
+        res = self._deliver()
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        self.assertEqual(Decimal(str(res.data["total"])), Decimal("18400"))
+        self.assertEqual(Decimal(str(res.data["subtotal"])), Decimal("18400"))
+
+    def test_no_threshold_set_charge_always_applies(self):
+        self.shop.fixed_delivery_charge = Decimal("1500")
+        self.shop.save(update_fields=["fixed_delivery_charge"])
+        res = self._deliver()
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        self.assertEqual(Decimal(str(res.data["total"])), Decimal("19900"))  # 18400 + 1500
+        self.assertEqual(Decimal(str(res.data["subtotal"])), Decimal("18400"))
+
+    def test_threshold_unmet_charge_applies(self):
+        self.shop.fixed_delivery_charge = Decimal("1500")
+        self.shop.free_delivery_threshold = Decimal("20000")  # above our 18,400 subtotal
+        self.shop.save(update_fields=["fixed_delivery_charge", "free_delivery_threshold"])
+        res = self._deliver()
+        self.assertEqual(Decimal(str(res.data["total"])), Decimal("19900"))
+
+    def test_threshold_met_delivery_is_free(self):
+        self.shop.fixed_delivery_charge = Decimal("1500")
+        self.shop.free_delivery_threshold = Decimal("15000")  # below our 18,400 subtotal
+        self.shop.save(update_fields=["fixed_delivery_charge", "free_delivery_threshold"])
+        res = self._deliver()
+        self.assertEqual(Decimal(str(res.data["total"])), Decimal("18400"))
+
+    def test_threshold_met_exactly_is_free(self):
+        """'At or above' — an order exactly at the threshold should not be charged."""
+        self.shop.fixed_delivery_charge = Decimal("1500")
+        self.shop.free_delivery_threshold = Decimal("18400")  # exactly our subtotal
+        self.shop.save(update_fields=["fixed_delivery_charge", "free_delivery_threshold"])
+        res = self._deliver()
+        self.assertEqual(Decimal(str(res.data["total"])), Decimal("18400"))
+
+    def test_charge_never_applies_to_pickup(self):
+        self.shop.fixed_delivery_charge = Decimal("1500")
+        self.shop.save(update_fields=["fixed_delivery_charge"])
+        res = self._place(fulfilment="pickup")
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        self.assertEqual(Decimal(str(res.data["total"])), Decimal("18400"))
+
+    def test_charge_never_applies_to_table_service(self):
+        table = RestaurantTable.objects.create(organisation=self.org, name="T1")
+        self.shop.fixed_delivery_charge = Decimal("1500")
+        self.shop.save(update_fields=["fixed_delivery_charge"])
+        res = self._place(table_code="T1")
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        self.assertEqual(res.data["fulfilment"], "table")
+        self.assertEqual(Decimal(str(res.data["total"])), Decimal("18400"))
+
+    def test_new_fields_are_visible_on_the_public_page(self):
+        self.shop.fixed_delivery_charge = Decimal("1500")
+        self.shop.free_delivery_threshold = Decimal("20000")
+        self.shop.save(update_fields=["fixed_delivery_charge", "free_delivery_threshold"])
+        res = self.public.get(f"/api/v1/shop/{self.shop.slug}/")
+        self.assertEqual(Decimal(str(res.data["fixed_delivery_charge"])), Decimal("1500"))
+        self.assertEqual(Decimal(str(res.data["free_delivery_threshold"])), Decimal("20000"))
+
+    def test_merchant_can_configure_delivery_pricing(self):
+        res = self.client.patch(
+            f"/api/v1/storefront/settings/{self.shop.id}/",
+            {"fixed_delivery_charge": "2000", "free_delivery_threshold": "25000"},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.shop.refresh_from_db()
+        self.assertEqual(self.shop.fixed_delivery_charge, Decimal("2000"))
+        self.assertEqual(self.shop.free_delivery_threshold, Decimal("25000"))

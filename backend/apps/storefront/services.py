@@ -150,8 +150,20 @@ class StorefrontService:
                 f"Orders start at {shop.minimum_order}. Please add a little more."
             )
 
+        # Delivery fee: a flat charge, waived once the free-delivery threshold
+        # is met (if the merchant set one). Never applies to pickup or table
+        # service — only an actual delivery has anything to charge for.
+        # order.fulfilment already accounts for a table code overriding the
+        # requested fulfilment (see above).
+        delivery_fee = ZERO
+        if order.fulfilment == StorefrontOrder.Fulfilment.DELIVERY and shop.fixed_delivery_charge:
+            charge = Decimal(str(shop.fixed_delivery_charge))
+            threshold = shop.free_delivery_threshold
+            if threshold is None or subtotal < Decimal(str(threshold)):
+                delivery_fee = charge
+
         order.subtotal = subtotal
-        order.total = subtotal
+        order.total = subtotal + delivery_fee
         order.save(update_fields=["subtotal", "total", "updated_at"])
         return order
 

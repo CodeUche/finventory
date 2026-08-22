@@ -14,7 +14,7 @@ import toast from 'react-hot-toast'
 import { storefrontApi, bypassNextGets } from '@/services/api'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { confirmDialog } from '@/lib/dialog'
-import { formatCurrency, formatDate } from '@/lib/utils'
+import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
 
 interface Shop {
   id: string
@@ -27,6 +27,9 @@ interface Shop {
   accent_colour: string
   accepts_orders: boolean
   minimum_order: string
+  /** Null means no free-delivery rule is configured. */
+  free_delivery_threshold: string | null
+  fixed_delivery_charge: string
   hide_out_of_stock: boolean
   public_url: string
 }
@@ -60,6 +63,16 @@ export default function StorefrontAdminPage() {
   const [saving, setSaving] = useState(false)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+
+  // Delivery pricing inputs — controlled (unlike the plain text fields above)
+  // so amounts get live comma formatting per project convention.
+  const [deliveryCharge, setDeliveryCharge] = useState('')
+  const [deliveryThreshold, setDeliveryThreshold] = useState('')
+  useEffect(() => {
+    if (!shop) return
+    setDeliveryCharge(formatAmountInput(shop.fixed_delivery_charge || '0'))
+    setDeliveryThreshold(shop.free_delivery_threshold != null ? formatAmountInput(shop.free_delivery_threshold) : '')
+  }, [shop?.id, shop?.fixed_delivery_charge, shop?.free_delivery_threshold])
 
   const load = async () => {
     setLoading(true)
@@ -208,6 +221,33 @@ export default function StorefrontAdminPage() {
                 className="input" defaultValue={shop.delivery_note} placeholder="Delivery within Ikeja"
                 onBlur={(e) => e.target.value !== shop.delivery_note && save({ delivery_note: e.target.value })}
               />
+            </div>
+            <div>
+              <label className="label">Delivery fee</label>
+              <input
+                className="input" inputMode="decimal" placeholder="0"
+                value={deliveryCharge}
+                onChange={(e) => setDeliveryCharge(formatAmountInput(e.target.value))}
+                onBlur={() => {
+                  const stripped = stripCommas(deliveryCharge) || '0'
+                  if (stripped !== (shop.fixed_delivery_charge ?? '0')) save({ fixed_delivery_charge: stripped })
+                }}
+              />
+              <p className="mt-1 text-[11px] text-slate-500">Flat charge added at checkout for delivery orders. Leave 0 to charge nothing.</p>
+            </div>
+            <div>
+              <label className="label">Free delivery above</label>
+              <input
+                className="input" inputMode="decimal" placeholder="No free-delivery rule"
+                value={deliveryThreshold}
+                onChange={(e) => setDeliveryThreshold(formatAmountInput(e.target.value))}
+                onBlur={() => {
+                  const stripped = stripCommas(deliveryThreshold)
+                  const newVal = stripped === '' ? null : stripped
+                  if (newVal !== shop.free_delivery_threshold) save({ free_delivery_threshold: newVal })
+                }}
+              />
+              <p className="mt-1 text-[11px] text-slate-500">Orders at or above this subtotal skip the delivery fee. Leave blank for none.</p>
             </div>
           </div>
 

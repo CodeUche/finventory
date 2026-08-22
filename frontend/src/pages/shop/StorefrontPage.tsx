@@ -83,9 +83,18 @@ export default function StorefrontPage() {
   const setQty = (id: string, qty: number) =>
     setLines((prev) => prev.map((l) => l.product.id === id ? { ...l, qty } : l).filter((l) => l.qty > 0))
 
-  const total = lines.reduce((s, l) => s + Number(l.product.selling_price) * l.qty, 0)
+  const subtotal = lines.reduce((s, l) => s + Number(l.product.selling_price) * l.qty, 0)
   const count = lines.reduce((s, l) => s + l.qty, 0)
   const minimum = Number(shop?.minimum_order || 0)
+
+  // Client-side estimate only — the server recomputes this from its own
+  // catalogue and settings, same as every other price on this page.
+  const fixedDeliveryCharge = Number(shop?.fixed_delivery_charge || 0)
+  const freeDeliveryThreshold = shop?.free_delivery_threshold != null ? Number(shop.free_delivery_threshold) : null
+  const deliveryFee = form.fulfilment === 'delivery' && fixedDeliveryCharge > 0
+    && (freeDeliveryThreshold === null || subtotal < freeDeliveryThreshold)
+    ? fixedDeliveryCharge : 0
+  const total = subtotal + deliveryFee
 
   const placeOrder = async () => {
     setProblem('')
@@ -152,6 +161,16 @@ export default function StorefrontPage() {
                 <span className="font-mono">{money(shop.currency, i.line_total)}</span>
               </div>
             ))}
+            {/* The only thing that can separate total from subtotal today is
+                the delivery fee — computed server-side in place_order(). */}
+            {Number(placed.total) > Number(placed.subtotal) && (
+              <div className="flex justify-between py-0.5 text-slate-600">
+                <span>Delivery</span>
+                <span className="font-mono">
+                  {money(shop.currency, Number(placed.total) - Number(placed.subtotal))}
+                </span>
+              </div>
+            )}
             <div className="mt-2 flex justify-between border-t border-slate-200 pt-2 font-semibold text-slate-900">
               <span>Total</span>
               <span className="font-mono">{money(shop.currency, placed.total)}</span>
@@ -346,11 +365,24 @@ export default function StorefrontPage() {
             </div>
 
             <div className="border-t border-slate-200 p-4">
+              {form.fulfilment === 'delivery' && fixedDeliveryCharge > 0 && (
+                <div className="mb-1 flex items-baseline justify-between text-sm text-slate-500">
+                  <span>Delivery</span>
+                  <span className="font-mono">
+                    {deliveryFee > 0 ? money(shop.currency, deliveryFee) : 'Free'}
+                  </span>
+                </div>
+              )}
               <div className="mb-3 flex items-baseline justify-between">
                 <span className="text-sm text-slate-500">Total</span>
                 <span className="font-mono text-2xl font-bold">{money(shop.currency, total)}</span>
               </div>
-              {minimum > 0 && total < minimum && (
+              {form.fulfilment === 'delivery' && fixedDeliveryCharge > 0 && deliveryFee > 0 && freeDeliveryThreshold !== null && (
+                <p className="mb-2 text-xs text-slate-500">
+                  Free delivery on orders over {money(shop.currency, freeDeliveryThreshold)}.
+                </p>
+              )}
+              {minimum > 0 && subtotal < minimum && (
                 <p className="mb-2 text-xs text-amber-700">
                   Orders start at {money(shop.currency, minimum)}.
                 </p>
@@ -362,7 +394,7 @@ export default function StorefrontPage() {
               )}
               <button
                 onClick={placeOrder}
-                disabled={placing || lines.length === 0 || !shop.accepts_orders || (minimum > 0 && total < minimum)}
+                disabled={placing || lines.length === 0 || !shop.accepts_orders || (minimum > 0 && subtotal < minimum)}
                 className="w-full rounded-xl py-3 font-semibold text-white disabled:opacity-40"
                 style={{ background: accent }}
               >
