@@ -1,5 +1,6 @@
 /// <reference types="vitest" />
 import { defineConfig } from 'vite'
+import { configDefaults } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import path from 'path'
@@ -96,6 +97,14 @@ export default defineConfig(({ mode }) => {
     globals: true,
     setupFiles: './src/test/setup.ts',
     css: false,
+    // Without this, vitest's default include glob (**/*.{test,spec}.ts...)
+    // also matches the Playwright specs under e2e/ — those use
+    // test.describe.configure(), which throws outside the real Playwright
+    // runner ("did not expect test.describe.configure() to be called here"),
+    // failing 18 suites on every `vitest run` even though nothing is
+    // actually broken. Playwright E2E has its own runner (see e2e/*.spec.ts
+    // + playwright.config.ts) — vitest should never touch that directory.
+    exclude: [...configDefaults.exclude, 'e2e/**'],
   },
 
   server: {

@@ -259,6 +259,17 @@ export interface Expense {
   group_name?: string | null
 }
 
+export interface ExpenseCategory {
+  id: string
+  name: string
+  description: string
+  is_income: boolean
+  account: string | null
+  account_code?: string | null
+  account_name?: string | null
+  created_at: string
+}
+
 export interface ExpenseGroup {
   id: string
   name: string

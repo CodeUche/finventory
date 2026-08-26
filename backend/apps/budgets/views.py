@@ -96,7 +96,7 @@ class BudgetViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     def add_line(self, request, pk=None):
         budget = self.get_object()
         org = self._get_organisation()
-        ser = BudgetLineSerializer(data=request.data)
+        ser = BudgetLineSerializer(data=request.data, context={'request': request})
         ser.is_valid(raise_exception=True)
         validated = dict(ser.validated_data)
         # Try to link an existing ExpenseCategory FK by name so variance works

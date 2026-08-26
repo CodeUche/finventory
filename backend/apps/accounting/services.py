@@ -1721,7 +1721,18 @@ class AccountingService:
                 (revenue_acct, zero, amount),
             ]
         else:
-            expense_acct = AccountMappingService.resolve(organisation, 'general_expense_account')
+            # Phase 2 budgeting upgrade: if the expense's category has an
+            # explicit GL account mapping, route the debit there instead of
+            # the shared bucket — this is what lets Budget Monitoring compute
+            # a real per-account "Actual" via BudgetService._actual_for_line.
+            # Strict opt-in: every category defaults to no account (null), so
+            # this branch is byte-for-byte identical to before unless a human
+            # has explicitly mapped that category to a GL account.
+            category_account = getattr(getattr(expense, 'category', None), 'account', None)
+            if category_account is not None:
+                expense_acct = category_account
+            else:
+                expense_acct = AccountMappingService.resolve(organisation, 'general_expense_account')
             if expense.payment_method in ('bank', 'cheque', 'card'):
                 payment_acct = AccountMappingService.resolve(organisation, 'bank_account')
             else:

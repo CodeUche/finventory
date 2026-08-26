@@ -1228,6 +1228,7 @@ export const expenseApi = {
   update: (id: string, data: object) => api.patch(`/expenses/${id}/`, data),
   delete: (id: string) => api.delete(`/expenses/${id}/`),
   categories: () => api.get('/expenses/categories/'),
+  updateCategory: (id: string, data: object) => api.patch(`/expenses/categories/${id}/`, data),
   // Folders / groups
   groups: (params?: object) => api.get('/expenses/groups/', { params }),
   createGroup: (data: object) => api.post('/expenses/groups/', data),

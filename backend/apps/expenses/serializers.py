@@ -9,10 +9,33 @@ from .models import Expense, ExpenseCategory, ExpenseGroup
 
 
 class ExpenseCategorySerializer(serializers.ModelSerializer):
+    account_code = serializers.CharField(source="account.code", read_only=True, default=None)
+    account_name = serializers.CharField(source="account.name", read_only=True, default=None)
+
     class Meta:
         model = ExpenseCategory
-        fields = ["id", "name", "description", "is_income", "created_at"]
+        fields = [
+            "id", "name", "description", "is_income",
+            "account", "account_code", "account_name",
+            "created_at",
+        ]
         read_only_fields = ["id", "created_at"]
+        extra_kwargs = {
+            "account": {"required": False, "allow_null": True},
+        }
+
+    def validate_account(self, value):
+        """Tenant isolation: reject an Account PK belonging to another org.
+        request.organisation is populated by the permission classes
+        (IsAccountant/_get_or_resolve_org) before the view runs, so it is
+        reliably set by the time this validator fires."""
+        if value is None:
+            return value
+        request = self.context.get('request')
+        org = getattr(request, 'organisation', None) if request else None
+        if org is None or value.organisation_id != org.id:
+            raise serializers.ValidationError("This account does not belong to your organisation.")
+        return value
 
 
 class ExpenseGroupSerializer(serializers.ModelSerializer):

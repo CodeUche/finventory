@@ -11,6 +11,7 @@ from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.accounting.models import Account
+from apps.accounting.services import AccountingService
 from apps.authentication.models import User
 from apps.budgets.models import Budget, BudgetLine
 from apps.budgets.services import BudgetService
@@ -331,3 +332,150 @@ class BudgetVarianceLinkFixTests(TestCase):
         mon_res = self.client.get("/api/v1/budgets/monitoring/")
         row_a = next(r for r in mon_res.data if r["budget_id"] == str(self.budget_a.id))
         self.assertEqual(Decimal(str(row_a["actual_amount"])), Decimal("8000"))
+
+
+class BudgetLineGLAccountActualTests(TestCase):
+    """Phase 2: when a BudgetLine.account is set, Actual is computed from
+    real posted JournalLine data for that account — not a category-name
+    guess. This is what makes the Phase 1 account link more than cosmetic."""
+
+    def setUp(self):
+        self.owner = _make_user("gl_owner@example.com")
+        self.org = _make_org(self.owner, "GL Actual Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.owner, self.org)
+        self.utilities = Account.objects.get(organisation=self.org, code="6200")
+        self.cash = Account.objects.get(organisation=self.org, code="1001")
+
+    def _post_je(self, amount, entry_date, debit_account, credit_account=None):
+        zero = Decimal("0")
+        credit_account = credit_account or self.cash
+        return AccountingService.post_journal_entry(
+            self.org, "Test JE", entry_date,
+            [(debit_account, Decimal(amount), zero), (credit_account, zero, Decimal(amount))],
+            self.owner,
+        )
+
+    def test_actual_computed_from_posted_journal_lines(self):
+        budget = Budget.objects.create(
+            organisation=self.org, name="GL Budget", fiscal_year=2026, status=Budget.ACTIVE,
+        )
+        line = BudgetLine.objects.create(
+            organisation=self.org, budget=budget, category_name="Utilities",
+            category_type="expense", budgeted_amount=Decimal("20000"), account=self.utilities,
+        )
+        self._post_je("8000", timezone.datetime(2026, 3, 5).date(), self.utilities)
+        self._post_je("4500", timezone.datetime(2026, 3, 20).date(), self.utilities)
+
+        actual = BudgetService._actual_for_line(line, budget, self.org)
+        self.assertEqual(actual, Decimal("12500"))
+
+    def test_actual_respects_period_month_filter(self):
+        budget = Budget.objects.create(
+            organisation=self.org, name="GL Monthly Budget", fiscal_year=2026, status=Budget.ACTIVE,
+        )
+        line = BudgetLine.objects.create(
+            organisation=self.org, budget=budget, category_name="Utilities",
+            category_type="expense", period_month=3,
+            budgeted_amount=Decimal("10000"), account=self.utilities,
+        )
+        self._post_je("8000", timezone.datetime(2026, 3, 5).date(), self.utilities)   # in period
+        self._post_je("9000", timezone.datetime(2026, 4, 5).date(), self.utilities)   # different month
+
+        actual = BudgetService._actual_for_line(line, budget, self.org)
+        self.assertEqual(actual, Decimal("8000"))
+
+    def test_actual_ignores_entries_outside_fiscal_year(self):
+        budget = Budget.objects.create(
+            organisation=self.org, name="GL FY Budget", fiscal_year=2026, status=Budget.ACTIVE,
+        )
+        line = BudgetLine.objects.create(
+            organisation=self.org, budget=budget, category_name="Utilities",
+            category_type="expense", budgeted_amount=Decimal("10000"), account=self.utilities,
+        )
+        self._post_je("3000", timezone.datetime(2026, 6, 1).date(), self.utilities)
+        self._post_je("6000", timezone.datetime(2025, 12, 31).date(), self.utilities)  # prior year
+
+        actual = BudgetService._actual_for_line(line, budget, self.org)
+        self.assertEqual(actual, Decimal("3000"))
+
+    def test_credit_normal_account_nets_correctly(self):
+        """A revenue (credit-normal) account's Actual = credits - debits, the
+        mirror image of the debit-normal expense case."""
+        revenue = Account.objects.get(organisation=self.org, code="4001")
+        budget = Budget.objects.create(
+            organisation=self.org, name="Revenue Budget", fiscal_year=2026, status=Budget.ACTIVE,
+        )
+        line = BudgetLine.objects.create(
+            organisation=self.org, budget=budget, category_name="Sales",
+            category_type="revenue", budgeted_amount=Decimal("50000"), account=revenue,
+        )
+        self._post_je("15000", timezone.datetime(2026, 3, 1).date(), self.cash, credit_account=revenue)
+
+        actual = BudgetService._actual_for_line(line, budget, self.org)
+        self.assertEqual(actual, Decimal("15000"))
+
+    def test_line_without_account_ignores_raw_gl_activity(self):
+        """A BudgetLine with no account link must ignore raw GL postings on
+        that account entirely and keep using the Phase 1 category-match path
+        — confirms the two branches are properly gated on line.account_id."""
+        budget = Budget.objects.create(
+            organisation=self.org, name="No Account Budget", fiscal_year=2026, status=Budget.ACTIVE,
+        )
+        line = BudgetLine.objects.create(
+            organisation=self.org, budget=budget, category_name="Utilities",
+            category_type="expense", budgeted_amount=Decimal("10000"),
+        )
+        self._post_je("9999", timezone.datetime(2026, 3, 5).date(), self.utilities)
+        actual = BudgetService._actual_for_line(line, budget, self.org)
+        self.assertEqual(actual, Decimal("0"))
+
+    def test_end_to_end_expense_in_mapped_category_reflects_in_monitoring(self):
+        """Full Phase 2 chain: category mapped to a GL account -> expense
+        posts to that account -> a BudgetLine pointing at the same account
+        shows the real posted amount via the /monitoring/ endpoint."""
+        category = ExpenseCategory.objects.create(
+            organisation=self.org, name="Utilities E2E", account=self.utilities,
+        )
+        budget = Budget.objects.create(
+            organisation=self.org, name="E2E Budget", fiscal_year=2026, status=Budget.ACTIVE,
+        )
+        line = BudgetLine.objects.create(
+            organisation=self.org, budget=budget, category=category, category_name="Utilities E2E",
+            category_type="expense", budgeted_amount=Decimal("20000"), account=self.utilities,
+        )
+        res = self.client.post("/api/v1/expenses/", {
+            "category_label": "Utilities E2E", "amount": "6500", "is_income": False,
+            "description": "Water + electricity", "expense_date": "2026-03-12", "payment_method": "cash",
+        })
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+
+        mon_res = self.client.get("/api/v1/budgets/monitoring/")
+        self.assertEqual(mon_res.status_code, 200)
+        row = next(r for r in mon_res.data if r["id"] == str(line.id))
+        self.assertEqual(Decimal(str(row["actual_amount"])), Decimal("6500"))
+
+
+class BudgetLineAccountTenantIsolationTests(TestCase):
+    """Regression coverage for the IDOR closed alongside Phase 2: since
+    _actual_for_line now queries real JournalLine data for line.account,
+    a foreign-org Account PK slipped into add_line would leak that org's GL
+    activity into this org's Budget Monitoring page. Must be rejected."""
+
+    def setUp(self):
+        self.owner = _make_user("iso_owner@example.com")
+        self.org = _make_org(self.owner, "Iso Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.owner, self.org)
+        self.other_owner = _make_user("iso_other_owner@example.com")
+        self.other_org = _make_org(self.other_owner, "Iso Other Org")
+
+    def test_add_line_rejects_foreign_org_account(self):
+        budget = Budget.objects.create(organisation=self.org, name="Iso Budget", fiscal_year=2026)
+        foreign_account = Account.objects.get(organisation=self.other_org, code="6200")
+        res = self.client.post(f"/api/v1/budgets/{budget.id}/add_line/", {
+            "category_name": "Utilities", "category_type": "expense",
+            "budgeted_amount": "5000", "account": str(foreign_account.id),
+        })
+        self.assertEqual(res.status_code, 400, msg=str(res.data))
+        self.assertEqual(budget.lines.count(), 0)

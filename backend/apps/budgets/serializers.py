@@ -28,6 +28,20 @@ class BudgetLineSerializer(serializers.ModelSerializer):
             attrs['category_name'] = 'Uncategorized'
         return attrs
 
+    def validate_account(self, value):
+        """Tenant isolation: reject an Account PK belonging to another org.
+        _actual_for_line queries real JournalLine data by this FK (Phase 2),
+        so a cross-org account here is a genuine data leak, not cosmetic —
+        must be blocked at write time. Requires context={'request': request}
+        to be passed by the caller (see views.py add_line)."""
+        if value is None:
+            return value
+        request = self.context.get('request')
+        org = getattr(request, 'organisation', None) if request else None
+        if org is None or value.organisation_id != org.id:
+            raise serializers.ValidationError("This account does not belong to your organisation.")
+        return value
+
 
 class BudgetSerializer(serializers.ModelSerializer):
     lines = BudgetLineSerializer(many=True, read_only=True)
