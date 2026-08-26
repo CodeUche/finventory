@@ -103,6 +103,7 @@ const NOTIFICATION_CATEGORIES: { key: string; label: string; hint: string }[] = 
   { key: 'payroll', label: 'Payroll', hint: 'Payroll runs raised, approved or paid' },
   { key: 'sales', label: 'Sales', hint: 'Invoices, payments and overdue reminders' },
   { key: 'bills', label: 'Bills', hint: 'Bills raised and due for payment' },
+  { key: 'messages', label: 'Messages', hint: 'New direct messages from your team or accountant' },
   { key: 'inventory', label: 'Inventory', hint: 'Low stock and stock movement alerts' },
   { key: 'tax', label: 'Tax', hint: 'Filing deadlines and tax status changes' },
   { key: 'system', label: 'System', hint: 'Account and organisation-level notices' },

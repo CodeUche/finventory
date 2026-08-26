@@ -25,7 +25,7 @@ import {
 } from '@/services/messagingApi'
 import { teamApi } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
-import { cn } from '@/lib/utils'
+import { cn, formatDate } from '@/lib/utils'
 import { useSearchParams } from 'react-router-dom'
 
 interface TeamMember {
@@ -44,6 +44,16 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+/** Chat-bubble timestamp: local time-of-day for today's messages, a date
+ *  (via the shared formatDate) plus time for anything older. */
+function formatMessageTime(iso: string): string {
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return ''
+  const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+  const isToday = d.toDateString() === new Date().toDateString()
+  return isToday ? time : `${formatDate(iso)} ${time}`
 }
 
 type FilterTab = 'team' | 'accountant'
@@ -378,10 +388,19 @@ export default function MessagesPage() {
                 ) : messages.length === 0 ? (
                   <p className="text-xs text-slate-500 text-center py-6">No messages yet — say hello.</p>
                 ) : (
-                  messages.map((msg) => {
+                  messages.map((msg, idx) => {
                     const mine = msg.sender === user?.id
+                    // "Seen" — single mark on the most recent read message,
+                    // WhatsApp-style. Only makes sense on the LAST message in
+                    // the thread when it's mine, checked against the other
+                    // participant's last_read_seq (already on every
+                    // conversation via ConversationSerializer.participants —
+                    // no per-message receipt scheme, deliberately).
+                    const isLastMessage = idx === messages.length - 1
+                    const other = selectedConv ? otherParticipant(selectedConv, user?.id) : undefined
+                    const seen = mine && isLastMessage && (other?.last_read_seq ?? 0) >= msg.seq
                     return (
-                      <div key={msg.id} className={cn('flex', mine ? 'justify-end' : 'justify-start')}>
+                      <div key={msg.id} className={cn('flex flex-col', mine ? 'items-end' : 'items-start')}>
                         <div className={cn(
                           'max-w-[75%] rounded-2xl px-3.5 py-2 text-sm',
                           mine ? 'bg-brand-500 text-white' : 'bg-surface-800 text-slate-200'
@@ -409,6 +428,10 @@ export default function MessagesPage() {
                               ))}
                             </>
                           )}
+                        </div>
+                        <div className="flex items-center gap-1 mt-0.5 px-1">
+                          <span className="text-[10px] text-slate-500">{formatMessageTime(msg.created_at)}</span>
+                          {seen && <span className="text-[10px] text-brand-400">Seen</span>}
                         </div>
                       </div>
                     )

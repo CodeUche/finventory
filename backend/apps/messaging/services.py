@@ -74,7 +74,48 @@ def create_message(*, conversation: Conversation, sender, body: str, client_nonc
             update_fields=["last_seq", "last_message_at", "last_message_preview", "updated_at"]
         )
 
+    _notify_new_message(locked_conversation, message)
     return message, True
+
+
+def _notify_new_message(conversation: Conversation, message: Message) -> None:
+    """
+    Tell every other active participant that a message arrived — the one path
+    that reaches someone who isn't sitting on the Messages page (or has the
+    app closed entirely). In-app always; email only if they opted in for the
+    'messages' category, via the same _wants_email() gate every other
+    notification category already goes through.
+
+    Deferred to after the surrounding transaction commits: if the send rolls
+    back, nobody should have been told about a message that never happened.
+    """
+    from apps.notifications.models import Notification
+    from apps.notifications.services import notify_after_commit
+
+    recipients = [
+        p.user for p in ConversationParticipant.objects.filter(
+            conversation=conversation, left_at__isnull=True,
+        ).select_related("user")
+        if p.user_id != message.sender_id and p.user is not None
+    ]
+    if not recipients:
+        return
+
+    sender = message.sender
+    if sender is not None:
+        sender_name = f"{sender.first_name} {sender.last_name}".strip() or sender.email
+    else:
+        sender_name = "Someone"
+
+    notify_after_commit(
+        conversation.organisation,
+        recipients,
+        category=Notification.Category.MESSAGES,
+        title=f"New message from {sender_name}",
+        body=_truncate_preview(message.body, 100),
+        link="/messages",
+        exclude=sender,
+    )
 
 
 def get_or_create_direct_conversation(*, organisation, user, other_user):
