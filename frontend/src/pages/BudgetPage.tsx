@@ -133,6 +133,16 @@ export default function BudgetPage() {
     try {
       await budgetApi.approve(b.id)
       toast.success('Budget approved')
+      // approve's URL has a UUID mid-path (/budgets/{id}/approve/, not a
+      // trailing one), so the axios write-through cache's invalidation
+      // heuristic (buildListUrl, keyed on a TRAILING UUID) can't match it —
+      // same gap already documented and worked around for bulk_lines below
+      // (BudgetGridEditor's onSaved) and for other action-suffixed
+      // endpoints elsewhere in services/api.ts. Without this, the list
+      // keeps serving the pre-approval snapshot (no "Approved by" badge,
+      // Approve button still showing) for up to 5 minutes even though the
+      // approval genuinely succeeded server-side.
+      bypassNextGets()
       load()
     } catch (err: any) {
       const apiErr = err?.response?.data?.error
