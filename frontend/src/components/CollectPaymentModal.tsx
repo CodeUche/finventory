@@ -16,6 +16,7 @@ import { X, Landmark, CreditCard, Building2, Copy, Check, Loader2, Clock, AlertT
 import toast from 'react-hot-toast'
 import { paymentGatewayApi } from '@/services/api'
 import { formatCurrency } from '@/lib/utils'
+import { useAuthStore } from '@/store/authStore'
 
 interface BankAccount {
   id: string
@@ -74,6 +75,15 @@ function useCountdown(iso: string | null): string | null {
 export default function CollectPaymentModal({
   invoiceId, invoiceNumber, amountDue, onClose, onPaid,
 }: Props) {
+  const organisation = useAuthStore((s) => s.organisation)
+  // Which tender types this org accepts at all (Settings → Payments →
+  // Accepted Tender Types). Distinct from `options` above, which is what the
+  // Paystack gateway is actually configured to support — a tab only shows
+  // when BOTH the gateway can do it AND the org hasn't turned it off.
+  const enabledPaymentTypes = organisation?.enabled_payment_types ?? ['cash', 'card', 'bank_transfer', 'wallet']
+  const cardEnabled = enabledPaymentTypes.includes('card')
+  const bankEnabled = enabledPaymentTypes.includes('bank_transfer')
+
   const [options, setOptions] = useState<Options | null>(null)
   const [method, setMethod] = useState<Method | null>(null)
   const [busy, setBusy] = useState(false)
@@ -89,11 +99,12 @@ export default function CollectPaymentModal({
     paymentGatewayApi.options()
       .then(({ data }) => {
         setOptions(data)
-        // Pre-select the strongest method the merchant actually offers.
+        // Pre-select the strongest method the merchant actually offers AND
+        // hasn't turned off in Settings → Payments → Accepted Tender Types.
         setMethod(
-          data.virtual_account ? 'virtual_account'
-            : data.card ? 'card'
-            : data.bank_transfer ? 'bank_transfer'
+          data.virtual_account && bankEnabled ? 'virtual_account'
+            : data.card && cardEnabled ? 'card'
+            : data.bank_transfer && bankEnabled ? 'bank_transfer'
             : null,
         )
       })
@@ -169,10 +180,14 @@ export default function CollectPaymentModal({
     options && !options.card && !options.virtual_account && !options.bank_transfer
 
   const TABS: { key: Method; label: string; icon: typeof Landmark; on: boolean }[] = [
-    { key: 'virtual_account', label: 'One-time account', icon: Landmark, on: !!options?.virtual_account },
-    { key: 'card', label: 'Card / online', icon: CreditCard, on: !!options?.card },
-    { key: 'bank_transfer', label: 'Bank transfer', icon: Building2, on: !!options?.bank_transfer },
+    { key: 'virtual_account', label: 'One-time account', icon: Landmark, on: !!options?.virtual_account && bankEnabled },
+    { key: 'card', label: 'Card / online', icon: CreditCard, on: !!options?.card && cardEnabled },
+    { key: 'bank_transfer', label: 'Bank transfer', icon: Building2, on: !!options?.bank_transfer && bankEnabled },
   ]
+  // Gateway is configured, but every method it offers has been turned off
+  // under Settings → Payments → Accepted Tender Types — distinct from
+  // nothingConfigured (no gateway keys at all) so the message is accurate.
+  const allTurnedOffByOrg = options && !nothingConfigured && !TABS.some((t) => t.on)
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
@@ -195,6 +210,23 @@ export default function CollectPaymentModal({
 
         {!options ? (
           <div className="flex justify-center py-6"><Loader2 size={20} className="animate-spin text-slate-500" /></div>
+        ) : allTurnedOffByOrg ? (
+          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200/90 space-y-3">
+            <div className="flex gap-3">
+              <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+              <span>
+                Card and bank transfer are both turned off under{' '}
+                <strong>Settings → Payments → Accepted Tender Types</strong>. Turn one back on to
+                collect this online, or take it in cash and record it manually.
+              </span>
+            </div>
+            <a
+              href="/settings?tab=payments"
+              className="btn-primary w-full justify-center text-xs no-underline"
+            >
+              Open payment settings
+            </a>
+          </div>
         ) : nothingConfigured ? (
           <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200/90 space-y-3">
             <div className="flex gap-3">

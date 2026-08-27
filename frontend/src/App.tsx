@@ -54,6 +54,7 @@ const OrgChartPage = React.lazy(() => import('@/pages/payroll/OrgChartPage'))
 const HRAnalyticsPage = React.lazy(() => import('@/pages/payroll/HRAnalyticsPage'))
 const EmployeePortalPage = React.lazy(() => import('@/pages/ess/EmployeePortalPage'))
 const BudgetPage = React.lazy(() => import('@/pages/BudgetPage'))
+const BudgetMonitoringPage = React.lazy(() => import('@/pages/BudgetMonitoringPage'))
 const ReportsPage = React.lazy(() => import('@/pages/reports/ReportsPage'))
 const BalanceSheetPage = React.lazy(() => import('@/pages/reports/BalanceSheetPage'))
 const SalesByCustomerPage = React.lazy(() => import('@/pages/reports/SalesByCustomerPage'))
@@ -389,6 +390,7 @@ export default function App() {
         {/* Finance */}
         <Route path="expenses"              element={<ModuleRoute module="expenses"><ExpensesPage /></ModuleRoute>} />
         <Route path="budgets"               element={<ModuleRoute module="budget"><BudgetPage /></ModuleRoute>} />
+        <Route path="budgets/monitoring"    element={<ModuleRoute module="budget"><BudgetMonitoringPage /></ModuleRoute>} />
         <Route path="reports"                       element={<ModuleRoute module="reports"><ReportsPage /></ModuleRoute>} />
         <Route path="reports/balance-sheet"         element={<ModuleRoute module="accounting"><BalanceSheetPage /></ModuleRoute>} />
         <Route path="reports/stock"                 element={<ModuleRoute module="inventory"><StockReportsPage /></ModuleRoute>} />

@@ -56,7 +56,7 @@ class OrganisationSerializer(serializers.ModelSerializer):
             "onboarding_completed",
             "strict_gl_mode", "business_type",
             "fixed_asset_capitalisation_threshold", "fixed_asset_revaluation_enabled",
-            "capital_allowance_nta2025_enabled",
+            "capital_allowance_nta2025_enabled", "enabled_payment_types",
             "managing_firm_name", "managing_firm_logo",
             "parent_org", "entity_group_name", "child_entity_count",
         ]

@@ -17,6 +17,15 @@ const CURRENCY_SYMBOLS: Record<string, string> = {
   NGN: '₦', USD: '$', GBP: '£', EUR: '€', GHS: '₵', KES: 'KSh', ZAR: 'R', XOF: 'CFA',
 }
 
+// Single source of truth for "which currencies can an org pick" — used by
+// both the TopBar quick-switch pill and Settings > Profile > Currency. Two
+// independently maintained lists previously existed here and drifted apart;
+// don't reintroduce a second one.
+export const SUPPORTED_CURRENCIES = [
+  'NGN', 'USD', 'EUR', 'GBP', 'GHS', 'KES', 'ZAR', 'XOF', 'XAF',
+  'EGP', 'MAD', 'TZS', 'UGX', 'RWF', 'ZMW', 'BWP',
+]
+
 /** Extract just the currency symbol (e.g. '₦', '$', '£') for the active or given currency. */
 export function getCurrencySymbol(currency?: string): string {
   const cur = currency ?? _activeCurrency

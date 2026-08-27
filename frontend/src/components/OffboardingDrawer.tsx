@@ -82,7 +82,7 @@ export default function OffboardingDrawer({
     }
   }
 
-  useEffect(() => { void load() }, [employeeId, existingCaseId]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { void load() }, [employeeId, existingCaseId])
 
   const handleCreateCase = async () => {
     setCreating(true)

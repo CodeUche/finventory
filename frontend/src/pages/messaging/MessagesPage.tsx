@@ -25,7 +25,7 @@ import {
 } from '@/services/messagingApi'
 import { teamApi } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
-import { cn } from '@/lib/utils'
+import { cn, formatDate } from '@/lib/utils'
 import { useSearchParams } from 'react-router-dom'
 
 interface TeamMember {
@@ -44,6 +44,42 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+/** Chat-bubble timestamp: local time-of-day for today's messages, a date
+ *  (via the shared formatDate) plus time for anything older. */
+function formatMessageTime(iso: string): string {
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return ''
+  const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+  const isToday = d.toDateString() === new Date().toDateString()
+  return isToday ? time : `${formatDate(iso)} ${time}`
+}
+
+/** Deterministic per-person colour, stable across conversations and
+ *  reloads (hashed from their user id, not assigned by render order) —
+ *  so the same teammate always reads as the same colour everywhere. Kept
+ *  distinct from the brand teal used for "my" bubbles. */
+const TEAMMATE_PALETTE = [
+  { text: 'text-rose-400', bg: 'bg-rose-500/20' },
+  { text: 'text-amber-400', bg: 'bg-amber-500/20' },
+  { text: 'text-violet-400', bg: 'bg-violet-500/20' },
+  { text: 'text-cyan-400', bg: 'bg-cyan-500/20' },
+  { text: 'text-lime-400', bg: 'bg-lime-500/20' },
+  { text: 'text-fuchsia-400', bg: 'bg-fuchsia-500/20' },
+  { text: 'text-orange-400', bg: 'bg-orange-500/20' },
+  { text: 'text-indigo-400', bg: 'bg-indigo-500/20' },
+]
+
+function colorForUser(userId: string | null | undefined) {
+  if (!userId) return TEAMMATE_PALETTE[0]
+  let hash = 0
+  for (let i = 0; i < userId.length; i++) hash = (hash * 31 + userId.charCodeAt(i)) >>> 0
+  return TEAMMATE_PALETTE[hash % TEAMMATE_PALETTE.length]
+}
+
+function displayName(p: { user_full_name?: string | null; user_email?: string | null } | null | undefined): string {
+  return p?.user_full_name || p?.user_email || 'Conversation'
 }
 
 type FilterTab = 'team' | 'accountant'
@@ -170,6 +206,7 @@ export default function MessagesPage() {
       conversation: selectedId,
       sender: user?.id ?? null,
       sender_email: user?.email ?? null,
+      sender_name: [user?.first_name, user?.last_name].filter(Boolean).join(' ') || user?.email || null,
       body,
       seq: (messages[messages.length - 1]?.seq ?? 0) + 1,
       client_nonce: nonce,
@@ -301,6 +338,7 @@ export default function MessagesPage() {
               filtered.map((conv) => {
                 const other = otherParticipant(conv, user?.id)
                 const crossOrg = isCrossOrgThread(conv)
+                const color = colorForUser(other?.user)
                 return (
                   <button
                     key={conv.id}
@@ -312,14 +350,14 @@ export default function MessagesPage() {
                   >
                     <div className={cn(
                       'w-8 h-8 rounded-full flex items-center justify-center shrink-0 text-xs font-bold',
-                      crossOrg ? 'bg-amber-500/20 text-amber-400' : 'bg-brand-500/20 text-brand-400'
+                      color.bg, color.text
                     )}>
-                      {(other?.user_email ?? '?')[0]?.toUpperCase()}
+                      {displayName(other)[0]?.toUpperCase()}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5">
-                        <p className="text-xs font-semibold text-white truncate">
-                          {other?.user_email ?? 'Conversation'}
+                        <p className={cn('text-xs font-semibold truncate', color.text)}>
+                          {displayName(other)}
                         </p>
                         {crossOrg && (
                           <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 shrink-0 uppercase tracking-wide">
@@ -360,9 +398,16 @@ export default function MessagesPage() {
                 >
                   <ArrowLeft size={16} />
                 </button>
+                <div className={cn(
+                  'w-7 h-7 rounded-full flex items-center justify-center shrink-0 text-xs font-bold',
+                  colorForUser(otherParticipant(selectedConv, user?.id)?.user).bg,
+                  colorForUser(otherParticipant(selectedConv, user?.id)?.user).text,
+                )}>
+                  {displayName(otherParticipant(selectedConv, user?.id))[0]?.toUpperCase()}
+                </div>
                 <div>
-                  <p className="text-sm font-semibold text-white">
-                    {otherParticipant(selectedConv, user?.id)?.user_email ?? 'Conversation'}
+                  <p className={cn('text-sm font-semibold', colorForUser(otherParticipant(selectedConv, user?.id)?.user).text)}>
+                    {displayName(otherParticipant(selectedConv, user?.id))}
                   </p>
                   {isCrossOrgThread(selectedConv) && (
                     <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 uppercase tracking-wide">
@@ -378,10 +423,32 @@ export default function MessagesPage() {
                 ) : messages.length === 0 ? (
                   <p className="text-xs text-slate-500 text-center py-6">No messages yet — say hello.</p>
                 ) : (
-                  messages.map((msg) => {
+                  messages.map((msg, idx) => {
                     const mine = msg.sender === user?.id
+                    // Delivered/Read — single mark on the most recent message
+                    // of mine, WhatsApp-style. "Delivered" is the default the
+                    // instant a send succeeds (this API has no offline queue
+                    // on the recipient's side); "Read" once the other
+                    // participant's last_read_seq catches up to this message
+                    // — already on every conversation via
+                    // ConversationSerializer.participants, no per-message
+                    // receipt scheme.
+                    const isLastMessage = idx === messages.length - 1
+                    const other = selectedConv ? otherParticipant(selectedConv, user?.id) : undefined
+                    const read = mine && isLastMessage && (other?.last_read_seq ?? 0) >= msg.seq
+                    const delivered = mine && isLastMessage && !read
+                    // Name label only on the first message of a consecutive
+                    // run from the other person — repeating it on every
+                    // bubble in a 1:1 thread is just noise.
+                    const showName = !mine && (idx === 0 || messages[idx - 1].sender !== msg.sender)
+                    const senderColor = colorForUser(msg.sender)
                     return (
-                      <div key={msg.id} className={cn('flex', mine ? 'justify-end' : 'justify-start')}>
+                      <div key={msg.id} className={cn('flex flex-col', mine ? 'items-end' : 'items-start')}>
+                        {showName && (
+                          <span className={cn('text-[10px] font-semibold px-1 mb-0.5', senderColor.text)}>
+                            {msg.sender_name || msg.sender_email || 'Them'}
+                          </span>
+                        )}
                         <div className={cn(
                           'max-w-[75%] rounded-2xl px-3.5 py-2 text-sm',
                           mine ? 'bg-brand-500 text-white' : 'bg-surface-800 text-slate-200'
@@ -409,6 +476,11 @@ export default function MessagesPage() {
                               ))}
                             </>
                           )}
+                        </div>
+                        <div className="flex items-center gap-1 mt-0.5 px-1">
+                          <span className="text-[10px] text-slate-500">{formatMessageTime(msg.created_at)}</span>
+                          {read && <span className="text-[10px] text-brand-400">Read</span>}
+                          {delivered && <span className="text-[10px] text-slate-500">Delivered</span>}
                         </div>
                       </div>
                     )

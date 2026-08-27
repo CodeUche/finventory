@@ -164,7 +164,7 @@ export default function PartnerDashboardPage() {
       sessionStorage.removeItem('audity_partner_own_org')
     }
     load()
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [])
 
   // ── Derived data ──────────────────────────────────────────────────────────
 

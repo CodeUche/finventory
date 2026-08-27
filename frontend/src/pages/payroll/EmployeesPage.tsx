@@ -178,7 +178,6 @@ export default function EmployeesPage() {
     if (formTab === 'documents') {
       loadDocs()
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formTab, editId])
 
   const gross = (f: EmployeeForm) =>

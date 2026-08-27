@@ -9,7 +9,7 @@ import {
   MapPin, ClipboardCheck, GraduationCap, Briefcase, ShoppingCart,
   User, Layout, Mail, Lock, Bot, Globe, Upload, GitBranch,
   ChevronLeft, HelpCircle, LayoutGrid, Zap, Wallet, Store,
-  CalendarDays,
+  CalendarDays, Bell,
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { authApi } from '@/services/api'
@@ -237,6 +237,7 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
   const settingsTabs: SettingsTabDef[] = [
     { id: 'profile',           label: 'Profile',           icon: User,       group: 'ACCOUNT' },
     { id: 'security',          label: 'Security',          icon: Shield,     group: 'ACCOUNT',       partnerRestricted: true },
+    { id: 'notifications',     label: 'Notifications',     icon: Bell,       group: 'ACCOUNT' },
     { id: 'invoice_templates', label: 'Templates',         icon: Layout,     group: 'WORKSPACE',     ownerOnly: true },
     { id: 'team',              label: 'Team',              icon: UsersRound, group: 'WORKSPACE',     ownerOnly: true, partnerRestricted: true },
     { id: 'access',            label: 'Accountant Access', icon: ShieldCheck,group: 'WORKSPACE',     ownerOnly: true, partnerRestricted: true },

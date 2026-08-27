@@ -50,6 +50,7 @@ class PublicStorefrontSerializer(serializers.ModelSerializer):
         fields = [
             "slug", "name", "logo", "currency", "headline", "about", "whatsapp",
             "delivery_note", "accent_colour", "accepts_orders", "minimum_order",
+            "free_delivery_threshold", "fixed_delivery_charge",
         ]
         read_only_fields = fields
 
@@ -134,6 +135,7 @@ class StorefrontSerializer(serializers.ModelSerializer):
         fields = [
             "id", "slug", "is_published", "headline", "about", "whatsapp",
             "delivery_note", "accent_colour", "accepts_orders", "minimum_order",
+            "free_delivery_threshold", "fixed_delivery_charge",
             "hide_out_of_stock", "public_url", "created_at",
         ]
         read_only_fields = ["id", "public_url", "created_at"]

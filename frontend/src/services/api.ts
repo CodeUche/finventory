@@ -1228,6 +1228,7 @@ export const expenseApi = {
   update: (id: string, data: object) => api.patch(`/expenses/${id}/`, data),
   delete: (id: string) => api.delete(`/expenses/${id}/`),
   categories: () => api.get('/expenses/categories/'),
+  updateCategory: (id: string, data: object) => api.patch(`/expenses/categories/${id}/`, data),
   // Folders / groups
   groups: (params?: object) => api.get('/expenses/groups/', { params }),
   createGroup: (data: object) => api.post('/expenses/groups/', data),
@@ -1709,6 +1710,16 @@ export const budgetApi = {
   update: (id: string, data: object) => api.patch(`/budgets/${id}/`, data),
   variance: (id: string) => api.get(`/budgets/${id}/variance/`),
   addLine: (id: string, data: object) => api.post(`/budgets/${id}/add_line/`, data),
+  /** Bulk upsert for the monthly grid editor — a flat array of line
+   * payloads (same shape as addLine's body). Matched to existing lines by
+   * (category_name, period_month) server-side; unmatched payloads create
+   * new lines. Single atomic transaction — see apps/budgets/views.py. */
+  bulkLines: (id: string, lines: object[]) => api.post(`/budgets/${id}/bulk_lines/`, lines),
+  approve: (id: string) => api.post(`/budgets/${id}/approve/`),
+  /** Flat, cross-budget list of every line + its variance data, for the
+   * Budget Monitoring page. params: { budget_type?, status? } — status
+   * defaults server-side to 'active'; pass 'all' to include every status. */
+  monitoring: (params?: object) => api.get('/budgets/monitoring/', { params }),
 }
 
 export const recurringApi = {
@@ -1759,6 +1770,13 @@ export const tillApi = {
   open: (data: object) => api.post('/pos/till-sessions/open/', data),
   close: (id: string, data: object) => api.post(`/pos/till-sessions/${id}/close/`, data),
   zReport: (id: string) => api.get(`/pos/till-sessions/${id}/z_report/`),
+}
+
+export const notificationApi = {
+  /** Every category with its current email setting, defaults filled in. */
+  getPreferences: () => api.get('/notifications/preferences/mine/'),
+  /** Partial patch — only the categories included are changed. */
+  updatePreferences: (data: Record<string, boolean>) => api.put('/notifications/preferences/mine/', data),
 }
 
 export const paymentGatewayApi = {

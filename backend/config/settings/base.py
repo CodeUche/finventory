@@ -447,6 +447,7 @@ CORS_ALLOW_HEADERS = [
     "x-csrftoken",
     "x-requested-with",
     "x-organisation-id",   # required for tenant resolution
+    "x-bypass-cache",      # messaging polling opt-out — see api.ts
 ]
 
 # Trusted origins for CSRF — mirrors CORS list so packaged apps can POST

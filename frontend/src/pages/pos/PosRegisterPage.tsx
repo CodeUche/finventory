@@ -45,11 +45,16 @@ const lineKey = (productId: string, optionIds: string[]) =>
   `${productId}::${[...optionIds].sort().join(',')}`
 
 /** Tenders a cashier may take. Credit is absent on purpose — extending credit
- *  is an owner decision, not something to do at a busy counter. */
+ *  is an owner decision, not something to do at a busy counter.
+ *  `settingsKey` maps to Organisation.enabled_payment_types (Settings →
+ *  Payments → Accepted Tender Types) — the on-the-wire `key` values (e.g.
+ *  'pos' for card) stay unchanged since till reconciliation already keys
+ *  off them. */
 const TENDERS = [
-  { key: 'cash', label: 'Cash', icon: Banknote },
-  { key: 'pos', label: 'Card', icon: CreditCard },
-  { key: 'bank_transfer', label: 'Transfer', icon: Landmark },
+  { key: 'cash', label: 'Cash', icon: Banknote, settingsKey: 'cash' },
+  { key: 'pos', label: 'Card', icon: CreditCard, settingsKey: 'card' },
+  { key: 'bank_transfer', label: 'Transfer', icon: Landmark, settingsKey: 'bank_transfer' },
+  { key: 'wallet', label: 'Wallet', icon: Wallet, settingsKey: 'wallet' },
 ] as const
 
 export default function PosRegisterPage() {
@@ -302,6 +307,7 @@ export default function PosRegisterPage() {
   }
 
   const tiles = query.trim() ? results : catalogue
+  const enabledTenders = TENDERS.filter((t) => (organisation?.enabled_payment_types ?? TENDERS.map((x) => x.settingsKey)).includes(t.settingsKey))
 
   return (
     // Full screen, no sidebar — the register owns the device.
@@ -451,8 +457,8 @@ export default function PosRegisterPage() {
               </p>
             )}
 
-            <div className="grid grid-cols-3 gap-2">
-              {TENDERS.map((t) => (
+            <div className="grid grid-cols-2 gap-2">
+              {enabledTenders.map((t) => (
                 <button
                   key={t.key} onClick={() => takePayment(t.key)} disabled={busy || lines.length === 0}
                   className="flex flex-col items-center gap-1 rounded-xl bg-brand-500 py-3 text-xs font-semibold text-white disabled:opacity-40"

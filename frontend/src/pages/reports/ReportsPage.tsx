@@ -446,7 +446,6 @@ export default function ReportsPage() {
         }).catch(() => toast.error('Failed to load accounts'))
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab])
 
   const loadStatement = async () => {
@@ -466,7 +465,6 @@ export default function ReportsPage() {
 
   useEffect(() => {
     if (tab === 'customer_gl' && selectedAccount) loadStatement()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, selectedAccount, statementPeriod])
 
   const togglePaymentDrilldown = async (row: PaymentsByCustomerRow) => {

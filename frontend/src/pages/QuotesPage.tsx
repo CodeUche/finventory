@@ -465,7 +465,6 @@ export default function QuotesPage() {
       }, 250)
     })
     return () => { timers.forEach((t) => { if (t) clearTimeout(t) }) }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [productQueries])
 
   // Close product dropdowns when clicking outside any of them

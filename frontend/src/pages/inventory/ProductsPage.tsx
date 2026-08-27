@@ -377,7 +377,7 @@ export default function ProductsPage() {
       searchParams.delete('new')
       setSearchParams(searchParams, { replace: true })
     }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [])
 
   const safeAmt = (v: string | null | undefined) => {
     const num = parseFloat(v ?? '0')

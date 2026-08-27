@@ -16,6 +16,12 @@ const TODAY_URL = process.env.E2E_TODAY_URL || 'http://localhost:5183'
 // Bank Reconciliation click-through — runs against whichever stack you point it
 // at (a throwaway-DB dev server locally, or a deployed environment).
 const RECON_URL = process.env.E2E_RECON_URL || 'http://127.0.0.1:5183'
+// HR runs two personas against a throwaway database seeded by
+// backend/seed_hr_e2e.py: the operator and one employee, whose whole point is
+// that she can reach her own record and nothing else.
+const HR_URL = process.env.E2E_HR_URL || 'http://127.0.0.1:3000'
+const HR_OWNER_STATE = './e2e/.auth/hr-owner.json'
+const HR_EMPLOYEE_STATE = './e2e/.auth/hr-employee.json'
 // POS receipt click-through — same isolated-stack pattern as bank-recon.
 const RECEIPTS_URL = process.env.E2E_RECEIPTS_URL || 'http://127.0.0.1:5183'
 
@@ -42,7 +48,12 @@ export default defineConfig({
     { name: 'setup', testMatch: /auth\.setup\.ts/ },
     {
       name: 'e2e',
-      testIgnore: /(auth|payments)\.setup\.ts|payments\.spec\.ts/,
+      // Specs that own a dedicated project below run against their own
+      // throwaway database, user and port. Sweeping them in here too runs them
+      // against the WRONG stack, where they fail on missing seed data and look
+      // like product regressions — which is exactly how a real bank-recon
+      // "failure" was chased before it turned out to be the wrong database.
+      testIgnore: /(auth|payments)\.setup\.ts|payments\.spec\.ts|bank-reconciliation\.spec\.ts|receipts\.spec\.ts|today\..*\.spec\.ts|hr\.setup\.ts|hr\.spec\.ts|hr\.ess\.spec\.ts/,
       dependencies: ['setup'],
       use: { storageState: STORAGE_STATE },
     },
@@ -90,6 +101,25 @@ export default defineConfig({
       name: 'receipts',
       testMatch: /receipts\.spec\.ts/,
       use: { baseURL: RECEIPTS_URL },
+    },
+
+    // HR. hr.setup.ts already existed and defined both personas, but no
+    // project ever ran it — so the HR specs fell into the default project,
+    // used the wrong session against the wrong database, and could never
+    // pass. Point at the HR-seeded stack:
+    //   E2E_HR_URL=http://127.0.0.1:3000 npx playwright test --project=hr
+    { name: 'hr-setup', testMatch: /hr\.setup\.ts/, use: { baseURL: HR_URL } },
+    {
+      name: 'hr',
+      testMatch: /hr\.spec\.ts/,
+      dependencies: ['hr-setup'],
+      use: { storageState: HR_OWNER_STATE, baseURL: HR_URL },
+    },
+    {
+      name: 'hr-ess',
+      testMatch: /hr\.ess\.spec\.ts/,
+      dependencies: ['hr-setup'],
+      use: { storageState: HR_EMPLOYEE_STATE, baseURL: HR_URL },
     },
   ],
 })

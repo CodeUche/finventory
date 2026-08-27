@@ -4,16 +4,13 @@ import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { useAuthStore } from '@/store/authStore'
 import { orgApi, inventoryApi, salesApi, customerApi, authApi, bypassNextGets } from '@/services/api'
-import { setActiveCurrency, formatCurrency } from '@/lib/utils'
+import { setActiveCurrency, formatCurrency, SUPPORTED_CURRENCIES } from '@/lib/utils'
 import NotificationBell from '@/components/NotificationBell'
 import MessagesBell from '@/components/MessagesBell'
 import { SyncStatusBadge } from '@/components/SyncStatusBadge'
 import { getStoredTheme, setTheme, type Theme } from '@/hooks/useTheme'
 
-const CURRENCIES = [
-  'NGN', 'USD', 'EUR', 'GBP', 'GHS', 'KES', 'ZAR', 'XOF', 'XAF',
-  'EGP', 'MAD', 'TZS', 'UGX', 'RWF', 'ZMW', 'BWP',
-]
+const CURRENCIES = SUPPORTED_CURRENCIES
 
 interface SearchResult {
   type: 'product' | 'invoice' | 'customer'

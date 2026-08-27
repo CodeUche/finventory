@@ -38,6 +38,7 @@ class Notification(TenantAwareModel):
         INVENTORY = "inventory", "Inventory"
         TAX = "tax", "Tax"
         SYSTEM = "system", "System"
+        MESSAGES = "messages", "Messages"
 
     class EmailStatus(models.TextChoices):
         NOT_REQUESTED = "not_requested", "Not requested"

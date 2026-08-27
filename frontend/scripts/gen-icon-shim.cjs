@@ -44,7 +44,7 @@ const MAP = {
   Banknote:'Money', ClipboardCheck:'ClipboardText', CheckSquare:'CheckSquare', Square:'Square',
   Check:'Check', FolderOpen:'FolderOpen', FolderPlus:'FolderPlus', ArrowUpRight:'ArrowUpRight',
   ArrowUpCircle:'ArrowCircleUp', BarChart2:'ChartBar', LockKeyhole:'LockKey', Gift:'Gift',
-  Settings:'GearSix',
+  Settings:'GearSix', Grid3x3:'GridNine', LayoutList:'ListBullets',
 }
 
 // fallbacks to try if the primary name is missing

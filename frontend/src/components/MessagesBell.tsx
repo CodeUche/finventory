@@ -10,6 +10,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { MessageSquare } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
+import toast from 'react-hot-toast'
 import { messagingApi, type Conversation } from '@/services/messagingApi'
 import { useAuthStore } from '@/store/authStore'
 import { cn } from '@/lib/utils'
@@ -25,15 +26,36 @@ export default function MessagesBell() {
   const ref = useRef<HTMLDivElement>(null)
   const navigate = useNavigate()
   const user = useAuthStore((s) => s.user)
+  // null = "haven't polled yet" — guards against firing a toast on the very
+  // first load just because unread count went from "unknown" to some number.
+  const prevUnreadRef = useRef<number | null>(null)
 
   const refreshUnread = useCallback(async () => {
     try {
       const { data } = await messagingApi.unreadCount()
-      setUnreadCount(data.unread_count ?? 0)
+      const next = data.unread_count ?? 0
+      // Fires only on an INCREASE between two consecutive polls — this is
+      // how a message reaches someone who is on a different page entirely
+      // (open() on the bell itself, and being on /messages already, both
+      // already show the count directly, so this is specifically for
+      // "app open, elsewhere" — the toast is the notification).
+      if (prevUnreadRef.current !== null && next > prevUnreadRef.current) {
+        toast((t) => (
+          <div
+            className="flex items-center gap-2 cursor-pointer"
+            onClick={() => { navigate('/messages'); toast.dismiss(t.id) }}
+          >
+            <MessageSquare size={15} className="text-brand-400 shrink-0" />
+            <span>New message</span>
+          </div>
+        ))
+      }
+      prevUnreadRef.current = next
+      setUnreadCount(next)
     } catch {
       /* silent — badge just won't update this cycle */
     }
-  }, [])
+  }, [navigate])
 
   const refreshList = useCallback(async () => {
     setLoading(true)

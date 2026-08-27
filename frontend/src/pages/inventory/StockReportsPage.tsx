@@ -607,7 +607,7 @@ export default function StockReportsPage() {
       .then(({ data }) => setValuation(data as ValuationReport))
       .catch(() => toast.error('Failed to load inventory valuation'))
       .finally(() => setValuationLoading(false))
-  }, [tab]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tab])
 
   const toISO = (dd: string) => {
     if (!dd) return ''

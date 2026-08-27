@@ -119,6 +119,38 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                     user.pk, orm_exc,
                 )
 
+        # Fail-open. Every attempt above filters on is_active, and soft-deleting
+        # an organisation deactivates its memberships (Organisation.delete), so a
+        # user whose organisations have all died resolves to NOTHING here. An
+        # empty claim routes them to /onboarding — the account looks broken while
+        # it is actually fine. An empty result is far more often a lookup problem
+        # than a genuine "belongs nowhere", so keep the memberships regardless of
+        # is_active rather than emptying the claim.
+        #
+        # This is safe because the claim is a client-side ROUTING hint only:
+        # every request is still authorised server-side by RLS and the
+        # permission classes, so a stale claim grants no read or write on its
+        # own. A user with a live organisation never reaches this branch, so a
+        # dead org is still dropped from their claim.
+        if not memberships:
+            try:
+                from apps.tenancy.models import Membership as _M2
+                memberships = {
+                    str(m.organisation_id): m.role
+                    for m in _M2.objects.filter(user=user)
+                }
+                if memberships:
+                    logger.warning(
+                        "get_token: no ACTIVE membership for user=%s — keeping %d "
+                        "inactive claim(s) rather than locking them out",
+                        user.pk, len(memberships),
+                    )
+            except Exception as _open_exc:
+                logger.error(
+                    "get_token: fail-open membership lookup failed for user=%s: %s",
+                    user.pk, _open_exc,
+                )
+
         if not memberships:
             logger.warning(
                 "get_token: JWT will have EMPTY memberships for user=%s — "

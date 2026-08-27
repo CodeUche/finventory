@@ -5,14 +5,15 @@ import { useSearchParams } from 'react-router-dom'
 import {
   ArrowDownCircle, ArrowUpCircle, Plus, Search, X, Pencil, Loader2, Layers,
   Folder, FolderOpen, FolderPlus, ChevronRight, ChevronDown, Home, Trash2, Edit2, RefreshCw,
+  Landmark,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { expenseApi, budgetApi, salesApi, bypassNextGets } from '@/services/api'
+import { expenseApi, budgetApi, salesApi, accountingApi, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatDate, normalizeAmountStr, stripCommas } from '@/lib/utils'
 import AmountInput from '@/components/AmountInput'
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from '@/lib/categories'
 import { useAuthStore } from '@/store/authStore'
-import type { Expense, ExpenseGroup, Invoice } from '@/types'
+import type { Expense, ExpenseGroup, ExpenseCategory, Account, Invoice } from '@/types'
 import DateInput from '@/components/DateInput'
 import YearFilter, { yearToDateParams } from '@/components/YearFilter'
 import MonthFilter, { monthToDateParams, type ArchiveMonth } from '@/components/MonthFilter'
@@ -122,6 +123,41 @@ export default function ExpensesPage() {
   const [budgets, setBudgets] = useState<{ id: string; name: string; status: string }[]>([])
   const [salesInvoices, setSalesInvoices] = useState<Invoice[]>([])
 
+  // GL Mapping — link an expense category to a specific Chart of Accounts
+  // account so Budget Monitoring can compute a real per-account Actual
+  // instead of a category-name guess (see apps/budgets/services.py).
+  const [showGlMapping, setShowGlMapping] = useState(false)
+  const [categories, setCategories] = useState<ExpenseCategory[]>([])
+  const [glAccounts, setGlAccounts] = useState<Account[]>([])
+  const [savingCategoryId, setSavingCategoryId] = useState<string | null>(null)
+
+  const loadCategories = async () => {
+    try {
+      const { data } = await expenseApi.categories()
+      setCategories(data.results ?? data)
+    } catch { /* GL mapping panel is optional — silently unavailable is fine */ }
+  }
+
+  const loadGlAccounts = async () => {
+    try {
+      const { data } = await accountingApi.accounts()
+      setGlAccounts((data.results ?? data).filter((a: Account) => a.is_active))
+    } catch { /* GL mapping panel is optional — silently unavailable is fine */ }
+  }
+
+  const handleMapCategoryAccount = async (categoryId: string, accountId: string) => {
+    setSavingCategoryId(categoryId)
+    try {
+      const { data } = await expenseApi.updateCategory(categoryId, { account: accountId || null })
+      setCategories((prev) => prev.map((c) => (c.id === categoryId ? data : c)))
+      toast.success('GL account mapping updated')
+    } catch {
+      toast.error('Failed to update GL account mapping')
+    } finally {
+      setSavingCategoryId(null)
+    }
+  }
+
   const loadExpenses = async () => {
     setLoading(true)
     try {
@@ -158,7 +194,7 @@ export default function ExpensesPage() {
       searchParams.delete('new')
       setSearchParams(searchParams, { replace: true })
     }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     budgetApi.list().then(({ data }) => {
@@ -166,6 +202,19 @@ export default function ExpensesPage() {
       setBudgets(list.filter((b: any) => b.status === 'active'))
     }).catch(() => {})
   }, [])
+
+  useEffect(() => {
+    // bypassNextGets: a category can have just been auto-created moments ago
+    // by recording an expense (get_or_create in ExpenseViewSet.perform_create).
+    // Without this, the 5-minute fresh-cache gate can serve a stale
+    // pre-existing (or empty) /expenses/categories/ response and the brand
+    // new category silently doesn't appear in the mapping list.
+    if (showGlMapping) {
+      bypassNextGets()
+      loadCategories()
+      if (glAccounts.length === 0) loadGlAccounts()
+    }
+  }, [showGlMapping])
 
   const handleCreate = async () => {
     const rawAmount = stripCommas(form.amount)
@@ -508,6 +557,14 @@ export default function ExpensesPage() {
               >
                 <Layers size={14} />
                 Group by Category
+              </button>
+              <button
+                onClick={() => setShowGlMapping(true)}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium transition-all border border-surface-600 text-slate-400 hover:border-surface-500"
+                title="Link expense categories to a GL account so Budget Monitoring can compute a real Actual"
+              >
+                <Landmark size={14} />
+                GL Mapping
               </button>
               {/* Period filter — hidden when an archive (year or month) is active */}
               {!archiveYear && !archiveMonth && (
@@ -1215,6 +1272,49 @@ export default function ExpensesPage() {
                 {savingFolderExp ? <Loader2 size={15} className="animate-spin mx-auto" /> : 'Add Entry'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── GL Mapping Modal ────────────────────────────────────────────────── */}
+      {showGlMapping && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setShowGlMapping(false)} />
+          <div className="relative card w-full max-w-lg p-6 space-y-4 max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-bold text-white">GL Account Mapping</h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Link a category to a specific Chart of Accounts account so expenses in it post
+                  there directly, and Budget Monitoring can show a real Actual for that account.
+                  Leave unmapped to keep posting to the general expense account.
+                </p>
+              </div>
+              <button onClick={() => setShowGlMapping(false)} className="text-slate-400 hover:text-white shrink-0"><X size={20} /></button>
+            </div>
+
+            {categories.length === 0 ? (
+              <p className="text-sm text-slate-500 py-6 text-center">No categories yet — record an expense first to create one.</p>
+            ) : (
+              <div className="divide-y divide-surface-700 -mx-6">
+                {categories.filter((c) => !c.is_income).map((c) => (
+                  <div key={c.id} className="flex items-center gap-3 px-6 py-2.5">
+                    <span className="text-sm text-slate-300 flex-1 min-w-0 truncate">{c.name}</span>
+                    <select
+                      className="input text-sm py-1.5 w-56 shrink-0"
+                      value={c.account ?? ''}
+                      disabled={savingCategoryId === c.id}
+                      onChange={(e) => handleMapCategoryAccount(c.id, e.target.value)}
+                    >
+                      <option value="">— General expense account —</option>
+                      {glAccounts.map((a) => (
+                        <option key={a.id} value={a.id}>{a.code} · {a.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}

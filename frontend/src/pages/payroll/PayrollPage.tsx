@@ -276,7 +276,6 @@ export default function PayrollPage() {
   useEffect(() => {
     if (pageTab === 'annual_tax') void loadAnnualPaye()
     if (pageTab === 'register') void loadRegister()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageTab, analyticsYear])
 
   // ── PAYE Remittance state ────────────────────────────────────────────────────

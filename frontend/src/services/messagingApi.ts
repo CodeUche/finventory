@@ -20,6 +20,7 @@ export interface ConversationParticipant {
   conversation: string
   user: string
   user_email: string | null
+  user_full_name: string | null
   role: string
   joined_at: string
   last_read_seq: number
@@ -59,6 +60,7 @@ export interface Message {
   conversation: string
   sender: string | null
   sender_email: string | null
+  sender_name: string | null
   body: string
   seq: number
   client_nonce: string | null
@@ -91,9 +93,21 @@ export function newClientNonce(): string {
   return `nonce-${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
+// api.ts caches every GET for 5 minutes by default (a genuinely fresh-cache
+// gate meant for list/detail pages) — with no per-endpoint exemption. That
+// silently broke polling here: the FIRST unread_count/conversations/messages
+// response got served back unchanged for the next 5 minutes regardless of
+// what happened server-side, so the unread badge, the Seen indicator, and
+// even new messages arriving in an open thread never updated until the
+// window expired. Found the hard way — see api.ts's own `X-Bypass-Cache`
+// check, which existed but had no caller anywhere in the codebase before
+// this. These three calls are the ones this feature's polling depends on;
+// this file does not attempt to fix the cache gate for every other poller.
+const BYPASS_CACHE = { headers: { 'X-Bypass-Cache': '1' } }
+
 export const messagingApi = {
   conversations: (params?: { archived?: boolean }) =>
-    api.get<{ results: Conversation[] } | Conversation[]>('/messaging/conversations/', { params }),
+    api.get<{ results: Conversation[] } | Conversation[]>('/messaging/conversations/', { params, ...BYPASS_CACHE }),
 
   getOrCreateDirect: (otherUserId: string) =>
     api.post<Conversation>('/messaging/conversations/get_or_create_direct/', {
@@ -103,6 +117,7 @@ export const messagingApi = {
   messages: (conversationId: string, opts?: { before?: number; limit?: number }) =>
     api.get<MessagePage>(`/messaging/conversations/${conversationId}/messages/`, {
       params: opts,
+      ...BYPASS_CACHE,
     }),
 
   /**
@@ -142,7 +157,7 @@ export const messagingApi = {
     )
   },
 
-  unreadCount: () => api.get<{ unread_count: number }>('/messaging/unread_count/'),
+  unreadCount: () => api.get<{ unread_count: number }>('/messaging/unread_count/', BYPASS_CACHE),
 
   partnerInbox: () => api.get<{ results: PartnerInboxRow[] }>('/messaging/partner_inbox/'),
 

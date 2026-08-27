@@ -17,12 +17,24 @@ const ALL_ORDER_TYPES = [
   { key: 'delivery', label: 'Delivery' },
   { key: 'room_service', label: 'Room Service', restaurantOnly: true },
 ]
-const TENDER_METHODS = ['cash', 'card', 'bank_transfer', 'pos']
+// settingsKey maps each on-the-wire tender method to Organisation.enabled_payment_types
+// (Settings → Payments → Accepted Tender Types). 'card' and 'pos' both mean
+// "card payment" here — kept as separate wire values since that's what's
+// already stored on past orders, but they toggle together.
+const TENDER_METHODS: { value: string; settingsKey: string }[] = [
+  { value: 'cash', settingsKey: 'cash' },
+  { value: 'card', settingsKey: 'card' },
+  { value: 'pos', settingsKey: 'card' },
+  { value: 'bank_transfer', settingsKey: 'bank_transfer' },
+  { value: 'wallet', settingsKey: 'wallet' },
+]
 
 export default function RestaurantPOSPage() {
   const organisation = useAuthStore((s) => s.organisation)
   const isRestaurant = (organisation as { business_type?: string } | null)?.business_type === 'restaurant'
   const orderTypes = ALL_ORDER_TYPES.filter((t) => isRestaurant || !t.restaurantOnly)
+  const enabledTenderMethods = TENDER_METHODS.filter((m) =>
+    (organisation?.enabled_payment_types ?? TENDER_METHODS.map((x) => x.settingsKey)).includes(m.settingsKey))
   const [products, setProducts] = useState<Product[]>([])
   const [tables, setTables] = useState<Table[]>([])
   const [search, setSearch] = useState('')
@@ -250,7 +262,7 @@ export default function RestaurantPOSPage() {
                 <div key={i} className="flex gap-2">
                   <select className="input w-32 text-sm" value={t.method}
                     onChange={(e) => setTenders((ts) => ts.map((x, j) => j === i ? { ...x, method: e.target.value } : x))}>
-                    {TENDER_METHODS.map((m) => <option key={m} value={m}>{m.replace('_', ' ')}</option>)}
+                    {enabledTenderMethods.map((m) => <option key={m.value} value={m.value}>{m.value.replace('_', ' ')}</option>)}
                   </select>
                   <input className="input flex-1 text-sm" placeholder="Amount" value={t.amount} inputMode="decimal"
                     onChange={(e) => setTenders((ts) => ts.map((x, j) => j === i ? { ...x, amount: e.target.value } : x))} />

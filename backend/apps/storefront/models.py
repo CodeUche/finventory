@@ -45,6 +45,19 @@ class Storefront(TenantAwareModel):
         max_length=200, blank=True,
         help_text="e.g. 'Delivery within Ikeja, ₦1,500'.",
     )
+    # Delivery pricing — scoped deliberately to flat-rate + a free-delivery
+    # cutoff. No per-km pricing: that needs geocoding/distance infrastructure
+    # this codebase doesn't have. Both fields are optional so a merchant who
+    # only wants the free-text delivery_note (the old behaviour) sees no
+    # charge added at checkout.
+    free_delivery_threshold = MoneyField(
+        null=True, blank=True, default=None,
+        help_text="Orders at or above this subtotal skip the delivery charge. Blank means no free-delivery rule.",
+    )
+    fixed_delivery_charge = MoneyField(
+        default=0,
+        help_text="Flat delivery fee added at checkout for delivery orders, unless the free-delivery threshold is met.",
+    )
     accent_colour = models.CharField(max_length=9, blank=True, default="#12694A")
 
     # Ordering controls

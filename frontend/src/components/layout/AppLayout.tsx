@@ -193,7 +193,6 @@ export default function AppLayout() {
       // org-list request fails (e.g. cold-start timeout on Railway).
       setOrgListLoaded(true)
     })
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, online, _appRefreshTick])
 
   // Load the current user's role + module permissions from the API.
@@ -238,7 +237,6 @@ export default function AppLayout() {
         setMembership('viewer', {})
       }
     })
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [organisation?.id, setMembership, online, _appRefreshTick])
 
   // Load the active subscription plan's module list for sidebar gating.
@@ -272,7 +270,6 @@ export default function AppLayout() {
       if (err?.response) { setPlanModules(null); setPlanTaxEngine(null); setPlanName(null) }
       setPlanLoaded(true)
     })
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [organisation?.id, user?.is_superuser, setPlanModules, setPlanTaxEngine, setPlanName, setSubscriptionExpired, online, _appRefreshTick])
 
   const handlePaywallDismiss = () => {

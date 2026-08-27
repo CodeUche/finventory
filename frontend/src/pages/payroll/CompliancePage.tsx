@@ -51,7 +51,13 @@ export default function CompliancePage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const params: Record<string, string> = {}
+      // This screen filters and totals client-side, so it needs every
+      // obligation — not the first page. The list is paginated at 25 by
+      // default, and reading only `results` silently dropped everything past
+      // that: an organisation with 50 obligations saw 25, with no pager and no
+      // hint any were missing. On a statutory-remittance screen a hidden row is
+      // a missed filing, so pull the lot (the paginator allows up to 5000).
+      const params: Record<string, string> = { page_size: '5000' }
       if (typeFilter) params.remittance_type = typeFilter
       if (statusFilter) params.status = statusFilter
       const [listRes, sumRes] = await Promise.all([

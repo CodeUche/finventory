@@ -18,6 +18,16 @@ class ExpenseCategory(TenantAwareModel):
     is_income = models.BooleanField(
         default=False, help_text="True for income categories (e.g., miscellaneous income)"
     )
+    # Optional link to the real Chart of Accounts. When set, expenses posted
+    # in this category route their GL debit to this specific account instead
+    # of the shared general_expense_account bucket (apps/accounting/services.py
+    # post_expense_journal). Null by default — fully backward compatible;
+    # every pre-existing category keeps posting to general_expense_account
+    # exactly as before until a human opts a category in.
+    account = models.ForeignKey(
+        'accounting.Account', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='expense_categories',
+    )
 
     class Meta(TenantAwareModel.Meta):
         # Unique among LIVE rows only — deletion is soft, so deleting the

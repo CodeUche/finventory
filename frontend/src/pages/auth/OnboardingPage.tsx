@@ -238,7 +238,6 @@ export default function OnboardingPage() {
   useEffect(() => {
     if (user?.is_sub_account) { navigate('/dashboard', { replace: true }); return }
     if (orgInitialized && hadOrgAtMount.current) { navigate('/dashboard', { replace: true }); return }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.is_sub_account, orgInitialized])
 
   // Step 0: workspace, 1: questionnaire, 2: plan selection, 3: partner enrollment
@@ -278,7 +277,6 @@ export default function OnboardingPage() {
       }).catch(() => {})
     }
     return () => { if (pollRef.current) clearInterval(pollRef.current) }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // ── Step 0 ──────────────────────────────────────────────────────────────────

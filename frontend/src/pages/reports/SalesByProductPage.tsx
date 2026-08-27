@@ -67,7 +67,7 @@ export default function SalesByProductPage() {
     } finally {
       setLoading(false)
     }
-  }, [period]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [period])
 
   useEffect(() => { load() }, [load])
   useDataRefresh(load)

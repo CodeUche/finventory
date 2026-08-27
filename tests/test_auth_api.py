@@ -18,6 +18,7 @@ class TestRegistration:
             "last_name": "User",
             "password": "SecurePass2024!",
             "password_confirm": "SecurePass2024!",
+            "terms_accepted": True,
         }, format="json")
         assert response.status_code == 201
         assert "message" in response.data
@@ -30,8 +31,30 @@ class TestRegistration:
             "last_name": "B",
             "password": "Pass123456!",
             "password_confirm": "WrongPass!",
+            "terms_accepted": True,
         }, format="json")
         assert response.status_code == 400
+        # Envelope shape varies; what matters is that it failed on the
+        # password check rather than being short-circuited by the
+        # clickwrap gate, which is what used to happen here.
+        assert "password_confirm" in str(response.data)
+
+    def test_register_requires_accepting_the_terms(self, api_client, db):
+        """Registration without clickwrap acceptance is refused.
+
+        Acceptance of the Terms, Privacy Policy and DPA is a legal control
+        recorded server-side, so it must be rejected here and not only hidden
+        behind a disabled button in the UI.
+        """
+        response = api_client.post("/api/v1/auth/register/", {
+            "email": "noterms@test.com",
+            "first_name": "No",
+            "last_name": "Terms",
+            "password": "SecurePass2024!",
+            "password_confirm": "SecurePass2024!",
+        }, format="json")
+        assert response.status_code == 400
+        assert response.data["error"]["code"] == "terms_required"
 
     def test_register_established_duplicate_email(self, api_client, user, db):
         """Registering with an email that has an active org membership should return 400."""
@@ -44,8 +67,10 @@ class TestRegistration:
             "last_name": "User",
             "password": "Password2024!",
             "password_confirm": "Password2024!",
+            "terms_accepted": True,
         }, format="json")
         assert response.status_code == 400
+        assert response.data["error"]["code"] == "email_taken"
 
 
 @pytest.mark.integration

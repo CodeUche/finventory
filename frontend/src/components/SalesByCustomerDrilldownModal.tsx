@@ -79,7 +79,6 @@ export default function SalesByCustomerDrilldownModal({ open, onClose, customerI
       setMaxAmount('')
       load()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, customerId])
 
   const handleFilter = () => load()
