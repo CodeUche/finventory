@@ -20,6 +20,7 @@ export interface ConversationParticipant {
   conversation: string
   user: string
   user_email: string | null
+  user_full_name: string | null
   role: string
   joined_at: string
   last_read_seq: number
@@ -59,6 +60,7 @@ export interface Message {
   conversation: string
   sender: string | null
   sender_email: string | null
+  sender_name: string | null
   body: string
   seq: number
   client_nonce: string | null

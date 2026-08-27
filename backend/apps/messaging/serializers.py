@@ -32,14 +32,22 @@ class MessageAttachmentSerializer(serializers.ModelSerializer):
         return request.build_absolute_uri(path) if request is not None else path
 
 
+def _display_name(user) -> str | None:
+    if user is None:
+        return None
+    full = f"{user.first_name} {user.last_name}".strip()
+    return full or user.email
+
+
 class MessageSerializer(serializers.ModelSerializer):
     attachments = MessageAttachmentSerializer(many=True, read_only=True)
     sender_email = serializers.SerializerMethodField()
+    sender_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Message
         fields = [
-            "id", "conversation", "sender", "sender_email", "body", "seq",
+            "id", "conversation", "sender", "sender_email", "sender_name", "body", "seq",
             "client_nonce", "attachments", "is_deleted", "created_at", "updated_at",
         ]
         read_only_fields = ["id", "conversation", "sender", "seq", "created_at", "updated_at"]
@@ -47,20 +55,27 @@ class MessageSerializer(serializers.ModelSerializer):
     def get_sender_email(self, obj):
         return obj.sender.email if obj.sender_id else None
 
+    def get_sender_name(self, obj):
+        return _display_name(obj.sender)
+
 
 class ConversationParticipantSerializer(serializers.ModelSerializer):
     user_email = serializers.SerializerMethodField()
+    user_full_name = serializers.SerializerMethodField()
 
     class Meta:
         model = ConversationParticipant
         fields = [
-            "id", "conversation", "user", "user_email", "role",
+            "id", "conversation", "user", "user_email", "user_full_name", "role",
             "joined_at", "last_read_seq", "muted", "left_at",
         ]
         read_only_fields = ["id", "conversation", "joined_at"]
 
     def get_user_email(self, obj):
         return obj.user.email if obj.user_id else None
+
+    def get_user_full_name(self, obj):
+        return _display_name(obj.user)
 
 
 class ConversationSerializer(serializers.ModelSerializer):
