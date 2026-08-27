@@ -66,6 +66,7 @@ import {
   Globe as _Globe,
   GraduationCap as _GraduationCap,
   GridFour as _GridFour,
+  GridNine as _GridNine,
   HardDrive as _HardDrive,
   House as _House,
   Info as _Info,
@@ -73,6 +74,7 @@ import {
   Layout as _Layout,
   Lightning as _Lightning,
   List as _List,
+  ListBullets as _ListBullets,
   Lock as _Lock,
   LockKey as _LockKey,
   LockOpen as _LockOpen,
@@ -207,6 +209,7 @@ export const Gift = mk(_Gift)
 export const GitBranch = mk(_GitBranch)
 export const Globe = mk(_Globe)
 export const GraduationCap = mk(_GraduationCap)
+export const Grid3x3 = mk(_GridNine)
 export const HardDrive = mk(_HardDrive)
 export const HelpCircle = mk(_Question)
 export const History = mk(_ClockCounterClockwise)
@@ -220,6 +223,7 @@ export const Layers = mk(_StackSimple)
 export const Layout = mk(_Layout)
 export const LayoutDashboard = mk(_SquaresFour)
 export const LayoutGrid = mk(_GridFour)
+export const LayoutList = mk(_ListBullets)
 export const Loader2 = mk(_CircleNotch)
 export const Lock = mk(_Lock)
 export const LockKeyhole = mk(_LockKey)

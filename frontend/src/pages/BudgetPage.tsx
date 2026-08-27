@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
-import { Plus, X, PieChart, Loader2, ChevronDown, ChevronUp, HelpCircle, RefreshCw, BarChart3, ShieldCheck, Landmark, Briefcase } from 'lucide-react'
+import { Plus, X, PieChart, Loader2, ChevronDown, ChevronUp, HelpCircle, RefreshCw, BarChart3, ShieldCheck, Landmark, Briefcase, Grid3x3, LayoutList, LayoutGrid } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { budgetApi, accountingApi, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatAmountInput, stripCommas } from '@/lib/utils'
+import { sumBudgetedAmount } from '@/lib/budgetGrid'
 import AmountInput from '@/components/AmountInput'
 import DateInput from '@/components/DateInput'
+import BudgetGridEditor from '@/components/BudgetGridEditor'
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from '@/lib/categories'
 import { useAuthStore } from '@/store/authStore'
 import type { Budget, Account } from '@/types'
@@ -66,6 +68,8 @@ export default function BudgetPage() {
   const [activatingBudget, setActivatingBudget] = useState<string | null>(null)
   const [approvingBudget, setApprovingBudget] = useState<string | null>(null)
   const [showVarianceHelp, setShowVarianceHelp] = useState(false)
+  const [gridEditorBudget, setGridEditorBudget] = useState<Budget | null>(null)
+  const [viewMode, setViewMode] = useState<'list' | 'grid'>('list')
 
   const load = async () => {
     setLoading(true)
@@ -197,6 +201,22 @@ export default function BudgetPage() {
           <button onClick={() => { bypassNextGets(); load() }} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
           </button>
+          <div className="flex items-center rounded-lg border border-surface-700 overflow-hidden">
+            <button
+              onClick={() => setViewMode('list')}
+              title="List view"
+              className={`p-2 transition-colors ${viewMode === 'list' ? 'bg-brand-500/20 text-brand-400' : 'text-slate-500 hover:text-white'}`}
+            >
+              <LayoutList size={16} />
+            </button>
+            <button
+              onClick={() => setViewMode('grid')}
+              title="Grid view"
+              className={`p-2 transition-colors ${viewMode === 'grid' ? 'bg-brand-500/20 text-brand-400' : 'text-slate-500 hover:text-white'}`}
+            >
+              <LayoutGrid size={16} />
+            </button>
+          </div>
           <Link to="/budgets/monitoring" className="btn-ghost inline-flex items-center gap-2 text-sm">
             <BarChart3 size={16} /> Monitoring
           </Link>
@@ -244,6 +264,37 @@ export default function BudgetPage() {
             <Plus size={14} /> Create First Budget
           </button>
         </div>
+      ) : viewMode === 'grid' ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {budgets.map((b) => (
+            <button
+              key={b.id}
+              onClick={() => { setViewMode('list'); setExpandedBudget(b.id) }}
+              className="card p-5 text-left hover:border-surface-500 transition-colors"
+            >
+              <div className="flex items-start justify-between gap-2 mb-2">
+                <p className="text-white font-semibold leading-tight">{b.name}</p>
+                <span className={STATUS_BADGE[b.status] ?? 'badge-slate'}>{b.status}</span>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap mb-3">
+                <span className={`${TYPE_BADGE[b.budget_type] ?? 'badge-slate'} inline-flex items-center gap-1`}>
+                  {b.budget_type === 'capital' ? <Landmark size={11} /> : <Briefcase size={11} />}
+                  {b.budget_type === 'capital' ? 'Capital' : 'Operational'}
+                </span>
+                <span className="text-slate-500 text-xs">{b.fiscal_year} · {b.period_type}</span>
+              </div>
+              <p className="text-2xl font-mono text-white mb-1">{formatCurrency(sumBudgetedAmount(b.lines))}</p>
+              <p className="text-slate-500 text-xs mb-2">{b.lines.length} line{b.lines.length !== 1 ? 's' : ''} budgeted</p>
+              {b.approved_by ? (
+                <p className="text-emerald-400/80 text-xs flex items-center gap-1">
+                  <ShieldCheck size={11} /> Approved by {b.approved_by_name || 'a manager'}
+                </p>
+              ) : (
+                <p className="text-slate-600 text-xs">Not yet approved</p>
+              )}
+            </button>
+          ))}
+        </div>
       ) : (
         <div className="space-y-4">
           {budgets.map((b) => (
@@ -273,6 +324,13 @@ export default function BudgetPage() {
                   <span className={STATUS_BADGE[b.status] ?? 'badge-slate'}>{b.status}</span>
                   <button onClick={() => { setAddLineBudgetId(b.id); setLineForm(BLANK_LINE); setAccountTouched(false) }} className="text-xs px-2.5 py-1 rounded-lg bg-brand-500/15 text-brand-400 hover:bg-brand-500/25 transition-colors">
                     + Line
+                  </button>
+                  <button
+                    onClick={() => setGridEditorBudget(b)}
+                    className="text-xs px-2.5 py-1 rounded-lg bg-surface-700 text-slate-300 hover:bg-surface-600 transition-colors inline-flex items-center gap-1"
+                    title="Build/edit this budget's lines in a 12-month grid"
+                  >
+                    <Grid3x3 size={11} /> Monthly Grid
                   </button>
                   {!b.approved_by && b.status !== 'closed' && isManagerOrAbove(memberRole, user?.is_superuser) && (
                     <button
@@ -538,6 +596,30 @@ export default function BudgetPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Monthly Grid Editor — alternative bulk entry mode alongside the
+          single-line Add Budget Line modal above, which is untouched. */}
+      {gridEditorBudget && (
+        <BudgetGridEditor
+          budget={gridEditorBudget}
+          accounts={accounts}
+          onClose={() => setGridEditorBudget(null)}
+          onSaved={() => {
+            // bulk_lines' URL has a UUID mid-path (/budgets/{id}/bulk_lines/,
+            // not a trailing one), so the axios write-through cache's
+            // invalidation heuristic (buildListUrl, keyed on a TRAILING
+            // UUID) can't match it and falls back to invalidating
+            // /budgets/{id}/ instead of the actual /budgets/ list — the same
+            // gap already documented for other action-suffixed endpoints in
+            // services/api.ts. bypassNextGets() sidesteps it the same way
+            // the header's manual Refresh button already does, so the list
+            // reflects the save immediately instead of up to 5 minutes stale.
+            setGridEditorBudget(null)
+            bypassNextGets()
+            load()
+          }}
+        />
       )}
     </div>
   )

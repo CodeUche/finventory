@@ -1710,6 +1710,11 @@ export const budgetApi = {
   update: (id: string, data: object) => api.patch(`/budgets/${id}/`, data),
   variance: (id: string) => api.get(`/budgets/${id}/variance/`),
   addLine: (id: string, data: object) => api.post(`/budgets/${id}/add_line/`, data),
+  /** Bulk upsert for the monthly grid editor — a flat array of line
+   * payloads (same shape as addLine's body). Matched to existing lines by
+   * (category_name, period_month) server-side; unmatched payloads create
+   * new lines. Single atomic transaction — see apps/budgets/views.py. */
+  bulkLines: (id: string, lines: object[]) => api.post(`/budgets/${id}/bulk_lines/`, lines),
   approve: (id: string) => api.post(`/budgets/${id}/approve/`),
   /** Flat, cross-budget list of every line + its variance data, for the
    * Budget Monitoring page. params: { budget_type?, status? } — status

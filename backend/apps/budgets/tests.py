@@ -4,6 +4,7 @@ variance fix (an expense explicitly linked to Budget A must never be
 attributed to Budget B just because both have a same-named category)."""
 
 from decimal import Decimal
+from unittest.mock import patch
 
 from django.test import TestCase
 from django.utils import timezone
@@ -479,3 +480,148 @@ class BudgetLineAccountTenantIsolationTests(TestCase):
         })
         self.assertEqual(res.status_code, 400, msg=str(res.data))
         self.assertEqual(budget.lines.count(), 0)
+
+
+class BudgetBulkLinesTests(TestCase):
+    """Coverage for POST /budgets/{id}/bulk_lines/ — the monthly grid
+    editor's bulk upsert endpoint (Phase 3). add_line is untouched by this
+    addition; these tests are purely additive alongside Phase 1/2 coverage
+    above."""
+
+    def setUp(self):
+        self.owner = _make_user("bulk_owner@example.com")
+        self.org = _make_org(self.owner, "Bulk Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.owner, self.org)
+        self.budget = Budget.objects.create(
+            organisation=self.org, name="2026 Grid Budget", fiscal_year=2026,
+        )
+        self.account = Account.objects.get(organisation=self.org, code="6200")
+
+    def test_bulk_lines_creates_new_lines(self):
+        payload = [
+            {"category_name": "Utilities", "category_type": "expense", "period_month": 1, "budgeted_amount": "10000"},
+            {"category_name": "Utilities", "category_type": "expense", "period_month": 2, "budgeted_amount": "11000"},
+            {"category_name": "Rent", "category_type": "expense", "period_month": 1, "budgeted_amount": "50000"},
+        ]
+        res = self.client.post(f"/api/v1/budgets/{self.budget.id}/bulk_lines/", payload, format="json")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.assertEqual(res.data["created"], 3)
+        self.assertEqual(res.data["updated"], 0)
+        self.assertEqual(BudgetLine.objects.filter(budget=self.budget).count(), 3)
+        jan_util = BudgetLine.objects.get(budget=self.budget, category_name="Utilities", period_month=1)
+        self.assertEqual(jan_util.budgeted_amount, Decimal("10000"))
+
+    def test_bulk_lines_updates_existing_lines_matched_by_category_and_month(self):
+        existing = BudgetLine.objects.create(
+            organisation=self.org, budget=self.budget, category_name="Utilities",
+            category_type="expense", period_month=1, budgeted_amount=Decimal("5000"),
+        )
+        payload = [
+            {"category_name": "Utilities", "category_type": "expense", "period_month": 1, "budgeted_amount": "9999"},
+        ]
+        res = self.client.post(f"/api/v1/budgets/{self.budget.id}/bulk_lines/", payload, format="json")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.assertEqual(res.data["created"], 0)
+        self.assertEqual(res.data["updated"], 1)
+        self.assertEqual(BudgetLine.objects.filter(budget=self.budget).count(), 1)
+        existing.refresh_from_db()
+        self.assertEqual(existing.budgeted_amount, Decimal("9999"))
+
+    def test_bulk_lines_does_not_touch_lines_outside_submitted_set(self):
+        rent = BudgetLine.objects.create(
+            organisation=self.org, budget=self.budget, category_name="Rent",
+            category_type="expense", period_month=1, budgeted_amount=Decimal("20000"),
+        )
+        payload = [
+            {"category_name": "Utilities", "category_type": "expense", "period_month": 1, "budgeted_amount": "3000"},
+        ]
+        res = self.client.post(f"/api/v1/budgets/{self.budget.id}/bulk_lines/", payload, format="json")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        rent.refresh_from_db()
+        self.assertEqual(rent.budgeted_amount, Decimal("20000"))
+        self.assertEqual(BudgetLine.objects.filter(budget=self.budget).count(), 2)
+
+    def test_bulk_lines_rejects_foreign_org_account(self):
+        other_owner = _make_user("bulk_other_owner@example.com")
+        other_org = _make_org(other_owner, "Bulk Other Org")
+        foreign_account = Account.objects.get(organisation=other_org, code="6200")
+        payload = [
+            {"category_name": "Utilities", "category_type": "expense", "period_month": 1, "budgeted_amount": "1000"},
+            {"category_name": "Rent", "category_type": "expense", "period_month": 1, "budgeted_amount": "2000",
+             "account": str(foreign_account.id)},
+        ]
+        res = self.client.post(f"/api/v1/budgets/{self.budget.id}/bulk_lines/", payload, format="json")
+        self.assertEqual(res.status_code, 400, msg=str(res.data))
+        # Nothing from the batch should be written — including the earlier,
+        # individually-valid item — because validation runs for the whole
+        # batch before any write happens.
+        self.assertEqual(BudgetLine.objects.filter(budget=self.budget).count(), 0)
+
+    def test_bulk_lines_accepts_own_org_account(self):
+        payload = [
+            {"category_name": "Utilities", "category_type": "expense", "period_month": 3,
+             "budgeted_amount": "7000", "account": str(self.account.id)},
+        ]
+        res = self.client.post(f"/api/v1/budgets/{self.budget.id}/bulk_lines/", payload, format="json")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        line = BudgetLine.objects.get(budget=self.budget, category_name="Utilities", period_month=3)
+        self.assertEqual(line.account_id, self.account.id)
+
+    def test_bulk_lines_atomic_rolls_back_on_mid_batch_write_failure(self):
+        """A validation-time rejection means nothing was ever written (proven
+        above). This test forces a failure DURING the write loop itself
+        (after validation already passed for both items) to prove the
+        transaction.atomic() block genuinely rolls back a partial write, not
+        merely that validation happened to catch the earlier test's problem
+        first."""
+        payload = [
+            {"category_name": "Utilities", "category_type": "expense", "period_month": 1, "budgeted_amount": "1000"},
+            {"category_name": "Rent", "category_type": "expense", "period_month": 1, "budgeted_amount": "2000"},
+        ]
+        original_save = BudgetLine.save
+        call_count = {"n": 0}
+
+        def flaky_save(self_line, *args, **kwargs):
+            call_count["n"] += 1
+            if call_count["n"] == 2:
+                raise RuntimeError("simulated mid-batch DB failure")
+            return original_save(self_line, *args, **kwargs)
+
+        with patch.object(BudgetLine, "save", flaky_save):
+            res = self.client.post(f"/api/v1/budgets/{self.budget.id}/bulk_lines/", payload, format="json")
+
+        # DRF's exception handler doesn't recognise a raw RuntimeError, so it
+        # surfaces as a 500 rather than propagating out of the test client —
+        # what matters here is the DB state, not the status code.
+        self.assertEqual(res.status_code, 500)
+        # The first line's save() succeeded before the second one failed, but
+        # both were inside the same transaction.atomic() block — neither may
+        # have persisted.
+        self.assertEqual(BudgetLine.objects.filter(budget=self.budget).count(), 0)
+
+    def test_bulk_lines_rejects_empty_list(self):
+        res = self.client.post(f"/api/v1/budgets/{self.budget.id}/bulk_lines/", [], format="json")
+        self.assertEqual(res.status_code, 400)
+
+    def test_add_line_still_works_after_bulk_lines_addition(self):
+        """Regression guard: add_line must be completely unaffected by the
+        bulk_lines addition and the _resolve_category refactor it shares."""
+        res = self.client.post(f"/api/v1/budgets/{self.budget.id}/add_line/", {
+            "category_name": "Misc", "category_type": "expense", "budgeted_amount": "1234",
+        })
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        self.assertEqual(BudgetLine.objects.filter(budget=self.budget).count(), 1)
+
+    def test_staff_cannot_bulk_lines(self):
+        """Same permission gate as the rest of the viewset (manager-or-above
+        / superuser) — no separate tier introduced for the grid editor."""
+        staff_user = _make_user("bulk_staff@example.com")
+        Membership.objects.create(
+            user=staff_user, organisation=self.org, role="staff", is_active=True,
+        )
+        staff_client = _auth_client(staff_user, self.org)
+        payload = [{"category_name": "Utilities", "category_type": "expense", "period_month": 1, "budgeted_amount": "1000"}]
+        res = staff_client.post(f"/api/v1/budgets/{self.budget.id}/bulk_lines/", payload, format="json")
+        self.assertEqual(res.status_code, 403)
+        self.assertEqual(BudgetLine.objects.filter(budget=self.budget).count(), 0)
