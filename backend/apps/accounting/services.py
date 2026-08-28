@@ -672,6 +672,82 @@ class AccountingService:
             )
 
     @staticmethod
+    @transaction.atomic
+    def set_item_opening_balance(organisation, product, warehouse, quantity, as_of_date,
+                                  unit_cost=None, side=None, created_by=None):
+        """
+        Take-on opening balance for a SINGLE inventory item at a single warehouse —
+        the product-creation and CSV-import path (as opposed to the Beginning
+        Balances wizard's batch `set_subledger_opening_balances`, which resyncs
+        every item/customer/supplier for a date in one go).
+
+        Reverses only THIS product+warehouse's prior take-on entry (keyed per-item,
+        mirroring `set_account_opening_balance`), so creating or re-editing one
+        product's opening stock never disturbs any other item, customer, supplier,
+        or the wizard's own date-scoped take-on. Posts Debit mapped inventory
+        account / Credit Take-On Suspense for a positive balance, reversed for a
+        negative one — the same accounting entries the wizard posts.
+
+        Passing quantity<=0 clears the item's opening balance (backs out the stock
+        and reverses the journal) without posting a new one.
+        """
+        from apps.inventory.models import StockMovement
+
+        as_of_date = AccountingService._coerce_date(as_of_date)
+        quantity = Decimal(str(quantity or 0))
+        side = AccountingService._normalise_side(side, 'debit')
+        if quantity < 0:
+            quantity, side = -quantity, ('credit' if side == 'debit' else 'debit')
+        signed_qty = quantity if side == 'debit' else -quantity
+
+        ref_prefix = f"opening-item-{product.id}-{warehouse.id}"
+
+        prior_qty = StockMovement.objects.filter(
+            organisation=organisation, movement_type='opening', reference=ref_prefix,
+        ).aggregate(q=Sum('quantity'))['q'] or Decimal('0')
+        delta = signed_qty - prior_qty
+
+        prior_entries = JournalEntry.objects.filter(
+            organisation=organisation, source_type='opening_balance',
+            source_ref__startswith=ref_prefix, status='posted',
+        )
+        AccountingService._reverse_prior_entries(prior_entries, actor=created_by)
+
+        unit_cost = Decimal(str(unit_cost if unit_cost is not None else (product.cost_price or 0)))
+        if delta != 0:
+            AccountingService._move_opening_stock(
+                organisation, product, warehouse, delta, unit_cost,
+                ref_prefix, as_of_date, created_by,
+            )
+
+        if signed_qty == 0:
+            return None
+
+        account = AccountingService._resolve_party_account(
+            organisation, product, 'inventory_account', 'inventory_account', '1200')
+        amount = abs(signed_qty * unit_cost)
+        if amount == 0:
+            return None
+
+        suspense = AccountingService.get_or_create_suspense_account(organisation)
+        if signed_qty > 0:
+            lines = [(account, amount, Decimal('0')), (suspense, Decimal('0'), amount)]
+        else:
+            lines = [(account, Decimal('0'), amount), (suspense, amount, Decimal('0'))]
+
+        import uuid
+        return AccountingService.post_journal_entry(
+            organisation,
+            description=f"Opening stock — {product.sku} at {warehouse.name} as of {as_of_date}",
+            entry_date=as_of_date,
+            lines=lines,
+            created_by=created_by,
+            ref='OPEN',
+            source_type='opening_balance',
+            source_ref=f"{ref_prefix}-{uuid.uuid4().hex[:12]}",
+        )
+
+    @staticmethod
     def _ledger_balance(account, as_of=None):
         """
         Posted-ledger balance for a single account, with the account's normal sign

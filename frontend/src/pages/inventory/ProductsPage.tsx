@@ -275,6 +275,7 @@ const BLANK_BATCH = {
   batch_number: '',
   manufacture_date: '',
   expiry_date: '',
+  as_of_date: new Date().toISOString().slice(0, 10),
 }
 
 const PRODUCT_TYPES = [
@@ -555,18 +556,20 @@ export default function ProductsPage() {
             } catch {
               toast.error('Batch could not be saved — add it from Batches & Lots page')
             }
-            // Record stock movement regardless of batch creation result so warehouse always has stock
+            // Post the opening balance regardless of batch creation result so the
+            // warehouse always has stock. Uses the GL-correct take-on path (Debit
+            // Inventory / Credit Take-On Suspense), not a plain stock adjustment.
             if (qty > 0) {
               try {
-                await inventoryApi.adjustStock({
-                  product_id: newProduct.id,
+                await inventoryApi.setProductOpeningBalance(newProduct.id, {
                   warehouse_id: batchForm.warehouse,
                   quantity: qty,
-                  reason: `Opening stock — batch ${batchForm.batch_number}`,
+                  unit_cost: stripCommas(form.cost_price) || undefined,
+                  as_of_date: batchForm.as_of_date || undefined,
                 })
                 toast.success('Product created with batch/lot')
               } catch {
-                toast.error('Opening stock could not be saved — add it from the Stock page')
+                toast.error('Opening stock could not be saved — add it from Beginning Balances')
               }
             } else {
               toast.success('Product created with batch/lot')
@@ -575,15 +578,15 @@ export default function ProductsPage() {
             // Simple opening stock (no batch tracking)
             if (qty > 0) {
               try {
-                await inventoryApi.adjustStock({
-                  product_id: newProduct.id,
+                await inventoryApi.setProductOpeningBalance(newProduct.id, {
                   warehouse_id: batchForm.warehouse,
                   quantity: qty,
-                  reason: 'Opening stock',
+                  unit_cost: stripCommas(form.cost_price) || undefined,
+                  as_of_date: batchForm.as_of_date || undefined,
                 })
                 toast.success('Product created with opening stock')
               } catch {
-                toast.error('Opening stock could not be saved — add it from the Stock page')
+                toast.error('Opening stock could not be saved — add it from Beginning Balances')
               }
             } else {
               toast.success('Product created')
@@ -1193,6 +1196,16 @@ export default function ProductsPage() {
                         <option value="">— Select location —</option>
                         {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
                       </select>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="label">Balance As At <FieldTooltip text="The date this opening balance is effective from. Posts a take-on journal (Debit Inventory / Credit Take-On Suspense) as of this date." /></label>
+                      <DateInput
+                        value={batchForm.as_of_date}
+                        onChange={(v) => setBatchForm((b) => ({ ...b, as_of_date: v }))}
+                        placeholder="DD/MM/YYYY"
+                      />
                     </div>
                   </div>
                   {/* Batch / Lot details — optional; if batch number provided, creates a tracked batch */}

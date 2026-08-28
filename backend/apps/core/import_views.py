@@ -586,15 +586,19 @@ class ImportProductsView(APIView):
                         if wh_new:
                             warehouses_created += 1
                         if qty > 0:
-                            with transaction.atomic():
-                                InventoryService.adjust_stock(
-                                    organisation=org,
-                                    product=obj,
-                                    warehouse=wh,
-                                    quantity=qty,
-                                    reason="Opening stock — CSV import",
-                                    created_by=request.user,
-                                )
+                            # GL-correct take-on: Debit mapped Inventory account /
+                            # Credit Take-On Suspense, scoped to this product+warehouse
+                            # so re-importing the same file only posts the delta
+                            # instead of doubling stock and the GL balance.
+                            from apps.accounting.services import AccountingService
+                            from django.utils import timezone
+                            AccountingService.set_item_opening_balance(
+                                org, obj, wh,
+                                quantity=qty,
+                                unit_cost=cost_price,
+                                as_of_date=timezone.now().date(),
+                                created_by=request.user,
+                            )
                             stock_assigned += 1
                     except Exception as exc:
                         errors.append({"row": row_num, "field": "warehouse",

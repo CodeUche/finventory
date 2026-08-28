@@ -1297,7 +1297,7 @@ function SideToggle({ value, onChange, className = '' }: {
 type OBTab = 'accounts' | 'customers' | 'suppliers' | 'items'
 type OBSide = 'debit' | 'credit'
 interface SubRow { id: string; label: string; amount: string; side: OBSide; accountLabel?: string }
-interface ItemRow { product_id: string; label: string; quantity: string; unit_cost: string; side: OBSide; accountLabel?: string }
+interface ItemRow { product_id: string; label: string; quantity: string; unit_cost: string; side: OBSide; accountLabel?: string; warehouse_id: string }
 
 export function OpeningBalancesModal({ accounts, onClose, onDone }: {
   accounts: Account[]
@@ -1328,6 +1328,7 @@ export function OpeningBalancesModal({ accounts, onClose, onDone }: {
   const [suppliers, setSuppliers] = useState<SubRow[]>([])
   const [items, setItems] = useState<ItemRow[]>([])
   const [loadedSub, setLoadedSub] = useState(false)
+  const [obWarehouses, setObWarehouses] = useState<{ id: string; name: string; is_default?: boolean }[]>([])
 
   // Footer text names the account the org has actually mapped, not a hardcoded code.
   const [mapping, setMapping] = useState<Record<string, string | null> | null>(null)
@@ -1353,10 +1354,11 @@ export function OpeningBalancesModal({ accounts, onClose, onDone }: {
     setLoadedSub(true)
     ;(async () => {
       try {
-        const [c, s, p] = await Promise.all([
+        const [c, s, p, w] = await Promise.all([
           customerApi.list({ page_size: 500 }),
           supplierApi.list({ page_size: 500 }),
           inventoryApi.products({ page_size: 500 }),
+          inventoryApi.warehouses(),
         ])
         type Party = { id: string; name: string }
         type Acct = { code?: string | null; name?: string | null }
@@ -1364,6 +1366,9 @@ export function OpeningBalancesModal({ accounts, onClose, onDone }: {
         const cust = (c.data.results ?? c.data) as (Party & { receivable_account_code?: string | null; receivable_account_name?: string | null })[]
         const sup = (s.data.results ?? s.data) as (Party & { payable_account_code?: string | null; payable_account_name?: string | null })[]
         const prod = (p.data.results ?? p.data) as (Party & { sku?: string; cost_price?: string | number; inventory_account_code?: string | null; inventory_account_name?: string | null })[]
+        const wh = (w.data.results ?? w.data) as { id: string; name: string; is_default?: boolean }[]
+        setObWarehouses(wh)
+        const defaultWh = wh.find((x) => x.is_default)?.id ?? wh[0]?.id ?? ''
         setCustomers(cust.map((x) => ({
           id: x.id, label: x.name, amount: '', side: 'debit',
           accountLabel: acctLabel({ code: x.receivable_account_code, name: x.receivable_account_name }),
@@ -1376,6 +1381,7 @@ export function OpeningBalancesModal({ accounts, onClose, onDone }: {
           product_id: x.id, label: `${x.sku ? x.sku + ' — ' : ''}${x.name}`,
           quantity: '', unit_cost: x.cost_price ? String(x.cost_price) : '', side: 'debit',
           accountLabel: acctLabel({ code: x.inventory_account_code, name: x.inventory_account_name }),
+          warehouse_id: defaultWh,
         })))
       } catch { toast.error('Failed to load sub-ledgers') }
     })()
@@ -1415,7 +1421,7 @@ export function OpeningBalancesModal({ accounts, onClose, onDone }: {
     suppliers: suppliers.filter((r) => parseFloat(stripCommas(r.amount) || '0') > 0)
       .map((r) => ({ id: r.id, amount: stripCommas(r.amount), side: r.side })),
     items: items.filter((r) => parseFloat(stripCommas(r.quantity) || '0') > 0)
-      .map((r) => ({ product_id: r.product_id, quantity: stripCommas(r.quantity), unit_cost: stripCommas(r.unit_cost), side: r.side })),
+      .map((r) => ({ product_id: r.product_id, quantity: stripCommas(r.quantity), unit_cost: stripCommas(r.unit_cost), side: r.side, warehouse_id: r.warehouse_id || undefined })),
   })
 
   const submit = async () => {
@@ -1531,16 +1537,20 @@ export function OpeningBalancesModal({ accounts, onClose, onDone }: {
               <div className="max-h-72 overflow-y-auto space-y-1.5 pr-1">
                 {items.map((r, i) => (
                   <div key={r.product_id} className="grid grid-cols-12 gap-2 items-center">
-                    <span className="col-span-4 text-sm text-slate-300 truncate" title={r.accountLabel ? `${r.label} → ${r.accountLabel}` : r.label}>
+                    <span className="col-span-3 text-sm text-slate-300 truncate" title={r.accountLabel ? `${r.label} → ${r.accountLabel}` : r.label}>
                       {r.label}
                       {r.accountLabel && <span className="block text-[10px] text-slate-500 truncate">{r.accountLabel}</span>}
                     </span>
                     <SideToggle className="col-span-2" value={r.side}
                       onChange={(s) => setItems((arr) => arr.map((x, idx) => idx === i ? { ...x, side: s } : x))} />
-                    <input className="input col-span-3" inputMode="decimal" placeholder="Qty" value={r.quantity}
+                    <input className="input col-span-2" inputMode="decimal" placeholder="Qty" value={r.quantity}
                       onChange={(e) => setItems((arr) => arr.map((x, idx) => idx === i ? { ...x, quantity: formatAmountInput(e.target.value) } : x))} />
-                    <input className="input col-span-3" inputMode="decimal" placeholder="Unit cost" value={r.unit_cost}
+                    <input className="input col-span-2" inputMode="decimal" placeholder="Unit cost" value={r.unit_cost}
                       onChange={(e) => setItems((arr) => arr.map((x, idx) => idx === i ? { ...x, unit_cost: formatAmountInput(e.target.value) } : x))} />
+                    <select className="input col-span-3" value={r.warehouse_id} title="Location"
+                      onChange={(e) => setItems((arr) => arr.map((x, idx) => idx === i ? { ...x, warehouse_id: e.target.value } : x))}>
+                      {obWarehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+                    </select>
                   </div>
                 ))}
               </div>

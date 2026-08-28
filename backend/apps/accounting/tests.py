@@ -1936,6 +1936,146 @@ class SubledgerAndAccountOpeningBalanceTests(TestCase):
         self.assertTrue(bs["balanced"], msg=str(bs))
 
 
+class ItemOpeningBalanceTests(TestCase):
+    """
+    Single-item take-on (`set_item_opening_balance`) — the GL-correct path used by
+    the New Product form and CSV import, as opposed to the Beginning Balances
+    wizard's batch `set_subledger_opening_balances`. Must never disturb other
+    items, customers, suppliers, or the wizard's own date-scoped take-on.
+    """
+
+    def setUp(self):
+        self.user = _make_user("item_ob@example.com")
+        self.org = _make_org(self.user, "Item OB Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+        from apps.inventory.models import Product, Warehouse
+        self.wh = Warehouse.objects.create(organisation=self.org, name="Main WH", is_default=True)
+        self.wh2 = Warehouse.objects.create(organisation=self.org, name="Branch WH")
+        self.prod = Product.objects.create(
+            organisation=self.org, sku="ITEM1", name="Rice",
+            cost_price=Decimal("50000"), selling_price=Decimal("65000"),
+        )
+
+    def test_posts_debit_inventory_credit_suspense(self):
+        entry = AccountingService.set_item_opening_balance(
+            self.org, self.prod, self.wh, quantity=Decimal("10"),
+            unit_cost=Decimal("45000"), as_of_date="2026-01-01", created_by=self.user,
+        )
+        self.assertIsNotNone(entry)
+        inv = Account.objects.get(organisation=self.org, code="1200")
+        suspense = Account.objects.get(organisation=self.org, code="3900")
+        self.assertAlmostEqual(float(inv.balance), 450000.0, places=2)
+        # Suspense is Equity (normal credit); Account.balance is credits − debits
+        # for equity, so a credit balance reads positive.
+        self.assertAlmostEqual(float(suspense.balance), 450000.0, places=2)
+
+        from apps.inventory.models import StockItem
+        stock = StockItem.objects.get(organisation=self.org, product=self.prod, warehouse=self.wh)
+        self.assertAlmostEqual(float(stock.quantity_on_hand), 10.0, places=2)
+
+        bs = AccountingService.balance_sheet(self.org)
+        self.assertTrue(bs["balanced"], msg=str(bs))
+
+    def test_reposting_corrects_in_place_without_doubling(self):
+        AccountingService.set_item_opening_balance(
+            self.org, self.prod, self.wh, quantity=Decimal("10"),
+            unit_cost=Decimal("45000"), as_of_date="2026-01-01", created_by=self.user,
+        )
+        AccountingService.set_item_opening_balance(
+            self.org, self.prod, self.wh, quantity=Decimal("25"),
+            unit_cost=Decimal("45000"), as_of_date="2026-01-01", created_by=self.user,
+        )
+        inv = Account.objects.get(organisation=self.org, code="1200")
+        self.assertAlmostEqual(float(inv.balance), 25 * 45000.0, places=2)
+
+        from apps.inventory.models import StockItem
+        stock = StockItem.objects.get(organisation=self.org, product=self.prod, warehouse=self.wh)
+        self.assertAlmostEqual(float(stock.quantity_on_hand), 25.0, places=2)
+
+    def test_negative_quantity_on_fresh_item_raises_clear_error(self):
+        """
+        A negative *quantity* take-on is meaningless for physical stock (you can't
+        take on -5 units of Rice) and is blocked by the same StockItem guard the
+        Beginning Balances wizard's `set_subledger_opening_balances` already relies
+        on (`InventoryService.record_movement` never allows quantity_on_hand < 0).
+        Unlike AR/AP, inventory has no legitimate negative-balance take-on case, so
+        this must raise a clear, actionable error rather than silently corrupting
+        the stock ledger.
+        """
+        with self.assertRaises(ValueError) as ctx:
+            AccountingService.set_item_opening_balance(
+                self.org, self.prod, self.wh, quantity=Decimal("-5"),
+                unit_cost=Decimal("1000"), as_of_date="2026-01-01", created_by=self.user,
+            )
+        self.assertIn("stock adjustment", str(ctx.exception))
+        # The rejected call must not have posted anything.
+        inv = Account.objects.get(organisation=self.org, code="1200")
+        self.assertAlmostEqual(float(inv.balance), 0.0, places=2)
+
+    def test_does_not_disturb_other_items_or_subledger_takeon(self):
+        from apps.inventory.models import Product
+        other = Product.objects.create(
+            organisation=self.org, sku="ITEM2", name="Beans",
+            cost_price=Decimal("20000"), selling_price=Decimal("30000"),
+        )
+        AccountingService.set_item_opening_balance(
+            self.org, self.prod, self.wh, quantity=Decimal("10"),
+            unit_cost=Decimal("45000"), as_of_date="2026-01-01", created_by=self.user,
+        )
+        # A second, unrelated item's take-on must add on top, not replace.
+        AccountingService.set_item_opening_balance(
+            self.org, other, self.wh, quantity=Decimal("4"),
+            unit_cost=Decimal("20000"), as_of_date="2026-01-05", created_by=self.user,
+        )
+        inv = Account.objects.get(organisation=self.org, code="1200")
+        self.assertAlmostEqual(float(inv.balance), 10 * 45000 + 4 * 20000, places=2)
+
+        from apps.inventory.models import StockItem
+        s1 = StockItem.objects.get(organisation=self.org, product=self.prod, warehouse=self.wh)
+        s2 = StockItem.objects.get(organisation=self.org, product=other, warehouse=self.wh)
+        self.assertAlmostEqual(float(s1.quantity_on_hand), 10.0, places=2)
+        self.assertAlmostEqual(float(s2.quantity_on_hand), 4.0, places=2)
+
+        bs = AccountingService.balance_sheet(self.org)
+        self.assertTrue(bs["balanced"], msg=str(bs))
+
+    def test_different_warehouses_tracked_independently(self):
+        AccountingService.set_item_opening_balance(
+            self.org, self.prod, self.wh, quantity=Decimal("10"),
+            unit_cost=Decimal("1000"), as_of_date="2026-01-01", created_by=self.user,
+        )
+        AccountingService.set_item_opening_balance(
+            self.org, self.prod, self.wh2, quantity=Decimal("6"),
+            unit_cost=Decimal("1000"), as_of_date="2026-01-01", created_by=self.user,
+        )
+        from apps.inventory.models import StockItem
+        s1 = StockItem.objects.get(organisation=self.org, product=self.prod, warehouse=self.wh)
+        s2 = StockItem.objects.get(organisation=self.org, product=self.prod, warehouse=self.wh2)
+        self.assertAlmostEqual(float(s1.quantity_on_hand), 10.0, places=2)
+        self.assertAlmostEqual(float(s2.quantity_on_hand), 6.0, places=2)
+        inv = Account.objects.get(organisation=self.org, code="1200")
+        self.assertAlmostEqual(float(inv.balance), 16000.0, places=2)
+
+    def test_api_endpoint_posts_opening_balance(self):
+        res = self.client.post(
+            f"/api/v1/inventory/products/{self.prod.id}/set-opening-balance/",
+            {"warehouse_id": str(self.wh.id), "quantity": "8", "unit_cost": "45000",
+             "as_of_date": "2026-01-01"},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        inv = Account.objects.get(organisation=self.org, code="1200")
+        self.assertAlmostEqual(float(inv.balance), 360000.0, places=2)
+
+    def test_api_endpoint_requires_warehouse(self):
+        res = self.client.post(
+            f"/api/v1/inventory/products/{self.prod.id}/set-opening-balance/",
+            {"quantity": "8"}, format="json",
+        )
+        self.assertEqual(res.status_code, 400)
+
+
 class AccountListingAndSummaryTests(TestCase):
     """The whole chart must be reachable through the API.
 

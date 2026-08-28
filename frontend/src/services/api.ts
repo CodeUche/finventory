@@ -1174,6 +1174,9 @@ export const inventoryApi = {
   updateWarehouse: (id: string, data: object) => api.patch(`/inventory/warehouses/${id}/`, data),
   deleteWarehouse: (id: string) => api.delete(`/inventory/warehouses/${id}/`),
   adjustStock: (data: object) => api.post('/inventory/movements/adjust/', data),
+  /** GL-correct opening balance for one product at one warehouse (Debit Inventory / Credit Take-On Suspense). */
+  setProductOpeningBalance: (productId: string, data: object) =>
+    api.post(`/inventory/products/${productId}/set-opening-balance/`, data),
   transferStock: (data: object) => api.post('/inventory/movements/transfer/', data),
   deleteStockItem: (id: string) => api.delete(`/inventory/stock/${id}/`),
   batches: (params?: object) => api.get('/inventory/batches/', { params }),

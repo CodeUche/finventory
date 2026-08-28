@@ -243,6 +243,55 @@ class ProductViewSet(FriendlyUniqueErrorMixin, TenantFilterMixin, viewsets.Model
 
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+    @action(detail=True, methods=["post"], url_path="set-opening-balance")
+    def set_opening_balance(self, request, pk=None):
+        """
+        POST /api/v1/inventory/products/<id>/set-opening-balance/
+        Body: { warehouse_id, quantity, unit_cost?, as_of_date?, side? }
+
+        GL-correct opening stock for ONE product at ONE warehouse — used by the
+        New Product form and CSV import. Posts Debit mapped inventory account /
+        Credit Take-On Suspense (reversed for a negative balance), matching the
+        Beginning Balances wizard's accounting entries, but scoped to this single
+        item so it never disturbs any other product, customer, or supplier
+        take-on. Re-posting (e.g. editing the opening qty later) corrects this
+        item's entry in place.
+        """
+        from datetime import date as _date
+        from apps.accounting.services import AccountingService
+
+        product = self.get_object()
+        org = self._get_organisation()
+        warehouse_id = request.data.get("warehouse_id")
+        if not warehouse_id:
+            return Response({"error": "warehouse_id is required"}, status=400)
+        try:
+            warehouse = Warehouse.objects.get(id=warehouse_id, organisation=org)
+        except Warehouse.DoesNotExist:
+            return Response({"error": "Warehouse not found"}, status=404)
+
+        as_of_str = request.data.get("as_of_date")
+        try:
+            as_of = _date.fromisoformat(as_of_str) if as_of_str else _date.today()
+        except (ValueError, TypeError):
+            return Response({"error": "as_of_date must be YYYY-MM-DD"}, status=400)
+
+        try:
+            AccountingService.set_item_opening_balance(
+                org, product, warehouse,
+                quantity=request.data.get("quantity", 0),
+                unit_cost=request.data.get("unit_cost"),
+                side=request.data.get("side"),
+                as_of_date=as_of,
+                created_by=request.user,
+            )
+        except ValueError as e:
+            return Response({"error": str(e)}, status=422)
+        except Exception as e:
+            return Response({"error": f"[{type(e).__name__}] {e}"}, status=422)
+
+        return Response(ProductSerializer(product, context={"request": request}).data)
+
     @action(detail=False, methods=["get"], url_path="low-stock")
     def low_stock(self, request):
         """GET /api/v1/inventory/products/low-stock/"""
