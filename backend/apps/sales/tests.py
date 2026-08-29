@@ -319,3 +319,114 @@ class InvoiceStatusBypassTests(TestCase):
         self.assertEqual(res.status_code, 200, res.content[:300])
         self.invoice.refresh_from_db()
         self.assertEqual(self.invoice.notes, "Customer asked to hold")
+
+
+class ProductHistoryOpeningBalanceTests(TestCase):
+    """
+    /sales/invoices/product_history/ must show a product's opening balance,
+    not just its sales — otherwise there is no way to see where a stock count
+    started. The opening row must be dated from the take-on's JournalEntry
+    (the date the user specified), not from StockMovement.created_at (the date
+    it happened to be recorded, which can be weeks later for a backdated
+    take-on).
+    """
+
+    def setUp(self):
+        from decimal import Decimal
+        self.user = _make_user("history_owner@example.com")
+        self.org = _make_org(self.user, "History Org")
+        self.client = _auth_client(self.user, self.org)
+        self.customer = _make_customer(self.org)
+        self.warehouse = _make_warehouse(self.org)
+        self.product = Product.objects.create(
+            organisation=self.org, sku="HIST-1", name="History Item",
+            product_type="physical", cost_price=Decimal("500"),
+            selling_price=Decimal("1000"), unit_of_measure="unit",
+        )
+
+    def test_opening_balance_row_uses_journal_entry_date_not_created_at(self):
+        from apps.accounting.services import AccountingService
+        AccountingService.set_item_opening_balance(
+            self.org, self.product, self.warehouse, quantity="20",
+            unit_cost="500", as_of_date="2026-01-01", created_by=self.user,
+        )
+        res = self.client.get(
+            "/api/v1/sales/invoices/product_history/", {"product_id": str(self.product.id)},
+        )
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        results = res.data["results"]
+        opening = [r for r in results if r["status"] == "opening"]
+        self.assertEqual(len(opening), 1, msg=results)
+        row = opening[0]
+        # Backdated to 2026-01-01 — must NOT show today's date (created_at).
+        self.assertEqual(row["issue_date"], "2026-01-01")
+        self.assertEqual(row["quantity"], "20.00")
+        self.assertEqual(row["unit_price"], "500.0000")
+        self.assertEqual(row["warehouse"], "Main")
+        self.assertEqual(row["invoice_number"], "Opening Balance")
+
+    def test_opening_balance_and_sale_both_appear(self):
+        from apps.accounting.services import AccountingService
+        AccountingService.set_item_opening_balance(
+            self.org, self.product, self.warehouse, quantity="20",
+            unit_cost="500", as_of_date="2026-01-01", created_by=self.user,
+        )
+        res = self.client.post(
+            "/api/v1/sales/invoices/",
+            {
+                "customer_id": str(self.customer.id),
+                "warehouse_id": str(self.warehouse.id),
+                "payment_method": "cash",
+                "items": [{"product_id": str(self.product.id), "quantity": 3, "unit_price": "1000.00"}],
+            },
+            format="json",
+        )
+        self.assertIn(res.status_code, (200, 201), msg=str(res.data))
+
+        res = self.client.get(
+            "/api/v1/sales/invoices/product_history/", {"product_id": str(self.product.id)},
+        )
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        results = res.data["results"]
+        statuses = [r["status"] for r in results]
+        self.assertIn("opening", statuses)
+        self.assertTrue(any(s != "opening" for s in statuses), msg=results)
+
+    def test_reposted_opening_balance_updates_row_not_duplicates(self):
+        """Correcting the opening qty must show ONE current row, not a growing history."""
+        from apps.accounting.services import AccountingService
+        AccountingService.set_item_opening_balance(
+            self.org, self.product, self.warehouse, quantity="20",
+            unit_cost="500", as_of_date="2026-01-01", created_by=self.user,
+        )
+        AccountingService.set_item_opening_balance(
+            self.org, self.product, self.warehouse, quantity="35",
+            unit_cost="500", as_of_date="2026-01-05", created_by=self.user,
+        )
+        res = self.client.get(
+            "/api/v1/sales/invoices/product_history/", {"product_id": str(self.product.id)},
+        )
+        opening = [r for r in res.data["results"] if r["status"] == "opening"]
+        self.assertEqual(len(opening), 1, msg=opening)
+        self.assertEqual(opening[0]["quantity"], "35.00")
+        self.assertEqual(opening[0]["issue_date"], "2026-01-05")
+
+    def test_no_opening_balance_means_no_synthetic_row(self):
+        res = self.client.get(
+            "/api/v1/sales/invoices/product_history/", {"product_id": str(self.product.id)},
+        )
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.assertEqual(res.data["results"], [])
+
+    def test_date_filter_applies_to_opening_row(self):
+        from apps.accounting.services import AccountingService
+        AccountingService.set_item_opening_balance(
+            self.org, self.product, self.warehouse, quantity="20",
+            unit_cost="500", as_of_date="2026-01-01", created_by=self.user,
+        )
+        res = self.client.get(
+            "/api/v1/sales/invoices/product_history/",
+            {"product_id": str(self.product.id), "date_from": "2026-02-01"},
+        )
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.assertEqual(res.data["results"], [])

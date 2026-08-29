@@ -934,7 +934,10 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
     @action(detail=False, methods=["get"])
     def product_history(self, request):
         """GET /api/v1/sales/invoices/product_history/?product_id=<uuid>
-        Returns all sale line items for a specific product (most recent first).
+        Returns all sale line items for a specific product (most recent first),
+        with a synthetic "Opening Balance" row prepended per warehouse that has
+        take-on stock — otherwise this view (and the "Sales History" modal it
+        backs) never shows where a product's stock count actually started.
         """
         org = self._get_organisation()
         product_id = request.query_params.get("product_id")
@@ -986,7 +989,59 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
                 }
             )
 
-        return Response({"product_name": product.name, "results": results})
+        # Opening balance — one row per warehouse with take-on stock, shaped like
+        # a SaleItem row so it slots into the same table/export without a
+        # frontend contract change. StockMovement has no date field of its own
+        # for a backdated take-on (created_at would show "today" rather than the
+        # date the user specified), so the real date is resolved from the linked
+        # opening-balance JournalEntry's entry_date instead.
+        import decimal
+        from apps.inventory.models import StockMovement
+        from apps.accounting.models import JournalEntry
+
+        opening_moves = list(
+            StockMovement.objects.filter(
+                organisation=org, product=product, movement_type="opening",
+            ).select_related("warehouse").order_by("warehouse_id", "-created_at")
+        )
+        qty_by_wh = {}
+        latest_by_wh = {}
+        for m in opening_moves:
+            qty_by_wh[m.warehouse_id] = qty_by_wh.get(m.warehouse_id, decimal.Decimal("0")) + m.quantity
+            latest_by_wh.setdefault(m.warehouse_id, m)  # first seen per warehouse = most recent (order_by -created_at)
+
+        date_from_d = datetime.date.fromisoformat(date_from) if date_from else None
+        date_to_d = datetime.date.fromisoformat(date_to) if date_to else None
+
+        opening_rows = []
+        for wh_id, qty in qty_by_wh.items():
+            if qty == 0:
+                continue
+            latest = latest_by_wh[wh_id]
+            je = JournalEntry.objects.filter(
+                organisation=org, source_type="opening_balance",
+                source_ref__startswith=latest.reference,
+            ).order_by("-created_at").first()
+            take_on_date = je.entry_date if je else latest.created_at.date()
+            if date_from_d and take_on_date < date_from_d:
+                continue
+            if date_to_d and take_on_date > date_to_d:
+                continue
+            opening_rows.append({
+                "invoice_id": f"opening-{wh_id}",
+                "invoice_number": "Opening Balance",
+                "issue_date": take_on_date.isoformat(),
+                "customer_name": "—",
+                "sold_by": "—",
+                "warehouse": latest.warehouse.name,
+                "payment_method": "",
+                "quantity": str(qty),
+                "unit_price": str(latest.unit_cost),
+                "line_total": str(qty * latest.unit_cost),
+                "status": "opening",
+            })
+
+        return Response({"product_name": product.name, "results": opening_rows + results})
 
 
 class InvoiceFolderViewSet(TenantFilterMixin, viewsets.ModelViewSet):
