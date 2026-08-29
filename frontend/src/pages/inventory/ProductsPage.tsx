@@ -264,7 +264,7 @@ const BLANK = {
   reorder_level: '10', max_stock_level: '', quantity_in_pack: '1',
   alcohol_percentage: '', volume_ml: '',
   is_taxable: false, tax_class: '',
-  inventory_account: '',
+  inventory_account: '', sales_account: '', cogs_account: '', wages_account: '',
   is_active: true,
   description: '', barcode: '', category: '',
 }
@@ -407,6 +407,9 @@ export default function ProductsPage() {
       is_taxable: p.is_taxable ?? false,
       tax_class: p.tax_class ?? '',
       inventory_account: p.inventory_account ?? '',
+      sales_account: (p as any).sales_account ?? '',
+      cogs_account: (p as any).cogs_account ?? '',
+      wages_account: (p as any).wages_account ?? '',
       is_active: p.is_active ?? true,
       description: (p as any).description ?? '',
       barcode: (p as any).barcode ?? '',
@@ -478,10 +481,18 @@ export default function ProductsPage() {
     else if (!payload.tax_class) payload.tax_class = null
     // Blank GL override means "use the organisation default"
     if (!payload.inventory_account) payload.inventory_account = null
+    if (!payload.sales_account) payload.sales_account = null
+    if (!payload.cogs_account) payload.cogs_account = null
+    if (!payload.wages_account) payload.wages_account = null
     // Editing without detail hydration (offline): never send the fields the slim
     // list doesn't carry — sending their empty defaults would wipe real data.
+    // (inventory_account was missing from this list too — same bug, fixed here
+    // since the new GL fields share its exact "not in the slim list" shape.)
     if (editId && !editHydrated) {
-      for (const k of ['description', 'barcode', 'wholesale_price', 'max_stock_level', 'quantity_in_pack']) {
+      for (const k of [
+        'description', 'barcode', 'wholesale_price', 'max_stock_level', 'quantity_in_pack',
+        'inventory_account', 'sales_account', 'cogs_account', 'wages_account',
+      ]) {
         delete payload[k]
       }
     }
@@ -1154,17 +1165,59 @@ export default function ProductsPage() {
                     )}
                   </div>
                 )}
-                {form.product_type === 'physical' && (
-                  <div>
-                    <label className="label">Inventory Account</label>
-                    <GLAccountSelect value={form.inventory_account}
-                      onChange={(v) => setForm((f) => ({ ...f, inventory_account: v }))} />
-                    <p className="text-[11px] text-slate-500 mt-1">
-                      GL control account this item's stock value posts to. Leave on the organisation default unless this item needs its own inventory account.
-                    </p>
-                  </div>
-                )}
               </div>
+
+              {form.product_type === 'physical' && (
+                <div className="rounded-xl border border-surface-700/60 p-4 space-y-3">
+                  <p className="text-sm font-semibold text-white">Inventory GL Mapped</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="label">Sales Account</label>
+                      <GLAccountSelect value={form.sales_account}
+                        onChange={(v) => setForm((f) => ({ ...f, sales_account: v }))} />
+                    </div>
+                    <div>
+                      <label className="label">Inventory Account</label>
+                      <GLAccountSelect value={form.inventory_account}
+                        onChange={(v) => setForm((f) => ({ ...f, inventory_account: v }))} />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="label">Cost of Sales Account</label>
+                    <GLAccountSelect value={form.cogs_account}
+                      onChange={(v) => setForm((f) => ({ ...f, cogs_account: v }))} />
+                  </div>
+                  <p className="text-[11px] text-slate-500">
+                    GL accounts this item's sales, stock value and cost of sales post to. Leave on the organisation default unless this item needs its own mapping.
+                  </p>
+                </div>
+              )}
+
+              {form.product_type === 'service' && (
+                <div className="rounded-xl border border-surface-700/60 p-4 space-y-3">
+                  <p className="text-sm font-semibold text-white">Service GL Mapped</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="label">Sales Account</label>
+                      <GLAccountSelect value={form.sales_account}
+                        onChange={(v) => setForm((f) => ({ ...f, sales_account: v }))} />
+                    </div>
+                    <div>
+                      <label className="label">Salary / Wages Account</label>
+                      <GLAccountSelect value={form.wages_account}
+                        onChange={(v) => setForm((f) => ({ ...f, wages_account: v }))} />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="label">Cost of Sales Account</label>
+                    <GLAccountSelect value={form.cogs_account}
+                      onChange={(v) => setForm((f) => ({ ...f, cogs_account: v }))} />
+                  </div>
+                  <p className="text-[11px] text-slate-500">
+                    GL accounts this service's sales and cost post to. When Salary/Wages Account is set, a sale debits it instead of Cost of Sales.
+                  </p>
+                </div>
+              )}
 
               {/* Opening stock / Batch (create only, physical only) */}
               {!editId && form.product_type === 'physical' && (

@@ -95,6 +95,15 @@ export interface Product {
   inventory_account?: string | null
   inventory_account_code?: string | null
   inventory_account_name?: string | null
+  sales_account?: string | null
+  sales_account_code?: string | null
+  sales_account_name?: string | null
+  cogs_account?: string | null
+  cogs_account_code?: string | null
+  cogs_account_name?: string | null
+  wages_account?: string | null
+  wages_account_code?: string | null
+  wages_account_name?: string | null
   total_stock: number
 }
 

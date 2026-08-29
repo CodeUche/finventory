@@ -1685,7 +1685,24 @@ class AccountingService:
         else:
             asset_account = ar_acct
 
-        revenue_acct = AccountMappingService.resolve(organisation, 'revenue_account')
+        revenue_acct_default = AccountMappingService.resolve(organisation, 'revenue_account')
+
+        # Per-item Sales/COGS/Wages overrides (Product.sales_account/cogs_account/
+        # wages_account) only change how this journal is BUILT, never posted, so
+        # an invoice where nothing overrides the org default produces the exact
+        # same lines as before — zero regression risk for the common case. Only
+        # once at least one item actually carries an override does this switch
+        # from one aggregate revenue/COGS line to netted per-account buckets.
+        items = list(
+            invoice.items.select_related(
+                'product__sales_account', 'product__cogs_account', 'product__wages_account',
+            ).all()
+        )
+        has_override = any(
+            i.product.sales_account_id or i.product.cogs_account_id or i.product.wages_account_id
+            for i in items
+        )
+        revenue_acct = revenue_acct_default
 
         # Partial cash/bank payment: split DR between cash/bank and AR
         paid_amount = Decimal(str(payment.amount)) if payment else zero
@@ -1696,28 +1713,66 @@ class AccountingService:
             lines = [
                 (asset_account, paid_amount, zero),   # DR Cash/Bank (amount paid)
                 (ar_acct, remaining, zero),            # DR AR (remaining balance)
-                (revenue_acct, zero, revenue),         # CR Revenue
             ]
         else:
             lines = [
                 (asset_account, total, zero),          # DR full amount to asset/AR
-                (revenue_acct, zero, revenue),
             ]
+
+        if not has_override:
+            lines.append((revenue_acct, zero, revenue))
+        else:
+            revenue_buckets = {}
+            for i in items:
+                amt = Decimal(str(i.line_total or 0)) - Decimal(str(i.tax_amount or 0))
+                if amt == 0:
+                    continue
+                acct = i.product.sales_account or revenue_acct_default
+                slot = revenue_buckets.setdefault(acct.id, [acct, zero])
+                slot[1] += amt
+            for acct, amt in revenue_buckets.values():
+                if amt != 0:
+                    lines.append((acct, zero, amt))
+
         if tax > zero:
             vat_acct = AccountMappingService.resolve(organisation, 'vat_output_account')
             lines.append((vat_acct, zero, tax))
 
         # COGS
         try:
-            cogs_total = sum(
-                Decimal(str(item.cost_of_goods or 0))
-                for item in invoice.items.all()
-            )
-            if cogs_total > zero:
-                cogs_acct = AccountMappingService.resolve(organisation, 'cogs_account')
-                inv_acct = AccountMappingService.resolve(organisation, 'inventory_account')
-                lines.append((cogs_acct, cogs_total, zero))
-                lines.append((inv_acct, zero, cogs_total))
+            if not has_override:
+                cogs_total = sum(Decimal(str(i.cost_of_goods or 0)) for i in items)
+                if cogs_total > zero:
+                    cogs_acct = AccountMappingService.resolve(organisation, 'cogs_account')
+                    inv_acct = AccountMappingService.resolve(organisation, 'inventory_account')
+                    lines.append((cogs_acct, cogs_total, zero))
+                    lines.append((inv_acct, zero, cogs_total))
+            else:
+                cogs_acct_default = AccountMappingService.resolve(organisation, 'cogs_account')
+                inv_acct_default = AccountMappingService.resolve(organisation, 'inventory_account')
+                debit_buckets = {}
+                credit_buckets = {}
+                for i in items:
+                    amt = Decimal(str(i.cost_of_goods or 0))
+                    if amt == 0:
+                        continue
+                    product = i.product
+                    debit_acct = (
+                        product.wages_account
+                        if product.product_type == "service" and product.wages_account_id
+                        else (product.cogs_account or cogs_acct_default)
+                    )
+                    credit_acct = product.inventory_account or inv_acct_default
+                    d_slot = debit_buckets.setdefault(debit_acct.id, [debit_acct, zero])
+                    d_slot[1] += amt
+                    c_slot = credit_buckets.setdefault(credit_acct.id, [credit_acct, zero])
+                    c_slot[1] += amt
+                for acct, amt in debit_buckets.values():
+                    if amt != 0:
+                        lines.append((acct, amt, zero))
+                for acct, amt in credit_buckets.values():
+                    if amt != 0:
+                        lines.append((acct, zero, amt))
         except Exception:
             pass
 

@@ -183,6 +183,28 @@ class Product(TenantAwareModel):
         related_name="products", limit_choices_to={"is_active": True},
         help_text="GL control account for this item's stock. Leave blank to use the organisation default.",
     )
+    # Per-product Sales/COGS overrides — same "blank falls back to org
+    # AccountMapping" pattern as inventory_account above. Shared by both
+    # physical and service products (the reviewer's "Inventory GL Mapped" and
+    # "Service GL Mapped" blocks both have a Sales Acct and a Cost of Sales
+    # Acct; only the debit side for services differs — see wages_account).
+    sales_account = models.ForeignKey(
+        "accounting.Account", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="products_as_sales_account", limit_choices_to={"is_active": True},
+        help_text="GL revenue account for this item's sales. Leave blank to use the organisation default.",
+    )
+    cogs_account = models.ForeignKey(
+        "accounting.Account", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="products_as_cogs_account", limit_choices_to={"is_active": True},
+        help_text="GL cost-of-sales account for this item. Leave blank to use the organisation default.",
+    )
+    # Service products only: when set, a sale debits this account instead of
+    # cogs_account (e.g. "Wages Expense" instead of generic "Cost of Sales").
+    wages_account = models.ForeignKey(
+        "accounting.Account", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="products_as_wages_account", limit_choices_to={"is_active": True},
+        help_text="Service products only — GL wages/direct-labor account debited on a sale instead of cogs_account.",
+    )
 
     class Meta(TenantAwareModel.Meta):
         # Live rows only — see Category above. A deleted product used to hold its

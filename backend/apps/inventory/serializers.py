@@ -33,6 +33,24 @@ class ProductSerializer(serializers.ModelSerializer):
     inventory_account_name = serializers.CharField(
         source="inventory_account.name", read_only=True, default=None
     )
+    sales_account_code = serializers.CharField(
+        source="sales_account.code", read_only=True, default=None
+    )
+    sales_account_name = serializers.CharField(
+        source="sales_account.name", read_only=True, default=None
+    )
+    cogs_account_code = serializers.CharField(
+        source="cogs_account.code", read_only=True, default=None
+    )
+    cogs_account_name = serializers.CharField(
+        source="cogs_account.name", read_only=True, default=None
+    )
+    wages_account_code = serializers.CharField(
+        source="wages_account.code", read_only=True, default=None
+    )
+    wages_account_name = serializers.CharField(
+        source="wages_account.name", read_only=True, default=None
+    )
 
     class Meta:
         model = Product
@@ -43,6 +61,9 @@ class ProductSerializer(serializers.ModelSerializer):
             "reorder_level", "max_stock_level", "reorder_quantity", "quantity_in_pack", "barcode",
             "is_active", "is_taxable", "tax_class",
             "inventory_account", "inventory_account_code", "inventory_account_name",
+            "sales_account", "sales_account_code", "sales_account_name",
+            "cogs_account", "cogs_account_code", "cogs_account_name",
+            "wages_account", "wages_account_code", "wages_account_name",
             "total_stock", "quantity_incoming", "created_at", "updated_at",
         ]
         read_only_fields = ["id", "total_stock", "quantity_incoming", "created_at", "updated_at"]
@@ -77,6 +98,18 @@ class ProductSerializer(serializers.ModelSerializer):
         return value
 
     def validate_inventory_account(self, value):
+        from apps.core.validators import validate_same_org_account
+        return validate_same_org_account(value, self.context.get('request'))
+
+    def validate_sales_account(self, value):
+        from apps.core.validators import validate_same_org_account
+        return validate_same_org_account(value, self.context.get('request'))
+
+    def validate_cogs_account(self, value):
+        from apps.core.validators import validate_same_org_account
+        return validate_same_org_account(value, self.context.get('request'))
+
+    def validate_wages_account(self, value):
         from apps.core.validators import validate_same_org_account
         return validate_same_org_account(value, self.context.get('request'))
 
