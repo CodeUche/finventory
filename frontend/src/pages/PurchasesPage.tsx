@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { useSearchParams } from 'react-router-dom'
-import { Plus, Search, Truck, X, Loader2, UploadCloud, FileText, Edit2, Trash2, ChevronDown, ChevronRight, Package, RefreshCw, RotateCcw } from 'lucide-react'
+import { Plus, Search, Truck, X, Loader2, UploadCloud, FileText, Edit2, Trash2, ChevronDown, ChevronRight, Package, PackageCheck, RefreshCw, RotateCcw } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { purchaseApi, purchaseReturnApi, supplierApi, inventoryApi, taxApi, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatDate, normalizeAmountStr, stripCommas } from '@/lib/utils'
@@ -111,6 +111,15 @@ export default function PurchasesPage() {
   const [returnMethod, setReturnMethod] = useState<'ap' | 'cash' | 'bank'>('ap')
   const [returnDate, setReturnDate] = useState(today)
   const [returnSaving, setReturnSaving] = useState(false)
+
+  // Receive goods — the only prior path was a notification's "mark fully
+  // received" quick-action; this is the first dedicated UI for it, letting a
+  // user receive a partial quantity per line with an optional batch/expiry.
+  const [receiveOrder, setReceiveOrder] = useState<PurchaseOrder | null>(null)
+  const [receiveQtys, setReceiveQtys] = useState<Record<string, string>>({})
+  const [receiveBatch, setReceiveBatch] = useState<Record<string, string>>({})
+  const [receiveExpiry, setReceiveExpiry] = useState<Record<string, string>>({})
+  const [receiveSaving, setReceiveSaving] = useState(false)
 
   // Edit PO
   const [editOrder, setEditOrder] = useState<PurchaseOrder | null>(null)
@@ -335,6 +344,42 @@ export default function PurchasesPage() {
     }
   }
 
+  const openReceiveModal = (o: PurchaseOrder) => {
+    setReceiveOrder(o)
+    setReceiveQtys({})
+    setReceiveBatch({})
+    setReceiveExpiry({})
+  }
+
+  const outstandingItems = (o: PurchaseOrder) =>
+    (o.items ?? []).filter((i) => (parseFloat(i.quantity_ordered) || 0) - (parseFloat(i.quantity_received) || 0) > 0)
+
+  const handleReceiveSubmit = async () => {
+    if (!receiveOrder) return
+    const items = Object.entries(receiveQtys)
+      .filter(([, qty]) => parseFloat(qty) > 0)
+      .map(([itemId, qty]) => ({
+        item_id: itemId,
+        quantity_received: parseFloat(qty),
+        ...(receiveBatch[itemId] ? { batch_number: receiveBatch[itemId] } : {}),
+        ...(receiveExpiry[itemId] ? { expiry_date: receiveExpiry[itemId] } : {}),
+      }))
+    if (items.length === 0) { toast.error('Enter a quantity to receive for at least one item'); return }
+    setReceiveSaving(true)
+    try {
+      await purchaseApi.receive(receiveOrder.id, items)
+      toast.success('Goods received')
+      setReceiveOrder(null)
+      bypassNextGets()
+      load()
+    } catch (err: any) {
+      const msg = err?.response?.data?.error ?? 'Failed to record receipt'
+      toast.error(typeof msg === 'string' ? msg : 'Failed to record receipt')
+    } finally {
+      setReceiveSaving(false)
+    }
+  }
+
   const handleRemoveReceipt = async () => {
     if (!editOrder) return
     if (!(await confirmDialog('Remove the attached receipt?'))) return
@@ -487,6 +532,15 @@ export default function PurchasesPage() {
                     </td>
                     <td className="px-5 py-3.5">
                       <div className="flex items-center gap-3">
+                        {!['received', 'closed', 'canceled'].includes(o.status) && (
+                          <button
+                            onClick={() => openReceiveModal(o)}
+                            className="text-slate-400 hover:text-emerald-400 transition-colors"
+                            title="Receive goods"
+                          >
+                            <PackageCheck size={14} />
+                          </button>
+                        )}
                         {(o.status === 'received' || o.status === 'partially_received') && (
                           <button
                             onClick={() => openReturnModal(o)}
@@ -901,6 +955,71 @@ export default function PurchasesPage() {
                 <button type="button" onClick={() => setShowModal(false)} className="btn-secondary flex-1 justify-center">Cancel</button>
                 <button type="button" onClick={handleCreate} disabled={saving} className="btn-primary flex-1 justify-center">
                   {saving ? <Loader2 size={16} className="animate-spin" /> : 'Create PO'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Receive Goods modal */}
+      {receiveOrder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="bg-surface-800 border border-surface-700 rounded-2xl w-full max-w-2xl shadow-2xl animate-slide-up max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-6 border-b border-surface-700">
+              <div>
+                <h2 className="font-semibold text-white text-lg">Receive Goods</h2>
+                <p className="text-slate-400 text-sm">{receiveOrder.po_number} · {receiveOrder.supplier_name}</p>
+              </div>
+              <button onClick={() => setReceiveOrder(null)} className="btn-ghost p-1.5"><X size={18} /></button>
+            </div>
+            <div className="p-6 space-y-4">
+              {outstandingItems(receiveOrder).length === 0 ? (
+                <p className="text-sm text-slate-500">Everything on this order has already been received.</p>
+              ) : (
+                <div className="space-y-3">
+                  <div className="grid grid-cols-[1fr_70px_70px_90px_90px_100px] gap-2 px-1 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                    <span>Product</span><span>Ordered</span><span>Received</span><span>Receive Qty</span><span>Batch #</span><span>Expiry</span>
+                  </div>
+                  {outstandingItems(receiveOrder).map((item) => {
+                    const outstanding = (parseFloat(item.quantity_ordered) || 0) - (parseFloat(item.quantity_received) || 0)
+                    return (
+                      <div key={item.id} className="grid grid-cols-[1fr_70px_70px_90px_90px_100px] gap-2 items-center">
+                        <span className="text-sm text-slate-200 truncate">{item.product_name}</span>
+                        <span className="text-xs text-slate-400 font-mono">{item.quantity_ordered}</span>
+                        <span className="text-xs text-slate-400 font-mono">{item.quantity_received}</span>
+                        <input
+                          type="number" min="0" max={outstanding} step="0.01" placeholder="0"
+                          className="input text-xs py-1.5"
+                          value={receiveQtys[item.id] ?? ''}
+                          onChange={(e) => setReceiveQtys((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                        />
+                        <input
+                          type="text" placeholder="optional"
+                          className="input text-xs py-1.5"
+                          value={receiveBatch[item.id] ?? ''}
+                          onChange={(e) => setReceiveBatch((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                        />
+                        <DateInput
+                          value={receiveExpiry[item.id] ?? ''}
+                          onChange={(v) => setReceiveExpiry((prev) => ({ ...prev, [item.id]: v }))}
+                        />
+                      </div>
+                    )
+                  })}
+                  <p className="text-[11px] text-slate-500">Batch # and Expiry are optional — leave blank if this product doesn't track them.</p>
+                </div>
+              )}
+
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={() => setReceiveOrder(null)} className="btn-secondary flex-1 justify-center">Cancel</button>
+                <button
+                  type="button"
+                  onClick={handleReceiveSubmit}
+                  disabled={receiveSaving || outstandingItems(receiveOrder).length === 0}
+                  className="btn-primary flex-1 justify-center"
+                >
+                  {receiveSaving ? <Loader2 size={16} className="animate-spin" /> : 'Record Receipt'}
                 </button>
               </div>
             </div>
