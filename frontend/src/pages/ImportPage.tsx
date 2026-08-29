@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { api, bypassNextGets } from '@/services/api'
-import { Upload, Download, CheckCircle, XCircle, AlertTriangle, FileText, Users, BookOpen, UsersRound, Loader2, Maximize2, X, Sparkles, ChevronDown, ChevronUp } from 'lucide-react'
+import { Upload, Download, CheckCircle, XCircle, AlertTriangle, FileText, Users, BookOpen, UsersRound, Loader2, Maximize2, X, Sparkles, ChevronDown, ChevronUp, Truck } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { importApi } from '@/services/api'
 import { save } from '@tauri-apps/plugin-dialog'
@@ -64,7 +64,7 @@ function parseCSV(text: string): string[][] {
   return [cleanHeaders, ...dataRows]
 }
 
-type Entity = 'products' | 'customers' | 'accounts' | 'employees'
+type Entity = 'products' | 'customers' | 'suppliers' | 'accounts' | 'employees'
 type ImportError = { row: number; field: string; message: string }
 type ImportResult = { created: number; updated: number; errors: ImportError[]; total_rows: number; warehouses_created?: number; stock_assigned?: number }
 
@@ -103,6 +103,13 @@ const ENTITIES: { key: Entity; label: string; icon: React.ReactNode; description
     icon: <Users size={20} />,
     description: 'Import your customer list with contact details and credit settings.',
     columns: 'code*, name*, customer_type, email, phone, address, contact_person, credit_limit, payment_terms_days, notes',
+  },
+  {
+    key: 'suppliers',
+    label: 'Suppliers',
+    icon: <Truck size={20} />,
+    description: 'Import your supplier list with contact details and payment terms.',
+    columns: 'name*, code, contact_person, email, phone, address, tax_id, payment_terms_days, notes',
   },
   {
     key: 'accounts',

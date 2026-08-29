@@ -16,13 +16,29 @@ class PurchaseOrderItemSerializer(serializers.ModelSerializer):
         fields = [
             "id", "product", "product_name",
             "quantity_ordered", "quantity_received",
-            "unit_cost", "line_total",
+            "unit_cost", "discount_percent", "discount_amount",
+            "tax_rate", "tax_amount", "line_total",
             "batch_number", "expiry_date", "is_fully_received",
         ]
-        read_only_fields = ["id", "quantity_received", "line_total"]
+        read_only_fields = ["id", "quantity_received", "discount_amount", "tax_rate", "tax_amount", "line_total"]
 
     def validate(self, attrs):
-        attrs["line_total"] = attrs["quantity_ordered"] * attrs["unit_cost"]
+        gross = attrs["quantity_ordered"] * attrs["unit_cost"]
+        discount_pct = attrs.get("discount_percent") or Decimal("0")
+        discount_amount = (gross * discount_pct / Decimal("100")).quantize(Decimal("0.01"))
+        after_discount = gross - discount_amount
+
+        # Same VAT rule as sales: only taxable products with a tax class pick up VAT.
+        product = attrs.get("product")
+        tax_rate = Decimal("0")
+        if product is not None and product.is_taxable and product.tax_class:
+            tax_rate = product.tax_class.rate
+        tax_amount = (after_discount * tax_rate / Decimal("100")).quantize(Decimal("0.01"))
+
+        attrs["discount_amount"] = discount_amount
+        attrs["tax_rate"] = tax_rate
+        attrs["tax_amount"] = tax_amount
+        attrs["line_total"] = after_discount + tax_amount
         return attrs
 
 
@@ -39,10 +55,10 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
         fields = [
             "id", "po_number", "supplier", "supplier_name",
             "warehouse", "warehouse_name", "status", "order_date", "expected_date",
-            "received_date", "subtotal", "tax_amount", "total_amount",
+            "received_date", "subtotal", "discount_amount", "tax_amount", "delivery_amount", "total_amount",
             "delivery_type", "delivery_notes", "notes", "receipt", "items", "created_at",
         ]
-        read_only_fields = ["id", "po_number", "subtotal", "tax_amount", "total_amount", "created_at"]
+        read_only_fields = ["id", "po_number", "subtotal", "discount_amount", "tax_amount", "total_amount", "created_at"]
         extra_kwargs = {
             "notes": {"max_length": 2000, "required": False, "allow_blank": True},
             "supplier": {"required": False, "allow_null": True},
@@ -52,10 +68,18 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         items_data = validated_data.pop("items", [])
-        subtotal = sum(item["line_total"] for item in items_data) if items_data else Decimal("0")
-        validated_data["subtotal"] = subtotal
-        validated_data["tax_amount"] = validated_data.get("tax_amount", Decimal("0"))
-        validated_data["total_amount"] = subtotal + validated_data["tax_amount"]
+        gross_subtotal = sum(
+            (item["quantity_ordered"] * item["unit_cost"] for item in items_data), Decimal("0")
+        )
+        discount_total = sum((item.get("discount_amount") or Decimal("0")) for item in items_data) if items_data else Decimal("0")
+        tax_total = sum((item.get("tax_amount") or Decimal("0")) for item in items_data) if items_data else Decimal("0")
+        delivery_amount = validated_data.get("delivery_amount") or Decimal("0")
+
+        validated_data["subtotal"] = gross_subtotal
+        validated_data["discount_amount"] = discount_total
+        validated_data["tax_amount"] = tax_total
+        validated_data["delivery_amount"] = delivery_amount
+        validated_data["total_amount"] = gross_subtotal - discount_total + tax_total + delivery_amount
         po = PurchaseOrder.objects.create(**validated_data)
         for item_data in items_data:
             PurchaseOrderItem.objects.create(

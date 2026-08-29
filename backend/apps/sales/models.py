@@ -131,6 +131,10 @@ class Invoice(TenantAwareModel):
     subtotal = MoneyField()
     discount_amount = MoneyField()
     tax_amount = MoneyField()
+    # Optional delivery/shipping charge — folded into total_amount and, for GL
+    # purposes, into the revenue credit line of post_sale_journal (not split out
+    # to a dedicated shipping-income account yet).
+    shipping_amount = MoneyField(default=0)
     total_amount = MoneyField()
     credit_applied = MoneyField(default=0)  # Store credit redeemed on this invoice
     amount_paid = MoneyField()

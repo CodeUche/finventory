@@ -47,7 +47,8 @@ class PurchaseService:
             )
 
         all_received = True
-        batch_subtotal = Decimal("0")
+        batch_subtotal = Decimal("0")  # net of discount, excl. VAT
+        batch_tax = Decimal("0")
 
         for item_data in received_items:
             try:
@@ -73,7 +74,14 @@ class PurchaseService:
             item.quantity_received += qty
             item.save(update_fields=["quantity_received", "updated_at"])
 
-            batch_subtotal += qty * Decimal(str(item.unit_cost))
+            # Apply this line's discount/VAT rate to the quantity actually
+            # received now — a partial receive only bills for what came in.
+            gross = qty * Decimal(str(item.unit_cost))
+            discount_amt = (gross * Decimal(str(item.discount_percent or 0)) / Decimal("100")).quantize(Decimal("0.01"))
+            net = gross - discount_amt
+            tax_amt = (net * Decimal(str(item.tax_rate or 0)) / Decimal("100")).quantize(Decimal("0.01"))
+            batch_subtotal += net
+            batch_tax += tax_amt
 
             # Create/update batch record
             batch = None
@@ -118,35 +126,44 @@ class PurchaseService:
 
         # Auto-create / update Bill so this receipt shows in AP aging
         if po.supplier_id and batch_subtotal > 0:
-            _upsert_bill_for_po(po, batch_subtotal, received_by)
+            _upsert_bill_for_po(po, batch_subtotal, batch_tax, received_by)
 
         logger.info("PO %s received by %s", po.po_number, received_by)
         return po
 
 
-def _upsert_bill_for_po(po: PurchaseOrder, batch_subtotal: Decimal, received_by) -> None:
+def _upsert_bill_for_po(po: PurchaseOrder, batch_subtotal: Decimal, batch_tax: Decimal, received_by) -> None:
     """
     Create a Bill (or add to the existing one) when a PO is received.
     One Bill per PO — subsequent partial receives increase the existing bill's amounts.
     Posts GL journal (DR Inventory CR AP) after creating/updating.
+
+    batch_subtotal/batch_tax are computed by the caller per-line (net of that
+    line's discount_percent, VAT via its tax_rate) for the quantity actually
+    received this call — not prorated off the PO header, so multi-line POs with
+    different discount/VAT rates receive correctly on partial receipt.
     """
     from apps.bills.models import Bill, BillItem
-    from apps.accounting.services import AccountingService
+    from apps.accounting.services import AccountingService, AccountMappingService, safe_post_gl
 
     today = timezone.now().date()
     due_date = today + timedelta(days=30)
+    batch_total = batch_subtotal + batch_tax
 
-    existing = Bill.objects.filter(
-        organisation=po.organisation,
-        reference=po.po_number,
-    ).first()
+    # Look up by the real FK first — falls back to the legacy string match only
+    # for bills auto-created before source_purchase_order existed.
+    existing = (
+        Bill.objects.filter(organisation=po.organisation, source_purchase_order=po).first()
+        or Bill.objects.filter(organisation=po.organisation, reference=po.po_number, source_purchase_order__isnull=True).first()
+    )
 
     if existing:
         # Add this batch's value to the existing bill
         existing.subtotal = Decimal(str(existing.subtotal)) + batch_subtotal
-        existing.total_amount = Decimal(str(existing.total_amount)) + batch_subtotal
-        existing.amount_due = Decimal(str(existing.amount_due)) + batch_subtotal
-        existing.save(update_fields=["subtotal", "total_amount", "amount_due", "updated_at"])
+        existing.tax_amount = Decimal(str(existing.tax_amount or 0)) + batch_tax
+        existing.total_amount = Decimal(str(existing.total_amount)) + batch_total
+        existing.amount_due = Decimal(str(existing.amount_due)) + batch_total
+        existing.save(update_fields=["subtotal", "tax_amount", "total_amount", "amount_due", "updated_at"])
         bill = existing
     else:
         bill = Bill.objects.create(
@@ -156,10 +173,11 @@ def _upsert_bill_for_po(po: PurchaseOrder, batch_subtotal: Decimal, received_by)
             issue_date=today,
             due_date=due_date,
             reference=po.po_number,
+            source_purchase_order=po,
             subtotal=batch_subtotal,
-            tax_amount=Decimal("0"),
-            total_amount=batch_subtotal,
-            amount_due=batch_subtotal,
+            tax_amount=batch_tax,
+            total_amount=batch_total,
+            amount_due=batch_total,
             notes=f"Auto-created from PO {po.po_number}",
             created_by=received_by,
         )
@@ -173,20 +191,33 @@ def _upsert_bill_for_po(po: PurchaseOrder, batch_subtotal: Decimal, received_by)
             line_total=batch_subtotal,
         )
 
-    # Post GL: DR Inventory 1200 / CR Accounts Payable 2001
-    try:
+    # Post GL: DR Inventory + (DR VAT Input if any) / CR Accounts Payable, via the
+    # standard account-mapping resolver — was previously hardcoded to codes "1200"/
+    # "2001", bypassing org-level remapping and always dropping input VAT.
+    def _post():
         zero = Decimal("0")
-        amount = Decimal(str(batch_subtotal))
+        inv_acct = AccountMappingService.resolve(po.organisation, "inventory_account")
+        ap_acct = AccountingService._resolve_party_account(
+            po.organisation, po.supplier, 'payable_account', 'accounts_payable', '2001')
+        lines = [
+            (inv_acct, batch_subtotal, zero),  # DR Inventory (net)
+            (ap_acct, zero, batch_total),       # CR Accounts Payable (gross)
+        ]
+        if batch_tax > zero:
+            vat_acct = AccountMappingService.resolve(po.organisation, "vat_input_account")
+            lines.append((vat_acct, batch_tax, zero))  # DR VAT Input (recoverable)
         AccountingService.post_journal_entry(
             po.organisation,
             f"Goods received {po.po_number}",
             timezone.now().date(),
-            [("1200", amount, zero), ("2001", zero, amount)],
+            lines,
             received_by,
             ref=po.po_number,
+            source_type="po_receipt",
+            source_ref=str(po.id),
         )
-    except Exception as exc:
-        logger.warning("GL journal for PO receipt %s failed: %s", po.po_number, exc)
+
+    safe_post_gl(_post, model_instance=bill)
 
 
 class PurchaseReturnService:
@@ -229,6 +260,8 @@ class PurchaseReturnService:
         )
 
         net_total = Decimal("0")
+        physical_net = Decimal("0")
+        service_net = Decimal("0")
         for row in items:
             product = Product.objects.get(id=row["product_id"], organisation=organisation)
             qty = Decimal(str(row["quantity"]))
@@ -252,6 +285,9 @@ class PurchaseReturnService:
                     quantity=-qty, movement_type="adjustment_out", unit_cost=unit_cost,
                     reference=pret.return_number, created_by=created_by,
                 )
+                physical_net += line_total
+            else:
+                service_net += line_total
             # Roll back the received quantity on the PO line.
             if po_item:
                 po_item.quantity_received = max(Decimal("0"), po_item.quantity_received - qty)
@@ -271,12 +307,21 @@ class PurchaseReturnService:
             elif refund_method == "bank":
                 debit_acct = AccountMappingService.resolve(organisation, "bank_account")
             else:
-                debit_acct = AccountMappingService.resolve(organisation, "accounts_payable")
-            inv_acct = AccountMappingService.resolve(organisation, "inventory_account")
+                debit_acct = AccountingService._resolve_party_account(
+                    organisation, purchase_order.supplier, 'payable_account', 'accounts_payable', '2001')
             lines = [
                 (debit_acct, grand_total, zero),   # DR AP / Cash / Bank
-                (inv_acct, zero, net_total),        # CR Inventory
             ]
+            # Stocked lines reverse Inventory; service/non-stocked lines reverse the
+            # expense account they were originally booked to (post_bill_approved_journal
+            # debits general_expense_account for non-capitalised, non-stocked lines) —
+            # previously this always credited Inventory regardless of item type.
+            if physical_net > 0:
+                inv_acct = AccountMappingService.resolve(organisation, "inventory_account")
+                lines.append((inv_acct, zero, physical_net))  # CR Inventory
+            if service_net > 0:
+                expense_acct = AccountMappingService.resolve(organisation, "general_expense_account")
+                lines.append((expense_acct, zero, service_net))  # CR Purchases/Service expense
             if vat_total > 0:
                 vat_acct = AccountMappingService.resolve(organisation, "vat_input_account")
                 lines.append((vat_acct, zero, vat_total))  # CR VAT Input (reverse recoverable)

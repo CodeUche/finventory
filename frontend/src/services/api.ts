@@ -1223,6 +1223,7 @@ export const customerApi = {
   delete: (id: string) => api.delete(`/customers/${id}/`),
   statement: (id: string, params?: object) => api.get(`/customers/${id}/statement/`, { params }),
   recordDebit: (id: string, data: object) => api.post(`/customers/${id}/record_debit/`, data),
+  setOpeningBalance: (id: string, data: object) => api.post(`/customers/${id}/set-opening-balance/`, data),
 }
 
 export const expenseApi = {
@@ -1258,11 +1259,18 @@ export const purchaseApi = {
   etaAlerts: () => api.get('/purchases/orders/eta-alerts/'),
 }
 
+export const purchaseReturnApi = {
+  list: (params?: object) => api.get('/purchases/returns/', { params }),
+  create: (data: object) => api.post('/purchases/returns/', data),
+}
+
 export const supplierApi = {
   list: (params?: object) => api.get('/suppliers/', { params }),
   create: (data: object) => api.post('/suppliers/', data),
   update: (id: string, data: object) => api.patch(`/suppliers/${id}/`, data),
   delete: (id: string) => api.delete(`/suppliers/${id}/`),
+  statement: (id: string, params?: object) => api.get(`/suppliers/${id}/statement/`, { params }),
+  setOpeningBalance: (id: string, data: object) => api.post(`/suppliers/${id}/set-opening-balance/`, data),
 }
 
 export const reportApi = {
@@ -1979,6 +1987,7 @@ async function _multipartPatch(url: string, file: File, fileFieldName: string, t
 export const importApi = {
   products: (file: File, mapping?: Record<string, string>) => _importPost('/import/products/', file, mapping),
   customers: (file: File) => _importPost('/import/customers/', file),
+  suppliers: (file: File) => _importPost('/import/suppliers/', file),
   accounts: (file: File) => _importPost('/import/accounts/', file),
   // Employee bulk import — same shape as customers/accounts (no AI column
   // mapping needed for this one), see ImportEmployeesView on the backend.
@@ -1987,7 +1996,7 @@ export const importApi = {
   suggestMapping: (entity: string, headers: string[]) =>
     api.post('/import/suggest-mapping/', { entity, headers }),
   /** GET /import/template/<entity>/ — download CSV template */
-  templateUrl: (entity: 'products' | 'customers' | 'accounts' | 'employees') =>
+  templateUrl: (entity: 'products' | 'customers' | 'suppliers' | 'accounts' | 'employees') =>
     `/import/template/${entity}/`,
 }
 

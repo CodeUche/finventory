@@ -60,16 +60,18 @@ class BillSerializer(serializers.ModelSerializer):
     payments = BillPaymentSerializer(many=True, read_only=True)
     supplier_name = serializers.CharField(source='supplier.name', read_only=True)
     folder_name = serializers.CharField(source='folder.name', read_only=True, allow_null=True)
+    source_po_number = serializers.CharField(source='source_purchase_order.po_number', read_only=True, default=None)
 
     class Meta:
         model = Bill
         fields = [
             'id', 'bill_number', 'folder', 'folder_name', 'supplier', 'supplier_name', 'status',
-            'issue_date', 'due_date', 'reference', 'subtotal', 'tax_amount',
+            'issue_date', 'due_date', 'reference', 'source_purchase_order', 'source_po_number',
+            'subtotal', 'tax_amount',
             'total_amount', 'amount_paid', 'amount_due', 'notes', 'attachment',
             'created_at', 'items', 'payments'
         ]
-        read_only_fields = ['id', 'bill_number', 'subtotal', 'total_amount', 'amount_paid', 'amount_due', 'created_at']
+        read_only_fields = ['id', 'bill_number', 'source_purchase_order', 'subtotal', 'total_amount', 'amount_paid', 'amount_due', 'created_at']
         extra_kwargs = {
             'attachment': {'validators': [validate_file_upload], 'required': False},
             'notes': {'max_length': 2000, 'required': False, 'allow_blank': True},

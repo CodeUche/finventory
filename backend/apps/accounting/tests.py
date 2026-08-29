@@ -4378,3 +4378,149 @@ class LedgerDrivenReconciliationTests(TestCase):
         self.assertEqual(res.status_code, 200)
         self.recon.refresh_from_db()
         self.assertTrue(self.recon.is_reconciled)
+
+
+class PartyGLAccountOverrideTests(TestCase):
+    """
+    A customer/supplier's own receivable_account/payable_account override must be
+    honoured by every day-to-day posting path, not just take-on. Previously
+    post_sale_journal, post_credit_payment_journal, post_gateway_payment_journal,
+    void_invoice, the sales-return journal, post_bill_approved_journal,
+    post_bill_payment_journal, the PO-receipt auto-bill, and the purchase-return
+    journal all hard-coded the org-wide default AR/AP account, silently ignoring
+    a per-party override entered on the Customer/Supplier record.
+    """
+
+    def setUp(self):
+        self.user = _make_user("party_gl@example.com")
+        self.org = _make_org(self.user, "Party GL Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+
+        from apps.inventory.models import Product, Warehouse
+        from apps.inventory.services import InventoryService
+        from apps.customers.models import Customer
+        from apps.suppliers.models import Supplier
+
+        self.wh = Warehouse.objects.create(organisation=self.org, name="Main WH", is_default=True)
+        self.product = Product.objects.create(
+            organisation=self.org, sku="PGL1", name="Rice",
+            cost_price=Decimal("50000"), selling_price=Decimal("65000"),
+        )
+        InventoryService.record_movement(
+            organisation=self.org, product=self.product, warehouse=self.wh,
+            quantity=Decimal("10"), movement_type="purchase_in",
+            unit_cost=Decimal("50000"), reference="SEED", created_by=self.user,
+        )
+
+        self.dedicated_ar = Account.objects.create(
+            organisation=self.org, code="1105", name="VIP Customer Receivable",
+            account_type=AccountType.ASSET, normal_balance="debit",
+        )
+        self.dedicated_ap = Account.objects.create(
+            organisation=self.org, code="2005", name="Key Supplier Payable",
+            account_type=AccountType.LIABILITY, normal_balance="credit",
+        )
+        self.customer = Customer.objects.create(
+            organisation=self.org, name="VIP Customer", customer_type="retail",
+            receivable_account=self.dedicated_ar,
+        )
+        self.supplier = Supplier.objects.create(
+            organisation=self.org, name="Key Supplier", payable_account=self.dedicated_ap,
+        )
+        self.default_ar = AccountMappingService.resolve(self.org, "accounts_receivable")
+        self.default_ap = AccountMappingService.resolve(self.org, "accounts_payable")
+        self.assertNotEqual(self.default_ar.id, self.dedicated_ar.id)
+        self.assertNotEqual(self.default_ap.id, self.dedicated_ap.id)
+
+    def _je_accounts(self, **filters):
+        entry = JournalEntry.objects.get(organisation=self.org, **filters)
+        return {l.account_id for l in entry.lines.all()}
+
+    def test_sale_journal_uses_customer_override(self):
+        from apps.sales.services import SaleService
+        invoice = SaleService.create_sale(
+            organisation=self.org, created_by=self.user, customer=self.customer, warehouse=self.wh,
+            items=[{"product_id": str(self.product.id), "quantity": 1, "unit_price": "65000"}],
+            payment_method="credit",
+        )
+        accts = self._je_accounts(source_type="sale", source_ref=str(invoice.id))
+        self.assertIn(self.dedicated_ar.id, accts)
+        self.assertNotIn(self.default_ar.id, accts)
+
+    def test_void_invoice_reversal_uses_customer_override(self):
+        from apps.sales.services import SaleService
+        invoice = SaleService.create_sale(
+            organisation=self.org, created_by=self.user, customer=self.customer, warehouse=self.wh,
+            items=[{"product_id": str(self.product.id), "quantity": 1, "unit_price": "65000"}],
+            payment_method="credit",
+        )
+        SaleService.void_invoice(invoice, voided_by=self.user)
+        accts = self._je_accounts(source_type="invoice_void", source_ref=str(invoice.id))
+        self.assertIn(self.dedicated_ar.id, accts)
+
+    def test_sales_return_journal_uses_customer_override(self):
+        from apps.sales.services import SaleService
+        invoice = SaleService.create_sale(
+            organisation=self.org, created_by=self.user, customer=self.customer, warehouse=self.wh,
+            items=[{"product_id": str(self.product.id), "quantity": 1, "unit_price": "65000"}],
+            payment_method="credit",
+        )
+        item = invoice.items.first()
+        sale_return = SaleService.process_return(
+            organisation=self.org, invoice=invoice,
+            items=[{"sale_item_id": str(item.id), "quantity_returned": "1"}],
+            reason="test", notes="", processed_by=self.user,
+        )
+        accts = self._je_accounts(source_type="sale_return", source_ref=str(sale_return.id))
+        self.assertIn(self.dedicated_ar.id, accts)
+
+    def test_credit_payment_journal_uses_customer_override(self):
+        from apps.credits.services import CreditService
+        CreditService.record_payment(
+            organisation=self.org, customer=self.customer, amount=Decimal("50000"), recorded_by=self.user,
+        )
+        entry = JournalEntry.objects.filter(organisation=self.org, source_type="credit_payment").order_by("-created_at").first()
+        self.assertIsNotNone(entry)
+        accts = {l.account_id for l in entry.lines.all()}
+        self.assertIn(self.dedicated_ar.id, accts)
+
+    def test_po_receipt_auto_bill_uses_supplier_override(self):
+        from apps.purchases.models import PurchaseOrder, PurchaseOrderItem
+        from apps.purchases.services import PurchaseService
+        po = PurchaseOrder.objects.create(
+            organisation=self.org, supplier=self.supplier, warehouse=self.wh,
+            po_number=PurchaseOrder.generate_number(self.org),
+            order_date=timezone.now().date(),
+            subtotal=Decimal("100000"), tax_amount=Decimal("0"), total_amount=Decimal("100000"),
+            created_by=self.user,
+        )
+        po_item = PurchaseOrderItem.objects.create(
+            organisation=self.org, purchase_order=po, product=self.product,
+            quantity_ordered=Decimal("2"), unit_cost=Decimal("50000"), line_total=Decimal("100000"),
+        )
+        po = PurchaseService.receive_purchase_order(
+            po, [{"item_id": str(po_item.id), "quantity_received": "2"}], self.user,
+        )
+        accts = self._je_accounts(source_type="po_receipt", source_ref=str(po.id))
+        self.assertIn(self.dedicated_ap.id, accts)
+        self.assertNotIn(self.default_ap.id, accts)
+
+    def test_bill_payment_journal_uses_supplier_override(self):
+        from apps.bills.models import Bill, BillPayment
+        from apps.accounting.services import AccountingService as AS
+        bill = Bill.objects.create(
+            organisation=self.org, supplier=self.supplier, status=Bill.APPROVED,
+            issue_date=timezone.now().date(), due_date=timezone.now().date(),
+            subtotal=Decimal("100000"), tax_amount=Decimal("0"), total_amount=Decimal("100000"),
+            amount_due=Decimal("100000"), created_by=self.user,
+        )
+        payment = BillPayment.objects.create(
+            organisation=self.org, bill=bill, amount=Decimal("100000"),
+            payment_date=timezone.now().date(), method="bank_transfer", recorded_by=self.user,
+        )
+        AS.post_bill_payment_journal(self.org, bill, payment, user=self.user)
+        entry = JournalEntry.objects.filter(organisation=self.org, source_type="bill_payment", source_ref=str(payment.id)).first()
+        self.assertIsNotNone(entry)
+        accts = {l.account_id for l in entry.lines.all()}
+        self.assertIn(self.dedicated_ap.id, accts)

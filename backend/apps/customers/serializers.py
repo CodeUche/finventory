@@ -24,12 +24,12 @@ class CustomerSerializer(serializers.ModelSerializer):
         fields = [
             "id", "code", "name", "customer_type", "email", "phone",
             "address", "contact_person", "credit_limit",
-            "payment_terms_days", "outstanding_balance", "store_credit",
+            "payment_terms_days", "outstanding_balance", "opening_balance_date", "store_credit",
             "available_credit", "is_credit_blocked", "credit_score",
             "receivable_account", "receivable_account_code", "receivable_account_name",
             "notes", "is_active", "created_at", "updated_at",
         ]
-        read_only_fields = ["id", "outstanding_balance", "created_at", "updated_at"]
+        read_only_fields = ["id", "outstanding_balance", "opening_balance_date", "created_at", "updated_at"]
 
     def validate_receivable_account(self, value):
         return validate_same_org_account(value, self.context.get("request"))

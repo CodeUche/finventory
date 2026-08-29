@@ -415,7 +415,14 @@ export default function BillsPage() {
                       </p>
                     )}
                   </td>
-                  <td className="px-4 py-3.5 text-slate-400">{b.reference || '—'}</td>
+                  <td className="px-4 py-3.5 text-slate-400">
+                    {b.reference || '—'}
+                    {b.source_po_number && (
+                      <p className="text-[10px] text-brand-400 mt-0.5" title="Auto-created from this Purchase Order — a reliable link, unlike Reference which is free text">
+                        Linked PO: {b.source_po_number}
+                      </p>
+                    )}
+                  </td>
                   <td className="px-4 py-3.5 text-slate-400">{formatDate(b.issue_date)}</td>
                   <td className="px-4 py-3.5 text-slate-400">{formatDate(b.due_date)}</td>
                   <td className="px-4 py-3.5 text-white font-semibold">{formatCurrency(b.total_amount)}</td>

@@ -469,6 +469,106 @@ class AccountingService:
 
     @staticmethod
     @transaction.atomic
+    def set_customer_opening_balance(organisation, customer, amount, side, as_of_date, created_by=None):
+        """
+        Take-on opening balance for a SINGLE customer — the per-customer "Adjust
+        Opening Balance" action, as opposed to set_subledger_opening_balances'
+        batch wizard. Mirrors set_account_opening_balance's single-party pattern.
+
+        side: 'debit' (customer owes us — the common case) or 'credit' (customer
+        is prepaid/in credit). Reverses only THIS customer's prior take-on entry,
+        so adjusting one customer never disturbs any other customer, supplier,
+        item, or the wizard's own date-scoped take-on.
+        """
+        as_of_date = AccountingService._coerce_date(as_of_date)
+        amount = Decimal(str(amount or 0))
+        side = AccountingService._normalise_side(side, 'debit')
+        ref_prefix = f"opening-customer-{customer.id}"
+
+        prior = JournalEntry.objects.filter(
+            organisation=organisation, source_type='opening_balance',
+            source_ref__startswith=ref_prefix, status='posted',
+        )
+        AccountingService._reverse_prior_entries(prior, actor=created_by)
+
+        customer.outstanding_balance = amount if side == 'debit' else -amount
+        customer.opening_balance_date = as_of_date
+        customer.save(update_fields=['outstanding_balance', 'opening_balance_date', 'updated_at'])
+
+        if amount <= 0:
+            return None
+
+        account = AccountingService._resolve_party_account(
+            organisation, customer, 'receivable_account', 'accounts_receivable', '1100')
+        suspense = AccountingService.get_or_create_suspense_account(organisation)
+        if side == 'debit':
+            lines = [(account, amount, Decimal('0')), (suspense, Decimal('0'), amount)]
+        else:
+            lines = [(account, Decimal('0'), amount), (suspense, amount, Decimal('0'))]
+
+        import uuid
+        return AccountingService.post_journal_entry(
+            organisation,
+            description=f"Opening balance — {customer.name}",
+            entry_date=as_of_date,
+            lines=lines,
+            created_by=created_by,
+            ref='OPEN',
+            source_type='opening_balance',
+            source_ref=f"{ref_prefix}-{uuid.uuid4().hex[:12]}",
+        )
+
+    @staticmethod
+    @transaction.atomic
+    def set_supplier_opening_balance(organisation, supplier, amount, side, as_of_date, created_by=None):
+        """
+        Take-on opening balance for a SINGLE supplier — the per-supplier "Adjust
+        Opening Balance" action. Mirrors set_customer_opening_balance above.
+
+        side: 'credit' (we owe them — the common case) or 'debit' (we've prepaid
+        an advance). Supplier.opening_balance is positive when we owe them, the
+        reverse convention from Customer.outstanding_balance.
+        """
+        as_of_date = AccountingService._coerce_date(as_of_date)
+        amount = Decimal(str(amount or 0))
+        side = AccountingService._normalise_side(side, 'credit')
+        ref_prefix = f"opening-supplier-{supplier.id}"
+
+        prior = JournalEntry.objects.filter(
+            organisation=organisation, source_type='opening_balance',
+            source_ref__startswith=ref_prefix, status='posted',
+        )
+        AccountingService._reverse_prior_entries(prior, actor=created_by)
+
+        supplier.opening_balance = amount if side == 'credit' else -amount
+        supplier.opening_balance_date = as_of_date
+        supplier.save(update_fields=['opening_balance', 'opening_balance_date', 'updated_at'])
+
+        if amount <= 0:
+            return None
+
+        account = AccountingService._resolve_party_account(
+            organisation, supplier, 'payable_account', 'accounts_payable', '2001')
+        suspense = AccountingService.get_or_create_suspense_account(organisation)
+        if side == 'credit':
+            lines = [(suspense, amount, Decimal('0')), (account, Decimal('0'), amount)]
+        else:
+            lines = [(account, amount, Decimal('0')), (suspense, Decimal('0'), amount)]
+
+        import uuid
+        return AccountingService.post_journal_entry(
+            organisation,
+            description=f"Opening balance — {supplier.name}",
+            entry_date=as_of_date,
+            lines=lines,
+            created_by=created_by,
+            ref='OPEN',
+            source_type='opening_balance',
+            source_ref=f"{ref_prefix}-{uuid.uuid4().hex[:12]}",
+        )
+
+    @staticmethod
+    @transaction.atomic
     def set_subledger_opening_balances(organisation, as_of_date, customers=None,
                                        suppliers=None, items=None, created_by=None):
         """
@@ -1569,7 +1669,11 @@ class AccountingService:
 
         # Determine payment method → which asset account to debit
         payment = SalePayment.objects.filter(invoice=invoice).first()
-        ar_acct = AccountMappingService.resolve(organisation, 'accounts_receivable')
+        # Honour the customer's own receivable-account override (set on the
+        # customer record) before falling back to the org default — previously
+        # every sale ignored it and always posted to the org-wide AR account.
+        ar_acct = AccountingService._resolve_party_account(
+            organisation, invoice.customer, 'receivable_account', 'accounts_receivable', '1100')
 
         if payment:
             if payment.method == 'cash':
@@ -1652,7 +1756,8 @@ class AccountingService:
         zero = Decimal('0')
         amt = Decimal(str(payment.amount))
         asset = AccountingService.tender_asset_account(organisation, payment.method)
-        ar_acct = AccountMappingService.resolve(organisation, 'accounts_receivable')
+        ar_acct = AccountingService._resolve_party_account(
+            organisation, invoice.customer, 'receivable_account', 'accounts_receivable', '1100')
         label = f" ({provider})" if provider else ""
         return AccountingService.post_journal_entry(
             organisation,
@@ -1673,7 +1778,8 @@ class AccountingService:
         amt = Decimal(str(amount))
 
         asset_acct = AccountingService.tender_asset_account(organisation, method)
-        ar_acct = AccountMappingService.resolve(organisation, 'accounts_receivable')
+        ar_acct = AccountingService._resolve_party_account(
+            organisation, customer, 'receivable_account', 'accounts_receivable', '1100')
 
         lines = [
             (asset_acct, amt, zero),  # DR Cash/Bank per tender
@@ -1709,7 +1815,8 @@ class AccountingService:
         net_cost = total - vat
 
         expense_acct  = AccountMappingService.resolve(organisation, 'general_expense_account')
-        ap_acct       = AccountMappingService.resolve(organisation, 'accounts_payable')
+        ap_acct       = AccountingService._resolve_party_account(
+            organisation, bill.supplier, 'payable_account', 'accounts_payable', '2001')
         input_vat_acct = AccountingService._get_or_create_account(
             organisation, '1400', 'VAT Receivable (Input VAT)', AccountType.ASSET
         )
@@ -1764,7 +1871,8 @@ class AccountingService:
         zero = Decimal('0')
         amount = Decimal(str(payment.amount))
 
-        ap_acct = AccountMappingService.resolve(organisation, 'accounts_payable')
+        ap_acct = AccountingService._resolve_party_account(
+            organisation, bill.supplier, 'payable_account', 'accounts_payable', '2001')
         if payment.method == 'cash':
             bank_acct = AccountMappingService.resolve(organisation, 'cash_account')
         else:

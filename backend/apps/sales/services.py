@@ -49,6 +49,7 @@ class SaleService:
         location=None,
         wht_rate_id=None,
         defer_fulfillment: bool = False,
+        shipping_amount: Decimal = None,
     ) -> Invoice:
         """
         Create a confirmed sale invoice with stock deductions.
@@ -74,6 +75,7 @@ class SaleService:
         from apps.accounting.services import AccountingService, check_strict_gl_mode
 
         issue_date = issue_date or tz.now().date()
+        shipping = Decimal(str(shipping_amount)) if shipping_amount else Decimal("0")
 
         check_strict_gl_mode(organisation)
 
@@ -115,6 +117,7 @@ class SaleService:
             subtotal=Decimal("0"),
             discount_amount=Decimal("0"),
             tax_amount=Decimal("0"),
+            shipping_amount=shipping,
             total_amount=Decimal("0"),
             credit_applied=Decimal("0"),
             amount_paid=Decimal("0"),
@@ -139,7 +142,7 @@ class SaleService:
             total_discount += line["discount_amount"]
             total_tax += line["tax_amount"]
 
-        total = subtotal - total_discount + total_tax
+        total = subtotal - total_discount + total_tax + shipping
 
         # Clamp credit to total (can't apply more credit than the invoice total)
         credit_to_apply = min(credit_to_apply, total)
@@ -410,7 +413,8 @@ class SaleService:
             total_discount += line["discount_amount"]
             total_tax += line["tax_amount"]
 
-        total = subtotal - total_discount + total_tax
+        existing_shipping = Decimal(str(invoice.shipping_amount or 0))
+        total = subtotal - total_discount + total_tax + existing_shipping
 
         # Recalculate financials; preserve existing payments
         invoice.subtotal = subtotal
@@ -699,14 +703,26 @@ class SaleService:
             vat_amt  = Decimal(str(invoice.tax_amount or 0))
             total    = Decimal(str(invoice.total_amount))
             revenue_acct = AccountMappingService.resolve(invoice.organisation, 'revenue_account')
-            vat_acct     = AccountMappingService.resolve(invoice.organisation, 'vat_payable_account')
-            ar_acct      = AccountMappingService.resolve(invoice.organisation, 'accounts_receivable')
+            vat_acct     = AccountMappingService.resolve(invoice.organisation, 'vat_output_account')
+            ar_acct      = AccountingService._resolve_party_account(
+                invoice.organisation, invoice.customer, 'receivable_account', 'accounts_receivable', '1100')
             # Reversal: DR AR (removes the receivable) ... CR Revenue + VAT Payable
             lines = [
                 (ar_acct,      zero,    total),   # CR AR (removes receivable)
                 (revenue_acct, net_rev, zero),    # DR Revenue (reverses income)
                 (vat_acct,     vat_amt, zero),    # DR VAT Payable (reverses liability)
             ]
+            # Reverse COGS/Inventory too, so the void undoes the full original posting
+            cogs_total = sum(
+                Decimal(str(item.cost_of_goods or 0))
+                for item in invoice.items.all()
+                if item.product.product_type != "service"
+            )
+            if cogs_total > zero:
+                cogs_acct = AccountMappingService.resolve(invoice.organisation, 'cogs_account')
+                inv_acct  = AccountMappingService.resolve(invoice.organisation, 'inventory_account')
+                lines.append((inv_acct,  cogs_total, zero))  # DR Inventory (restore)
+                lines.append((cogs_acct, zero,       cogs_total))  # CR COGS (reverse)
             AccountingService.post_journal_entry(
                 invoice.organisation,
                 f"Void invoice {invoice.invoice_number}",
@@ -896,6 +912,7 @@ class SaleService:
 
         total_refund = Decimal("0")
         total_tax_refund = Decimal("0")
+        total_cogs_refund = Decimal("0")
         return_items_to_create = []
 
         for item_data in items:
@@ -969,6 +986,7 @@ class SaleService:
                     reference=sale_return.return_number,
                     created_by=processed_by,
                 )
+                total_cogs_refund += round_money(unit_cost * qty)
 
         all_items = list(invoice.items.all())
         total_sold     = sum(Decimal(str(i.quantity))           for i in all_items)
@@ -993,13 +1011,21 @@ class SaleService:
             zero = Decimal("0")
             net_refund = total_refund - total_tax_refund
             revenue_acct = AccountMappingService.resolve(organisation, 'revenue_account')
-            vat_acct     = AccountMappingService.resolve(organisation, 'vat_payable_account')
-            ar_acct      = AccountMappingService.resolve(organisation, 'accounts_receivable')
+            vat_acct     = AccountMappingService.resolve(organisation, 'vat_output_account')
+            ar_acct      = AccountingService._resolve_party_account(
+                organisation, invoice.customer, 'receivable_account', 'accounts_receivable', '1100')
             lines = [
                 (revenue_acct, net_refund,       zero),           # DR Revenue (reversal)
                 (vat_acct,     total_tax_refund,  zero),          # DR VAT Payable (reversal)
                 (ar_acct,      zero,              total_refund),  # CR AR / customer
             ]
+            # Reverse COGS/Inventory for the restocked portion, so the GL Inventory
+            # balance stays in step with the physical stock InventoryService already restored
+            if total_cogs_refund > zero:
+                cogs_acct = AccountMappingService.resolve(organisation, 'cogs_account')
+                inv_acct  = AccountMappingService.resolve(organisation, 'inventory_account')
+                lines.append((inv_acct,  total_cogs_refund, zero))  # DR Inventory (restore)
+                lines.append((cogs_acct, zero,              total_cogs_refund))  # CR COGS (reverse)
             AccountingService.post_journal_entry(
                 organisation,
                 f"Credit note {sale_return.return_number}",

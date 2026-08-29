@@ -235,6 +235,46 @@ class CustomerViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
             },
         })
 
+    @action(detail=True, methods=["post"], url_path="set-opening-balance")
+    def set_opening_balance(self, request, pk=None):
+        """
+        POST /api/v1/customers/<id>/set-opening-balance/
+        Body: { amount, side?, as_of_date? }
+
+        GL-correct opening/take-on balance for ONE customer — the "Adjust Opening
+        Balance" action. Posts Debit mapped receivable account / Credit Take-On
+        Suspense for a debit balance (reversed for a credit balance), matching the
+        Beginning Balances wizard's accounting entries, but scoped to this single
+        customer so it never disturbs any other party's take-on. Re-posting
+        corrects this customer's entry in place.
+        """
+        from datetime import date as _date
+        from apps.accounting.services import AccountingService
+
+        customer = self.get_object()
+        org = self._get_organisation()
+
+        as_of_str = request.data.get("as_of_date")
+        try:
+            as_of = _date.fromisoformat(as_of_str) if as_of_str else _date.today()
+        except (ValueError, TypeError):
+            return Response({"error": "as_of_date must be YYYY-MM-DD"}, status=400)
+
+        try:
+            AccountingService.set_customer_opening_balance(
+                org, customer,
+                amount=request.data.get("amount", 0),
+                side=request.data.get("side"),
+                as_of_date=as_of,
+                created_by=request.user,
+            )
+        except ValueError as e:
+            return Response({"error": str(e)}, status=422)
+        except Exception as e:
+            return Response({"error": f"[{type(e).__name__}] {e}"}, status=422)
+
+        return Response(CustomerSerializer(customer).data)
+
     @action(detail=True, methods=["post"], url_path="record_debit")
     def record_debit(self, request, pk=None):
         """POST /customers/{id}/record_debit/  — record a manual debit charge."""

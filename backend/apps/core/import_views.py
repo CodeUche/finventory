@@ -51,6 +51,16 @@ CUSTOMER_OPTIONAL = [
 ]
 CUSTOMER_ALL = CUSTOMER_REQUIRED + CUSTOMER_OPTIONAL
 
+# Supplier: only "name" is required, matching the New Supplier form — "code" is
+# optional here too (auto-generated the same way SupplierSerializer.create() does
+# for the UI) rather than mandatory the way it is for customers.
+SUPPLIER_REQUIRED = ["name"]
+SUPPLIER_OPTIONAL = [
+    "code", "contact_person", "email", "phone", "address",
+    "tax_id", "payment_terms_days", "notes",
+]
+SUPPLIER_ALL = SUPPLIER_REQUIRED + SUPPLIER_OPTIONAL
+
 ACCOUNT_REQUIRED = ["code", "name", "account_type"]
 ACCOUNT_OPTIONAL = ["description"]
 ACCOUNT_ALL = ACCOUNT_REQUIRED + ACCOUNT_OPTIONAL
@@ -761,6 +771,93 @@ class ImportCustomersView(APIView):
 
 
 # ---------------------------------------------------------------------------
+# Suppliers import
+# ---------------------------------------------------------------------------
+
+class ImportSuppliersView(APIView):
+    permission_classes = [IsAuthenticated, IsVerified, IsManagerOrSuperuser]
+
+    def post(self, request):
+        import uuid as _uuid
+
+        org = _get_or_resolve_org(request)
+        if not org:
+            return Response({"error": "Organisation not found"}, status=400)
+
+        file_obj = request.FILES.get("file")
+        if not file_obj:
+            return Response({"error": "No file uploaded"}, status=400)
+
+        try:
+            headers, rows = _parse_csv(file_obj)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=400)
+
+        ok, used = _check_import_quota(org, len(rows))
+        if not ok:
+            return Response(
+                {"error": f"Daily import quota exceeded ({DAILY_IMPORT_ROW_QUOTA:,} rows/day, {used:,} already used today). Try again tomorrow."},
+                status=429,
+            )
+
+        missing_cols = [c for c in SUPPLIER_REQUIRED if c not in headers]
+        if missing_cols:
+            return Response(
+                {"error": f"CSV missing required columns: {', '.join(missing_cols)}"},
+                status=400,
+            )
+
+        from apps.suppliers.models import Supplier
+
+        created = 0
+        updated = 0
+        errors = []
+
+        for idx, row in enumerate(rows, start=2):
+            row_num = idx
+            if _missing_required(row, SUPPLIER_REQUIRED, errors, row_num):
+                continue
+
+            payment_terms = _int_val(row.get("payment_terms_days", "30"), "payment_terms_days", errors, row_num, 30)
+            if payment_terms is None:
+                payment_terms = 30
+
+            code = (row.get("code") or "").strip()
+            if not code:
+                # Same auto-code scheme as SupplierSerializer.create() for the UI —
+                # keeps import-created and manually-created suppliers consistent.
+                name = row.get("name", "")
+                prefix = (name[:3].upper().replace(" ", "") or "SUP").ljust(3, "X")[:3]
+                code = f"{prefix}-{_uuid.uuid4().hex[:6].upper()}"
+
+            obj, was_created = Supplier.objects.update_or_create(
+                organisation=org,
+                code=code,
+                defaults={
+                    "name": row["name"],
+                    "contact_person": row.get("contact_person", ""),
+                    "email": row.get("email", ""),
+                    "phone": row.get("phone", ""),
+                    "address": row.get("address", ""),
+                    "tax_id": row.get("tax_id", ""),
+                    "payment_terms_days": payment_terms,
+                    "notes": row.get("notes", ""),
+                },
+            )
+            if was_created:
+                created += 1
+            else:
+                updated += 1
+
+        return Response({
+            "created": created,
+            "updated": updated,
+            "errors": errors,
+            "total_rows": len(rows),
+        })
+
+
+# ---------------------------------------------------------------------------
 # Chart of Accounts import
 # ---------------------------------------------------------------------------
 
@@ -1031,6 +1128,7 @@ class ImportEmployeesView(APIView):
 TEMPLATES = {
     "products": PRODUCT_ALL,
     "customers": CUSTOMER_ALL,
+    "suppliers": SUPPLIER_ALL,
     "accounts": ACCOUNT_ALL,
     "employees": EMPLOYEE_ALL,
 }
@@ -1043,6 +1141,11 @@ SAMPLE_ROWS = {
     "customers": [
         ["CUST001", "Adaeze Okafor", "retail", "adaeze@example.com", "08012345678", "Lagos", "Adaeze", "0", "0", ""],
         ["CUST002", "Zenith Foods Ltd", "wholesale", "accounts@zenith.ng", "08087654321", "Abuja", "Mr Bello", "500000", "30", "Preferred supplier"],
+    ],
+    # Column order must match SUPPLIER_ALL = SUPPLIER_REQUIRED + SUPPLIER_OPTIONAL above.
+    "suppliers": [
+        ["ABC Distributors Ltd", "ABC-001", "Mr. John Doe", "sales@abcdist.ng", "08012345678", "12 Adeola Odeku St, Victoria Island, Lagos", "TIN-12345678", "30", "Primary rice supplier"],
+        ["Kobo Trading & Services Ltd", "", "Chinedu Okoro", "info@kobotrading.ng", "08087654321", "Kano", "", "45", ""],
     ],
     "accounts": [
         ["6000", "Office Supplies", "expense", "General office supplies expense"],
@@ -1069,7 +1172,7 @@ class ImportTemplateView(APIView):
         from django.http import HttpResponse
 
         if entity not in TEMPLATES:
-            return Response({"error": f"Unknown entity '{entity}'. Choose: products, customers, accounts, employees"}, status=400)
+            return Response({"error": f"Unknown entity '{entity}'. Choose: products, customers, suppliers, accounts, employees"}, status=400)
 
         columns = TEMPLATES[entity]
         sample_rows = SAMPLE_ROWS.get(entity, [])

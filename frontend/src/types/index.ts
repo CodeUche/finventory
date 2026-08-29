@@ -124,6 +124,7 @@ export interface Customer {
   address?: string
   credit_limit: string
   outstanding_balance: string
+  opening_balance_date?: string | null
   store_credit: string
   available_credit: string
   is_credit_blocked: boolean
@@ -319,6 +320,10 @@ export interface PurchaseOrderItem {
   quantity_ordered: string
   quantity_received: string
   unit_cost: string
+  discount_percent?: string
+  discount_amount?: string
+  tax_rate?: string
+  tax_amount?: string
   line_total: string
   batch_number: string
   expiry_date: string | null
@@ -335,11 +340,44 @@ export interface PurchaseOrder {
   status: 'draft' | 'sent' | 'partially_received' | 'received' | 'closed' | 'canceled'
   order_date: string
   expected_date: string | null
+  subtotal?: string
+  discount_amount?: string
+  tax_amount?: string
+  delivery_amount?: string
   total_amount: string
   notes: string
   receipt: string | null
   created_at: string
   items?: PurchaseOrderItem[]
+}
+
+export interface PurchaseReturnItem {
+  id: string
+  product: string
+  product_name: string
+  product_sku: string
+  quantity_returned: string
+  unit_cost: string
+  line_total: string
+}
+
+export interface PurchaseReturn {
+  id: string
+  return_number: string
+  purchase_order: string
+  po_number: string
+  supplier: string
+  supplier_name: string | null
+  warehouse: string
+  return_date: string
+  reason: string
+  refund_method: 'ap' | 'cash' | 'bank'
+  subtotal: string
+  tax_amount: string
+  total_amount: string
+  gl_post_status: string
+  items: PurchaseReturnItem[]
+  created_at: string
 }
 
 // ─── Reports ──────────────────────────────────────────────────────────────────
@@ -505,6 +543,8 @@ export interface Bill {
   issue_date: string
   due_date: string
   reference: string
+  source_purchase_order?: string | null
+  source_po_number?: string | null
   subtotal: string
   tax_amount: string
   total_amount: string

@@ -40,7 +40,11 @@ class PurchaseOrder(TenantAwareModel):
     expected_date = models.DateField(null=True, blank=True)
     received_date = models.DateField(null=True, blank=True)
     subtotal = MoneyField()
+    discount_amount = MoneyField(default=0)
     tax_amount = MoneyField()
+    # Real monetary freight/shipping cost — distinct from delivery_type/delivery_notes
+    # below, which only describe HOW goods are collected, not what it costs.
+    delivery_amount = MoneyField(default=0)
     total_amount = MoneyField()
     delivery_type = models.CharField(
         max_length=20, choices=DeliveryType.choices,
@@ -104,6 +108,14 @@ class PurchaseOrderItem(TenantAwareModel):
     quantity_ordered = models.DecimalField(max_digits=12, decimal_places=2)
     quantity_received = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     unit_cost = MoneyField()
+    discount_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    discount_amount = MoneyField(default=0)
+    # Input VAT — auto-computed from the product's tax class, the same rule
+    # SaleService._process_line_item uses for sales, so a product's VAT
+    # treatment is consistent whether it's being sold or purchased.
+    tax_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    tax_amount = MoneyField(default=0)
+    # quantity_ordered × unit_cost, net of discount, plus tax — the full line value.
     line_total = MoneyField()
     batch_number = models.CharField(max_length=100, blank=True)
     expiry_date = models.DateField(null=True, blank=True)

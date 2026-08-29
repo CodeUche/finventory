@@ -19,6 +19,8 @@ class Supplier(TenantAwareModel):
     # Take-on opening balance at migration into Audity. Signed: positive = we owe
     # them (credit / payable), negative = they owe us (advance paid).
     opening_balance = MoneyField(default=0)
+    # Date of the most recent take-on/opening-balance adjustment.
+    opening_balance_date = models.DateField(null=True, blank=True)
     # Optional per-supplier payable control account. Blank falls back to the org
     # AccountMapping 'accounts_payable' role, then to code 2001.
     payable_account = models.ForeignKey(

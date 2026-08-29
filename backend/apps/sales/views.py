@@ -112,22 +112,29 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
             return cached
 
         # ── Plan limit check (atomic to prevent race-condition bypass) ────────
+        # Guarded end-to-end: a bug or transient DB error in the limit check itself
+        # must never block a legitimate sale with an opaque 500 ("unexpected error
+        # occurred") — it should fail open (allow the write) and log, the same
+        # best-effort posture used for GL posting elsewhere in this codebase.
         from django.db import transaction as _tx
         from django.utils import timezone as _tz
         from apps.subscriptions.services import SubscriptionService
         from apps.tenancy.models import Organisation
-        org = self._get_organisation()
-        _now = _tz.now()
-        with _tx.atomic():
-            Organisation.objects.select_for_update().get(pk=org.pk)
-            monthly_count = Invoice.objects.filter(
-                organisation=org,
-                created_at__year=_now.year,
-                created_at__month=_now.month,
-            ).count()
-            _limit_err = SubscriptionService.get_write_limit_error(org, "max_invoices_per_month", monthly_count)
-            if _limit_err:
-                return Response({"error": _limit_err, "upgrade_required": True}, status=402)
+        try:
+            org = self._get_organisation()
+            _now = _tz.now()
+            with _tx.atomic():
+                Organisation.objects.select_for_update().get(pk=org.pk)
+                monthly_count = Invoice.objects.filter(
+                    organisation=org,
+                    created_at__year=_now.year,
+                    created_at__month=_now.month,
+                ).count()
+                _limit_err = SubscriptionService.get_write_limit_error(org, "max_invoices_per_month", monthly_count)
+                if _limit_err:
+                    return Response({"error": _limit_err, "upgrade_required": True}, status=402)
+        except Exception:
+            logger.exception("Invoice plan-limit check failed; allowing the write through")
         # ─────────────────────────────────────────────────────────────────────
 
         serializer = CreateSaleSerializer(data=request.data)
@@ -188,6 +195,7 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
                 location=location,
                 wht_rate_id=d.get("wht_rate_id"),
                 defer_fulfillment=d.get("defer_fulfillment", False),
+                shipping_amount=d.get("shipping_amount"),
             )
             try:
                 from apps.core.models import AuditLog as _AL
