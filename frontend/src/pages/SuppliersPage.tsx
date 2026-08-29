@@ -3,7 +3,7 @@ import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, Search, Truck, X, Pencil, Loader2, Trash2, FileText, Download, Scale } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { supplierApi } from '@/services/api'
+import { supplierApi, bypassNextGets } from '@/services/api'
 import { usePagination } from '@/hooks/usePagination'
 import Pagination from '@/components/Pagination'
 import GLAccountSelect from '@/components/GLAccountSelect'
@@ -131,6 +131,11 @@ export default function SuppliersPage() {
         toast.success('Supplier added')
       }
       setShowModal(false)
+      // set-opening-balance is POST /suppliers/<id>/set-opening-balance/ — the
+      // action-endpoint cache invalidation only strips one trailing segment,
+      // landing on the item URL rather than the list URL, so the list GET
+      // right below would otherwise still serve the pre-update cached list.
+      bypassNextGets()
       load()
     } catch {
       toast.error(editId ? 'Failed to update supplier' : 'Failed to create supplier')
@@ -626,6 +631,7 @@ export default function SuppliersPage() {
             try {
               await supplierApi.setOpeningBalance(balanceParty.id, { amount, side, as_of_date: asOfDate })
               toast.success('Opening balance updated')
+              bypassNextGets()
               load()
             } catch {
               toast.error('Failed to update opening balance')

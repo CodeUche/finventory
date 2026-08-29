@@ -238,6 +238,9 @@ export default function PurchasesPage() {
       }
       toast.success('Purchase order created')
       setShowModal(false)
+      // Fresh-cache gate confirmed live to sometimes leave the list stale right
+      // after a create — force the next read to hit the network.
+      bypassNextGets()
       load()
     } catch (err: any) {
       const msg = err?.response?.data?.error?.message
@@ -322,6 +325,7 @@ export default function PurchasesPage() {
       })
       toast.success('Purchase return processed')
       setReturnOrder(null)
+      bypassNextGets()
       load()
     } catch (err: any) {
       const msg = err?.response?.data?.error ?? 'Failed to process return'

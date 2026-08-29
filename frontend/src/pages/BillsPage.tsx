@@ -90,6 +90,12 @@ export default function BillsPage() {
   const [showModal, setShowModal] = useState(false)
   const [editingBillId, setEditingBillId] = useState<string | null>(null)
   const [form, setForm] = useState<BillForm>(BLANK_BILL)
+  // Reviewer feedback: the New Bill modal read as cluttered/confusing — Folder,
+  // Bill Status, and Reference are secondary to entering what's owed, so they're
+  // tucked behind this toggle instead of always showing. Nothing is removed,
+  // just not shown by default; editing an existing bill starts expanded since a
+  // saved bill likely already has one of these set.
+  const [showMoreOptions, setShowMoreOptions] = useState(false)
   const [lines, setLines] = useState<BillLineForm[]>([{ ...BLANK_LINE }])
   const [saving, setSaving] = useState(false)
 
@@ -128,6 +134,7 @@ export default function BillsPage() {
       setEditingBillId(null)
       setForm({ ...BLANK_BILL, folder: folderId })
       setLines([{ ...BLANK_LINE }])
+      setShowMoreOptions(true)
       setShowModal(true)
       // Remove params from URL so modal doesn't re-open on refresh
       setSearchParams({}, { replace: true })
@@ -158,6 +165,7 @@ export default function BillsPage() {
     setEditingBillId(null)
     setForm(BLANK_BILL)
     setLines([{ ...BLANK_LINE }])
+    setShowMoreOptions(false)
     setShowModal(true)
   }
 
@@ -195,6 +203,7 @@ export default function BillsPage() {
       capitalise: Boolean(item.capitalise),
     }))
     setLines(existingItems.length > 0 ? existingItems : [{ ...BLANK_LINE }])
+    setShowMoreOptions(true)
     setShowModal(true)
   }
 
@@ -232,6 +241,7 @@ export default function BillsPage() {
       setShowModal(false)
       setForm(BLANK_BILL)
       setLines([{ ...BLANK_LINE }])
+      bypassNextGets()
       load()
     } catch (err: unknown) {
       const apiErr = (err as { response?: { data?: { error?: { message?: string } | string } } })?.response?.data?.error
@@ -499,10 +509,6 @@ export default function BillsPage() {
                 )}
               </div>
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">Reference<FieldTooltip text="The invoice number printed on the supplier's document. Write it here to match your records to theirs — useful if there's ever a dispute." /></label>
-                <input className="input" placeholder="Invoice/PO ref" value={form.reference} onChange={(e) => setForm({ ...form, reference: e.target.value })} />
-              </div>
-              <div>
                 <label className="text-xs text-slate-400 mb-1 block">Issue Date<FieldTooltip text="The date printed on the supplier's invoice — when they say they raised the bill." /></label>
                 <DateInput value={form.issue_date} onChange={(v) => setForm({ ...form, issue_date: v })} />
               </div>
@@ -510,24 +516,9 @@ export default function BillsPage() {
                 <label className="text-xs text-slate-400 mb-1 block">Due Date<FieldTooltip text="The deadline by which you must pay this bill. The app will flag overdue bills automatically." /></label>
                 <DateInput value={form.due_date} onChange={(v) => setForm({ ...form, due_date: v })} />
               </div>
-              <div>
-                <label className="text-xs text-slate-400 mb-1 block">Folder (optional)<FieldTooltip text="Organise bills into folders for easier management — e.g. 'Utilities', 'Rent', 'Suppliers'." /></label>
-                <select className="input" value={form.folder} onChange={(e) => setForm({ ...form, folder: e.target.value })}>
-                  <option value="">— No folder —</option>
-                  {billFolders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="text-xs text-slate-400 mb-1 block">Bill Status<FieldTooltip text="Draft = you haven't received the physical bill yet. Received = bill is in hand. Approved = authorised for payment." /></label>
-                <select className="input" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
-                  <option value="draft">Draft</option>
-                  <option value="received">Received</option>
-                  <option value="approved">Approved</option>
-                </select>
-              </div>
 
               {/* Smart Tax Field */}
-              <div>
+              <div className="col-span-2">
                 <label className="text-xs text-slate-400 mb-1 block">Tax Class or Rate %<FieldTooltip text="The VAT or tax charged by the supplier. Select a tax class or enter a percentage manually — e.g. 7.5 for 7.5% VAT." /></label>
                 <div className="flex gap-2">
                   <select
@@ -550,6 +541,42 @@ export default function BillsPage() {
                   </div>
                 </div>
               </div>
+            </div>
+
+            {/* Secondary fields — Reference/Folder/Status are metadata, not what's
+                owed, so they stay tucked away unless the user asks for them
+                (reviewer feedback: the full form read as cluttered). */}
+            <div>
+              <button
+                type="button"
+                onClick={() => setShowMoreOptions((v) => !v)}
+                className="text-xs text-slate-400 hover:text-white transition-colors flex items-center gap-1"
+              >
+                {showMoreOptions ? '− Hide' : '+ More'} options (Reference, Folder, Status)
+              </button>
+              {showMoreOptions && (
+                <div className="grid grid-cols-2 gap-4 mt-3">
+                  <div>
+                    <label className="text-xs text-slate-400 mb-1 block">Reference<FieldTooltip text="The invoice number printed on the supplier's document. Write it here to match your records to theirs — useful if there's ever a dispute." /></label>
+                    <input className="input" placeholder="Invoice/PO ref" value={form.reference} onChange={(e) => setForm({ ...form, reference: e.target.value })} />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-400 mb-1 block">Folder (optional)<FieldTooltip text="Organise bills into folders for easier management — e.g. 'Utilities', 'Rent', 'Suppliers'." /></label>
+                    <select className="input" value={form.folder} onChange={(e) => setForm({ ...form, folder: e.target.value })}>
+                      <option value="">— No folder —</option>
+                      {billFolders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-400 mb-1 block">Bill Status<FieldTooltip text="Draft = you haven't received the physical bill yet. Received = bill is in hand. Approved = authorised for payment." /></label>
+                    <select className="input" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
+                      <option value="draft">Draft</option>
+                      <option value="received">Received</option>
+                      <option value="approved">Approved</option>
+                    </select>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Line Items */}

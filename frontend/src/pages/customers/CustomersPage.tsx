@@ -173,6 +173,11 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
       setForm(BLANK)
       setObAmount('')
       setObDate(new Date().toISOString().split('T')[0])
+      // Unconditional: the fresh-cache gate's invalidation heuristic doesn't
+      // reliably clear the list cache for every mutation shape (confirmed live —
+      // a plain create could leave the list showing stale data for up to 5 min),
+      // so force the very next read to hit the network instead of trusting it.
+      bypassNextGets()
       load()
     } catch { toast.error('Failed to create customer') }
     finally { setSaving(false) }
@@ -1274,6 +1279,7 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
             try {
               await customerApi.setOpeningBalance(balanceParty.id, { amount, side, as_of_date: asOfDate })
               toast.success('Opening balance updated')
+              bypassNextGets()
               load()
             } catch {
               toast.error('Failed to update opening balance')
