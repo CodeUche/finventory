@@ -206,6 +206,17 @@ class Product(TenantAwareModel):
         help_text="Service products only — GL wages/direct-labor account debited on a sale instead of cogs_account.",
     )
 
+    class CostingMethod(models.TextChoices):
+        FIFO = "fifo", "FIFO"
+        LIFO = "lifo", "LIFO"
+        AVERAGE = "average", "Average"
+        SPECIFIC = "specific", "Specific Unit"
+
+    costing_method = models.CharField(
+        max_length=10, choices=CostingMethod.choices, default=CostingMethod.AVERAGE,
+        help_text="How cost of goods sold is determined for this item on a sale.",
+    )
+
     class Meta(TenantAwareModel.Meta):
         # Live rows only — see Category above. A deleted product used to hold its
         # SKU forever, so re-adding an item you had removed was impossible.
@@ -280,6 +291,11 @@ class StockItem(TenantAwareModel):
         max_digits=12, decimal_places=2, default=0,
         help_text="Reserved for pending sales orders"
     )
+    # Running weighted-average unit cost, recomputed on every inbound movement
+    # regardless of the product's costing_method (so switching a product TO
+    # 'average' later has real history instead of starting from zero). Read at
+    # sale time only when costing_method == 'average'.
+    average_cost = MoneyField(default=Decimal("0"))
 
     class Meta(TenantAwareModel.Meta):
         unique_together = [["organisation", "product", "warehouse"]]
@@ -354,6 +370,33 @@ class StockMovement(TenantAwareModel):
     def __str__(self):
         sku = self.product.sku if self.product_id else "[deleted product]"
         return f"{self.movement_type} {self.quantity} × {sku}"
+
+
+class StockCostLayer(TenantAwareModel):
+    """
+    Internal FIFO/LIFO cost layer — one row per inbound movement's remaining
+    quantity at its own unit cost. Invisible to users (unlike Batch, which is
+    opt-in lot/expiry tracking); this is purely the accounting cost ledger a
+    FIFO/LIFO costing_method consumes from oldest/newest first on a sale.
+
+    Created for every inbound movement regardless of the product's
+    costing_method, so switching a product to fifo/lifo later has real history
+    to consume instead of starting empty.
+    """
+
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="cost_layers")
+    warehouse = models.ForeignKey(Warehouse, on_delete=models.CASCADE, related_name="cost_layers")
+    quantity_remaining = models.DecimalField(max_digits=12, decimal_places=2)
+    unit_cost = MoneyField()
+    reference = models.CharField(max_length=100, blank=True)
+
+    class Meta(TenantAwareModel.Meta):
+        indexes = [
+            models.Index(fields=["product", "warehouse", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.product.sku} @ {self.warehouse.name}: {self.quantity_remaining} left @ {self.unit_cost}"
 
 
 # Product modifiers live in their own module for clarity; re-exported so Django

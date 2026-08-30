@@ -285,10 +285,24 @@ class SaleService:
 
         line_total = after_discount + tax_amount
 
+        # Specific Unit costing sells FROM a chosen lot, so the batch has to be
+        # resolved before the movement. batch_id was already accepted by the
+        # serializer and SaleItem.batch already existed, but neither was ever
+        # read or persisted — so the column stayed empty and Specific Unit had
+        # nothing to cost against.
+        batch = None
+        batch_id = item_data.get("batch_id")
+        if batch_id:
+            from apps.inventory.models import Batch
+            batch = Batch.objects.filter(
+                id=batch_id, organisation=organisation, product=product,
+            ).first()
+
         # Deduct stock only for physical/digital products (services have no inventory)
         # skip_stock=True for proforma invoices (stock not reserved yet)
+        cost_per_unit = product.cost_price
         if product.product_type != "service" and not skip_stock:
-            InventoryService.record_movement(
+            movement = InventoryService.record_movement(
                 organisation=organisation,
                 product=product,
                 warehouse=warehouse,
@@ -297,12 +311,23 @@ class SaleService:
                 unit_cost=product.cost_price,
                 reference=invoice.invoice_number,
                 created_by=created_by,
+                batch=batch,
+                # The one path the reviewer's costing-method request is about:
+                # value this sale per the product's FIFO/LIFO/Average/Specific
+                # method instead of the flat product.cost_price.
+                use_costing_engine=True,
             )
+            # COGS must agree with the cost the ledger actually consumed —
+            # post_sale_journal reads cost_of_goods, so taking product.cost_price
+            # here would post a different figure to the GL than the stock ledger
+            # recorded, and the two would drift apart permanently.
+            cost_per_unit = movement.unit_cost
 
         SaleItem.objects.create(
             organisation=organisation,
             invoice=invoice,
             product=product,
+            batch=batch,
             quantity=quantity,
             unit_price=unit_price,
             discount_percent=discount_pct,
@@ -310,7 +335,7 @@ class SaleService:
             tax_rate=tax_rate,
             tax_amount=tax_amount,
             line_total=line_total,
-            cost_of_goods=round_money(quantity * product.cost_price),
+            cost_of_goods=round_money(quantity * cost_per_unit),
             modifiers=modifiers,
         )
 
@@ -629,10 +654,10 @@ class SaleService:
         if invoice.fulfilled_at is not None:
             raise ValueError("This invoice has already been fulfilled.")
 
-        for item in invoice.items.select_related("product").all():
+        for item in invoice.items.select_related("product", "batch").all():
             if item.product.product_type == "service":
                 continue
-            InventoryService.record_movement(
+            movement = InventoryService.record_movement(
                 organisation=invoice.organisation,
                 product=item.product,
                 warehouse=invoice.warehouse,
@@ -641,7 +666,16 @@ class SaleService:
                 unit_cost=item.product.cost_price,
                 reference=invoice.invoice_number,
                 created_by=actor,
+                batch=item.batch,
+                use_costing_engine=True,
             )
+            # Deferred fulfilment is where the stock actually leaves, so this is
+            # where its real cost is known. The line was costed provisionally at
+            # creation time (skip_stock=True, nothing consumed yet); restate it
+            # from what the ledger consumed before the GL posts just below,
+            # otherwise the journal and the stock ledger disagree.
+            item.cost_of_goods = round_money(item.quantity * movement.unit_cost)
+            item.save(update_fields=["cost_of_goods", "updated_at"])
 
         from apps.accounting.services import safe_post_gl
         safe_post_gl(

@@ -502,6 +502,7 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
             from django.db import transaction as _tx
             from apps.inventory.services import InventoryService
             from apps.inventory.models import StockMovement
+            from apps.core.utils import round_money
             with _tx.atomic():
                 # Re-read with row lock to prevent concurrent double-confirmation
                 invoice = Invoice.objects.select_for_update().get(
@@ -512,7 +513,7 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
                     return Response({"error": "Only proforma invoices can be confirmed this way"}, status=422)
                 for item in invoice.items.all():
                     if item.product.product_type != "service":
-                        InventoryService.record_movement(
+                        movement = InventoryService.record_movement(
                             organisation=invoice.organisation,
                             product=item.product,
                             warehouse=invoice.warehouse,
@@ -522,7 +523,14 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
                             reference=invoice.invoice_number,
                             created_by=request.user,
                             batch=item.batch,
+                            use_costing_engine=True,
                         )
+                        # Confirming is where a proforma's stock actually leaves,
+                        # so restate the provisional cost from what the ledger
+                        # consumed — the GL posts off cost_of_goods later.
+                        if item.quantity:
+                            item.cost_of_goods = round_money(item.quantity * movement.unit_cost)
+                            item.save(update_fields=["cost_of_goods", "updated_at"])
                 invoice.status = Invoice.Status.CONFIRMED
                 invoice.save(update_fields=["status"])
             return Response(InvoiceSerializer(invoice).data)

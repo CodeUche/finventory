@@ -59,7 +59,7 @@ class ProductSerializer(serializers.ModelSerializer):
             "brand", "unit_of_measure", "product_type", "alcohol_percentage", "volume_ml",
             "cost_price", "owner_cost_price", "selling_price", "wholesale_price",
             "reorder_level", "max_stock_level", "reorder_quantity", "quantity_in_pack", "barcode",
-            "is_active", "is_taxable", "tax_class",
+            "is_active", "is_taxable", "tax_class", "costing_method",
             "inventory_account", "inventory_account_code", "inventory_account_name",
             "sales_account", "sales_account_code", "sales_account_name",
             "cogs_account", "cogs_account_code", "cogs_account_name",

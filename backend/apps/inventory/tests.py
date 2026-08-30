@@ -308,3 +308,160 @@ class ProductListQueryCountTests(TestCase):
             len(ctx.captured_queries), 20,
             f"stock list ran {len(ctx.captured_queries)} queries — N+1 regression",
         )
+
+
+class CostingMethodTests(TestCase):
+    """
+    FIFO / LIFO / Average / Specific Unit costing (the reviewer's "Add Inventory
+    Costing Methods" request).
+
+    These assert on MONEY, so they check exact consumed cost, not just that a
+    sale succeeded. The scenario is deliberately the classic one: two inbound
+    layers at different unit costs, then a sale that spans both, where every
+    method gives a provably different answer.
+    """
+
+    def setUp(self):
+        from apps.customers.models import Customer
+        self.user = _make_user("costing@example.com")
+        self.org = _make_org(self.user, "Costing Org")
+        self.client = _auth_client(self.user, self.org)
+        self.wh = _make_warehouse(self.org)
+        self.customer = Customer.objects.create(
+            organisation=self.org, code="C-COST", name="Cost Customer",
+        )
+
+    def _product(self, method, sku="COST-1"):
+        return Product.objects.create(
+            organisation=self.org, sku=sku, name=f"Item {method}",
+            product_type="physical", costing_method=method,
+            cost_price=Decimal("100"), selling_price=Decimal("500"),
+        )
+
+    def _receive(self, product, qty, unit_cost, reference="PO"):
+        from apps.inventory.services import InventoryService
+        return InventoryService.record_movement(
+            organisation=self.org, product=product, warehouse=self.wh,
+            quantity=Decimal(str(qty)), movement_type="purchase_in",
+            unit_cost=Decimal(str(unit_cost)), reference=reference,
+            created_by=self.user,
+        )
+
+    def _sell(self, product, qty, batch=None):
+        """Sell via the real sale path so COGS wiring is covered too."""
+        from apps.sales.services import SaleService
+        item = {"product_id": str(product.id), "quantity": str(qty), "unit_price": "500"}
+        if batch is not None:
+            item["batch_id"] = str(batch.id)
+        invoice = SaleService.create_sale(
+            organisation=self.org, created_by=self.user, customer=self.customer,
+            warehouse=self.wh, items=[item], payment_method="cash",
+        )
+        return invoice
+
+    def test_fifo_consumes_oldest_layers_first(self):
+        p = self._product("fifo")
+        self._receive(p, 10, "100")
+        self._receive(p, 10, "200")
+        invoice = self._sell(p, 15)          # 10 @ 100 + 5 @ 200 = 2000 → 133.3333/unit
+        line = invoice.items.first()
+        self.assertAlmostEqual(float(line.cost_of_goods), 2000.0, places=2)
+
+    def test_lifo_consumes_newest_layers_first(self):
+        p = self._product("lifo")
+        self._receive(p, 10, "100")
+        self._receive(p, 10, "200")
+        invoice = self._sell(p, 15)          # 10 @ 200 + 5 @ 100 = 2500
+        line = invoice.items.first()
+        self.assertAlmostEqual(float(line.cost_of_goods), 2500.0, places=2)
+
+    def test_average_uses_running_weighted_average(self):
+        p = self._product("average")
+        self._receive(p, 10, "100")
+        self._receive(p, 10, "200")          # weighted avg = 150
+        invoice = self._sell(p, 15)          # 15 × 150 = 2250
+        line = invoice.items.first()
+        self.assertAlmostEqual(float(line.cost_of_goods), 2250.0, places=2)
+
+    def test_specific_unit_uses_chosen_batch_cost(self):
+        from apps.inventory.models import Batch
+        p = self._product("specific")
+        self._receive(p, 10, "100")
+        self._receive(p, 10, "200")
+        batch = Batch.objects.create(
+            organisation=self.org, product=p, warehouse=self.wh,
+            batch_number="LOT-A", quantity=Decimal("10"), unit_cost=Decimal("175"),
+        )
+        invoice = self._sell(p, 5, batch=batch)   # 5 × 175 = 875
+        line = invoice.items.first()
+        self.assertAlmostEqual(float(line.cost_of_goods), 875.0, places=2)
+        # The chosen lot must be recorded on the line, not silently dropped.
+        self.assertEqual(line.batch_id, batch.id)
+
+    def test_fifo_layers_are_drawn_down_across_successive_sales(self):
+        """Second sale must not re-consume the first sale's layer."""
+        p = self._product("fifo")
+        self._receive(p, 10, "100")
+        self._receive(p, 10, "200")
+        first = self._sell(p, 10)            # exhausts the 100-cost layer
+        second = self._sell(p, 5)            # must now draw from the 200 layer
+        self.assertAlmostEqual(float(first.items.first().cost_of_goods), 1000.0, places=2)
+        self.assertAlmostEqual(float(second.items.first().cost_of_goods), 1000.0, places=2)
+
+    def test_default_method_is_average_for_new_products(self):
+        p = Product.objects.create(
+            organisation=self.org, sku="COST-DEFAULT", name="Default",
+            product_type="physical", cost_price=Decimal("100"), selling_price=Decimal("500"),
+        )
+        self.assertEqual(p.costing_method, Product.CostingMethod.AVERAGE)
+
+    def test_cogs_falls_back_to_cost_price_without_layer_history(self):
+        """Stock taken on before any purchase layer must still cost sanely."""
+        from apps.inventory.services import InventoryService
+        p = self._product("fifo", sku="COST-NOHIST")
+        # Opening-balance style movement still builds a layer, so bypass it and
+        # seed the balance the way pre-engine stock would have existed.
+        from apps.inventory.models import StockItem, StockCostLayer
+        InventoryService.record_movement(
+            organisation=self.org, product=p, warehouse=self.wh,
+            quantity=Decimal("10"), movement_type="opening",
+            unit_cost=Decimal("100"), reference="SEED", created_by=self.user,
+        )
+        StockCostLayer.objects.filter(organisation=self.org, product=p).delete()
+        invoice = self._sell(p, 5)           # no layers → falls back to 100/unit
+        self.assertAlmostEqual(float(invoice.items.first().cost_of_goods), 500.0, places=2)
+
+    def test_gl_cogs_matches_the_consumed_ledger_cost(self):
+        """
+        The journal must post the SAME cost the stock ledger consumed. If COGS
+        were still taken from the flat product.cost_price, a FIFO sale would
+        post 100/unit to the GL while the ledger consumed 200/unit, and the two
+        would drift apart permanently.
+        """
+        from apps.accounting.models import JournalEntry
+        p = self._product("lifo", sku="COST-GL")
+        self._receive(p, 10, "100")
+        self._receive(p, 10, "200")
+        invoice = self._sell(p, 5)           # LIFO → 5 × 200 = 1000
+        line = invoice.items.first()
+        self.assertAlmostEqual(float(line.cost_of_goods), 1000.0, places=2)
+
+        entry = JournalEntry.objects.filter(
+            organisation=self.org, source_type="sale", source_ref=str(invoice.id),
+        ).first()
+        self.assertIsNotNone(entry)
+        cogs_debits = [
+            float(l.debit) for l in entry.lines.all()
+            if l.account.account_type in ("cogs", "expense") and l.debit > 0
+        ]
+        self.assertIn(1000.0, cogs_debits, msg=f"GL COGS lines: {cogs_debits}")
+
+    def test_valuation_uses_running_average_once_known(self):
+        from apps.inventory.services import InventoryService
+        p = self._product("average", sku="COST-VAL")
+        self._receive(p, 10, "100")
+        self._receive(p, 10, "200")
+        rows = InventoryService.get_stock_valuation(self.org)
+        row = next(r for r in rows if r.product_id == p.id)
+        # 20 units at a 150 weighted average = 3000, not 20 × flat cost_price.
+        self.assertAlmostEqual(float(row.total_value), 3000.0, places=2)

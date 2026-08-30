@@ -265,6 +265,7 @@ const BLANK = {
   alcohol_percentage: '', volume_ml: '',
   is_taxable: false, tax_class: '',
   inventory_account: '', sales_account: '', cogs_account: '', wages_account: '',
+  costing_method: 'average',
   is_active: true,
   description: '', barcode: '', category: '',
 }
@@ -282,6 +283,14 @@ const PRODUCT_TYPES = [
   { value: 'physical', label: 'Physical (tracked inventory)' },
   { value: 'service', label: 'Service (no inventory)' },
   { value: 'digital', label: 'Digital (no inventory)' },
+]
+
+// Mirrors Product.CostingMethod on the backend.
+const COSTING_METHODS = [
+  { value: 'average', label: 'Average' },
+  { value: 'fifo', label: 'FIFO' },
+  { value: 'lifo', label: 'LIFO' },
+  { value: 'specific', label: 'Specific Unit' },
 ]
 
 const UNITS_OF_MEASURE = [
@@ -407,6 +416,7 @@ export default function ProductsPage() {
       is_taxable: p.is_taxable ?? false,
       tax_class: p.tax_class ?? '',
       inventory_account: p.inventory_account ?? '',
+      costing_method: (p as any).costing_method ?? 'average',
       sales_account: (p as any).sales_account ?? '',
       cogs_account: (p as any).cogs_account ?? '',
       wages_account: (p as any).wages_account ?? '',
@@ -422,6 +432,11 @@ export default function ProductsPage() {
     editReqRef.current = p.id
     inventoryApi.product(p.id).then(({ data }) => {
       if (editReqRef.current !== p.id) return  // user opened a different product meanwhile
+      // EVERY field the slim list omits has to be patched here. Anything
+      // missing shows its blank/default in the form, and because the save
+      // guard below stops skipping fields once editHydrated flips true, that
+      // default then overwrites the real stored value — silently wiping a
+      // product's costing method or GL mapping just by opening and saving it.
       setForm((f) => ({
         ...f,
         description: data.description ?? '',
@@ -429,6 +444,11 @@ export default function ProductsPage() {
         wholesale_price: safeAmt(data.wholesale_price),
         max_stock_level: String(data.max_stock_level ?? ''),
         quantity_in_pack: String(data.quantity_in_pack ?? '1'),
+        costing_method: data.costing_method ?? 'average',
+        inventory_account: data.inventory_account ?? '',
+        sales_account: data.sales_account ?? '',
+        cogs_account: data.cogs_account ?? '',
+        wages_account: data.wages_account ?? '',
       }))
       setEditHydrated(true)
     }).catch(() => { /* offline — form keeps row data; save will omit slim gaps */ })
@@ -492,6 +512,7 @@ export default function ProductsPage() {
       for (const k of [
         'description', 'barcode', 'wholesale_price', 'max_stock_level', 'quantity_in_pack',
         'inventory_account', 'sales_account', 'cogs_account', 'wages_account',
+        'costing_method',
       ]) {
         delete payload[k]
       }
@@ -1186,6 +1207,14 @@ export default function ProductsPage() {
                     <label className="label">Cost of Sales Account</label>
                     <GLAccountSelect value={form.cogs_account}
                       onChange={(v) => setForm((f) => ({ ...f, cogs_account: v }))} />
+                  </div>
+                  <div>
+                    <label className="label">Cost Method <FieldTooltip text="How this item's cost of goods sold is worked out when it sells. FIFO uses your oldest stock first, LIFO your newest, Average blends every purchase, and Specific Unit costs the exact batch you pick on the sale." /></label>
+                    <select className="input" value={form.costing_method} onChange={upd('costing_method')}>
+                      {COSTING_METHODS.map((m) => (
+                        <option key={m.value} value={m.value}>{m.label}</option>
+                      ))}
+                    </select>
                   </div>
                   <p className="text-[11px] text-slate-500">
                     GL accounts this item's sales, stock value and cost of sales post to. Leave on the organisation default unless this item needs its own mapping.

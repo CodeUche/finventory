@@ -104,6 +104,7 @@ export interface Product {
   wages_account?: string | null
   wages_account_code?: string | null
   wages_account_name?: string | null
+  costing_method?: 'fifo' | 'lifo' | 'average' | 'specific'
   total_stock: number
 }
 
