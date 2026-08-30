@@ -11,7 +11,7 @@ import { inventoryApi, taxApi, salesApi, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatAmountInput, stripCommas, formatDate } from '@/lib/utils'
 import AmountInput from '@/components/AmountInput'
 import { useAuthStore } from '@/store/authStore'
-import type { Product, ProductImage, TaxClass, Organisation } from '@/types'
+import type { Product, ProductImage, ProductVariantSummary, ComboComponent, TaxClass, Organisation } from '@/types'
 import SortSelect from '@/components/SortSelect'
 import { FieldTooltip } from '@/components/FieldTooltip'
 import DateInput from '@/components/DateInput'
@@ -268,6 +268,7 @@ const BLANK = {
   costing_method: 'average',
   is_active: true,
   description: '', barcode: '', barcode_symbology: 'code128', category: '',
+  parent_product: '', variant_attributes: {} as Record<string, string>,
 }
 
 const BLANK_BATCH = {
@@ -283,6 +284,8 @@ const PRODUCT_TYPES = [
   { value: 'physical', label: 'Physical (tracked inventory)' },
   { value: 'service', label: 'Service (no inventory)' },
   { value: 'digital', label: 'Digital (no inventory)' },
+  { value: 'variable', label: 'Variable Product (has variants)' },
+  { value: 'combo', label: 'Combo / Bundle Product' },
 ]
 
 // Mirrors Product.CostingMethod on the backend.
@@ -332,6 +335,13 @@ export default function ProductsPage() {
   const [galleryImages, setGalleryImages] = useState<ProductImage[]>([])
   const [galleryUploading, setGalleryUploading] = useState(false)
   const [dragImageId, setDragImageId] = useState<string | null>(null)
+  const [variantList, setVariantList] = useState<ProductVariantSummary[]>([])
+  const [comboComponentsList, setComboComponentsList] = useState<ComboComponent[]>([])
+  const [newVariant, setNewVariant] = useState({ sku: '', name: '', attributes: '', cost_price: '', selling_price: '' })
+  const [newCombo, setNewCombo] = useState({ component_product: '', quantity: '1' })
+  const [comboSaving, setComboSaving] = useState(false)
+  const [variantSaving, setVariantSaving] = useState(false)
+  const [comboPickableProducts, setComboPickableProducts] = useState<Product[]>([])
   const [form, setForm] = useState({ ...BLANK })
   const [taxClasses, setTaxClasses] = useState<TaxClass[]>([])
   const [sortBy, setSortBy] = useState('name')
@@ -387,6 +397,11 @@ export default function ProductsPage() {
     inventoryApi.categories().then(({ data }) => {
       setCategories(data.results ?? data)
     }).catch(() => {})
+    // Combo Products pick their components from physical stock items only —
+    // a service/digital/variable-template/combo product can't be assembled from.
+    inventoryApi.products({ product_type: 'physical', page_size: 500 }).then(({ data }) => {
+      setComboPickableProducts(data.results ?? data)
+    }).catch(() => {})
   }
 
   const openCreate = () => {
@@ -394,6 +409,10 @@ export default function ProductsPage() {
     setForm({ ...BLANK })
     setBatchForm({ ...BLANK_BATCH })
     setGalleryImages([])
+    setVariantList([])
+    setComboComponentsList([])
+    setNewVariant({ sku: '', name: '', attributes: '', cost_price: '', selling_price: '' })
+    setNewCombo({ component_product: '', quantity: '1' })
     loadModalDeps()
     setShowModal(true)
   }
@@ -445,6 +464,8 @@ export default function ProductsPage() {
       barcode: (p as any).barcode ?? '',
       barcode_symbology: (p as any).barcode_symbology ?? 'code128',
       category: (p as any).category ?? '',
+      parent_product: (p as any).parent_product ?? '',
+      variant_attributes: (p as any).variant_attributes ?? {},
     })
     loadModalDeps()
     // Hydrate the slim-list gaps from the detail endpoint (full serializer).
@@ -472,8 +493,12 @@ export default function ProductsPage() {
         wages_account: data.wages_account ?? '',
         tax_type: data.tax_type ?? 'exclusive',
         barcode_symbology: data.barcode_symbology ?? 'code128',
+        parent_product: data.parent_product ?? '',
+        variant_attributes: data.variant_attributes ?? {},
       }))
       setGalleryImages(data.images ?? [])
+      setVariantList(data.variants ?? [])
+      setComboComponentsList(data.combo_components ?? [])
       setEditHydrated(true)
     }).catch(() => { /* offline — form keeps row data; save will omit slim gaps */ })
     // Fetch current warehouse for this product (largest stock qty wins)
@@ -560,6 +585,74 @@ export default function ProductsPage() {
     }
   }
 
+  const handleAddVariant = async () => {
+    if (!editId || !newVariant.sku.trim() || !newVariant.name.trim()) {
+      toast.error('SKU and name are required for a variant')
+      return
+    }
+    setVariantSaving(true)
+    try {
+      const attributes: Record<string, string> = {}
+      for (const pair of newVariant.attributes.split(',')) {
+        const [k, v] = pair.split(':').map((s) => s.trim())
+        if (k && v) attributes[k] = v
+      }
+      const { data } = await inventoryApi.createProduct({
+        sku: newVariant.sku.trim(),
+        name: newVariant.name.trim(),
+        product_type: 'physical',
+        parent_product: editId,
+        variant_attributes: attributes,
+        cost_price: stripCommas(newVariant.cost_price) || '0',
+        selling_price: stripCommas(newVariant.selling_price) || '0',
+        unit_of_measure: form.unit_of_measure,
+      })
+      setVariantList((v) => [...v, { ...data, total_stock: 0 }])
+      setNewVariant({ sku: '', name: '', attributes: '', cost_price: '', selling_price: '' })
+      toast.success('Variant added')
+    } catch (err: any) {
+      const apiErr = err?.response?.data?.error ?? err?.response?.data
+      const msg = typeof apiErr === 'string' ? apiErr : (apiErr?.message ?? JSON.stringify(err?.response?.data ?? {}))
+      toast.error(msg || 'Could not add variant')
+    } finally {
+      setVariantSaving(false)
+    }
+  }
+
+  const handleAddComboComponent = async () => {
+    if (!editId || !newCombo.component_product) {
+      toast.error('Choose a component product')
+      return
+    }
+    setComboSaving(true)
+    try {
+      const { data } = await inventoryApi.createComboComponent({
+        combo_product: editId,
+        component_product: newCombo.component_product,
+        quantity: newCombo.quantity || '1',
+      })
+      setComboComponentsList((c) => [...c, data])
+      setNewCombo({ component_product: '', quantity: '1' })
+    } catch (err: any) {
+      const apiErr = err?.response?.data?.error ?? err?.response?.data
+      const msg = typeof apiErr === 'string' ? apiErr : (apiErr?.message ?? (Array.isArray(apiErr) ? apiErr.join(' ') : 'Could not add component'))
+      toast.error(msg)
+    } finally {
+      setComboSaving(false)
+    }
+  }
+
+  const handleDeleteComboComponent = async (id: string) => {
+    const ok = await confirmDialog('Remove this component from the combo?')
+    if (!ok) return
+    setComboComponentsList((c) => c.filter((x) => x.id !== id))
+    try {
+      await inventoryApi.deleteComboComponent(id)
+    } catch {
+      toast.error('Could not remove component')
+    }
+  }
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault()
     setSaving(true)
@@ -589,6 +682,7 @@ export default function ProductsPage() {
     if (!payload.sales_account) payload.sales_account = null
     if (!payload.cogs_account) payload.cogs_account = null
     if (!payload.wages_account) payload.wages_account = null
+    if (!payload.parent_product) payload.parent_product = null
     // Editing without detail hydration (offline): never send the fields the slim
     // list doesn't carry — sending their empty defaults would wipe real data.
     // (inventory_account was missing from this list too — same bug, fixed here
@@ -598,6 +692,7 @@ export default function ProductsPage() {
         'description', 'barcode', 'wholesale_price', 'max_stock_level', 'quantity_in_pack',
         'inventory_account', 'sales_account', 'cogs_account', 'wages_account',
         'costing_method', 'tax_type', 'barcode_symbology',
+        'parent_product', 'variant_attributes',
       ]) {
         delete payload[k]
       }
@@ -993,6 +1088,8 @@ export default function ProductsPage() {
                     <td className="px-5 py-3.5">
                       {(p as any).product_type === 'service' ? <span className="badge-blue">Service</span>
                         : (p as any).product_type === 'digital' ? <span className="badge-orange">Digital</span>
+                        : (p as any).product_type === 'variable' ? <span className="badge-purple">Variable</span>
+                        : (p as any).product_type === 'combo' ? <span className="badge-green">Combo</span>
                         : <span className="badge-slate">Physical</span>}
                     </td>
                     <td className="px-5 py-3.5 text-slate-300">{formatCurrency(p.cost_price)}</td>
@@ -1015,7 +1112,7 @@ export default function ProductsPage() {
                       </div>
                     </td>
                     <td className="px-5 py-3.5">
-                      {(p as any).product_type === 'service' || (p as any).product_type === 'digital' ? (
+                      {['service', 'digital', 'variable', 'combo'].includes((p as any).product_type) ? (
                         <span className="badge-slate">N/A</span>
                       ) : (
                         <div className="flex flex-col gap-1">
@@ -1136,6 +1233,8 @@ export default function ProductsPage() {
                 <p className="text-sm font-semibold text-white">Product Images</p>
                 {!editId ? (
                   <p className="text-xs text-slate-500">Save the product first, then add photos.</p>
+                ) : !editHydrated ? (
+                  <p className="text-xs text-slate-500">Loading…</p>
                 ) : (
                   <>
                     <label className={`flex flex-col items-center justify-center gap-1.5 border-2 border-dashed rounded-xl py-6 transition-colors ${galleryUploading ? 'border-surface-700 cursor-wait' : 'border-surface-600 hover:border-brand-500 cursor-pointer'}`}>
@@ -1187,6 +1286,98 @@ export default function ProductsPage() {
                   </>
                 )}
               </div>
+
+              {form.product_type === 'variable' && (
+                <div className="rounded-xl border border-surface-700/60 p-4 space-y-3">
+                  <p className="text-sm font-semibold text-white">Variants</p>
+                  {!editId ? (
+                    <p className="text-xs text-slate-500">Save this Variable Product first, then add its variants.</p>
+                  ) : !editHydrated ? (
+                    <p className="text-xs text-slate-500">Loading…</p>
+                  ) : (
+                    <>
+                      {variantList.length === 0 ? (
+                        <p className="text-xs text-slate-500">No variants yet. Add one below — e.g. "Size: Large, Color: Red".</p>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {variantList.map((v) => (
+                            <div key={v.id} className="flex items-center justify-between text-sm bg-surface-900/50 rounded-lg px-3 py-2">
+                              <div>
+                                <span className="text-white font-medium">{v.sku}</span>
+                                <span className="text-slate-400 ml-2">{v.name}</span>
+                                {Object.keys(v.variant_attributes ?? {}).length > 0 && (
+                                  <span className="text-[11px] text-slate-500 ml-2">
+                                    ({Object.entries(v.variant_attributes).map(([k, val]) => `${k}: ${val}`).join(', ')})
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-slate-400 text-xs">Stock: {v.total_stock}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="grid grid-cols-2 gap-2 pt-2 border-t border-surface-700/60">
+                        <input className="input" placeholder="Variant SKU" value={newVariant.sku}
+                          onChange={(e) => setNewVariant((n) => ({ ...n, sku: e.target.value }))} />
+                        <input className="input" placeholder="Variant Name" value={newVariant.name}
+                          onChange={(e) => setNewVariant((n) => ({ ...n, name: e.target.value }))} />
+                        <input className="input col-span-2" placeholder="Attributes (e.g. Size: Large, Color: Red)" value={newVariant.attributes}
+                          onChange={(e) => setNewVariant((n) => ({ ...n, attributes: e.target.value }))} />
+                        <input className="input" type="number" min="0" placeholder="Cost Price" value={newVariant.cost_price}
+                          onChange={(e) => setNewVariant((n) => ({ ...n, cost_price: e.target.value }))} />
+                        <input className="input" type="number" min="0" placeholder="Selling Price" value={newVariant.selling_price}
+                          onChange={(e) => setNewVariant((n) => ({ ...n, selling_price: e.target.value }))} />
+                      </div>
+                      <button type="button" className="btn-secondary w-full text-sm" disabled={variantSaving} onClick={handleAddVariant}>
+                        {variantSaving ? <Loader2 size={14} className="animate-spin mx-auto" /> : 'Add Variant'}
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {form.product_type === 'combo' && (
+                <div className="rounded-xl border border-surface-700/60 p-4 space-y-3">
+                  <p className="text-sm font-semibold text-white">Combo Components</p>
+                  {!editId ? (
+                    <p className="text-xs text-slate-500">Save this Combo Product first, then add its components.</p>
+                  ) : !editHydrated ? (
+                    <p className="text-xs text-slate-500">Loading…</p>
+                  ) : (
+                    <>
+                      {comboComponentsList.length === 0 ? (
+                        <p className="text-xs text-slate-500">No components yet. Selling this combo will fail until at least one is added.</p>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {comboComponentsList.map((c) => (
+                            <div key={c.id} className="flex items-center justify-between text-sm bg-surface-900/50 rounded-lg px-3 py-2">
+                              <span className="text-white">{c.quantity} × {c.component_product_sku} — {c.component_product_name}</span>
+                              <button type="button" onClick={() => handleDeleteComboComponent(c.id)} className="text-slate-400 hover:text-red-400">
+                                <X size={14} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="grid grid-cols-3 gap-2 pt-2 border-t border-surface-700/60">
+                        <select className="input col-span-2" value={newCombo.component_product}
+                          onChange={(e) => setNewCombo((n) => ({ ...n, component_product: e.target.value }))}>
+                          <option value="">— Choose component —</option>
+                          {comboPickableProducts.filter((p) => p.id !== editId).map((p) => (
+                            <option key={p.id} value={p.id}>{p.sku} — {p.name}</option>
+                          ))}
+                        </select>
+                        <input className="input" type="number" min="0.01" step="0.01" placeholder="Qty" value={newCombo.quantity}
+                          onChange={(e) => setNewCombo((n) => ({ ...n, quantity: e.target.value }))} />
+                      </div>
+                      <button type="button" className="btn-secondary w-full text-sm" disabled={comboSaving} onClick={handleAddComboComponent}>
+                        {comboSaving ? <Loader2 size={14} className="animate-spin mx-auto" /> : 'Add Component'}
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="label">Brand / Vendor <FieldTooltip text="The brand name or the company that makes or supplies this product. Optional — useful for filtering and reports." /></label>

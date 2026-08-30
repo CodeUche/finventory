@@ -5,6 +5,7 @@ from .modifier_views import ModifierGroupViewSet, ModifierOptionViewSet
 from .views import (
     BatchViewSet,
     CategoryViewSet,
+    ComboComponentViewSet,
     ProductImageViewSet,
     ProductViewSet,
     StockItemViewSet,
@@ -18,6 +19,7 @@ router.register("warehouses", WarehouseViewSet, basename="warehouse")
 router.register("products", ProductViewSet, basename="product")
 router.register("batches", BatchViewSet, basename="batch")
 router.register("product-images", ProductImageViewSet, basename="product-image")
+router.register("combo-components", ComboComponentViewSet, basename="combo-component")
 router.register("stock", StockItemViewSet, basename="stock-item")
 router.register("movements", StockMovementViewSet, basename="stock-movement")
 router.register('modifier-groups', ModifierGroupViewSet, basename='modifier-group')

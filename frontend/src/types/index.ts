@@ -80,6 +80,26 @@ export interface ProductImage {
   created_at: string
 }
 
+export interface ProductVariantSummary {
+  id: string
+  sku: string
+  name: string
+  variant_attributes: Record<string, string>
+  cost_price: string
+  selling_price: string
+  is_active: boolean
+  total_stock: number
+}
+
+export interface ComboComponent {
+  id: string
+  combo_product: string
+  component_product: string
+  component_product_sku: string
+  component_product_name: string
+  quantity: string
+}
+
 // ─── Product ──────────────────────────────────────────────────────────────────
 export interface Product {
   id: string
@@ -89,7 +109,7 @@ export interface Product {
   category: string | null
   category_name: string | null
   unit_of_measure: string
-  product_type?: 'physical' | 'service' | 'digital'
+  product_type?: 'physical' | 'service' | 'digital' | 'variable' | 'combo'
   alcohol_percentage?: number
   volume_ml?: number
   cost_price: string
@@ -118,6 +138,12 @@ export interface Product {
   barcode_symbology?: 'code128' | 'code39' | 'ean8' | 'ean13' | 'upc'
   image?: string | null
   images?: ProductImage[]
+  parent_product?: string | null
+  parent_product_sku?: string | null
+  parent_product_name?: string | null
+  variant_attributes?: Record<string, string>
+  variants?: ProductVariantSummary[]
+  combo_components?: ComboComponent[]
   total_stock: number
 }
 

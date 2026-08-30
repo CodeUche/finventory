@@ -177,6 +177,47 @@ class InventoryService:
         return total_cost / quantity_needed
 
     @staticmethod
+    @transaction.atomic
+    def consume_combo_components(
+        organisation, combo_product: Product, warehouse: Warehouse, quantity: Decimal,
+        reference: str = "", created_by=None,
+    ) -> Decimal:
+        """
+        Sell `quantity` units of a Combo Product by deducting each of its
+        bill-of-materials components from their OWN stock — the combo itself
+        carries no StockItem, so this is the only place its "sale" actually
+        touches inventory. Reuses record_movement (with the costing engine)
+        per component so FIFO/LIFO/Average/Specific-Unit and the GL/cost
+        machinery already built for ordinary sales keeps working unmodified.
+
+        Returns the combo's effective cost-of-goods PER COMBO UNIT — the sum
+        of each component's actual consumed cost, scaled by how many of that
+        component one combo unit needs.
+        """
+        from .models import ComboComponent
+
+        components = list(
+            ComboComponent.objects.filter(organisation=organisation, combo_product=combo_product)
+            .select_related("component_product")
+        )
+        total_cost_per_combo_unit = Decimal("0")
+        for line in components:
+            component_qty = line.quantity * quantity
+            movement = InventoryService.record_movement(
+                organisation=organisation,
+                product=line.component_product,
+                warehouse=warehouse,
+                quantity=-component_qty,
+                movement_type="sale_out",
+                unit_cost=line.component_product.cost_price,
+                reference=reference,
+                created_by=created_by,
+                use_costing_engine=True,
+            )
+            total_cost_per_combo_unit += movement.unit_cost * line.quantity
+        return total_cost_per_combo_unit
+
+    @staticmethod
     def get_low_stock_products(organisation):
         """Return stock items that have fallen below reorder level."""
         return (

@@ -257,6 +257,10 @@ class SaleService:
         product = Product.objects.select_for_update().get(
             id=item_data["product_id"], organisation=organisation
         )
+        if product.product_type == Product.ProductType.VARIABLE:
+            raise ValueError(
+                f"'{product.name}' is a Variable Product template — sell one of its variants instead."
+            )
         quantity = Decimal(str(item_data["quantity"]))
         base_price = Decimal(str(item_data.get("unit_price", product.selling_price)))
         discount_pct = Decimal(str(item_data.get("discount_percent", 0)))
@@ -308,7 +312,18 @@ class SaleService:
         # Deduct stock only for physical/digital products (services have no inventory)
         # skip_stock=True for proforma invoices (stock not reserved yet)
         cost_per_unit = product.cost_price
-        if product.product_type != "service" and not skip_stock:
+        if product.product_type == Product.ProductType.COMBO and not skip_stock:
+            # A combo has no stock of its own — selling it deducts each of its
+            # bill-of-materials components from their own stock instead.
+            cost_per_unit = InventoryService.consume_combo_components(
+                organisation=organisation,
+                combo_product=product,
+                warehouse=warehouse,
+                quantity=quantity,
+                reference=invoice.invoice_number,
+                created_by=created_by,
+            )
+        elif product.product_type != "service" and not skip_stock:
             movement = InventoryService.record_movement(
                 organisation=organisation,
                 product=product,
@@ -664,24 +679,35 @@ class SaleService:
         for item in invoice.items.select_related("product", "batch").all():
             if item.product.product_type == "service":
                 continue
-            movement = InventoryService.record_movement(
-                organisation=invoice.organisation,
-                product=item.product,
-                warehouse=invoice.warehouse,
-                quantity=-item.quantity,
-                movement_type="sale_out",
-                unit_cost=item.product.cost_price,
-                reference=invoice.invoice_number,
-                created_by=actor,
-                batch=item.batch,
-                use_costing_engine=True,
-            )
+            if item.product.product_type == Product.ProductType.COMBO:
+                cost_per_unit = InventoryService.consume_combo_components(
+                    organisation=invoice.organisation,
+                    combo_product=item.product,
+                    warehouse=invoice.warehouse,
+                    quantity=item.quantity,
+                    reference=invoice.invoice_number,
+                    created_by=actor,
+                )
+            else:
+                movement = InventoryService.record_movement(
+                    organisation=invoice.organisation,
+                    product=item.product,
+                    warehouse=invoice.warehouse,
+                    quantity=-item.quantity,
+                    movement_type="sale_out",
+                    unit_cost=item.product.cost_price,
+                    reference=invoice.invoice_number,
+                    created_by=actor,
+                    batch=item.batch,
+                    use_costing_engine=True,
+                )
+                cost_per_unit = movement.unit_cost
             # Deferred fulfilment is where the stock actually leaves, so this is
             # where its real cost is known. The line was costed provisionally at
             # creation time (skip_stock=True, nothing consumed yet); restate it
             # from what the ledger consumed before the GL posts just below,
             # otherwise the journal and the stock ledger disagree.
-            item.cost_of_goods = round_money(item.quantity * movement.unit_cost)
+            item.cost_of_goods = round_money(item.quantity * cost_per_unit)
             item.save(update_fields=["cost_of_goods", "updated_at"])
 
         from apps.accounting.services import safe_post_gl

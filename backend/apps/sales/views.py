@@ -512,7 +512,19 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
                 if invoice.status != Invoice.Status.PROFORMA:
                     return Response({"error": "Only proforma invoices can be confirmed this way"}, status=422)
                 for item in invoice.items.all():
-                    if item.product.product_type != "service":
+                    if item.product.product_type == "combo":
+                        cost_per_unit = InventoryService.consume_combo_components(
+                            organisation=invoice.organisation,
+                            combo_product=item.product,
+                            warehouse=invoice.warehouse,
+                            quantity=item.quantity,
+                            reference=invoice.invoice_number,
+                            created_by=request.user,
+                        )
+                        if item.quantity:
+                            item.cost_of_goods = round_money(item.quantity * cost_per_unit)
+                            item.save(update_fields=["cost_of_goods", "updated_at"])
+                    elif item.product.product_type != "service":
                         movement = InventoryService.record_movement(
                             organisation=invoice.organisation,
                             product=item.product,

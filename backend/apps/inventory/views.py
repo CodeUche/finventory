@@ -15,10 +15,11 @@ from apps.core.permissions import requires_module
 _ModAccess_inventory = requires_module("inventory")
 
 
-from .models import Batch, Category, Product, ProductImage, StockItem, StockMovement, Warehouse
+from .models import Batch, Category, ComboComponent, Product, ProductImage, StockItem, StockMovement, Warehouse
 from .serializers import (
     BatchSerializer,
     CategorySerializer,
+    ComboComponentSerializer,
     ProductImageSerializer,
     ProductSerializer,
     StockAdjustmentSerializer,
@@ -41,7 +42,7 @@ class ProductFilter(django_filters.FilterSet):
 
     class Meta:
         model = Product
-        fields = ["name", "sku", "category", "is_active", "brand"]
+        fields = ["name", "sku", "category", "is_active", "brand", "product_type"]
 
 
 class CategoryViewSet(TenantFilterMixin, viewsets.ModelViewSet):
@@ -147,6 +148,11 @@ class ProductViewSet(FriendlyUniqueErrorMixin, TenantFilterMixin, viewsets.Model
             qs = qs.annotate(
                 _quantity_incoming=Coalesce(Subquery(incoming_sq, output_field=dec), Value(0, output_field=dec)),
             )
+        # variants/combo_components are nested on the full (non-slim) serializer
+        # — prefetch so N products doesn't mean N extra queries (see the
+        # products-list N+1 incident this viewset was already rewritten for).
+        if not (self.action == "list" and self._slim_requested()):
+            qs = qs.prefetch_related("variants__stock_items", "combo_components__component_product")
         return qs
 
     def create(self, request, *args, **kwargs):
@@ -772,6 +778,24 @@ class ProductImageViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         for idx, image_id in enumerate(order):
             updated += ProductImage.objects.filter(organisation=org, id=image_id).update(sort_order=idx)
         return Response({"updated": updated})
+
+
+class ComboComponentViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+    """
+    Bill-of-materials lines for a Combo/Bundle Product — the reviewer's
+    "Combo Product" request. Managed as its own CRUD resource (same pattern
+    as ProductImageViewSet) rather than nested writes on ProductSerializer,
+    so adding/removing/adjusting one component doesn't require resubmitting
+    the whole product form.
+    """
+    queryset = ComboComponent.objects.select_related("combo_product", "component_product")
+    serializer_class = ComboComponentSerializer
+    permission_classes = [IsAuthenticated, IsStaff, _ModAccess_inventory]
+    filterset_fields = ["combo_product"]
+
+    def perform_create(self, serializer):
+        serializer.save(organisation=self._get_organisation())
+        self._write_audit('create', serializer.instance, {})
 
 
 class StockItemViewSet(TenantFilterMixin, viewsets.ModelViewSet):

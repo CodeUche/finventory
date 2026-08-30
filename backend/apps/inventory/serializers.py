@@ -5,7 +5,7 @@ from decimal import Decimal
 from rest_framework import serializers
 
 from apps.core.validators import validate_image_upload
-from .models import Batch, Category, Product, ProductImage, StockItem, StockMovement, Warehouse
+from .models import Batch, Category, ComboComponent, Product, ProductImage, StockItem, StockMovement, Warehouse
 
 _OWNER_ROLES = {"owner", "admin"}
 
@@ -41,6 +41,69 @@ class ProductImageSerializer(serializers.ModelSerializer):
         return value
 
 
+class ProductVariantSummarySerializer(serializers.ModelSerializer):
+    """
+    Minimal representation of a variant row, nested under its Variable Product
+    template. Deliberately excludes GL/images/variants fields — a variant's
+    own detail is opened the same way any other product's is, via the normal
+    product edit form; this is just enough for the template's variant list.
+    """
+    total_stock = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Product
+        fields = [
+            "id", "sku", "name", "variant_attributes",
+            "cost_price", "selling_price", "is_active", "total_stock",
+        ]
+
+    def get_total_stock(self, obj):
+        annotated = getattr(obj, "_total_stock", None)
+        if annotated is not None:
+            return annotated
+        return sum(
+            s.quantity_on_hand for s in obj.stock_items.filter(organisation=obj.organisation)
+        )
+
+
+class ComboComponentSerializer(serializers.ModelSerializer):
+    component_product_sku = serializers.CharField(source="component_product.sku", read_only=True)
+    component_product_name = serializers.CharField(source="component_product.name", read_only=True)
+
+    class Meta:
+        model = ComboComponent
+        fields = [
+            "id", "combo_product", "component_product",
+            "component_product_sku", "component_product_name", "quantity",
+        ]
+        read_only_fields = ["id"]
+
+    def validate(self, attrs):
+        combo_product = attrs.get("combo_product") or getattr(self.instance, "combo_product", None)
+        component_product = attrs.get("component_product") or getattr(self.instance, "component_product", None)
+        request = self.context.get("request")
+        org = getattr(request, "organisation", None) if request else None
+
+        for label, product in (("combo_product", combo_product), ("component_product", component_product)):
+            if product is not None and org is not None and product.organisation_id != org.id:
+                raise serializers.ValidationError({label: "Product does not belong to this organisation."})
+
+        if combo_product and component_product:
+            if combo_product.id == component_product.id:
+                raise serializers.ValidationError("A combo cannot contain itself as a component.")
+            if combo_product.product_type != Product.ProductType.COMBO:
+                raise serializers.ValidationError({"combo_product": "This product is not a Combo Product."})
+            if component_product.product_type == Product.ProductType.COMBO:
+                raise serializers.ValidationError(
+                    {"component_product": "A combo's component cannot itself be a Combo Product."}
+                )
+
+        quantity = attrs.get("quantity", getattr(self.instance, "quantity", None))
+        if quantity is not None and quantity <= 0:
+            raise serializers.ValidationError({"quantity": "Quantity must be greater than zero."})
+        return attrs
+
+
 class ProductSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True)
     images = ProductImageSerializer(many=True, read_only=True)
@@ -70,6 +133,10 @@ class ProductSerializer(serializers.ModelSerializer):
     wages_account_name = serializers.CharField(
         source="wages_account.name", read_only=True, default=None
     )
+    parent_product_sku = serializers.CharField(source="parent_product.sku", read_only=True, default=None)
+    parent_product_name = serializers.CharField(source="parent_product.name", read_only=True, default=None)
+    variants = serializers.SerializerMethodField()
+    combo_components = ComboComponentSerializer(many=True, read_only=True)
 
     class Meta:
         model = Product
@@ -84,10 +151,34 @@ class ProductSerializer(serializers.ModelSerializer):
             "sales_account", "sales_account_code", "sales_account_name",
             "cogs_account", "cogs_account_code", "cogs_account_name",
             "wages_account", "wages_account_code", "wages_account_name",
+            "parent_product", "parent_product_sku", "parent_product_name",
+            "variant_attributes", "variants", "combo_components",
             "image", "images",
             "total_stock", "quantity_incoming", "created_at", "updated_at",
         ]
         read_only_fields = ["id", "total_stock", "quantity_incoming", "created_at", "updated_at", "image"]
+
+    def get_variants(self, obj):
+        if obj.product_type != Product.ProductType.VARIABLE:
+            return []
+        return ProductVariantSummarySerializer(
+            obj.variants.filter(organisation=obj.organisation), many=True,
+        ).data
+
+    def validate_parent_product(self, value):
+        if value is None:
+            return value
+        request = self.context.get("request")
+        org = getattr(request, "organisation", None) if request else None
+        if org is not None and value.organisation_id != org.id:
+            raise serializers.ValidationError("Parent product does not belong to this organisation.")
+        if value.product_type != Product.ProductType.VARIABLE:
+            raise serializers.ValidationError("Parent product must be a Variable Product.")
+        if self.instance is not None and value.id == self.instance.id:
+            raise serializers.ValidationError("A product cannot be its own variant parent.")
+        if value.parent_product_id is not None:
+            raise serializers.ValidationError("Parent product cannot itself be a variant.")
+        return value
 
     def get_quantity_incoming(self, obj):
         # Fast path: ProductViewSet.get_queryset annotates _quantity_incoming so

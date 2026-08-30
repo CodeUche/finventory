@@ -1188,6 +1188,12 @@ export const inventoryApi = {
   setMainProductImage: (imageId: string) => api.post(`/inventory/product-images/${imageId}/set_main/`),
   deleteProductImage: (imageId: string) => api.delete(`/inventory/product-images/${imageId}/`),
   reorderProductImages: (order: string[]) => api.post('/inventory/product-images/reorder/', { order }),
+  /** Variable Products: variants are ordinary products with parent_product set — reuse create/updateProduct. */
+  comboComponents: (comboProductId: string) =>
+    api.get('/inventory/combo-components/', { params: { combo_product: comboProductId } }),
+  createComboComponent: (data: object) => api.post('/inventory/combo-components/', data),
+  updateComboComponent: (id: string, data: object) => api.patch(`/inventory/combo-components/${id}/`, data),
+  deleteComboComponent: (id: string) => api.delete(`/inventory/combo-components/${id}/`),
 }
 
 export const salesApi = {

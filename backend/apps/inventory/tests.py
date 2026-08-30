@@ -9,7 +9,7 @@ from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.authentication.models import User
-from apps.inventory.models import Product, ProductImage, Warehouse
+from apps.inventory.models import ComboComponent, Product, ProductImage, Warehouse
 from apps.tenancy.services import OrganisationService
 
 
@@ -713,3 +713,274 @@ class ProductImageRawUploadTests(TestCase):
         )
         self.assertEqual(res2.status_code, 201, msg=str(res2.data))
         self.assertFalse(res2.data["is_main"])
+
+
+class ProductVariantTests(TestCase):
+    """
+    Variable Products (the reviewer's "Add Variable Product type" request).
+
+    A variant is a normal Product row with parent_product set to a
+    product_type=VARIABLE template — this suite checks the template/variant
+    relationship, cross-org/self-parent/double-nesting guards, that each
+    variant tracks its own independent stock and price, and that the
+    template itself can never be sold directly.
+    """
+
+    def setUp(self):
+        self.user = _make_user("variant@example.com")
+        self.org = _make_org(self.user, "Variant Org")
+        self.client = _auth_client(self.user, self.org)
+        self.wh = _make_warehouse(self.org)
+        self.template = Product.objects.create(
+            organisation=self.org, sku="TSHIRT", name="T-Shirt",
+            product_type=Product.ProductType.VARIABLE,
+            cost_price=Decimal("0"), selling_price=Decimal("0"),
+        )
+
+    def test_create_variant_links_to_template(self):
+        res = self.client.post("/api/v1/inventory/products/", {
+            "sku": "TSHIRT-RED-L", "name": "T-Shirt Red/Large",
+            "product_type": "physical", "parent_product": str(self.template.id),
+            "variant_attributes": {"Size": "Large", "Color": "Red"},
+            "cost_price": "1000", "selling_price": "2000",
+        }, format="json")
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        self.assertEqual(str(res.data["parent_product"]), str(self.template.id))
+        self.assertEqual(res.data["variant_attributes"], {"Size": "Large", "Color": "Red"})
+
+    def test_template_lists_its_variants(self):
+        Product.objects.create(
+            organisation=self.org, sku="TSHIRT-S", name="T-Shirt Small",
+            product_type="physical", parent_product=self.template,
+            variant_attributes={"Size": "Small"},
+            cost_price=Decimal("1000"), selling_price=Decimal("2000"),
+        )
+        Product.objects.create(
+            organisation=self.org, sku="TSHIRT-L", name="T-Shirt Large",
+            product_type="physical", parent_product=self.template,
+            variant_attributes={"Size": "Large"},
+            cost_price=Decimal("1200"), selling_price=Decimal("2500"),
+        )
+        res = self.client.get(f"/api/v1/inventory/products/{self.template.id}/")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        skus = {v["sku"] for v in res.data["variants"]}
+        self.assertEqual(skus, {"TSHIRT-S", "TSHIRT-L"})
+
+    def test_variants_track_independent_stock_and_price(self):
+        small = Product.objects.create(
+            organisation=self.org, sku="TSHIRT-S2", name="T-Shirt Small",
+            product_type="physical", parent_product=self.template,
+            cost_price=Decimal("1000"), selling_price=Decimal("2000"),
+        )
+        large = Product.objects.create(
+            organisation=self.org, sku="TSHIRT-L2", name="T-Shirt Large",
+            product_type="physical", parent_product=self.template,
+            cost_price=Decimal("1200"), selling_price=Decimal("2500"),
+        )
+        from apps.inventory.services import InventoryService
+        InventoryService.record_movement(
+            organisation=self.org, product=small, warehouse=self.wh,
+            quantity=Decimal("10"), movement_type="purchase_in",
+            unit_cost=Decimal("1000"), created_by=self.user,
+        )
+        InventoryService.record_movement(
+            organisation=self.org, product=large, warehouse=self.wh,
+            quantity=Decimal("3"), movement_type="purchase_in",
+            unit_cost=Decimal("1200"), created_by=self.user,
+        )
+        self.assertEqual(small.stock_items.get(warehouse=self.wh).quantity_on_hand, Decimal("10"))
+        self.assertEqual(large.stock_items.get(warehouse=self.wh).quantity_on_hand, Decimal("3"))
+        self.assertNotEqual(small.selling_price, large.selling_price)
+
+    def test_cannot_sell_template_directly(self):
+        from apps.customers.models import Customer
+        from apps.sales.services import SaleService
+        customer = Customer.objects.create(organisation=self.org, code="C1", name="Cust")
+        with self.assertRaises(ValueError):
+            SaleService.create_sale(
+                organisation=self.org, created_by=self.user, customer=customer,
+                warehouse=self.wh, payment_method="cash",
+                items=[{"product_id": str(self.template.id), "quantity": "1", "unit_price": "100"}],
+            )
+
+    def test_variant_cannot_be_its_own_parent(self):
+        res = self.client.patch(f"/api/v1/inventory/products/{self.template.id}/", {
+            "parent_product": str(self.template.id),
+        }, format="json")
+        self.assertEqual(res.status_code, 400, msg=str(res.data))
+
+    def test_parent_must_be_variable_type(self):
+        physical = Product.objects.create(
+            organisation=self.org, sku="PHYS-1", name="Ordinary Product",
+            product_type="physical", cost_price=Decimal("10"), selling_price=Decimal("20"),
+        )
+        res = self.client.post("/api/v1/inventory/products/", {
+            "sku": "BAD-VARIANT", "name": "Bad Variant",
+            "product_type": "physical", "parent_product": str(physical.id),
+            "cost_price": "10", "selling_price": "20",
+        }, format="json")
+        self.assertEqual(res.status_code, 400, msg=str(res.data))
+
+    def test_variant_of_variant_rejected(self):
+        variant = Product.objects.create(
+            organisation=self.org, sku="TSHIRT-M", name="T-Shirt Medium",
+            product_type="physical", parent_product=self.template,
+            cost_price=Decimal("1000"), selling_price=Decimal("2000"),
+        )
+        res = self.client.post("/api/v1/inventory/products/", {
+            "sku": "TSHIRT-M-SUB", "name": "Sub Variant",
+            "product_type": "physical", "parent_product": str(variant.id),
+            "cost_price": "10", "selling_price": "20",
+        }, format="json")
+        self.assertEqual(res.status_code, 400, msg=str(res.data))
+
+    def test_cross_org_parent_rejected(self):
+        other_user = _make_user("other_variant@example.com")
+        other_org = _make_org(other_user, "Other Variant Org")
+        other_template = Product.objects.create(
+            organisation=other_org, sku="OTHER-TMPL", name="Other Template",
+            product_type=Product.ProductType.VARIABLE,
+            cost_price=Decimal("0"), selling_price=Decimal("0"),
+        )
+        res = self.client.post("/api/v1/inventory/products/", {
+            "sku": "CROSS-ORG-VAR", "name": "Cross Org Variant",
+            "product_type": "physical", "parent_product": str(other_template.id),
+            "cost_price": "10", "selling_price": "20",
+        }, format="json")
+        self.assertEqual(res.status_code, 400, msg=str(res.data))
+
+
+class ComboProductTests(TestCase):
+    """
+    Combo/Bundle Products (the reviewer's "Add Combo Product type" request).
+
+    A combo carries no stock of its own; selling one unit deducts each
+    bill-of-materials component from ITS OWN stock (quantity x component
+    quantity), through the real costing engine, so GL/COGS reuses everything
+    built for ordinary sales. These tests assert on actual component stock
+    levels and posted cost-of-goods, not just "the sale succeeded".
+    """
+
+    def setUp(self):
+        from apps.customers.models import Customer
+        self.user = _make_user("combo@example.com")
+        self.org = _make_org(self.user, "Combo Org")
+        self.client = _auth_client(self.user, self.org)
+        self.wh = _make_warehouse(self.org)
+        self.customer = Customer.objects.create(organisation=self.org, code="C-COMBO", name="Combo Customer")
+
+        self.bun = Product.objects.create(
+            organisation=self.org, sku="BUN", name="Bun",
+            product_type="physical", cost_price=Decimal("50"), selling_price=Decimal("100"),
+        )
+        self.patty = Product.objects.create(
+            organisation=self.org, sku="PATTY", name="Patty",
+            product_type="physical", cost_price=Decimal("200"), selling_price=Decimal("400"),
+        )
+        self.combo = Product.objects.create(
+            organisation=self.org, sku="BURGER-COMBO", name="Burger Combo",
+            product_type=Product.ProductType.COMBO,
+            cost_price=Decimal("0"), selling_price=Decimal("500"),
+        )
+        from apps.inventory.services import InventoryService
+        InventoryService.record_movement(
+            organisation=self.org, product=self.bun, warehouse=self.wh,
+            quantity=Decimal("20"), movement_type="purchase_in",
+            unit_cost=Decimal("50"), created_by=self.user,
+        )
+        InventoryService.record_movement(
+            organisation=self.org, product=self.patty, warehouse=self.wh,
+            quantity=Decimal("20"), movement_type="purchase_in",
+            unit_cost=Decimal("200"), created_by=self.user,
+        )
+        ComboComponent.objects.create(
+            organisation=self.org, combo_product=self.combo, component_product=self.bun,
+            quantity=Decimal("2"),
+        )
+        ComboComponent.objects.create(
+            organisation=self.org, combo_product=self.combo, component_product=self.patty,
+            quantity=Decimal("1"),
+        )
+
+    def test_selling_combo_deducts_each_component_stock(self):
+        from apps.sales.services import SaleService
+        SaleService.create_sale(
+            organisation=self.org, created_by=self.user, customer=self.customer,
+            warehouse=self.wh, payment_method="cash",
+            items=[{"product_id": str(self.combo.id), "quantity": "3", "unit_price": "500"}],
+        )
+        self.bun.refresh_from_db()
+        self.patty.refresh_from_db()
+        self.assertEqual(self.bun.stock_items.get(warehouse=self.wh).quantity_on_hand, Decimal("14"))    # 20 - 3*2
+        self.assertEqual(self.patty.stock_items.get(warehouse=self.wh).quantity_on_hand, Decimal("17"))  # 20 - 3*1
+
+    def test_combo_cost_of_goods_is_sum_of_component_costs(self):
+        from apps.sales.services import SaleService
+        invoice = SaleService.create_sale(
+            organisation=self.org, created_by=self.user, customer=self.customer,
+            warehouse=self.wh, payment_method="cash",
+            items=[{"product_id": str(self.combo.id), "quantity": "1", "unit_price": "500"}],
+        )
+        line = invoice.items.first()
+        # 2 buns @ 50 + 1 patty @ 200 = 300 per combo unit
+        self.assertEqual(line.cost_of_goods, Decimal("300.0000"))
+
+    def test_combo_has_no_stock_item_of_its_own(self):
+        self.assertFalse(self.combo.stock_items.exists())
+
+    def test_insufficient_component_stock_blocks_the_sale(self):
+        from apps.sales.services import SaleService
+        with self.assertRaises(ValueError):
+            SaleService.create_sale(
+                organisation=self.org, created_by=self.user, customer=self.customer,
+                warehouse=self.wh, payment_method="cash",
+                items=[{"product_id": str(self.combo.id), "quantity": "50", "unit_price": "500"}],
+            )
+        # Nothing should have been deducted — the whole sale is one atomic transaction.
+        self.bun.refresh_from_db()
+        self.assertEqual(self.bun.stock_items.get(warehouse=self.wh).quantity_on_hand, Decimal("20"))
+
+    def test_combo_cannot_contain_itself(self):
+        res = self.client.post("/api/v1/inventory/combo-components/", {
+            "combo_product": str(self.combo.id), "component_product": str(self.combo.id),
+            "quantity": "1",
+        }, format="json")
+        self.assertEqual(res.status_code, 400, msg=str(res.data))
+
+    def test_combo_cannot_contain_another_combo(self):
+        other_combo = Product.objects.create(
+            organisation=self.org, sku="OTHER-COMBO", name="Other Combo",
+            product_type=Product.ProductType.COMBO,
+            cost_price=Decimal("0"), selling_price=Decimal("100"),
+        )
+        res = self.client.post("/api/v1/inventory/combo-components/", {
+            "combo_product": str(self.combo.id), "component_product": str(other_combo.id),
+            "quantity": "1",
+        }, format="json")
+        self.assertEqual(res.status_code, 400, msg=str(res.data))
+
+    def test_cross_org_component_rejected(self):
+        other_user = _make_user("other_combo@example.com")
+        other_org = _make_org(other_user, "Other Combo Org")
+        other_product = Product.objects.create(
+            organisation=other_org, sku="OTHER-ITEM", name="Other Item",
+            product_type="physical", cost_price=Decimal("10"), selling_price=Decimal("20"),
+        )
+        res = self.client.post("/api/v1/inventory/combo-components/", {
+            "combo_product": str(self.combo.id), "component_product": str(other_product.id),
+            "quantity": "1",
+        }, format="json")
+        self.assertEqual(res.status_code, 400, msg=str(res.data))
+
+    def test_zero_quantity_component_rejected(self):
+        res = self.client.post("/api/v1/inventory/combo-components/", {
+            "combo_product": str(self.combo.id), "component_product": str(self.bun.id),
+            "quantity": "0",
+        }, format="json")
+        self.assertEqual(res.status_code, 400, msg=str(res.data))
+
+    def test_get_product_detail_lists_combo_components(self):
+        res = self.client.get(f"/api/v1/inventory/products/{self.combo.id}/")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        skus = {c["component_product_sku"] for c in res.data["combo_components"]}
+        self.assertEqual(skus, {"BUN", "PATTY"})

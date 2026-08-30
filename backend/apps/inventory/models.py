@@ -109,6 +109,8 @@ class Product(TenantAwareModel):
         PHYSICAL = "physical", "Physical (tracked inventory)"
         SERVICE = "service", "Service (no inventory)"
         DIGITAL = "digital", "Digital (no inventory)"
+        VARIABLE = "variable", "Variable (has variants)"
+        COMBO = "combo", "Combo / Bundle"
 
     sku = models.CharField(max_length=100, db_index=True)
     product_type = models.CharField(
@@ -239,6 +241,24 @@ class Product(TenantAwareModel):
         help_text="How cost of goods sold is determined for this item on a sale.",
     )
 
+    # ── Variants ──────────────────────────────────────────────────────────────
+    # A variant IS a full Product row (own SKU, price, stock, costing) that
+    # points back at a "template" product (product_type=VARIABLE) which is
+    # never itself sold or stocked — it exists only to group its variants in
+    # the catalogue UI. This mirrors how Shopify/WooCommerce model variants
+    # under the hood, and reuses every bit of pricing/stock/costing/GL
+    # machinery already built for ordinary products instead of inventing a
+    # parallel system.
+    parent_product = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.CASCADE,
+        related_name="variants",
+        help_text="Set on a variant row to link it to its Variable Product template.",
+    )
+    variant_attributes = models.JSONField(
+        default=dict, blank=True,
+        help_text='Display attributes for this variant, e.g. {"Size": "Large", "Color": "Red"}.',
+    )
+
     @staticmethod
     def _gs1_check_digit(digits: str) -> str:
         """
@@ -301,6 +321,45 @@ class Product(TenantAwareModel):
 
     def __str__(self):
         return f"{self.sku} – {self.name}"
+
+
+class ComboComponent(TenantAwareModel):
+    """
+    One line of a Combo/Bundle Product's bill-of-materials: "this combo is
+    made of `quantity` units of `component_product`".
+
+    A combo has no stock of its own — it isn't a physical thing sitting on a
+    shelf, it's an assembly instruction. Selling one combo unit deducts
+    `quantity` units of each component from that component's own stock (see
+    SalesService), so existing per-component costing/GL/reorder-alert
+    machinery keeps working untouched; the combo itself never needs a
+    StockItem.
+    """
+
+    combo_product = models.ForeignKey(
+        Product, on_delete=models.CASCADE, related_name="combo_components",
+        help_text="The Combo Product this line belongs to.",
+    )
+    component_product = models.ForeignKey(
+        Product, on_delete=models.PROTECT, related_name="used_in_combos",
+        help_text="The underlying product consumed when the combo is sold.",
+    )
+    quantity = models.DecimalField(
+        max_digits=12, decimal_places=2, default=1,
+        help_text="How many units of the component one combo unit consumes.",
+    )
+
+    class Meta(TenantAwareModel.Meta):
+        constraints = [
+            models.UniqueConstraint(
+                fields=["combo_product", "component_product"],
+                condition=models.Q(is_deleted=False),
+                name="uniq_combo_component_per_combo",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.combo_product.sku}: {self.quantity} x {self.component_product.sku}"
 
 
 class Batch(TenantAwareModel):
