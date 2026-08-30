@@ -1,13 +1,15 @@
 """Tests for inventory: products, stock movements, warehouses, low stock."""
 
+import base64
 from decimal import Decimal
 
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.authentication.models import User
-from apps.inventory.models import Product, Warehouse
+from apps.inventory.models import Product, ProductImage, Warehouse
 from apps.tenancy.services import OrganisationService
 
 
@@ -547,3 +549,167 @@ class BarcodeGenerationTests(TestCase):
         code = res.data["barcode"]
         self.assertEqual(len(code), 13)
         self.assertTrue(self._luhn_style_valid(code), code)
+
+
+class ProductImageGalleryTests(TestCase):
+    """
+    Multi-image product gallery — the reviewer's "Product images gallery /
+    Upload one or more images / Click a thumbnail to set the main image /
+    Drag to reorder" request. Product.image (the legacy single-image field
+    the storefront reads) must stay in sync with whichever image is main.
+    """
+
+    # Minimal valid 1×1 transparent PNG — real magic bytes so
+    # validate_image_upload's sniffing accepts it, not just a fake string.
+    _PNG = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGP8zwACTGCSAQANHQEDgslx/wAAAABJRU5ErkJggg=="
+    )
+
+    def setUp(self):
+        self.user = _make_user("gallery@example.com")
+        self.org = _make_org(self.user, "Gallery Org")
+        self.client = _auth_client(self.user, self.org)
+        self.product = Product.objects.create(
+            organisation=self.org, sku="GAL-1", name="Gallery Item",
+            cost_price=100, selling_price=200,
+        )
+
+    def _upload(self, name="photo.png"):
+        return SimpleUploadedFile(name, self._PNG, content_type="image/png")
+
+    def _post_image(self, **extra):
+        data = {"product": str(self.product.id), "image": self._upload()}
+        data.update(extra)
+        return self.client.post("/api/v1/inventory/product-images/", data, format="multipart")
+
+    def test_first_uploaded_image_becomes_main_automatically(self):
+        res = self._post_image()
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        self.assertTrue(res.data["is_main"])
+        self.product.refresh_from_db()
+        self.assertTrue(bool(self.product.image))
+
+    def test_second_image_is_not_main_by_default(self):
+        self._post_image()
+        res2 = self._post_image()
+        self.assertEqual(res2.status_code, 201, msg=str(res2.data))
+        self.assertFalse(res2.data["is_main"])
+        self.assertEqual(
+            ProductImage.objects.filter(organisation=self.org, product=self.product, is_main=True).count(), 1,
+        )
+
+    def test_set_main_switches_cover_and_syncs_product_image(self):
+        img1 = self._post_image().data
+        img2 = self._post_image().data
+        res = self.client.post(f"/api/v1/inventory/product-images/{img2['id']}/set_main/")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.assertTrue(ProductImage.objects.get(id=img2["id"]).is_main)
+        self.assertFalse(ProductImage.objects.get(id=img1["id"]).is_main)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.image.name, ProductImage.objects.get(id=img2["id"]).image.name)
+
+    def test_reorder_sets_sort_order_from_list_position(self):
+        img1 = self._post_image().data
+        img2 = self._post_image().data
+        img3 = self._post_image().data
+        res = self.client.post("/api/v1/inventory/product-images/reorder/", {
+            "order": [img3["id"], img1["id"], img2["id"]],
+        }, format="json")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.assertEqual(ProductImage.objects.get(id=img3["id"]).sort_order, 0)
+        self.assertEqual(ProductImage.objects.get(id=img1["id"]).sort_order, 1)
+        self.assertEqual(ProductImage.objects.get(id=img2["id"]).sort_order, 2)
+
+    def test_deleting_main_image_promotes_the_next_one(self):
+        img1 = self._post_image().data
+        img2 = self._post_image().data
+        res = self.client.delete(f"/api/v1/inventory/product-images/{img1['id']}/")
+        self.assertIn(res.status_code, (200, 204), msg=str(res.data))
+        self.assertTrue(ProductImage.objects.get(id=img2["id"]).is_main)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.image.name, ProductImage.objects.get(id=img2["id"]).image.name)
+
+    def test_deleting_the_only_image_clears_product_image(self):
+        img1 = self._post_image().data
+        self.client.delete(f"/api/v1/inventory/product-images/{img1['id']}/")
+        self.product.refresh_from_db()
+        self.assertFalse(bool(self.product.image))
+
+    def test_rejects_non_image_upload(self):
+        fake = SimpleUploadedFile("not_an_image.png", b"this is not a real png", content_type="image/png")
+        res = self.client.post("/api/v1/inventory/product-images/", {
+            "product": str(self.product.id), "image": fake,
+        }, format="multipart")
+        self.assertIn(res.status_code, (400, 422), msg=str(res.data))
+
+    def test_cannot_attach_image_to_another_orgs_product(self):
+        other_user = _make_user("gallery_other@example.com")
+        other_org = _make_org(other_user, "Other Gallery Org")
+        other_product = Product.objects.create(
+            organisation=other_org, sku="GAL-OTHER", name="Other Org Item",
+            cost_price=100, selling_price=200,
+        )
+        res = self.client.post("/api/v1/inventory/product-images/", {
+            "product": str(other_product.id), "image": self._upload(),
+        }, format="multipart")
+        self.assertIn(res.status_code, (400, 403, 404), msg=str(res.data))
+
+    def test_product_detail_includes_gallery(self):
+        self._post_image()
+        self._post_image()
+        res = self.client.get(f"/api/v1/inventory/products/{self.product.id}/")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(len(res.data["images"]), 2)
+
+
+class ProductImageRawUploadTests(TestCase):
+    """
+    POST /inventory/products/<id>/upload-image/ — raw binary body, the same
+    Tauri-FormData-workaround pattern as Organisation.upload_logo. This is
+    the endpoint the frontend actually calls (works identically on web and
+    desktop); the multipart /product-images/ endpoint stays available as a
+    generic API path.
+    """
+
+    _PNG = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGP8zwACTGCSAQANHQEDgslx/wAAAABJRU5ErkJggg=="
+    )
+
+    def setUp(self):
+        self.user = _make_user("rawupload@example.com")
+        self.org = _make_org(self.user, "Raw Upload Org")
+        self.client = _auth_client(self.user, self.org)
+        self.product = Product.objects.create(
+            organisation=self.org, sku="RAW-1", name="Raw Upload Item",
+            cost_price=100, selling_price=200,
+        )
+
+    def test_raw_binary_upload_creates_gallery_image(self):
+        res = self.client.post(
+            f"/api/v1/inventory/products/{self.product.id}/upload-image/",
+            data=self._PNG, content_type="image/png",
+        )
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        self.assertTrue(res.data["is_main"])
+        self.assertEqual(ProductImage.objects.filter(organisation=self.org, product=self.product).count(), 1)
+        self.product.refresh_from_db()
+        self.assertTrue(bool(self.product.image))
+
+    def test_raw_binary_upload_rejects_non_image(self):
+        res = self.client.post(
+            f"/api/v1/inventory/products/{self.product.id}/upload-image/",
+            data=b"not an image at all", content_type="image/png",
+        )
+        self.assertEqual(res.status_code, 400, msg=str(res.data))
+
+    def test_second_raw_upload_is_not_main(self):
+        self.client.post(
+            f"/api/v1/inventory/products/{self.product.id}/upload-image/",
+            data=self._PNG, content_type="image/png",
+        )
+        res2 = self.client.post(
+            f"/api/v1/inventory/products/{self.product.id}/upload-image/",
+            data=self._PNG, content_type="image/png",
+        )
+        self.assertEqual(res2.status_code, 201, msg=str(res2.data))
+        self.assertFalse(res2.data["is_main"])

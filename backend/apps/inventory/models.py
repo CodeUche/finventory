@@ -466,6 +466,55 @@ class StockCostLayer(TenantAwareModel):
         return f"{self.product.sku} @ {self.warehouse.name}: {self.quantity_remaining} left @ {self.unit_cost}"
 
 
+class ProductImage(TenantAwareModel):
+    """
+    One photo in a product's gallery — the reviewer's "Product images gallery
+    / Upload one or more images / Click a thumbnail to set the main image /
+    Drag to reorder" request. Product.image (a single legacy field) stays in
+    sync with whichever image is marked main, so the storefront and anything
+    else already reading it directly keeps working unchanged.
+    """
+
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="images")
+    # Validated in ProductImageSerializer (validate_image_upload), matching
+    # Organisation.logo / User.avatar — this codebase keeps upload validation
+    # at the serializer layer rather than on the model field.
+    image = models.ImageField(upload_to="products/gallery/")
+    sort_order = models.PositiveIntegerField(default=0)
+    is_main = models.BooleanField(default=False)
+
+    class Meta(TenantAwareModel.Meta):
+        ordering = ["sort_order", "created_at"]
+
+    def __str__(self):
+        return f"{self.product.sku} image {self.sort_order}{' (main)' if self.is_main else ''}"
+
+    def save(self, *args, **kwargs):
+        if self.is_main:
+            ProductImage.objects.filter(
+                organisation=self.organisation, product=self.product, is_main=True,
+            ).exclude(pk=self.pk).update(is_main=False)
+        super().save(*args, **kwargs)
+        if self.is_main:
+            Product.objects.filter(pk=self.product_id).update(image=self.image)
+
+    def delete(self, *args, **kwargs):
+        was_main = self.is_main
+        product = self.product
+        super().delete(*args, **kwargs)
+        if was_main:
+            # Promote the next image (if any) so the storefront isn't left
+            # pointing at a file that no longer exists.
+            next_image = ProductImage.objects.filter(
+                organisation=self.organisation, product=product,
+            ).order_by("sort_order", "created_at").first()
+            if next_image:
+                next_image.is_main = True
+                next_image.save(update_fields=["is_main"])
+            else:
+                Product.objects.filter(pk=product.pk).update(image=None)
+
+
 # Product modifiers live in their own module for clarity; re-exported so Django
 # discovers them and existing imports keep working.
 from .modifier_models import ModifierGroup, ModifierOption  # noqa: E402,F401

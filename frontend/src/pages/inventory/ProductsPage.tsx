@@ -5,13 +5,13 @@ import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { useModuleAccess } from '@/hooks/useModuleAccess'
 import { usePagination } from '@/hooks/usePagination'
 import Pagination from '@/components/Pagination'
-import { Plus, Search, Package, AlertTriangle, X, Pencil, Loader2, TrendingUp, TrendingDown, History, Maximize2, Minimize2, ShieldCheck, FileDown, Table2, ArrowDownCircle, Trash2, RefreshCw, CheckSquare, ChevronDown } from 'lucide-react'
+import { Plus, Search, Package, AlertTriangle, X, Pencil, Loader2, TrendingUp, TrendingDown, History, Maximize2, Minimize2, ShieldCheck, FileDown, Table2, ArrowDownCircle, Trash2, RefreshCw, CheckSquare, ChevronDown, Upload } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { inventoryApi, taxApi, salesApi, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatAmountInput, stripCommas, formatDate } from '@/lib/utils'
 import AmountInput from '@/components/AmountInput'
 import { useAuthStore } from '@/store/authStore'
-import type { Product, TaxClass, Organisation } from '@/types'
+import type { Product, ProductImage, TaxClass, Organisation } from '@/types'
 import SortSelect from '@/components/SortSelect'
 import { FieldTooltip } from '@/components/FieldTooltip'
 import DateInput from '@/components/DateInput'
@@ -329,6 +329,9 @@ export default function ProductsPage() {
   const [editHydrated, setEditHydrated] = useState(false)
   const editReqRef = useRef<string>('')
   const [saving, setSaving] = useState(false)
+  const [galleryImages, setGalleryImages] = useState<ProductImage[]>([])
+  const [galleryUploading, setGalleryUploading] = useState(false)
+  const [dragImageId, setDragImageId] = useState<string | null>(null)
   const [form, setForm] = useState({ ...BLANK })
   const [taxClasses, setTaxClasses] = useState<TaxClass[]>([])
   const [sortBy, setSortBy] = useState('name')
@@ -390,6 +393,7 @@ export default function ProductsPage() {
     setEditId(null)
     setForm({ ...BLANK })
     setBatchForm({ ...BLANK_BATCH })
+    setGalleryImages([])
     loadModalDeps()
     setShowModal(true)
   }
@@ -469,6 +473,7 @@ export default function ProductsPage() {
         tax_type: data.tax_type ?? 'exclusive',
         barcode_symbology: data.barcode_symbology ?? 'code128',
       }))
+      setGalleryImages(data.images ?? [])
       setEditHydrated(true)
     }).catch(() => { /* offline — form keeps row data; save will omit slim gaps */ })
     // Fetch current warehouse for this product (largest stock qty wins)
@@ -492,6 +497,67 @@ export default function ProductsPage() {
       }
     }).catch(() => { setEditStockQty('0') })
     setShowModal(true)
+  }
+
+  const handleImageFilesSelected = async (files: FileList | null) => {
+    if (!files || files.length === 0 || !editId) return
+    setGalleryUploading(true)
+    try {
+      for (const file of Array.from(files)) {
+        const resp = await inventoryApi.uploadProductImage(editId, file)
+        if (resp.ok) {
+          const img = await resp.json()
+          setGalleryImages((imgs) => [...imgs, img])
+        } else {
+          toast.error('One or more images could not be uploaded')
+        }
+      }
+    } finally {
+      setGalleryUploading(false)
+    }
+  }
+
+  const handleSetMainImage = async (imageId: string) => {
+    setGalleryImages((imgs) => imgs.map((i) => ({ ...i, is_main: i.id === imageId })))
+    try {
+      await inventoryApi.setMainProductImage(imageId)
+    } catch {
+      toast.error('Could not set cover photo')
+    }
+  }
+
+  const handleDeleteImage = async (imageId: string) => {
+    const ok = await confirmDialog('Remove this image from the gallery?')
+    if (!ok) return
+    const removed = galleryImages.find((i) => i.id === imageId)
+    setGalleryImages((imgs) => imgs.filter((i) => i.id !== imageId))
+    try {
+      await inventoryApi.deleteProductImage(imageId)
+      // Deleting the cover photo promotes the next one server-side — reflect
+      // that locally too instead of leaving no image marked main.
+      if (removed?.is_main) {
+        setGalleryImages((imgs) => imgs.map((i, idx) => (idx === 0 ? { ...i, is_main: true } : i)))
+      }
+    } catch {
+      toast.error('Could not remove image')
+    }
+  }
+
+  const handleImageDrop = async (targetId: string) => {
+    if (!dragImageId || dragImageId === targetId) { setDragImageId(null); return }
+    const from = galleryImages.findIndex((i) => i.id === dragImageId)
+    const to = galleryImages.findIndex((i) => i.id === targetId)
+    if (from === -1 || to === -1) { setDragImageId(null); return }
+    const reordered = [...galleryImages]
+    const [moved] = reordered.splice(from, 1)
+    reordered.splice(to, 0, moved)
+    setGalleryImages(reordered)
+    setDragImageId(null)
+    try {
+      await inventoryApi.reorderProductImages(reordered.map((i) => i.id))
+    } catch {
+      toast.error('Could not save the new image order')
+    }
   }
 
   const handleSave = async (e: React.FormEvent) => {
@@ -1065,6 +1131,61 @@ export default function ProductsPage() {
                     ))}
                   </select>
                 </div>
+              </div>
+              <div className="rounded-xl border border-surface-700/60 p-4 space-y-3">
+                <p className="text-sm font-semibold text-white">Product Images</p>
+                {!editId ? (
+                  <p className="text-xs text-slate-500">Save the product first, then add photos.</p>
+                ) : (
+                  <>
+                    <label className={`flex flex-col items-center justify-center gap-1.5 border-2 border-dashed rounded-xl py-6 transition-colors ${galleryUploading ? 'border-surface-700 cursor-wait' : 'border-surface-600 hover:border-brand-500 cursor-pointer'}`}>
+                      {galleryUploading ? <Loader2 size={20} className="text-slate-400 animate-spin" /> : <Upload size={20} className="text-slate-400" />}
+                      <span className="text-sm text-slate-300">{galleryUploading ? 'Uploading…' : 'Add images'}</span>
+                      <span className="text-[11px] text-slate-500">Supported formats: JPG, PNG, GIF</span>
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/gif,image/webp"
+                        multiple
+                        className="hidden"
+                        disabled={galleryUploading}
+                        onChange={(e) => { handleImageFilesSelected(e.target.files); e.target.value = '' }}
+                      />
+                    </label>
+                    {galleryImages.length === 0 ? (
+                      <p className="text-xs text-slate-500 text-center py-2">No images yet. Add photos using the area above.</p>
+                    ) : (
+                      <>
+                        <div className="grid grid-cols-4 gap-3">
+                          {galleryImages.map((img) => (
+                            <div
+                              key={img.id}
+                              draggable
+                              onDragStart={() => setDragImageId(img.id)}
+                              onDragOver={(e) => e.preventDefault()}
+                              onDrop={() => handleImageDrop(img.id)}
+                              onClick={() => handleSetMainImage(img.id)}
+                              title={img.is_main ? 'Cover photo' : 'Click to set as cover photo — drag to reorder'}
+                              className={`relative group aspect-square rounded-lg overflow-hidden border-2 cursor-pointer ${img.is_main ? 'border-brand-500' : 'border-surface-700'}`}
+                            >
+                              <img src={img.image} alt="" className="w-full h-full object-cover" />
+                              {img.is_main && (
+                                <span className="absolute top-1 left-1 badge-blue text-[9px] px-1.5 py-0.5">Cover</span>
+                              )}
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); handleDeleteImage(img.id) }}
+                                className="absolute top-1 right-1 bg-black/60 hover:bg-red-600 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                              >
+                                <X size={12} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                        <p className="text-[11px] text-slate-500">Click a thumbnail to set the main image. Drag to reorder.</p>
+                      </>
+                    )}
+                  </>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>

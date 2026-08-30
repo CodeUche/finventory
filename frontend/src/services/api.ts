@@ -1182,6 +1182,12 @@ export const inventoryApi = {
   batches: (params?: object) => api.get('/inventory/batches/', { params }),
   createBatch: (data: object) => api.post('/inventory/batches/', data),
   deleteBatch: (id: string) => api.delete(`/inventory/batches/${id}/`),
+  /** Raw-binary upload (same Tauri-FormData workaround as uploadLogo) — the first image for a product becomes its cover automatically. */
+  uploadProductImage: (productId: string, file: File) =>
+    uploadFileDirect(`/inventory/products/${productId}/upload-image/`, file),
+  setMainProductImage: (imageId: string) => api.post(`/inventory/product-images/${imageId}/set_main/`),
+  deleteProductImage: (imageId: string) => api.delete(`/inventory/product-images/${imageId}/`),
+  reorderProductImages: (order: string[]) => api.post('/inventory/product-images/reorder/', { order }),
 }
 
 export const salesApi = {

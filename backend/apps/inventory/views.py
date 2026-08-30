@@ -15,10 +15,11 @@ from apps.core.permissions import requires_module
 _ModAccess_inventory = requires_module("inventory")
 
 
-from .models import Batch, Category, Product, StockItem, StockMovement, Warehouse
+from .models import Batch, Category, Product, ProductImage, StockItem, StockMovement, Warehouse
 from .serializers import (
     BatchSerializer,
     CategorySerializer,
+    ProductImageSerializer,
     ProductSerializer,
     StockAdjustmentSerializer,
     StockItemSerializer,
@@ -291,6 +292,41 @@ class ProductViewSet(FriendlyUniqueErrorMixin, TenantFilterMixin, viewsets.Model
             return Response({"error": f"[{type(e).__name__}] {e}"}, status=422)
 
         return Response(ProductSerializer(product, context={"request": request}).data)
+
+    @action(detail=True, methods=["post"], url_path="upload-image")
+    def upload_image(self, request, pk=None):
+        """
+        POST /inventory/products/<id>/upload-image/
+        Body: raw image binary. Content-Type: image/png | image/jpeg | image/webp | image/gif
+
+        Accepts raw binary instead of multipart — same workaround as
+        Organisation.upload_logo — because Tauri's IPC layer serialises
+        FormData as application/x-www-form-urlencoded instead of
+        multipart/form-data, which would otherwise silently corrupt the
+        upload on desktop. Adds one photo to the product's gallery; the
+        first upload becomes the cover automatically (ProductImage.save()
+        keeps Product.image, the field the storefront reads, in sync).
+        """
+        from django.core.files.base import ContentFile
+        from apps.core.validators import sniff_image_bytes
+        _MAX_BYTES = 5 * 1024 * 1024
+        product = self.get_object()
+        org = self._get_organisation()
+        body = request.body
+        if not body:
+            return Response({"error": "No file data received."}, status=400)
+        if len(body) > _MAX_BYTES:
+            return Response({"error": "File too large. Maximum size is 5 MB."}, status=413)
+        detected_mime = sniff_image_bytes(body[:261])
+        if detected_mime is None:
+            return Response({"error": "File is not a valid image."}, status=400)
+        ext = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}.get(detected_mime, ".jpg")
+
+        is_first = not ProductImage.objects.filter(organisation=org, product=product).exists()
+        img = ProductImage(organisation=org, product=product, is_main=is_first)
+        img.image.save(f"{product.sku}_{img.pk or 'new'}{ext}", ContentFile(body), save=False)
+        img.save()
+        return Response(ProductImageSerializer(img, context={"request": request}).data, status=201)
 
     @action(detail=False, methods=["get"], url_path="low-stock")
     def low_stock(self, request):
@@ -691,6 +727,51 @@ class BatchViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             from datetime import timedelta
             qs = qs.filter(expiry_date__gte=today + timedelta(days=30))
         return qs
+
+
+class ProductImageViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+    """
+    A product's photo gallery — the reviewer's "Product images gallery"
+    request. POST to upload, the `set_main` action to choose the cover photo
+    (clicking a thumbnail), and `reorder` for drag-to-reorder.
+    """
+    queryset = ProductImage.objects.select_related("product")
+    serializer_class = ProductImageSerializer
+    permission_classes = [IsAuthenticated, IsStaff, _ModAccess_inventory]
+    filterset_fields = ["product"]
+
+    def perform_create(self, serializer):
+        org = self._get_organisation()
+        # The first photo for a product becomes its cover automatically —
+        # otherwise a single-image upload (the common case) would need a
+        # separate set_main call just to make it show up anywhere.
+        is_first = not ProductImage.objects.filter(
+            organisation=org, product=serializer.validated_data["product"],
+        ).exists()
+        serializer.save(organisation=org, is_main=is_first)
+        self._write_audit('create', serializer.instance, {})
+
+    @action(detail=True, methods=["post"])
+    def set_main(self, request, pk=None):
+        """POST /inventory/product-images/<id>/set_main/ — click a thumbnail to make it the cover photo."""
+        image = self.get_object()
+        image.is_main = True
+        image.save()
+        return Response(ProductImageSerializer(image).data)
+
+    @action(detail=False, methods=["post"])
+    def reorder(self, request):
+        """
+        POST /inventory/product-images/reorder/
+        Body: { "order": [<image_id>, <image_id>, ...] } — drag-to-reorder,
+        left-to-right becomes first-to-last.
+        """
+        org = self._get_organisation()
+        order = request.data.get("order") or []
+        updated = 0
+        for idx, image_id in enumerate(order):
+            updated += ProductImage.objects.filter(organisation=org, id=image_id).update(sort_order=idx)
+        return Response({"updated": updated})
 
 
 class StockItemViewSet(TenantFilterMixin, viewsets.ModelViewSet):

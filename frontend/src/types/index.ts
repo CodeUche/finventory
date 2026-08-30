@@ -71,6 +71,15 @@ export interface Organisation {
   enabled_payment_types?: string[]
 }
 
+export interface ProductImage {
+  id: string
+  product: string
+  image: string
+  sort_order: number
+  is_main: boolean
+  created_at: string
+}
+
 // ─── Product ──────────────────────────────────────────────────────────────────
 export interface Product {
   id: string
@@ -107,6 +116,8 @@ export interface Product {
   costing_method?: 'fifo' | 'lifo' | 'average' | 'specific'
   tax_type?: 'exclusive' | 'inclusive'
   barcode_symbology?: 'code128' | 'code39' | 'ean8' | 'ean13' | 'upc'
+  image?: string | null
+  images?: ProductImage[]
   total_stock: number
 }
 

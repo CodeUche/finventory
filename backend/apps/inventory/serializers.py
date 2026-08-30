@@ -4,7 +4,8 @@ from decimal import Decimal
 
 from rest_framework import serializers
 
-from .models import Batch, Category, Product, StockItem, StockMovement, Warehouse
+from apps.core.validators import validate_image_upload
+from .models import Batch, Category, Product, ProductImage, StockItem, StockMovement, Warehouse
 
 _OWNER_ROLES = {"owner", "admin"}
 
@@ -23,8 +24,26 @@ class WarehouseSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "created_at"]
 
 
+class ProductImageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProductImage
+        fields = ["id", "product", "image", "sort_order", "is_main", "created_at"]
+        read_only_fields = ["id", "created_at"]
+        # Matches Organisation.logo / User.avatar — upload validation lives at
+        # the serializer layer, not on the model field.
+        extra_kwargs = {"image": {"validators": [validate_image_upload]}}
+
+    def validate_product(self, value):
+        request = self.context.get("request")
+        if request and hasattr(request, "organisation") and request.organisation:
+            if value.organisation_id != request.organisation.id:
+                raise serializers.ValidationError("Product does not belong to this organisation.")
+        return value
+
+
 class ProductSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True)
+    images = ProductImageSerializer(many=True, read_only=True)
     total_stock = serializers.SerializerMethodField()
     quantity_incoming = serializers.SerializerMethodField()
     inventory_account_code = serializers.CharField(
@@ -65,9 +84,10 @@ class ProductSerializer(serializers.ModelSerializer):
             "sales_account", "sales_account_code", "sales_account_name",
             "cogs_account", "cogs_account_code", "cogs_account_name",
             "wages_account", "wages_account_code", "wages_account_name",
+            "image", "images",
             "total_stock", "quantity_incoming", "created_at", "updated_at",
         ]
-        read_only_fields = ["id", "total_stock", "quantity_incoming", "created_at", "updated_at"]
+        read_only_fields = ["id", "total_stock", "quantity_incoming", "created_at", "updated_at", "image"]
 
     def get_quantity_incoming(self, obj):
         # Fast path: ProductViewSet.get_queryset annotates _quantity_incoming so
