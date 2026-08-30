@@ -103,9 +103,15 @@ if SENTRY_DSN:
 # Set USE_S3=True in .env to activate. All other S3_* vars are then required.
 _use_s3 = config("USE_S3", default=False, cast=bool)
 if _use_s3:
-    # Required env vars when USE_S3=True
-    AWS_ACCESS_KEY_ID = config("S3_ACCESS_KEY_ID")
-    AWS_SECRET_ACCESS_KEY = config("S3_SECRET_ACCESS_KEY")
+    # S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY are optional: leave them unset
+    # to let boto3 fall back to its default credential chain (e.g. an ECS
+    # task IAM role on AWS — no long-lived static keys to leak or rotate).
+    # Still required for providers without IAM-role-style auth (Cloudflare
+    # R2, DigitalOcean Spaces) — set them there as before.
+    _s3_access_key = config("S3_ACCESS_KEY_ID", default="")
+    _s3_secret_key = config("S3_SECRET_ACCESS_KEY", default="")
+    AWS_ACCESS_KEY_ID = _s3_access_key or None
+    AWS_SECRET_ACCESS_KEY = _s3_secret_key or None
     AWS_STORAGE_BUCKET_NAME = config("S3_BUCKET_NAME")
     AWS_S3_REGION_NAME = config("S3_REGION", default="auto")  # 'auto' works for Cloudflare R2
     # For non-AWS providers set the endpoint URL:
@@ -119,12 +125,19 @@ if _use_s3:
     AWS_QUERYSTRING_EXPIRE = 3600   # Signed URL TTL: 1 hour
 
     DEFAULT_FILE_STORAGE = "storages.backends.s3boto3.S3Boto3Storage"
-    # Media files go under the media/ prefix in the bucket
-    MEDIA_URL = (
-        f"https://{AWS_S3_CUSTOM_DOMAIN}/media/"
-        if AWS_S3_CUSTOM_DOMAIN
-        else f"{AWS_S3_ENDPOINT_URL}/{AWS_STORAGE_BUCKET_NAME}/media/"
-    )
+    # Media files go under the media/ prefix in the bucket.
+    # Note: S3Boto3Storage.url() (what FileField.url actually calls) builds
+    # its own signed URL from the bucket/region/custom-domain settings above
+    # and does NOT read MEDIA_URL — this setting is only a fallback for any
+    # code that manually references settings.MEDIA_URL directly.
+    if AWS_S3_CUSTOM_DOMAIN:
+        MEDIA_URL = f"https://{AWS_S3_CUSTOM_DOMAIN}/media/"
+    elif AWS_S3_ENDPOINT_URL:
+        # R2 / DigitalOcean-style: bucket is a path segment under the endpoint
+        MEDIA_URL = f"{AWS_S3_ENDPOINT_URL}/{AWS_STORAGE_BUCKET_NAME}/media/"
+    else:
+        # Real AWS S3, no CDN in front yet: bucket is a subdomain
+        MEDIA_URL = f"https://{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com/media/"
 
 # ─── Cloud platform database / redis URL parsing ──────────────────────────────
 # Railway, Render, Heroku etc. expose a single DATABASE_URL connection string.
