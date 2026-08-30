@@ -4,6 +4,59 @@ import apps.core.models
 import django.db.models.deletion
 from django.db import migrations, models
 
+_PAYE_REMITTANCE_CONSTRAINT_NAME = 'unique_paye_remittance_per_org_period'
+_PAYE_REMITTANCE_CONSTRAINT_FIELDS = ['organisation', 'period_year', 'period_month']
+
+
+def _drop_paye_remittance_constraint_if_exists(apps, schema_editor):
+    """Database-side companion to the state-only RemoveConstraint below.
+
+    On PostgreSQL, uses a defensive `DROP CONSTRAINT IF EXISTS` so a
+    from-zero `migrate` can't hard-fail if the constraint 0009 added is
+    somehow already gone by the time this runs (see the comment on the
+    SeparateDatabaseAndState operation that calls this). On any other
+    backend (SQLite, in the test suite) there is no such race, so this
+    just does what Django's plain RemoveConstraint would have done.
+    """
+    if schema_editor.connection.vendor == 'postgresql':
+        schema_editor.execute(
+            'ALTER TABLE payroll_payeremittance '
+            f'DROP CONSTRAINT IF EXISTS {_PAYE_REMITTANCE_CONSTRAINT_NAME};'
+        )
+        return
+    PAYERemittance = apps.get_model('payroll', 'PAYERemittance')
+    constraint = models.UniqueConstraint(
+        fields=_PAYE_REMITTANCE_CONSTRAINT_FIELDS,
+        name=_PAYE_REMITTANCE_CONSTRAINT_NAME,
+    )
+    schema_editor.remove_constraint(PAYERemittance, constraint)
+
+
+def _add_paye_remittance_constraint_if_missing(apps, schema_editor):
+    """Reverse of the above — re-adds the constraint, tolerating it already
+    being present (mirrors the forward function's defensiveness)."""
+    if schema_editor.connection.vendor == 'postgresql':
+        schema_editor.execute(
+            "DO $$\n"
+            "BEGIN\n"
+            "    IF NOT EXISTS (\n"
+            "        SELECT 1 FROM pg_constraint WHERE conname = "
+            f"'{_PAYE_REMITTANCE_CONSTRAINT_NAME}'\n"
+            "    ) THEN\n"
+            "        ALTER TABLE payroll_payeremittance\n"
+            f"        ADD CONSTRAINT {_PAYE_REMITTANCE_CONSTRAINT_NAME}\n"
+            "        UNIQUE (organisation_id, period_year, period_month);\n"
+            "    END IF;\n"
+            "END $$;"
+        )
+        return
+    PAYERemittance = apps.get_model('payroll', 'PAYERemittance')
+    constraint = models.UniqueConstraint(
+        fields=_PAYE_REMITTANCE_CONSTRAINT_FIELDS,
+        name=_PAYE_REMITTANCE_CONSTRAINT_NAME,
+    )
+    schema_editor.add_constraint(PAYERemittance, constraint)
+
 
 class Migration(migrations.Migration):
 
@@ -13,9 +66,52 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.RemoveConstraint(
-            model_name='payeremittance',
-            name='unique_paye_remittance_per_org_period',
+        # SeparateDatabaseAndState: the state side still removes the constraint
+        # (so Django's model-state tracking stays consistent with the eventual
+        # `unique_together` re-add below and with 0012's later DeleteModel of
+        # PAYERemittance) but the database side is defensive about the
+        # constraint already being gone, instead of Django's plain
+        # RemoveConstraint (which hard-fails with `does not exist` if so).
+        #
+        # Why: on a from-zero `migrate` this operation has been observed to fail
+        # with `constraint "unique_paye_remittance_per_org_period" of relation
+        # "payroll_payeremittance" does not exist`, even though the immediately
+        # preceding migration (0009) unambiguously adds that exact constraint.
+        # Local reproduction against a clean Postgres 16 instance — both a
+        # single serial `migrate` and several concurrent multi-process races —
+        # could not reproduce the missing constraint deterministically, but the
+        # concurrent-race runs *did* reliably crash migrate with other Postgres
+        # catalog races (e.g. `duplicate key value violates unique constraint
+        # "pg_type_typname_nsp_index"`) when multiple `migrate` invocations ran
+        # against the same empty database at once — which is exactly what
+        # happens when ECS starts the api/worker/beat tasks together and each
+        # runs its own `migrate.py` before its main process. That points to an
+        # unguarded concurrent-migrate race (or an Aurora replica/connection
+        # inconsistency of the same shape) as the real trigger, not a defect in
+        # the operation order here. Regardless of the exact mechanism, this
+        # operation should never hard-fail just because the constraint it means
+        # to remove is already gone.
+        #
+        # RunPython (not raw RunSQL) so this stays cross-database: the test
+        # suite runs this same migration against SQLite, which has no `DROP
+        # CONSTRAINT` syntax at all and doesn't need the defensive path (it's
+        # a single synchronous process, never subject to the concurrent-apply
+        # race this guards against) — on SQLite we fall back to Django's
+        # normal schema_editor.remove_constraint, letting Django's own
+        # table-rebuild handling do its thing as it always has.
+        migrations.SeparateDatabaseAndState(
+            state_operations=[
+                migrations.RemoveConstraint(
+                    model_name='payeremittance',
+                    name='unique_paye_remittance_per_org_period',
+                ),
+            ],
+            database_operations=[
+                migrations.RunPython(
+                    code=_drop_paye_remittance_constraint_if_exists,
+                    reverse_code=_add_paye_remittance_constraint_if_missing,
+                ),
+            ],
         ),
         migrations.AddField(
             model_name='employee',
