@@ -1,5 +1,7 @@
 """Tests for sales: invoice CRUD, payment, proforma, sale returns."""
 
+from decimal import Decimal
+
 from django.test import TestCase
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -430,3 +432,89 @@ class ProductHistoryOpeningBalanceTests(TestCase):
         )
         self.assertEqual(res.status_code, 200, msg=str(res.data))
         self.assertEqual(res.data["results"], [])
+
+
+class TaxInclusiveExclusiveTests(TestCase):
+    """
+    Product.tax_type — the reviewer's "specify if each item is tax exclusive
+    or inclusive" request. Exclusive is the default and must reproduce every
+    existing product's current math exactly; inclusive must back the tax OUT
+    of the price instead of adding it on top, while the customer-facing total
+    stays what they were quoted either way.
+    """
+
+    def setUp(self):
+        from apps.tax.models import TaxClass
+        self.user = _make_user("taxtype@example.com")
+        self.org = _make_org(self.user, "Tax Type Org")
+        self.client = _auth_client(self.user, self.org)
+        self.customer = _make_customer(self.org)
+        self.warehouse = _make_warehouse(self.org)
+        self.vat = TaxClass.objects.create(organisation=self.org, name="VAT 15%", rate=Decimal("15"))
+
+    def _sale(self, product, unit_price):
+        res = self.client.post("/api/v1/sales/invoices/", {
+            "customer_id": str(self.customer.id),
+            "warehouse_id": str(self.warehouse.id),
+            "payment_method": "cash",
+            "items": [{"product_id": str(product.id), "quantity": 1, "unit_price": unit_price}],
+        }, format="json")
+        self.assertIn(res.status_code, (200, 201), msg=str(res.data))
+        return Invoice.objects.get(id=res.data["id"])
+
+    def test_exclusive_is_the_default_and_matches_prior_behaviour(self):
+        p = Product.objects.create(
+            organisation=self.org, sku="TT-EXCL", name="Exclusive Item",
+            product_type="service", cost_price=0, selling_price=1000,
+            is_taxable=True, tax_class=self.vat,
+        )
+        self.assertEqual(p.tax_type, "exclusive")
+        invoice = self._sale(p, "1000.00")
+        item = invoice.items.first()
+        self.assertAlmostEqual(float(item.tax_amount), 150.0, places=2)   # 15% added on top
+        self.assertAlmostEqual(float(item.line_total), 1150.0, places=2)  # 1000 + 150
+
+    def test_inclusive_backs_tax_out_of_the_price(self):
+        p = Product.objects.create(
+            organisation=self.org, sku="TT-INCL", name="Inclusive Item",
+            product_type="service", cost_price=0, selling_price=1150,
+            is_taxable=True, tax_class=self.vat, tax_type="inclusive",
+        )
+        invoice = self._sale(p, "1150.00")
+        item = invoice.items.first()
+        # 1150 already contains 15% VAT → true tax is 1150 × 15/115 = 150.
+        self.assertAlmostEqual(float(item.tax_amount), 150.0, places=2)
+        # Customer is charged exactly what was quoted — not 1150 + more tax.
+        self.assertAlmostEqual(float(item.line_total), 1150.0, places=2)
+
+    def test_inclusive_and_exclusive_agree_on_the_customer_facing_total_but_split_differently(self):
+        """Same price, same rate — inclusive and exclusive must charge the
+        customer differently (that's the whole point), not just relabel the
+        same numbers."""
+        excl = Product.objects.create(
+            organisation=self.org, sku="TT-CMP-E", name="Compare Exclusive",
+            product_type="service", cost_price=0, selling_price=1000,
+            is_taxable=True, tax_class=self.vat,
+        )
+        incl = Product.objects.create(
+            organisation=self.org, sku="TT-CMP-I", name="Compare Inclusive",
+            product_type="service", cost_price=0, selling_price=1000,
+            is_taxable=True, tax_class=self.vat, tax_type="inclusive",
+        )
+        excl_invoice = self._sale(excl, "1000.00")
+        incl_invoice = self._sale(incl, "1000.00")
+        self.assertAlmostEqual(float(excl_invoice.items.first().line_total), 1150.0, places=2)
+        self.assertAlmostEqual(float(incl_invoice.items.first().line_total), 1000.0, places=2)
+
+    def test_inclusive_with_no_tax_class_behaves_like_untaxed(self):
+        """A product marked inclusive but not actually taxable must not divide
+        by a zero-or-missing rate or otherwise blow up."""
+        p = Product.objects.create(
+            organisation=self.org, sku="TT-NOTAX", name="No Tax Item",
+            product_type="service", cost_price=0, selling_price=500,
+            is_taxable=False, tax_type="inclusive",
+        )
+        invoice = self._sale(p, "500.00")
+        item = invoice.items.first()
+        self.assertAlmostEqual(float(item.tax_amount), 0.0, places=2)
+        self.assertAlmostEqual(float(item.line_total), 500.0, places=2)

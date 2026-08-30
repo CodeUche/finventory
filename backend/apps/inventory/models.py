@@ -152,7 +152,18 @@ class Product(TenantAwareModel):
     )
     reorder_quantity = models.PositiveIntegerField(default=50)
 
+    class BarcodeSymbology(models.TextChoices):
+        CODE128 = "code128", "Code 128"
+        CODE39 = "code39", "Code 39"
+        EAN8 = "ean8", "EAN-8"
+        EAN13 = "ean13", "EAN-13"
+        UPC = "upc", "UPC"
+
     barcode = models.CharField(max_length=100, blank=True)
+    barcode_symbology = models.CharField(
+        max_length=10, choices=BarcodeSymbology.choices, default=BarcodeSymbology.CODE128,
+        help_text="Format the barcode is encoded/printed as. Only affects generation and scanning, not the stored value.",
+    )
     image = models.ImageField(upload_to="products/", null=True, blank=True)
     is_active = models.BooleanField(default=True, db_index=True)
     # Off by default: publishing a merchant's whole catalogue to the internet
@@ -174,6 +185,17 @@ class Product(TenantAwareModel):
     is_taxable = models.BooleanField(default=True)
     tax_class = models.ForeignKey(
         "tax.TaxClass", null=True, blank=True, on_delete=models.SET_NULL, related_name="products"
+    )
+
+    class TaxType(models.TextChoices):
+        EXCLUSIVE = "exclusive", "Exclusive (tax added on top)"
+        INCLUSIVE = "inclusive", "Inclusive (tax already in the price)"
+
+    # Default 'exclusive' preserves every existing product's current behaviour
+    # (VAT has always been calculated as added on top of unit_price).
+    tax_type = models.CharField(
+        max_length=10, choices=TaxType.choices, default=TaxType.EXCLUSIVE,
+        help_text="Whether this item's price already includes tax, or tax is added on top at sale.",
     )
 
     # Optional per-product inventory control account. Blank falls back to the org
@@ -216,6 +238,51 @@ class Product(TenantAwareModel):
         max_length=10, choices=CostingMethod.choices, default=CostingMethod.AVERAGE,
         help_text="How cost of goods sold is determined for this item on a sale.",
     )
+
+    @staticmethod
+    def _gs1_check_digit(digits: str) -> str:
+        """
+        Standard GS1 check digit: weight the digits 3,1,3,1... starting from
+        the RIGHTMOST digit, sum, subtract from the next multiple of 10. The
+        same algorithm produces a valid check digit for EAN-8, UPC-A (treated
+        as an 11-digit base), and EAN-13 (a 12-digit base) alike.
+        """
+        total = sum(
+            int(d) * (3 if i % 2 == 0 else 1)
+            for i, d in enumerate(reversed(digits))
+        )
+        return str((10 - total % 10) % 10)
+
+    @classmethod
+    def generate_barcode(cls, organisation, symbology=None) -> str:
+        """
+        A system-generated barcode for a product that doesn't have a real one
+        already — the reviewer's "best practice: system generated, not
+        manually entered" request. Manual entry stays available for products
+        that already have a printed barcode; this only fills the gap when the
+        field is left blank.
+
+        EAN-8/EAN-13/UPC need a numeric value with a valid check digit to
+        actually scan; Code 128/39 have no such constraint, so those get a
+        simple sequential alphanumeric code instead. Sequenced per
+        organisation via a count of existing barcodes — not a globally
+        registered GS1 prefix, since these are internal shop codes, not resold
+        retail products that need a real manufacturer prefix.
+        """
+        symbology = symbology or cls.BarcodeSymbology.CODE128
+        seq = cls.all_objects.filter(organisation=organisation).exclude(barcode="").count() + 1
+        if symbology == cls.BarcodeSymbology.EAN13:
+            base = str(seq).zfill(12)[-12:]
+            return base + cls._gs1_check_digit(base)
+        if symbology == cls.BarcodeSymbology.UPC:
+            base = str(seq).zfill(11)[-11:]
+            return base + cls._gs1_check_digit(base)
+        if symbology == cls.BarcodeSymbology.EAN8:
+            base = str(seq).zfill(7)[-7:]
+            return base + cls._gs1_check_digit(base)
+        # Code 128 / Code 39 — alphanumeric, no checksum requirement.
+        org_prefix = str(organisation.id).replace("-", "")[:4].upper()
+        return f"{org_prefix}{seq:08d}"
 
     class Meta(TenantAwareModel.Meta):
         # Live rows only — see Category above. A deleted product used to hold its

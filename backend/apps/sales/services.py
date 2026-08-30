@@ -277,13 +277,20 @@ class SaleService:
         discount_amount = round_money(subtotal * discount_pct / Decimal("100"))
         after_discount = subtotal - discount_amount
 
-        # Apply product tax rate
+        # Apply product tax rate. Exclusive (the default, and every existing
+        # product's current behaviour) adds tax on top of unit_price. Inclusive
+        # means unit_price already contains it, so the tax is backed OUT of
+        # after_discount instead of added — line_total stays what the customer
+        # was quoted either way; only the tax/subtotal split changes.
         tax_rate = Decimal("0")
         if product.is_taxable and product.tax_class:
             tax_rate = product.tax_class.rate
-        tax_amount = round_money(after_discount * tax_rate / Decimal("100"))
-
-        line_total = after_discount + tax_amount
+        if product.tax_type == Product.TaxType.INCLUSIVE and tax_rate > 0:
+            tax_amount = round_money(after_discount * tax_rate / (Decimal("100") + tax_rate))
+            line_total = after_discount
+        else:
+            tax_amount = round_money(after_discount * tax_rate / Decimal("100"))
+            line_total = after_discount + tax_amount
 
         # Specific Unit costing sells FROM a chosen lot, so the batch has to be
         # resolved before the movement. batch_id was already accepted by the

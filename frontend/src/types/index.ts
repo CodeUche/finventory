@@ -105,6 +105,8 @@ export interface Product {
   wages_account_code?: string | null
   wages_account_name?: string | null
   costing_method?: 'fifo' | 'lifo' | 'average' | 'specific'
+  tax_type?: 'exclusive' | 'inclusive'
+  barcode_symbology?: 'code128' | 'code39' | 'ean8' | 'ean13' | 'upc'
   total_stock: number
 }
 

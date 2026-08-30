@@ -263,11 +263,11 @@ const BLANK = {
   cost_price: '', owner_cost_price: '', selling_price: '', wholesale_price: '',
   reorder_level: '10', max_stock_level: '', quantity_in_pack: '1',
   alcohol_percentage: '', volume_ml: '',
-  is_taxable: false, tax_class: '',
+  is_taxable: false, tax_class: '', tax_type: 'exclusive',
   inventory_account: '', sales_account: '', cogs_account: '', wages_account: '',
   costing_method: 'average',
   is_active: true,
-  description: '', barcode: '', category: '',
+  description: '', barcode: '', barcode_symbology: 'code128', category: '',
 }
 
 const BLANK_BATCH = {
@@ -291,6 +291,21 @@ const COSTING_METHODS = [
   { value: 'fifo', label: 'FIFO' },
   { value: 'lifo', label: 'LIFO' },
   { value: 'specific', label: 'Specific Unit' },
+]
+
+// Mirrors Product.TaxType on the backend.
+const TAX_TYPES = [
+  { value: 'exclusive', label: 'Exclusive (tax added on top)' },
+  { value: 'inclusive', label: 'Inclusive (tax already in the price)' },
+]
+
+// Mirrors Product.BarcodeSymbology on the backend.
+const BARCODE_SYMBOLOGIES = [
+  { value: 'code128', label: 'Code 128' },
+  { value: 'code39', label: 'Code 39' },
+  { value: 'ean8', label: 'EAN-8' },
+  { value: 'ean13', label: 'EAN-13' },
+  { value: 'upc', label: 'UPC' },
 ]
 
 const UNITS_OF_MEASURE = [
@@ -415,6 +430,7 @@ export default function ProductsPage() {
       volume_ml: String(p.volume_ml ?? ''),
       is_taxable: p.is_taxable ?? false,
       tax_class: p.tax_class ?? '',
+      tax_type: (p as any).tax_type ?? 'exclusive',
       inventory_account: p.inventory_account ?? '',
       costing_method: (p as any).costing_method ?? 'average',
       sales_account: (p as any).sales_account ?? '',
@@ -423,6 +439,7 @@ export default function ProductsPage() {
       is_active: p.is_active ?? true,
       description: (p as any).description ?? '',
       barcode: (p as any).barcode ?? '',
+      barcode_symbology: (p as any).barcode_symbology ?? 'code128',
       category: (p as any).category ?? '',
     })
     loadModalDeps()
@@ -449,6 +466,8 @@ export default function ProductsPage() {
         sales_account: data.sales_account ?? '',
         cogs_account: data.cogs_account ?? '',
         wages_account: data.wages_account ?? '',
+        tax_type: data.tax_type ?? 'exclusive',
+        barcode_symbology: data.barcode_symbology ?? 'code128',
       }))
       setEditHydrated(true)
     }).catch(() => { /* offline — form keeps row data; save will omit slim gaps */ })
@@ -512,7 +531,7 @@ export default function ProductsPage() {
       for (const k of [
         'description', 'barcode', 'wholesale_price', 'max_stock_level', 'quantity_in_pack',
         'inventory_account', 'sales_account', 'cogs_account', 'wages_account',
-        'costing_method',
+        'costing_method', 'tax_type', 'barcode_symbology',
       ]) {
         delete payload[k]
       }
@@ -1033,8 +1052,18 @@ export default function ProductsPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="label">Barcode</label>
-                  <input className="input" value={(form as any).barcode ?? ''} onChange={upd('barcode')} placeholder="Optional" />
+                  <label className="label">Barcode <FieldTooltip text="Leave blank to auto-generate one when you create the product. Enter a value here only if this item already has a printed barcode." /></label>
+                  <input className="input" value={(form as any).barcode ?? ''} onChange={upd('barcode')} placeholder={editId ? 'Optional' : 'Auto-generated if left blank'} />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="label">Barcode Symbology</label>
+                  <select className="input" value={(form as any).barcode_symbology ?? 'code128'} onChange={upd('barcode_symbology')}>
+                    {BARCODE_SYMBOLOGIES.map((s) => (
+                      <option key={s.value} value={s.value}>{s.label}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -1184,6 +1213,16 @@ export default function ProductsPage() {
                         No VAT classes configured. Add them in Tax → VAT Classes.
                       </p>
                     )}
+                  </div>
+                )}
+                {form.is_taxable && (
+                  <div>
+                    <label className="label">Tax Type <FieldTooltip text="Exclusive: VAT is added on top of the price you set. Inclusive: the price you set already contains VAT, so it's backed out instead of added." /></label>
+                    <select className="input" value={form.tax_type} onChange={upd('tax_type')}>
+                      {TAX_TYPES.map((t) => (
+                        <option key={t.value} value={t.value}>{t.label}</option>
+                      ))}
+                    </select>
                   </div>
                 )}
               </div>

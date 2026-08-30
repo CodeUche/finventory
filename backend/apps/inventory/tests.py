@@ -465,3 +465,85 @@ class CostingMethodTests(TestCase):
         row = next(r for r in rows if r.product_id == p.id)
         # 20 units at a 150 weighted average = 3000, not 20 × flat cost_price.
         self.assertAlmostEqual(float(row.total_value), 3000.0, places=2)
+
+
+class BarcodeGenerationTests(TestCase):
+    """
+    System-generated barcodes (the reviewer's "best practice: system
+    generated, not manually entered" request), with manual entry still
+    available for products that already have a printed barcode.
+    """
+
+    def setUp(self):
+        self.user = _make_user("barcode@example.com")
+        self.org = _make_org(self.user, "Barcode Org")
+        self.client = _auth_client(self.user, self.org)
+
+    def _luhn_style_valid(self, code: str) -> bool:
+        """GS1 check-digit validator: recompute the check digit from the base
+        and confirm it matches the last digit — proves the code would actually
+        scan, not just that it's numeric."""
+        base, check = code[:-1], code[-1]
+        return Product._gs1_check_digit(base) == check
+
+    def test_ean13_generates_valid_check_digit(self):
+        code = Product.generate_barcode(self.org, "ean13")
+        self.assertEqual(len(code), 13)
+        self.assertTrue(code.isdigit())
+        self.assertTrue(self._luhn_style_valid(code), code)
+
+    def test_upc_generates_valid_check_digit(self):
+        code = Product.generate_barcode(self.org, "upc")
+        self.assertEqual(len(code), 12)
+        self.assertTrue(self._luhn_style_valid(code), code)
+
+    def test_ean8_generates_valid_check_digit(self):
+        code = Product.generate_barcode(self.org, "ean8")
+        self.assertEqual(len(code), 8)
+        self.assertTrue(self._luhn_style_valid(code), code)
+
+    def test_code128_generates_alphanumeric_code(self):
+        code = Product.generate_barcode(self.org, "code128")
+        self.assertTrue(len(code) > 0)
+
+    def test_successive_generated_barcodes_are_unique(self):
+        # Sequence only advances once a product with a barcode is actually
+        # persisted, so generating in a loop without saving would repeat the
+        # same value — this exercises the real API path, which does save.
+        res_codes = set()
+        for i in range(3):
+            res = self.client.post("/api/v1/inventory/products/", {
+                "sku": f"BC-API-{i}", "name": f"API Item {i}",
+                "cost_price": "10", "selling_price": "20",
+            }, format="json")
+            self.assertEqual(res.status_code, 201, msg=str(res.data))
+            res_codes.add(res.data["barcode"])
+        self.assertEqual(len(res_codes), 3, msg=res_codes)
+
+    def test_blank_barcode_auto_generates_on_create(self):
+        res = self.client.post("/api/v1/inventory/products/", {
+            "sku": "BC-BLANK", "name": "Blank Barcode Item",
+            "cost_price": "10", "selling_price": "20",
+        }, format="json")
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        self.assertTrue(res.data["barcode"], "barcode should have been auto-generated")
+
+    def test_manual_barcode_is_not_overwritten(self):
+        res = self.client.post("/api/v1/inventory/products/", {
+            "sku": "BC-MANUAL", "name": "Manual Barcode Item",
+            "cost_price": "10", "selling_price": "20",
+            "barcode": "9990001112223",
+        }, format="json")
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        self.assertEqual(res.data["barcode"], "9990001112223")
+
+    def test_ean13_requested_symbology_generates_ean13_shape(self):
+        res = self.client.post("/api/v1/inventory/products/", {
+            "sku": "BC-EAN13", "name": "EAN13 Item",
+            "cost_price": "10", "selling_price": "20",
+            "barcode_symbology": "ean13",
+        }, format="json")
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        code = res.data["barcode"]
+        self.assertEqual(len(code), 13)
+        self.assertTrue(self._luhn_style_valid(code), code)

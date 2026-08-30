@@ -28,17 +28,24 @@ class PurchaseOrderItemSerializer(serializers.ModelSerializer):
         discount_amount = (gross * discount_pct / Decimal("100")).quantize(Decimal("0.01"))
         after_discount = gross - discount_amount
 
-        # Same VAT rule as sales: only taxable products with a tax class pick up VAT.
+        # Same VAT rule as sales: only taxable products with a tax class pick up
+        # VAT, and the same exclusive/inclusive split applies — a product
+        # marked tax-inclusive means unit_cost already contains the tax.
         product = attrs.get("product")
         tax_rate = Decimal("0")
         if product is not None and product.is_taxable and product.tax_class:
             tax_rate = product.tax_class.rate
-        tax_amount = (after_discount * tax_rate / Decimal("100")).quantize(Decimal("0.01"))
+        if product is not None and product.tax_type == product.TaxType.INCLUSIVE and tax_rate > 0:
+            tax_amount = (after_discount * tax_rate / (Decimal("100") + tax_rate)).quantize(Decimal("0.01"))
+            line_total = after_discount
+        else:
+            tax_amount = (after_discount * tax_rate / Decimal("100")).quantize(Decimal("0.01"))
+            line_total = after_discount + tax_amount
 
         attrs["discount_amount"] = discount_amount
         attrs["tax_rate"] = tax_rate
         attrs["tax_amount"] = tax_amount
-        attrs["line_total"] = after_discount + tax_amount
+        attrs["line_total"] = line_total
         return attrs
 
 
