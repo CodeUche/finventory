@@ -80,6 +80,23 @@ export interface ProductImage {
   created_at: string
 }
 
+export interface ItemClassGLDefault {
+  id: string
+  product_type: 'physical' | 'service' | 'digital' | 'variable' | 'combo'
+  sales_account: string | null
+  sales_account_code: string | null
+  sales_account_name: string | null
+  cogs_account: string | null
+  cogs_account_code: string | null
+  cogs_account_name: string | null
+  inventory_account: string | null
+  inventory_account_code: string | null
+  inventory_account_name: string | null
+  wages_account: string | null
+  wages_account_code: string | null
+  wages_account_name: string | null
+}
+
 export interface ProductVariantSummary {
   id: string
   sku: string
@@ -144,6 +161,7 @@ export interface Product {
   variant_attributes?: Record<string, string>
   variants?: ProductVariantSummary[]
   combo_components?: ComboComponent[]
+  custom_fields?: Record<string, string>
   total_stock: number
 }
 

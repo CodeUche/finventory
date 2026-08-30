@@ -984,3 +984,59 @@ class ComboProductTests(TestCase):
         self.assertEqual(res.status_code, 200, msg=str(res.data))
         skus = {c["component_product_sku"] for c in res.data["combo_components"]}
         self.assertEqual(skus, {"BUN", "PATTY"})
+
+
+class ProductCustomFieldsTests(TestCase):
+    """Free-form custom fields on Product, capped at 5 (the reviewer's "custom fields" request)."""
+
+    def setUp(self):
+        self.user = _make_user("customfields@example.com")
+        self.org = _make_org(self.user, "Custom Fields Org")
+        self.client = _auth_client(self.user, self.org)
+
+    def test_create_with_custom_fields(self):
+        res = self.client.post("/api/v1/inventory/products/", {
+            "sku": "CF-1", "name": "Jacket", "product_type": "physical",
+            "cost_price": "1000", "selling_price": "2000",
+            "custom_fields": {"Material": "Leather", "Warranty": "12 months"},
+        }, format="json")
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        self.assertEqual(res.data["custom_fields"], {"Material": "Leather", "Warranty": "12 months"})
+
+    def test_more_than_five_custom_fields_rejected(self):
+        fields = {f"Field {i}": f"Value {i}" for i in range(6)}
+        res = self.client.post("/api/v1/inventory/products/", {
+            "sku": "CF-2", "name": "Overloaded", "product_type": "physical",
+            "cost_price": "1000", "selling_price": "2000",
+            "custom_fields": fields,
+        }, format="json")
+        self.assertEqual(res.status_code, 400, msg=str(res.data))
+
+    def test_exactly_five_custom_fields_accepted(self):
+        fields = {f"Field {i}": f"Value {i}" for i in range(5)}
+        res = self.client.post("/api/v1/inventory/products/", {
+            "sku": "CF-3", "name": "Exactly Five", "product_type": "physical",
+            "cost_price": "1000", "selling_price": "2000",
+            "custom_fields": fields,
+        }, format="json")
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+
+    def test_default_is_empty_dict(self):
+        res = self.client.post("/api/v1/inventory/products/", {
+            "sku": "CF-4", "name": "Plain", "product_type": "physical",
+            "cost_price": "1000", "selling_price": "2000",
+        }, format="json")
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        self.assertEqual(res.data["custom_fields"], {})
+
+    def test_update_custom_fields(self):
+        p = Product.objects.create(
+            organisation=self.org, sku="CF-5", name="Updatable",
+            cost_price=Decimal("1000"), selling_price=Decimal("2000"),
+        )
+        res = self.client.patch(f"/api/v1/inventory/products/{p.id}/", {
+            "custom_fields": {"Color": "Blue"},
+        }, format="json")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        p.refresh_from_db()
+        self.assertEqual(p.custom_fields, {"Color": "Blue"})

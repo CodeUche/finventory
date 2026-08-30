@@ -4701,3 +4701,172 @@ class ProductGLAccountOverrideTests(TestCase):
             {"wages_account": str(foreign_acct.id)}, format="json",
         )
         self.assertIn(res.status_code, (400, 422), msg=str(res.data))
+
+
+class ItemClassGLDefaultTests(TestCase):
+    """
+    Default GL accounts per product_type (the reviewer's "item-class GL
+    defaults" request) — sits between a per-product override and the
+    org-wide AccountMapping default. A product with NO override of its own
+    should pick up its class's default; an explicit per-product override
+    still wins over the class default.
+    """
+
+    def setUp(self):
+        self.user = _make_user("itemclass@example.com")
+        self.org = _make_org(self.user, "Item Class Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+
+        from apps.inventory.models import Product, Warehouse
+        from apps.inventory.services import InventoryService
+        from apps.customers.models import Customer
+
+        self.wh = Warehouse.objects.create(organisation=self.org, name="Main WH", is_default=True)
+        self.customer = Customer.objects.create(organisation=self.org, name="Walk-in", customer_type="retail")
+
+        self.class_sales_acct = Account.objects.create(
+            organisation=self.org, code="4910", name="Physical Goods Revenue",
+            account_type=AccountType.REVENUE, normal_balance="credit",
+        )
+        self.class_cogs_acct = Account.objects.create(
+            organisation=self.org, code="5910", name="Physical Goods COGS",
+            account_type=AccountType.COST_OF_GOODS, normal_balance="debit",
+        )
+        self.class_wages_acct = Account.objects.create(
+            organisation=self.org, code="7760", name="Service Wages",
+            account_type=AccountType.EXPENSE, normal_balance="debit",
+        )
+        self.per_product_override = Account.objects.create(
+            organisation=self.org, code="4920", name="Specific Product Revenue",
+            account_type=AccountType.REVENUE, normal_balance="credit",
+        )
+
+        self.default_revenue = AccountMappingService.resolve(self.org, "revenue_account")
+        self.default_cogs = AccountMappingService.resolve(self.org, "cogs_account")
+
+        self.physical_product = Product.objects.create(
+            organisation=self.org, sku="ICD-PHYS", name="Widget",
+            cost_price=Decimal("400"), selling_price=Decimal("1000"),
+        )
+        InventoryService.record_movement(
+            organisation=self.org, product=self.physical_product, warehouse=self.wh,
+            quantity=Decimal("20"), movement_type="purchase_in",
+            unit_cost=Decimal("400"), reference="SEED", created_by=self.user,
+        )
+        self.overridden_product = Product.objects.create(
+            organisation=self.org, sku="ICD-OVERRIDE", name="Special Widget",
+            cost_price=Decimal("400"), selling_price=Decimal("1000"),
+            sales_account=self.per_product_override,
+        )
+        InventoryService.record_movement(
+            organisation=self.org, product=self.overridden_product, warehouse=self.wh,
+            quantity=Decimal("20"), movement_type="purchase_in",
+            unit_cost=Decimal("400"), reference="SEED", created_by=self.user,
+        )
+        self.service_product = Product.objects.create(
+            organisation=self.org, sku="ICD-SVC", name="Consulting",
+            product_type="service", cost_price=Decimal("300"), selling_price=Decimal("2000"),
+        )
+
+    def _sale(self, product):
+        from apps.sales.services import SaleService
+        return SaleService.create_sale(
+            organisation=self.org, created_by=self.user, customer=self.customer, warehouse=self.wh,
+            items=[{"product_id": str(product.id), "quantity": "1", "unit_price": str(product.selling_price)}],
+            payment_method="credit",
+        )
+
+    def _lines(self, invoice):
+        entry = JournalEntry.objects.get(organisation=self.org, source_type="sale", source_ref=str(invoice.id))
+        return list(entry.lines.all())
+
+    def test_no_class_default_configured_uses_org_default(self):
+        invoice = self._sale(self.physical_product)
+        lines = self._lines(invoice)
+        accts = {l.account_id for l in lines}
+        self.assertIn(self.default_revenue.id, accts)
+
+    def test_class_default_redirects_a_product_with_no_override_of_its_own(self):
+        from apps.accounting.models import ItemClassGLDefault
+        ItemClassGLDefault.objects.create(
+            organisation=self.org, product_type="physical",
+            sales_account=self.class_sales_acct, cogs_account=self.class_cogs_acct,
+        )
+        invoice = self._sale(self.physical_product)
+        lines = self._lines(invoice)
+        accts = {l.account_id for l in lines}
+        self.assertIn(self.class_sales_acct.id, accts)
+        self.assertIn(self.class_cogs_acct.id, accts)
+        self.assertNotIn(self.default_revenue.id, accts)
+        self.assertNotIn(self.default_cogs.id, accts)
+
+    def test_per_product_override_wins_over_class_default(self):
+        from apps.accounting.models import ItemClassGLDefault
+        ItemClassGLDefault.objects.create(
+            organisation=self.org, product_type="physical", sales_account=self.class_sales_acct,
+        )
+        invoice = self._sale(self.overridden_product)
+        lines = self._lines(invoice)
+        accts = {l.account_id for l in lines}
+        self.assertIn(self.per_product_override.id, accts)
+        self.assertNotIn(self.class_sales_acct.id, accts)
+
+    def test_service_wages_class_default_used_when_product_has_none(self):
+        from apps.accounting.models import ItemClassGLDefault
+        ItemClassGLDefault.objects.create(
+            organisation=self.org, product_type="service", wages_account=self.class_wages_acct,
+        )
+        invoice = self._sale(self.service_product)
+        lines = self._lines(invoice)
+        accts = {l.account_id for l in lines}
+        self.assertIn(self.class_wages_acct.id, accts)
+
+    def test_class_default_is_isolated_per_product_type(self):
+        """A default set for 'service' must not leak onto 'physical' items."""
+        from apps.accounting.models import ItemClassGLDefault
+        ItemClassGLDefault.objects.create(
+            organisation=self.org, product_type="service", sales_account=self.class_sales_acct,
+        )
+        invoice = self._sale(self.physical_product)
+        lines = self._lines(invoice)
+        accts = {l.account_id for l in lines}
+        self.assertNotIn(self.class_sales_acct.id, accts)
+        self.assertIn(self.default_revenue.id, accts)
+
+    def test_cross_org_account_rejected(self):
+        other_org = _make_org(_make_user("other_itemclass@example.com"), "Other Item Class Org")
+        foreign_acct = Account.objects.create(
+            organisation=other_org, code="4999", name="Foreign Sales",
+            account_type=AccountType.REVENUE, normal_balance="credit",
+        )
+        res = self.client.post("/api/v1/accounting/item-class-gl-defaults/", {
+            "product_type": "physical", "sales_account": str(foreign_acct.id),
+        }, format="json")
+        self.assertIn(res.status_code, (400, 422), msg=str(res.data))
+
+    def test_duplicate_product_type_rejected(self):
+        from apps.accounting.models import ItemClassGLDefault
+        ItemClassGLDefault.objects.create(organisation=self.org, product_type="physical")
+        res = self.client.post("/api/v1/accounting/item-class-gl-defaults/", {
+            "product_type": "physical",
+        }, format="json")
+        self.assertIn(res.status_code, (400, 422), msg=str(res.data))
+
+    def test_list_and_update_via_api(self):
+        res = self.client.post("/api/v1/accounting/item-class-gl-defaults/", {
+            "product_type": "combo", "sales_account": str(self.class_sales_acct.id),
+        }, format="json")
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        row_id = res.data["id"]
+
+        res = self.client.get("/api/v1/accounting/item-class-gl-defaults/")
+        self.assertEqual(res.status_code, 200)
+        results = res.data.get("results", res.data)
+        self.assertTrue(any(r["id"] == row_id for r in results))
+
+        res = self.client.patch(f"/api/v1/accounting/item-class-gl-defaults/{row_id}/", {
+            "cogs_account": str(self.class_cogs_acct.id),
+        }, format="json")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.assertEqual(res.data["cogs_account_code"], "5910")

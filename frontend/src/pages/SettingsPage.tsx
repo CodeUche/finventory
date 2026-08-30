@@ -15,9 +15,18 @@ import {
   setTimeoutPreference,
   type TimeoutOption,
 } from '@/hooks/useInactivityTimeout'
-import type { PaymentGatewayConfig, MerchantBankAccount, FinancialPeriod, TeamMember, ModuleKey, AccessLevel, PartnerAccessRequest, PartnerClientLink } from '@/types'
+import type { PaymentGatewayConfig, MerchantBankAccount, FinancialPeriod, TeamMember, ModuleKey, AccessLevel, PartnerAccessRequest, PartnerClientLink, ItemClassGLDefault } from '@/types'
 import { NIGERIAN_BANKS } from '@/lib/banks'
 import { useResolveBankAccount } from '@/hooks/useResolveBankAccount'
+
+// Mirrors ItemClassGLDefault.PRODUCT_TYPE_CHOICES on the backend.
+const PRODUCT_TYPE_GL_ROWS: { value: string; label: string }[] = [
+  { value: 'physical', label: 'Physical' },
+  { value: 'service', label: 'Service' },
+  { value: 'digital', label: 'Digital' },
+  { value: 'variable', label: 'Variable' },
+  { value: 'combo', label: 'Combo / Bundle' },
+]
 
 const ALL_MODULES: { key: ModuleKey; label: string }[] = [
   { key: 'sales', label: 'Sales / Invoices' },
@@ -497,6 +506,8 @@ export default function SettingsPage() {
   const [glMapping, setGlMapping] = useState<Record<string, any> | null>(null)
   const [glAccounts, setGlAccounts] = useState<any[]>([])
   const [glMappingSaving, setGlMappingSaving] = useState(false)
+  const [itemClassDefaults, setItemClassDefaults] = useState<ItemClassGLDefault[]>([])
+  const [itemClassSavingType, setItemClassSavingType] = useState<string | null>(null)
 
   // FIRS state lives in the FirsTab sub-component (see bottom of this file)
   const [rejectingReq, setRejectingReq] = useState<string | null>(null)
@@ -585,11 +596,16 @@ export default function SettingsPage() {
       Promise.allSettled([
         accountingApi.getAccountMapping(),
         accountingApi.accounts(),
-      ]).then(([mapRes, acctRes]) => {
+        accountingApi.itemClassGLDefaults(),
+      ]).then(([mapRes, acctRes, classRes]) => {
         if (mapRes.status === 'fulfilled') setGlMapping(mapRes.value.data)
         if (acctRes.status === 'fulfilled') {
           const d = acctRes.value.data
           setGlAccounts(Array.isArray(d) ? d : d.results ?? [])
+        }
+        if (classRes.status === 'fulfilled') {
+          const d = classRes.value.data
+          setItemClassDefaults(Array.isArray(d) ? d : d.results ?? [])
         }
       })
     }
@@ -3844,6 +3860,72 @@ export default function SettingsPage() {
               </button>
             </div>
           )}
+
+          {/* ── Item-Class GL Defaults ──────────────────────────────────────── */}
+          <div className="pt-4 border-t border-slate-700">
+            <h3 className="text-sm font-semibold text-white">Item-Class GL Defaults</h3>
+            <p className="text-xs text-slate-400 mt-1 mb-4">
+              Default Sales / COGS / Inventory / Wages accounts for every product of a given type.
+              A specific product's own GL mapping (set on the product itself) always wins over these;
+              these only apply when a product has no override of its own — instead of the single
+              organisation-wide default above.
+            </p>
+            <div className="space-y-3">
+              {PRODUCT_TYPE_GL_ROWS.map(({ value, label }) => {
+                const row = itemClassDefaults.find((d) => d.product_type === value)
+                const saving = itemClassSavingType === value
+                const updateRow = async (field: string, acctId: string) => {
+                  setItemClassSavingType(value)
+                  try {
+                    if (row) {
+                      const { data } = await accountingApi.updateItemClassGLDefault(row.id, { [field]: acctId || null })
+                      setItemClassDefaults((prev) => prev.map((d) => (d.id === row.id ? data : d)))
+                    } else {
+                      const { data } = await accountingApi.createItemClassGLDefault({ product_type: value, [field]: acctId || null })
+                      setItemClassDefaults((prev) => [...prev, data])
+                    }
+                    toast.success(`${label} defaults updated`)
+                  } catch {
+                    toast.error('Failed to save item-class default')
+                  } finally {
+                    setItemClassSavingType(null)
+                  }
+                }
+                const fields: { key: 'sales_account' | 'cogs_account' | 'inventory_account' | 'wages_account'; label: string; show: boolean }[] = [
+                  { key: 'sales_account', label: 'Sales', show: true },
+                  { key: 'cogs_account', label: 'Cost of Sales', show: true },
+                  { key: 'inventory_account', label: 'Inventory', show: value === 'physical' },
+                  { key: 'wages_account', label: 'Wages', show: value === 'service' },
+                ]
+                return (
+                  <div key={value} className="rounded-lg bg-slate-800 border border-slate-700 px-4 py-3 space-y-2">
+                    <p className="text-sm font-medium text-white flex items-center gap-2">
+                      {label}
+                      {saving && <Loader2 size={12} className="animate-spin text-slate-400" />}
+                    </p>
+                    <div className="grid grid-cols-2 gap-2">
+                      {fields.filter((f) => f.show).map((f) => (
+                        <div key={f.key}>
+                          <p className="text-[11px] text-slate-500 mb-1">{f.label}</p>
+                          <select
+                            className="w-full bg-slate-700 border border-slate-600 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-brand-500"
+                            value={(row as any)?.[f.key] ?? ''}
+                            disabled={saving}
+                            onChange={(e) => updateRow(f.key, e.target.value)}
+                          >
+                            <option value="">— Use org default —</option>
+                            {glAccounts.map((a: any) => (
+                              <option key={a.id} value={a.id}>{a.code} – {a.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
         </div>
       )}
 

@@ -259,6 +259,18 @@ class Product(TenantAwareModel):
         help_text='Display attributes for this variant, e.g. {"Size": "Large", "Color": "Red"}.',
     )
 
+    # Free-form label:value pairs a merchant defines per product — the
+    # reviewer's "custom fields" request. Capped at 5 (enforced in the
+    # serializer, same as variant_attributes' shape) rather than a rigid
+    # org-wide schema, since different product types plausibly want
+    # different ad-hoc fields (warranty months on electronics, material on
+    # apparel) and a fixed 5-column schema would waste slots for whichever
+    # products don't need all of them.
+    custom_fields = models.JSONField(
+        default=dict, blank=True,
+        help_text='Up to 5 free-form label:value pairs, e.g. {"Warranty": "12 months"}.',
+    )
+
     @staticmethod
     def _gs1_check_digit(digits: str) -> str:
         """

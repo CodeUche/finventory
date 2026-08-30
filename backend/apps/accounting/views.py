@@ -20,7 +20,7 @@ _PlanAccounting = plan_requires('accounting')
 from .models import (
     Account, AccountSubType, AccountType, JournalEntry, JournalLine, FixedAsset, FinancialPeriod,
     BankReconciliation, BankReconciliationLine, AIReconMatch, AccountMapping, AssetType, ACCOUNT_GROUP_SPEC,
-    DEBIT_NORMAL_TYPES,
+    DEBIT_NORMAL_TYPES, ItemClassGLDefault,
 )
 from django.db import transaction
 from .serializers import (
@@ -28,7 +28,7 @@ from .serializers import (
     UpdateJournalEntrySerializer, FixedAssetSerializer, FinancialPeriodSerializer,
     BankReconciliationSerializer, BankReconciliationLineSerializer,
     AIReconMatchSerializer, AccountMappingSerializer, AssetTypeSerializer, MAPPING_ROLES,
-    MAPPING_ROLE_MODULES, MAPPING_ROLE_LABELS,
+    MAPPING_ROLE_MODULES, MAPPING_ROLE_LABELS, ItemClassGLDefaultSerializer,
 )
 from .services import AccountingService, AccountMappingService, safe_post_gl
 
@@ -1866,6 +1866,22 @@ RESPONSE FORMAT — Return ONLY valid JSON, nothing else:
             'errors': errors,
             'journal_entry_ids': posted,
         }, status=status.HTTP_201_CREATED if posted else status.HTTP_422_UNPROCESSABLE_ENTITY)
+
+
+class ItemClassGLDefaultViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+    """
+    Default GL accounts per product_type — the reviewer's "item-class GL
+    defaults" request. One row per (organisation, product_type); the
+    frontend settings screen renders one editable block per product type,
+    POSTing a new row for a type that doesn't have one yet and PATCHing an
+    existing one, exactly like ComboComponentViewSet's CRUD-child pattern.
+    """
+    queryset = ItemClassGLDefault.objects.select_related(
+        "sales_account", "cogs_account", "inventory_account", "wages_account",
+    )
+    serializer_class = ItemClassGLDefaultSerializer
+    permission_classes = [IsAuthenticated, IsAccountant, _PlanAccounting, _ModAccess_accounting]
+    filterset_fields = ["product_type"]
 
 
 class AccountMappingView(APIView):

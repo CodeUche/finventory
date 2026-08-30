@@ -152,7 +152,7 @@ class ProductSerializer(serializers.ModelSerializer):
             "cogs_account", "cogs_account_code", "cogs_account_name",
             "wages_account", "wages_account_code", "wages_account_name",
             "parent_product", "parent_product_sku", "parent_product_name",
-            "variant_attributes", "variants", "combo_components",
+            "variant_attributes", "variants", "combo_components", "custom_fields",
             "image", "images",
             "total_stock", "quantity_incoming", "created_at", "updated_at",
         ]
@@ -164,6 +164,11 @@ class ProductSerializer(serializers.ModelSerializer):
         return ProductVariantSummarySerializer(
             obj.variants.filter(organisation=obj.organisation), many=True,
         ).data
+
+    def validate_custom_fields(self, value):
+        if value and len(value) > 5:
+            raise serializers.ValidationError("A product can have at most 5 custom fields.")
+        return value
 
     def validate_parent_product(self, value):
         if value is None:

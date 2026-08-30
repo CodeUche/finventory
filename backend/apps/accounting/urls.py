@@ -4,7 +4,7 @@ from .views import (
     AccountViewSet, AccountSubTypeViewSet, JournalEntryViewSet, FixedAssetViewSet, AssetTypeViewSet,
     FinancialPeriodViewSet, BankReconciliationViewSet, AccountMappingView, AccountMappingSuggestionsView,
     GLHealthView, GLHealthRetryView, GLHealthBulkRetryView, BeginningBalancesSummaryView,
-    YearEndCloseView,
+    YearEndCloseView, ItemClassGLDefaultViewSet,
 )
 
 router = DefaultRouter()
@@ -15,6 +15,7 @@ router.register('asset-types', AssetTypeViewSet, basename='asset-type')
 router.register('assets', FixedAssetViewSet, basename='asset')
 router.register('periods', FinancialPeriodViewSet, basename='period')
 router.register('reconciliations', BankReconciliationViewSet, basename='reconciliation')
+router.register('item-class-gl-defaults', ItemClassGLDefaultViewSet, basename='item-class-gl-default')
 
 urlpatterns = [
     path('', include(router.urls)),

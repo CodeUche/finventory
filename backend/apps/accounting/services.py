@@ -131,6 +131,19 @@ class AccountMappingService:
     }
 
     @classmethod
+    def get_item_class_defaults(cls, organisation) -> dict:
+        """
+        {product_type: ItemClassGLDefault} for this org, one query. Sits
+        between a per-product override and the org-wide AccountMapping
+        default — see ItemClassGLDefault's docstring for why.
+        """
+        from .models import ItemClassGLDefault
+        return {
+            row.product_type: row
+            for row in ItemClassGLDefault.objects.filter(organisation=organisation)
+        }
+
+    @classmethod
     def get_or_create_mapping(cls, organisation) -> 'AccountMapping':
         mapping, created = AccountMapping.objects.get_or_create(organisation=organisation)
         if created:
@@ -1693,13 +1706,25 @@ class AccountingService:
         # same lines as before — zero regression risk for the common case. Only
         # once at least one item actually carries an override does this switch
         # from one aggregate revenue/COGS line to netted per-account buckets.
+        # Item-class defaults (set per product_type in Settings, e.g. all
+        # "service" items to Service Revenue) count as an override too — a
+        # product with no override of its own still needs per-item resolution
+        # to pick up its class's default instead of the org-wide one.
         items = list(
             invoice.items.select_related(
                 'product__sales_account', 'product__cogs_account', 'product__wages_account',
             ).all()
         )
+        item_class_defaults = AccountMappingService.get_item_class_defaults(organisation)
+
+        def _class_default(product, role):
+            row = item_class_defaults.get(product.product_type)
+            return getattr(row, role, None) if row else None
+
         has_override = any(
             i.product.sales_account_id or i.product.cogs_account_id or i.product.wages_account_id
+            or _class_default(i.product, 'sales_account') or _class_default(i.product, 'cogs_account')
+            or _class_default(i.product, 'wages_account')
             for i in items
         )
         revenue_acct = revenue_acct_default
@@ -1727,7 +1752,7 @@ class AccountingService:
                 amt = Decimal(str(i.line_total or 0)) - Decimal(str(i.tax_amount or 0))
                 if amt == 0:
                     continue
-                acct = i.product.sales_account or revenue_acct_default
+                acct = i.product.sales_account or _class_default(i.product, 'sales_account') or revenue_acct_default
                 slot = revenue_buckets.setdefault(acct.id, [acct, zero])
                 slot[1] += amt
             for acct, amt in revenue_buckets.values():
@@ -1757,12 +1782,11 @@ class AccountingService:
                     if amt == 0:
                         continue
                     product = i.product
-                    debit_acct = (
-                        product.wages_account
-                        if product.product_type == "service" and product.wages_account_id
-                        else (product.cogs_account or cogs_acct_default)
-                    )
-                    credit_acct = product.inventory_account or inv_acct_default
+                    if product.product_type == "service" and (product.wages_account_id or _class_default(product, 'wages_account')):
+                        debit_acct = product.wages_account or _class_default(product, 'wages_account')
+                    else:
+                        debit_acct = product.cogs_account or _class_default(product, 'cogs_account') or cogs_acct_default
+                    credit_acct = product.inventory_account or _class_default(product, 'inventory_account') or inv_acct_default
                     d_slot = debit_buckets.setdefault(debit_acct.id, [debit_acct, zero])
                     d_slot[1] += amt
                     c_slot = credit_buckets.setdefault(credit_acct.id, [credit_acct, zero])

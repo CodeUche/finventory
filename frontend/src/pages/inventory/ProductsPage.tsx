@@ -342,6 +342,7 @@ export default function ProductsPage() {
   const [comboSaving, setComboSaving] = useState(false)
   const [variantSaving, setVariantSaving] = useState(false)
   const [comboPickableProducts, setComboPickableProducts] = useState<Product[]>([])
+  const [customFieldRows, setCustomFieldRows] = useState<{ label: string; value: string }[]>([])
   const [form, setForm] = useState({ ...BLANK })
   const [taxClasses, setTaxClasses] = useState<TaxClass[]>([])
   const [sortBy, setSortBy] = useState('name')
@@ -413,6 +414,7 @@ export default function ProductsPage() {
     setComboComponentsList([])
     setNewVariant({ sku: '', name: '', attributes: '', cost_price: '', selling_price: '' })
     setNewCombo({ component_product: '', quantity: '1' })
+    setCustomFieldRows([])
     loadModalDeps()
     setShowModal(true)
   }
@@ -499,6 +501,9 @@ export default function ProductsPage() {
       setGalleryImages(data.images ?? [])
       setVariantList(data.variants ?? [])
       setComboComponentsList(data.combo_components ?? [])
+      setCustomFieldRows(
+        Object.entries(data.custom_fields ?? {}).map(([label, value]) => ({ label, value: String(value) })),
+      )
       setEditHydrated(true)
     }).catch(() => { /* offline — form keeps row data; save will omit slim gaps */ })
     // Fetch current warehouse for this product (largest stock qty wins)
@@ -653,6 +658,23 @@ export default function ProductsPage() {
     }
   }
 
+  // Custom fields are plain JSON on the product row (no separate endpoint),
+  // so edits here are local until the main form is saved — unlike
+  // variants/combo components, which write immediately.
+  const addCustomFieldRow = () => {
+    if (customFieldRows.length >= 5) {
+      toast.error('A product can have at most 5 custom fields')
+      return
+    }
+    setCustomFieldRows((rows) => [...rows, { label: '', value: '' }])
+  }
+  const updateCustomFieldRow = (idx: number, field: 'label' | 'value', v: string) => {
+    setCustomFieldRows((rows) => rows.map((r, i) => (i === idx ? { ...r, [field]: v } : r)))
+  }
+  const removeCustomFieldRow = (idx: number) => {
+    setCustomFieldRows((rows) => rows.filter((_, i) => i !== idx))
+  }
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault()
     setSaving(true)
@@ -683,6 +705,9 @@ export default function ProductsPage() {
     if (!payload.cogs_account) payload.cogs_account = null
     if (!payload.wages_account) payload.wages_account = null
     if (!payload.parent_product) payload.parent_product = null
+    payload.custom_fields = Object.fromEntries(
+      customFieldRows.filter((r) => r.label.trim()).map((r) => [r.label.trim(), r.value]),
+    )
     // Editing without detail hydration (offline): never send the fields the slim
     // list doesn't carry — sending their empty defaults would wipe real data.
     // (inventory_account was missing from this list too — same bug, fixed here
@@ -692,7 +717,7 @@ export default function ProductsPage() {
         'description', 'barcode', 'wholesale_price', 'max_stock_level', 'quantity_in_pack',
         'inventory_account', 'sales_account', 'cogs_account', 'wages_account',
         'costing_method', 'tax_type', 'barcode_symbology',
-        'parent_product', 'variant_attributes',
+        'parent_product', 'variant_attributes', 'custom_fields',
       ]) {
         delete payload[k]
       }
@@ -1377,6 +1402,42 @@ export default function ProductsPage() {
                   )}
                 </div>
               )}
+
+              <div className="rounded-xl border border-surface-700/60 p-4 space-y-3">
+                <p className="text-sm font-semibold text-white">Custom Fields <FieldTooltip text="Add up to 5 of your own label/value pairs — e.g. Warranty, Material, Country of Origin." /></p>
+                {editId && !editHydrated ? (
+                  <p className="text-xs text-slate-500">Loading…</p>
+                ) : (
+                  <>
+                    {customFieldRows.length === 0 ? (
+                      <p className="text-xs text-slate-500">No custom fields yet.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {customFieldRows.map((row, idx) => (
+                          <div key={idx} className="flex items-center gap-2">
+                            <input
+                              className="input flex-1" placeholder="Label (e.g. Warranty)"
+                              value={row.label} onChange={(e) => updateCustomFieldRow(idx, 'label', e.target.value)}
+                            />
+                            <input
+                              className="input flex-1" placeholder="Value (e.g. 12 months)"
+                              value={row.value} onChange={(e) => updateCustomFieldRow(idx, 'value', e.target.value)}
+                            />
+                            <button type="button" onClick={() => removeCustomFieldRow(idx)} className="text-slate-400 hover:text-red-400 shrink-0">
+                              <X size={14} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {customFieldRows.length < 5 && (
+                      <button type="button" onClick={addCustomFieldRow} className="btn-secondary w-full text-sm">
+                        + Add Field
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div>

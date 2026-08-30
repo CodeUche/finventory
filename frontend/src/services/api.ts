@@ -1566,6 +1566,10 @@ export const accountingApi = {
   getAccountMapping: () => api.get('/accounting/account-mapping/'),
   updateAccountMapping: (data: object) => api.put('/accounting/account-mapping/', data),
   getAccountMappingSuggestions: () => api.get('/accounting/account-mapping/suggestions/'),
+  /** Default GL accounts per product_type — sits between a per-product override and the org-wide mapping above. */
+  itemClassGLDefaults: () => api.get('/accounting/item-class-gl-defaults/'),
+  createItemClassGLDefault: (data: object) => api.post('/accounting/item-class-gl-defaults/', data),
+  updateItemClassGLDefault: (id: string, data: object) => api.patch(`/accounting/item-class-gl-defaults/${id}/`, data),
 }
 
 export const payrollApi = {

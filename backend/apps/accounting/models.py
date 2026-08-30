@@ -722,3 +722,57 @@ class AccountMapping(TenantAwareModel):
                     f"Account '{account}' for role '{field_name}' is a header/summary account; "
                     f"map a specific posting account instead."
                 )
+
+
+class ItemClassGLDefault(TenantAwareModel):
+    """
+    Default GL accounts for a whole product_type (physical/service/digital/
+    variable/combo) — the reviewer's "item-class GL defaults" request.
+
+    Sits between a per-product override (Product.sales_account etc, set one
+    item at a time) and the org-wide single default (AccountMapping): a new
+    physical product with no override of its own posts to whatever's set
+    here for "physical" before falling back to the org default, so a
+    merchant can set "Service Revenue" once for every service item instead
+    of remapping each one by hand.
+
+    product_type intentionally duplicates Product.ProductType's values as
+    plain strings rather than importing apps.inventory here — Product
+    already references apps.accounting.Account by string, and reversing
+    that with a real import would create a circular dependency between the
+    two apps for a value that never changes.
+    """
+
+    PRODUCT_TYPE_CHOICES = [
+        ("physical", "Physical (tracked inventory)"),
+        ("service", "Service (no inventory)"),
+        ("digital", "Digital (no inventory)"),
+        ("variable", "Variable (has variants)"),
+        ("combo", "Combo / Bundle"),
+    ]
+
+    product_type = models.CharField(max_length=20, choices=PRODUCT_TYPE_CHOICES)
+    sales_account = models.ForeignKey(
+        Account, null=True, blank=True, on_delete=models.SET_NULL, related_name="item_class_sales_defaults",
+    )
+    cogs_account = models.ForeignKey(
+        Account, null=True, blank=True, on_delete=models.SET_NULL, related_name="item_class_cogs_defaults",
+    )
+    inventory_account = models.ForeignKey(
+        Account, null=True, blank=True, on_delete=models.SET_NULL, related_name="item_class_inventory_defaults",
+    )
+    wages_account = models.ForeignKey(
+        Account, null=True, blank=True, on_delete=models.SET_NULL, related_name="item_class_wages_defaults",
+    )
+
+    class Meta(TenantAwareModel.Meta):
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organisation", "product_type"],
+                condition=models.Q(is_deleted=False),
+                name="uniq_item_class_gl_default_per_type",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.organisation_id}: {self.product_type} defaults"
