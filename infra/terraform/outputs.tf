@@ -31,6 +31,21 @@ output "ecs_cluster_name" {
   value = aws_ecs_cluster.main.name
 }
 
+output "migrate_task_definition_arn" {
+  description = "Run this as a one-off task before every deploy — see README 'Deploy runbook'. Never let api/worker/beat run migrations themselves."
+  value       = aws_ecs_task_definition.migrate.arn
+}
+
+output "private_app_subnet_ids" {
+  description = "For the --network-configuration flag on `aws ecs run-task` (migrate task runbook)."
+  value       = aws_subnet.private_app[*].id
+}
+
+output "ecs_tasks_security_group_id" {
+  description = "For the --network-configuration flag on `aws ecs run-task` (migrate task runbook)."
+  value       = aws_security_group.ecs_tasks.id
+}
+
 output "admin_url_generated" {
   description = "Random obfuscated Django admin path — matches production.py's fail-fast guard."
   value       = local.admin_url

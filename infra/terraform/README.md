@@ -32,19 +32,62 @@ terraform init \
   -backend-config="profile=audity-migration"
 ```
 
-## Build & push the image (before the first `apply` that creates ECS services)
+## Deploy runbook (every deploy, not just the first one)
 
-The ECR repo is `IMMUTABLE` — each deploy needs a new tag. `var.image_tag`
-defaults to `bootstrap-v1` for this session's initial bring-up:
+The ECR repo is `IMMUTABLE` — each deploy needs a new tag.
 
-```bash
-aws ecr get-login-password --region eu-west-1 --profile audity-migration \
-  | docker login --username AWS --password-stdin <account_id>.dkr.ecr.eu-west-1.amazonaws.com
+**Migrations run as a dedicated one-off task, never inside `api`/`worker`/
+`beat`.** The Dockerfile's default CMD still runs `python migrate.py` on
+cold start (unchanged, since Railway relies on that today), but `api`'s ECS
+container `command` explicitly overrides that away — see
+`aws_ecs_task_definition.api`'s header comment in `ecs.tf` for why: with
+`api` autoscaling 1→4, or during any rolling deployment where old and new
+tasks briefly overlap, multiple containers independently running
+`migrate.py` against the same Aurora database at once is a real race
+(reproduced as Postgres catalog-level errors under concurrent DDL, not
+just an app-level migration bug). Running migrations exactly once, before
+any service picks up the new image, removes the race structurally instead
+of just making one migration crash-proof.
 
-docker build -t audity-backend:bootstrap-v1 -f ../../Dockerfile ../..
-docker tag audity-backend:bootstrap-v1 <account_id>.dkr.ecr.eu-west-1.amazonaws.com/audity-backend:bootstrap-v1
-docker push <account_id>.dkr.ecr.eu-west-1.amazonaws.com/audity-backend:bootstrap-v1
-```
+1. **Build & push:**
+   ```bash
+   aws ecr get-login-password --region eu-west-1 --profile audity-migration \
+     | docker login --username AWS --password-stdin <account_id>.dkr.ecr.eu-west-1.amazonaws.com
+
+   docker build -t audity-backend:<new-tag> -f ../../Dockerfile ../..
+   docker tag audity-backend:<new-tag> <account_id>.dkr.ecr.eu-west-1.amazonaws.com/audity-backend:<new-tag>
+   docker push <account_id>.dkr.ecr.eu-west-1.amazonaws.com/audity-backend:<new-tag>
+   ```
+
+2. **Update `image_tag` and apply** (updates all task definitions, including `migrate`, to the new image — does NOT yet deploy services):
+   ```bash
+   terraform apply -var image_tag=<new-tag>
+   ```
+
+3. **Run the migration task and wait for it to finish successfully — do this before step 4, every time:**
+   ```bash
+   aws ecs run-task \
+     --cluster audity-cluster \
+     --task-definition "$(terraform output -raw migrate_task_definition_arn)" \
+     --launch-type FARGATE \
+     --network-configuration "awsvpcConfiguration={subnets=[$(terraform output -json private_app_subnet_ids | tr -d '[]\"\n')],securityGroups=[$(terraform output -raw ecs_tasks_security_group_id)],assignPublicIp=DISABLED}" \
+     --profile audity-migration --region eu-west-1
+
+   # poll until lastStatus=STOPPED, then check the exit code:
+   aws ecs describe-tasks --cluster audity-cluster --tasks <task-arn-from-above> \
+     --profile audity-migration --region eu-west-1 \
+     --query 'tasks[0].{Status:lastStatus,ExitCode:containers[0].exitCode}'
+   ```
+   A non-zero exit code means STOP — do not proceed to step 4 with a failed/partial migration. Check `/ecs/audity/migrate` in CloudWatch Logs for the traceback.
+
+4. **Only after step 3 succeeds, deploy the services:**
+   ```bash
+   aws ecs update-service --cluster audity-cluster --service audity-api --force-new-deployment --profile audity-migration --region eu-west-1
+   aws ecs update-service --cluster audity-cluster --service audity-worker --force-new-deployment --profile audity-migration --region eu-west-1
+   aws ecs update-service --cluster audity-cluster --service audity-beat --force-new-deployment --profile audity-migration --region eu-west-1
+   ```
+
+This 4-step sequence (build/push → apply → migrate task → deploy services) is what the eventual CI job (Phase 6, not part of this session) should automate — not a plain `railway up`-style single push.
 
 ## Bootstrap runbook: creating the `audity_app` RLS role
 

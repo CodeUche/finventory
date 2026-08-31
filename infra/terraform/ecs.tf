@@ -10,7 +10,7 @@
 variable "image_tag" {
   description = "ECR image tag to deploy. The repo is IMMUTABLE (see ecr.tf), so each new build needs a new tag — e.g. a git SHA in the eventual CI job (Phase 6, not part of this session). Bootstrap value below is pushed once, manually, during this session's bring-up."
   type        = string
-  default     = "bootstrap-v1"
+  default     = "bootstrap-v2"
 }
 
 resource "aws_ecs_cluster" "main" {
@@ -65,6 +65,11 @@ resource "aws_cloudwatch_log_group" "beat" {
   retention_in_days = 14
 }
 
+resource "aws_cloudwatch_log_group" "migrate" {
+  name              = "/ecs/${var.project}/migrate"
+  retention_in_days = 14
+}
+
 locals {
   # Plain (non-secret) runtime config shared by all three services.
   # ALLOWED_HOSTS/BACKEND_URL point at the raw ALB DNS name for now — a
@@ -104,6 +109,49 @@ locals {
   image = "${aws_ecr_repository.backend.repository_url}:${var.image_tag}"
 }
 
+# ─── One-off migration task ────────────────────────────────────────────────
+# Structural fix for a real concurrent-migrate race: the Dockerfile's
+# default CMD runs `python migrate.py` on every cold start of the `api`
+# container. With api autoscaling 1→4 (aws_appautoscaling_target.api
+# below) or during any rolling deployment where old+new tasks briefly
+# overlap, multiple containers can call migrate.py against the same Aurora
+# database at once — reproduced in testing as Postgres catalog-level
+# errors (e.g. "duplicate key value violates unique constraint
+# pg_type_typname_nsp_index") from concurrent DDL, not just an
+# application-level migration bug.
+#
+# Fix: migrations run exactly once per deploy, as a standalone one-off
+# ECS task (RunTask, not a long-lived service) — see README "Deploy
+# runbook". `api`'s own container command below explicitly skips
+# migrate.py/setup_periodic_tasks and goes straight to gunicorn, so no
+# service container ever runs migrate.py again, at any scale.
+resource "aws_ecs_task_definition" "migrate" {
+  family                   = "${var.project}-migrate"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = var.api_cpu
+  memory                   = var.api_memory
+  execution_role_arn       = aws_iam_role.ecs_task_execution.arn
+  task_role_arn            = aws_iam_role.ecs_task.arn
+
+  container_definitions = jsonencode([{
+    name        = "migrate"
+    image       = local.image
+    essential   = true
+    command     = ["sh", "-c", "python migrate.py && python manage.py setup_periodic_tasks"]
+    environment = local.common_environment
+    secrets     = local.common_secrets
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        "awslogs-group"         = aws_cloudwatch_log_group.migrate.name
+        "awslogs-region"        = var.aws_region
+        "awslogs-stream-prefix" = "migrate"
+      }
+    }
+  }])
+}
+
 # ─── api service ─────────────────────────────────────────────────────────
 resource "aws_ecs_task_definition" "api" {
   family                   = "${var.project}-api"
@@ -118,8 +166,23 @@ resource "aws_ecs_task_definition" "api" {
     name      = "api"
     image     = local.image
     essential = true
-    # No `command` override — uses the Dockerfile's default CMD, which
-    # runs migrate.py then gunicorn, exactly like Railway's "web" process.
+    # Explicit override — skips the Dockerfile default CMD's migrate.py/
+    # setup_periodic_tasks entirely (see aws_ecs_task_definition.migrate
+    # above for why). collectstatic and the optional createsuperuser stay
+    # here: they're local-filesystem/idempotent-row operations, safe to
+    # repeat per task, and collectstatic specifically MUST run per-task
+    # since Fargate tasks don't share storage — each container needs its
+    # own populated staticfiles dir for Whitenoise to serve from.
+    command = ["sh", "-c", <<-EOT
+      (python manage.py collectstatic --no-input --clear 2>/dev/null || true) && \
+      if [ -n "$DJANGO_SUPERUSER_EMAIL" ] && [ -n "$DJANGO_SUPERUSER_PASSWORD" ]; then \
+        python manage.py createsuperuser --no-input --email "$DJANGO_SUPERUSER_EMAIL" 2>/dev/null || true; \
+      fi && \
+      gunicorn config.wsgi:application --bind "0.0.0.0:${var.container_port}" \
+        --workers 2 --worker-class sync --worker-tmp-dir /dev/shm \
+        --access-logfile - --error-logfile - --log-level info --timeout 120
+    EOT
+    ]
     portMappings = [{ containerPort = var.container_port, protocol = "tcp" }]
     environment  = local.common_environment
     secrets      = local.common_secrets
