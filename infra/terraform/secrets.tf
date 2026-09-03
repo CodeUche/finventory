@@ -46,12 +46,25 @@ locals {
 
   database_url = "postgresql://${var.db_master_username}:${urlencode(random_password.db_master.result)}@${aws_rds_cluster.main.endpoint}:${aws_rds_cluster.main.port}/${var.db_name}?sslmode=require"
 
-  # ssl_cert_reqs is required by Celery's redis backend whenever the URL
-  # scheme is rediss:// (TLS) — without it, celery-worker crashes on startup
-  # with "A rediss:// URL must have parameter ssl_cert_reqs...". CERT_REQUIRED
-  # is correct here (not CERT_NONE): ElastiCache Serverless presents a
-  # publicly-trusted cert, so full verification is both safe and free.
-  redis_url = "rediss://${aws_elasticache_serverless_cache.main.endpoint[0].address}:${aws_elasticache_serverless_cache.main.endpoint[0].port}/0?ssl_cert_reqs=CERT_REQUIRED"
+  # ssl_cert_reqs is required on any rediss:// URL (both Celery's kombu
+  # transport and django_redis/redis-py refuse to connect without it) —
+  # but the two libraries disagree on acceptable spelling. redis-py's own
+  # URL parser (used by django_redis, i.e. the API's cache + DRF
+  # throttling) only accepts the lowercase words "none"/"optional"/
+  # "required" and raises "Invalid SSL Certificate Requirements Flag" on
+  # anything else — it does NOT accept the Python ssl-module enum name
+  # "CERT_REQUIRED", even though kombu's redis transport is lenient enough
+  # to accept that form too. Use the lowercase form everywhere so both
+  # libraries agree. "required" (not "none") is correct here: both
+  # ElastiCache Serverless and the dedicated Celery node present
+  # publicly-trusted certs, so full verification is safe and free.
+  redis_url = "rediss://${aws_elasticache_serverless_cache.main.endpoint[0].address}:${aws_elasticache_serverless_cache.main.endpoint[0].port}/0?ssl_cert_reqs=required"
+
+  # Celery's own dedicated (non-cluster) node — see cache.tf header note for
+  # why this can't just reuse redis_url above. /0 and /1 (broker vs backend)
+  # on the SAME node — no cluster-slot concerns here since it's plain Redis.
+  celery_broker_url     = "rediss://${aws_elasticache_replication_group.celery.primary_endpoint_address}:${aws_elasticache_replication_group.celery.port}/0?ssl_cert_reqs=required"
+  celery_result_backend = "rediss://${aws_elasticache_replication_group.celery.primary_endpoint_address}:${aws_elasticache_replication_group.celery.port}/1?ssl_cert_reqs=required"
 
   # Phase 1: no dependency on Aurora/ElastiCache.
   static_secrets = {
@@ -86,10 +99,17 @@ locals {
     DIGITAX_WEBHOOK_SECRET  = var.digitax_webhook_secret
   }
 
-  # Phase 2: depends on aws_rds_cluster.main / aws_elasticache_serverless_cache.main.
+  # Phase 2: depends on aws_rds_cluster.main / aws_elasticache_serverless_cache.main
+  # / aws_elasticache_replication_group.celery. Adding CELERY_BROKER_URL/
+  # CELERY_RESULT_BACKEND here — rather than a separate resource block —
+  # means they flow through the existing secret-container/version/IAM/ECS
+  # wiring (iam.tf's db_cache policy, ecs.tf's common_secrets) with no
+  # further changes needed anywhere else.
   db_cache_secrets = {
-    DATABASE_URL = local.database_url
-    REDIS_URL    = local.redis_url
+    DATABASE_URL          = local.database_url
+    REDIS_URL             = local.redis_url
+    CELERY_BROKER_URL     = local.celery_broker_url
+    CELERY_RESULT_BACKEND = local.celery_result_backend
   }
 
   # Which static_secrets keys currently have a real (non-"") value — used

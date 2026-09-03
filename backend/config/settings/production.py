@@ -172,10 +172,20 @@ if _app_database_url:
     )
 
 # Railway exposes REDIS_URL automatically when you add a Redis service.
+# NOTE: this only drives the Django cache (CACHES). It deliberately does NOT
+# also force CELERY_BROKER_URL/CELERY_RESULT_BACKEND to the same value —
+# base.py already does `config("CELERY_BROKER_URL", default=REDIS_URL)`,
+# which correctly falls back to REDIS_URL when Celery has no separate
+# connection string of its own, but still lets an explicitly-set
+# CELERY_BROKER_URL/CELERY_RESULT_BACKEND win. That distinction matters on
+# AWS: the Django cache lives on ElastiCache Serverless (cluster-protocol,
+# single-key ops only), while Celery's broker needs a plain non-cluster
+# Redis node (Serverless's CROSSSLOT errors crash celery-worker on startup
+# otherwise — Celery's kombu transport issues multi-key MULTI/EXEC
+# operations that Redis Cluster mode rejects). Forcing both to REDIS_URL
+# here would silently re-break that split on every deploy.
 _redis_url = config("REDIS_URL", default="")
 if _redis_url:
-    CELERY_BROKER_URL = _redis_url  # noqa: F405
-    CELERY_RESULT_BACKEND = _redis_url  # noqa: F405
     CACHES["default"]["LOCATION"] = _redis_url  # noqa: F405
 
 # ─── ALLOWED_HOSTS: auto-include Railway deployment domain ────────────────────

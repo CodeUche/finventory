@@ -159,6 +159,12 @@ variable "redis_max_ecpu_per_second" {
   default     = 2000
 }
 
+variable "celery_redis_node_type" {
+  description = "Smallest ElastiCache node type for the dedicated Celery broker/result-backend (non-cluster — see cache.tf header note)."
+  type        = string
+  default     = "cache.t4g.micro"
+}
+
 # ─── Secrets requiring a real value the user must supply ───────────────────
 # All default to "" (safe — base.py already defaults these to "" and the app
 # degrades gracefully: Brevo falls back to console email backend, Sentry

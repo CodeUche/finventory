@@ -10,7 +10,7 @@
 variable "image_tag" {
   description = "ECR image tag to deploy. The repo is IMMUTABLE (see ecr.tf), so each new build needs a new tag — e.g. a git SHA in the eventual CI job (Phase 6, not part of this session). Bootstrap value below is pushed once, manually, during this session's bring-up."
   type        = string
-  default     = "bootstrap-v4"
+  default     = "bootstrap-v6"
 }
 
 resource "aws_ecs_cluster" "main" {
