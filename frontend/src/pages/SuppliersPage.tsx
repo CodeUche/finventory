@@ -10,7 +10,7 @@ import GLAccountSelect from '@/components/GLAccountSelect'
 import AdjustOpeningBalanceModal from '@/components/AdjustOpeningBalanceModal'
 import DateInput from '@/components/DateInput'
 import AmountInput from '@/components/AmountInput'
-import { formatCurrency, formatDate } from '@/lib/utils'
+import { formatCurrency, formatDate, stripCommas } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
 import { saveBlobFile } from '@/lib/saveBlobFile'
 
@@ -124,7 +124,7 @@ export default function SuppliersPage() {
         toast.success('Supplier updated')
       } else {
         const { data: created } = await supplierApi.create(toPayload(form))
-        const amt = parseFloat(obAmount.replace(/,/g, '')) || 0
+        const amt = parseFloat(stripCommas(obAmount)) || 0
         if (amt > 0) {
           await supplierApi.setOpeningBalance(created.id, { amount: amt, side: obSide, as_of_date: obDate })
         }

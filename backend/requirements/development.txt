@@ -8,6 +8,12 @@ pytest-cov==6.0.0
 factory-boy==3.3.1
 faker==33.3.1
 
+# apps/core/test_production_settings_guard.py boots real production settings
+# in a subprocess, which unconditionally imports sentry_sdk when SENTRY_DSN is
+# set (config/settings/production.py) — needed here even though sentry_sdk
+# itself is a production.txt dependency, not a dev one.
+sentry-sdk==2.19.2
+
 # Debug tools
 django-debug-toolbar==4.4.6
 ipython==8.31.0

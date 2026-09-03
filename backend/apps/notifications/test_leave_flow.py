@@ -7,7 +7,7 @@ away. When it is decided, the person whose leave it is hears the outcome —
 even though they almost certainly do not hold the leave permission.
 """
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from unittest.mock import patch
 
@@ -19,6 +19,20 @@ from apps.payroll.test_track_a import _make_user, _make_org, _auth_client
 from apps.tenancy.models import Membership, ModulePermission
 
 from .models import Notification, NotificationPreference
+
+
+def _next_working_day() -> date:
+    """
+    A single-day leave request needs a date that actually contains a working
+    day — using bare `date.today()` made this whole suite fail every time it
+    ran on a Saturday or Sunday with "That range contains no working days.",
+    which is the backend correctly rejecting the input, not a bug. Roll
+    forward to the next weekday instead of pinning to "today".
+    """
+    d = date.today()
+    while d.weekday() >= 5:  # 5=Saturday, 6=Sunday
+        d += timedelta(days=1)
+    return d
 
 
 def _member(org, email, role="staff", leave_level=None):
@@ -81,11 +95,12 @@ class LeaveNotificationTests(TestCase):
         it, and should not need to.
         """
         client = _auth_client(self.staff_user, self.org)
+        working_day = str(_next_working_day())
         with self.captureOnCommitCallbacks(execute=True):
             return client.post("/api/v1/me/leave-requests/", {
             "leave_type": str(self.leave_type.id),
-            "start_date": str(date.today()),
-            "end_date": str(date.today()),
+            "start_date": working_day,
+            "end_date": working_day,
             "reason": "Family matter",
             }, format="json")
 
