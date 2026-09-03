@@ -10,7 +10,7 @@
 variable "image_tag" {
   description = "ECR image tag to deploy. The repo is IMMUTABLE (see ecr.tf), so each new build needs a new tag — e.g. a git SHA in the eventual CI job (Phase 6, not part of this session). Bootstrap value below is pushed once, manually, during this session's bring-up."
   type        = string
-  default     = "bootstrap-v2"
+  default     = "bootstrap-v4"
 }
 
 resource "aws_ecs_cluster" "main" {
@@ -78,7 +78,20 @@ locals {
   common_environment = [
     { name = "DJANGO_SETTINGS_MODULE", value = "config.settings.production" },
     { name = "DEBUG", value = "False" },
-    { name = "ALLOWED_HOSTS", value = aws_lb.main.dns_name },
+    # No HTTPS listener on the ALB yet (Phase 8 — needs a real domain for
+    # an ACM cert). Without this, SECURE_SSL_REDIRECT's default True 301s
+    # every request, including the ALB health check, to a nonexistent
+    # HTTPS endpoint. Remove this line (or flip to "True") once Phase 8's
+    # HTTPS listener + domain are in place.
+    { name = "SECURE_SSL_REDIRECT", value = "False" },
+    # ALB health checks hit the task's private IP directly (Host: <ip>:8000,
+    # not the ALB's DNS name), so the DNS name alone gets every health check
+    # rejected as DisallowedHost. Wildcard is standard practice for an
+    # ALB-fronted app in a private subnet: the security groups (ALB-only
+    # ingress on the container port, no public IP on the tasks) are the
+    # real access boundary here, not the Host header. Revisit if/when a
+    # real domain + HTTPS listener replaces the raw ALB DNS name (Phase 8).
+    { name = "ALLOWED_HOSTS", value = "${aws_lb.main.dns_name},*" },
     { name = "TIME_ZONE", value = "Africa/Lagos" },
     { name = "CORS_ALLOWED_ORIGINS", value = var.frontend_url != "" ? var.frontend_url : "http://localhost:3000" },
     { name = "CSRF_TRUSTED_ORIGINS", value = var.frontend_url != "" ? var.frontend_url : "http://localhost:3000" },
@@ -173,16 +186,7 @@ resource "aws_ecs_task_definition" "api" {
     # repeat per task, and collectstatic specifically MUST run per-task
     # since Fargate tasks don't share storage — each container needs its
     # own populated staticfiles dir for Whitenoise to serve from.
-    command = ["sh", "-c", <<-EOT
-      (python manage.py collectstatic --no-input --clear 2>/dev/null || true) && \
-      if [ -n "$DJANGO_SUPERUSER_EMAIL" ] && [ -n "$DJANGO_SUPERUSER_PASSWORD" ]; then \
-        python manage.py createsuperuser --no-input --email "$DJANGO_SUPERUSER_EMAIL" 2>/dev/null || true; \
-      fi && \
-      gunicorn config.wsgi:application --bind "0.0.0.0:${var.container_port}" \
-        --workers 2 --worker-class sync --worker-tmp-dir /dev/shm \
-        --access-logfile - --error-logfile - --log-level info --timeout 120
-    EOT
-    ]
+    command      = ["sh", "-c", "(python manage.py collectstatic --no-input --clear 2>/dev/null || true) && if [ -n \"$DJANGO_SUPERUSER_EMAIL\" ] && [ -n \"$DJANGO_SUPERUSER_PASSWORD\" ]; then python manage.py createsuperuser --no-input --email \"$DJANGO_SUPERUSER_EMAIL\" 2>/dev/null || true; fi && gunicorn config.wsgi:application --bind 0.0.0.0:${var.container_port} --workers 2 --worker-class sync --worker-tmp-dir /dev/shm --access-logfile - --error-logfile - --log-level info --timeout 120"]
     portMappings = [{ containerPort = var.container_port, protocol = "tcp" }]
     environment  = local.common_environment
     secrets      = local.common_secrets

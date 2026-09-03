@@ -67,7 +67,15 @@ SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SECURE_HSTS_SECONDS = 31536000
 SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 SECURE_HSTS_PRELOAD = True
-SECURE_SSL_REDIRECT = True
+# Default True (secure by default everywhere this has HTTPS already, e.g.
+# Railway). Overridable via env var only for the pre-cutover AWS bring-up,
+# where the ALB deliberately has no HTTPS listener yet (no ACM cert without
+# a real domain — that's Phase 8 of the migration plan) — with this stuck
+# True there, every request including the ALB health check gets a 301 to
+# an HTTPS endpoint that doesn't exist, and the target group never goes
+# healthy. Must be set back to True (or just unset) once the HTTPS
+# listener + real domain land.
+SECURE_SSL_REDIRECT = config("SECURE_SSL_REDIRECT", default=True, cast=bool)
 SESSION_COOKIE_SECURE = True
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = "Strict"

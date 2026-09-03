@@ -46,7 +46,12 @@ locals {
 
   database_url = "postgresql://${var.db_master_username}:${urlencode(random_password.db_master.result)}@${aws_rds_cluster.main.endpoint}:${aws_rds_cluster.main.port}/${var.db_name}?sslmode=require"
 
-  redis_url = "rediss://${aws_elasticache_serverless_cache.main.endpoint[0].address}:${aws_elasticache_serverless_cache.main.endpoint[0].port}/0"
+  # ssl_cert_reqs is required by Celery's redis backend whenever the URL
+  # scheme is rediss:// (TLS) — without it, celery-worker crashes on startup
+  # with "A rediss:// URL must have parameter ssl_cert_reqs...". CERT_REQUIRED
+  # is correct here (not CERT_NONE): ElastiCache Serverless presents a
+  # publicly-trusted cert, so full verification is both safe and free.
+  redis_url = "rediss://${aws_elasticache_serverless_cache.main.endpoint[0].address}:${aws_elasticache_serverless_cache.main.endpoint[0].port}/0?ssl_cert_reqs=CERT_REQUIRED"
 
   # Phase 1: no dependency on Aurora/ElastiCache.
   static_secrets = {
