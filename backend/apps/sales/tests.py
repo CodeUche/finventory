@@ -518,3 +518,100 @@ class TaxInclusiveExclusiveTests(TestCase):
         item = invoice.items.first()
         self.assertAlmostEqual(float(item.tax_amount), 0.0, places=2)
         self.assertAlmostEqual(float(item.line_total), 500.0, places=2)
+
+
+class InvoiceShippingJournalBalanceTests(TestCase):
+    """
+    Regression: an invoice carrying a delivery/shipping charge must post a
+    BALANCED journal whether or not any line item overrides its own Sales/COGS
+    GL account.
+
+    post_sale_journal has two revenue paths. The default one credits a single
+    `revenue` figure (total - tax) which already contains the shipping. The
+    per-item-override path instead rebuilds revenue from per-item buckets of
+    `line_total - tax_amount` — item values only, with no item owning the
+    shipping. The debit side stayed at the full `total_amount` either way, so
+    the override path came up short by exactly the shipping amount and
+    post_journal_entry (which rejects anything off by more than 0.01) threw,
+    failing the whole invoice.
+    """
+
+    def setUp(self):
+        from apps.accounting.models import Account
+        self.user = _make_user("shipgl@example.com")
+        self.org = _make_org(self.user, "Shipping GL Org")
+        self.client = _auth_client(self.user, self.org)
+        self.customer = _make_customer(self.org)
+        self.warehouse = _make_warehouse(self.org)
+        self.custom_revenue = Account.objects.create(
+            organisation=self.org, code="4090", name="Consulting Revenue",
+            account_type="income", normal_balance="credit",
+        )
+
+    def _sale_with_shipping(self, product, shipping="2500.00"):
+        res = self.client.post("/api/v1/sales/invoices/", {
+            "customer_id": str(self.customer.id),
+            "warehouse_id": str(self.warehouse.id),
+            "payment_method": "cash",
+            "shipping_amount": shipping,
+            "items": [{"product_id": str(product.id), "quantity": 1, "unit_price": "10000.00"}],
+        }, format="json")
+        return res
+
+    def _assert_journal_balances(self, invoice):
+        from apps.accounting.models import JournalEntry
+        entry = JournalEntry.objects.filter(
+            organisation=self.org, source_type="sale", source_ref=str(invoice.id),
+        ).first()
+        self.assertIsNotNone(entry, "Sale journal was never posted")
+        debits = sum(Decimal(str(line.debit)) for line in entry.lines.all())
+        credits = sum(Decimal(str(line.credit)) for line in entry.lines.all())
+        self.assertEqual(debits, credits, f"Journal imbalanced: DR {debits} vs CR {credits}")
+        return entry, debits
+
+    def test_shipping_posts_balanced_without_any_item_override(self):
+        """The path that always worked — guards against regressing it."""
+        p = Product.objects.create(
+            organisation=self.org, sku="SHIP-NOOVR", name="Plain Item",
+            product_type="service", cost_price=0, selling_price=10000,
+        )
+        res = self._sale_with_shipping(p)
+        self.assertIn(res.status_code, (200, 201), msg=str(res.data))
+        invoice = Invoice.objects.get(id=res.data["id"])
+        self.assertEqual(Decimal(str(invoice.shipping_amount)), Decimal("2500.00"))
+        _, debits = self._assert_journal_balances(invoice)
+        self.assertEqual(debits, Decimal(str(invoice.total_amount)))
+
+    def test_shipping_posts_balanced_when_an_item_overrides_its_sales_account(self):
+        """The bug. Before the fix this raised 'Journal entry imbalanced' and
+        the invoice failed to post at all."""
+        p = Product.objects.create(
+            organisation=self.org, sku="SHIP-OVR", name="Overridden Item",
+            product_type="service", cost_price=0, selling_price=10000,
+            sales_account=self.custom_revenue,
+        )
+        res = self._sale_with_shipping(p)
+        self.assertIn(res.status_code, (200, 201), msg=str(res.data))
+        invoice = Invoice.objects.get(id=res.data["id"])
+        entry, debits = self._assert_journal_balances(invoice)
+        self.assertEqual(debits, Decimal(str(invoice.total_amount)))
+
+        # The item's own revenue went to its override; the shipping did not —
+        # it lands on the org default, exactly where the non-override path puts it.
+        by_account = {line.account.code: Decimal(str(line.credit)) for line in entry.lines.all() if line.credit}
+        self.assertEqual(by_account.get("4090"), Decimal("10000.0000"))
+        self.assertNotIn(Decimal("12500.0000"), by_account.values())
+
+    def test_no_shipping_with_override_is_unchanged(self):
+        """Zero shipping must not invent an empty revenue bucket."""
+        p = Product.objects.create(
+            organisation=self.org, sku="SHIP-ZERO", name="No Shipping Item",
+            product_type="service", cost_price=0, selling_price=10000,
+            sales_account=self.custom_revenue,
+        )
+        res = self._sale_with_shipping(p, shipping="0")
+        self.assertIn(res.status_code, (200, 201), msg=str(res.data))
+        invoice = Invoice.objects.get(id=res.data["id"])
+        entry, _ = self._assert_journal_balances(invoice)
+        credit_codes = [line.account.code for line in entry.lines.all() if line.credit]
+        self.assertEqual(credit_codes.count("4090"), 1)

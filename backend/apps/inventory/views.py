@@ -298,9 +298,11 @@ class ProductViewSet(FriendlyUniqueErrorMixin, TenantFilterMixin, viewsets.Model
             )
         except ValueError as e:
             return Response({"error": str(e)}, status=422)
-        except Exception:
+        except Exception as e:
             logger.exception("Error setting product opening balance")
-            return Response({"error": "An unexpected error occurred. Please try again."}, status=422)
+            return Response(
+                {"error": f"Could not set this product's opening balance: {type(e).__name__}: {e}"}, status=422
+            )
 
         return Response(ProductSerializer(product, context={"request": request}).data)
 

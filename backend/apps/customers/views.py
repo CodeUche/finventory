@@ -274,9 +274,11 @@ class CustomerViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
             )
         except ValueError as e:
             return Response({"error": str(e)}, status=422)
-        except Exception:
+        except Exception as e:
             logger.exception("Error setting customer opening balance")
-            return Response({"error": "An unexpected error occurred. Please try again."}, status=422)
+            return Response(
+                {"error": f"Could not set this customer's opening balance: {type(e).__name__}: {e}"}, status=422
+            )
 
         return Response(CustomerSerializer(customer).data)
 

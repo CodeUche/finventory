@@ -490,9 +490,11 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
             return Response(SaleReturnSerializer(sale_return).data, status=201)
         except ValueError as e:
             return Response({"error": str(e)}, status=422)
-        except Exception:
+        except Exception as e:
             logger.exception("Unexpected error processing return")
-            return Response({"error": "An unexpected error occurred. Please try again."}, status=422)
+            return Response(
+                {"error": f"Could not process this return: {type(e).__name__}: {e}"}, status=422
+            )
 
 
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsStaff])
@@ -546,9 +548,11 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
                 invoice.status = Invoice.Status.CONFIRMED
                 invoice.save(update_fields=["status"])
             return Response(InvoiceSerializer(invoice).data)
-        except Exception:
+        except Exception as e:
             logger.exception("Error confirming proforma")
-            return Response({"error": "An unexpected error occurred. Please try again."}, status=422)
+            return Response(
+                {"error": f"Could not confirm this proforma: {type(e).__name__}: {e}"}, status=422
+            )
 
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsStaff])
     def fulfill(self, request, pk=None):
@@ -559,9 +563,11 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
             return Response(InvoiceSerializer(invoice).data)
         except ValueError as e:
             return Response({"error": str(e)}, status=422)
-        except Exception:
+        except Exception as e:
             logger.exception("Error fulfilling invoice")
-            return Response({"error": "An unexpected error occurred. Please try again."}, status=422)
+            return Response(
+                {"error": f"Could not fulfil this invoice: {type(e).__name__}: {e}"}, status=422
+            )
 
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsOwnerOrAdmin])
     def delete_invoice(self, request, pk=None):
@@ -579,9 +585,11 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
             return Response(status=204)
         except ValueError as e:
             return Response({"error": str(e)}, status=422)
-        except Exception:
+        except Exception as e:
             logger.exception("Error deleting invoice")
-            return Response({"error": "An unexpected error occurred. Please try again."}, status=422)
+            return Response(
+                {"error": f"Could not delete this invoice: {type(e).__name__}: {e}"}, status=422
+            )
 
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsStaff])
     def send_email(self, request, pk=None):
