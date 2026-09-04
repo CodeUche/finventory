@@ -302,7 +302,27 @@ class MessageAttachmentDownloadView(APIView):
         # There is no USE_S3 flag exposed on `settings` (production.py only
         # keeps it as a local `_use_s3` at settings-load time) — detect the
         # active storage backend directly instead of requiring one.
-        use_s3 = type(attachment.file.storage).__name__ == "S3Boto3Storage"
+        #
+        # Checked with isinstance against the real class, NOT by comparing
+        # type(...).__name__ to "S3Boto3Storage": django-storages 1.14 made
+        # storages.backends.s3boto3 a compat shim in which S3Boto3Storage *is*
+        # storages.backends.s3.S3Storage, so the class __name__ is "S3Storage"
+        # and the old name comparison was always False. That was invisible
+        # while USE_S3 was broken in production.py (the backend was always
+        # FileSystemStorage anyway); once S3 is genuinely active it would send
+        # every attachment download through the local-file branch — proxying
+        # bytes through the Django worker instead of a signed redirect, and
+        # 500-ing on a missing object (boto3 raises ClientError, not
+        # FileNotFoundError, so the except below would not catch it).
+        #
+        # django-storages ships in requirements/production.txt only, so the
+        # import is local and guarded: on dev/test it is simply absent.
+        try:
+            from storages.backends.s3boto3 import S3Boto3Storage
+        except ImportError:
+            use_s3 = False
+        else:
+            use_s3 = isinstance(attachment.file.storage, S3Boto3Storage)
 
         if use_s3:
             try:

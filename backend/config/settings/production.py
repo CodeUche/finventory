@@ -90,7 +90,35 @@ PERMISSIONS_POLICY = "geolocation=(), microphone=(), camera=(), payment=(), usb=
 
 # Whitenoise for static files
 MIDDLEWARE.insert(1, "whitenoise.middleware.WhiteNoiseMiddleware")  # noqa: F405
-STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
+
+# ─── Storage backends (Django 5.1 STORAGES) ──────────────────────────────────
+# Django 4.2 deprecated STATICFILES_STORAGE / DEFAULT_FILE_STORAGE and Django
+# 5.1 REMOVED them — assigning either name is now silently ignored (no warning,
+# no error). This file used to set exactly those two names, which meant that in
+# production:
+#   * whitenoise's compressed/manifest static storage was never actually
+#     active — Django fell back to plain StaticFilesStorage; and
+#   * USE_S3=True did nothing — uploads kept landing on the container's
+#     ephemeral local disk and were wiped on every redeploy/autoscale event.
+# Both aliases must therefore be declared together in one STORAGES dict.
+#
+# "default" below is the local-filesystem fallback; the USE_S3 block further
+# down swaps in the S3 backend. "staticfiles" is whitenoise either way.
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"
+    },
+}
+
+# Manifest lookups are deliberately non-strict. Both the image build and the
+# container start command run `collectstatic ... || true`, so a failed collect
+# leaves no staticfiles.json behind. Under whitenoise's strict default, every
+# {% static %} lookup (Django admin, DRF browsable API) would then raise
+# ValueError and 500 the page — a failure mode that could not occur before,
+# only because the manifest storage above was not in effect at all. Non-strict
+# degrades gracefully to the un-hashed filename instead.
+WHITENOISE_MANIFEST_STRICT = False
 
 # Sentry error tracking
 import sentry_sdk  # noqa: E402
@@ -132,20 +160,40 @@ if _use_s3:
     AWS_QUERYSTRING_AUTH = True     # Signed URLs — prevents direct public access
     AWS_QUERYSTRING_EXPIRE = 3600   # Signed URL TTL: 1 hour
 
-    DEFAULT_FILE_STORAGE = "storages.backends.s3boto3.S3Boto3Storage"
-    # Media files go under the media/ prefix in the bucket.
+    # Django 5.1: the default-storage backend is selected through the STORAGES
+    # dict declared above. DEFAULT_FILE_STORAGE is removed and would be
+    # ignored. Only the "default" alias is swapped — staticfiles stays on
+    # whitenoise, which serves them from the container, not from S3.
+    #
+    # The S3 tunables above stay as module-level AWS_* settings rather than
+    # moving into STORAGES["default"]["OPTIONS"]. django-storages 1.14 reads
+    # both, but module-level keeps a single source of truth: other code (the
+    # AWS migration's media-upload scripts, a future collectstatic-to-S3) can
+    # read settings.AWS_STORAGE_BUCKET_NAME directly without reaching into the
+    # STORAGES dict, and there is no chance of the two copies drifting apart.
+    STORAGES["default"] = {"BACKEND": "storages.backends.s3boto3.S3Boto3Storage"}
+
+    # Object keys are the models' own `upload_to` paths at bucket root: there
+    # is deliberately NO AWS_LOCATION prefix, because the file paths already
+    # stored in the database are unprefixed (e.g. "org_logos/logo_<uuid>.jpg").
+    # Adding one would orphan every existing row.
+    #
     # Note: S3Boto3Storage.url() (what FileField.url actually calls) builds
     # its own signed URL from the bucket/region/custom-domain settings above
     # and does NOT read MEDIA_URL — this setting is only a fallback for any
-    # code that manually references settings.MEDIA_URL directly.
+    # code that manually references settings.MEDIA_URL directly. It points at
+    # the bucket root (no trailing "media/" segment, which used to be here and
+    # matched no real object key) so that MEDIA_URL + <file field value>
+    # resolves to the same object the storage backend would serve. That holds
+    # for all three provider shapes below.
     if AWS_S3_CUSTOM_DOMAIN:
-        MEDIA_URL = f"https://{AWS_S3_CUSTOM_DOMAIN}/media/"
+        MEDIA_URL = f"https://{AWS_S3_CUSTOM_DOMAIN}/"
     elif AWS_S3_ENDPOINT_URL:
         # R2 / DigitalOcean-style: bucket is a path segment under the endpoint
-        MEDIA_URL = f"{AWS_S3_ENDPOINT_URL}/{AWS_STORAGE_BUCKET_NAME}/media/"
+        MEDIA_URL = f"{AWS_S3_ENDPOINT_URL}/{AWS_STORAGE_BUCKET_NAME}/"
     else:
         # Real AWS S3, no CDN in front yet: bucket is a subdomain
-        MEDIA_URL = f"https://{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com/media/"
+        MEDIA_URL = f"https://{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com/"
 
 # ─── Cloud platform database / redis URL parsing ──────────────────────────────
 # Railway, Render, Heroku etc. expose a single DATABASE_URL connection string.
