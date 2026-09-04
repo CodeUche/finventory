@@ -6,7 +6,7 @@ permissions:
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, "infra/aws-migration"]
     tags: ["v*.*.*"]
   pull_request:
     branches: [main, develop]
@@ -543,3 +543,57 @@ jobs:
               contains(github.ref_name, '-beta')  ||
               contains(github.ref_name, '-rc')
             }}
+
+# ─── Build — Backend image → ECR (AWS migration) ──────────────────────────────
+# Why here and not locally: Avast's TLS interception on the dev machine breaks
+# HTTPS fetches inside the Docker build (the postgresql-client apt-key step
+# fails with curl exit 60). This is also where Phase 6 of the migration plan
+# puts builds permanently.
+#
+# Scope is deliberately narrow: BUILD and PUSH only, no deploy. Rolling the ECS
+# services stays with Terraform, which owns the task definitions and the
+# image_tag variable — so CI and Terraform never fight over task-definition
+# revisions.
+#
+# Auth is OIDC; no AWS keys live in GitHub. The role ARN is not a secret, and
+# trust is scoped in infra/terraform/github_oidc.tf to this repo and branch.
+#
+# The Railway deploy job above is intentionally untouched: Railway must keep
+# serving desktop/mobile clients that still have its hostname compiled in,
+# until those clients have updated.
+  build-backend-image:
+    name: Build — Backend image → ECR
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/infra/aws-migration' || github.ref == 'refs/heads/main'
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::222907083438:role/audity-github-deploy
+          aws-region: eu-west-1
+
+      - name: Log in to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # ECR tags are immutable (infra/terraform/ecr.tf), so every build needs a
+      # fresh tag; the commit SHA is that tag.
+      - name: Build and push
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          REPOSITORY: audity-backend
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t "$REGISTRY/$REPOSITORY:$IMAGE_TAG" .
+          docker push "$REGISTRY/$REPOSITORY:$IMAGE_TAG"
+
+      - name: Deployment instructions
+        run: |
+          echo "::notice title=Image pushed::Deploy with: terraform apply -var image_tag=${{ github.sha }}"
