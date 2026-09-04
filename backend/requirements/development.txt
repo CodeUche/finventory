@@ -1,5 +1,13 @@
 # Development dependencies
--r base.txt
+#
+# Pulls in production.txt (not just base.txt) because
+# apps/core/test_production_settings_guard.py boots real production settings
+# in a subprocess to verify they don't crash — that subprocess conditionally
+# imports sentry_sdk (when SENTRY_DSN is set) and dj_database_url (when
+# DATABASE_URL is set), both production-only packages. Picking those two
+# individually already caused two rounds of "ModuleNotFoundError" in CI;
+# pulling the whole production.txt avoids the next one-at-a-time surprise.
+-r production.txt
 
 # Testing
 pytest==8.3.4
@@ -7,12 +15,6 @@ pytest-django==4.9.0
 pytest-cov==6.0.0
 factory-boy==3.3.1
 faker==33.3.1
-
-# apps/core/test_production_settings_guard.py boots real production settings
-# in a subprocess, which unconditionally imports sentry_sdk when SENTRY_DSN is
-# set (config/settings/production.py) — needed here even though sentry_sdk
-# itself is a production.txt dependency, not a dev one.
-sentry-sdk==2.19.2
 
 # Debug tools
 django-debug-toolbar==4.4.6
