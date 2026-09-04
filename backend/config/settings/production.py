@@ -153,8 +153,21 @@ if _use_s3:
     # For non-AWS providers set the endpoint URL:
     #   Cloudflare R2:  https://<account_id>.r2.cloudflarestorage.com
     #   DigitalOcean:   https://<region>.digitaloceanspaces.com
-    AWS_S3_ENDPOINT_URL = config("S3_ENDPOINT_URL", default="")  # leave blank for AWS S3
-    AWS_S3_CUSTOM_DOMAIN = config("S3_CUSTOM_DOMAIN", default="")  # CDN domain (optional)
+    # These two must be UNSET (not empty-string) when talking to real AWS S3.
+    # boto3 validates endpoint_url eagerly and raises
+    # `ValueError: Invalid endpoint: ` on "", rather than treating it as
+    # "use the default AWS endpoint" — so assigning "" breaks every S3 call.
+    # Same story for the custom domain: "" would build URLs like "https:///key".
+    # Only non-AWS providers (Cloudflare R2, DigitalOcean Spaces) set them.
+    # This was invisible until USE_S3 genuinely took effect: while
+    # DEFAULT_FILE_STORAGE was being silently ignored under Django 5.1, the
+    # S3 backend was never constructed, so the bad values were never used.
+    _s3_endpoint_url = config("S3_ENDPOINT_URL", default="")
+    _s3_custom_domain = config("S3_CUSTOM_DOMAIN", default="")
+    if _s3_endpoint_url:
+        AWS_S3_ENDPOINT_URL = _s3_endpoint_url
+    if _s3_custom_domain:
+        AWS_S3_CUSTOM_DOMAIN = _s3_custom_domain
     AWS_DEFAULT_ACL = None          # Cloudflare R2 / private bucket — no public ACL
     AWS_S3_OBJECT_PARAMETERS = {"CacheControl": "max-age=86400"}
     AWS_QUERYSTRING_AUTH = True     # Signed URLs — prevents direct public access
@@ -186,11 +199,11 @@ if _use_s3:
     # matched no real object key) so that MEDIA_URL + <file field value>
     # resolves to the same object the storage backend would serve. That holds
     # for all three provider shapes below.
-    if AWS_S3_CUSTOM_DOMAIN:
-        MEDIA_URL = f"https://{AWS_S3_CUSTOM_DOMAIN}/"
-    elif AWS_S3_ENDPOINT_URL:
+    if _s3_custom_domain:
+        MEDIA_URL = f"https://{_s3_custom_domain}/"
+    elif _s3_endpoint_url:
         # R2 / DigitalOcean-style: bucket is a path segment under the endpoint
-        MEDIA_URL = f"{AWS_S3_ENDPOINT_URL}/{AWS_STORAGE_BUCKET_NAME}/"
+        MEDIA_URL = f"{_s3_endpoint_url}/{AWS_STORAGE_BUCKET_NAME}/"
     else:
         # Real AWS S3, no CDN in front yet: bucket is a subdomain
         MEDIA_URL = f"https://{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com/"
