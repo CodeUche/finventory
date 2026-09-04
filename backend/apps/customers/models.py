@@ -44,6 +44,10 @@ class Customer(TenantAwareModel):
     # Signed: positive = the customer owes us (debit), negative = the customer is
     # in credit (prepayment / unapplied credit note).
     outstanding_balance = MoneyField(default=0)
+    # Date of the most recent take-on/opening-balance adjustment (via
+    # AccountingService.set_customer_opening_balance) — mirrors Account/Supplier's
+    # own opening_balance_date so a per-customer take-on records when it was taken on.
+    opening_balance_date = models.DateField(null=True, blank=True)
 
     # Optional per-customer receivable control account. Blank falls back to the org
     # AccountMapping 'accounts_receivable' role, then to code 1100.

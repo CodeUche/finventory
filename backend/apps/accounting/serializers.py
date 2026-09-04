@@ -2,7 +2,7 @@ from rest_framework import serializers
 from .models import (
     Account, AccountSubType, JournalEntry, JournalLine, FixedAsset, DepreciationEntry,
     FinancialPeriod, BankReconciliation, BankReconciliationLine, AIReconMatch, AccountMapping,
-    AssetType, normal_balance_for_type, FiscalYear, PeriodPostingGrant,
+    AssetType, normal_balance_for_type, FiscalYear, PeriodPostingGrant, ItemClassGLDefault,
 )
 
 
@@ -285,6 +285,63 @@ MAPPING_ROLE_LABELS = {
     'salary_expense_account': 'Salaries & Wages', 'general_expense_account': 'General Expenses',
     'bank_charges_account': 'Bank Charges',
 }
+
+
+class ItemClassGLDefaultSerializer(serializers.ModelSerializer):
+    sales_account_code = serializers.CharField(source="sales_account.code", read_only=True, default=None)
+    sales_account_name = serializers.CharField(source="sales_account.name", read_only=True, default=None)
+    cogs_account_code = serializers.CharField(source="cogs_account.code", read_only=True, default=None)
+    cogs_account_name = serializers.CharField(source="cogs_account.name", read_only=True, default=None)
+    inventory_account_code = serializers.CharField(source="inventory_account.code", read_only=True, default=None)
+    inventory_account_name = serializers.CharField(source="inventory_account.name", read_only=True, default=None)
+    wages_account_code = serializers.CharField(source="wages_account.code", read_only=True, default=None)
+    wages_account_name = serializers.CharField(source="wages_account.name", read_only=True, default=None)
+
+    class Meta:
+        model = ItemClassGLDefault
+        fields = [
+            "id", "product_type",
+            "sales_account", "sales_account_code", "sales_account_name",
+            "cogs_account", "cogs_account_code", "cogs_account_name",
+            "inventory_account", "inventory_account_code", "inventory_account_name",
+            "wages_account", "wages_account_code", "wages_account_name",
+        ]
+        read_only_fields = ["id"]
+
+    def _validate_account(self, value):
+        if value is None:
+            return value
+        request = self.context.get("request")
+        org = getattr(request, "organisation", None) if request else None
+        if org is not None and value.organisation_id != org.id:
+            raise serializers.ValidationError("Account does not belong to this organisation.")
+        return value
+
+    def validate_sales_account(self, value):
+        return self._validate_account(value)
+
+    def validate_cogs_account(self, value):
+        return self._validate_account(value)
+
+    def validate_inventory_account(self, value):
+        return self._validate_account(value)
+
+    def validate_wages_account(self, value):
+        return self._validate_account(value)
+
+    def validate(self, attrs):
+        product_type = attrs.get("product_type", getattr(self.instance, "product_type", None))
+        request = self.context.get("request")
+        org = getattr(request, "organisation", None) if request else None
+        if product_type and org is not None:
+            qs = ItemClassGLDefault.objects.filter(organisation=org, product_type=product_type)
+            if self.instance is not None:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                raise serializers.ValidationError(
+                    {"product_type": "A GL default for this product type already exists — edit it instead."}
+                )
+        return attrs
 
 
 class AccountMappingSerializer(serializers.ModelSerializer):

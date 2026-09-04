@@ -1,5 +1,7 @@
 """Inventory ViewSets."""
 
+import logging
+
 import django_filters
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -15,10 +17,12 @@ from apps.core.permissions import requires_module
 _ModAccess_inventory = requires_module("inventory")
 
 
-from .models import Batch, Category, Product, StockItem, StockMovement, Warehouse
+from .models import Batch, Category, ComboComponent, Product, ProductImage, StockItem, StockMovement, Warehouse
 from .serializers import (
     BatchSerializer,
     CategorySerializer,
+    ComboComponentSerializer,
+    ProductImageSerializer,
     ProductSerializer,
     StockAdjustmentSerializer,
     StockItemSerializer,
@@ -28,6 +32,8 @@ from .serializers import (
 )
 from .services import InventoryService
 from apps.core.unique_errors import FriendlyUniqueErrorMixin
+
+logger = logging.getLogger(__name__)
 
 
 class ProductFilter(django_filters.FilterSet):
@@ -40,7 +46,7 @@ class ProductFilter(django_filters.FilterSet):
 
     class Meta:
         model = Product
-        fields = ["name", "sku", "category", "is_active", "brand"]
+        fields = ["name", "sku", "category", "is_active", "brand", "product_type"]
 
 
 class CategoryViewSet(TenantFilterMixin, viewsets.ModelViewSet):
@@ -146,6 +152,11 @@ class ProductViewSet(FriendlyUniqueErrorMixin, TenantFilterMixin, viewsets.Model
             qs = qs.annotate(
                 _quantity_incoming=Coalesce(Subquery(incoming_sq, output_field=dec), Value(0, output_field=dec)),
             )
+        # variants/combo_components are nested on the full (non-slim) serializer
+        # — prefetch so N products doesn't mean N extra queries (see the
+        # products-list N+1 incident this viewset was already rewritten for).
+        if not (self.action == "list" and self._slim_requested()):
+            qs = qs.prefetch_related("variants__stock_items", "combo_components__component_product")
         return qs
 
     def create(self, request, *args, **kwargs):
@@ -242,6 +253,93 @@ class ProductViewSet(FriendlyUniqueErrorMixin, TenantFilterMixin, viewsets.Model
             pass
 
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=["post"], url_path="set-opening-balance")
+    def set_opening_balance(self, request, pk=None):
+        """
+        POST /api/v1/inventory/products/<id>/set-opening-balance/
+        Body: { warehouse_id, quantity, unit_cost?, as_of_date?, side? }
+
+        GL-correct opening stock for ONE product at ONE warehouse — used by the
+        New Product form and CSV import. Posts Debit mapped inventory account /
+        Credit Take-On Suspense (reversed for a negative balance), matching the
+        Beginning Balances wizard's accounting entries, but scoped to this single
+        item so it never disturbs any other product, customer, or supplier
+        take-on. Re-posting (e.g. editing the opening qty later) corrects this
+        item's entry in place.
+        """
+        from datetime import date as _date
+        from apps.accounting.services import AccountingService
+
+        product = self.get_object()
+        org = self._get_organisation()
+        warehouse_id = request.data.get("warehouse_id")
+        if not warehouse_id:
+            return Response({"error": "warehouse_id is required"}, status=400)
+        try:
+            warehouse = Warehouse.objects.get(id=warehouse_id, organisation=org)
+        except Warehouse.DoesNotExist:
+            return Response({"error": "Warehouse not found"}, status=404)
+
+        as_of_str = request.data.get("as_of_date")
+        try:
+            as_of = _date.fromisoformat(as_of_str) if as_of_str else _date.today()
+        except (ValueError, TypeError):
+            return Response({"error": "as_of_date must be YYYY-MM-DD"}, status=400)
+
+        try:
+            AccountingService.set_item_opening_balance(
+                org, product, warehouse,
+                quantity=request.data.get("quantity", 0),
+                unit_cost=request.data.get("unit_cost"),
+                side=request.data.get("side"),
+                as_of_date=as_of,
+                created_by=request.user,
+            )
+        except ValueError as e:
+            return Response({"error": str(e)}, status=422)
+        except Exception as e:
+            logger.exception("Error setting product opening balance")
+            return Response(
+                {"error": f"Could not set this product's opening balance: {type(e).__name__}: {e}"}, status=422
+            )
+
+        return Response(ProductSerializer(product, context={"request": request}).data)
+
+    @action(detail=True, methods=["post"], url_path="upload-image")
+    def upload_image(self, request, pk=None):
+        """
+        POST /inventory/products/<id>/upload-image/
+        Body: raw image binary. Content-Type: image/png | image/jpeg | image/webp | image/gif
+
+        Accepts raw binary instead of multipart — same workaround as
+        Organisation.upload_logo — because Tauri's IPC layer serialises
+        FormData as application/x-www-form-urlencoded instead of
+        multipart/form-data, which would otherwise silently corrupt the
+        upload on desktop. Adds one photo to the product's gallery; the
+        first upload becomes the cover automatically (ProductImage.save()
+        keeps Product.image, the field the storefront reads, in sync).
+        """
+        from django.core.files.base import ContentFile
+        from apps.core.validators import sniff_image_bytes
+        _MAX_BYTES = 5 * 1024 * 1024
+        product = self.get_object()
+        org = self._get_organisation()
+        body = request.body
+        if not body:
+            return Response({"error": "No file data received."}, status=400)
+        if len(body) > _MAX_BYTES:
+            return Response({"error": "File too large. Maximum size is 5 MB."}, status=413)
+        detected_mime = sniff_image_bytes(body[:261])
+        if detected_mime is None:
+            return Response({"error": "File is not a valid image."}, status=400)
+        ext = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}.get(detected_mime, ".jpg")
+
+        is_first = not ProductImage.objects.filter(organisation=org, product=product).exists()
+        img = ProductImage(organisation=org, product=product, is_main=is_first)
+        img.image.save(f"{product.sku}_{img.pk or 'new'}{ext}", ContentFile(body), save=False)
+        img.save()
+        return Response(ProductImageSerializer(img, context={"request": request}).data, status=201)
 
     @action(detail=False, methods=["get"], url_path="low-stock")
     def low_stock(self, request):
@@ -642,6 +740,69 @@ class BatchViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             from datetime import timedelta
             qs = qs.filter(expiry_date__gte=today + timedelta(days=30))
         return qs
+
+
+class ProductImageViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+    """
+    A product's photo gallery — the reviewer's "Product images gallery"
+    request. POST to upload, the `set_main` action to choose the cover photo
+    (clicking a thumbnail), and `reorder` for drag-to-reorder.
+    """
+    queryset = ProductImage.objects.select_related("product")
+    serializer_class = ProductImageSerializer
+    permission_classes = [IsAuthenticated, IsStaff, _ModAccess_inventory]
+    filterset_fields = ["product"]
+
+    def perform_create(self, serializer):
+        org = self._get_organisation()
+        # The first photo for a product becomes its cover automatically —
+        # otherwise a single-image upload (the common case) would need a
+        # separate set_main call just to make it show up anywhere.
+        is_first = not ProductImage.objects.filter(
+            organisation=org, product=serializer.validated_data["product"],
+        ).exists()
+        serializer.save(organisation=org, is_main=is_first)
+        self._write_audit('create', serializer.instance, {})
+
+    @action(detail=True, methods=["post"])
+    def set_main(self, request, pk=None):
+        """POST /inventory/product-images/<id>/set_main/ — click a thumbnail to make it the cover photo."""
+        image = self.get_object()
+        image.is_main = True
+        image.save()
+        return Response(ProductImageSerializer(image).data)
+
+    @action(detail=False, methods=["post"])
+    def reorder(self, request):
+        """
+        POST /inventory/product-images/reorder/
+        Body: { "order": [<image_id>, <image_id>, ...] } — drag-to-reorder,
+        left-to-right becomes first-to-last.
+        """
+        org = self._get_organisation()
+        order = request.data.get("order") or []
+        updated = 0
+        for idx, image_id in enumerate(order):
+            updated += ProductImage.objects.filter(organisation=org, id=image_id).update(sort_order=idx)
+        return Response({"updated": updated})
+
+
+class ComboComponentViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+    """
+    Bill-of-materials lines for a Combo/Bundle Product — the reviewer's
+    "Combo Product" request. Managed as its own CRUD resource (same pattern
+    as ProductImageViewSet) rather than nested writes on ProductSerializer,
+    so adding/removing/adjusting one component doesn't require resubmitting
+    the whole product form.
+    """
+    queryset = ComboComponent.objects.select_related("combo_product", "component_product")
+    serializer_class = ComboComponentSerializer
+    permission_classes = [IsAuthenticated, IsStaff, _ModAccess_inventory]
+    filterset_fields = ["combo_product"]
+
+    def perform_create(self, serializer):
+        serializer.save(organisation=self._get_organisation())
+        self._write_audit('create', serializer.instance, {})
 
 
 class StockItemViewSet(TenantFilterMixin, viewsets.ModelViewSet):

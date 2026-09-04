@@ -49,6 +49,7 @@ class SaleService:
         location=None,
         wht_rate_id=None,
         defer_fulfillment: bool = False,
+        shipping_amount: Decimal = None,
     ) -> Invoice:
         """
         Create a confirmed sale invoice with stock deductions.
@@ -74,6 +75,7 @@ class SaleService:
         from apps.accounting.services import AccountingService, check_strict_gl_mode
 
         issue_date = issue_date or tz.now().date()
+        shipping = Decimal(str(shipping_amount)) if shipping_amount else Decimal("0")
 
         check_strict_gl_mode(organisation)
 
@@ -115,6 +117,7 @@ class SaleService:
             subtotal=Decimal("0"),
             discount_amount=Decimal("0"),
             tax_amount=Decimal("0"),
+            shipping_amount=shipping,
             total_amount=Decimal("0"),
             credit_applied=Decimal("0"),
             amount_paid=Decimal("0"),
@@ -139,7 +142,7 @@ class SaleService:
             total_discount += line["discount_amount"]
             total_tax += line["tax_amount"]
 
-        total = subtotal - total_discount + total_tax
+        total = subtotal - total_discount + total_tax + shipping
 
         # Clamp credit to total (can't apply more credit than the invoice total)
         credit_to_apply = min(credit_to_apply, total)
@@ -254,6 +257,10 @@ class SaleService:
         product = Product.objects.select_for_update().get(
             id=item_data["product_id"], organisation=organisation
         )
+        if product.product_type == Product.ProductType.VARIABLE:
+            raise ValueError(
+                f"'{product.name}' is a Variable Product template — sell one of its variants instead."
+            )
         quantity = Decimal(str(item_data["quantity"]))
         base_price = Decimal(str(item_data.get("unit_price", product.selling_price)))
         discount_pct = Decimal(str(item_data.get("discount_percent", 0)))
@@ -274,18 +281,50 @@ class SaleService:
         discount_amount = round_money(subtotal * discount_pct / Decimal("100"))
         after_discount = subtotal - discount_amount
 
-        # Apply product tax rate
+        # Apply product tax rate. Exclusive (the default, and every existing
+        # product's current behaviour) adds tax on top of unit_price. Inclusive
+        # means unit_price already contains it, so the tax is backed OUT of
+        # after_discount instead of added — line_total stays what the customer
+        # was quoted either way; only the tax/subtotal split changes.
         tax_rate = Decimal("0")
         if product.is_taxable and product.tax_class:
             tax_rate = product.tax_class.rate
-        tax_amount = round_money(after_discount * tax_rate / Decimal("100"))
+        if product.tax_type == Product.TaxType.INCLUSIVE and tax_rate > 0:
+            tax_amount = round_money(after_discount * tax_rate / (Decimal("100") + tax_rate))
+            line_total = after_discount
+        else:
+            tax_amount = round_money(after_discount * tax_rate / Decimal("100"))
+            line_total = after_discount + tax_amount
 
-        line_total = after_discount + tax_amount
+        # Specific Unit costing sells FROM a chosen lot, so the batch has to be
+        # resolved before the movement. batch_id was already accepted by the
+        # serializer and SaleItem.batch already existed, but neither was ever
+        # read or persisted — so the column stayed empty and Specific Unit had
+        # nothing to cost against.
+        batch = None
+        batch_id = item_data.get("batch_id")
+        if batch_id:
+            from apps.inventory.models import Batch
+            batch = Batch.objects.filter(
+                id=batch_id, organisation=organisation, product=product,
+            ).first()
 
         # Deduct stock only for physical/digital products (services have no inventory)
         # skip_stock=True for proforma invoices (stock not reserved yet)
-        if product.product_type != "service" and not skip_stock:
-            InventoryService.record_movement(
+        cost_per_unit = product.cost_price
+        if product.product_type == Product.ProductType.COMBO and not skip_stock:
+            # A combo has no stock of its own — selling it deducts each of its
+            # bill-of-materials components from their own stock instead.
+            cost_per_unit = InventoryService.consume_combo_components(
+                organisation=organisation,
+                combo_product=product,
+                warehouse=warehouse,
+                quantity=quantity,
+                reference=invoice.invoice_number,
+                created_by=created_by,
+            )
+        elif product.product_type != "service" and not skip_stock:
+            movement = InventoryService.record_movement(
                 organisation=organisation,
                 product=product,
                 warehouse=warehouse,
@@ -294,12 +333,23 @@ class SaleService:
                 unit_cost=product.cost_price,
                 reference=invoice.invoice_number,
                 created_by=created_by,
+                batch=batch,
+                # The one path the reviewer's costing-method request is about:
+                # value this sale per the product's FIFO/LIFO/Average/Specific
+                # method instead of the flat product.cost_price.
+                use_costing_engine=True,
             )
+            # COGS must agree with the cost the ledger actually consumed —
+            # post_sale_journal reads cost_of_goods, so taking product.cost_price
+            # here would post a different figure to the GL than the stock ledger
+            # recorded, and the two would drift apart permanently.
+            cost_per_unit = movement.unit_cost
 
         SaleItem.objects.create(
             organisation=organisation,
             invoice=invoice,
             product=product,
+            batch=batch,
             quantity=quantity,
             unit_price=unit_price,
             discount_percent=discount_pct,
@@ -307,7 +357,7 @@ class SaleService:
             tax_rate=tax_rate,
             tax_amount=tax_amount,
             line_total=line_total,
-            cost_of_goods=round_money(quantity * product.cost_price),
+            cost_of_goods=round_money(quantity * cost_per_unit),
             modifiers=modifiers,
         )
 
@@ -410,7 +460,8 @@ class SaleService:
             total_discount += line["discount_amount"]
             total_tax += line["tax_amount"]
 
-        total = subtotal - total_discount + total_tax
+        existing_shipping = Decimal(str(invoice.shipping_amount or 0))
+        total = subtotal - total_discount + total_tax + existing_shipping
 
         # Recalculate financials; preserve existing payments
         invoice.subtotal = subtotal
@@ -625,19 +676,39 @@ class SaleService:
         if invoice.fulfilled_at is not None:
             raise ValueError("This invoice has already been fulfilled.")
 
-        for item in invoice.items.select_related("product").all():
+        for item in invoice.items.select_related("product", "batch").all():
             if item.product.product_type == "service":
                 continue
-            InventoryService.record_movement(
-                organisation=invoice.organisation,
-                product=item.product,
-                warehouse=invoice.warehouse,
-                quantity=-item.quantity,
-                movement_type="sale_out",
-                unit_cost=item.product.cost_price,
-                reference=invoice.invoice_number,
-                created_by=actor,
-            )
+            if item.product.product_type == Product.ProductType.COMBO:
+                cost_per_unit = InventoryService.consume_combo_components(
+                    organisation=invoice.organisation,
+                    combo_product=item.product,
+                    warehouse=invoice.warehouse,
+                    quantity=item.quantity,
+                    reference=invoice.invoice_number,
+                    created_by=actor,
+                )
+            else:
+                movement = InventoryService.record_movement(
+                    organisation=invoice.organisation,
+                    product=item.product,
+                    warehouse=invoice.warehouse,
+                    quantity=-item.quantity,
+                    movement_type="sale_out",
+                    unit_cost=item.product.cost_price,
+                    reference=invoice.invoice_number,
+                    created_by=actor,
+                    batch=item.batch,
+                    use_costing_engine=True,
+                )
+                cost_per_unit = movement.unit_cost
+            # Deferred fulfilment is where the stock actually leaves, so this is
+            # where its real cost is known. The line was costed provisionally at
+            # creation time (skip_stock=True, nothing consumed yet); restate it
+            # from what the ledger consumed before the GL posts just below,
+            # otherwise the journal and the stock ledger disagree.
+            item.cost_of_goods = round_money(item.quantity * cost_per_unit)
+            item.save(update_fields=["cost_of_goods", "updated_at"])
 
         from apps.accounting.services import safe_post_gl
         safe_post_gl(
@@ -699,14 +770,26 @@ class SaleService:
             vat_amt  = Decimal(str(invoice.tax_amount or 0))
             total    = Decimal(str(invoice.total_amount))
             revenue_acct = AccountMappingService.resolve(invoice.organisation, 'revenue_account')
-            vat_acct     = AccountMappingService.resolve(invoice.organisation, 'vat_payable_account')
-            ar_acct      = AccountMappingService.resolve(invoice.organisation, 'accounts_receivable')
+            vat_acct     = AccountMappingService.resolve(invoice.organisation, 'vat_output_account')
+            ar_acct      = AccountingService._resolve_party_account(
+                invoice.organisation, invoice.customer, 'receivable_account', 'accounts_receivable', '1100')
             # Reversal: DR AR (removes the receivable) ... CR Revenue + VAT Payable
             lines = [
                 (ar_acct,      zero,    total),   # CR AR (removes receivable)
                 (revenue_acct, net_rev, zero),    # DR Revenue (reverses income)
                 (vat_acct,     vat_amt, zero),    # DR VAT Payable (reverses liability)
             ]
+            # Reverse COGS/Inventory too, so the void undoes the full original posting
+            cogs_total = sum(
+                Decimal(str(item.cost_of_goods or 0))
+                for item in invoice.items.all()
+                if item.product.product_type != "service"
+            )
+            if cogs_total > zero:
+                cogs_acct = AccountMappingService.resolve(invoice.organisation, 'cogs_account')
+                inv_acct  = AccountMappingService.resolve(invoice.organisation, 'inventory_account')
+                lines.append((inv_acct,  cogs_total, zero))  # DR Inventory (restore)
+                lines.append((cogs_acct, zero,       cogs_total))  # CR COGS (reverse)
             AccountingService.post_journal_entry(
                 invoice.organisation,
                 f"Void invoice {invoice.invoice_number}",
@@ -896,6 +979,7 @@ class SaleService:
 
         total_refund = Decimal("0")
         total_tax_refund = Decimal("0")
+        total_cogs_refund = Decimal("0")
         return_items_to_create = []
 
         for item_data in items:
@@ -969,6 +1053,7 @@ class SaleService:
                     reference=sale_return.return_number,
                     created_by=processed_by,
                 )
+                total_cogs_refund += round_money(unit_cost * qty)
 
         all_items = list(invoice.items.all())
         total_sold     = sum(Decimal(str(i.quantity))           for i in all_items)
@@ -993,13 +1078,21 @@ class SaleService:
             zero = Decimal("0")
             net_refund = total_refund - total_tax_refund
             revenue_acct = AccountMappingService.resolve(organisation, 'revenue_account')
-            vat_acct     = AccountMappingService.resolve(organisation, 'vat_payable_account')
-            ar_acct      = AccountMappingService.resolve(organisation, 'accounts_receivable')
+            vat_acct     = AccountMappingService.resolve(organisation, 'vat_output_account')
+            ar_acct      = AccountingService._resolve_party_account(
+                organisation, invoice.customer, 'receivable_account', 'accounts_receivable', '1100')
             lines = [
                 (revenue_acct, net_refund,       zero),           # DR Revenue (reversal)
                 (vat_acct,     total_tax_refund,  zero),          # DR VAT Payable (reversal)
                 (ar_acct,      zero,              total_refund),  # CR AR / customer
             ]
+            # Reverse COGS/Inventory for the restocked portion, so the GL Inventory
+            # balance stays in step with the physical stock InventoryService already restored
+            if total_cogs_refund > zero:
+                cogs_acct = AccountMappingService.resolve(organisation, 'cogs_account')
+                inv_acct  = AccountMappingService.resolve(organisation, 'inventory_account')
+                lines.append((inv_acct,  total_cogs_refund, zero))  # DR Inventory (restore)
+                lines.append((cogs_acct, zero,              total_cogs_refund))  # CR COGS (reverse)
             AccountingService.post_journal_entry(
                 organisation,
                 f"Credit note {sale_return.return_number}",

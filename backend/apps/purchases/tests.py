@@ -319,3 +319,45 @@ class PurchaseOrderOverReceiptTests(TestCase):
         self.po.refresh_from_db()
         self.assertEqual(self.po.status, PurchaseOrder.Status.RECEIVED)
         self.assertEqual(self._stock(), Decimal("10"))
+
+
+class PurchaseTaxInclusiveExclusiveTests(TestCase):
+    """Product.tax_type must apply the same on the buying side as the selling
+    side — a product's inclusive/exclusive convention doesn't flip depending
+    on which direction it's moving."""
+
+    def setUp(self):
+        from apps.tax.models import TaxClass
+        self.user = _make_user("purch_taxtype@example.com")
+        self.org = _make_org(self.user, "Purchase Tax Type Org")
+        self.vat = TaxClass.objects.create(organisation=self.org, name="VAT 15%", rate=Decimal("15"))
+
+    def _validate(self, product, unit_cost, quantity="1"):
+        from apps.purchases.serializers import PurchaseOrderItemSerializer
+        serializer = PurchaseOrderItemSerializer()
+        return serializer.validate({
+            "product": product,
+            "quantity_ordered": Decimal(quantity),
+            "unit_cost": Decimal(unit_cost),
+            "discount_percent": Decimal("0"),
+        })
+
+    def test_exclusive_adds_tax_on_top(self):
+        p = Product.objects.create(
+            organisation=self.org, sku="PT-EXCL", name="Exclusive Buy",
+            product_type="physical", cost_price=1000, selling_price=1500,
+            is_taxable=True, tax_class=self.vat,
+        )
+        attrs = self._validate(p, "1000")
+        self.assertAlmostEqual(float(attrs["tax_amount"]), 150.0, places=2)
+        self.assertAlmostEqual(float(attrs["line_total"]), 1150.0, places=2)
+
+    def test_inclusive_backs_tax_out(self):
+        p = Product.objects.create(
+            organisation=self.org, sku="PT-INCL", name="Inclusive Buy",
+            product_type="physical", cost_price=1150, selling_price=1500,
+            is_taxable=True, tax_class=self.vat, tax_type="inclusive",
+        )
+        attrs = self._validate(p, "1150")
+        self.assertAlmostEqual(float(attrs["tax_amount"]), 150.0, places=2)
+        self.assertAlmostEqual(float(attrs["line_total"]), 1150.0, places=2)

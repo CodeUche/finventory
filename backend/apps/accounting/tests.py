@@ -1936,6 +1936,146 @@ class SubledgerAndAccountOpeningBalanceTests(TestCase):
         self.assertTrue(bs["balanced"], msg=str(bs))
 
 
+class ItemOpeningBalanceTests(TestCase):
+    """
+    Single-item take-on (`set_item_opening_balance`) — the GL-correct path used by
+    the New Product form and CSV import, as opposed to the Beginning Balances
+    wizard's batch `set_subledger_opening_balances`. Must never disturb other
+    items, customers, suppliers, or the wizard's own date-scoped take-on.
+    """
+
+    def setUp(self):
+        self.user = _make_user("item_ob@example.com")
+        self.org = _make_org(self.user, "Item OB Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+        from apps.inventory.models import Product, Warehouse
+        self.wh = Warehouse.objects.create(organisation=self.org, name="Main WH", is_default=True)
+        self.wh2 = Warehouse.objects.create(organisation=self.org, name="Branch WH")
+        self.prod = Product.objects.create(
+            organisation=self.org, sku="ITEM1", name="Rice",
+            cost_price=Decimal("50000"), selling_price=Decimal("65000"),
+        )
+
+    def test_posts_debit_inventory_credit_suspense(self):
+        entry = AccountingService.set_item_opening_balance(
+            self.org, self.prod, self.wh, quantity=Decimal("10"),
+            unit_cost=Decimal("45000"), as_of_date="2026-01-01", created_by=self.user,
+        )
+        self.assertIsNotNone(entry)
+        inv = Account.objects.get(organisation=self.org, code="1200")
+        suspense = Account.objects.get(organisation=self.org, code="3900")
+        self.assertAlmostEqual(float(inv.balance), 450000.0, places=2)
+        # Suspense is Equity (normal credit); Account.balance is credits − debits
+        # for equity, so a credit balance reads positive.
+        self.assertAlmostEqual(float(suspense.balance), 450000.0, places=2)
+
+        from apps.inventory.models import StockItem
+        stock = StockItem.objects.get(organisation=self.org, product=self.prod, warehouse=self.wh)
+        self.assertAlmostEqual(float(stock.quantity_on_hand), 10.0, places=2)
+
+        bs = AccountingService.balance_sheet(self.org)
+        self.assertTrue(bs["balanced"], msg=str(bs))
+
+    def test_reposting_corrects_in_place_without_doubling(self):
+        AccountingService.set_item_opening_balance(
+            self.org, self.prod, self.wh, quantity=Decimal("10"),
+            unit_cost=Decimal("45000"), as_of_date="2026-01-01", created_by=self.user,
+        )
+        AccountingService.set_item_opening_balance(
+            self.org, self.prod, self.wh, quantity=Decimal("25"),
+            unit_cost=Decimal("45000"), as_of_date="2026-01-01", created_by=self.user,
+        )
+        inv = Account.objects.get(organisation=self.org, code="1200")
+        self.assertAlmostEqual(float(inv.balance), 25 * 45000.0, places=2)
+
+        from apps.inventory.models import StockItem
+        stock = StockItem.objects.get(organisation=self.org, product=self.prod, warehouse=self.wh)
+        self.assertAlmostEqual(float(stock.quantity_on_hand), 25.0, places=2)
+
+    def test_negative_quantity_on_fresh_item_raises_clear_error(self):
+        """
+        A negative *quantity* take-on is meaningless for physical stock (you can't
+        take on -5 units of Rice) and is blocked by the same StockItem guard the
+        Beginning Balances wizard's `set_subledger_opening_balances` already relies
+        on (`InventoryService.record_movement` never allows quantity_on_hand < 0).
+        Unlike AR/AP, inventory has no legitimate negative-balance take-on case, so
+        this must raise a clear, actionable error rather than silently corrupting
+        the stock ledger.
+        """
+        with self.assertRaises(ValueError) as ctx:
+            AccountingService.set_item_opening_balance(
+                self.org, self.prod, self.wh, quantity=Decimal("-5"),
+                unit_cost=Decimal("1000"), as_of_date="2026-01-01", created_by=self.user,
+            )
+        self.assertIn("stock adjustment", str(ctx.exception))
+        # The rejected call must not have posted anything.
+        inv = Account.objects.get(organisation=self.org, code="1200")
+        self.assertAlmostEqual(float(inv.balance), 0.0, places=2)
+
+    def test_does_not_disturb_other_items_or_subledger_takeon(self):
+        from apps.inventory.models import Product
+        other = Product.objects.create(
+            organisation=self.org, sku="ITEM2", name="Beans",
+            cost_price=Decimal("20000"), selling_price=Decimal("30000"),
+        )
+        AccountingService.set_item_opening_balance(
+            self.org, self.prod, self.wh, quantity=Decimal("10"),
+            unit_cost=Decimal("45000"), as_of_date="2026-01-01", created_by=self.user,
+        )
+        # A second, unrelated item's take-on must add on top, not replace.
+        AccountingService.set_item_opening_balance(
+            self.org, other, self.wh, quantity=Decimal("4"),
+            unit_cost=Decimal("20000"), as_of_date="2026-01-05", created_by=self.user,
+        )
+        inv = Account.objects.get(organisation=self.org, code="1200")
+        self.assertAlmostEqual(float(inv.balance), 10 * 45000 + 4 * 20000, places=2)
+
+        from apps.inventory.models import StockItem
+        s1 = StockItem.objects.get(organisation=self.org, product=self.prod, warehouse=self.wh)
+        s2 = StockItem.objects.get(organisation=self.org, product=other, warehouse=self.wh)
+        self.assertAlmostEqual(float(s1.quantity_on_hand), 10.0, places=2)
+        self.assertAlmostEqual(float(s2.quantity_on_hand), 4.0, places=2)
+
+        bs = AccountingService.balance_sheet(self.org)
+        self.assertTrue(bs["balanced"], msg=str(bs))
+
+    def test_different_warehouses_tracked_independently(self):
+        AccountingService.set_item_opening_balance(
+            self.org, self.prod, self.wh, quantity=Decimal("10"),
+            unit_cost=Decimal("1000"), as_of_date="2026-01-01", created_by=self.user,
+        )
+        AccountingService.set_item_opening_balance(
+            self.org, self.prod, self.wh2, quantity=Decimal("6"),
+            unit_cost=Decimal("1000"), as_of_date="2026-01-01", created_by=self.user,
+        )
+        from apps.inventory.models import StockItem
+        s1 = StockItem.objects.get(organisation=self.org, product=self.prod, warehouse=self.wh)
+        s2 = StockItem.objects.get(organisation=self.org, product=self.prod, warehouse=self.wh2)
+        self.assertAlmostEqual(float(s1.quantity_on_hand), 10.0, places=2)
+        self.assertAlmostEqual(float(s2.quantity_on_hand), 6.0, places=2)
+        inv = Account.objects.get(organisation=self.org, code="1200")
+        self.assertAlmostEqual(float(inv.balance), 16000.0, places=2)
+
+    def test_api_endpoint_posts_opening_balance(self):
+        res = self.client.post(
+            f"/api/v1/inventory/products/{self.prod.id}/set-opening-balance/",
+            {"warehouse_id": str(self.wh.id), "quantity": "8", "unit_cost": "45000",
+             "as_of_date": "2026-01-01"},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        inv = Account.objects.get(organisation=self.org, code="1200")
+        self.assertAlmostEqual(float(inv.balance), 360000.0, places=2)
+
+    def test_api_endpoint_requires_warehouse(self):
+        res = self.client.post(
+            f"/api/v1/inventory/products/{self.prod.id}/set-opening-balance/",
+            {"quantity": "8"}, format="json",
+        )
+        self.assertEqual(res.status_code, 400)
+
+
 class AccountListingAndSummaryTests(TestCase):
     """The whole chart must be reachable through the API.
 
@@ -4238,3 +4378,495 @@ class LedgerDrivenReconciliationTests(TestCase):
         self.assertEqual(res.status_code, 200)
         self.recon.refresh_from_db()
         self.assertTrue(self.recon.is_reconciled)
+
+
+class PartyGLAccountOverrideTests(TestCase):
+    """
+    A customer/supplier's own receivable_account/payable_account override must be
+    honoured by every day-to-day posting path, not just take-on. Previously
+    post_sale_journal, post_credit_payment_journal, post_gateway_payment_journal,
+    void_invoice, the sales-return journal, post_bill_approved_journal,
+    post_bill_payment_journal, the PO-receipt auto-bill, and the purchase-return
+    journal all hard-coded the org-wide default AR/AP account, silently ignoring
+    a per-party override entered on the Customer/Supplier record.
+    """
+
+    def setUp(self):
+        self.user = _make_user("party_gl@example.com")
+        self.org = _make_org(self.user, "Party GL Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+
+        from apps.inventory.models import Product, Warehouse
+        from apps.inventory.services import InventoryService
+        from apps.customers.models import Customer
+        from apps.suppliers.models import Supplier
+
+        self.wh = Warehouse.objects.create(organisation=self.org, name="Main WH", is_default=True)
+        self.product = Product.objects.create(
+            organisation=self.org, sku="PGL1", name="Rice",
+            cost_price=Decimal("50000"), selling_price=Decimal("65000"),
+        )
+        InventoryService.record_movement(
+            organisation=self.org, product=self.product, warehouse=self.wh,
+            quantity=Decimal("10"), movement_type="purchase_in",
+            unit_cost=Decimal("50000"), reference="SEED", created_by=self.user,
+        )
+
+        self.dedicated_ar = Account.objects.create(
+            organisation=self.org, code="1105", name="VIP Customer Receivable",
+            account_type=AccountType.ASSET, normal_balance="debit",
+        )
+        self.dedicated_ap = Account.objects.create(
+            organisation=self.org, code="2005", name="Key Supplier Payable",
+            account_type=AccountType.LIABILITY, normal_balance="credit",
+        )
+        self.customer = Customer.objects.create(
+            organisation=self.org, name="VIP Customer", customer_type="retail",
+            receivable_account=self.dedicated_ar,
+        )
+        self.supplier = Supplier.objects.create(
+            organisation=self.org, name="Key Supplier", payable_account=self.dedicated_ap,
+        )
+        self.default_ar = AccountMappingService.resolve(self.org, "accounts_receivable")
+        self.default_ap = AccountMappingService.resolve(self.org, "accounts_payable")
+        self.assertNotEqual(self.default_ar.id, self.dedicated_ar.id)
+        self.assertNotEqual(self.default_ap.id, self.dedicated_ap.id)
+
+    def _je_accounts(self, **filters):
+        entry = JournalEntry.objects.get(organisation=self.org, **filters)
+        return {l.account_id for l in entry.lines.all()}
+
+    def test_sale_journal_uses_customer_override(self):
+        from apps.sales.services import SaleService
+        invoice = SaleService.create_sale(
+            organisation=self.org, created_by=self.user, customer=self.customer, warehouse=self.wh,
+            items=[{"product_id": str(self.product.id), "quantity": 1, "unit_price": "65000"}],
+            payment_method="credit",
+        )
+        accts = self._je_accounts(source_type="sale", source_ref=str(invoice.id))
+        self.assertIn(self.dedicated_ar.id, accts)
+        self.assertNotIn(self.default_ar.id, accts)
+
+    def test_void_invoice_reversal_uses_customer_override(self):
+        from apps.sales.services import SaleService
+        invoice = SaleService.create_sale(
+            organisation=self.org, created_by=self.user, customer=self.customer, warehouse=self.wh,
+            items=[{"product_id": str(self.product.id), "quantity": 1, "unit_price": "65000"}],
+            payment_method="credit",
+        )
+        SaleService.void_invoice(invoice, voided_by=self.user)
+        accts = self._je_accounts(source_type="invoice_void", source_ref=str(invoice.id))
+        self.assertIn(self.dedicated_ar.id, accts)
+
+    def test_sales_return_journal_uses_customer_override(self):
+        from apps.sales.services import SaleService
+        invoice = SaleService.create_sale(
+            organisation=self.org, created_by=self.user, customer=self.customer, warehouse=self.wh,
+            items=[{"product_id": str(self.product.id), "quantity": 1, "unit_price": "65000"}],
+            payment_method="credit",
+        )
+        item = invoice.items.first()
+        sale_return = SaleService.process_return(
+            organisation=self.org, invoice=invoice,
+            items=[{"sale_item_id": str(item.id), "quantity_returned": "1"}],
+            reason="test", notes="", processed_by=self.user,
+        )
+        accts = self._je_accounts(source_type="sale_return", source_ref=str(sale_return.id))
+        self.assertIn(self.dedicated_ar.id, accts)
+
+    def test_credit_payment_journal_uses_customer_override(self):
+        from apps.credits.services import CreditService
+        CreditService.record_payment(
+            organisation=self.org, customer=self.customer, amount=Decimal("50000"), recorded_by=self.user,
+        )
+        entry = JournalEntry.objects.filter(organisation=self.org, source_type="credit_payment").order_by("-created_at").first()
+        self.assertIsNotNone(entry)
+        accts = {l.account_id for l in entry.lines.all()}
+        self.assertIn(self.dedicated_ar.id, accts)
+
+    def test_po_receipt_auto_bill_uses_supplier_override(self):
+        from apps.purchases.models import PurchaseOrder, PurchaseOrderItem
+        from apps.purchases.services import PurchaseService
+        po = PurchaseOrder.objects.create(
+            organisation=self.org, supplier=self.supplier, warehouse=self.wh,
+            po_number=PurchaseOrder.generate_number(self.org),
+            order_date=timezone.now().date(),
+            subtotal=Decimal("100000"), tax_amount=Decimal("0"), total_amount=Decimal("100000"),
+            created_by=self.user,
+        )
+        po_item = PurchaseOrderItem.objects.create(
+            organisation=self.org, purchase_order=po, product=self.product,
+            quantity_ordered=Decimal("2"), unit_cost=Decimal("50000"), line_total=Decimal("100000"),
+        )
+        po = PurchaseService.receive_purchase_order(
+            po, [{"item_id": str(po_item.id), "quantity_received": "2"}], self.user,
+        )
+        accts = self._je_accounts(source_type="po_receipt", source_ref=str(po.id))
+        self.assertIn(self.dedicated_ap.id, accts)
+        self.assertNotIn(self.default_ap.id, accts)
+
+    def test_bill_payment_journal_uses_supplier_override(self):
+        from apps.bills.models import Bill, BillPayment
+        from apps.accounting.services import AccountingService as AS
+        bill = Bill.objects.create(
+            organisation=self.org, supplier=self.supplier, status=Bill.APPROVED,
+            issue_date=timezone.now().date(), due_date=timezone.now().date(),
+            subtotal=Decimal("100000"), tax_amount=Decimal("0"), total_amount=Decimal("100000"),
+            amount_due=Decimal("100000"), created_by=self.user,
+        )
+        payment = BillPayment.objects.create(
+            organisation=self.org, bill=bill, amount=Decimal("100000"),
+            payment_date=timezone.now().date(), method="bank_transfer", recorded_by=self.user,
+        )
+        AS.post_bill_payment_journal(self.org, bill, payment, user=self.user)
+        entry = JournalEntry.objects.filter(organisation=self.org, source_type="bill_payment", source_ref=str(payment.id)).first()
+        self.assertIsNotNone(entry)
+        accts = {l.account_id for l in entry.lines.all()}
+        self.assertIn(self.dedicated_ap.id, accts)
+
+
+class ProductGLAccountOverrideTests(TestCase):
+    """
+    Product.sales_account / cogs_account / wages_account — per-item GL mapping
+    (the reviewer's "Inventory GL Mapped" / "Service GL Mapped" fields).
+
+    post_sale_journal must produce the EXACT same lines as before when no item
+    on the invoice carries an override (this is the overwhelming majority
+    case), and only switch to netted per-account buckets once an override is
+    actually in play — this is the regression-safety property the whole
+    feature was designed around, so it gets its own explicit test.
+    """
+
+    def setUp(self):
+        self.user = _make_user("product_gl@example.com")
+        self.org = _make_org(self.user, "Product GL Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+
+        from apps.inventory.models import Product, Warehouse
+        from apps.inventory.services import InventoryService
+        from apps.customers.models import Customer
+
+        self.wh = Warehouse.objects.create(organisation=self.org, name="Main WH", is_default=True)
+        self.customer = Customer.objects.create(organisation=self.org, name="Walk-in", customer_type="retail")
+
+        self.plain_product = Product.objects.create(
+            organisation=self.org, sku="PGL-PLAIN", name="Plain Widget",
+            cost_price=Decimal("400"), selling_price=Decimal("1000"),
+        )
+        InventoryService.record_movement(
+            organisation=self.org, product=self.plain_product, warehouse=self.wh,
+            quantity=Decimal("20"), movement_type="purchase_in",
+            unit_cost=Decimal("400"), reference="SEED", created_by=self.user,
+        )
+
+        self.custom_sales_acct = Account.objects.create(
+            organisation=self.org, code="4900", name="Special Sales Line",
+            account_type=AccountType.REVENUE, normal_balance="credit",
+        )
+        self.custom_cogs_acct = Account.objects.create(
+            organisation=self.org, code="5900", name="Special COGS Line",
+            account_type=AccountType.COST_OF_GOODS, normal_balance="debit",
+        )
+        self.wages_acct = Account.objects.create(
+            organisation=self.org, code="7750", name="Wages Expense",
+            account_type=AccountType.EXPENSE, normal_balance="debit",
+        )
+        self.mapped_product = Product.objects.create(
+            organisation=self.org, sku="PGL-MAPPED", name="Mapped Widget",
+            cost_price=Decimal("400"), selling_price=Decimal("1000"),
+            sales_account=self.custom_sales_acct, cogs_account=self.custom_cogs_acct,
+        )
+        InventoryService.record_movement(
+            organisation=self.org, product=self.mapped_product, warehouse=self.wh,
+            quantity=Decimal("20"), movement_type="purchase_in",
+            unit_cost=Decimal("400"), reference="SEED", created_by=self.user,
+        )
+
+        self.service_product = Product.objects.create(
+            organisation=self.org, sku="PGL-SERVICE", name="Consulting Hour",
+            product_type="service", cost_price=Decimal("300"), selling_price=Decimal("2000"),
+            wages_account=self.wages_acct,
+        )
+
+        self.default_revenue = AccountMappingService.resolve(self.org, "revenue_account")
+        self.default_cogs = AccountMappingService.resolve(self.org, "cogs_account")
+        self.default_inventory = AccountMappingService.resolve(self.org, "inventory_account")
+
+    def _sale(self, product, quantity="1", unit_price=None):
+        from apps.sales.services import SaleService
+        return SaleService.create_sale(
+            organisation=self.org, created_by=self.user, customer=self.customer, warehouse=self.wh,
+            items=[{"product_id": str(product.id), "quantity": quantity,
+                    "unit_price": unit_price or str(product.selling_price)}],
+            payment_method="credit",
+        )
+
+    def _lines(self, invoice):
+        entry = JournalEntry.objects.get(organisation=self.org, source_type="sale", source_ref=str(invoice.id))
+        return list(entry.lines.all())
+
+    def test_no_override_produces_identical_aggregate_lines(self):
+        """Regression guard: an invoice with zero overridden items must post
+        exactly one revenue line and one COGS/inventory line pair, on the org
+        defaults — the pre-existing behaviour, byte-for-byte."""
+        invoice = self._sale(self.plain_product, quantity="2")
+        lines = self._lines(invoice)
+        revenue_lines = [l for l in lines if l.account_id == self.default_revenue.id]
+        cogs_lines = [l for l in lines if l.account_id == self.default_cogs.id]
+        inv_lines = [l for l in lines if l.account_id == self.default_inventory.id]
+        self.assertEqual(len(revenue_lines), 1)
+        self.assertEqual(len(cogs_lines), 1)
+        self.assertEqual(len(inv_lines), 1)
+        self.assertAlmostEqual(float(revenue_lines[0].credit), 2000.0, places=2)
+        self.assertAlmostEqual(float(cogs_lines[0].debit), 800.0, places=2)
+        self.assertAlmostEqual(float(inv_lines[0].credit), 800.0, places=2)
+        # Never touches the override accounts at all.
+        accts = {l.account_id for l in lines}
+        self.assertNotIn(self.custom_sales_acct.id, accts)
+        self.assertNotIn(self.custom_cogs_acct.id, accts)
+
+    def test_sales_account_override_redirects_revenue(self):
+        invoice = self._sale(self.mapped_product)
+        lines = self._lines(invoice)
+        accts = {l.account_id for l in lines}
+        self.assertIn(self.custom_sales_acct.id, accts)
+        self.assertNotIn(self.default_revenue.id, accts)
+        revenue_line = next(l for l in lines if l.account_id == self.custom_sales_acct.id)
+        self.assertAlmostEqual(float(revenue_line.credit), 1000.0, places=2)
+
+    def test_cogs_account_override_redirects_debit_credit_stays_on_inventory(self):
+        invoice = self._sale(self.mapped_product)
+        lines = self._lines(invoice)
+        accts = {l.account_id for l in lines}
+        self.assertIn(self.custom_cogs_acct.id, accts)
+        self.assertNotIn(self.default_cogs.id, accts)
+        # No per-item inventory_account override was set, so the credit side
+        # still lands on the org default inventory control account.
+        self.assertIn(self.default_inventory.id, accts)
+        cogs_line = next(l for l in lines if l.account_id == self.custom_cogs_acct.id)
+        self.assertAlmostEqual(float(cogs_line.debit), 400.0, places=2)
+
+    def test_wages_account_replaces_cogs_for_service_item(self):
+        invoice = self._sale(self.service_product)
+        lines = self._lines(invoice)
+        accts = {l.account_id for l in lines}
+        self.assertIn(self.wages_acct.id, accts)
+        self.assertNotIn(self.default_cogs.id, accts)
+        wages_line = next(l for l in lines if l.account_id == self.wages_acct.id)
+        self.assertAlmostEqual(float(wages_line.debit), 300.0, places=2)
+
+    def test_mixed_invoice_nets_per_account_not_per_line(self):
+        """Two lines of the SAME mapped product on one invoice must produce
+        ONE netted revenue line and ONE netted COGS line for that account,
+        not two — otherwise the control account gets posted twice."""
+        from apps.sales.services import SaleService
+        invoice = SaleService.create_sale(
+            organisation=self.org, created_by=self.user, customer=self.customer, warehouse=self.wh,
+            items=[
+                {"product_id": str(self.mapped_product.id), "quantity": "1", "unit_price": "1000"},
+                {"product_id": str(self.mapped_product.id), "quantity": "2", "unit_price": "1000"},
+            ],
+            payment_method="credit",
+        )
+        lines = self._lines(invoice)
+        revenue_lines = [l for l in lines if l.account_id == self.custom_sales_acct.id]
+        cogs_lines = [l for l in lines if l.account_id == self.custom_cogs_acct.id]
+        self.assertEqual(len(revenue_lines), 1, msg=lines)
+        self.assertEqual(len(cogs_lines), 1, msg=lines)
+        self.assertAlmostEqual(float(revenue_lines[0].credit), 3000.0, places=2)
+        self.assertAlmostEqual(float(cogs_lines[0].debit), 1200.0, places=2)
+
+    def test_serializer_rejects_cross_org_sales_account(self):
+        other_org = _make_org(_make_user("other_org_owner@example.com"), "Other Org")
+        foreign_acct = Account.objects.create(
+            organisation=other_org, code="4999", name="Foreign Sales",
+            account_type=AccountType.REVENUE, normal_balance="credit",
+        )
+        res = self.client.patch(
+            f"/api/v1/inventory/products/{self.plain_product.id}/",
+            {"sales_account": str(foreign_acct.id)}, format="json",
+        )
+        self.assertIn(res.status_code, (400, 422), msg=str(res.data))
+
+    def test_serializer_rejects_cross_org_wages_account(self):
+        other_org = _make_org(_make_user("other_org_owner2@example.com"), "Other Org 2")
+        foreign_acct = Account.objects.create(
+            organisation=other_org, code="7799", name="Foreign Wages",
+            account_type=AccountType.EXPENSE, normal_balance="debit",
+        )
+        res = self.client.patch(
+            f"/api/v1/inventory/products/{self.service_product.id}/",
+            {"wages_account": str(foreign_acct.id)}, format="json",
+        )
+        self.assertIn(res.status_code, (400, 422), msg=str(res.data))
+
+
+class ItemClassGLDefaultTests(TestCase):
+    """
+    Default GL accounts per product_type (the reviewer's "item-class GL
+    defaults" request) — sits between a per-product override and the
+    org-wide AccountMapping default. A product with NO override of its own
+    should pick up its class's default; an explicit per-product override
+    still wins over the class default.
+    """
+
+    def setUp(self):
+        self.user = _make_user("itemclass@example.com")
+        self.org = _make_org(self.user, "Item Class Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+
+        from apps.inventory.models import Product, Warehouse
+        from apps.inventory.services import InventoryService
+        from apps.customers.models import Customer
+
+        self.wh = Warehouse.objects.create(organisation=self.org, name="Main WH", is_default=True)
+        self.customer = Customer.objects.create(organisation=self.org, name="Walk-in", customer_type="retail")
+
+        self.class_sales_acct = Account.objects.create(
+            organisation=self.org, code="4910", name="Physical Goods Revenue",
+            account_type=AccountType.REVENUE, normal_balance="credit",
+        )
+        self.class_cogs_acct = Account.objects.create(
+            organisation=self.org, code="5910", name="Physical Goods COGS",
+            account_type=AccountType.COST_OF_GOODS, normal_balance="debit",
+        )
+        self.class_wages_acct = Account.objects.create(
+            organisation=self.org, code="7760", name="Service Wages",
+            account_type=AccountType.EXPENSE, normal_balance="debit",
+        )
+        self.per_product_override = Account.objects.create(
+            organisation=self.org, code="4920", name="Specific Product Revenue",
+            account_type=AccountType.REVENUE, normal_balance="credit",
+        )
+
+        self.default_revenue = AccountMappingService.resolve(self.org, "revenue_account")
+        self.default_cogs = AccountMappingService.resolve(self.org, "cogs_account")
+
+        self.physical_product = Product.objects.create(
+            organisation=self.org, sku="ICD-PHYS", name="Widget",
+            cost_price=Decimal("400"), selling_price=Decimal("1000"),
+        )
+        InventoryService.record_movement(
+            organisation=self.org, product=self.physical_product, warehouse=self.wh,
+            quantity=Decimal("20"), movement_type="purchase_in",
+            unit_cost=Decimal("400"), reference="SEED", created_by=self.user,
+        )
+        self.overridden_product = Product.objects.create(
+            organisation=self.org, sku="ICD-OVERRIDE", name="Special Widget",
+            cost_price=Decimal("400"), selling_price=Decimal("1000"),
+            sales_account=self.per_product_override,
+        )
+        InventoryService.record_movement(
+            organisation=self.org, product=self.overridden_product, warehouse=self.wh,
+            quantity=Decimal("20"), movement_type="purchase_in",
+            unit_cost=Decimal("400"), reference="SEED", created_by=self.user,
+        )
+        self.service_product = Product.objects.create(
+            organisation=self.org, sku="ICD-SVC", name="Consulting",
+            product_type="service", cost_price=Decimal("300"), selling_price=Decimal("2000"),
+        )
+
+    def _sale(self, product):
+        from apps.sales.services import SaleService
+        return SaleService.create_sale(
+            organisation=self.org, created_by=self.user, customer=self.customer, warehouse=self.wh,
+            items=[{"product_id": str(product.id), "quantity": "1", "unit_price": str(product.selling_price)}],
+            payment_method="credit",
+        )
+
+    def _lines(self, invoice):
+        entry = JournalEntry.objects.get(organisation=self.org, source_type="sale", source_ref=str(invoice.id))
+        return list(entry.lines.all())
+
+    def test_no_class_default_configured_uses_org_default(self):
+        invoice = self._sale(self.physical_product)
+        lines = self._lines(invoice)
+        accts = {l.account_id for l in lines}
+        self.assertIn(self.default_revenue.id, accts)
+
+    def test_class_default_redirects_a_product_with_no_override_of_its_own(self):
+        from apps.accounting.models import ItemClassGLDefault
+        ItemClassGLDefault.objects.create(
+            organisation=self.org, product_type="physical",
+            sales_account=self.class_sales_acct, cogs_account=self.class_cogs_acct,
+        )
+        invoice = self._sale(self.physical_product)
+        lines = self._lines(invoice)
+        accts = {l.account_id for l in lines}
+        self.assertIn(self.class_sales_acct.id, accts)
+        self.assertIn(self.class_cogs_acct.id, accts)
+        self.assertNotIn(self.default_revenue.id, accts)
+        self.assertNotIn(self.default_cogs.id, accts)
+
+    def test_per_product_override_wins_over_class_default(self):
+        from apps.accounting.models import ItemClassGLDefault
+        ItemClassGLDefault.objects.create(
+            organisation=self.org, product_type="physical", sales_account=self.class_sales_acct,
+        )
+        invoice = self._sale(self.overridden_product)
+        lines = self._lines(invoice)
+        accts = {l.account_id for l in lines}
+        self.assertIn(self.per_product_override.id, accts)
+        self.assertNotIn(self.class_sales_acct.id, accts)
+
+    def test_service_wages_class_default_used_when_product_has_none(self):
+        from apps.accounting.models import ItemClassGLDefault
+        ItemClassGLDefault.objects.create(
+            organisation=self.org, product_type="service", wages_account=self.class_wages_acct,
+        )
+        invoice = self._sale(self.service_product)
+        lines = self._lines(invoice)
+        accts = {l.account_id for l in lines}
+        self.assertIn(self.class_wages_acct.id, accts)
+
+    def test_class_default_is_isolated_per_product_type(self):
+        """A default set for 'service' must not leak onto 'physical' items."""
+        from apps.accounting.models import ItemClassGLDefault
+        ItemClassGLDefault.objects.create(
+            organisation=self.org, product_type="service", sales_account=self.class_sales_acct,
+        )
+        invoice = self._sale(self.physical_product)
+        lines = self._lines(invoice)
+        accts = {l.account_id for l in lines}
+        self.assertNotIn(self.class_sales_acct.id, accts)
+        self.assertIn(self.default_revenue.id, accts)
+
+    def test_cross_org_account_rejected(self):
+        other_org = _make_org(_make_user("other_itemclass@example.com"), "Other Item Class Org")
+        foreign_acct = Account.objects.create(
+            organisation=other_org, code="4999", name="Foreign Sales",
+            account_type=AccountType.REVENUE, normal_balance="credit",
+        )
+        res = self.client.post("/api/v1/accounting/item-class-gl-defaults/", {
+            "product_type": "physical", "sales_account": str(foreign_acct.id),
+        }, format="json")
+        self.assertIn(res.status_code, (400, 422), msg=str(res.data))
+
+    def test_duplicate_product_type_rejected(self):
+        from apps.accounting.models import ItemClassGLDefault
+        ItemClassGLDefault.objects.create(organisation=self.org, product_type="physical")
+        res = self.client.post("/api/v1/accounting/item-class-gl-defaults/", {
+            "product_type": "physical",
+        }, format="json")
+        self.assertIn(res.status_code, (400, 422), msg=str(res.data))
+
+    def test_list_and_update_via_api(self):
+        res = self.client.post("/api/v1/accounting/item-class-gl-defaults/", {
+            "product_type": "combo", "sales_account": str(self.class_sales_acct.id),
+        }, format="json")
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        row_id = res.data["id"]
+
+        res = self.client.get("/api/v1/accounting/item-class-gl-defaults/")
+        self.assertEqual(res.status_code, 200)
+        results = res.data.get("results", res.data)
+        self.assertTrue(any(r["id"] == row_id for r in results))
+
+        res = self.client.patch(f"/api/v1/accounting/item-class-gl-defaults/{row_id}/", {
+            "cogs_account": str(self.class_cogs_acct.id),
+        }, format="json")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.assertEqual(res.data["cogs_account_code"], "5910")

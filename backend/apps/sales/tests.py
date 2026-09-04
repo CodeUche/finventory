@@ -1,5 +1,7 @@
 """Tests for sales: invoice CRUD, payment, proforma, sale returns."""
 
+from decimal import Decimal
+
 from django.test import TestCase
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -319,3 +321,297 @@ class InvoiceStatusBypassTests(TestCase):
         self.assertEqual(res.status_code, 200, res.content[:300])
         self.invoice.refresh_from_db()
         self.assertEqual(self.invoice.notes, "Customer asked to hold")
+
+
+class ProductHistoryOpeningBalanceTests(TestCase):
+    """
+    /sales/invoices/product_history/ must show a product's opening balance,
+    not just its sales — otherwise there is no way to see where a stock count
+    started. The opening row must be dated from the take-on's JournalEntry
+    (the date the user specified), not from StockMovement.created_at (the date
+    it happened to be recorded, which can be weeks later for a backdated
+    take-on).
+    """
+
+    def setUp(self):
+        from decimal import Decimal
+        self.user = _make_user("history_owner@example.com")
+        self.org = _make_org(self.user, "History Org")
+        self.client = _auth_client(self.user, self.org)
+        self.customer = _make_customer(self.org)
+        self.warehouse = _make_warehouse(self.org)
+        self.product = Product.objects.create(
+            organisation=self.org, sku="HIST-1", name="History Item",
+            product_type="physical", cost_price=Decimal("500"),
+            selling_price=Decimal("1000"), unit_of_measure="unit",
+        )
+
+    def test_opening_balance_row_uses_journal_entry_date_not_created_at(self):
+        from apps.accounting.services import AccountingService
+        AccountingService.set_item_opening_balance(
+            self.org, self.product, self.warehouse, quantity="20",
+            unit_cost="500", as_of_date="2026-01-01", created_by=self.user,
+        )
+        res = self.client.get(
+            "/api/v1/sales/invoices/product_history/", {"product_id": str(self.product.id)},
+        )
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        results = res.data["results"]
+        opening = [r for r in results if r["status"] == "opening"]
+        self.assertEqual(len(opening), 1, msg=results)
+        row = opening[0]
+        # Backdated to 2026-01-01 — must NOT show today's date (created_at).
+        self.assertEqual(row["issue_date"], "2026-01-01")
+        self.assertEqual(row["quantity"], "20.00")
+        self.assertEqual(row["unit_price"], "500.0000")
+        self.assertEqual(row["warehouse"], "Main")
+        self.assertEqual(row["invoice_number"], "Opening Balance")
+
+    def test_opening_balance_and_sale_both_appear(self):
+        from apps.accounting.services import AccountingService
+        AccountingService.set_item_opening_balance(
+            self.org, self.product, self.warehouse, quantity="20",
+            unit_cost="500", as_of_date="2026-01-01", created_by=self.user,
+        )
+        res = self.client.post(
+            "/api/v1/sales/invoices/",
+            {
+                "customer_id": str(self.customer.id),
+                "warehouse_id": str(self.warehouse.id),
+                "payment_method": "cash",
+                "items": [{"product_id": str(self.product.id), "quantity": 3, "unit_price": "1000.00"}],
+            },
+            format="json",
+        )
+        self.assertIn(res.status_code, (200, 201), msg=str(res.data))
+
+        res = self.client.get(
+            "/api/v1/sales/invoices/product_history/", {"product_id": str(self.product.id)},
+        )
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        results = res.data["results"]
+        statuses = [r["status"] for r in results]
+        self.assertIn("opening", statuses)
+        self.assertTrue(any(s != "opening" for s in statuses), msg=results)
+
+    def test_reposted_opening_balance_updates_row_not_duplicates(self):
+        """Correcting the opening qty must show ONE current row, not a growing history."""
+        from apps.accounting.services import AccountingService
+        AccountingService.set_item_opening_balance(
+            self.org, self.product, self.warehouse, quantity="20",
+            unit_cost="500", as_of_date="2026-01-01", created_by=self.user,
+        )
+        AccountingService.set_item_opening_balance(
+            self.org, self.product, self.warehouse, quantity="35",
+            unit_cost="500", as_of_date="2026-01-05", created_by=self.user,
+        )
+        res = self.client.get(
+            "/api/v1/sales/invoices/product_history/", {"product_id": str(self.product.id)},
+        )
+        opening = [r for r in res.data["results"] if r["status"] == "opening"]
+        self.assertEqual(len(opening), 1, msg=opening)
+        self.assertEqual(opening[0]["quantity"], "35.00")
+        self.assertEqual(opening[0]["issue_date"], "2026-01-05")
+
+    def test_no_opening_balance_means_no_synthetic_row(self):
+        res = self.client.get(
+            "/api/v1/sales/invoices/product_history/", {"product_id": str(self.product.id)},
+        )
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.assertEqual(res.data["results"], [])
+
+    def test_date_filter_applies_to_opening_row(self):
+        from apps.accounting.services import AccountingService
+        AccountingService.set_item_opening_balance(
+            self.org, self.product, self.warehouse, quantity="20",
+            unit_cost="500", as_of_date="2026-01-01", created_by=self.user,
+        )
+        res = self.client.get(
+            "/api/v1/sales/invoices/product_history/",
+            {"product_id": str(self.product.id), "date_from": "2026-02-01"},
+        )
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.assertEqual(res.data["results"], [])
+
+
+class TaxInclusiveExclusiveTests(TestCase):
+    """
+    Product.tax_type — the reviewer's "specify if each item is tax exclusive
+    or inclusive" request. Exclusive is the default and must reproduce every
+    existing product's current math exactly; inclusive must back the tax OUT
+    of the price instead of adding it on top, while the customer-facing total
+    stays what they were quoted either way.
+    """
+
+    def setUp(self):
+        from apps.tax.models import TaxClass
+        self.user = _make_user("taxtype@example.com")
+        self.org = _make_org(self.user, "Tax Type Org")
+        self.client = _auth_client(self.user, self.org)
+        self.customer = _make_customer(self.org)
+        self.warehouse = _make_warehouse(self.org)
+        self.vat = TaxClass.objects.create(organisation=self.org, name="VAT 15%", rate=Decimal("15"))
+
+    def _sale(self, product, unit_price):
+        res = self.client.post("/api/v1/sales/invoices/", {
+            "customer_id": str(self.customer.id),
+            "warehouse_id": str(self.warehouse.id),
+            "payment_method": "cash",
+            "items": [{"product_id": str(product.id), "quantity": 1, "unit_price": unit_price}],
+        }, format="json")
+        self.assertIn(res.status_code, (200, 201), msg=str(res.data))
+        return Invoice.objects.get(id=res.data["id"])
+
+    def test_exclusive_is_the_default_and_matches_prior_behaviour(self):
+        p = Product.objects.create(
+            organisation=self.org, sku="TT-EXCL", name="Exclusive Item",
+            product_type="service", cost_price=0, selling_price=1000,
+            is_taxable=True, tax_class=self.vat,
+        )
+        self.assertEqual(p.tax_type, "exclusive")
+        invoice = self._sale(p, "1000.00")
+        item = invoice.items.first()
+        self.assertAlmostEqual(float(item.tax_amount), 150.0, places=2)   # 15% added on top
+        self.assertAlmostEqual(float(item.line_total), 1150.0, places=2)  # 1000 + 150
+
+    def test_inclusive_backs_tax_out_of_the_price(self):
+        p = Product.objects.create(
+            organisation=self.org, sku="TT-INCL", name="Inclusive Item",
+            product_type="service", cost_price=0, selling_price=1150,
+            is_taxable=True, tax_class=self.vat, tax_type="inclusive",
+        )
+        invoice = self._sale(p, "1150.00")
+        item = invoice.items.first()
+        # 1150 already contains 15% VAT → true tax is 1150 × 15/115 = 150.
+        self.assertAlmostEqual(float(item.tax_amount), 150.0, places=2)
+        # Customer is charged exactly what was quoted — not 1150 + more tax.
+        self.assertAlmostEqual(float(item.line_total), 1150.0, places=2)
+
+    def test_inclusive_and_exclusive_agree_on_the_customer_facing_total_but_split_differently(self):
+        """Same price, same rate — inclusive and exclusive must charge the
+        customer differently (that's the whole point), not just relabel the
+        same numbers."""
+        excl = Product.objects.create(
+            organisation=self.org, sku="TT-CMP-E", name="Compare Exclusive",
+            product_type="service", cost_price=0, selling_price=1000,
+            is_taxable=True, tax_class=self.vat,
+        )
+        incl = Product.objects.create(
+            organisation=self.org, sku="TT-CMP-I", name="Compare Inclusive",
+            product_type="service", cost_price=0, selling_price=1000,
+            is_taxable=True, tax_class=self.vat, tax_type="inclusive",
+        )
+        excl_invoice = self._sale(excl, "1000.00")
+        incl_invoice = self._sale(incl, "1000.00")
+        self.assertAlmostEqual(float(excl_invoice.items.first().line_total), 1150.0, places=2)
+        self.assertAlmostEqual(float(incl_invoice.items.first().line_total), 1000.0, places=2)
+
+    def test_inclusive_with_no_tax_class_behaves_like_untaxed(self):
+        """A product marked inclusive but not actually taxable must not divide
+        by a zero-or-missing rate or otherwise blow up."""
+        p = Product.objects.create(
+            organisation=self.org, sku="TT-NOTAX", name="No Tax Item",
+            product_type="service", cost_price=0, selling_price=500,
+            is_taxable=False, tax_type="inclusive",
+        )
+        invoice = self._sale(p, "500.00")
+        item = invoice.items.first()
+        self.assertAlmostEqual(float(item.tax_amount), 0.0, places=2)
+        self.assertAlmostEqual(float(item.line_total), 500.0, places=2)
+
+
+class InvoiceShippingJournalBalanceTests(TestCase):
+    """
+    Regression: an invoice carrying a delivery/shipping charge must post a
+    BALANCED journal whether or not any line item overrides its own Sales/COGS
+    GL account.
+
+    post_sale_journal has two revenue paths. The default one credits a single
+    `revenue` figure (total - tax) which already contains the shipping. The
+    per-item-override path instead rebuilds revenue from per-item buckets of
+    `line_total - tax_amount` — item values only, with no item owning the
+    shipping. The debit side stayed at the full `total_amount` either way, so
+    the override path came up short by exactly the shipping amount and
+    post_journal_entry (which rejects anything off by more than 0.01) threw,
+    failing the whole invoice.
+    """
+
+    def setUp(self):
+        from apps.accounting.models import Account
+        self.user = _make_user("shipgl@example.com")
+        self.org = _make_org(self.user, "Shipping GL Org")
+        self.client = _auth_client(self.user, self.org)
+        self.customer = _make_customer(self.org)
+        self.warehouse = _make_warehouse(self.org)
+        self.custom_revenue = Account.objects.create(
+            organisation=self.org, code="4090", name="Consulting Revenue",
+            account_type="income", normal_balance="credit",
+        )
+
+    def _sale_with_shipping(self, product, shipping="2500.00"):
+        res = self.client.post("/api/v1/sales/invoices/", {
+            "customer_id": str(self.customer.id),
+            "warehouse_id": str(self.warehouse.id),
+            "payment_method": "cash",
+            "shipping_amount": shipping,
+            "items": [{"product_id": str(product.id), "quantity": 1, "unit_price": "10000.00"}],
+        }, format="json")
+        return res
+
+    def _assert_journal_balances(self, invoice):
+        from apps.accounting.models import JournalEntry
+        entry = JournalEntry.objects.filter(
+            organisation=self.org, source_type="sale", source_ref=str(invoice.id),
+        ).first()
+        self.assertIsNotNone(entry, "Sale journal was never posted")
+        debits = sum(Decimal(str(line.debit)) for line in entry.lines.all())
+        credits = sum(Decimal(str(line.credit)) for line in entry.lines.all())
+        self.assertEqual(debits, credits, f"Journal imbalanced: DR {debits} vs CR {credits}")
+        return entry, debits
+
+    def test_shipping_posts_balanced_without_any_item_override(self):
+        """The path that always worked — guards against regressing it."""
+        p = Product.objects.create(
+            organisation=self.org, sku="SHIP-NOOVR", name="Plain Item",
+            product_type="service", cost_price=0, selling_price=10000,
+        )
+        res = self._sale_with_shipping(p)
+        self.assertIn(res.status_code, (200, 201), msg=str(res.data))
+        invoice = Invoice.objects.get(id=res.data["id"])
+        self.assertEqual(Decimal(str(invoice.shipping_amount)), Decimal("2500.00"))
+        _, debits = self._assert_journal_balances(invoice)
+        self.assertEqual(debits, Decimal(str(invoice.total_amount)))
+
+    def test_shipping_posts_balanced_when_an_item_overrides_its_sales_account(self):
+        """The bug. Before the fix this raised 'Journal entry imbalanced' and
+        the invoice failed to post at all."""
+        p = Product.objects.create(
+            organisation=self.org, sku="SHIP-OVR", name="Overridden Item",
+            product_type="service", cost_price=0, selling_price=10000,
+            sales_account=self.custom_revenue,
+        )
+        res = self._sale_with_shipping(p)
+        self.assertIn(res.status_code, (200, 201), msg=str(res.data))
+        invoice = Invoice.objects.get(id=res.data["id"])
+        entry, debits = self._assert_journal_balances(invoice)
+        self.assertEqual(debits, Decimal(str(invoice.total_amount)))
+
+        # The item's own revenue went to its override; the shipping did not —
+        # it lands on the org default, exactly where the non-override path puts it.
+        by_account = {line.account.code: Decimal(str(line.credit)) for line in entry.lines.all() if line.credit}
+        self.assertEqual(by_account.get("4090"), Decimal("10000.0000"))
+        self.assertNotIn(Decimal("12500.0000"), by_account.values())
+
+    def test_no_shipping_with_override_is_unchanged(self):
+        """Zero shipping must not invent an empty revenue bucket."""
+        p = Product.objects.create(
+            organisation=self.org, sku="SHIP-ZERO", name="No Shipping Item",
+            product_type="service", cost_price=0, selling_price=10000,
+            sales_account=self.custom_revenue,
+        )
+        res = self._sale_with_shipping(p, shipping="0")
+        self.assertIn(res.status_code, (200, 201), msg=str(res.data))
+        invoice = Invoice.objects.get(id=res.data["id"])
+        entry, _ = self._assert_journal_balances(invoice)
+        credit_codes = [line.account.code for line in entry.lines.all() if line.credit]
+        self.assertEqual(credit_codes.count("4090"), 1)

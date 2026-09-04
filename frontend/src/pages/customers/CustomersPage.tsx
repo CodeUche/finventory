@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { confirmDialog } from '@/lib/dialog'
 import { useSearchParams } from 'react-router-dom'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
-import { Plus, Search, Users, X, Pencil, Loader2, FileText, RefreshCw, Download, Trash2, MinusCircle, ChevronRight, Maximize2, Minimize2 } from 'lucide-react'
+import { Plus, Search, Users, X, Pencil, Loader2, FileText, RefreshCw, Download, Trash2, MinusCircle, ChevronRight, Maximize2, Minimize2, Scale } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { customerApi, bypassNextGets } from '@/services/api'
 import ExportButton from '@/components/ExportButton'
@@ -12,6 +12,7 @@ import AmountInput from '@/components/AmountInput'
 import DateInput from '@/components/DateInput'
 import { FieldTooltip } from '@/components/FieldTooltip'
 import GLAccountSelect from '@/components/GLAccountSelect'
+import AdjustOpeningBalanceModal from '@/components/AdjustOpeningBalanceModal'
 import { useAuthStore } from '@/store/authStore'
 import { saveBlobFile } from '@/lib/saveBlobFile'
 import type { Customer } from '@/types'
@@ -98,6 +99,12 @@ export default function CustomersPage() {
   const [form, setForm] = useState<NewCustomerForm>(BLANK)
   const [saving, setSaving] = useState(false)
 
+  // Opening balance — only captured at creation time; adjusting it later goes
+  // through the dedicated "Adjust Opening Balance" action (GL-safe).
+  const [obAmount, setObAmount] = useState('')
+  const [obDate, setObDate] = useState(() => new Date().toISOString().split('T')[0])
+  const [balanceParty, setBalanceParty] = useState<Customer | null>(null)
+
   const [selected, setSelected] = useState<Customer | null>(null)
   const [showEditModal, setShowEditModal] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
@@ -156,10 +163,21 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
     if (!form.name.trim()) { toast.error('Customer name required'); return }
     setSaving(true)
     try {
-      await customerApi.create(toPayload(form))
+      const { data: created } = await customerApi.create(toPayload(form))
+      const amt = parseFloat(stripCommas(obAmount)) || 0
+      if (amt > 0) {
+        await customerApi.setOpeningBalance(created.id, { amount: amt, side: 'debit', as_of_date: obDate })
+      }
       toast.success('Customer added')
       setShowModal(false)
       setForm(BLANK)
+      setObAmount('')
+      setObDate(new Date().toISOString().split('T')[0])
+      // Unconditional: the fresh-cache gate's invalidation heuristic doesn't
+      // reliably clear the list cache for every mutation shape (confirmed live —
+      // a plain create could leave the list showing stale data for up to 5 min),
+      // so force the very next read to hit the network instead of trusting it.
+      bypassNextGets()
       load()
     } catch { toast.error('Failed to create customer') }
     finally { setSaving(false) }
@@ -714,6 +732,21 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
                   </div>
                   <ChevronRight size={14} className="text-slate-500 group-hover:text-orange-400 transition-colors" />
                 </button>
+                <button
+                  onClick={() => setBalanceParty(selected)}
+                  className="w-full flex items-center justify-between px-4 py-3 mt-2 rounded-xl border border-brand-500/30 bg-brand-500/5 hover:bg-brand-500/10 transition-colors group"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-brand-500/15 flex items-center justify-center">
+                      <Scale size={15} className="text-brand-400" />
+                    </div>
+                    <div className="text-left">
+                      <p className="text-sm font-medium text-white">Adjust Opening Balance</p>
+                      <p className="text-[10px] text-slate-500">Correct the take-on figure for this customer</p>
+                    </div>
+                  </div>
+                  <ChevronRight size={14} className="text-slate-500 group-hover:text-brand-400 transition-colors" />
+                </button>
               </div>
             </div>
           </aside>
@@ -1212,6 +1245,15 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
                 <GLAccountSelect value={form.receivable_account}
                   onChange={(v) => setForm({ ...form, receivable_account: v })} />
               </div>
+
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Opening Balance<FieldTooltip text="What this customer already owed you before starting to use Audity, if anything. Posts a GL-correct take-on entry." /></label>
+                <AmountInput className="input" placeholder="0.00" value={obAmount} onChange={setObAmount} />
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Opening Balance As At</label>
+                <DateInput value={obDate} onChange={setObDate} />
+              </div>
             </div>
 
             <div className="flex gap-3 pt-1">
@@ -1224,6 +1266,27 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
             </div>
           </div>
         </div>
+      )}
+
+      {balanceParty && (
+        <AdjustOpeningBalanceModal
+          partyName={balanceParty.name}
+          partyLabel="Customer"
+          currentBalance={parseFloat(balanceParty.outstanding_balance ?? '0') || 0}
+          naturalSide="debit"
+          onClose={() => setBalanceParty(null)}
+          onSave={async (amount, side, asOfDate) => {
+            try {
+              await customerApi.setOpeningBalance(balanceParty.id, { amount, side, as_of_date: asOfDate })
+              toast.success('Opening balance updated')
+              bypassNextGets()
+              load()
+            } catch {
+              toast.error('Failed to update opening balance')
+              throw new Error('set-opening-balance failed')
+            }
+          }}
+        />
       )}
     </div>
   )

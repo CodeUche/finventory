@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, FileText, Plus, Trash2, User, UserCheck, Warehouse, X } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { customerApi, inventoryApi, locationApi, salesApi } from '@/services/api'
+import { customerApi, inventoryApi, locationApi, salesApi, taxApi } from '@/services/api'
 import { formatCurrency, normalizeAmountStr, stripCommas } from '@/lib/utils'
 import AmountInput from '@/components/AmountInput'
 import EditableTotal from '@/components/EditableTotal'
@@ -18,9 +18,14 @@ interface InvoiceLine {
   quantity: string
   unit_price: string
   discount_percent: string
+  is_taxable: boolean
+  tax_class: string | null
 }
 
-const BLANK_LINE: InvoiceLine = { product: '', product_name: '', quantity: '1', unit_price: '', discount_percent: '0' }
+const BLANK_LINE: InvoiceLine = {
+  product: '', product_name: '', quantity: '1', unit_price: '', discount_percent: '0',
+  is_taxable: false, tax_class: null,
+}
 
 const today = new Date().toISOString().split('T')[0]
 const inThirtyDays = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0]
@@ -86,11 +91,26 @@ export default function NewInvoicePage() {
 
   const selectProduct = (i: number, p: Product) => {
     setLines((prev) => prev.map((l, idx) =>
-      idx === i ? { ...l, product: p.id, product_name: p.name, unit_price: normalizeAmountStr(p.selling_price) } : l
+      idx === i
+        ? { ...l, product: p.id, product_name: p.name, unit_price: normalizeAmountStr(p.selling_price), is_taxable: p.is_taxable, tax_class: p.tax_class }
+        : l
     ))
     setProductQueries((prev) => prev.map((q, idx) => (idx === i ? p.name : q)))
     setOpenProductDrop(null)
   }
+
+  // ── VAT — mirrors the backend's SaleService._process_line_item calc exactly
+  // (rate applied to the post-discount amount) so the preview never drifts
+  // from what actually gets posted.
+  const [taxRates, setTaxRates] = useState<Record<string, number>>({})
+  useEffect(() => {
+    taxApi.classes().then(({ data }) => {
+      const list = data.results ?? data
+      const map: Record<string, number> = {}
+      for (const c of list) map[c.id] = parseFloat(c.rate)
+      setTaxRates(map)
+    }).catch(() => {})
+  }, [])
 
   const addLine = () => {
     setLines((prev) => [...prev, { ...BLANK_LINE }])
@@ -138,7 +158,20 @@ export default function NewInvoicePage() {
     const lineTotal = (parseFloat(stripCommas(l.unit_price)) || 0) * (parseFloat(l.quantity) || 0)
     return sum + (lineTotal * (parseFloat(l.discount_percent) || 0)) / 100
   }, 0)
-  const grandTotal = subtotal - discountTotal
+  // Line-items-only total (post-discount, pre-VAT) — this is what EditableTotal's
+  // "edit total" back-solves unit prices against, since it has no notion of tax.
+  const lineItemsTotal = subtotal - discountTotal
+  const lineVat = (l: InvoiceLine) => {
+    if (!l.is_taxable || !l.tax_class) return 0
+    const rate = taxRates[l.tax_class] ?? 0
+    const lineTotal = (parseFloat(stripCommas(l.unit_price)) || 0) * (parseFloat(l.quantity) || 0)
+    const afterDiscount = lineTotal - (lineTotal * (parseFloat(l.discount_percent) || 0)) / 100
+    return (afterDiscount * rate) / 100
+  }
+  const taxTotal = lines.reduce((sum, l) => sum + lineVat(l), 0)
+  const [shippingAmount, setShippingAmount] = useState('')
+  const shippingNum = parseFloat(stripCommas(shippingAmount)) || 0
+  const grandTotal = lineItemsTotal + taxTotal + shippingNum
 
   // ── Fulfillment ─────────────────────────────────────────────────────────
   // Invoices bill the customer now; stock/GL posting is deferred until the
@@ -171,6 +204,7 @@ export default function NewInvoicePage() {
     issue_date: issueDate,
     due_date: dueDate || null,
     defer_fulfillment: !fulfillNow,
+    shipping_amount: shippingNum.toFixed(4),
     items: lines.map((l) => ({
       product_id: l.product,
       quantity: parseFloat(l.quantity) || 1,
@@ -295,15 +329,16 @@ export default function NewInvoicePage() {
           <div className="card p-4">
             <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Line Items</p>
             <div className="grid grid-cols-12 gap-2 mb-1">
-              <span className="col-span-4 text-[11px] text-slate-400 uppercase">Product</span>
+              <span className="col-span-3 text-[11px] text-slate-400 uppercase">Product</span>
               <span className="col-span-2 text-[11px] text-slate-400 uppercase">Qty</span>
-              <span className="col-span-3 text-[11px] text-slate-400 uppercase">Unit Price</span>
+              <span className="col-span-2 text-[11px] text-slate-400 uppercase">Unit Price</span>
               <span className="col-span-2 text-[11px] text-slate-400 uppercase">Disc %</span>
+              <span className="col-span-2 text-[11px] text-slate-400 uppercase">VAT</span>
             </div>
             <div className="space-y-2">
               {lines.map((line, i) => (
                 <div key={i} className="grid grid-cols-12 gap-2 items-center">
-                  <div className="col-span-4 relative" ref={(el) => { lineSearchRefs.current[i] = el }}>
+                  <div className="col-span-3 relative" ref={(el) => { lineSearchRefs.current[i] = el }}>
                     <input
                       className="input py-1.5 text-sm"
                       placeholder="Search product…"
@@ -333,11 +368,14 @@ export default function NewInvoicePage() {
                   <div className="col-span-2">
                     <input type="number" min="1" className="input py-1.5 text-sm" placeholder="Qty" value={line.quantity} onChange={(e) => updateLine(i, 'quantity', e.target.value)} />
                   </div>
-                  <div className="col-span-3">
+                  <div className="col-span-2">
                     <AmountInput className="input py-1.5 text-sm" placeholder="Unit Price" value={line.unit_price} onChange={(v) => updateLine(i, 'unit_price', v)} />
                   </div>
                   <div className="col-span-2">
                     <input type="number" min="0" max="100" className="input py-1.5 text-sm" placeholder="Disc%" value={line.discount_percent} onChange={(e) => updateLine(i, 'discount_percent', e.target.value)} />
+                  </div>
+                  <div className="col-span-2 text-sm text-slate-400 truncate" title={line.is_taxable && line.tax_class ? `${(taxRates[line.tax_class] ?? 0)}% VAT` : 'Not taxable'}>
+                    {line.is_taxable && line.tax_class ? formatCurrency(lineVat(line)) : '—'}
                   </div>
                   <div className="col-span-1 flex justify-center">
                     <button onClick={() => removeLine(i)} className="p-1 text-slate-500 hover:text-red-400 transition-colors" disabled={lines.length === 1}>
@@ -465,9 +503,9 @@ export default function NewInvoicePage() {
                   <span>− {formatCurrency(discountTotal)}</span>
                 </div>
               )}
-              <div className="border-t border-surface-700 pt-2 text-base">
+              <div className="text-base">
                 <EditableTotal
-                  total={grandTotal}
+                  total={lineItemsTotal}
                   valueClass="text-white font-semibold"
                   lines={lines.map((l) => ({
                     quantity: parseFloat(l.quantity) || 0,
@@ -476,6 +514,20 @@ export default function NewInvoicePage() {
                   }))}
                   onApply={(prices) => setLines((prev) => prev.map((l, i) => ({ ...l, unit_price: String(prices[i]) })))}
                 />
+              </div>
+              {taxTotal > 0 && (
+                <div className="flex justify-between text-blue-400">
+                  <span>VAT</span>
+                  <span>+ {formatCurrency(taxTotal)}</span>
+                </div>
+              )}
+              <div className="flex justify-between items-center text-slate-400">
+                <span>Delivery / Shipping <FieldTooltip text="Optional delivery or shipping charge, added on top of the line items and VAT." /></span>
+                <AmountInput className="input py-1 text-sm text-right max-w-[140px]" placeholder="0.00" value={shippingAmount} onChange={setShippingAmount} />
+              </div>
+              <div className="border-t border-surface-700 pt-2 flex justify-between items-center font-bold text-base">
+                <span className="text-white">Grand Total</span>
+                <span className="text-brand-400">{formatCurrency(grandTotal)}</span>
               </div>
               {recordPaymentNow && tenderedNum > 0 && (
                 <>

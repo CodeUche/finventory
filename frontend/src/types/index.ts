@@ -71,6 +71,52 @@ export interface Organisation {
   enabled_payment_types?: string[]
 }
 
+export interface ProductImage {
+  id: string
+  product: string
+  image: string
+  sort_order: number
+  is_main: boolean
+  created_at: string
+}
+
+export interface ItemClassGLDefault {
+  id: string
+  product_type: 'physical' | 'service' | 'digital' | 'variable' | 'combo'
+  sales_account: string | null
+  sales_account_code: string | null
+  sales_account_name: string | null
+  cogs_account: string | null
+  cogs_account_code: string | null
+  cogs_account_name: string | null
+  inventory_account: string | null
+  inventory_account_code: string | null
+  inventory_account_name: string | null
+  wages_account: string | null
+  wages_account_code: string | null
+  wages_account_name: string | null
+}
+
+export interface ProductVariantSummary {
+  id: string
+  sku: string
+  name: string
+  variant_attributes: Record<string, string>
+  cost_price: string
+  selling_price: string
+  is_active: boolean
+  total_stock: number
+}
+
+export interface ComboComponent {
+  id: string
+  combo_product: string
+  component_product: string
+  component_product_sku: string
+  component_product_name: string
+  quantity: string
+}
+
 // ─── Product ──────────────────────────────────────────────────────────────────
 export interface Product {
   id: string
@@ -80,7 +126,7 @@ export interface Product {
   category: string | null
   category_name: string | null
   unit_of_measure: string
-  product_type?: 'physical' | 'service' | 'digital'
+  product_type?: 'physical' | 'service' | 'digital' | 'variable' | 'combo'
   alcohol_percentage?: number
   volume_ml?: number
   cost_price: string
@@ -95,6 +141,27 @@ export interface Product {
   inventory_account?: string | null
   inventory_account_code?: string | null
   inventory_account_name?: string | null
+  sales_account?: string | null
+  sales_account_code?: string | null
+  sales_account_name?: string | null
+  cogs_account?: string | null
+  cogs_account_code?: string | null
+  cogs_account_name?: string | null
+  wages_account?: string | null
+  wages_account_code?: string | null
+  wages_account_name?: string | null
+  costing_method?: 'fifo' | 'lifo' | 'average' | 'specific'
+  tax_type?: 'exclusive' | 'inclusive'
+  barcode_symbology?: 'code128' | 'code39' | 'ean8' | 'ean13' | 'upc'
+  image?: string | null
+  images?: ProductImage[]
+  parent_product?: string | null
+  parent_product_sku?: string | null
+  parent_product_name?: string | null
+  variant_attributes?: Record<string, string>
+  variants?: ProductVariantSummary[]
+  combo_components?: ComboComponent[]
+  custom_fields?: Record<string, string>
   total_stock: number
 }
 
@@ -124,6 +191,7 @@ export interface Customer {
   address?: string
   credit_limit: string
   outstanding_balance: string
+  opening_balance_date?: string | null
   store_credit: string
   available_credit: string
   is_credit_blocked: boolean
@@ -319,6 +387,10 @@ export interface PurchaseOrderItem {
   quantity_ordered: string
   quantity_received: string
   unit_cost: string
+  discount_percent?: string
+  discount_amount?: string
+  tax_rate?: string
+  tax_amount?: string
   line_total: string
   batch_number: string
   expiry_date: string | null
@@ -335,11 +407,44 @@ export interface PurchaseOrder {
   status: 'draft' | 'sent' | 'partially_received' | 'received' | 'closed' | 'canceled'
   order_date: string
   expected_date: string | null
+  subtotal?: string
+  discount_amount?: string
+  tax_amount?: string
+  delivery_amount?: string
   total_amount: string
   notes: string
   receipt: string | null
   created_at: string
   items?: PurchaseOrderItem[]
+}
+
+export interface PurchaseReturnItem {
+  id: string
+  product: string
+  product_name: string
+  product_sku: string
+  quantity_returned: string
+  unit_cost: string
+  line_total: string
+}
+
+export interface PurchaseReturn {
+  id: string
+  return_number: string
+  purchase_order: string
+  po_number: string
+  supplier: string
+  supplier_name: string | null
+  warehouse: string
+  return_date: string
+  reason: string
+  refund_method: 'ap' | 'cash' | 'bank'
+  subtotal: string
+  tax_amount: string
+  total_amount: string
+  gl_post_status: string
+  items: PurchaseReturnItem[]
+  created_at: string
 }
 
 // ─── Reports ──────────────────────────────────────────────────────────────────
@@ -505,6 +610,8 @@ export interface Bill {
   issue_date: string
   due_date: string
   reference: string
+  source_purchase_order?: string | null
+  source_po_number?: string | null
   subtotal: string
   tax_amount: string
   total_amount: string

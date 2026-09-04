@@ -112,22 +112,29 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
             return cached
 
         # ── Plan limit check (atomic to prevent race-condition bypass) ────────
+        # Guarded end-to-end: a bug or transient DB error in the limit check itself
+        # must never block a legitimate sale with an opaque 500 ("unexpected error
+        # occurred") — it should fail open (allow the write) and log, the same
+        # best-effort posture used for GL posting elsewhere in this codebase.
         from django.db import transaction as _tx
         from django.utils import timezone as _tz
         from apps.subscriptions.services import SubscriptionService
         from apps.tenancy.models import Organisation
-        org = self._get_organisation()
-        _now = _tz.now()
-        with _tx.atomic():
-            Organisation.objects.select_for_update().get(pk=org.pk)
-            monthly_count = Invoice.objects.filter(
-                organisation=org,
-                created_at__year=_now.year,
-                created_at__month=_now.month,
-            ).count()
-            _limit_err = SubscriptionService.get_write_limit_error(org, "max_invoices_per_month", monthly_count)
-            if _limit_err:
-                return Response({"error": _limit_err, "upgrade_required": True}, status=402)
+        try:
+            org = self._get_organisation()
+            _now = _tz.now()
+            with _tx.atomic():
+                Organisation.objects.select_for_update().get(pk=org.pk)
+                monthly_count = Invoice.objects.filter(
+                    organisation=org,
+                    created_at__year=_now.year,
+                    created_at__month=_now.month,
+                ).count()
+                _limit_err = SubscriptionService.get_write_limit_error(org, "max_invoices_per_month", monthly_count)
+                if _limit_err:
+                    return Response({"error": _limit_err, "upgrade_required": True}, status=402)
+        except Exception:
+            logger.exception("Invoice plan-limit check failed; allowing the write through")
         # ─────────────────────────────────────────────────────────────────────
 
         serializer = CreateSaleSerializer(data=request.data)
@@ -188,6 +195,7 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
                 location=location,
                 wht_rate_id=d.get("wht_rate_id"),
                 defer_fulfillment=d.get("defer_fulfillment", False),
+                shipping_amount=d.get("shipping_amount"),
             )
             try:
                 from apps.core.models import AuditLog as _AL
@@ -482,9 +490,11 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
             return Response(SaleReturnSerializer(sale_return).data, status=201)
         except ValueError as e:
             return Response({"error": str(e)}, status=422)
-        except Exception:
+        except Exception as e:
             logger.exception("Unexpected error processing return")
-            return Response({"error": "An unexpected error occurred. Please try again."}, status=422)
+            return Response(
+                {"error": f"Could not process this return: {type(e).__name__}: {e}"}, status=422
+            )
 
 
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsStaff])
@@ -494,6 +504,7 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
             from django.db import transaction as _tx
             from apps.inventory.services import InventoryService
             from apps.inventory.models import StockMovement
+            from apps.core.utils import round_money
             with _tx.atomic():
                 # Re-read with row lock to prevent concurrent double-confirmation
                 invoice = Invoice.objects.select_for_update().get(
@@ -503,8 +514,20 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
                 if invoice.status != Invoice.Status.PROFORMA:
                     return Response({"error": "Only proforma invoices can be confirmed this way"}, status=422)
                 for item in invoice.items.all():
-                    if item.product.product_type != "service":
-                        InventoryService.record_movement(
+                    if item.product.product_type == "combo":
+                        cost_per_unit = InventoryService.consume_combo_components(
+                            organisation=invoice.organisation,
+                            combo_product=item.product,
+                            warehouse=invoice.warehouse,
+                            quantity=item.quantity,
+                            reference=invoice.invoice_number,
+                            created_by=request.user,
+                        )
+                        if item.quantity:
+                            item.cost_of_goods = round_money(item.quantity * cost_per_unit)
+                            item.save(update_fields=["cost_of_goods", "updated_at"])
+                    elif item.product.product_type != "service":
+                        movement = InventoryService.record_movement(
                             organisation=invoice.organisation,
                             product=item.product,
                             warehouse=invoice.warehouse,
@@ -514,13 +537,22 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
                             reference=invoice.invoice_number,
                             created_by=request.user,
                             batch=item.batch,
+                            use_costing_engine=True,
                         )
+                        # Confirming is where a proforma's stock actually leaves,
+                        # so restate the provisional cost from what the ledger
+                        # consumed — the GL posts off cost_of_goods later.
+                        if item.quantity:
+                            item.cost_of_goods = round_money(item.quantity * movement.unit_cost)
+                            item.save(update_fields=["cost_of_goods", "updated_at"])
                 invoice.status = Invoice.Status.CONFIRMED
                 invoice.save(update_fields=["status"])
             return Response(InvoiceSerializer(invoice).data)
-        except Exception:
+        except Exception as e:
             logger.exception("Error confirming proforma")
-            return Response({"error": "An unexpected error occurred. Please try again."}, status=422)
+            return Response(
+                {"error": f"Could not confirm this proforma: {type(e).__name__}: {e}"}, status=422
+            )
 
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsStaff])
     def fulfill(self, request, pk=None):
@@ -531,9 +563,11 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
             return Response(InvoiceSerializer(invoice).data)
         except ValueError as e:
             return Response({"error": str(e)}, status=422)
-        except Exception:
+        except Exception as e:
             logger.exception("Error fulfilling invoice")
-            return Response({"error": "An unexpected error occurred. Please try again."}, status=422)
+            return Response(
+                {"error": f"Could not fulfil this invoice: {type(e).__name__}: {e}"}, status=422
+            )
 
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsOwnerOrAdmin])
     def delete_invoice(self, request, pk=None):
@@ -551,9 +585,11 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
             return Response(status=204)
         except ValueError as e:
             return Response({"error": str(e)}, status=422)
-        except Exception:
+        except Exception as e:
             logger.exception("Error deleting invoice")
-            return Response({"error": "An unexpected error occurred. Please try again."}, status=422)
+            return Response(
+                {"error": f"Could not delete this invoice: {type(e).__name__}: {e}"}, status=422
+            )
 
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsStaff])
     def send_email(self, request, pk=None):
@@ -934,7 +970,10 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
     @action(detail=False, methods=["get"])
     def product_history(self, request):
         """GET /api/v1/sales/invoices/product_history/?product_id=<uuid>
-        Returns all sale line items for a specific product (most recent first).
+        Returns all sale line items for a specific product (most recent first),
+        with a synthetic "Opening Balance" row prepended per warehouse that has
+        take-on stock — otherwise this view (and the "Sales History" modal it
+        backs) never shows where a product's stock count actually started.
         """
         org = self._get_organisation()
         product_id = request.query_params.get("product_id")
@@ -986,7 +1025,59 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
                 }
             )
 
-        return Response({"product_name": product.name, "results": results})
+        # Opening balance — one row per warehouse with take-on stock, shaped like
+        # a SaleItem row so it slots into the same table/export without a
+        # frontend contract change. StockMovement has no date field of its own
+        # for a backdated take-on (created_at would show "today" rather than the
+        # date the user specified), so the real date is resolved from the linked
+        # opening-balance JournalEntry's entry_date instead.
+        import decimal
+        from apps.inventory.models import StockMovement
+        from apps.accounting.models import JournalEntry
+
+        opening_moves = list(
+            StockMovement.objects.filter(
+                organisation=org, product=product, movement_type="opening",
+            ).select_related("warehouse").order_by("warehouse_id", "-created_at")
+        )
+        qty_by_wh = {}
+        latest_by_wh = {}
+        for m in opening_moves:
+            qty_by_wh[m.warehouse_id] = qty_by_wh.get(m.warehouse_id, decimal.Decimal("0")) + m.quantity
+            latest_by_wh.setdefault(m.warehouse_id, m)  # first seen per warehouse = most recent (order_by -created_at)
+
+        date_from_d = datetime.date.fromisoformat(date_from) if date_from else None
+        date_to_d = datetime.date.fromisoformat(date_to) if date_to else None
+
+        opening_rows = []
+        for wh_id, qty in qty_by_wh.items():
+            if qty == 0:
+                continue
+            latest = latest_by_wh[wh_id]
+            je = JournalEntry.objects.filter(
+                organisation=org, source_type="opening_balance",
+                source_ref__startswith=latest.reference,
+            ).order_by("-created_at").first()
+            take_on_date = je.entry_date if je else latest.created_at.date()
+            if date_from_d and take_on_date < date_from_d:
+                continue
+            if date_to_d and take_on_date > date_to_d:
+                continue
+            opening_rows.append({
+                "invoice_id": f"opening-{wh_id}",
+                "invoice_number": "Opening Balance",
+                "issue_date": take_on_date.isoformat(),
+                "customer_name": "—",
+                "sold_by": "—",
+                "warehouse": latest.warehouse.name,
+                "payment_method": "",
+                "quantity": str(qty),
+                "unit_price": str(latest.unit_cost),
+                "line_total": str(qty * latest.unit_cost),
+                "status": "opening",
+            })
+
+        return Response({"product_name": product.name, "results": opening_rows + results})
 
 
 class InvoiceFolderViewSet(TenantFilterMixin, viewsets.ModelViewSet):

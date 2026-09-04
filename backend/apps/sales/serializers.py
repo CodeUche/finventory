@@ -83,7 +83,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
             "id", "invoice_number", "folder", "folder_name", "customer", "customer_name",
             "status", "payment_method", "issue_date", "due_date", "warehouse",
             "location", "location_name",
-            "subtotal", "discount_amount", "tax_amount", "total_amount",
+            "subtotal", "discount_amount", "tax_amount", "shipping_amount", "total_amount",
             "credit_applied", "amount_paid", "amount_due", "notes", "sold_by",
             "is_deferred", "fulfilled_at",
             "items", "payments", "created_at",
@@ -94,7 +94,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             "id", "invoice_number", "subtotal", "discount_amount",
-            "tax_amount", "total_amount", "credit_applied", "amount_paid", "amount_due", "created_at",
+            "tax_amount", "shipping_amount", "total_amount", "credit_applied", "amount_paid", "amount_due", "created_at",
             "is_deferred", "fulfilled_at",
             "firs_status", "firs_irn", "firs_invoice_number", "firs_csid", "firs_qr_code",
         ]
@@ -125,6 +125,9 @@ class CreateSaleSerializer(serializers.Serializer):
     due_date = serializers.DateField(required=False, allow_null=True)
     is_proforma = serializers.BooleanField(required=False, default=False)
     defer_fulfillment = serializers.BooleanField(required=False, default=False, write_only=True)
+    shipping_amount = serializers.DecimalField(
+        max_digits=15, decimal_places=4, required=False, default=Decimal("0"), min_value=Decimal("0")
+    )
 
     def validate(self, attrs):
         issue_date = attrs.get('issue_date')

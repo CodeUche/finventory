@@ -131,6 +131,19 @@ class AccountMappingService:
     }
 
     @classmethod
+    def get_item_class_defaults(cls, organisation) -> dict:
+        """
+        {product_type: ItemClassGLDefault} for this org, one query. Sits
+        between a per-product override and the org-wide AccountMapping
+        default — see ItemClassGLDefault's docstring for why.
+        """
+        from .models import ItemClassGLDefault
+        return {
+            row.product_type: row
+            for row in ItemClassGLDefault.objects.filter(organisation=organisation)
+        }
+
+    @classmethod
     def get_or_create_mapping(cls, organisation) -> 'AccountMapping':
         mapping, created = AccountMapping.objects.get_or_create(organisation=organisation)
         if created:
@@ -469,6 +482,106 @@ class AccountingService:
 
     @staticmethod
     @transaction.atomic
+    def set_customer_opening_balance(organisation, customer, amount, side, as_of_date, created_by=None):
+        """
+        Take-on opening balance for a SINGLE customer — the per-customer "Adjust
+        Opening Balance" action, as opposed to set_subledger_opening_balances'
+        batch wizard. Mirrors set_account_opening_balance's single-party pattern.
+
+        side: 'debit' (customer owes us — the common case) or 'credit' (customer
+        is prepaid/in credit). Reverses only THIS customer's prior take-on entry,
+        so adjusting one customer never disturbs any other customer, supplier,
+        item, or the wizard's own date-scoped take-on.
+        """
+        as_of_date = AccountingService._coerce_date(as_of_date)
+        amount = Decimal(str(amount or 0))
+        side = AccountingService._normalise_side(side, 'debit')
+        ref_prefix = f"opening-customer-{customer.id}"
+
+        prior = JournalEntry.objects.filter(
+            organisation=organisation, source_type='opening_balance',
+            source_ref__startswith=ref_prefix, status='posted',
+        )
+        AccountingService._reverse_prior_entries(prior, actor=created_by)
+
+        customer.outstanding_balance = amount if side == 'debit' else -amount
+        customer.opening_balance_date = as_of_date
+        customer.save(update_fields=['outstanding_balance', 'opening_balance_date', 'updated_at'])
+
+        if amount <= 0:
+            return None
+
+        account = AccountingService._resolve_party_account(
+            organisation, customer, 'receivable_account', 'accounts_receivable', '1100')
+        suspense = AccountingService.get_or_create_suspense_account(organisation)
+        if side == 'debit':
+            lines = [(account, amount, Decimal('0')), (suspense, Decimal('0'), amount)]
+        else:
+            lines = [(account, Decimal('0'), amount), (suspense, amount, Decimal('0'))]
+
+        import uuid
+        return AccountingService.post_journal_entry(
+            organisation,
+            description=f"Opening balance — {customer.name}",
+            entry_date=as_of_date,
+            lines=lines,
+            created_by=created_by,
+            ref='OPEN',
+            source_type='opening_balance',
+            source_ref=f"{ref_prefix}-{uuid.uuid4().hex[:12]}",
+        )
+
+    @staticmethod
+    @transaction.atomic
+    def set_supplier_opening_balance(organisation, supplier, amount, side, as_of_date, created_by=None):
+        """
+        Take-on opening balance for a SINGLE supplier — the per-supplier "Adjust
+        Opening Balance" action. Mirrors set_customer_opening_balance above.
+
+        side: 'credit' (we owe them — the common case) or 'debit' (we've prepaid
+        an advance). Supplier.opening_balance is positive when we owe them, the
+        reverse convention from Customer.outstanding_balance.
+        """
+        as_of_date = AccountingService._coerce_date(as_of_date)
+        amount = Decimal(str(amount or 0))
+        side = AccountingService._normalise_side(side, 'credit')
+        ref_prefix = f"opening-supplier-{supplier.id}"
+
+        prior = JournalEntry.objects.filter(
+            organisation=organisation, source_type='opening_balance',
+            source_ref__startswith=ref_prefix, status='posted',
+        )
+        AccountingService._reverse_prior_entries(prior, actor=created_by)
+
+        supplier.opening_balance = amount if side == 'credit' else -amount
+        supplier.opening_balance_date = as_of_date
+        supplier.save(update_fields=['opening_balance', 'opening_balance_date', 'updated_at'])
+
+        if amount <= 0:
+            return None
+
+        account = AccountingService._resolve_party_account(
+            organisation, supplier, 'payable_account', 'accounts_payable', '2001')
+        suspense = AccountingService.get_or_create_suspense_account(organisation)
+        if side == 'credit':
+            lines = [(suspense, amount, Decimal('0')), (account, Decimal('0'), amount)]
+        else:
+            lines = [(account, amount, Decimal('0')), (suspense, Decimal('0'), amount)]
+
+        import uuid
+        return AccountingService.post_journal_entry(
+            organisation,
+            description=f"Opening balance — {supplier.name}",
+            entry_date=as_of_date,
+            lines=lines,
+            created_by=created_by,
+            ref='OPEN',
+            source_type='opening_balance',
+            source_ref=f"{ref_prefix}-{uuid.uuid4().hex[:12]}",
+        )
+
+    @staticmethod
+    @transaction.atomic
     def set_subledger_opening_balances(organisation, as_of_date, customers=None,
                                        suppliers=None, items=None, created_by=None):
         """
@@ -670,6 +783,82 @@ class AccountingService:
                 f"level because stock from the original take-on has already been sold or "
                 f"transferred. Post a stock adjustment instead."
             )
+
+    @staticmethod
+    @transaction.atomic
+    def set_item_opening_balance(organisation, product, warehouse, quantity, as_of_date,
+                                  unit_cost=None, side=None, created_by=None):
+        """
+        Take-on opening balance for a SINGLE inventory item at a single warehouse —
+        the product-creation and CSV-import path (as opposed to the Beginning
+        Balances wizard's batch `set_subledger_opening_balances`, which resyncs
+        every item/customer/supplier for a date in one go).
+
+        Reverses only THIS product+warehouse's prior take-on entry (keyed per-item,
+        mirroring `set_account_opening_balance`), so creating or re-editing one
+        product's opening stock never disturbs any other item, customer, supplier,
+        or the wizard's own date-scoped take-on. Posts Debit mapped inventory
+        account / Credit Take-On Suspense for a positive balance, reversed for a
+        negative one — the same accounting entries the wizard posts.
+
+        Passing quantity<=0 clears the item's opening balance (backs out the stock
+        and reverses the journal) without posting a new one.
+        """
+        from apps.inventory.models import StockMovement
+
+        as_of_date = AccountingService._coerce_date(as_of_date)
+        quantity = Decimal(str(quantity or 0))
+        side = AccountingService._normalise_side(side, 'debit')
+        if quantity < 0:
+            quantity, side = -quantity, ('credit' if side == 'debit' else 'debit')
+        signed_qty = quantity if side == 'debit' else -quantity
+
+        ref_prefix = f"opening-item-{product.id}-{warehouse.id}"
+
+        prior_qty = StockMovement.objects.filter(
+            organisation=organisation, movement_type='opening', reference=ref_prefix,
+        ).aggregate(q=Sum('quantity'))['q'] or Decimal('0')
+        delta = signed_qty - prior_qty
+
+        prior_entries = JournalEntry.objects.filter(
+            organisation=organisation, source_type='opening_balance',
+            source_ref__startswith=ref_prefix, status='posted',
+        )
+        AccountingService._reverse_prior_entries(prior_entries, actor=created_by)
+
+        unit_cost = Decimal(str(unit_cost if unit_cost is not None else (product.cost_price or 0)))
+        if delta != 0:
+            AccountingService._move_opening_stock(
+                organisation, product, warehouse, delta, unit_cost,
+                ref_prefix, as_of_date, created_by,
+            )
+
+        if signed_qty == 0:
+            return None
+
+        account = AccountingService._resolve_party_account(
+            organisation, product, 'inventory_account', 'inventory_account', '1200')
+        amount = abs(signed_qty * unit_cost)
+        if amount == 0:
+            return None
+
+        suspense = AccountingService.get_or_create_suspense_account(organisation)
+        if signed_qty > 0:
+            lines = [(account, amount, Decimal('0')), (suspense, Decimal('0'), amount)]
+        else:
+            lines = [(account, Decimal('0'), amount), (suspense, amount, Decimal('0'))]
+
+        import uuid
+        return AccountingService.post_journal_entry(
+            organisation,
+            description=f"Opening stock — {product.sku} at {warehouse.name} as of {as_of_date}",
+            entry_date=as_of_date,
+            lines=lines,
+            created_by=created_by,
+            ref='OPEN',
+            source_type='opening_balance',
+            source_ref=f"{ref_prefix}-{uuid.uuid4().hex[:12]}",
+        )
 
     @staticmethod
     def _ledger_balance(account, as_of=None):
@@ -1493,7 +1682,11 @@ class AccountingService:
 
         # Determine payment method → which asset account to debit
         payment = SalePayment.objects.filter(invoice=invoice).first()
-        ar_acct = AccountMappingService.resolve(organisation, 'accounts_receivable')
+        # Honour the customer's own receivable-account override (set on the
+        # customer record) before falling back to the org default — previously
+        # every sale ignored it and always posted to the org-wide AR account.
+        ar_acct = AccountingService._resolve_party_account(
+            organisation, invoice.customer, 'receivable_account', 'accounts_receivable', '1100')
 
         if payment:
             if payment.method == 'cash':
@@ -1505,7 +1698,36 @@ class AccountingService:
         else:
             asset_account = ar_acct
 
-        revenue_acct = AccountMappingService.resolve(organisation, 'revenue_account')
+        revenue_acct_default = AccountMappingService.resolve(organisation, 'revenue_account')
+
+        # Per-item Sales/COGS/Wages overrides (Product.sales_account/cogs_account/
+        # wages_account) only change how this journal is BUILT, never posted, so
+        # an invoice where nothing overrides the org default produces the exact
+        # same lines as before — zero regression risk for the common case. Only
+        # once at least one item actually carries an override does this switch
+        # from one aggregate revenue/COGS line to netted per-account buckets.
+        # Item-class defaults (set per product_type in Settings, e.g. all
+        # "service" items to Service Revenue) count as an override too — a
+        # product with no override of its own still needs per-item resolution
+        # to pick up its class's default instead of the org-wide one.
+        items = list(
+            invoice.items.select_related(
+                'product__sales_account', 'product__cogs_account', 'product__wages_account',
+            ).all()
+        )
+        item_class_defaults = AccountMappingService.get_item_class_defaults(organisation)
+
+        def _class_default(product, role):
+            row = item_class_defaults.get(product.product_type)
+            return getattr(row, role, None) if row else None
+
+        has_override = any(
+            i.product.sales_account_id or i.product.cogs_account_id or i.product.wages_account_id
+            or _class_default(i.product, 'sales_account') or _class_default(i.product, 'cogs_account')
+            or _class_default(i.product, 'wages_account')
+            for i in items
+        )
+        revenue_acct = revenue_acct_default
 
         # Partial cash/bank payment: split DR between cash/bank and AR
         paid_amount = Decimal(str(payment.amount)) if payment else zero
@@ -1516,28 +1738,78 @@ class AccountingService:
             lines = [
                 (asset_account, paid_amount, zero),   # DR Cash/Bank (amount paid)
                 (ar_acct, remaining, zero),            # DR AR (remaining balance)
-                (revenue_acct, zero, revenue),         # CR Revenue
             ]
         else:
             lines = [
                 (asset_account, total, zero),          # DR full amount to asset/AR
-                (revenue_acct, zero, revenue),
             ]
+
+        if not has_override:
+            lines.append((revenue_acct, zero, revenue))
+        else:
+            # Per-item buckets can only ever account for the ITEM lines. An
+            # invoice's delivery/shipping charge belongs to no item, so it has
+            # to be credited explicitly here or the journal comes up short by
+            # exactly the shipping amount and post_journal_entry rejects the
+            # whole invoice. The non-override branch above never hit this
+            # because its single `revenue` figure (total - tax) already
+            # carries the shipping inside it. Shipping goes to the org's
+            # default revenue account, which is precisely where the
+            # non-override branch puts it too - so a shipped invoice posts to
+            # the same account whether or not any item overrides its own.
+            shipping = Decimal(str(invoice.shipping_amount or 0))
+            revenue_buckets = {}
+            if shipping != zero:
+                revenue_buckets[revenue_acct_default.id] = [revenue_acct_default, shipping]
+            for i in items:
+                amt = Decimal(str(i.line_total or 0)) - Decimal(str(i.tax_amount or 0))
+                if amt == 0:
+                    continue
+                acct = i.product.sales_account or _class_default(i.product, 'sales_account') or revenue_acct_default
+                slot = revenue_buckets.setdefault(acct.id, [acct, zero])
+                slot[1] += amt
+            for acct, amt in revenue_buckets.values():
+                if amt != 0:
+                    lines.append((acct, zero, amt))
+
         if tax > zero:
             vat_acct = AccountMappingService.resolve(organisation, 'vat_output_account')
             lines.append((vat_acct, zero, tax))
 
         # COGS
         try:
-            cogs_total = sum(
-                Decimal(str(item.cost_of_goods or 0))
-                for item in invoice.items.all()
-            )
-            if cogs_total > zero:
-                cogs_acct = AccountMappingService.resolve(organisation, 'cogs_account')
-                inv_acct = AccountMappingService.resolve(organisation, 'inventory_account')
-                lines.append((cogs_acct, cogs_total, zero))
-                lines.append((inv_acct, zero, cogs_total))
+            if not has_override:
+                cogs_total = sum(Decimal(str(i.cost_of_goods or 0)) for i in items)
+                if cogs_total > zero:
+                    cogs_acct = AccountMappingService.resolve(organisation, 'cogs_account')
+                    inv_acct = AccountMappingService.resolve(organisation, 'inventory_account')
+                    lines.append((cogs_acct, cogs_total, zero))
+                    lines.append((inv_acct, zero, cogs_total))
+            else:
+                cogs_acct_default = AccountMappingService.resolve(organisation, 'cogs_account')
+                inv_acct_default = AccountMappingService.resolve(organisation, 'inventory_account')
+                debit_buckets = {}
+                credit_buckets = {}
+                for i in items:
+                    amt = Decimal(str(i.cost_of_goods or 0))
+                    if amt == 0:
+                        continue
+                    product = i.product
+                    if product.product_type == "service" and (product.wages_account_id or _class_default(product, 'wages_account')):
+                        debit_acct = product.wages_account or _class_default(product, 'wages_account')
+                    else:
+                        debit_acct = product.cogs_account or _class_default(product, 'cogs_account') or cogs_acct_default
+                    credit_acct = product.inventory_account or _class_default(product, 'inventory_account') or inv_acct_default
+                    d_slot = debit_buckets.setdefault(debit_acct.id, [debit_acct, zero])
+                    d_slot[1] += amt
+                    c_slot = credit_buckets.setdefault(credit_acct.id, [credit_acct, zero])
+                    c_slot[1] += amt
+                for acct, amt in debit_buckets.values():
+                    if amt != 0:
+                        lines.append((acct, amt, zero))
+                for acct, amt in credit_buckets.values():
+                    if amt != 0:
+                        lines.append((acct, zero, amt))
         except Exception:
             pass
 
@@ -1576,7 +1848,8 @@ class AccountingService:
         zero = Decimal('0')
         amt = Decimal(str(payment.amount))
         asset = AccountingService.tender_asset_account(organisation, payment.method)
-        ar_acct = AccountMappingService.resolve(organisation, 'accounts_receivable')
+        ar_acct = AccountingService._resolve_party_account(
+            organisation, invoice.customer, 'receivable_account', 'accounts_receivable', '1100')
         label = f" ({provider})" if provider else ""
         return AccountingService.post_journal_entry(
             organisation,
@@ -1597,7 +1870,8 @@ class AccountingService:
         amt = Decimal(str(amount))
 
         asset_acct = AccountingService.tender_asset_account(organisation, method)
-        ar_acct = AccountMappingService.resolve(organisation, 'accounts_receivable')
+        ar_acct = AccountingService._resolve_party_account(
+            organisation, customer, 'receivable_account', 'accounts_receivable', '1100')
 
         lines = [
             (asset_acct, amt, zero),  # DR Cash/Bank per tender
@@ -1633,7 +1907,8 @@ class AccountingService:
         net_cost = total - vat
 
         expense_acct  = AccountMappingService.resolve(organisation, 'general_expense_account')
-        ap_acct       = AccountMappingService.resolve(organisation, 'accounts_payable')
+        ap_acct       = AccountingService._resolve_party_account(
+            organisation, bill.supplier, 'payable_account', 'accounts_payable', '2001')
         input_vat_acct = AccountingService._get_or_create_account(
             organisation, '1400', 'VAT Receivable (Input VAT)', AccountType.ASSET
         )
@@ -1688,7 +1963,8 @@ class AccountingService:
         zero = Decimal('0')
         amount = Decimal(str(payment.amount))
 
-        ap_acct = AccountMappingService.resolve(organisation, 'accounts_payable')
+        ap_acct = AccountingService._resolve_party_account(
+            organisation, bill.supplier, 'payable_account', 'accounts_payable', '2001')
         if payment.method == 'cash':
             bank_acct = AccountMappingService.resolve(organisation, 'cash_account')
         else:

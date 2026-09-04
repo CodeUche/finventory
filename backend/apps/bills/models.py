@@ -46,6 +46,13 @@ class Bill(TenantAwareModel):
     issue_date = models.DateField()
     due_date = models.DateField()
     reference = models.CharField(max_length=100, blank=True)
+    # Real linkage to the PO this bill was auto-created from on receipt — the
+    # `reference` field above is a free-text string a user can overwrite, so it's
+    # not a reliable way to answer "which bills came from which PO" programmatically.
+    source_purchase_order = models.ForeignKey(
+        'purchases.PurchaseOrder', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='bills_from_po',
+    )
     subtotal = MoneyField(default=0)
     tax_amount = MoneyField(default=0)
     total_amount = MoneyField(default=0)

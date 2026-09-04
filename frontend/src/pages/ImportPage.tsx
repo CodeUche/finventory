@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { api, bypassNextGets } from '@/services/api'
-import { Upload, Download, CheckCircle, XCircle, AlertTriangle, FileText, Users, BookOpen, UsersRound, Loader2, Maximize2, X, Sparkles, ChevronDown, ChevronUp } from 'lucide-react'
+import { Upload, Download, CheckCircle, XCircle, AlertTriangle, FileText, Users, BookOpen, UsersRound, Loader2, Maximize2, X, Sparkles, ChevronDown, ChevronUp, Truck } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { importApi } from '@/services/api'
 import { save } from '@tauri-apps/plugin-dialog'
@@ -64,9 +64,9 @@ function parseCSV(text: string): string[][] {
   return [cleanHeaders, ...dataRows]
 }
 
-type Entity = 'products' | 'customers' | 'accounts' | 'employees'
+type Entity = 'products' | 'customers' | 'suppliers' | 'accounts' | 'employees'
 type ImportError = { row: number; field: string; message: string }
-type ImportResult = { created: number; updated: number; errors: ImportError[]; total_rows: number; warehouses_created?: number; stock_assigned?: number }
+type ImportResult = { created: number; updated: number; errors: ImportError[]; total_rows: number; warehouses_created?: number; stock_assigned?: number; balances_set?: number }
 
 // All product fields with human-readable labels
 const PRODUCT_FIELD_LABELS: Record<string, string> = {
@@ -101,8 +101,15 @@ const ENTITIES: { key: Entity; label: string; icon: React.ReactNode; description
     key: 'customers',
     label: 'Customers',
     icon: <Users size={20} />,
-    description: 'Import your customer list with contact details and credit settings.',
-    columns: 'code*, name*, customer_type, email, phone, address, contact_person, credit_limit, payment_terms_days, notes',
+    description: 'Import your customer list, with or without the balances they already owe you.',
+    columns: 'code*, name*, customer_type, email, phone, address, contact_person, credit_limit, payment_terms_days, notes, opening_balance, opening_balance_date, opening_balance_side',
+  },
+  {
+    key: 'suppliers',
+    label: 'Suppliers',
+    icon: <Truck size={20} />,
+    description: 'Import your supplier list, with or without the balances you already owe them.',
+    columns: 'name*, code, contact_person, email, phone, address, tax_id, payment_terms_days, notes, opening_balance, opening_balance_date, opening_balance_side',
   },
   {
     key: 'accounts',
@@ -206,7 +213,8 @@ export default function ImportPage() {
       if (data.errors.length === 0) {
         const stockMsg = data.stock_assigned ? `, ${data.stock_assigned} stocked` : ''
         const whMsg = data.warehouses_created ? `, ${data.warehouses_created} warehouse(s) created` : ''
-        toast.success(`Import complete: ${data.created} created, ${data.updated} updated${stockMsg}${whMsg}`)
+        const balMsg = data.balances_set ? `, ${data.balances_set} opening balance(s) posted` : ''
+        toast.success(`Import complete: ${data.created} created, ${data.updated} updated${stockMsg}${whMsg}${balMsg}`)
       } else {
         toast(`Import done with ${data.errors.length} error(s)`, { icon: '⚠️' })
       }
@@ -507,7 +515,7 @@ export default function ImportPage() {
       {/* Result */}
       {result && (
         <div className="space-y-4">
-          <div className={`grid gap-3 ${result.warehouses_created !== undefined ? 'grid-cols-2 sm:grid-cols-5' : 'grid-cols-3'}`}>
+          <div className={`grid gap-3 ${(result.warehouses_created !== undefined || result.balances_set !== undefined) ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3'}`}>
             <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 flex items-center gap-3">
               <CheckCircle size={20} className="text-emerald-400" />
               <div>
@@ -537,6 +545,15 @@ export default function ImportPage() {
                 <div>
                   <p className="text-xs text-slate-400">Stocked</p>
                   <p className="text-xl font-bold text-cyan-400">{result.stock_assigned}</p>
+                </div>
+              </div>
+            )}
+            {result.balances_set !== undefined && (
+              <div className="rounded-xl border border-violet-500/30 bg-violet-500/10 p-4 flex items-center gap-3">
+                <CheckCircle size={20} className="text-violet-400" />
+                <div>
+                  <p className="text-xs text-slate-400">Opening balances</p>
+                  <p className="text-xl font-bold text-violet-400">{result.balances_set}</p>
                 </div>
               </div>
             )}

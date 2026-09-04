@@ -539,6 +539,9 @@ export default function CreditsPage() {
                   </select>
                 </div>
               </div>
+              <p className="text-xs text-slate-500 -mt-2">
+                For your records only — this payment always posts to the standard cash/bank and receivable accounts; it does not yet redirect the ledger entry to the accounts chosen above.
+              </p>
 
               {/* Payment number — auto-generated if left blank, but manually editable */}
               <div>

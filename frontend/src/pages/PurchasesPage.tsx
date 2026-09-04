@@ -2,13 +2,13 @@ import React, { useEffect, useRef, useState } from 'react'
 import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { useSearchParams } from 'react-router-dom'
-import { Plus, Search, Truck, X, Loader2, UploadCloud, FileText, Edit2, Trash2, ChevronDown, ChevronRight, Package, RefreshCw } from 'lucide-react'
+import { Plus, Search, Truck, X, Loader2, UploadCloud, FileText, Edit2, Trash2, ChevronDown, ChevronRight, Package, PackageCheck, RefreshCw, RotateCcw } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { purchaseApi, supplierApi, inventoryApi, bypassNextGets } from '@/services/api'
+import { purchaseApi, purchaseReturnApi, supplierApi, inventoryApi, taxApi, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatDate, normalizeAmountStr, stripCommas } from '@/lib/utils'
 import AmountInput from '@/components/AmountInput'
-import type { Product, PurchaseOrder, PurchaseOrderItem } from '@/types'
 import DateInput from '@/components/DateInput'
+import type { Product, PurchaseOrder, PurchaseOrderItem } from '@/types'
 import YearFilter, { yearToDateParams } from '@/components/YearFilter'
 import MonthFilter, { monthToDateParams, type ArchiveMonth } from '@/components/MonthFilter'
 import ExportButton from '@/components/ExportButton'
@@ -18,9 +18,9 @@ import Pagination from '@/components/Pagination'
 
 interface Supplier { id: string; name: string }
 interface Warehouse { id: string; name: string }
-interface POItem { product_id: string; quantity: string; unit_cost: string }
+interface POItem { product_id: string; quantity: string; unit_cost: string; discount_percent: string }
 
-const BLANK_ITEM: POItem = { product_id: '', quantity: '', unit_cost: '' }
+const BLANK_ITEM: POItem = { product_id: '', quantity: '', unit_cost: '', discount_percent: '0' }
 
 const STATUS_COLORS: Record<string, string> = {
   draft: 'badge-slate',
@@ -55,6 +55,7 @@ const BLANK = {
   expected_date: '',
   delivery_type: 'self_collection',
   delivery_notes: '',
+  delivery_amount: '',
   notes: '',
 }
 
@@ -80,6 +81,7 @@ export default function PurchasesPage() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
   const [products, setProducts] = useState<Product[]>([])
+  const [taxRates, setTaxRates] = useState<Record<string, number>>({})
   const [form, setForm] = useState({ ...BLANK })
   const [items, setItems] = useState<POItem[]>([])
   const [receiptFile, setReceiptFile] = useState<File | null>(null)
@@ -101,6 +103,23 @@ export default function PurchasesPage() {
 
   // Delete PO
   const [deletingId, setDeletingId] = useState<string | null>(null)
+
+  // Purchase return
+  const [returnOrder, setReturnOrder] = useState<PurchaseOrder | null>(null)
+  const [returnQtys, setReturnQtys] = useState<Record<string, string>>({})
+  const [returnReason, setReturnReason] = useState('')
+  const [returnMethod, setReturnMethod] = useState<'ap' | 'cash' | 'bank'>('ap')
+  const [returnDate, setReturnDate] = useState(today)
+  const [returnSaving, setReturnSaving] = useState(false)
+
+  // Receive goods — the only prior path was a notification's "mark fully
+  // received" quick-action; this is the first dedicated UI for it, letting a
+  // user receive a partial quantity per line with an optional batch/expiry.
+  const [receiveOrder, setReceiveOrder] = useState<PurchaseOrder | null>(null)
+  const [receiveQtys, setReceiveQtys] = useState<Record<string, string>>({})
+  const [receiveBatch, setReceiveBatch] = useState<Record<string, string>>({})
+  const [receiveExpiry, setReceiveExpiry] = useState<Record<string, string>>({})
+  const [receiveSaving, setReceiveSaving] = useState(false)
 
   // Edit PO
   const [editOrder, setEditOrder] = useState<PurchaseOrder | null>(null)
@@ -127,14 +146,19 @@ export default function PurchasesPage() {
 
   const loadSelectData = async () => {
     try {
-      const [supRes, whRes, pRes] = await Promise.all([
+      const [supRes, whRes, pRes, taxRes] = await Promise.all([
         supplierApi.list(),
         inventoryApi.warehouses(),
         inventoryApi.products({ page_size: 500, is_active: true }),
+        taxApi.classes(),
       ])
       setSuppliers(supRes.data.results ?? supRes.data)
       setWarehouses(whRes.data.results ?? whRes.data)
       setProducts(pRes.data.results ?? pRes.data)
+      const taxList = taxRes.data.results ?? taxRes.data
+      const rateMap: Record<string, number> = {}
+      for (const c of taxList) rateMap[c.id] = parseFloat(c.rate)
+      setTaxRates(rateMap)
     } catch { /* ignore */ }
   }
 
@@ -178,6 +202,21 @@ export default function PurchasesPage() {
   const poSubtotal = items.reduce((sum, item) => {
     return sum + (parseFloat(item.quantity) || 0) * (parseFloat(stripCommas(item.unit_cost)) || 0)
   }, 0)
+  const itemVat = (item: POItem) => {
+    const product = products.find((p) => p.id === item.product_id)
+    if (!product?.is_taxable || !product.tax_class) return 0
+    const rate = taxRates[product.tax_class] ?? 0
+    const gross = (parseFloat(item.quantity) || 0) * (parseFloat(stripCommas(item.unit_cost)) || 0)
+    const afterDiscount = gross - (gross * (parseFloat(item.discount_percent) || 0)) / 100
+    return (afterDiscount * rate) / 100
+  }
+  const poDiscountTotal = items.reduce((sum, item) => {
+    const gross = (parseFloat(item.quantity) || 0) * (parseFloat(stripCommas(item.unit_cost)) || 0)
+    return sum + (gross * (parseFloat(item.discount_percent) || 0)) / 100
+  }, 0)
+  const poVatTotal = items.reduce((sum, item) => sum + itemVat(item), 0)
+  const poDeliveryAmount = parseFloat(stripCommas(form.delivery_amount)) || 0
+  const poGrandTotal = poSubtotal - poDiscountTotal + poVatTotal + poDeliveryAmount
 
   const handleCreate = async () => {
     if (!form.warehouse) { toast.error('Select a warehouse'); return }
@@ -189,6 +228,7 @@ export default function PurchasesPage() {
           product: i.product_id,
           quantity_ordered: parseFloat(i.quantity),
           unit_cost: parseFloat(stripCommas(i.unit_cost)),
+          discount_percent: parseFloat(i.discount_percent) || 0,
         }))
       const payload: Record<string, unknown> = {
         supplier: form.supplier || null,
@@ -196,6 +236,7 @@ export default function PurchasesPage() {
         order_date: form.order_date,
         delivery_type: form.delivery_type,
         delivery_notes: form.delivery_notes,
+        delivery_amount: (parseFloat(stripCommas(form.delivery_amount)) || 0).toFixed(4),
         notes: form.notes,
         items: validItems,
       }
@@ -206,6 +247,9 @@ export default function PurchasesPage() {
       }
       toast.success('Purchase order created')
       setShowModal(false)
+      // Fresh-cache gate confirmed live to sometimes leave the list stale right
+      // after a create — force the next read to hit the network.
+      bypassNextGets()
       load()
     } catch (err: any) {
       const msg = err?.response?.data?.error?.message
@@ -255,6 +299,84 @@ export default function PurchasesPage() {
       toast.error(msg)
     } finally {
       setDeletingId(null)
+    }
+  }
+
+  const openReturnModal = (o: PurchaseOrder) => {
+    setReturnOrder(o)
+    setReturnQtys({})
+    setReturnReason('')
+    setReturnMethod('ap')
+    setReturnDate(today)
+  }
+
+  const returnableItems = (o: PurchaseOrder) =>
+    (o.items ?? []).filter((i) => (parseFloat(i.quantity_received) || 0) > 0)
+
+  const handleReturnSubmit = async () => {
+    if (!returnOrder) return
+    const items = Object.entries(returnQtys)
+      .filter(([, qty]) => parseFloat(qty) > 0)
+      .map(([itemId, qty]) => {
+        const line = (returnOrder.items ?? []).find((i) => i.id === itemId)
+        return { product_id: line?.product, quantity: parseFloat(qty) }
+      })
+      .filter((i) => i.product_id)
+    if (items.length === 0) { toast.error('Enter a return quantity for at least one item'); return }
+    setReturnSaving(true)
+    try {
+      await purchaseReturnApi.create({
+        purchase_order: returnOrder.id,
+        items,
+        reason: returnReason,
+        refund_method: returnMethod,
+        return_date: returnDate,
+      })
+      toast.success('Purchase return processed')
+      setReturnOrder(null)
+      bypassNextGets()
+      load()
+    } catch (err: any) {
+      const msg = err?.response?.data?.error ?? 'Failed to process return'
+      toast.error(typeof msg === 'string' ? msg : 'Failed to process return')
+    } finally {
+      setReturnSaving(false)
+    }
+  }
+
+  const openReceiveModal = (o: PurchaseOrder) => {
+    setReceiveOrder(o)
+    setReceiveQtys({})
+    setReceiveBatch({})
+    setReceiveExpiry({})
+  }
+
+  const outstandingItems = (o: PurchaseOrder) =>
+    (o.items ?? []).filter((i) => (parseFloat(i.quantity_ordered) || 0) - (parseFloat(i.quantity_received) || 0) > 0)
+
+  const handleReceiveSubmit = async () => {
+    if (!receiveOrder) return
+    const items = Object.entries(receiveQtys)
+      .filter(([, qty]) => parseFloat(qty) > 0)
+      .map(([itemId, qty]) => ({
+        item_id: itemId,
+        quantity_received: parseFloat(qty),
+        ...(receiveBatch[itemId] ? { batch_number: receiveBatch[itemId] } : {}),
+        ...(receiveExpiry[itemId] ? { expiry_date: receiveExpiry[itemId] } : {}),
+      }))
+    if (items.length === 0) { toast.error('Enter a quantity to receive for at least one item'); return }
+    setReceiveSaving(true)
+    try {
+      await purchaseApi.receive(receiveOrder.id, items)
+      toast.success('Goods received')
+      setReceiveOrder(null)
+      bypassNextGets()
+      load()
+    } catch (err: any) {
+      const msg = err?.response?.data?.error ?? 'Failed to record receipt'
+      toast.error(typeof msg === 'string' ? msg : 'Failed to record receipt')
+    } finally {
+      setReceiveSaving(false)
     }
   }
 
@@ -410,6 +532,24 @@ export default function PurchasesPage() {
                     </td>
                     <td className="px-5 py-3.5">
                       <div className="flex items-center gap-3">
+                        {!['received', 'closed', 'canceled'].includes(o.status) && (
+                          <button
+                            onClick={() => openReceiveModal(o)}
+                            className="text-slate-400 hover:text-emerald-400 transition-colors"
+                            title="Receive goods"
+                          >
+                            <PackageCheck size={14} />
+                          </button>
+                        )}
+                        {(o.status === 'received' || o.status === 'partially_received') && (
+                          <button
+                            onClick={() => openReturnModal(o)}
+                            className="text-slate-400 hover:text-amber-400 transition-colors"
+                            title="Return goods to supplier"
+                          >
+                            <RotateCcw size={14} />
+                          </button>
+                        )}
                         <button
                           onClick={() => openEditOrder(o)}
                           className="text-slate-400 hover:text-white transition-colors"
@@ -674,6 +814,11 @@ export default function PurchasesPage() {
                       onChange={(e) => setForm((f) => ({ ...f, delivery_notes: e.target.value }))} />
                   </div>
                 )}
+                <div>
+                  <label className="label">Delivery / Shipping Cost <FieldTooltip text="Optional freight or courier charge for this order, added on top of the line-item subtotal." /></label>
+                  <AmountInput className="input" placeholder="0.00" value={form.delivery_amount}
+                    onChange={(v) => setForm((f) => ({ ...f, delivery_amount: v }))} />
+                </div>
                 <div className="col-span-2">
                   <label className="label">Notes <FieldTooltip text="Any special instructions for this order — e.g. delivery terms, packaging requirements, or contact details." /></label>
                   <textarea className="input resize-none" rows={2} value={form.notes}
@@ -694,12 +839,16 @@ export default function PurchasesPage() {
                   <p className="text-xs text-slate-500 italic py-2">No items yet — click "Add Item" to begin.</p>
                 ) : (
                   <div className="space-y-2">
-                    <div className="grid grid-cols-[1fr_72px_96px_76px_20px] gap-2 px-1 text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                      <span>Product</span><span>Qty</span><span>Unit Cost</span><span>Total</span><span />
+                    <div className="grid grid-cols-[1fr_56px_88px_60px_76px_76px_20px] gap-2 px-1 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                      <span>Product</span><span>Qty</span><span>Unit Cost</span><span>Disc %</span><span>VAT</span><span>Total</span><span />
                     </div>
                     {items.map((item, idx) => {
+                      const gross = (parseFloat(item.quantity) || 0) * (parseFloat(stripCommas(item.unit_cost)) || 0)
+                      const discount = (gross * (parseFloat(item.discount_percent) || 0)) / 100
+                      const vat = itemVat(item)
+                      const lineTotal = gross - discount + vat
                       return (
-                        <div key={idx} className="grid grid-cols-[1fr_72px_96px_76px_20px] gap-2 items-center">
+                        <div key={idx} className="grid grid-cols-[1fr_56px_88px_60px_76px_76px_20px] gap-2 items-center">
                           <select
                             className="input text-xs py-1.5"
                             value={item.product_id}
@@ -722,10 +871,17 @@ export default function PurchasesPage() {
                             value={item.unit_cost}
                             onChange={(v) => updateItem(idx, 'unit_cost', v)}
                           />
+                          <input
+                            type="number" min="0" max="100" step="0.01" placeholder="0"
+                            className="input text-xs py-1.5"
+                            value={item.discount_percent}
+                            onChange={(e) => updateItem(idx, 'discount_percent', e.target.value)}
+                          />
+                          <span className="text-xs text-slate-400 font-mono truncate" title={vat > 0 ? `${formatCurrency(String(vat))} input VAT` : 'Not taxable'}>
+                            {vat > 0 ? formatCurrency(String(vat)) : '—'}
+                          </span>
                           <span className="text-xs text-slate-300 font-mono truncate">
-                            {(parseFloat(item.quantity) || 0) * (parseFloat(stripCommas(item.unit_cost)) || 0) > 0
-                              ? formatCurrency(String((parseFloat(item.quantity) || 0) * (parseFloat(stripCommas(item.unit_cost)) || 0)))
-                              : '—'}
+                            {lineTotal > 0 ? formatCurrency(String(lineTotal)) : '—'}
                           </span>
                           <button type="button" onClick={() => removeItem(idx)}
                             className="text-slate-600 hover:text-red-400 transition-colors">
@@ -735,9 +891,28 @@ export default function PurchasesPage() {
                       )
                     })}
                     <div className="flex justify-end pt-2 border-t border-surface-700">
-                      <div className="text-right">
-                        <p className="text-xs text-slate-400">Subtotal</p>
-                        <p className="text-sm font-bold text-white">{formatCurrency(String(poSubtotal))}</p>
+                      <div className="text-right space-y-1">
+                        <div className="flex justify-between gap-6 text-xs text-slate-400">
+                          <span>Subtotal</span><span>{formatCurrency(String(poSubtotal))}</span>
+                        </div>
+                        {poDiscountTotal > 0 && (
+                          <div className="flex justify-between gap-6 text-xs text-amber-400">
+                            <span>Discount</span><span>− {formatCurrency(String(poDiscountTotal))}</span>
+                          </div>
+                        )}
+                        {poVatTotal > 0 && (
+                          <div className="flex justify-between gap-6 text-xs text-blue-400">
+                            <span>VAT</span><span>+ {formatCurrency(String(poVatTotal))}</span>
+                          </div>
+                        )}
+                        {poDeliveryAmount > 0 && (
+                          <div className="flex justify-between gap-6 text-xs text-slate-400">
+                            <span>Delivery / Shipping</span><span>+ {formatCurrency(String(poDeliveryAmount))}</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between gap-6 text-sm font-bold text-white pt-1 border-t border-surface-700">
+                          <span>Total</span><span>{formatCurrency(String(poGrandTotal))}</span>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -780,6 +955,141 @@ export default function PurchasesPage() {
                 <button type="button" onClick={() => setShowModal(false)} className="btn-secondary flex-1 justify-center">Cancel</button>
                 <button type="button" onClick={handleCreate} disabled={saving} className="btn-primary flex-1 justify-center">
                   {saving ? <Loader2 size={16} className="animate-spin" /> : 'Create PO'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Receive Goods modal */}
+      {receiveOrder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="bg-surface-800 border border-surface-700 rounded-2xl w-full max-w-2xl shadow-2xl animate-slide-up max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-6 border-b border-surface-700">
+              <div>
+                <h2 className="font-semibold text-white text-lg">Receive Goods</h2>
+                <p className="text-slate-400 text-sm">{receiveOrder.po_number} · {receiveOrder.supplier_name}</p>
+              </div>
+              <button onClick={() => setReceiveOrder(null)} className="btn-ghost p-1.5"><X size={18} /></button>
+            </div>
+            <div className="p-6 space-y-4">
+              {outstandingItems(receiveOrder).length === 0 ? (
+                <p className="text-sm text-slate-500">Everything on this order has already been received.</p>
+              ) : (
+                <div className="space-y-3">
+                  <div className="grid grid-cols-[1fr_70px_70px_90px_90px_100px] gap-2 px-1 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                    <span>Product</span><span>Ordered</span><span>Received</span><span>Receive Qty</span><span>Batch #</span><span>Expiry</span>
+                  </div>
+                  {outstandingItems(receiveOrder).map((item) => {
+                    const outstanding = (parseFloat(item.quantity_ordered) || 0) - (parseFloat(item.quantity_received) || 0)
+                    return (
+                      <div key={item.id} className="grid grid-cols-[1fr_70px_70px_90px_90px_100px] gap-2 items-center">
+                        <span className="text-sm text-slate-200 truncate">{item.product_name}</span>
+                        <span className="text-xs text-slate-400 font-mono">{item.quantity_ordered}</span>
+                        <span className="text-xs text-slate-400 font-mono">{item.quantity_received}</span>
+                        <input
+                          type="number" min="0" max={outstanding} step="0.01" placeholder="0"
+                          className="input text-xs py-1.5"
+                          value={receiveQtys[item.id] ?? ''}
+                          onChange={(e) => setReceiveQtys((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                        />
+                        <input
+                          type="text" placeholder="optional"
+                          className="input text-xs py-1.5"
+                          value={receiveBatch[item.id] ?? ''}
+                          onChange={(e) => setReceiveBatch((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                        />
+                        <DateInput
+                          value={receiveExpiry[item.id] ?? ''}
+                          onChange={(v) => setReceiveExpiry((prev) => ({ ...prev, [item.id]: v }))}
+                        />
+                      </div>
+                    )
+                  })}
+                  <p className="text-[11px] text-slate-500">Batch # and Expiry are optional — leave blank if this product doesn't track them.</p>
+                </div>
+              )}
+
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={() => setReceiveOrder(null)} className="btn-secondary flex-1 justify-center">Cancel</button>
+                <button
+                  type="button"
+                  onClick={handleReceiveSubmit}
+                  disabled={receiveSaving || outstandingItems(receiveOrder).length === 0}
+                  className="btn-primary flex-1 justify-center"
+                >
+                  {receiveSaving ? <Loader2 size={16} className="animate-spin" /> : 'Record Receipt'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Purchase Return modal */}
+      {returnOrder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="bg-surface-800 border border-surface-700 rounded-2xl w-full max-w-lg shadow-2xl animate-slide-up max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-6 border-b border-surface-700">
+              <div>
+                <h2 className="font-semibold text-white text-lg">Return Goods to Supplier</h2>
+                <p className="text-slate-400 text-sm">{returnOrder.po_number} · {returnOrder.supplier_name}</p>
+              </div>
+              <button onClick={() => setReturnOrder(null)} className="btn-ghost p-1.5"><X size={18} /></button>
+            </div>
+            <div className="p-6 space-y-4">
+              {returnableItems(returnOrder).length === 0 ? (
+                <p className="text-sm text-slate-500">Nothing has been received against this order yet — there's nothing to return.</p>
+              ) : (
+                <div className="space-y-2">
+                  <div className="grid grid-cols-[1fr_90px_100px] gap-2 px-1 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                    <span>Product</span><span>Received</span><span>Return Qty</span>
+                  </div>
+                  {returnableItems(returnOrder).map((item) => (
+                    <div key={item.id} className="grid grid-cols-[1fr_90px_100px] gap-2 items-center">
+                      <span className="text-sm text-slate-200 truncate">{item.product_name}</span>
+                      <span className="text-xs text-slate-400 font-mono">{item.quantity_received}</span>
+                      <input
+                        type="number" min="0" max={item.quantity_received} step="0.01" placeholder="0"
+                        className="input text-xs py-1.5"
+                        value={returnQtys[item.id] ?? ''}
+                        onChange={(e) => setReturnQtys((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="label">Return Date</label>
+                  <DateInput value={returnDate} onChange={setReturnDate} />
+                </div>
+                <div>
+                  <label className="label">Refund Method <FieldTooltip text="How the refund is settled: reduce what you owe the supplier (debit note), or a cash/bank refund received back." /></label>
+                  <select className="input" value={returnMethod} onChange={(e) => setReturnMethod(e.target.value as any)}>
+                    <option value="ap">Reduce Payable (debit note)</option>
+                    <option value="cash">Cash Refund</option>
+                    <option value="bank">Bank Refund</option>
+                  </select>
+                </div>
+                <div className="col-span-2">
+                  <label className="label">Reason</label>
+                  <textarea className="input resize-none" rows={2} placeholder="e.g. damaged goods, wrong item, quality issue…"
+                    value={returnReason} onChange={(e) => setReturnReason(e.target.value)} />
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={() => setReturnOrder(null)} className="btn-secondary flex-1 justify-center">Cancel</button>
+                <button
+                  type="button"
+                  onClick={handleReturnSubmit}
+                  disabled={returnSaving || returnableItems(returnOrder).length === 0}
+                  className="btn-primary flex-1 justify-center"
+                >
+                  {returnSaving ? <Loader2 size={16} className="animate-spin" /> : 'Process Return'}
                 </button>
               </div>
             </div>
