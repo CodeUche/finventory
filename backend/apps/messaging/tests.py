@@ -8,6 +8,8 @@ correctness, and seq-collision-free concurrent sends.
 """
 
 import io
+import unittest
+from unittest import mock
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, TransactionTestCase
@@ -640,3 +642,113 @@ class OperationalScopeMessagingDenialTests(TestCase):
             format="json",
         )
         self.assertIn(resp.status_code, (200, 201), resp.content)
+
+
+try:
+    from storages.backends.s3boto3 import S3Boto3Storage
+except ImportError:  # django-storages is a production-only dependency
+    S3Boto3Storage = None
+
+
+@unittest.skipIf(
+    S3Boto3Storage is None,
+    "django-storages not installed (requirements/production.txt only)",
+)
+class MessageAttachmentS3BackendTests(TestCase):
+    """
+    MessageAttachmentDownloadView must recognise the S3 backend and answer with
+    a short-TTL signed redirect instead of proxying the bytes.
+
+    This never actually ran in production: the view detected S3 with
+    `type(storage).__name__ == "S3Boto3Storage"`, but django-storages 1.14 made
+    storages.backends.s3boto3 a compat shim in which S3Boto3Storage *is*
+    storages.backends.s3.S3Storage — so the class __name__ is "S3Storage" and
+    the comparison was always False. It stayed invisible because production.py
+    configured storage through DEFAULT_FILE_STORAGE, removed in Django 5.1, so
+    USE_S3=True never took effect and the backend was always FileSystemStorage
+    anyway. Fixing that settings bug is what makes this path reachable, so it
+    is pinned here.
+    """
+
+    SIGNED_URL = "https://bucket.s3.eu-west-1.amazonaws.com/attachments/x.pdf?sig=1"
+
+    def setUp(self):
+        self.owner = _make_user("s3_att_owner@example.com")
+        self.org = _make_org(self.owner, "S3 Attachment Org")
+        self.other = _make_user("s3_att_other@example.com")
+        _add_member(self.org, self.other, Membership.Role.STAFF)
+        self.conversation, _ = services.get_or_create_direct_conversation(
+            organisation=self.org, user=self.owner, other_user=self.other
+        )
+        self.client = _auth_client(self.owner, self.org)
+        upload = SimpleUploadedFile(
+            "invoice.pdf", b"%PDF-1.4 fake pdf content", content_type="application/pdf"
+        )
+        resp = self.client.post(
+            f"/api/v1/messaging/conversations/{self.conversation.id}/attachments/",
+            {"file": upload},
+            format="multipart",
+        )
+        self.assertEqual(resp.status_code, 201, resp.content)
+        self.attachment_id = resp.data["id"]
+
+    def tearDown(self):
+        for att in MessageAttachment.objects.all():
+            if att.file:
+                try:
+                    att.file.delete(save=False)
+                except OSError:
+                    pass
+
+    def test_s3_storage_yields_signed_redirect(self):
+        # A real S3Boto3Storage instance — no network is reached: url() is
+        # stubbed, and _open() is wired to fail loudly so that taking the
+        # local-file branch (what the old name comparison did) is a
+        # deterministic error rather than a boto3 call.
+        s3_storage = S3Boto3Storage(bucket_name="audity-media-test")
+        file_field = MessageAttachment._meta.get_field("file")
+
+        with mock.patch.object(
+            type(s3_storage), "url", return_value=self.SIGNED_URL
+        ), mock.patch.object(
+            type(s3_storage),
+            "_open",
+            side_effect=AssertionError(
+                "local-file branch taken against an S3 storage backend"
+            ),
+        ), mock.patch.object(file_field, "storage", s3_storage):
+            resp = self.client.get(
+                f"/api/v1/messaging/attachments/{self.attachment_id}/download/"
+            )
+
+        self.assertEqual(resp.status_code, 302, getattr(resp, "content", None))
+        self.assertEqual(resp["Location"], self.SIGNED_URL)
+
+    def test_signed_url_ttl_is_clamped_short(self):
+        """The redirect must not reuse the hour-long AWS_QUERYSTRING_EXPIRE."""
+        s3_storage = S3Boto3Storage(bucket_name="audity-media-test")
+        file_field = MessageAttachment._meta.get_field("file")
+
+        with mock.patch.object(
+            type(s3_storage), "url", return_value=self.SIGNED_URL
+        ) as mocked_url, mock.patch.object(
+            type(s3_storage),
+            "_open",
+            side_effect=AssertionError(
+                "local-file branch taken against an S3 storage backend"
+            ),
+        ), mock.patch.object(file_field, "storage", s3_storage):
+            self.client.get(
+                f"/api/v1/messaging/attachments/{self.attachment_id}/download/"
+            )
+
+        self.assertEqual(mocked_url.call_args.kwargs["expire"], 120)
+
+    def test_filesystem_storage_still_streams_bytes(self):
+        """The default local backend must keep streaming, not redirect."""
+        resp = self.client.get(
+            f"/api/v1/messaging/attachments/{self.attachment_id}/download/"
+        )
+        self.assertEqual(resp.status_code, 200, getattr(resp, "content", None))
+        content = b"".join(resp.streaming_content) if resp.streaming else resp.content
+        self.assertIn(b"fake pdf content", content)

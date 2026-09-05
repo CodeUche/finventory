@@ -20,10 +20,15 @@ class HealthCheckView(APIView):
     503 for a missing Redis service would break CI and load-balancer health
     checks even though the app is perfectly healthy.
 
-    No authentication required.
+    No authentication required. No throttling either: load balancers and
+    uptime monitors poll this endpoint every 15-30s (120-240 req/hour),
+    which blows past the default anonymous throttle (60/hour in
+    production.py) and gets self-throttled to 429 — the health check would
+    be reporting on its own rate limit, not the app's actual health.
     """
 
     permission_classes = [AllowAny]
+    throttle_classes = []
 
     def get(self, request):
         db_status    = self._check_db()

@@ -1,0 +1,206 @@
+########################################################################
+# Secrets Manager
+#
+# Every credential-shaped value from Railway's production .env gets an
+# entry here, injected into ECS task definitions as `secrets` (pulled at
+# container start, never baked into the image or logged). Plain
+# non-credential config (ALLOWED_HOSTS, TIME_ZONE, etc.) goes as ordinary
+# task-definition `environment` values in ecs.tf instead — no need to pay
+# Secrets Manager's per-secret cost ($0.40/secret/mo) for things that
+# aren't secret.
+#
+# Two secrets are generated for real right here (SECRET_KEY, ADMIN_URL) —
+# the task explicitly asked for these to be real, matching production.py's
+# fail-fast guards (min length 40 / not the literal "admin/").
+#
+# Everything else that needs a genuine third-party credential (Brevo,
+# Sentry, Paystack, ...) is left as an empty string with a TODO — filling
+# in a fake-looking placeholder risks it being mistaken for real and
+# silently shipped. See the final report for the full TODO list.
+#
+# Deliberately split into TWO resource blocks (static_secrets vs
+# db_cache_secrets), not one merged map: DATABASE_URL/REDIS_URL depend on
+# Aurora/ElastiCache (Phase 2), while everything else (SECRET_KEY,
+# ADMIN_URL, third-party placeholders, APP_DATABASE_URL) has no such
+# dependency (Phase 1). Terraform's `-target` graph-walk treats any
+# reference into a shared map as a dependency on everything that
+# contributes to that map — merging them would silently drag Aurora +
+# ElastiCache into a "Phase 1" apply. Keeping them as separate resources
+# keeps the two phases' cost gates real, not just cosmetic.
+########################################################################
+
+resource "random_password" "django_secret_key" {
+  length  = 64
+  special = true
+  # Django's SECRET_KEY generator avoids characters that are awkward in
+  # shell/env-var contexts; restrict to the same safe set.
+  override_special = "!@#$%^&*(-_=+)"
+}
+
+resource "random_id" "admin_url" {
+  byte_length = 12
+}
+
+# Key material for EncryptedCharField (User.mfa_secret, EmailConfig.
+# smtp_password, FIRSConfig.app_api_key). production.py hard-requires this
+# (min 32 chars) since the M-9 fix, so the containers will not boot without it.
+#
+# Deliberately NOT generated here: it must match the value Railway is using.
+# Railway keeps serving users through the fallback window, so anything
+# encrypted there before clients finish moving must still decrypt on AWS.
+# Generating a fresh key would silently orphan exactly that data.
+variable "field_encryption_key" {
+  description = "Must match Railway's FIELD_ENCRYPTION_KEY so data encrypted there stays readable here."
+  type        = string
+  sensitive   = true
+}
+
+
+locals {
+  admin_url = "${random_id.admin_url.hex}/"
+
+  database_url = "postgresql://${var.db_master_username}:${urlencode(random_password.db_master.result)}@${aws_rds_cluster.main.endpoint}:${aws_rds_cluster.main.port}/${var.db_name}?sslmode=require"
+
+  # ssl_cert_reqs is required on any rediss:// URL (both Celery's kombu
+  # transport and django_redis/redis-py refuse to connect without it) —
+  # but the two libraries disagree on acceptable spelling. redis-py's own
+  # URL parser (used by django_redis, i.e. the API's cache + DRF
+  # throttling) only accepts the lowercase words "none"/"optional"/
+  # "required" and raises "Invalid SSL Certificate Requirements Flag" on
+  # anything else — it does NOT accept the Python ssl-module enum name
+  # "CERT_REQUIRED", even though kombu's redis transport is lenient enough
+  # to accept that form too. Use the lowercase form everywhere so both
+  # libraries agree. "required" (not "none") is correct here: both
+  # ElastiCache Serverless and the dedicated Celery node present
+  # publicly-trusted certs, so full verification is safe and free.
+  # Serverless authenticates via RBAC, so the username is part of the URL.
+  # urlencode on the password: the generated set includes characters (#, ?, /,
+  # :) that would otherwise terminate or reroute the URL's parsing.
+  redis_url = "rediss://${aws_elasticache_user.app.user_name}:${urlencode(random_password.serverless_redis_auth.result)}@${aws_elasticache_serverless_cache.main.endpoint[0].address}:${aws_elasticache_serverless_cache.main.endpoint[0].port}/0?ssl_cert_reqs=required"
+
+  # Celery's own dedicated (non-cluster) node — see cache.tf header note for
+  # why this can't just reuse redis_url above. /0 and /1 (broker vs backend)
+  # on the SAME node — no cluster-slot concerns here since it's plain Redis.
+  celery_broker_url     = "rediss://:${urlencode(random_password.celery_redis_auth.result)}@${aws_elasticache_replication_group.celery.primary_endpoint_address}:${aws_elasticache_replication_group.celery.port}/0?ssl_cert_reqs=required"
+  celery_result_backend = "rediss://:${urlencode(random_password.celery_redis_auth.result)}@${aws_elasticache_replication_group.celery.primary_endpoint_address}:${aws_elasticache_replication_group.celery.port}/1?ssl_cert_reqs=required"
+
+  # Phase 1: no dependency on Aurora/ElastiCache.
+  static_secrets = {
+    SECRET_KEY = random_password.django_secret_key.result
+    ADMIN_URL  = local.admin_url
+    FIELD_ENCRYPTION_KEY = var.field_encryption_key
+
+    # Populated the same way as the third-party placeholders below: starts
+    # "" (container reserved, no version, not injected into ECS — see the
+    # for_each filter a few lines down), then filled in for real via
+    # `terraform apply -var app_database_url=...` once `manage.py
+    # setup_rls_role` has been run via ECS Exec against the live Aurora
+    # cluster (see README "Bootstrap runbook"). Re-running apply at that
+    # point both creates the version AND adds it to the running ECS
+    # services automatically — same mechanism, no special-casing needed.
+    APP_DATABASE_URL = var.app_database_url
+
+    # Third-party credentials Terraform cannot invent — left blank on
+    # purpose. base.py/production.py default every one of these to "" and
+    # degrade gracefully (Brevo -> console email backend, Sentry -> no-op,
+    # etc.), so a blank value never blocks the /api/v1/health/ check.
+    BREVO_API_KEY           = var.brevo_api_key
+    SENTRY_DSN              = var.sentry_dsn
+    PAYSTACK_SECRET_KEY     = var.paystack_secret_key
+    FLUTTERWAVE_SECRET_KEY  = var.flutterwave_secret_key
+    NANGO_SECRET_KEY        = var.nango_secret_key
+    NANGO_WEBHOOK_SECRET    = var.nango_webhook_secret
+    TELEGRAM_BOT_TOKEN      = var.telegram_bot_token
+    TELEGRAM_WEBHOOK_SECRET = var.telegram_webhook_secret
+    GROQ_API_KEY            = var.groq_api_key
+    POSTHOG_API_KEY         = var.posthog_api_key
+    DIGITAX_APP_API_KEY     = var.digitax_app_api_key
+    DIGITAX_WEBHOOK_SECRET  = var.digitax_webhook_secret
+  }
+
+  # Phase 2: depends on aws_rds_cluster.main / aws_elasticache_serverless_cache.main
+  # / aws_elasticache_replication_group.celery. Adding CELERY_BROKER_URL/
+  # CELERY_RESULT_BACKEND here — rather than a separate resource block —
+  # means they flow through the existing secret-container/version/IAM/ECS
+  # wiring (iam.tf's db_cache policy, ecs.tf's common_secrets) with no
+  # further changes needed anywhere else.
+  db_cache_secrets = {
+    DATABASE_URL          = local.database_url
+    REDIS_URL             = local.redis_url
+    CELERY_BROKER_URL     = local.celery_broker_url
+    CELERY_RESULT_BACKEND = local.celery_result_backend
+  }
+
+  # Which static_secrets keys get a Secrets Manager *version*.
+  #
+  # Deliberately NOT derived by filtering local.static_secrets on value, which
+  # is what this used to do. SECRET_KEY and ADMIN_URL come from random_password
+  # / random_id, so their values are unknown until apply; a for_each whose keys
+  # depend on them is unknown at plan time and Terraform rejects the plan
+  # outright. That never surfaced here because the state already existed, but it
+  # breaks the case that matters most — rebuilding this stack from nothing, i.e.
+  # disaster recovery or standing it up in a second account.
+  #
+  # Both inputs below are plan-known: the generated keys always have a value by
+  # construction, and the rest come from variables, which Terraform knows before
+  # applying anything.
+  generated_secret_keys = ["SECRET_KEY", "ADMIN_URL"]
+
+  var_backed_secrets = {
+    FIELD_ENCRYPTION_KEY    = var.field_encryption_key
+    APP_DATABASE_URL        = var.app_database_url
+    BREVO_API_KEY           = var.brevo_api_key
+    SENTRY_DSN              = var.sentry_dsn
+    PAYSTACK_SECRET_KEY     = var.paystack_secret_key
+    FLUTTERWAVE_SECRET_KEY  = var.flutterwave_secret_key
+    NANGO_SECRET_KEY        = var.nango_secret_key
+    NANGO_WEBHOOK_SECRET    = var.nango_webhook_secret
+    TELEGRAM_BOT_TOKEN      = var.telegram_bot_token
+    TELEGRAM_WEBHOOK_SECRET = var.telegram_webhook_secret
+    GROQ_API_KEY            = var.groq_api_key
+    POSTHOG_API_KEY         = var.posthog_api_key
+    DIGITAX_APP_API_KEY     = var.digitax_app_api_key
+    DIGITAX_WEBHOOK_SECRET  = var.digitax_webhook_secret
+  }
+
+  static_secrets_with_value = toset(concat(
+    local.generated_secret_keys,
+    # nonsensitive() declassifies only the is-it-empty comparison, never the
+    # value itself. Required because a for_each key set derived from sensitive
+    # values is rejected outright — and these keys must stay plan-known, which
+    # is why membership comes from variables rather than generated secrets.
+    [for k, v in local.var_backed_secrets : k if nonsensitive(v) != ""],
+  ))
+}
+
+resource "aws_secretsmanager_secret" "static_app" {
+  for_each = local.static_secrets
+  name     = "${var.project}/${lower(each.key)}"
+}
+
+# AWS Secrets Manager's PutSecretValue rejects a literal empty string
+# ("InvalidRequestException: You must provide either SecretString or
+# SecretBinary") — so any placeholder still at its "" default (every
+# third-party credential Terraform can't invent, plus APP_DATABASE_URL
+# pre-bootstrap) gets NO version created at all, not a version with an
+# empty string. The secret CONTAINER still exists (stable ARN, ready for
+# `aws secretsmanager put-secret-value` later — see README). This also
+# means ecs.tf must only reference secrets that actually have a version
+# (see its `common_secrets` local) — referencing a version-less secret ARN
+# in an ECS task definition fails the task at launch.
+resource "aws_secretsmanager_secret_version" "static_app" {
+  for_each      = local.static_secrets_with_value
+  secret_id     = aws_secretsmanager_secret.static_app[each.value].id
+  secret_string = local.static_secrets[each.value]
+}
+
+resource "aws_secretsmanager_secret" "db_cache" {
+  for_each = local.db_cache_secrets
+  name     = "${var.project}/${lower(each.key)}"
+}
+
+resource "aws_secretsmanager_secret_version" "db_cache" {
+  for_each      = local.db_cache_secrets
+  secret_id     = aws_secretsmanager_secret.db_cache[each.key].id
+  secret_string = each.value
+}
