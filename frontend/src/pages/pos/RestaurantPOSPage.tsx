@@ -57,7 +57,7 @@ export default function RestaurantPOSPage() {
 
   const load = useCallback(async () => {
     try {
-      const [p, t] = await Promise.all([inventoryApi.products(), posApi.tables({ is_active: true })])
+      const [p, t] = await Promise.all([inventoryApi.sellableProducts(), posApi.tables({ is_active: true })])
       setProducts(p.data.results ?? p.data)
       setTables((t.data.results ?? t.data).filter((x: Table) => x.status !== 'occupied' || x.id === tableId))
     } catch {

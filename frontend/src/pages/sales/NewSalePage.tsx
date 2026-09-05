@@ -53,7 +53,7 @@ export default function NewSalePage() {
     let cancelled = false
     const t = setTimeout(async () => {
       try {
-        const { data } = await inventoryApi.products({ search: productQuery, is_active: true })
+        const { data } = await inventoryApi.sellableProducts({ search: productQuery, is_active: true })
         if (!cancelled) {
           setProducts(data.results ?? data)
           setShowProductDrop(true)
@@ -153,7 +153,7 @@ export default function NewSalePage() {
     if (!query) return
     setScanning(true)
     try {
-      const { data } = await inventoryApi.products({ search: query, is_active: true })
+      const { data } = await inventoryApi.sellableProducts({ search: query, is_active: true })
       const found: Product[] = data.results ?? data
       const exact = found.find(
         (p) => p.barcode?.toLowerCase() === query.toLowerCase()

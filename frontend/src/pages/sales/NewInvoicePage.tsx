@@ -134,7 +134,7 @@ export default function NewInvoicePage() {
       }
       return setTimeout(async () => {
         try {
-          const { data } = await inventoryApi.products({ search: trimmed, is_active: true })
+          const { data } = await inventoryApi.sellableProducts({ search: trimmed, is_active: true })
           setProductResults((prev) => prev.map((r, idx) => (idx === i ? (data.results ?? data) : r)))
         } catch { /* silent */ }
       }, 250)

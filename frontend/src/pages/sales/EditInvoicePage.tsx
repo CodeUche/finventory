@@ -61,7 +61,7 @@ export default function EditInvoicePage() {
     if (!productQuery.trim()) { setProducts([]); return }
     const t = setTimeout(async () => {
       try {
-        const { data } = await inventoryApi.products({ search: productQuery, is_active: true })
+        const { data } = await inventoryApi.sellableProducts({ search: productQuery, is_active: true })
         setProducts(data.results ?? data)
         setShowProductDrop(true)
       } catch { /* silent */ }

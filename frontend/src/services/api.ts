@@ -1149,6 +1149,21 @@ export const inventoryApi = {
     // slim=1 → backend sends the lightweight list payload (this build hydrates
     // the edit form from the detail endpoint, so the slim list is safe for it).
     api.get('/inventory/products/', { params: { slim: '1', ...(params ?? {}) } }),
+  /**
+   * For sale/POS product pickers only: same as products(), but drops
+   * Variable Product templates — a template carries no stock or price of its
+   * own (its variants do), so picking one to sell would only hit the
+   * backend's "sell one of its variants instead" guard. Filtered client-side
+   * since the backend only supports exact product_type matches, not excludes.
+   */
+  sellableProducts: async (params?: object) => {
+    const res = await api.get('/inventory/products/', { params: { slim: '1', ...(params ?? {}) } })
+    const isPaginated = !Array.isArray(res.data)
+    const results = (isPaginated ? res.data.results : res.data).filter(
+      (p: any) => p.product_type !== 'variable',
+    )
+    return { ...res, data: isPaginated ? { ...res.data, results } : results }
+  },
   product: (id: string) => api.get(`/inventory/products/${id}/`),
   /** Modifier groups to ask about when this product is added to a sale. */
   modifierGroupsFor: (productId: string) =>
