@@ -73,13 +73,16 @@ locals {
   # libraries agree. "required" (not "none") is correct here: both
   # ElastiCache Serverless and the dedicated Celery node present
   # publicly-trusted certs, so full verification is safe and free.
-  redis_url = "rediss://${aws_elasticache_serverless_cache.main.endpoint[0].address}:${aws_elasticache_serverless_cache.main.endpoint[0].port}/0?ssl_cert_reqs=required"
+  # Serverless authenticates via RBAC, so the username is part of the URL.
+  # urlencode on the password: the generated set includes characters (#, ?, /,
+  # :) that would otherwise terminate or reroute the URL's parsing.
+  redis_url = "rediss://${aws_elasticache_user.app.user_name}:${urlencode(random_password.serverless_redis_auth.result)}@${aws_elasticache_serverless_cache.main.endpoint[0].address}:${aws_elasticache_serverless_cache.main.endpoint[0].port}/0?ssl_cert_reqs=required"
 
   # Celery's own dedicated (non-cluster) node — see cache.tf header note for
   # why this can't just reuse redis_url above. /0 and /1 (broker vs backend)
   # on the SAME node — no cluster-slot concerns here since it's plain Redis.
-  celery_broker_url     = "rediss://${aws_elasticache_replication_group.celery.primary_endpoint_address}:${aws_elasticache_replication_group.celery.port}/0?ssl_cert_reqs=required"
-  celery_result_backend = "rediss://${aws_elasticache_replication_group.celery.primary_endpoint_address}:${aws_elasticache_replication_group.celery.port}/1?ssl_cert_reqs=required"
+  celery_broker_url     = "rediss://:${urlencode(random_password.celery_redis_auth.result)}@${aws_elasticache_replication_group.celery.primary_endpoint_address}:${aws_elasticache_replication_group.celery.port}/0?ssl_cert_reqs=required"
+  celery_result_backend = "rediss://:${urlencode(random_password.celery_redis_auth.result)}@${aws_elasticache_replication_group.celery.primary_endpoint_address}:${aws_elasticache_replication_group.celery.port}/1?ssl_cert_reqs=required"
 
   # Phase 1: no dependency on Aurora/ElastiCache.
   static_secrets = {
@@ -162,7 +165,11 @@ locals {
 
   static_secrets_with_value = toset(concat(
     local.generated_secret_keys,
-    [for k, v in local.var_backed_secrets : k if v != ""],
+    # nonsensitive() declassifies only the is-it-empty comparison, never the
+    # value itself. Required because a for_each key set derived from sensitive
+    # values is rejected outright — and these keys must stay plan-known, which
+    # is why membership comes from variables rather than generated secrets.
+    [for k, v in local.var_backed_secrets : k if nonsensitive(v) != ""],
   ))
 }
 
