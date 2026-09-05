@@ -615,3 +615,196 @@ class InvoiceShippingJournalBalanceTests(TestCase):
         entry, _ = self._assert_journal_balances(invoice)
         credit_codes = [line.account.code for line in entry.lines.all() if line.credit]
         self.assertEqual(credit_codes.count("4090"), 1)
+
+
+class ShippingIncomeAccountMappingTests(TestCase):
+    """
+    C6/C6b: an org can optionally map a distinct GL account for delivery/
+    shipping income, kept separate from plain product/service revenue on the
+    income statement. Unmapped (every org before this field existed, and any
+    org that never touches it) must keep posting shipping bundled into plain
+    revenue exactly as before — zero behaviour change, no GLAccountNotConfigured
+    ever raised for this optional role.
+    """
+
+    def setUp(self):
+        from apps.accounting.models import Account
+        self.user = _make_user("shipacct@example.com")
+        self.org = _make_org(self.user, "Shipping Account Org")
+        self.client = _auth_client(self.user, self.org)
+        self.customer = _make_customer(self.org)
+        self.warehouse = _make_warehouse(self.org)
+        self.plain_product = Product.objects.create(
+            organisation=self.org, sku="SHIPACCT-PLAIN", name="Plain Item",
+            product_type="service", cost_price=0, selling_price=10000,
+        )
+        self.custom_revenue = Account.objects.create(
+            organisation=self.org, code="4095", name="Consulting Revenue",
+            account_type="income", normal_balance="credit",
+        )
+        self.override_product = Product.objects.create(
+            organisation=self.org, sku="SHIPACCT-OVR", name="Overridden Item",
+            product_type="service", cost_price=0, selling_price=10000,
+            sales_account=self.custom_revenue,
+        )
+
+    def _default_revenue_account(self):
+        from apps.accounting.services import AccountMappingService
+        return AccountMappingService.resolve(self.org, "revenue_account")
+
+    def _sale_with_shipping(self, product, shipping="2500.00"):
+        res = self.client.post("/api/v1/sales/invoices/", {
+            "customer_id": str(self.customer.id),
+            "warehouse_id": str(self.warehouse.id),
+            "payment_method": "cash",
+            "shipping_amount": shipping,
+            "items": [{"product_id": str(product.id), "quantity": 1, "unit_price": "10000.00"}],
+        }, format="json")
+        self.assertIn(res.status_code, (200, 201), msg=str(res.data))
+        return Invoice.objects.get(id=res.data["id"])
+
+    def _journal_credits_by_code(self, invoice):
+        from apps.accounting.models import JournalEntry
+        entry = JournalEntry.objects.get(
+            organisation=self.org, source_type="sale", source_ref=str(invoice.id),
+        )
+        debits = sum(Decimal(str(l.debit)) for l in entry.lines.all())
+        credits = sum(Decimal(str(l.credit)) for l in entry.lines.all())
+        self.assertEqual(debits, credits, f"Journal imbalanced: DR {debits} vs CR {credits}")
+        return {l.account.code: Decimal(str(l.credit)) for l in entry.lines.all() if l.credit}
+
+    def test_unmapped_shipping_still_bundles_into_plain_revenue(self):
+        """No shipping_income_account configured — identical to pre-C6 behaviour."""
+        invoice = self._sale_with_shipping(self.plain_product)
+        revenue = self._default_revenue_account()
+        by_code = self._journal_credits_by_code(invoice)
+        self.assertEqual(by_code.get(revenue.code), Decimal("12500.0000"))  # 10000 item + 2500 shipping
+        self.assertEqual(len(by_code), 1)  # exactly one revenue-side credit line
+
+    def test_unmapped_shipping_with_item_override_still_lands_on_plain_revenue(self):
+        """Regression for the Phase-0 fix — must survive the C6 change untouched."""
+        invoice = self._sale_with_shipping(self.override_product)
+        revenue = self._default_revenue_account()
+        by_code = self._journal_credits_by_code(invoice)
+        self.assertEqual(by_code.get(self.custom_revenue.code), Decimal("10000.0000"))
+        self.assertEqual(by_code.get(revenue.code), Decimal("2500.0000"))
+
+    def test_mapped_shipping_posts_to_its_own_account_separately(self):
+        from apps.accounting.models import Account
+        from apps.accounting.services import AccountMappingService
+        shipping_acct = Account.objects.create(
+            organisation=self.org, code="4200", name="Delivery Income",
+            account_type="income", normal_balance="credit",
+        )
+        mapping = AccountMappingService.get_or_create_mapping(self.org)
+        mapping.shipping_income_account = shipping_acct
+        mapping.save(update_fields=["shipping_income_account"])
+
+        invoice = self._sale_with_shipping(self.plain_product)
+        revenue = self._default_revenue_account()
+        by_code = self._journal_credits_by_code(invoice)
+        self.assertEqual(by_code.get(revenue.code), Decimal("10000.0000"))       # item only
+        self.assertEqual(by_code.get(shipping_acct.code), Decimal("2500.0000"))  # shipping, separate
+
+    def test_mapped_shipping_with_item_override_still_uses_the_dedicated_account(self):
+        from apps.accounting.models import Account
+        from apps.accounting.services import AccountMappingService
+        shipping_acct = Account.objects.create(
+            organisation=self.org, code="4201", name="Delivery Income",
+            account_type="income", normal_balance="credit",
+        )
+        mapping = AccountMappingService.get_or_create_mapping(self.org)
+        mapping.shipping_income_account = shipping_acct
+        mapping.save(update_fields=["shipping_income_account"])
+
+        invoice = self._sale_with_shipping(self.override_product)
+        by_code = self._journal_credits_by_code(invoice)
+        self.assertEqual(by_code.get(self.custom_revenue.code), Decimal("10000.0000"))
+        self.assertEqual(by_code.get(shipping_acct.code), Decimal("2500.0000"))
+
+    def test_zero_shipping_never_posts_an_empty_line_either_way(self):
+        invoice = self._sale_with_shipping(self.plain_product, shipping="0")
+        by_code = self._journal_credits_by_code(invoice)
+        self.assertEqual(len(by_code), 1)
+
+
+class EditInvoiceShippingAndVatTests(TestCase):
+    """
+    C4: editing an invoice can now change its shipping amount (previously
+    edit_lines silently carried the old value forward no matter what the
+    request sent), and VAT keeps recomputing correctly through an edit — the
+    calculation was already correct server-side, this only confirms it still
+    is now that shipping_amount flows through the same call.
+    """
+
+    def setUp(self):
+        from apps.tax.models import TaxClass
+        self.user = _make_user("editship@example.com")
+        self.org = _make_org(self.user, "Edit Shipping Org")
+        self.client = _auth_client(self.user, self.org)
+        self.customer = _make_customer(self.org)
+        self.warehouse = _make_warehouse(self.org)
+        self.vat = TaxClass.objects.create(organisation=self.org, name="VAT 15%", rate=Decimal("15"))
+        self.product = Product.objects.create(
+            organisation=self.org, sku="EDITSHIP-1", name="Taxable Item",
+            product_type="service", cost_price=0, selling_price=1000,
+            is_taxable=True, tax_class=self.vat,
+        )
+
+    def _create_invoice(self, shipping="1000.00"):
+        res = self.client.post("/api/v1/sales/invoices/", {
+            "customer_id": str(self.customer.id),
+            "warehouse_id": str(self.warehouse.id),
+            "payment_method": "credit",
+            "shipping_amount": shipping,
+            "items": [{"product_id": str(self.product.id), "quantity": 1, "unit_price": "1000.00"}],
+        }, format="json")
+        self.assertIn(res.status_code, (200, 201), msg=str(res.data))
+        return Invoice.objects.get(id=res.data["id"])
+
+    def _edit(self, invoice, **overrides):
+        payload = {
+            "items": [{"product_id": str(self.product.id), "quantity": 1, "unit_price": "1000.00", "discount_percent": 0}],
+        }
+        payload.update(overrides)
+        return self.client.patch(f"/api/v1/sales/invoices/{invoice.id}/edit_lines/", payload, format="json")
+
+    def test_editing_shipping_amount_changes_it_and_the_total(self):
+        invoice = self._create_invoice(shipping="1000.00")
+        res = self._edit(invoice, shipping_amount="3000.00")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        invoice.refresh_from_db()
+        self.assertEqual(Decimal(str(invoice.shipping_amount)), Decimal("3000.00"))
+        # 1000 item + 150 VAT (15%) + 3000 shipping
+        self.assertEqual(Decimal(str(invoice.total_amount)), Decimal("4150.00"))
+
+    def test_omitting_shipping_amount_leaves_it_unchanged(self):
+        """Any OTHER caller of update_sale (none exist yet, but the contract
+        matters) must not have shipping silently zeroed just by not mentioning it."""
+        invoice = self._create_invoice(shipping="1000.00")
+        payload = {
+            "items": [{"product_id": str(self.product.id), "quantity": 1, "unit_price": "1000.00", "discount_percent": 0}],
+        }
+        res = self.client.patch(f"/api/v1/sales/invoices/{invoice.id}/edit_lines/", payload, format="json")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        invoice.refresh_from_db()
+        self.assertEqual(Decimal(str(invoice.shipping_amount)), Decimal("1000.00"))
+
+    def test_explicit_zero_clears_shipping(self):
+        invoice = self._create_invoice(shipping="1000.00")
+        res = self._edit(invoice, shipping_amount="0")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        invoice.refresh_from_db()
+        self.assertEqual(Decimal(str(invoice.shipping_amount)), Decimal("0"))
+
+    def test_vat_recomputes_correctly_through_an_edit(self):
+        invoice = self._create_invoice(shipping="0")
+        res = self._edit(
+            invoice, shipping_amount="0",
+            items=[{"product_id": str(self.product.id), "quantity": 2, "unit_price": "1000.00", "discount_percent": 0}],
+        )
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        invoice.refresh_from_db()
+        # 2000 subtotal, 15% VAT = 300
+        self.assertEqual(Decimal(str(invoice.tax_amount)), Decimal("300.0000"))
+        self.assertEqual(Decimal(str(invoice.total_amount)), Decimal("2300.0000"))

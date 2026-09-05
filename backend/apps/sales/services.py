@@ -381,6 +381,7 @@ class SaleService:
         issue_date=None,
         due_date=None,
         payment_method: str = None,
+        shipping_amount=None,
     ) -> Invoice:
         """
         Full update of invoice line items and metadata.
@@ -460,13 +461,18 @@ class SaleService:
             total_discount += line["discount_amount"]
             total_tax += line["tax_amount"]
 
-        existing_shipping = Decimal(str(invoice.shipping_amount or 0))
-        total = subtotal - total_discount + total_tax + existing_shipping
+        # None means "leave it alone" (the caller didn't touch shipping) —
+        # distinct from an explicit 0, which clears it. Only the edit-invoice
+        # UI passes a value here; every other caller of update_sale omits it
+        # and keeps today's behaviour of carrying the old amount forward.
+        shipping = Decimal(str(shipping_amount)) if shipping_amount is not None else Decimal(str(invoice.shipping_amount or 0))
+        total = subtotal - total_discount + total_tax + shipping
 
         # Recalculate financials; preserve existing payments
         invoice.subtotal = subtotal
         invoice.discount_amount = total_discount
         invoice.tax_amount = total_tax
+        invoice.shipping_amount = shipping
         invoice.total_amount = total
         amount_paid = invoice.amount_paid or Decimal("0")
         invoice.amount_due = max(total - amount_paid, Decimal("0"))

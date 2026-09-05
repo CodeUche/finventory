@@ -669,6 +669,11 @@ class AccountMapping(TenantAwareModel):
     # Revenue & COGS
     revenue_account         = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='mapping_revenue')
     cogs_account            = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='mapping_cogs')
+    # Optional — delivery/shipping charged on a sale posts here when set, kept
+    # separate from product/service revenue for a cleaner income statement.
+    # Left null, post_sale_journal falls back to revenue_account so an org
+    # that never configures this sees no change in behaviour.
+    shipping_income_account = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='mapping_shipping_income')
     # Assets
     inventory_account       = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='mapping_inventory')
     accounts_receivable     = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='mapping_ar')
@@ -700,10 +705,11 @@ class AccountMapping(TenantAwareModel):
         never be a posting target.
         """
         fk_fields = [
-            'revenue_account', 'cogs_account', 'inventory_account', 'accounts_receivable',
-            'cash_account', 'bank_account', 'accounts_payable', 'vat_output_account',
-            'vat_input_account', 'paye_account', 'pension_account', 'nhf_account', 'wht_account',
-            'salary_expense_account', 'general_expense_account', 'bank_charges_account',
+            'revenue_account', 'cogs_account', 'shipping_income_account', 'inventory_account',
+            'accounts_receivable', 'cash_account', 'bank_account', 'accounts_payable',
+            'vat_output_account', 'vat_input_account', 'paye_account', 'pension_account',
+            'nhf_account', 'wht_account', 'salary_expense_account', 'general_expense_account',
+            'bank_charges_account',
         ]
         for field_name in fk_fields:
             account = getattr(self, field_name, None)

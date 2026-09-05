@@ -3,6 +3,7 @@ import logging
 import django_filters
 from datetime import date, datetime
 from decimal import Decimal
+from django.db.models import Sum
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -199,6 +200,33 @@ class CustomerViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
         )
         total_returns = sum(Decimal(str(r["total_refund"])) for r in returns_qs)
 
+        # Balance brought forward — what the customer owed at the START of
+        # date_from, before any of the transactions this statement lists.
+        # Derived BACKWARD from customer.outstanding_balance (today's live,
+        # always-correct running balance) by undoing everything dated on or
+        # after date_from, rather than forward from the take-on: the take-on
+        # sets outstanding_balance directly with no separate ledger-row of its
+        # own, so there is nothing to "start summing from" — the live balance
+        # already has it baked in, whatever it was and whenever it happened.
+        # This has no dependency on date_to: opening balance is a snapshot at
+        # one instant (the start of the period), so transactions after date_to
+        # but before today still have to be undone to land on the right figure.
+        future_invoiced = Invoice.objects.filter(
+            organisation=request.organisation, customer=customer, issue_date__gte=date_from,
+        ).exclude(status="voided").aggregate(t=Sum("total_amount"))["t"] or Decimal("0")
+        future_debits = CustomerDebit.objects.filter(
+            organisation=request.organisation, customer=customer, debit_date__gte=date_from,
+        ).aggregate(t=Sum("amount"))["t"] or Decimal("0")
+        future_paid = SalePayment.objects.filter(
+            organisation=request.organisation, invoice__customer=customer, received_at__date__gte=date_from,
+        ).aggregate(t=Sum("amount"))["t"] or Decimal("0")
+        future_returned = SaleReturn.objects.filter(
+            organisation=request.organisation, invoice__customer=customer, created_at__date__gte=date_from,
+        ).aggregate(t=Sum("total_refund"))["t"] or Decimal("0")
+        opening_balance = Decimal(str(customer.outstanding_balance)) - (
+            future_invoiced + future_debits - future_paid - future_returned
+        )
+
         return Response({
             "customer": CustomerSerializer(customer).data,
             "period_start": date_from,
@@ -226,6 +254,7 @@ class CustomerViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
                 for r in returns_qs
             ],
             "summary": {
+                "opening_balance": str(opening_balance),
                 "total_invoiced": str(total_invoiced),
                 "total_discounts": str(total_discounts),
                 "total_tax": str(total_tax),
@@ -233,7 +262,10 @@ class CustomerViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
                 "total_returns": str(total_returns),
                 "total_charged": str(total_invoiced + total_debits),
                 "total_paid": str(total_paid),
-                "balance_due": str(total_invoiced + total_debits - total_paid - total_returns),
+                # Now includes the opening balance, so this ties out to
+                # customer.outstanding_balance whenever date_to is today — the
+                # reviewer's "statement doesn't reconcile" complaint.
+                "balance_due": str(opening_balance + total_invoiced + total_debits - total_paid - total_returns),
                 "outstanding_balance": str(customer.outstanding_balance),
                 "payment_by_method": payment_by_method,
             },

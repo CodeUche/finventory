@@ -213,12 +213,13 @@ export default function SuppliersPage() {
 
     const fmtMoney = pdfMoney
     const kpis = [
+      { label: 'Balance B/F', value: fmtMoney(parseFloat(statementData.summary.opening_balance ?? '0')), color: DARK },
       { label: 'Total Billed', value: fmtMoney(parseFloat(statementData.summary.total_billed)), color: DARK },
       { label: 'Total Paid', value: fmtMoney(parseFloat(statementData.summary.total_paid)), color: COLORS.GREEN },
       { label: 'Balance Due', value: fmtMoney(parseFloat(statementData.summary.balance_due)),
         color: parseFloat(statementData.summary.balance_due) > 0 ? COLORS.RED : COLORS.GREEN },
     ] as const
-    const kpiW = (pageW - 20) / 3
+    const kpiW = (pageW - 20) / 4
     kpis.forEach((k, i) => {
       const kx = 10 + i * kpiW
       doc.setFillColor(...LIGHT); doc.setDrawColor(...RULE); doc.setLineWidth(0.25)
@@ -241,7 +242,11 @@ export default function SuppliersPage() {
     const ledger: Row[] = []
     const debitRowIndices: number[] = []
     const creditRowIndices: number[] = []
-    let runBalance = 0
+    // Seed from the period's opening balance so the running total ties out
+    // from the first row instead of silently assuming the period started at
+    // zero.
+    let runBalance = parseFloat(statementData.summary.opening_balance ?? '0')
+    ledger.push(['', '', 'BALANCE BROUGHT FORWARD', '', '', fmtMoney(runBalance)])
     for (const e of events) {
       if (e.type === 'bill') {
         const b = e.data
@@ -513,8 +518,9 @@ export default function SuppliersPage() {
                 <div className="py-12 text-center"><Loader2 size={24} className="animate-spin mx-auto text-slate-500" /></div>
               ) : !statementData ? null : (
                 <>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                     {[
+                      { label: 'Balance B/F', value: formatCurrency(statementData.summary.opening_balance ?? '0'), color: 'text-slate-300', sub: `Before ${formatDate(stmtFrom)}` },
                       { label: 'Total Billed', value: formatCurrency(statementData.summary.total_billed), color: 'text-red-400', sub: `${statementData.bills.length} bill${statementData.bills.length !== 1 ? 's' : ''}` },
                       { label: 'VAT', value: formatCurrency(statementData.summary.total_tax ?? '0'), color: 'text-blue-400', sub: 'Input VAT on bills' },
                       { label: 'Total Paid', value: formatCurrency(statementData.summary.total_paid), color: 'text-green-400', sub: `${statementData.payments.length} payment${statementData.payments.length !== 1 ? 's' : ''}` },

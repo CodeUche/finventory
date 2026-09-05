@@ -113,6 +113,7 @@ class AccountMappingService:
     # Maps role name → (account_type list, code prefix list, name keywords)
     ROLE_HINTS = {
         'revenue_account':         (['revenue'],          ['4001', '4'],  ['sales', 'revenue', 'income']),
+        'shipping_income_account': (['revenue'],          ['4090', '4'],  ['shipping', 'delivery', 'freight', 'carriage']),
         'cogs_account':            (['cogs'],             ['5001', '5'],  ['cost', 'cogs', 'goods']),
         'inventory_account':       (['asset'],            ['1200', '12'], ['inventory', 'stock']),
         'accounts_receivable':     (['asset'],            ['1100', '11'], ['receivable', 'debtor']),
@@ -1699,6 +1700,13 @@ class AccountingService:
             asset_account = ar_acct
 
         revenue_acct_default = AccountMappingService.resolve(organisation, 'revenue_account')
+        # Optional and deliberately non-raising, unlike .resolve() above: an org
+        # that has never configured this (every org before this field existed)
+        # must keep posting shipping to plain revenue exactly as before, not
+        # start throwing GLAccountNotConfigured on its next invoice with a
+        # delivery charge.
+        shipping_acct = AccountMappingService.get_or_create_mapping(organisation).shipping_income_account \
+            or revenue_acct_default
 
         # Per-item Sales/COGS/Wages overrides (Product.sales_account/cogs_account/
         # wages_account) only change how this journal is BUILT, never posted, so
@@ -1745,7 +1753,20 @@ class AccountingService:
             ]
 
         if not has_override:
-            lines.append((revenue_acct, zero, revenue))
+            invoice_shipping = Decimal(str(invoice.shipping_amount or 0))
+            if invoice_shipping != zero and shipping_acct.id != revenue_acct.id:
+                # A distinct shipping-income account is configured — split it
+                # out so the income statement shows delivery income separately
+                # from product/service revenue. `revenue` (total - tax) has
+                # shipping baked in, so the product-only credit is the
+                # remainder.
+                lines.append((revenue_acct, zero, revenue - invoice_shipping))
+                lines.append((shipping_acct, zero, invoice_shipping))
+            else:
+                # No distinct account configured (the default for every org
+                # before this field existed) — unchanged: one line, shipping
+                # bundled into plain revenue exactly as before.
+                lines.append((revenue_acct, zero, revenue))
         else:
             # Per-item buckets can only ever account for the ITEM lines. An
             # invoice's delivery/shipping charge belongs to no item, so it has
@@ -1753,14 +1774,13 @@ class AccountingService:
             # exactly the shipping amount and post_journal_entry rejects the
             # whole invoice. The non-override branch above never hit this
             # because its single `revenue` figure (total - tax) already
-            # carries the shipping inside it. Shipping goes to the org's
-            # default revenue account, which is precisely where the
-            # non-override branch puts it too - so a shipped invoice posts to
-            # the same account whether or not any item overrides its own.
+            # carries the shipping inside it. Shipping goes to the resolved
+            # shipping-income account (falling back to plain revenue when
+            # unconfigured), matching the non-override branch above.
             shipping = Decimal(str(invoice.shipping_amount or 0))
             revenue_buckets = {}
             if shipping != zero:
-                revenue_buckets[revenue_acct_default.id] = [revenue_acct_default, shipping]
+                revenue_buckets[shipping_acct.id] = [shipping_acct, shipping]
             for i in items:
                 amt = Decimal(str(i.line_total or 0)) - Decimal(str(i.tax_amount or 0))
                 if amt == 0:

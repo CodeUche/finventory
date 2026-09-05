@@ -302,12 +302,13 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
     // ── KPI summary cards — 3 equal-width cards side by side ──────────────────
     const fmtMoney = pdfMoney
     const kpis = [
+      { label: 'Balance B/F',   value: fmtMoney(parseFloat(statementData.summary.opening_balance)), color: DARK },
       { label: 'Total Invoiced', value: fmtMoney(parseFloat(statementData.summary.total_invoiced)), color: DARK },
       { label: 'Total Paid',     value: fmtMoney(parseFloat(statementData.summary.total_paid)),     color: COLORS.GREEN },
       { label: 'Balance Due',    value: fmtMoney(parseFloat(statementData.summary.balance_due)),
         color: parseFloat(statementData.summary.balance_due) > 0 ? COLORS.RED : COLORS.GREEN },
     ] as const
-    const kpiW = (pageW - 20) / 3
+    const kpiW = (pageW - 20) / 4
     kpis.forEach((k, i) => {
       const kx = 10 + i * kpiW
       doc.setFillColor(...LIGHT); doc.setDrawColor(...RULE); doc.setLineWidth(0.25)
@@ -325,7 +326,11 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
     const debitRowIndices: number[] = []
     const creditRowIndices: number[] = []
     const grandTotalRowIndex: number[] = []
-    let runBalance = 0
+    // Seed the running balance from the period's opening balance, and print it
+    // as the ledger's first row, so the printed statement ties out from line
+    // one instead of silently assuming the period started at zero.
+    let runBalance = parseFloat(statementData.summary.opening_balance ?? '0')
+    ledger.push(['', '', 'BALANCE BROUGHT FORWARD', '', '', '', '', '', '', fmtMoney(runBalance)])
 
     type Evt = { date: string; type: 'invoice' | 'payment' | 'debit'; data: any }
     const events: Evt[] = []
@@ -389,13 +394,16 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
       }
     }
 
-    // Grand Total row
+    // Grand Total row — Debit/Credit are in-period movement only (matches the
+    // reviewer's actual figures for the period); Balance is the true running
+    // total including brought-forward, so it lines up with the ledger rows
+    // above it and with summary.balance_due, not just this period's movement.
     const totalCharged = parseFloat(statementData.summary.total_charged)
     const totalCredit  = parseFloat(statementData.summary.total_paid)
     grandTotalRowIndex.push(ledger.length)
     ledger.push(['', '', 'GRAND TOTAL', '', '', '', '',
       fmtMoney(totalCharged), fmtMoney(totalCredit),
-      fmtMoney(totalCharged - totalCredit)])
+      fmtMoney(runBalance)])
 
     const ts = buildTableStyle(BRAND, pdfFont, { landscape: true })
     autoTable(doc, {
@@ -876,8 +884,9 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
               ) : !statementData ? null : (
                 <>
                   {/* Summary KPIs — row 1 */}
-                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">
                     {[
+                      { label: 'Balance B/F', value: formatCurrency(statementData.summary.opening_balance ?? '0'), color: 'text-slate-300', sub: `Before ${formatDate(stmtFrom)}` },
                       { label: 'Total Invoiced', value: formatCurrency(statementData.summary.total_invoiced), color: 'text-red-400', sub: `${statementData.invoices.length} invoice${statementData.invoices.length !== 1 ? 's' : ''}` },
                       { label: 'Discounts Given', value: formatCurrency(statementData.summary.total_discounts ?? '0'), color: 'text-green-400', sub: 'Savings on invoices' },
                       { label: 'VAT Charged', value: formatCurrency(statementData.summary.total_tax ?? '0'), color: 'text-blue-400', sub: 'Tax on invoices' },
@@ -967,8 +976,11 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
                       for (const d of (statementData.debits ?? [])) events.push({ date: d.debit_date, type: 'debit', data: d })
                       for (const r of (statementData.returns ?? [])) events.push({ date: r.created_at ? String(r.created_at).split('T')[0] : '', type: 'return', data: r })
                       events.sort((a, b) => a.date.localeCompare(b.date))
-                      let balance = 0
-                      return events.length === 0 ? (
+                      // Seed from the period's opening balance so the running
+                      // total ties out from the first row instead of silently
+                      // assuming the period started at zero.
+                      let balance = parseFloat(statementData.summary.opening_balance ?? '0')
+                      return events.length === 0 && balance === 0 ? (
                         <p className="text-slate-600 text-sm text-center py-4">No transactions in this period</p>
                       ) : (
                         <div className="overflow-x-auto rounded-lg border border-surface-700/50">
@@ -1007,6 +1019,10 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
                               </tr>
                             </thead>
                             <tbody>
+                              <tr className="border-b border-surface-700/40 bg-surface-800/40">
+                                <td colSpan={9} className="px-2 py-2 font-semibold text-slate-400 text-right text-[11px]">Balance Brought Forward</td>
+                                <td className={`px-2 py-2 text-right font-semibold whitespace-nowrap ${balance > 0 ? 'text-amber-400' : 'text-green-400'}`}>{formatCurrency(balance)}</td>
+                              </tr>
                               {events.map((e, ei) => {
                                 if (e.type === 'invoice') {
                                   const inv = e.data

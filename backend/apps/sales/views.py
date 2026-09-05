@@ -327,7 +327,8 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
             "notes": "...",            (optional)
             "issue_date": "YYYY-MM-DD",
             "due_date": "YYYY-MM-DD",
-            "payment_method": "..."
+            "payment_method": "...",
+            "shipping_amount": "..."   (optional; omit to leave unchanged)
           }
         """
         if not self._check_invoice_edit_permission(request):
@@ -381,6 +382,7 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
                 issue_date=parse_date(request.data.get("issue_date")),
                 due_date=parse_date(request.data.get("due_date")),
                 payment_method=request.data.get("payment_method"),
+                shipping_amount=request.data.get("shipping_amount"),
             )
         except (ValueError, Exception) as exc:
             logger.error("[edit_lines] %s – %s", type(exc).__name__, exc)

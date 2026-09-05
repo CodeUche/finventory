@@ -252,10 +252,11 @@ def _account_summary(account):
 
 
 MAPPING_ROLES = [
-    'revenue_account', 'cogs_account', 'inventory_account', 'accounts_receivable',
-    'cash_account', 'bank_account', 'accounts_payable', 'vat_output_account',
-    'vat_input_account', 'paye_account', 'pension_account', 'nhf_account', 'wht_account',
-    'salary_expense_account', 'general_expense_account', 'bank_charges_account',
+    'revenue_account', 'shipping_income_account', 'cogs_account', 'inventory_account',
+    'accounts_receivable', 'cash_account', 'bank_account', 'accounts_payable',
+    'vat_output_account', 'vat_input_account', 'paye_account', 'pension_account',
+    'nhf_account', 'wht_account', 'salary_expense_account', 'general_expense_account',
+    'bank_charges_account',
 ]
 
 # GL Mapping grouped BY MODULE (per client spec: GL / Customer / Supplier / Inventory,
@@ -265,7 +266,7 @@ MAPPING_ROLE_MODULES = [
     {'key': 'gl', 'label': 'General Ledger', 'roles': [
         'cash_account', 'bank_account', 'bank_charges_account', 'general_expense_account']},
     {'key': 'customer', 'label': 'Customers & Sales', 'roles': [
-        'accounts_receivable', 'revenue_account', 'vat_output_account']},
+        'accounts_receivable', 'revenue_account', 'shipping_income_account', 'vat_output_account']},
     {'key': 'supplier', 'label': 'Suppliers & Purchases', 'roles': [
         'accounts_payable', 'vat_input_account']},
     {'key': 'inventory', 'label': 'Inventory & COGS', 'roles': [
@@ -276,7 +277,8 @@ MAPPING_ROLE_MODULES = [
 
 # Human-readable labels for each role (used by the module-grouped UI).
 MAPPING_ROLE_LABELS = {
-    'revenue_account': 'Revenue', 'cogs_account': 'Cost of Goods Sold',
+    'revenue_account': 'Revenue', 'shipping_income_account': 'Shipping / Delivery Income',
+    'cogs_account': 'Cost of Goods Sold',
     'inventory_account': 'Inventory', 'accounts_receivable': 'Accounts Receivable',
     'cash_account': 'Cash', 'bank_account': 'Bank', 'accounts_payable': 'Accounts Payable',
     'vat_output_account': 'VAT Output (Sales)', 'vat_input_account': 'VAT Input (Purchases)',
