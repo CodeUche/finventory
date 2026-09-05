@@ -9,7 +9,7 @@ import {
   MapPin, ClipboardCheck, GraduationCap, Briefcase, ShoppingCart,
   User, Layout, Mail, Lock, Bot, Globe, Upload, GitBranch,
   ChevronLeft, HelpCircle, LayoutGrid, Zap, Wallet, Store,
-  CalendarDays, Bell,
+  CalendarDays, Bell, RotateCcw,
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { authApi } from '@/services/api'
@@ -58,6 +58,7 @@ export const navGroups: { label: string | null; alwaysGroup?: boolean; items: { 
     items: [
       { name: 'Quotes', href: '/quotes', icon: ClipboardList, module: 'quotes' },
       { name: 'Invoices', href: '/sales', icon: FileText, module: 'sales' },
+      { name: 'Sales Returns', href: '/sales/returns', icon: RotateCcw, module: 'sales' },
       { name: 'Recurring Invoices', href: '/recurring', icon: RefreshCw, module: 'recurring' },
       { name: 'Register (Till)', href: '/pos/register', icon: ShoppingCart, module: 'sales' },
       { name: 'New Sale / Invoice', href: '/sales/new', icon: Receipt, module: 'sales' },
@@ -74,6 +75,7 @@ export const navGroups: { label: string | null; alwaysGroup?: boolean; items: { 
     items: [
       { name: 'Suppliers', href: '/suppliers', icon: Building2, module: 'suppliers' },
       { name: 'Purchase Orders', href: '/purchases', icon: Truck, module: 'purchases' },
+      { name: 'Purchase Returns', href: '/purchases/returns', icon: RotateCcw, module: 'purchases' },
       { name: 'Pay Bills (PO)', href: '/bills', icon: Receipt, module: 'bills' },
     ],
   },

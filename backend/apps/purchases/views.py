@@ -219,13 +219,20 @@ class PurchaseReturnViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, IsStaff, _PlanPurchases, _ModAccess_purchases]
     http_method_names = ["get", "post", "head", "options"]
     filterset_fields = ["supplier", "purchase_order"]
-    search_fields = ["return_number"]
+    search_fields = ["return_number", "supplier__name", "purchase_order__po_number"]
 
     def get_queryset(self):
         org = self._get_organisation()
-        return (PurchaseReturn.objects.filter(organisation=org)
-                .select_related("supplier", "purchase_order")
-                .prefetch_related("items__product"))
+        qs = (PurchaseReturn.objects.filter(organisation=org)
+              .select_related("supplier", "purchase_order")
+              .prefetch_related("items__product"))
+        date_from = self.request.query_params.get("date_from")
+        date_to = self.request.query_params.get("date_to")
+        if date_from:
+            qs = qs.filter(return_date__gte=date_from)
+        if date_to:
+            qs = qs.filter(return_date__lte=date_to)
+        return qs
 
     def create(self, request, *args, **kwargs):
         from apps.inventory.models import Product

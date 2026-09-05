@@ -447,6 +447,34 @@ export interface PurchaseReturn {
   created_at: string
 }
 
+export interface SaleReturnItem {
+  id: string
+  original_item: string
+  product: string
+  product_name: string
+  product_sku: string
+  quantity_returned: string
+  unit_price: string
+  refund_amount: string
+}
+
+export interface SaleReturn {
+  id: string
+  return_number: string
+  invoice: string
+  invoice_number: string
+  customer_name: string | null
+  reason: 'defective' | 'wrong_item' | 'customer_change' | 'overcharge' | 'other'
+  notes: string
+  return_date: string
+  total_refund: string
+  restocked: boolean
+  processed_by: string
+  processed_by_name: string | null
+  items: SaleReturnItem[]
+  created_at: string
+}
+
 // ─── Reports ──────────────────────────────────────────────────────────────────
 export interface PnL {
   period_start: string

@@ -164,15 +164,25 @@ class SaleReturnItemSerializer(serializers.ModelSerializer):
 class SaleReturnSerializer(serializers.ModelSerializer):
     items = SaleReturnItemSerializer(many=True, read_only=True)
     invoice_number = serializers.CharField(source="invoice.invoice_number", read_only=True)
+    # Nullable — an invoice raised with no customer selected (walk-in/cash sale)
+    # has invoice.customer = None, so this must default rather than 500.
+    customer_name = serializers.CharField(source="invoice.customer.name", read_only=True, default=None)
+    processed_by_name = serializers.SerializerMethodField()
 
     class Meta:
         model = SaleReturn
         fields = [
-            "id", "return_number", "invoice", "invoice_number", "reason",
+            "id", "return_number", "invoice", "invoice_number", "customer_name", "reason",
             "notes", "return_date", "total_refund", "restocked",
-            "processed_by", "items", "created_at",
+            "processed_by", "processed_by_name", "items", "created_at",
         ]
         read_only_fields = ["id", "return_number", "total_refund", "created_at"]
+
+    def get_processed_by_name(self, obj):
+        if not obj.processed_by_id:
+            return None
+        name = f"{obj.processed_by.first_name} {obj.processed_by.last_name}".strip()
+        return name or obj.processed_by.email
 
 
 class ProcessReturnSerializer(serializers.Serializer):
