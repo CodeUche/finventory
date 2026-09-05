@@ -152,9 +152,40 @@ def _find_python() -> str:
         BACKEND / "venv" / "bin" / "python",
         ROOT / "venv" / "Scripts" / "python.exe",
         ROOT / "venv" / "bin" / "python",
+        # .venv-test is the name actually used in this repo. Its absence from
+        # this list meant discovery silently fell through to whatever Python
+        # happened to invoke the script.
+        BACKEND / ".venv-test" / "Scripts" / "python.exe",
+        BACKEND / ".venv-test" / "bin" / "python",
     ]:
         if candidate.exists():
             return str(candidate)
+
+    # Git worktrees do not carry a virtualenv — those directories are ignored,
+    # so a fresh worktree has none and would fall back to the system Python,
+    # which has no Django or pytest. The suite then "fails" in under a second
+    # for reasons that have nothing to do with the code being tested. Look in
+    # the primary checkout, which git identifies via the common git dir.
+    try:
+        common = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"],
+            capture_output=True, text=True, check=True, cwd=str(ROOT),
+        ).stdout.strip()
+        primary = Path(common).resolve().parent
+        if primary != ROOT:
+            for candidate in [
+                primary / "backend" / ".venv-test" / "Scripts" / "python.exe",
+                primary / "backend" / ".venv-test" / "bin" / "python",
+                primary / "venv" / "Scripts" / "python.exe",
+                primary / "venv" / "bin" / "python",
+                primary / "backend" / ".venv" / "Scripts" / "python.exe",
+                primary / "backend" / ".venv" / "bin" / "python",
+            ]:
+                if candidate.exists():
+                    return str(candidate)
+    except Exception:
+        pass
+
     return sys.executable
 
 
