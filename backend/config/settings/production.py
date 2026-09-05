@@ -173,7 +173,18 @@ if _use_s3:
     _s3_endpoint_url = config("S3_ENDPOINT_URL", default="")
     _s3_custom_domain = config("S3_CUSTOM_DOMAIN", default="")
     if _s3_endpoint_url:
+        # Presigned media URLs carry the signature in the query string, so a
+        # plaintext endpoint would put a credential-bearing URL on the wire
+        # until it expires. Refuse to start rather than silently downgrade.
+        if not _s3_endpoint_url.startswith("https://"):
+            from django.core.exceptions import ImproperlyConfigured
+            raise ImproperlyConfigured(
+                "[PRODUCTION] S3_ENDPOINT_URL must use https:// — got "
+                f"'{_s3_endpoint_url[:40]}'. Presigned URLs would otherwise be "
+                "transmitted in cleartext."
+            )
         AWS_S3_ENDPOINT_URL = _s3_endpoint_url
+    AWS_S3_USE_SSL = True
     if _s3_custom_domain:
         AWS_S3_CUSTOM_DOMAIN = _s3_custom_domain
     AWS_DEFAULT_ACL = None          # Cloudflare R2 / private bucket — no public ACL

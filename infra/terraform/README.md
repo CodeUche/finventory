@@ -59,10 +59,14 @@ of just making one migration crash-proof.
    docker push <account_id>.dkr.ecr.eu-west-1.amazonaws.com/audity-backend:<new-tag>
    ```
 
-2. **Update `image_tag` and apply** (updates all task definitions, including `migrate`, to the new image — does NOT yet deploy services):
+2. **Point ONLY the migrate task definition at the new image:**
    ```bash
-   terraform apply -var image_tag=<new-tag>
+   terraform apply -var image_tag=<new-tag> -target=aws_ecs_task_definition.migrate
    ```
+   Targeting matters. A plain `terraform apply` here also updates the `api`,
+   `worker` and `beat` services, which starts rolling new containers against a
+   database that has not been migrated yet — the opposite of the intended
+   ordering.
 
 3. **Run the migration task and wait for it to finish successfully — do this before step 4, every time:**
    ```bash
@@ -115,13 +119,25 @@ Copy the generated password from the command's output, then re-apply with
 adds it to the running ECS task definitions in one step (same mechanism as
 any other TODO secret in variables.tf, see secrets.tf):
 
+Do NOT pass it as a `-var` argument. Command arguments land in shell history
+and are visible in the process list to anything running on the same host, and
+this value is a live database credential. Put it in a gitignored, mode-0600
+tfvars file instead:
+
 ```bash
-terraform apply -var app_database_url="postgresql://audity_app:<password>@<aurora-endpoint>:5432/finventory?sslmode=require"
+umask 077
+cat > secrets.auto.tfvars <<'EOF'
+app_database_url = "postgresql://audity_app:PASSWORD@ENDPOINT:5432/finventory?sslmode=require"
+EOF
+terraform apply
 ```
 
+`secrets.auto.tfvars` is covered by .gitignore. Terraform picks up
+`*.auto.tfvars` automatically, so no flag is needed. Delete the file once the
+secret is stored, or keep it only on a machine where that is acceptable.
+
 This updates the `api` and `worker` task definitions and triggers a new
-deployment automatically. Don't put this value in a committed `.tfvars`
-file — pass it inline as above, or via a gitignored `secrets.auto.tfvars`.
+deployment automatically.
 
 ## Adding real third-party secrets later
 

@@ -102,23 +102,10 @@ resource "aws_iam_role_policy" "github_deploy" {
         ]
         Resource = aws_ecr_repository.backend.arn
       },
-      {
-        Effect = "Allow"
-        Action = [
-          "ecs:DescribeServices",
-          "ecs:DescribeTaskDefinition",
-          "ecs:RegisterTaskDefinition",
-          "ecs:UpdateService",
-          "ecs:RunTask",
-          "ecs:DescribeTasks",
-        ]
-        Resource = "*"
-      },
-      {
-        Effect   = "Allow"
-        Action   = ["iam:PassRole"]
-        Resource = [aws_iam_role.ecs_task.arn, aws_iam_role.ecs_task_execution.arn]
-      },
+      # NOTE: no ecs:* or iam:PassRole here on purpose. The workflow builds and
+      # pushes an image and nothing else — Terraform owns task definitions and
+      # rolls the services. Granting deploy rights to a role that never deploys
+      # only widens what a compromised workflow could reach.
     ]
   })
 }

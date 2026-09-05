@@ -75,15 +75,27 @@ output "alb_dns_name_for_cname" {
 # SECURE_SSL_REDIRECT — see the Phase 8 notes.
 ########################################################################
 
+# Gated behind enable_https, not just api_domain_name. The validation record
+# lives at Namecheap and has to be added by hand, so on a from-scratch apply
+# this resource would block indefinitely waiting for a record nobody has
+# created yet — and take the HTTPS listener with it. Stand the stack up with
+# enable_https=false, add the CNAME the acm_validation_record output prints,
+# then apply again with enable_https=true.
+variable "enable_https" {
+  description = "Create the cert validation + HTTPS listener. Requires the ACM CNAME to exist at the DNS host first."
+  type        = bool
+  default     = true
+}
+
 resource "aws_acm_certificate_validation" "api" {
-  count           = var.api_domain_name == "" ? 0 : 1
+  count           = var.api_domain_name == "" || !var.enable_https ? 0 : 1
   certificate_arn = aws_acm_certificate.api[0].arn
   # No validation_record_fqdns: the records live at Namecheap, not Route 53,
   # so Terraform cannot create them. It only waits for AWS to observe them.
 }
 
 resource "aws_lb_listener" "https" {
-  count             = var.api_domain_name == "" ? 0 : 1
+  count             = var.api_domain_name == "" || !var.enable_https ? 0 : 1
   load_balancer_arn = aws_lb.main.arn
   port              = 443
   protocol          = "HTTPS"

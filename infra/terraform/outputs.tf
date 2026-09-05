@@ -23,9 +23,6 @@ output "media_bucket_name" {
   value = aws_s3_bucket.media.id
 }
 
-output "cloudfront_domain_name" {
-  value = aws_cloudfront_distribution.media.domain_name
-}
 
 output "ecs_cluster_name" {
   value = aws_ecs_cluster.main.name

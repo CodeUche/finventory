@@ -71,73 +71,21 @@ resource "aws_s3_bucket_lifecycle_configuration" "media" {
 }
 
 # ─── CloudFront (provisioned, not yet load-bearing — see header note) ──────
-resource "aws_cloudfront_origin_access_control" "media" {
-  name                              = "${var.project}-media-oac"
-  origin_access_control_origin_type = "s3"
-  signing_behavior                  = "always"
-  signing_protocol                  = "sigv4"
-}
-
-resource "aws_cloudfront_distribution" "media" {
-  enabled     = true
-  comment     = "${var.project} media CDN"
-  price_class = "PriceClass_100" # cheapest tier: North America + Europe edge locations only — matches where Audity's traffic actually is (Nigeria via European PoPs)
-
-  origin {
-    domain_name              = aws_s3_bucket.media.bucket_regional_domain_name
-    origin_id                = "media-s3-origin"
-    origin_access_control_id = aws_cloudfront_origin_access_control.media.id
-  }
-
-  default_cache_behavior {
-    allowed_methods        = ["GET", "HEAD"]
-    cached_methods         = ["GET", "HEAD"]
-    target_origin_id       = "media-s3-origin"
-    viewer_protocol_policy = "redirect-to-https"
-
-    forwarded_values {
-      query_string = true # required so any future SigV4-through-CDN signed URLs still validate
-      cookies {
-        forward = "none"
-      }
-    }
-
-    min_ttl     = 0
-    default_ttl = 86400
-    max_ttl     = 604800
-  }
-
-  restrictions {
-    geo_restriction {
-      restriction_type = "none"
-    }
-  }
-
-  viewer_certificate {
-    cloudfront_default_certificate = true
-  }
-}
-
-# Bucket policy: only this specific CloudFront distribution (via OAC) may
-# read from the bucket — not "any CloudFront distribution in the account".
-data "aws_iam_policy_document" "media_bucket_policy" {
-  statement {
-    sid       = "AllowCloudFrontServicePrincipalReadOnly"
-    actions   = ["s3:GetObject"]
-    resources = ["${aws_s3_bucket.media.arn}/*"]
-    principals {
-      type        = "Service"
-      identifiers = ["cloudfront.amazonaws.com"]
-    }
-    condition {
-      test     = "StringEquals"
-      variable = "AWS:SourceArn"
-      values   = [aws_cloudfront_distribution.media.arn]
-    }
-  }
-}
-
-resource "aws_s3_bucket_policy" "media" {
-  bucket = aws_s3_bucket.media.id
-  policy = data.aws_iam_policy_document.media_bucket_policy.json
-}
+# ─── CloudFront: deliberately NOT provisioned ────────────────────────────────
+#
+# Removed rather than shipped. The distribution served unauthenticated GET/HEAD
+# and its bucket policy granted the distribution read access to every object
+# under the media bucket — so any object key that leaked or was guessed could be
+# fetched through the CloudFront domain by anyone. That would have quietly
+# defeated the protection the application actually relies on: django-storages
+# hands out short-lived presigned S3 URLs, and the bucket blocks all public
+# access.
+#
+# Media is fully working without it (verified: a presigned URL fetched from
+# outside AWS returns 200, an unsigned one returns 403), so a CDN is a
+# performance nicety here, not a requirement. If it is wanted later, it must
+# enforce signed URLs or signed cookies via a trusted key group, and sit behind
+# WAF — at which point the bucket policy can be reintroduced alongside it.
+#
+# This also retires the pending "CloudFront blocked on AWS account
+# verification" TODO: there is no longer anything waiting on that.

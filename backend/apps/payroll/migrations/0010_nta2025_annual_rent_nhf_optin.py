@@ -40,7 +40,9 @@ def _add_paye_remittance_constraint_if_missing(apps, schema_editor):
             "DO $$\n"
             "BEGIN\n"
             "    IF NOT EXISTS (\n"
-            "        SELECT 1 FROM pg_constraint WHERE conname = "
+            "        SELECT 1 FROM pg_constraint
+"
+            "        WHERE conrelid = 'payroll_payeremittance'::regclass AND conname = "
             f"'{_PAYE_REMITTANCE_CONSTRAINT_NAME}'\n"
             "    ) THEN\n"
             "        ALTER TABLE payroll_payeremittance\n"

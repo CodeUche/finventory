@@ -128,16 +128,42 @@ locals {
     CELERY_RESULT_BACKEND = local.celery_result_backend
   }
 
-  # Which static_secrets keys currently have a real (non-"") value — used
-  # below to decide which get an actual Secrets Manager *version*. Built as
-  # a set of plain key strings (via nonsensitive(), which only declassifies
-  # the "is it empty" boolean, never the secret content itself) because
-  # Terraform forbids a sensitive-tainted expression as a for_each argument
-  # — a `{k => v if v != ""}` filter over a map of sensitive values trips
-  # that restriction even though the condition never leaks a value.
-  static_secrets_with_value = toset([
-    for k, v in local.static_secrets : k if nonsensitive(v) != ""
-  ])
+  # Which static_secrets keys get a Secrets Manager *version*.
+  #
+  # Deliberately NOT derived by filtering local.static_secrets on value, which
+  # is what this used to do. SECRET_KEY and ADMIN_URL come from random_password
+  # / random_id, so their values are unknown until apply; a for_each whose keys
+  # depend on them is unknown at plan time and Terraform rejects the plan
+  # outright. That never surfaced here because the state already existed, but it
+  # breaks the case that matters most — rebuilding this stack from nothing, i.e.
+  # disaster recovery or standing it up in a second account.
+  #
+  # Both inputs below are plan-known: the generated keys always have a value by
+  # construction, and the rest come from variables, which Terraform knows before
+  # applying anything.
+  generated_secret_keys = ["SECRET_KEY", "ADMIN_URL"]
+
+  var_backed_secrets = {
+    FIELD_ENCRYPTION_KEY    = var.field_encryption_key
+    APP_DATABASE_URL        = var.app_database_url
+    BREVO_API_KEY           = var.brevo_api_key
+    SENTRY_DSN              = var.sentry_dsn
+    PAYSTACK_SECRET_KEY     = var.paystack_secret_key
+    FLUTTERWAVE_SECRET_KEY  = var.flutterwave_secret_key
+    NANGO_SECRET_KEY        = var.nango_secret_key
+    NANGO_WEBHOOK_SECRET    = var.nango_webhook_secret
+    TELEGRAM_BOT_TOKEN      = var.telegram_bot_token
+    TELEGRAM_WEBHOOK_SECRET = var.telegram_webhook_secret
+    GROQ_API_KEY            = var.groq_api_key
+    POSTHOG_API_KEY         = var.posthog_api_key
+    DIGITAX_APP_API_KEY     = var.digitax_app_api_key
+    DIGITAX_WEBHOOK_SECRET  = var.digitax_webhook_secret
+  }
+
+  static_secrets_with_value = toset(concat(
+    local.generated_secret_keys,
+    [for k, v in local.var_backed_secrets : k if v != ""],
+  ))
 }
 
 resource "aws_secretsmanager_secret" "static_app" {

@@ -74,14 +74,24 @@ resource "aws_lb_target_group" "api" {
   deregistration_delay = 30 # faster rollout during this validation phase; revisit (default 300s) once real traffic exists
 }
 
+# Port 80 redirects rather than forwards. Serving the API over plaintext would
+# expose bearer tokens and the X-Organisation-ID header to anyone on the path,
+# and presigned media URLs carry their signature in the query string. The
+# redirect keeps old links working while ensuring nothing sensitive travels in
+# the clear. Health checks are unaffected: the ALB probes the target directly
+# on the container port, not through this listener.
 resource "aws_lb_listener" "http" {
   load_balancer_arn = aws_lb.main.arn
   port              = 80
   protocol          = "HTTP"
 
   default_action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.api.arn
+    type = "redirect"
+    redirect {
+      port        = "443"
+      protocol    = "HTTPS"
+      status_code = "HTTP_301"
+    }
   }
 }
 
