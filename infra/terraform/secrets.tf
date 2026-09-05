@@ -41,6 +41,20 @@ resource "random_id" "admin_url" {
   byte_length = 12
 }
 
+# Key material for EncryptedCharField (User.mfa_secret, EmailConfig.
+# smtp_password, FIRSConfig.app_api_key). Deliberately SEPARATE from
+# SECRET_KEY: the encryption helper falls back to SECRET_KEY when this is
+# unset, which would tie every encrypted value to a key that gets rotated
+# as ordinary hygiene — silently making those values undecryptable and, for
+# mfa_secret, locking the user out with no obvious cause. This key must
+# therefore stay fixed for the life of the data. Safe to introduce now:
+# every encrypted column is currently empty (0 MFA secrets, 0 SMTP
+# passwords, 0 API keys), so there is nothing to re-encrypt.
+resource "random_password" "field_encryption_key" {
+  length  = 64
+  special = false
+}
+
 locals {
   admin_url = "${random_id.admin_url.hex}/"
 
@@ -70,6 +84,7 @@ locals {
   static_secrets = {
     SECRET_KEY = random_password.django_secret_key.result
     ADMIN_URL  = local.admin_url
+    FIELD_ENCRYPTION_KEY = random_password.field_encryption_key.result
 
     # Populated the same way as the third-party placeholders below: starts
     # "" (container reserved, no version, not injected into ECS — see the

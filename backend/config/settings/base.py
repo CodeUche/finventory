@@ -26,6 +26,22 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 # ─── Core ─────────────────────────────────────────────────────────────────────
 # Never use this default in production — production.py raises ImproperlyConfigured if it detects it
 SECRET_KEY = config("SECRET_KEY", default="change-me-in-production-never-commit-real-key")
+
+# Key material for EncryptedCharField (apps/core/fields.py). That helper reads
+# `settings.FIELD_ENCRYPTION_KEY` and falls back to SECRET_KEY when it is unset
+# — but the setting was never actually defined here, so the fallback was the
+# only path that ever ran and a FIELD_ENCRYPTION_KEY env var had no effect at
+# all. Defining it makes the documented behaviour real.
+#
+# Why it matters: encrypted fields (User.mfa_secret, EmailConfig.smtp_password,
+# FIRSConfig.app_api_key) become permanently undecryptable if the key changes.
+# Tying them to SECRET_KEY means rotating SECRET_KEY — ordinary good hygiene,
+# and unavoidable when moving between environments — silently destroys them.
+# A dedicated key can stay fixed while SECRET_KEY rotates freely.
+#
+# Empty default preserves the existing fallback, so nothing changes for any
+# deployment that does not set it.
+FIELD_ENCRYPTION_KEY = config("FIELD_ENCRYPTION_KEY", default="")
 DEBUG = config("DEBUG", default=False, cast=bool)
 ALLOWED_HOSTS: list[str] = config("ALLOWED_HOSTS", default="localhost,127.0.0.1", cast=Csv())
 
