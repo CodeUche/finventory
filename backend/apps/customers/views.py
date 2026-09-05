@@ -1,3 +1,5 @@
+import logging
+
 import django_filters
 from datetime import date, datetime
 from decimal import Decimal
@@ -18,6 +20,8 @@ from rest_framework import viewsets
 
 from .models import Customer, CustomerDebit
 from .serializers import CustomerSerializer, CustomerDebitSerializer
+
+logger = logging.getLogger(__name__)
 
 
 class CustomerFilter(django_filters.FilterSet):
@@ -271,7 +275,10 @@ class CustomerViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
         except ValueError as e:
             return Response({"error": str(e)}, status=422)
         except Exception as e:
-            return Response({"error": f"[{type(e).__name__}] {e}"}, status=422)
+            logger.exception("Error setting customer opening balance")
+            return Response(
+                {"error": f"Could not set this customer's opening balance: {type(e).__name__}: {e}"}, status=422
+            )
 
         return Response(CustomerSerializer(customer).data)
 

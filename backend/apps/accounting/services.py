@@ -1747,7 +1747,20 @@ class AccountingService:
         if not has_override:
             lines.append((revenue_acct, zero, revenue))
         else:
+            # Per-item buckets can only ever account for the ITEM lines. An
+            # invoice's delivery/shipping charge belongs to no item, so it has
+            # to be credited explicitly here or the journal comes up short by
+            # exactly the shipping amount and post_journal_entry rejects the
+            # whole invoice. The non-override branch above never hit this
+            # because its single `revenue` figure (total - tax) already
+            # carries the shipping inside it. Shipping goes to the org's
+            # default revenue account, which is precisely where the
+            # non-override branch puts it too - so a shipped invoice posts to
+            # the same account whether or not any item overrides its own.
+            shipping = Decimal(str(invoice.shipping_amount or 0))
             revenue_buckets = {}
+            if shipping != zero:
+                revenue_buckets[revenue_acct_default.id] = [revenue_acct_default, shipping]
             for i in items:
                 amt = Decimal(str(i.line_total or 0)) - Decimal(str(i.tax_amount or 0))
                 if amt == 0:

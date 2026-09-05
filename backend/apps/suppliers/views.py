@@ -1,3 +1,4 @@
+import logging
 from datetime import date, datetime
 from decimal import Decimal
 
@@ -19,6 +20,8 @@ _PlanSuppliers = plan_requires('suppliers')
 from .models import Supplier
 from .serializers import SupplierSerializer
 from apps.core.unique_errors import FriendlyUniqueErrorMixin
+
+logger = logging.getLogger(__name__)
 
 
 class SupplierViewSet(FriendlyUniqueErrorMixin, TenantFilterMixin, viewsets.ModelViewSet):
@@ -62,7 +65,10 @@ class SupplierViewSet(FriendlyUniqueErrorMixin, TenantFilterMixin, viewsets.Mode
         except ValueError as e:
             return Response({"error": str(e)}, status=422)
         except Exception as e:
-            return Response({"error": f"[{type(e).__name__}] {e}"}, status=422)
+            logger.exception("Error setting supplier opening balance")
+            return Response(
+                {"error": f"Could not set this supplier's opening balance: {type(e).__name__}: {e}"}, status=422
+            )
 
         return Response(SupplierSerializer(supplier).data)
 

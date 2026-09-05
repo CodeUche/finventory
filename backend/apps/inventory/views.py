@@ -1,5 +1,7 @@
 """Inventory ViewSets."""
 
+import logging
+
 import django_filters
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -30,6 +32,8 @@ from .serializers import (
 )
 from .services import InventoryService
 from apps.core.unique_errors import FriendlyUniqueErrorMixin
+
+logger = logging.getLogger(__name__)
 
 
 class ProductFilter(django_filters.FilterSet):
@@ -295,7 +299,10 @@ class ProductViewSet(FriendlyUniqueErrorMixin, TenantFilterMixin, viewsets.Model
         except ValueError as e:
             return Response({"error": str(e)}, status=422)
         except Exception as e:
-            return Response({"error": f"[{type(e).__name__}] {e}"}, status=422)
+            logger.exception("Error setting product opening balance")
+            return Response(
+                {"error": f"Could not set this product's opening balance: {type(e).__name__}: {e}"}, status=422
+            )
 
         return Response(ProductSerializer(product, context={"request": request}).data)
 

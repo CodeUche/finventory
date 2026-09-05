@@ -122,10 +122,12 @@ class QuoteViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             return Response({'message': 'Converted successfully', 'invoice_id': str(invoice.id)})
         except ValueError as e:
             return Response({'error': str(e)}, status=400)
-        except Exception:
+        except Exception as e:
             import logging as _log
             _log.getLogger(__name__).exception("Unexpected error converting quote")
-            return Response({'error': "An unexpected error occurred. Please try again."}, status=400)
+            return Response(
+                {'error': f"Could not convert this quote: {type(e).__name__}: {e}"}, status=400
+            )
 
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsStaff])
     def send_email(self, request, pk=None):

@@ -23,12 +23,20 @@ def _check_required(name: str, value: str, min_length: int = 20) -> None:
             "Generate a real secret and set it in the server .env file."
         )
 
-_secret_key   = _config("SECRET_KEY",   default="")
-_db_password  = _config("DB_PASSWORD",  default="")
-_database_url = _config("DATABASE_URL", default="")  # Railway / Render provide this directly
-_admin_url    = _config("ADMIN_URL",    default="admin/")
+_secret_key    = _config("SECRET_KEY",    default="")
+_db_password   = _config("DB_PASSWORD",   default="")
+_database_url  = _config("DATABASE_URL",  default="")  # Railway / Render provide this directly
+_admin_url     = _config("ADMIN_URL",     default="admin/")
+_field_enc_key = _config("FIELD_ENCRYPTION_KEY", default="")
 
 _check_required("SECRET_KEY", _secret_key, min_length=40)
+
+# Without this, EncryptedCharField (apps/core/fields.py) silently falls back to
+# deriving the encryption key from SECRET_KEY instead — a weaker guarantee,
+# since that key already has a different job (session/JWT signing, CSRF) and
+# rotating it for that purpose would also silently break every value encrypted
+# under the fallback. Finding M-9.
+_check_required("FIELD_ENCRYPTION_KEY", _field_enc_key, min_length=32)
 
 # DB_PASSWORD check is skipped when a full DATABASE_URL is provided (cloud platforms
 # like Railway embed the password inside the URL automatically).

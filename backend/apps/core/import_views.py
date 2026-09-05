@@ -45,9 +45,14 @@ PRODUCT_OPTIONAL = [
 PRODUCT_ALL = PRODUCT_OPTIONAL  # kept for template generation order
 
 CUSTOMER_REQUIRED = ["code", "name"]
+# opening_balance / _date / _side let a migrating business bring its debtors
+# across WITH what they already owe, instead of importing names and then
+# keying every balance in by hand. Blank opening_balance = import the customer
+# with no take-on at all, exactly as before these columns existed.
 CUSTOMER_OPTIONAL = [
     "customer_type", "email", "phone", "address",
     "contact_person", "credit_limit", "payment_terms_days", "notes",
+    "opening_balance", "opening_balance_date", "opening_balance_side",
 ]
 CUSTOMER_ALL = CUSTOMER_REQUIRED + CUSTOMER_OPTIONAL
 
@@ -58,6 +63,7 @@ SUPPLIER_REQUIRED = ["name"]
 SUPPLIER_OPTIONAL = [
     "code", "contact_person", "email", "phone", "address",
     "tax_id", "payment_terms_days", "notes",
+    "opening_balance", "opening_balance_date", "opening_balance_side",
 ]
 SUPPLIER_ALL = SUPPLIER_REQUIRED + SUPPLIER_OPTIONAL
 
@@ -279,6 +285,58 @@ def _date_val(val, field, errors, row_num):
             continue
     errors.append({"row": row_num, "field": field, "message": f"Invalid date '{val}' — use YYYY-MM-DD"})
     return None
+
+
+def _opening_balance_from_row(row, errors, row_num, default_side):
+    """
+    Read the opening_balance / opening_balance_date / opening_balance_side trio
+    off one CSV row.
+
+    Returns (amount, as_of_date, side), or None when the row carries no opening
+    balance at all — which is the normal case and must leave the party's
+    balance completely untouched.
+
+    `side` says which way the balance runs. For a customer 'debit' means they
+    owe us (the usual case); for a supplier 'credit' means we owe them. Each
+    caller passes its own default so a spreadsheet that omits the column still
+    does the sensible thing. A negative amount is accepted as shorthand for
+    "the other way round" and flips the side, because that is how people
+    actually export ledgers.
+    """
+    from django.utils import timezone
+
+    raw = (row.get("opening_balance") or "").strip()
+    if not raw:
+        return None
+
+    amount = _money(raw, "opening_balance", errors, row_num)
+    if amount is None:
+        return None
+
+    side = (row.get("opening_balance_side") or "").strip().lower()
+    if side in ("dr", "debit"):
+        side = "debit"
+    elif side in ("cr", "credit"):
+        side = "credit"
+    elif side:
+        errors.append({"row": row_num, "field": "opening_balance_side",
+                       "message": f"Invalid side '{side}' — use DR or CR"})
+        return None
+    else:
+        side = default_side
+
+    if amount < 0:
+        amount = -amount
+        side = "credit" if side == "debit" else "debit"
+
+    as_of = timezone.now().date()
+    if (row.get("opening_balance_date") or "").strip():
+        parsed = _date_val(row["opening_balance_date"], "opening_balance_date", errors, row_num)
+        if parsed is None:
+            return None
+        as_of = parsed
+
+    return amount, as_of, side
 
 
 def _normalize_ws(s: str) -> str:
@@ -720,6 +778,7 @@ class ImportCustomersView(APIView):
 
         created = 0
         updated = 0
+        balances_set = 0
         errors = []
 
         for idx, row in enumerate(rows, start=2):
@@ -762,9 +821,31 @@ class ImportCustomersView(APIView):
             else:
                 updated += 1
 
+            # Opening balance is posted through the SAME service the per-customer
+            # "Adjust Opening Balance" action uses, so an imported take-on gets
+            # identical GL treatment: Debit the customer's mapped receivable
+            # account / Credit Take-On Suspense (reversed for a credit balance).
+            # That service reverses this customer's own prior take-on first, so
+            # re-importing a corrected file fixes the balance in place instead of
+            # stacking a second entry on top of the first.
+            ob = _opening_balance_from_row(row, errors, row_num, default_side="debit")
+            if ob:
+                amount, as_of, side = ob
+                try:
+                    from apps.accounting.services import AccountingService
+                    AccountingService.set_customer_opening_balance(
+                        org, obj, amount=amount, side=side,
+                        as_of_date=as_of, created_by=request.user,
+                    )
+                    balances_set += 1
+                except Exception as exc:
+                    errors.append({"row": row_num, "field": "opening_balance",
+                                   "message": f"Customer imported, but the opening balance could not be posted: {exc}"})
+
         return Response({
             "created": created,
             "updated": updated,
+            "balances_set": balances_set,
             "errors": errors,
             "total_rows": len(rows),
         })
@@ -811,6 +892,7 @@ class ImportSuppliersView(APIView):
 
         created = 0
         updated = 0
+        balances_set = 0
         errors = []
 
         for idx, row in enumerate(rows, start=2):
@@ -849,9 +931,29 @@ class ImportSuppliersView(APIView):
             else:
                 updated += 1
 
+            # Same treatment as the customer import above, mirrored for payables:
+            # a supplier balance normally runs the other way (we owe them), so the
+            # default side here is credit. Posts Credit the supplier's mapped
+            # payable account / Debit Take-On Suspense, and re-importing corrects
+            # in place rather than double-posting.
+            ob = _opening_balance_from_row(row, errors, row_num, default_side="credit")
+            if ob:
+                amount, as_of, side = ob
+                try:
+                    from apps.accounting.services import AccountingService
+                    AccountingService.set_supplier_opening_balance(
+                        org, obj, amount=amount, side=side,
+                        as_of_date=as_of, created_by=request.user,
+                    )
+                    balances_set += 1
+                except Exception as exc:
+                    errors.append({"row": row_num, "field": "opening_balance",
+                                   "message": f"Supplier imported, but the opening balance could not be posted: {exc}"})
+
         return Response({
             "created": created,
             "updated": updated,
+            "balances_set": balances_set,
             "errors": errors,
             "total_rows": len(rows),
         })
@@ -1138,14 +1240,18 @@ SAMPLE_ROWS = {
         ["SKU001", "Hennessy VS 750ml", "5500.00", "3200.00", "physical", "Cognac", "Hennessy", "bottle", "10", "", "", "Main Warehouse", "24"],
         ["SKU002", "Delivery Service", "2000.00", "0.00", "service", "Logistics", "", "hour", "0", "", "Delivery service charge", "", ""],
     ],
+    # Column order must match CUSTOMER_ALL = CUSTOMER_REQUIRED + CUSTOMER_OPTIONAL above.
+    # Row 1 shows a customer with no opening balance, row 2 one who already owes
+    # 250,000 as at the take-on date — the two cases the reviewer asked for
+    # ("import customer with or without balances").
     "customers": [
-        ["CUST001", "Adaeze Okafor", "retail", "adaeze@example.com", "08012345678", "Lagos", "Adaeze", "0", "0", ""],
-        ["CUST002", "Zenith Foods Ltd", "wholesale", "accounts@zenith.ng", "08087654321", "Abuja", "Mr Bello", "500000", "30", "Preferred supplier"],
+        ["CUST001", "Adaeze Okafor", "retail", "adaeze@example.com", "08012345678", "Lagos", "Adaeze", "0", "0", "", "", "", ""],
+        ["CUST002", "Zenith Foods Ltd", "wholesale", "accounts@zenith.ng", "08087654321", "Abuja", "Mr Bello", "500000", "30", "Opening debtor", "250000", "2026-01-01", "DR"],
     ],
     # Column order must match SUPPLIER_ALL = SUPPLIER_REQUIRED + SUPPLIER_OPTIONAL above.
     "suppliers": [
-        ["ABC Distributors Ltd", "ABC-001", "Mr. John Doe", "sales@abcdist.ng", "08012345678", "12 Adeola Odeku St, Victoria Island, Lagos", "TIN-12345678", "30", "Primary rice supplier"],
-        ["Kobo Trading & Services Ltd", "", "Chinedu Okoro", "info@kobotrading.ng", "08087654321", "Kano", "", "45", ""],
+        ["ABC Distributors Ltd", "ABC-001", "Mr. John Doe", "sales@abcdist.ng", "08012345678", "12 Adeola Odeku St, Victoria Island, Lagos", "TIN-12345678", "30", "Primary rice supplier", "180000", "2026-01-01", "CR"],
+        ["Kobo Trading & Services Ltd", "", "Chinedu Okoro", "info@kobotrading.ng", "08087654321", "Kano", "", "45", "", "", "", ""],
     ],
     "accounts": [
         ["6000", "Office Supplies", "expense", "General office supplies expense"],

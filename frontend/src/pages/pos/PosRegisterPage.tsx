@@ -86,7 +86,7 @@ export default function PosRegisterPage() {
   // ── Catalogue ───────────────────────────────────────────────────────────
   const [catalogue, setCatalogue] = useState<Product[]>([])
   useEffect(() => {
-    inventoryApi.products({ is_active: true, page_size: 60 })
+    inventoryApi.sellableProducts({ is_active: true, page_size: 60 })
       .then(({ data }) => setCatalogue(data.results ?? data))
       .catch(() => { /* the scan box still works without tiles */ })
   }, [])
@@ -95,7 +95,7 @@ export default function PosRegisterPage() {
     if (!query.trim()) { setResults([]); return }
     const t = setTimeout(async () => {
       try {
-        const { data } = await inventoryApi.products({ search: query, is_active: true })
+        const { data } = await inventoryApi.sellableProducts({ search: query, is_active: true })
         setResults(data.results ?? data)
       } catch { /* silent — scanning still works */ }
     }, 200)
@@ -213,7 +213,7 @@ export default function PosRegisterPage() {
     if (!q) return
     setBusy(true)
     try {
-      const { data } = await inventoryApi.products({ search: q, is_active: true })
+      const { data } = await inventoryApi.sellableProducts({ search: q, is_active: true })
       const found: Product[] = data.results ?? data
       const exact = found.find(
         (p) => p.barcode?.toLowerCase() === q.toLowerCase() || p.sku?.toLowerCase() === q.toLowerCase(),

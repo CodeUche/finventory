@@ -18,6 +18,12 @@ interface LineForm { category_name: string; custom_name: string; category_type: 
 
 const now = new Date()
 const CURRENT_YEAR = now.getFullYear()
+// Prior-year budgets are permitted: an accountant loading last year's budget to
+// compare against this year's is a normal thing to do, and the old hard floor at
+// CURRENT_YEAR made it impossible. The bounds below exist only to stop a typo
+// ("202", "20261") creating a nonsense fiscal year.
+const MIN_YEAR = CURRENT_YEAR - 10
+const MAX_YEAR = CURRENT_YEAR + 10
 const BLANK_BUDGET: BudgetForm = { name: '', fiscal_year: String(CURRENT_YEAR), period_type: 'monthly', notes: '', budget_type: 'operational', start_date: '', end_date: '' }
 const BLANK_LINE: LineForm = { category_name: '', custom_name: '', category_type: 'expense', period_month: '', budgeted_amount: '', unit_price: '', quantity: '1', description: '', account: '' }
 
@@ -93,8 +99,8 @@ export default function BudgetPage() {
   const handleCreateBudget = async () => {
     if (!budgetForm.name.trim()) { toast.error('Budget name is required'); return }
     const year = parseInt(budgetForm.fiscal_year)
-    if (isNaN(year) || year < CURRENT_YEAR) {
-      toast.error(`Fiscal year must be ${CURRENT_YEAR} or later — you cannot create budgets for past years`)
+    if (isNaN(year) || year < MIN_YEAR || year > MAX_YEAR) {
+      toast.error(`Fiscal year must be between ${MIN_YEAR} and ${MAX_YEAR}`)
       return
     }
     setSavingBudget(true)
@@ -440,12 +446,12 @@ export default function BudgetPage() {
                 <input
                   type="number"
                   className="input"
-                  min={CURRENT_YEAR}
-                  max={CURRENT_YEAR + 10}
+                  min={MIN_YEAR}
+                  max={MAX_YEAR}
                   value={budgetForm.fiscal_year}
                   onChange={(e) => setBudgetForm({ ...budgetForm, fiscal_year: e.target.value })}
                 />
-                <p className="text-xs text-slate-600 mt-1">Min: {CURRENT_YEAR} (cannot create past budgets)</p>
+                <p className="text-xs text-slate-600 mt-1">{MIN_YEAR}–{MAX_YEAR}. Prior years are allowed so you can load a historic budget for comparison.</p>
               </div>
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Period Type</label>
