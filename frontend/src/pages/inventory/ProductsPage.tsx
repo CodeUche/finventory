@@ -5,7 +5,8 @@ import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { useModuleAccess } from '@/hooks/useModuleAccess'
 import { usePagination } from '@/hooks/usePagination'
 import Pagination from '@/components/Pagination'
-import { Plus, Search, Package, AlertTriangle, X, Pencil, Loader2, TrendingUp, TrendingDown, History, Maximize2, Minimize2, ShieldCheck, FileDown, Table2, ArrowDownCircle, Trash2, RefreshCw, CheckSquare, ChevronDown, Upload } from 'lucide-react'
+import { Plus, Search, Package, AlertTriangle, X, Pencil, Loader2, TrendingUp, TrendingDown, History, Maximize2, Minimize2, ShieldCheck, FileDown, Table2, ArrowDownCircle, Trash2, RefreshCw, CheckSquare, ChevronDown, Upload, Printer } from 'lucide-react'
+import PrintLabelModal from '@/components/PrintLabelModal'
 import toast from 'react-hot-toast'
 import { inventoryApi, taxApi, salesApi, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatAmountInput, stripCommas, formatDate } from '@/lib/utils'
@@ -343,6 +344,7 @@ export default function ProductsPage() {
   const [variantSaving, setVariantSaving] = useState(false)
   const [comboPickableProducts, setComboPickableProducts] = useState<Product[]>([])
   const [customFieldRows, setCustomFieldRows] = useState<{ label: string; value: string }[]>([])
+  const [printLabelProduct, setPrintLabelProduct] = useState<Product | null>(null)
   const [form, setForm] = useState({ ...BLANK })
   const [taxClasses, setTaxClasses] = useState<TaxClass[]>([])
   const [sortBy, setSortBy] = useState('name')
@@ -1199,7 +1201,26 @@ export default function ProductsPage() {
           <div className="bg-surface-800 border border-surface-700 rounded-2xl w-full max-w-lg shadow-2xl animate-slide-up max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between p-6 border-b border-surface-700">
               <h2 className="font-semibold text-white text-lg">{editId ? 'Edit Product' : 'New Product'}</h2>
-              <button onClick={() => setShowModal(false)} className="btn-ghost p-1.5"><X size={18} /></button>
+              <div className="flex items-center gap-1">
+                {editId && editHydrated && (
+                  <button
+                    type="button"
+                    onClick={() => setPrintLabelProduct({
+                      id: editId,
+                      sku: form.sku,
+                      name: form.name,
+                      barcode: (form as any).barcode ?? '',
+                      barcode_symbology: (form as any).barcode_symbology ?? 'code128',
+                      selling_price: stripCommas(form.selling_price),
+                    } as Product)}
+                    className="btn-ghost p-1.5 text-slate-400 hover:text-white"
+                    title="Print barcode label"
+                  >
+                    <Printer size={18} />
+                  </button>
+                )}
+                <button onClick={() => setShowModal(false)} className="btn-ghost p-1.5"><X size={18} /></button>
+              </div>
             </div>
             <form onSubmit={handleSave} className="p-6 space-y-4">
               {/* Product Type */}
@@ -1921,6 +1942,10 @@ export default function ProductsPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {printLabelProduct && (
+        <PrintLabelModal product={printLabelProduct} onClose={() => setPrintLabelProduct(null)} />
       )}
     </div>
   )
