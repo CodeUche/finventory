@@ -42,18 +42,19 @@ resource "random_id" "admin_url" {
 }
 
 # Key material for EncryptedCharField (User.mfa_secret, EmailConfig.
-# smtp_password, FIRSConfig.app_api_key). Deliberately SEPARATE from
-# SECRET_KEY: the encryption helper falls back to SECRET_KEY when this is
-# unset, which would tie every encrypted value to a key that gets rotated
-# as ordinary hygiene — silently making those values undecryptable and, for
-# mfa_secret, locking the user out with no obvious cause. This key must
-# therefore stay fixed for the life of the data. Safe to introduce now:
-# every encrypted column is currently empty (0 MFA secrets, 0 SMTP
-# passwords, 0 API keys), so there is nothing to re-encrypt.
-resource "random_password" "field_encryption_key" {
-  length  = 64
-  special = false
+# smtp_password, FIRSConfig.app_api_key). production.py hard-requires this
+# (min 32 chars) since the M-9 fix, so the containers will not boot without it.
+#
+# Deliberately NOT generated here: it must match the value Railway is using.
+# Railway keeps serving users through the fallback window, so anything
+# encrypted there before clients finish moving must still decrypt on AWS.
+# Generating a fresh key would silently orphan exactly that data.
+variable "field_encryption_key" {
+  description = "Must match Railway's FIELD_ENCRYPTION_KEY so data encrypted there stays readable here."
+  type        = string
+  sensitive   = true
 }
+
 
 locals {
   admin_url = "${random_id.admin_url.hex}/"
@@ -84,7 +85,7 @@ locals {
   static_secrets = {
     SECRET_KEY = random_password.django_secret_key.result
     ADMIN_URL  = local.admin_url
-    FIELD_ENCRYPTION_KEY = random_password.field_encryption_key.result
+    FIELD_ENCRYPTION_KEY = var.field_encryption_key
 
     # Populated the same way as the third-party placeholders below: starts
     # "" (container reserved, no version, not injected into ECS — see the
