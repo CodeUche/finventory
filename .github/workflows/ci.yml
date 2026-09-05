@@ -398,7 +398,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: audity-windows-msi
-          path: frontend/src-tauri/target/release/bundle/msi/*.msi
+          # *.msi* not *.msi — Tauri writes the updater signature alongside the
+          # installer as <name>.msi.sig, and the narrower glob silently dropped
+          # it. Without that signature the updater manifest cannot be built and
+          # desktop clients never see the release.
+          path: frontend/src-tauri/target/release/bundle/msi/*.msi*
           if-no-files-found: error
           retention-days: 90
 
@@ -406,7 +410,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: audity-windows-nsis
-          path: frontend/src-tauri/target/release/bundle/nsis/*.exe
+          # *.exe* to include the accompanying .exe.sig — see the MSI note above.
+          path: frontend/src-tauri/target/release/bundle/nsis/*.exe*
           if-no-files-found: error
           retention-days: 90
 
