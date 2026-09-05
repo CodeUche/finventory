@@ -36,21 +36,24 @@ def _add_paye_remittance_constraint_if_missing(apps, schema_editor):
     """Reverse of the above — re-adds the constraint, tolerating it already
     being present (mirrors the forward function's defensiveness)."""
     if schema_editor.connection.vendor == 'postgresql':
-        schema_editor.execute(
-            "DO $$\n"
-            "BEGIN\n"
-            "    IF NOT EXISTS (\n"
-            "        SELECT 1 FROM pg_constraint
-"
-            "        WHERE conrelid = 'payroll_payeremittance'::regclass AND conname = "
-            f"'{_PAYE_REMITTANCE_CONSTRAINT_NAME}'\n"
-            "    ) THEN\n"
-            "        ALTER TABLE payroll_payeremittance\n"
-            f"        ADD CONSTRAINT {_PAYE_REMITTANCE_CONSTRAINT_NAME}\n"
-            "        UNIQUE (organisation_id, period_year, period_month);\n"
-            "    END IF;\n"
-            "END $$;"
-        )
+        # conrelid is included deliberately: PostgreSQL only requires
+        # constraint names to be unique per relation, so filtering on conname
+        # alone could match a same-named constraint on a different table and
+        # wrongly skip restoring this one.
+        schema_editor.execute(f"""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conrelid = 'payroll_payeremittance'::regclass
+                      AND conname = '{_PAYE_REMITTANCE_CONSTRAINT_NAME}'
+                ) THEN
+                    ALTER TABLE payroll_payeremittance
+                    ADD CONSTRAINT {_PAYE_REMITTANCE_CONSTRAINT_NAME}
+                    UNIQUE (organisation_id, period_year, period_month);
+                END IF;
+            END $$;
+        """)
         return
     PAYERemittance = apps.get_model('payroll', 'PAYERemittance')
     constraint = models.UniqueConstraint(
