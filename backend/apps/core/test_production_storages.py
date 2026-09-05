@@ -111,6 +111,11 @@ def _resolve_production_storages(**overrides):
             # S3Boto3Storage opens its connection lazily on first use.
             "SECRET_KEY": "test-only-key-for-storage-resolution-check-0123456789",
             "ADMIN_URL": "test-admin-path/",
+            # production.py refuses to start without this (min 32 chars). It is
+            # a startup guard, unrelated to storage, but these subprocesses load
+            # the real production settings module so every guard must be
+            # satisfied or the import fails before any storage is resolved.
+            "FIELD_ENCRYPTION_KEY": "test-only-field-encryption-key-0123456789abcdef",
             "DATABASE_URL": "postgres://u:p@localhost:5432/storage_probe",
             "DEBUG": "False",
         }
