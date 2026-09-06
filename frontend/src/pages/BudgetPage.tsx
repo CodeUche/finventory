@@ -77,6 +77,11 @@ export default function BudgetPage() {
   const [gridEditorBudget, setGridEditorBudget] = useState<Budget | null>(null)
   const [viewMode, setViewMode] = useState<'list' | 'grid'>('list')
 
+  // Phase 6 (B7): per-budget draft tax-rate input, keyed by budget id, so
+  // editing one budget's rate doesn't clobber another's in-progress edit.
+  const [taxRateDraft, setTaxRateDraft] = useState<Record<string, string>>({})
+  const [savingTaxRate, setSavingTaxRate] = useState<string | null>(null)
+
   const load = async () => {
     setLoading(true)
     try {
@@ -156,6 +161,24 @@ export default function BudgetPage() {
       toast.error(msg)
     } finally {
       setApprovingBudget(null)
+    }
+  }
+
+  const handleSaveTaxRate = async (b: Budget) => {
+    const raw = taxRateDraft[b.id] ?? String(b.tax_rate ?? 0)
+    const rate = parseFloat(raw)
+    if (isNaN(rate)) { toast.error('Enter a valid tax rate'); return }
+    setSavingTaxRate(b.id)
+    try {
+      await budgetApi.update(b.id, { tax_rate: rate })
+      toast.success('Tax rate saved')
+      load()
+    } catch (err: any) {
+      const apiErr = err?.response?.data?.error
+      const msg = typeof apiErr === 'string' ? apiErr : (apiErr?.message ?? 'Failed to save tax rate')
+      toast.error(msg)
+    } finally {
+      setSavingTaxRate(null)
     }
   }
 
@@ -371,6 +394,61 @@ export default function BudgetPage() {
 
               {expandedBudget === b.id && (
                 <div className="border-t border-surface-700">
+                  {(() => {
+                    // Phase 6 (B7): a simple two-bucket roll-up — every
+                    // revenue line vs every expense line (COGS lumped in
+                    // with expense here, unlike the grid editor's 5-row P&L
+                    // breakdown; this is deliberately the lighter summary).
+                    const totalIncome = sumBudgetedAmount(b.lines.filter((l) => l.category_type === 'revenue'))
+                    const totalExpense = sumBudgetedAmount(b.lines.filter((l) => l.category_type === 'expense'))
+                    const expectedProfit = totalIncome - totalExpense
+                    const taxRate = parseFloat(taxRateDraft[b.id] ?? String(b.tax_rate ?? 0)) || 0
+                    const tax = expectedProfit * (taxRate / 100)
+                    const budgetAmount = expectedProfit - tax
+                    return (
+                      <div className="p-4 bg-surface-800/30 border-b border-surface-700">
+                        <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+                          <div>
+                            <p className="text-xs text-slate-500">Total Income (A)</p>
+                            <p className="font-mono text-sm text-white">{formatCurrency(totalIncome)}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-slate-500">Total Expense (B)</p>
+                            <p className="font-mono text-sm text-white">{formatCurrency(totalExpense)}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-slate-500">Expected Profit (C = A−B)</p>
+                            <p className={`font-mono text-sm ${expectedProfit < 0 ? 'text-red-400' : 'text-emerald-400'}`}>{formatCurrency(expectedProfit)}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-slate-500 mb-1">Tax (D = C × rate)</p>
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="text"
+                                inputMode="decimal"
+                                className="input py-1 text-xs w-16"
+                                value={taxRateDraft[b.id] ?? String(b.tax_rate ?? 0)}
+                                onChange={(e) => setTaxRateDraft((prev) => ({ ...prev, [b.id]: e.target.value }))}
+                              />
+                              <span className="text-xs text-slate-500">%</span>
+                              <button
+                                onClick={() => handleSaveTaxRate(b)}
+                                disabled={savingTaxRate === b.id}
+                                className="text-xs px-1.5 py-1 rounded bg-brand-500/15 text-brand-400 hover:bg-brand-500/25 disabled:opacity-50"
+                              >
+                                {savingTaxRate === b.id ? <Loader2 size={11} className="animate-spin" /> : 'Save'}
+                              </button>
+                            </div>
+                            <p className="font-mono text-xs text-slate-400 mt-1">{formatCurrency(tax)}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-slate-500">Budget Amount (E = C−D)</p>
+                            <p className="font-mono text-sm text-white font-semibold">{formatCurrency(budgetAmount)}</p>
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })()}
                   {b.lines.length === 0 ? (
                     <div className="p-6 text-center text-slate-500 text-sm">
                       No budget lines yet.{' '}

@@ -1496,6 +1496,10 @@ export interface Budget {
    * period's start/end date instead of the bare fiscal_year. */
   period?: string | null
   period_name?: string | null
+  /** Phase 6 (B7): a plain percentage used only for the client-computed
+   * Expected Profit / Tax / Budget Amount roll-up panel — not wired into
+   * TaxService/TaxConfig. Defaults to 0, never null. */
+  tax_rate: string
 }
 
 /** A named financial period (e.g. "FY2026", "Q1 2026") a Budget can be

@@ -1,12 +1,49 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { X, Plus, Trash2, Copy, Loader2, Grid3x3 } from 'lucide-react'
+import { X, Plus, Trash2, Copy, Loader2, Grid3x3, CalendarClock } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { budgetApi } from '@/services/api'
-import { formatAmountInput, stripCommas } from '@/lib/utils'
+import { formatAmountInput, formatCurrency, stripCommas } from '@/lib/utils'
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from '@/lib/categories'
-import { applyCopyForward, buildBulkLinesPayload, type GridRow } from '@/lib/budgetGrid'
+import {
+  applyCopyForward, buildBulkLinesPayload, applyFrequencyCopy, computeSubtotals,
+  sumRowMonths, sumColumnAcrossRows, type GridRow, type CopyFrequency,
+} from '@/lib/budgetGrid'
 import type { Budget, Account } from '@/types'
+
+const FREQUENCY_OPTIONS: { value: CopyFrequency; label: string }[] = [
+  { value: 'once', label: 'Once-off (this month only)' },
+  { value: 'monthly', label: 'Monthly (every month to Dec)' },
+  { value: 'bimonthly', label: 'Every 2 Months' },
+  { value: 'quarterly', label: 'Quarterly' },
+  { value: 'semiannual', label: 'Every 6 Months' },
+]
+const ROUND_OPTIONS = [0, 1, 10, 100, 1000]
+
+// Income-statement account types eligible for grid pre-population — a
+// Balance Sheet account (asset/liability/equity) has no place on a P&L
+// budget grid.
+const INCOME_STATEMENT_TYPES = new Set(['revenue', 'cogs', 'expense'])
+
+/** Appends one blank-months row per active income-statement account that
+ * isn't already represented by an existing GridRow (matched by account id,
+ * not by category_name text — a line could use a different display name for
+ * an account it's already linked to). Existing rows keep their order; new
+ * pre-populated rows are appended afterward, sorted by account code. */
+function withPrepopulatedAccountRows(rows: GridRow[], accounts: Account[]): GridRow[] {
+  const linkedAccountIds = new Set(rows.map((r) => r.account).filter(Boolean))
+  const toAdd = accounts
+    .filter((a) => a.is_active && INCOME_STATEMENT_TYPES.has(a.account_type) && !linkedAccountIds.has(a.id))
+    .sort((a, b) => a.code.localeCompare(b.code))
+    .map((a): GridRow => ({
+      key: `acct-${a.id}`,
+      category_name: a.name,
+      category_type: a.account_type === 'revenue' ? 'revenue' : 'expense',
+      account: a.id,
+      months: Array(12).fill(''),
+    }))
+  return [...rows, ...toAdd]
+}
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const EXPENSE_SUGGESTIONS = EXPENSE_CATEGORIES.filter((c) => c !== 'Other (Custom)')
@@ -48,12 +85,27 @@ interface Props {
 }
 
 export default function BudgetGridEditor({ budget, accounts, onClose, onSaved }: Props) {
-  const [rows, setRows] = useState<GridRow[]>(() => rowsFromBudget(budget))
+  const [rows, setRows] = useState<GridRow[]>(() => withPrepopulatedAccountRows(rowsFromBudget(budget), accounts))
   const [saving, setSaving] = useState(false)
   const [copyTarget, setCopyTarget] = useState<{ rowKey: string; monthIdx: number; x: number; y: number } | null>(null)
   const [copyPercent, setCopyPercent] = useState('')
 
-  useEffect(() => { setRows(rowsFromBudget(budget)) }, [budget.id])
+  // Phase 6 (B3/B3b): the "Copy Budget Values" modal — a separate, additive
+  // feature from the right-click copy-forward popover above.
+  const [showFreqModal, setShowFreqModal] = useState(false)
+  const [freqRowKey, setFreqRowKey] = useState('')
+  const [freqMonth, setFreqMonth] = useState(0)
+  const [freqFrequency, setFreqFrequency] = useState<CopyFrequency>('monthly')
+  const [freqPercent, setFreqPercent] = useState('')
+  const [freqRound, setFreqRound] = useState(0)
+
+  // Only re-derives on budget.id change (matching the pre-Phase-6 behavior)
+  // — `accounts` is read from whatever the latest render's closure holds,
+  // but is deliberately NOT a dependency, so a parent re-render that hands
+  // down a new (same-content) accounts array reference never wipes out
+  // in-progress unsaved edits in this grid.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { setRows(withPrepopulatedAccountRows(rowsFromBudget(budget), accounts)) }, [budget.id])
 
   const updateRow = (key: string, patch: Partial<GridRow>) =>
     setRows((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)))
@@ -85,6 +137,29 @@ export default function BudgetGridEditor({ budget, accounts, onClose, onSaved }:
     )))
     setCopyTarget(null)
   }
+
+  const openFreqModal = () => {
+    setFreqRowKey(rows[0]?.key ?? '')
+    setFreqMonth(0)
+    setFreqFrequency('monthly')
+    setFreqPercent('')
+    setFreqRound(0)
+    setShowFreqModal(true)
+  }
+
+  const applyFreqCopy = () => {
+    if (!freqRowKey) return
+    const pct = freqPercent.trim() ? parseFloat(freqPercent) : 0
+    setRows((prev) => prev.map((r) => (
+      r.key === freqRowKey
+        ? { ...r, months: applyFrequencyCopy(r.months, freqMonth, freqFrequency, isNaN(pct) ? 0 : pct, freqRound) }
+        : r
+    )))
+    setShowFreqModal(false)
+  }
+
+  const subtotals = computeSubtotals(rows, accounts)
+  const grandTotal = rows.reduce((sum, r) => sum + sumRowMonths(r), 0)
 
   const handleSave = async () => {
     const hasNamelessAmount = rows.some((r) => !r.category_name.trim() && r.months.some((m) => m !== ''))
@@ -124,7 +199,16 @@ export default function BudgetGridEditor({ budget, accounts, onClose, onSaved }:
             <h2 className="text-lg font-bold text-white flex items-center gap-2"><Grid3x3 size={18} /> Monthly Grid — {budget.name}</h2>
             <p className="text-xs text-slate-500 mt-0.5">Build a whole year's budget lines at once. Right-click (or use the <Copy size={11} className="inline" /> icon) on a filled cell to copy it across the rest of the row, with an optional % adjustment.</p>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-white"><X size={20} /></button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={openFreqModal}
+              className="text-xs px-2.5 py-1.5 rounded-lg bg-brand-500/15 text-brand-400 hover:bg-brand-500/25 transition-colors inline-flex items-center gap-1.5"
+              title="Fill a row's months using a frequency pattern (once-off, monthly, quarterly, etc.)"
+            >
+              <CalendarClock size={13} /> Copy Budget Values
+            </button>
+            <button onClick={onClose} className="text-slate-400 hover:text-white"><X size={20} /></button>
+          </div>
         </div>
 
         <datalist id="grid-expense-cats">
@@ -144,6 +228,7 @@ export default function BudgetGridEditor({ budget, accounts, onClose, onSaved }:
                 {MONTH_NAMES.map((m) => (
                   <th key={m} className="px-1 py-2 text-center text-xs font-semibold text-slate-400 uppercase min-w-[110px]">{m}</th>
                 ))}
+                <th className="px-2 py-2 text-right text-xs font-semibold text-slate-400 uppercase min-w-[110px]">Total</th>
                 <th className="px-2 py-2" />
               </tr>
             </thead>
@@ -204,6 +289,9 @@ export default function BudgetGridEditor({ budget, accounts, onClose, onSaved }:
                       </div>
                     </td>
                   ))}
+                  <td className="px-2 py-1.5 text-right font-mono text-xs text-slate-300">
+                    {formatCurrency(sumRowMonths(row))}
+                  </td>
                   <td className="px-2 py-1.5">
                     <button onClick={() => removeRow(row.key)} className="text-slate-500 hover:text-red-400" title="Remove row">
                       <Trash2 size={14} />
@@ -212,6 +300,36 @@ export default function BudgetGridEditor({ budget, accounts, onClose, onSaved }:
                 </tr>
               ))}
             </tbody>
+            <tfoot>
+              <tr className="border-t-2 border-surface-600 bg-surface-800/60 font-semibold">
+                <td className="px-2 py-1.5 sticky left-0 bg-surface-800/95 text-xs text-slate-300" colSpan={3}>Column Total</td>
+                {MONTH_NAMES.map((_, i) => (
+                  <td key={i} className="px-1 py-1.5 text-right font-mono text-xs text-slate-200">
+                    {formatCurrency(sumColumnAcrossRows(rows, i))}
+                  </td>
+                ))}
+                <td className="px-2 py-1.5 text-right font-mono text-xs text-white">{formatCurrency(grandTotal)}</td>
+                <td />
+              </tr>
+              {([
+                ['Total Sales', subtotals.totalSales],
+                ['Cost of Sales', subtotals.costOfSales],
+                ['Gross Profit', subtotals.grossProfit],
+                ['Total Expenses', subtotals.totalExpenses],
+                ['Net Profit', subtotals.netProfit],
+              ] as const).map(([label, values]) => (
+                <tr key={label} className="border-t border-surface-700/60">
+                  <td className="px-2 py-1.5 sticky left-0 bg-surface-900/95 text-xs text-slate-400" colSpan={3}>{label}</td>
+                  {values.map((v, i) => (
+                    <td key={i} className="px-1 py-1.5 text-right font-mono text-xs text-slate-400">{formatCurrency(v)}</td>
+                  ))}
+                  <td className="px-2 py-1.5 text-right font-mono text-xs text-slate-400">
+                    {formatCurrency(values.reduce((s, v) => s + v, 0))}
+                  </td>
+                  <td />
+                </tr>
+              ))}
+            </tfoot>
           </table>
         </div>
 
@@ -256,6 +374,63 @@ export default function BudgetGridEditor({ budget, accounts, onClose, onSaved }:
             </div>
           </div>
         </>
+      )}
+
+      {showFreqModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setShowFreqModal(false)} />
+          <div className="relative card w-full max-w-sm p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2"><CalendarClock size={16} /> Copy Budget Values</h3>
+              <button onClick={() => setShowFreqModal(false)} className="text-slate-400 hover:text-white"><X size={18} /></button>
+            </div>
+            <p className="text-xs text-slate-500">Fill a row's remaining months from a starting month's value, using a frequency pattern.</p>
+
+            <div>
+              <label className="text-xs text-slate-500 mb-1 block">Row</label>
+              <select className="input py-1.5 text-xs" value={freqRowKey} onChange={(e) => setFreqRowKey(e.target.value)}>
+                {rows.map((r) => (
+                  <option key={r.key} value={r.key}>{r.category_name || '(unnamed row)'}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="text-xs text-slate-500 mb-1 block">Starting Month (its value is the base amount)</label>
+              <select className="input py-1.5 text-xs" value={freqMonth} onChange={(e) => setFreqMonth(Number(e.target.value))}>
+                {MONTH_NAMES.map((m, i) => <option key={m} value={i}>{m}</option>)}
+              </select>
+            </div>
+
+            <div>
+              <label className="text-xs text-slate-500 mb-1 block">Frequency</label>
+              <select className="input py-1.5 text-xs" value={freqFrequency} onChange={(e) => setFreqFrequency(e.target.value as CopyFrequency)}>
+                {FREQUENCY_OPTIONS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
+              </select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-slate-500 mb-1 block">Adjust by % <span className="text-slate-600">(optional)</span></label>
+                <input
+                  type="text" inputMode="decimal" className="input py-1.5 text-xs" placeholder="0"
+                  value={freqPercent} onChange={(e) => setFreqPercent(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 mb-1 block">Round to nearest</label>
+                <select className="input py-1.5 text-xs" value={freqRound} onChange={(e) => setFreqRound(Number(e.target.value))}>
+                  {ROUND_OPTIONS.map((r) => <option key={r} value={r}>{r === 0 ? 'None' : r.toLocaleString()}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div className="flex gap-3 pt-1">
+              <button className="flex-1 py-2 rounded-xl border border-surface-600 text-slate-400 hover:text-white text-sm" onClick={() => setShowFreqModal(false)}>Cancel</button>
+              <button className="btn-primary flex-1 py-2 justify-center" onClick={applyFreqCopy}>Apply</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>,
     document.body,

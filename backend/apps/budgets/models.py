@@ -59,6 +59,13 @@ class Budget(TenantAwareModel):
     period = models.ForeignKey(
         BudgetPeriod, null=True, blank=True, on_delete=models.SET_NULL, related_name='budgets',
     )
+    # Phase 6 (B7): a plain user-editable percentage for the lightweight
+    # Expected Profit / Tax / Budget Amount roll-up panel. Deliberately NOT
+    # wired into TaxService.calculate_income_tax / TaxConfig — that engine
+    # needs an active TaxConfig plus gross_turnover/fixed_assets a Budget has
+    # no concept of, and is overkill for what's meant to be a quick planning
+    # figure, not a statutory computation.
+    tax_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0)
 
     class Meta:
         ordering = ['-fiscal_year', 'name']

@@ -184,6 +184,28 @@ class BudgetFieldsTests(TestCase):
         self.assertEqual(variance_res.status_code, 200)
         self.assertEqual(Decimal(str(variance_res.data[0]["actual_amount"])), Decimal("0"))
 
+    def test_tax_rate_defaults_to_zero(self):
+        """Phase 6 (B7): a Budget created with no tax_rate specified defaults
+        to 0, not null — existing pre-Phase-6 budgets must serialize fine."""
+        budget = Budget.objects.create(organisation=self.org, name="No Tax Set", fiscal_year=2026)
+        res = self.client.get(f"/api/v1/budgets/{budget.id}/")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(Decimal(str(res.data["tax_rate"])), Decimal("0"))
+
+    def test_tax_rate_can_be_set_on_create(self):
+        res = self.client.post("/api/v1/budgets/", {
+            "name": "Taxed Budget", "fiscal_year": 2026, "tax_rate": "30.00",
+        })
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        self.assertEqual(Decimal(str(res.data["tax_rate"])), Decimal("30.00"))
+
+    def test_tax_rate_can_be_updated_via_patch(self):
+        budget = Budget.objects.create(organisation=self.org, name="Patch Tax", fiscal_year=2026)
+        res = self.client.patch(f"/api/v1/budgets/{budget.id}/", {"tax_rate": "22.50"})
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        budget.refresh_from_db()
+        self.assertEqual(budget.tax_rate, Decimal("22.50"))
+
 
 class BudgetMonitoringTests(TestCase):
     def setUp(self):

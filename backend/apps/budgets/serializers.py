@@ -55,7 +55,7 @@ class BudgetSerializer(serializers.ModelSerializer):
             'id', 'name', 'fiscal_year', 'period_type', 'status', 'notes', 'created_at', 'lines',
             'budget_type', 'start_date', 'end_date',
             'approved_by', 'approved_by_name', 'approved_at',
-            'period', 'period_name',
+            'period', 'period_name', 'tax_rate',
         ]
         read_only_fields = ['id', 'created_at', 'approved_by', 'approved_by_name', 'approved_at']
 
