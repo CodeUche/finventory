@@ -103,11 +103,21 @@ locals {
   common_environment = [
     { name = "DJANGO_SETTINGS_MODULE", value = "config.settings.production" },
     { name = "DEBUG", value = "False" },
-    # No HTTPS listener on the ALB yet (Phase 8 — needs a real domain for
-    # an ACM cert). Without this, SECURE_SSL_REDIRECT's default True 301s
-    # every request, including the ALB health check, to a nonexistent
-    # HTTPS endpoint. Remove this line (or flip to "True") once Phase 8's
-    # HTTPS listener + domain are in place.
+    # Stays False deliberately, and is no longer a Phase 8 leftover.
+    #
+    # HTTPS is live and the ALB's :80 listener already 301s to :443 (verified
+    # 2026-09-06), so nothing reaches Django over plain HTTP except the health
+    # check — and that is exactly what makes Django-level redirect harmful
+    # here. ALB health checks connect straight to the task on HTTP with no
+    # X-Forwarded-Proto, so SECURE_SSL_REDIRECT=True would 301 them, the target
+    # group expects 200, every task would be marked unhealthy and the service
+    # would cycle. Enabling it safely first needs SECURE_REDIRECT_EXEMPT for
+    # the health path in production.py, which means a new image — real risk for
+    # zero gain, since the redirect already happens one layer up.
+    #
+    # The protections that actually matter are already on: HSTS (1 year,
+    # includeSubDomains, preload), SESSION_COOKIE_SECURE, CSRF_COOKIE_SECURE
+    # and SECURE_PROXY_SSL_HEADER — all set in production.py.
     { name = "SECURE_SSL_REDIRECT", value = "False" },
     # ALB health checks hit the task's private IP directly (Host: <ip>:8000,
     # not the ALB's DNS name), so the DNS name alone gets every health check
