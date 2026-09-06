@@ -203,12 +203,17 @@ resource "aws_secretsmanager_secret_version" "static_app" {
   # losing that version takes production down at the next task start.
   #
   # prevent_destroy turns that silent data loss into a loud plan-time error.
-  # If you genuinely need to remove one of these, either re-supply the value
-  #   -var app_database_url=...
-  # or drop the version out of Terraform's control on purpose:
+  #
+  # APP_DATABASE_URL is already resolved and is NO LONGER IN STATE: it was
+  # removed on 2026-09-06 with
   #   terraform state rm 'aws_secretsmanager_secret_version.static_app["APP_DATABASE_URL"]'
-  # (the value stays in AWS; only Terraform stops managing it), then remove
-  # this lifecycle block for that run.
+  # so the value lives only in AWS. The secret CONTAINER above is still managed
+  # here; only its value is set out of band. That is deliberate — a bootstrap
+  # credential should not depend on someone remembering to pass a -var. Rotate
+  # it with `aws secretsmanager put-secret-value`, not through Terraform.
+  #
+  # If a future key hits this same error, prefer the same treatment over
+  # re-supplying the var.
   lifecycle {
     prevent_destroy = true
   }
