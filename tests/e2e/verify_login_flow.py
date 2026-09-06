@@ -23,7 +23,7 @@ import sys
 import urllib.request
 import urllib.error
 
-BASE_URL = "https://audity-backend-production-30f9.up.railway.app/api/v1"
+BASE_URL = "https://api.auditytechnologies.com/api/v1"
 
 
 def post(path: str, payload: dict) -> tuple[int, dict]:
