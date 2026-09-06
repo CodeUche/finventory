@@ -34,6 +34,28 @@ terraform init \
 
 ## Deploy runbook (every deploy, not just the first one)
 
+**Normally you just run this, from the repo root:**
+
+```bash
+./infra/deploy.sh              # deploys the image CI built from origin/main
+./infra/deploy.sh <git-sha>    # deploys a specific build
+DRY_RUN=1 ./infra/deploy.sh    # shows what would happen, changes nothing
+```
+
+It checks the image exists in ECR, runs the migrations once as a standalone
+task, and only rolls the services if those migrations succeed — then waits for
+the rollout and checks the health endpoint. The manual steps below are what it
+automates, kept for when something goes wrong mid-deploy.
+
+**Deploys are deliberately manual.** CI builds and pushes an image to ECR and
+stops: the GitHub OIDC role has ECR rights and nothing else, so a compromised
+workflow cannot roll production (see `github_oidc.tf`). Merging to main does
+NOT ship — you must run the script. Check what is actually live with:
+
+```bash
+aws ecs describe-task-definition --task-definition audity-api   --query 'taskDefinition.containerDefinitions[0].image' --output text
+```
+
 The ECR repo is `IMMUTABLE` — each deploy needs a new tag.
 
 **Migrations run as a dedicated one-off task, never inside `api`/`worker`/
