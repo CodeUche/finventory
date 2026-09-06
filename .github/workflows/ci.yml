@@ -270,15 +270,14 @@ jobs:
 # Granting ecs:* to a workflow that never deploys would only widen what a
 # compromised workflow could reach.
 #
-# To ship a backend change:
-#   1. Merge to main. `build-backend-image` below pushes an image to ECR tagged
-#      with the commit SHA.
-#   2. Run the migrations once, as a standalone task (never per-container —
-#      see the concurrent-migrate race documented in infra/terraform/ecs.tf):
-#        aws ecs run-task --cluster audity-cluster #          --task-definition audity-migrate --launch-type FARGATE #          --network-configuration "awsvpcConfiguration={subnets=[...],securityGroups=[...]}"
-#   3. Roll the services with that image:
-#        cd infra/terraform
-#        terraform apply -var image_tag=<commit-sha> -var field_encryption_key=<...>
+# To ship a backend change: merge to main (which makes `build-backend-image`
+# below push an image tagged with the commit SHA), then run
+#
+#     ./infra/deploy.sh
+#
+# That runs the migrations once as a standalone task — never per-container, see
+# the concurrent-migrate race in infra/terraform/ecs.tf — and only rolls the
+# services if the migrations succeed. MERGING ALONE DOES NOT DEPLOY.
 #
 # If this ever becomes automatic, the migrate task MUST gate the service update,
 # and the OIDC role needs ecs:UpdateService / ecs:RunTask / iam:PassRole added.
