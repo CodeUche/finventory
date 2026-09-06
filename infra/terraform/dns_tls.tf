@@ -104,8 +104,44 @@ resource "aws_lb_listener" "https" {
   ssl_policy      = "ELBSecurityPolicy-TLS13-1-2-2021-06"
   certificate_arn = aws_acm_certificate_validation.api[0].certificate_arn
 
+  # Refuse anything whose Host we do not recognise, INSTEAD of forwarding it.
+  #
+  # Django runs with ALLOWED_HOSTS = "<alb-dns>,*". The wildcard is not laziness:
+  # ALB health checks connect straight to the task's private IP and send
+  # "Host: 10.20.x.y:8000", the IP changes with every task, and ALB gives no way
+  # to set a health-check Host header — so Django cannot enumerate the hosts it
+  # must accept. Verified on 2026-09-06 that this let a forged
+  # "Host: evil.example.com" through to the app with a 200.
+  #
+  # Host validation therefore belongs at the edge, where the legitimate names ARE
+  # known. Health checks bypass the listener entirely (they hit the target
+  # directly), so they are unaffected by this rule.
   default_action {
+    type = "fixed-response"
+
+    fixed_response {
+      content_type = "text/plain"
+      message_body = "Unrecognised host"
+      status_code  = "403"
+    }
+  }
+}
+
+resource "aws_lb_listener_rule" "https_known_hosts" {
+  count        = var.api_domain_name == "" || !var.enable_https ? 0 : 1
+  listener_arn = aws_lb_listener.https[0].arn
+  priority     = 100
+
+  action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.api.arn
+  }
+
+  condition {
+    host_header {
+      # The real API domain, plus the raw ALB DNS name so anything still
+      # addressing the load balancer directly keeps working.
+      values = [var.api_domain_name, aws_lb.main.dns_name]
+    }
   }
 }

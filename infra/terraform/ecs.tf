@@ -8,9 +8,21 @@
 ########################################################################
 
 variable "image_tag" {
-  description = "ECR image tag to deploy. The repo is IMMUTABLE (see ecr.tf), so each new build needs a new tag — e.g. a git SHA in the eventual CI job (Phase 6, not part of this session). Bootstrap value below is pushed once, manually, during this session's bring-up."
+  description = <<-EOT
+    ECR image tag to deploy - a git SHA, as pushed by the build-backend-image CI
+    job. The repo is IMMUTABLE (see ecr.tf), so every build needs a new tag.
+
+    DELIBERATELY HAS NO DEFAULT. It used to default to the "bootstrap-v7" image
+    from bring-up, which meant any apply that forgot -var image_tag silently
+    rolled all four task definitions back to that ancient build, reverting
+    production code with no warning. Caught on 2026-09-06 while reconciling
+    post-cutover drift. A missing value must fail loudly rather than quietly
+    ship an old image.
+
+    Find the tag that is actually deployed with:
+      aws ecs describe-task-definition --task-definition audity-api --query 'taskDefinition.containerDefinitions[0].image' --output text
+  EOT
   type        = string
-  default     = "bootstrap-v7"
 }
 
 resource "aws_ecs_cluster" "main" {
@@ -71,6 +83,19 @@ resource "aws_cloudwatch_log_group" "migrate" {
 }
 
 locals {
+  # Browser origins allowed to call the API.
+  #
+  # The Tauri desktop and Capacitor mobile origins are NOT deployment-specific
+  # and must always be present: base.py only supplies them as a *default*, so
+  # setting CORS_ALLOWED_ORIGINS at all silently drops them. That is exactly how
+  # the 2026-09-06 cutover broke login — CORS_ALLOWED_ORIGINS held a single
+  # leftover validation URL, so the real frontend was refused by the browser.
+  cors_origins = join(",", compact(concat(
+    [var.frontend_url],
+    var.additional_cors_origins,
+    ["tauri://localhost", "capacitor://localhost", "http://localhost"],
+  )))
+
   # Plain (non-secret) runtime config shared by all three services.
   # ALLOWED_HOSTS/BACKEND_URL point at the raw ALB DNS name for now — a
   # real domain (api.audity.africa) + HTTPS listener is Phase 8 (DNS
@@ -78,11 +103,21 @@ locals {
   common_environment = [
     { name = "DJANGO_SETTINGS_MODULE", value = "config.settings.production" },
     { name = "DEBUG", value = "False" },
-    # No HTTPS listener on the ALB yet (Phase 8 — needs a real domain for
-    # an ACM cert). Without this, SECURE_SSL_REDIRECT's default True 301s
-    # every request, including the ALB health check, to a nonexistent
-    # HTTPS endpoint. Remove this line (or flip to "True") once Phase 8's
-    # HTTPS listener + domain are in place.
+    # Stays False deliberately, and is no longer a Phase 8 leftover.
+    #
+    # HTTPS is live and the ALB's :80 listener already 301s to :443 (verified
+    # 2026-09-06), so nothing reaches Django over plain HTTP except the health
+    # check — and that is exactly what makes Django-level redirect harmful
+    # here. ALB health checks connect straight to the task on HTTP with no
+    # X-Forwarded-Proto, so SECURE_SSL_REDIRECT=True would 301 them, the target
+    # group expects 200, every task would be marked unhealthy and the service
+    # would cycle. Enabling it safely first needs SECURE_REDIRECT_EXEMPT for
+    # the health path in production.py, which means a new image — real risk for
+    # zero gain, since the redirect already happens one layer up.
+    #
+    # The protections that actually matter are already on: HSTS (1 year,
+    # includeSubDomains, preload), SESSION_COOKIE_SECURE, CSRF_COOKIE_SECURE
+    # and SECURE_PROXY_SSL_HEADER — all set in production.py.
     { name = "SECURE_SSL_REDIRECT", value = "False" },
     # ALB health checks hit the task's private IP directly (Host: <ip>:8000,
     # not the ALB's DNS name), so the DNS name alone gets every health check
@@ -93,8 +128,8 @@ locals {
     # real domain + HTTPS listener replaces the raw ALB DNS name (Phase 8).
     { name = "ALLOWED_HOSTS", value = "${aws_lb.main.dns_name},*" },
     { name = "TIME_ZONE", value = "Africa/Lagos" },
-    { name = "CORS_ALLOWED_ORIGINS", value = var.frontend_url != "" ? var.frontend_url : "http://localhost:3000" },
-    { name = "CSRF_TRUSTED_ORIGINS", value = var.frontend_url != "" ? var.frontend_url : "http://localhost:3000" },
+    { name = "CORS_ALLOWED_ORIGINS", value = local.cors_origins },
+    { name = "CSRF_TRUSTED_ORIGINS", value = local.cors_origins },
     { name = "USE_S3", value = "True" },
     { name = "S3_BUCKET_NAME", value = aws_s3_bucket.media.id },
     { name = "S3_REGION", value = var.aws_region },

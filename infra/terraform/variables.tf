@@ -259,9 +259,15 @@ variable "app_database_url" {
 }
 
 variable "frontend_url" {
-  description = "Existing Vercel frontend URL — unchanged by this migration. Low-stakes: base.py notes verify-email now uses BACKEND_URL directly, this is 'kept for reference'. Left blank by default — set it if you have a canonical production Vercel domain."
+  description = "Canonical Vercel frontend origin. This is NOT low-stakes: it feeds CORS_ALLOWED_ORIGINS and CSRF_TRUSTED_ORIGINS, so a wrong or empty value makes the browser refuse every API call and no one can log in. Defaulted to the live web app so an apply without -var cannot silently break login."
   type        = string
-  default     = ""
+  default     = "https://audity-review.vercel.app"
+}
+
+variable "additional_cors_origins" {
+  description = "Extra browser origins allowed to call the API, beyond var.frontend_url and the always-included Tauri/Capacitor origins. Use for preview or validation deployments."
+  type        = list(string)
+  default     = []
 }
 
 variable "support_ticket_email" {

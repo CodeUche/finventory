@@ -192,6 +192,31 @@ resource "aws_secretsmanager_secret_version" "static_app" {
   for_each      = local.static_secrets_with_value
   secret_id     = aws_secretsmanager_secret.static_app[each.value].id
   secret_string = local.static_secrets[each.value]
+
+  # DANGER, learned the hard way on 2026-09-06.
+  #
+  # Membership of static_secrets_with_value depends on whether the backing
+  # var is non-empty. So running `apply` WITHOUT re-supplying a credential
+  # that was supplied at bootstrap silently drops its key from the for_each
+  # map and DESTROYS the live secret version. APP_DATABASE_URL is the one
+  # that matters: every ECS task reads its Aurora credentials from it, so
+  # losing that version takes production down at the next task start.
+  #
+  # prevent_destroy turns that silent data loss into a loud plan-time error.
+  #
+  # APP_DATABASE_URL is already resolved and is NO LONGER IN STATE: it was
+  # removed on 2026-09-06 with
+  #   terraform state rm 'aws_secretsmanager_secret_version.static_app["APP_DATABASE_URL"]'
+  # so the value lives only in AWS. The secret CONTAINER above is still managed
+  # here; only its value is set out of band. That is deliberate — a bootstrap
+  # credential should not depend on someone remembering to pass a -var. Rotate
+  # it with `aws secretsmanager put-secret-value`, not through Terraform.
+  #
+  # If a future key hits this same error, prefer the same treatment over
+  # re-supplying the var.
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_secretsmanager_secret" "db_cache" {
