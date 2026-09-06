@@ -10,7 +10,7 @@ import DateInput from '@/components/DateInput'
 import { useNotifications } from '@/contexts/NotificationsContext'
 import { useAuthStore } from '@/store/authStore'
 import { FieldTooltip } from '@/components/FieldTooltip'
-import type { Customer, Product, Warehouse as WarehouseType } from '@/types'
+import type { Customer, Product, TaxClass, Warehouse as WarehouseType } from '@/types'
 
 interface InvoiceLine {
   product: string
@@ -20,11 +20,19 @@ interface InvoiceLine {
   discount_percent: string
   is_taxable: boolean
   tax_class: string | null
+  // The product's own defaults, kept aside so "Auto" can restore them after
+  // a line has been overridden to a different class or a manual rate.
+  product_is_taxable: boolean
+  product_tax_class: string | null
+  // Non-empty means the user typed a rate directly instead of picking a
+  // TaxClass — takes priority over tax_class when computing/submitting.
+  manual_tax_rate: string
 }
 
 const BLANK_LINE: InvoiceLine = {
   product: '', product_name: '', quantity: '1', unit_price: '', discount_percent: '0',
   is_taxable: false, tax_class: null,
+  product_is_taxable: false, product_tax_class: null, manual_tax_rate: '',
 }
 
 const today = new Date().toISOString().split('T')[0]
@@ -92,7 +100,11 @@ export default function NewInvoicePage() {
   const selectProduct = (i: number, p: Product) => {
     setLines((prev) => prev.map((l, idx) =>
       idx === i
-        ? { ...l, product: p.id, product_name: p.name, unit_price: normalizeAmountStr(p.selling_price), is_taxable: p.is_taxable, tax_class: p.tax_class }
+        ? {
+            ...l, product: p.id, product_name: p.name, unit_price: normalizeAmountStr(p.selling_price),
+            is_taxable: p.is_taxable, tax_class: p.tax_class,
+            product_is_taxable: p.is_taxable, product_tax_class: p.tax_class, manual_tax_rate: '',
+          }
         : l
     ))
     setProductQueries((prev) => prev.map((q, idx) => (idx === i ? p.name : q)))
@@ -101,16 +113,42 @@ export default function NewInvoicePage() {
 
   // ── VAT — mirrors the backend's SaleService._process_line_item calc exactly
   // (rate applied to the post-discount amount) so the preview never drifts
-  // from what actually gets posted.
+  // from what actually gets posted. Each line can also override the product's
+  // default: pick a different configured TaxClass, or type a rate directly.
+  const [taxClasses, setTaxClasses] = useState<TaxClass[]>([])
   const [taxRates, setTaxRates] = useState<Record<string, number>>({})
   useEffect(() => {
     taxApi.classes().then(({ data }) => {
       const list = data.results ?? data
+      setTaxClasses(list)
       const map: Record<string, number> = {}
       for (const c of list) map[c.id] = parseFloat(c.rate)
       setTaxRates(map)
     }).catch(() => {})
   }, [])
+
+  const setLineTaxMode = (i: number, mode: string) => {
+    setLines((prev) => prev.map((l, idx) => {
+      if (idx !== i) return l
+      if (mode === '__auto__') return { ...l, tax_class: l.product_tax_class, manual_tax_rate: '' }
+      if (mode === '__custom__') return { ...l, manual_tax_rate: l.manual_tax_rate || '0' }
+      return { ...l, tax_class: mode, manual_tax_rate: '' }
+    }))
+  }
+  const setLineManualRate = (i: number, value: string) => {
+    setLines((prev) => prev.map((l, idx) => (idx === i ? { ...l, manual_tax_rate: value } : l)))
+  }
+  // The checkbox is the master on/off switch for VAT on a line — unticking it
+  // always zeroes the line's tax regardless of what class/rate was chosen,
+  // and re-ticking restores the product's own default rather than guessing
+  // at whatever was last selected.
+  const setLineVatEnabled = (i: number, enabled: boolean) => {
+    setLines((prev) => prev.map((l, idx) => {
+      if (idx !== i) return l
+      if (!enabled) return { ...l, is_taxable: false }
+      return { ...l, is_taxable: true, tax_class: l.tax_class ?? l.product_tax_class }
+    }))
+  }
 
   const addLine = () => {
     setLines((prev) => [...prev, { ...BLANK_LINE }])
@@ -162,8 +200,13 @@ export default function NewInvoicePage() {
   // "edit total" back-solves unit prices against, since it has no notion of tax.
   const lineItemsTotal = subtotal - discountTotal
   const lineVat = (l: InvoiceLine) => {
-    if (!l.is_taxable || !l.tax_class) return 0
-    const rate = taxRates[l.tax_class] ?? 0
+    // The "Apply VAT" checkbox is the master switch — unticked always means
+    // zero, regardless of what class/rate is still sitting in the fields.
+    if (!l.is_taxable) return 0
+    let rate = 0
+    if (l.manual_tax_rate !== '') rate = parseFloat(l.manual_tax_rate) || 0
+    else if (l.tax_class) rate = taxRates[l.tax_class] ?? 0
+    else return 0
     const lineTotal = (parseFloat(stripCommas(l.unit_price)) || 0) * (parseFloat(l.quantity) || 0)
     const afterDiscount = lineTotal - (lineTotal * (parseFloat(l.discount_percent) || 0)) / 100
     return (afterDiscount * rate) / 100
@@ -205,12 +248,23 @@ export default function NewInvoicePage() {
     due_date: dueDate || null,
     defer_fulfillment: !fulfillNow,
     shipping_amount: shippingNum.toFixed(4),
-    items: lines.map((l) => ({
-      product_id: l.product,
-      quantity: parseFloat(l.quantity) || 1,
-      unit_price: (parseFloat(stripCommas(l.unit_price)) || 0).toFixed(4),
-      discount_percent: (parseFloat(l.discount_percent) || 0).toFixed(2),
-    })),
+    items: lines.map((l) => {
+      // Only send a tax override when the line actually differs from the
+      // product's own default — an untouched line stays on the exact same
+      // path it always has (product.is_taxable/tax_class), so nothing about
+      // existing invoices changes.
+      const overridden = l.manual_tax_rate !== '' || l.tax_class !== l.product_tax_class || l.is_taxable !== l.product_is_taxable
+      return {
+        product_id: l.product,
+        quantity: parseFloat(l.quantity) || 1,
+        unit_price: (parseFloat(stripCommas(l.unit_price)) || 0).toFixed(4),
+        discount_percent: (parseFloat(l.discount_percent) || 0).toFixed(2),
+        ...(overridden ? {
+          tax_class_id: !l.is_taxable || l.manual_tax_rate !== '' ? null : (l.tax_class || null),
+          tax_rate: !l.is_taxable ? '0.00' : (l.manual_tax_rate !== '' ? (parseFloat(l.manual_tax_rate) || 0).toFixed(2) : null),
+        } : {}),
+      }
+    }),
   })
 
   const handleSubmit = async () => {
@@ -337,7 +391,7 @@ export default function NewInvoicePage() {
             </div>
             <div className="space-y-2">
               {lines.map((line, i) => (
-                <div key={i} className="grid grid-cols-12 gap-2 items-center">
+                <div key={i} className="grid grid-cols-12 gap-2 items-start">
                   <div className="col-span-3 relative" ref={(el) => { lineSearchRefs.current[i] = el }}>
                     <input
                       className="input py-1.5 text-sm"
@@ -374,8 +428,40 @@ export default function NewInvoicePage() {
                   <div className="col-span-2">
                     <input type="number" min="0" max="100" className="input py-1.5 text-sm" placeholder="Disc%" value={line.discount_percent} onChange={(e) => updateLine(i, 'discount_percent', e.target.value)} />
                   </div>
-                  <div className="col-span-2 text-sm text-slate-400 truncate" title={line.is_taxable && line.tax_class ? `${(taxRates[line.tax_class] ?? 0)}% VAT` : 'Not taxable'}>
-                    {line.is_taxable && line.tax_class ? formatCurrency(lineVat(line)) : '—'}
+                  <div className="col-span-2 space-y-1">
+                    <label className="flex items-center gap-1.5 text-xs text-slate-400 select-none">
+                      <input
+                        type="checkbox"
+                        checked={line.is_taxable}
+                        onChange={(e) => setLineVatEnabled(i, e.target.checked)}
+                      />
+                      Apply VAT
+                    </label>
+                    {line.is_taxable && (
+                      <>
+                        <select
+                          className="input py-1.5 text-sm"
+                          value={line.manual_tax_rate !== '' ? '__custom__' : (line.tax_class ?? '__auto__')}
+                          onChange={(e) => setLineTaxMode(i, e.target.value)}
+                        >
+                          <option value="__auto__">Auto (product)</option>
+                          {taxClasses.map((c) => (
+                            <option key={c.id} value={c.id}>{c.name} ({c.rate}%)</option>
+                          ))}
+                          <option value="__custom__">Custom %…</option>
+                        </select>
+                        {line.manual_tax_rate !== '' && (
+                          <input
+                            type="number" min="0" max="100" step="0.01"
+                            className="input py-1 text-xs"
+                            placeholder="Rate %"
+                            value={line.manual_tax_rate}
+                            onChange={(e) => setLineManualRate(i, e.target.value)}
+                          />
+                        )}
+                      </>
+                    )}
+                    <p className="text-[11px] text-slate-500 truncate">{formatCurrency(lineVat(line))}</p>
                   </div>
                   <div className="col-span-1 flex justify-center">
                     <button onClick={() => removeLine(i)} className="p-1 text-slate-500 hover:text-red-400 transition-colors" disabled={lines.length === 1}>
