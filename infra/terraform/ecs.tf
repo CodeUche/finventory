@@ -71,6 +71,19 @@ resource "aws_cloudwatch_log_group" "migrate" {
 }
 
 locals {
+  # Browser origins allowed to call the API.
+  #
+  # The Tauri desktop and Capacitor mobile origins are NOT deployment-specific
+  # and must always be present: base.py only supplies them as a *default*, so
+  # setting CORS_ALLOWED_ORIGINS at all silently drops them. That is exactly how
+  # the 2026-09-06 cutover broke login — CORS_ALLOWED_ORIGINS held a single
+  # leftover validation URL, so the real frontend was refused by the browser.
+  cors_origins = join(",", compact(concat(
+    [var.frontend_url],
+    var.additional_cors_origins,
+    ["tauri://localhost", "capacitor://localhost", "http://localhost"],
+  )))
+
   # Plain (non-secret) runtime config shared by all three services.
   # ALLOWED_HOSTS/BACKEND_URL point at the raw ALB DNS name for now — a
   # real domain (api.audity.africa) + HTTPS listener is Phase 8 (DNS
@@ -93,8 +106,8 @@ locals {
     # real domain + HTTPS listener replaces the raw ALB DNS name (Phase 8).
     { name = "ALLOWED_HOSTS", value = "${aws_lb.main.dns_name},*" },
     { name = "TIME_ZONE", value = "Africa/Lagos" },
-    { name = "CORS_ALLOWED_ORIGINS", value = var.frontend_url != "" ? var.frontend_url : "http://localhost:3000" },
-    { name = "CSRF_TRUSTED_ORIGINS", value = var.frontend_url != "" ? var.frontend_url : "http://localhost:3000" },
+    { name = "CORS_ALLOWED_ORIGINS", value = local.cors_origins },
+    { name = "CSRF_TRUSTED_ORIGINS", value = local.cors_origins },
     { name = "USE_S3", value = "True" },
     { name = "S3_BUCKET_NAME", value = aws_s3_bucket.media.id },
     { name = "S3_REGION", value = var.aws_region },
