@@ -81,6 +81,17 @@ resource "aws_elasticache_user" "default_off" {
   authentication_mode {
     type = "no-password-required"
   }
+
+  # ElastiCache reports this back as "no-password", never the
+  # "no-password-required" it accepts on write, so Terraform proposes the same
+  # update on every plan forever. Applying it changes nothing (confirmed
+  # 2026-09-06: applied, then still present in the next plan). Ignored so that
+  # a non-empty plan stays meaningful signal instead of routine noise that
+  # trains people to skim past it. This user is switched off entirely
+  # (access_string "off -@all"), so its auth mode is not a live control anyway.
+  lifecycle {
+    ignore_changes = [authentication_mode]
+  }
 }
 
 resource "aws_elasticache_user" "app" {
