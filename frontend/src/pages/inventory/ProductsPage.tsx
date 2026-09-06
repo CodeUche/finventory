@@ -413,6 +413,10 @@ export default function ProductsPage() {
 
   const openCreate = () => {
     setEditId(null)
+    // Invalidate any in-flight edit-detail request — otherwise a response
+    // that lands after switching from Edit to Create can still pass the
+    // "same product" guard in openEdit and wipe out images just staged here.
+    editReqRef.current = ''
     setForm({ ...BLANK })
     setBatchForm({ ...BLANK_BATCH })
     setGalleryImages([])
