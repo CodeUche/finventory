@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
-import { useSearchParams } from 'react-router-dom'
-import { Plus, Search, Truck, X, Loader2, UploadCloud, FileText, Edit2, Trash2, ChevronDown, ChevronRight, Package, PackageCheck, RefreshCw, RotateCcw } from 'lucide-react'
+import { Link, useSearchParams } from 'react-router-dom'
+import { Plus, Search, Truck, X, Loader2, UploadCloud, FileText, Edit2, Trash2, ChevronDown, ChevronRight, Package, PackageCheck, RefreshCw, RotateCcw, Receipt, Info } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { purchaseApi, purchaseReturnApi, supplierApi, inventoryApi, taxApi, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatDate, normalizeAmountStr, stripCommas } from '@/lib/utils'
@@ -103,6 +103,10 @@ export default function PurchasesPage() {
 
   // Delete PO
   const [deletingId, setDeletingId] = useState<string | null>(null)
+
+  // Convert to Bill (bill the supplier before goods are physically received)
+  const [convertingId, setConvertingId] = useState<string | null>(null)
+  const [showWorkflowInfo, setShowWorkflowInfo] = useState(false)
 
   // Purchase return
   const [returnOrder, setReturnOrder] = useState<PurchaseOrder | null>(null)
@@ -302,6 +306,24 @@ export default function PurchasesPage() {
     }
   }
 
+  const handleConvertToBill = async (o: PurchaseOrder) => {
+    if (!(await confirmDialog(
+      `Bill ${o.supplier_name} for the full value of ${o.po_number} (${formatCurrency(o.total_amount)}) now, before any goods are received?`
+    ))) return
+    setConvertingId(o.id)
+    try {
+      await purchaseApi.convertToBill(o.id)
+      toast.success('Converted to bill')
+      bypassNextGets()
+      load()
+    } catch (err: any) {
+      const apiErr = err?.response?.data?.error
+      toast.error(typeof apiErr === 'string' ? apiErr : (apiErr?.message ?? 'Failed to convert to bill'))
+    } finally {
+      setConvertingId(null)
+    }
+  }
+
   const openReturnModal = (o: PurchaseOrder) => {
     setReturnOrder(o)
     setReturnQtys({})
@@ -441,6 +463,9 @@ export default function PurchasesPage() {
           <p className="text-slate-400 text-sm">{total} purchase orders</p>
         </div>
         <div className="flex items-center gap-2 sm:ml-auto">
+          <button onClick={() => setShowWorkflowInfo(true)} className="btn-ghost p-2 text-slate-400 hover:text-white" title="What's the difference between a PO, a Bill and a Receipt?">
+            <Info size={16} />
+          </button>
           <button onClick={() => { bypassNextGets(); load() }} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
           </button>
@@ -529,6 +554,15 @@ export default function PurchasesPage() {
                     <td className="px-5 py-3.5 font-semibold text-white">{formatCurrency(o.total_amount)}</td>
                     <td className="px-5 py-3.5">
                       <span className={STATUS_COLORS[o.status] ?? 'badge-slate'}>{o.status.replace('_', ' ')}</span>
+                      {o.bill_id && (
+                        <Link
+                          to="/bills"
+                          className="block mt-1 text-[11px] font-mono text-brand-400 hover:underline"
+                          title={o.billed_before_receipt ? 'Billed before goods were received' : 'Bill auto-created on receipt'}
+                        >
+                          {o.bill_number}
+                        </Link>
+                      )}
                     </td>
                     <td className="px-5 py-3.5">
                       <div className="flex items-center gap-3">
@@ -539,6 +573,16 @@ export default function PurchasesPage() {
                             title="Receive goods"
                           >
                             <PackageCheck size={14} />
+                          </button>
+                        )}
+                        {!['received', 'closed', 'canceled'].includes(o.status) && !o.bill_id && (
+                          <button
+                            onClick={() => handleConvertToBill(o)}
+                            disabled={convertingId === o.id}
+                            className="text-slate-400 hover:text-brand-400 transition-colors disabled:opacity-50"
+                            title="Convert to Bill — the supplier invoice arrived before the goods"
+                          >
+                            {convertingId === o.id ? <Loader2 size={14} className="animate-spin" /> : <Receipt size={14} />}
                           </button>
                         )}
                         {(o.status === 'received' || o.status === 'partially_received') && (
@@ -1092,6 +1136,38 @@ export default function PurchasesPage() {
                   {returnSaving ? <Loader2 size={16} className="animate-spin" /> : 'Process Return'}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* S3d: workflow explainer — the reviewer's own request was to
+          understand the difference between a PO and a Supplier Invoice
+          before anything else changed here. */}
+      {showWorkflowInfo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setShowWorkflowInfo(false)} />
+          <div className="relative card w-full max-w-lg p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold text-white">Purchase Order → Bill → Receipt</h2>
+              <button onClick={() => setShowWorkflowInfo(false)} className="text-slate-400 hover:text-white"><X size={20} /></button>
+            </div>
+            <div className="space-y-3 text-sm text-slate-300">
+              <div className="flex gap-3">
+                <span className="badge-slate shrink-0 h-fit">1. PO</span>
+                <p><span className="text-white font-medium">A Purchase Order is a commitment.</span> You're telling the supplier what you intend to buy. Nothing is owed yet and nothing posts to your books — it's a plan, not a transaction.</p>
+              </div>
+              <div className="flex gap-3">
+                <span className="badge-blue shrink-0 h-fit">2. Bill</span>
+                <p><span className="text-white font-medium">A Bill is a liability.</span> Money is now owed to the supplier — because you received their invoice. This can happen two ways: automatically, the moment you record goods arriving (see below), or explicitly via <span className="font-mono text-brand-400">Convert to Bill</span> on the PO, for when the invoice arrives before the goods do.</p>
+              </div>
+              <div className="flex gap-3">
+                <span className="badge-green shrink-0 h-fit">3. Receipt</span>
+                <p><span className="text-white font-medium">Receiving is a physical fact.</span> It's stock actually arriving in your warehouse — independent of whether you've been billed or paid yet. Use <span className="font-mono text-emerald-400">Receive Goods</span> whenever stock turns up, whether or not a bill already exists for this PO.</p>
+              </div>
+              <p className="text-xs text-slate-500 pt-2 border-t border-surface-700">
+                In short: if the invoice comes first, use Convert to Bill, then Receive Goods when the stock arrives — you won't be billed twice. If the goods come first, just Receive Goods — the bill is created for you automatically.
+              </p>
             </div>
           </div>
         </div>

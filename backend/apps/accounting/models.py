@@ -676,6 +676,14 @@ class AccountMapping(TenantAwareModel):
     shipping_income_account = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='mapping_shipping_income')
     # Assets
     inventory_account       = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='mapping_inventory')
+    # Optional — a supplier invoice converted to a Bill BEFORE the goods have
+    # been physically received debits this "goods in transit" clearing account
+    # instead of Inventory (which doesn't exist yet). When the stock later
+    # arrives, receiving debits Inventory and CREDITS this account back to
+    # zero, rather than crediting Accounts Payable again. Left null,
+    # PurchaseService falls back to inventory_account (today's only option),
+    # so an org that never configures this sees no change in behaviour.
+    goods_in_transit_account = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='mapping_goods_in_transit')
     accounts_receivable     = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='mapping_ar')
     cash_account            = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='mapping_cash')
     bank_account            = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='mapping_bank')
@@ -706,6 +714,7 @@ class AccountMapping(TenantAwareModel):
         """
         fk_fields = [
             'revenue_account', 'cogs_account', 'shipping_income_account', 'inventory_account',
+            'goods_in_transit_account',
             'accounts_receivable', 'cash_account', 'bank_account', 'accounts_payable',
             'vat_output_account', 'vat_input_account', 'paye_account', 'pension_account',
             'nhf_account', 'wht_account', 'salary_expense_account', 'general_expense_account',

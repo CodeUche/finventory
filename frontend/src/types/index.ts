@@ -416,6 +416,9 @@ export interface PurchaseOrder {
   receipt: string | null
   created_at: string
   items?: PurchaseOrderItem[]
+  billed_before_receipt?: boolean
+  bill_id?: string | null
+  bill_number?: string | null
 }
 
 export interface PurchaseReturnItem {

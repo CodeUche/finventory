@@ -131,6 +131,113 @@ class PurchaseService:
         logger.info("PO %s received by %s", po.po_number, received_by)
         return po
 
+    @staticmethod
+    @transaction.atomic
+    def convert_to_bill(po: PurchaseOrder, created_by) -> "PurchaseOrder":
+        """
+        Bill the supplier for this PO's full ordered value BEFORE any goods
+        have been physically received — the supplier invoice arrived first,
+        which is the normal case on credit terms. This is a workflow choice
+        distinct from receive_purchase_order:
+
+          PO      = a commitment to buy — no GL entry, nothing owed yet.
+          Bill     = a liability — money is now owed to the supplier,
+                     whether or not the goods have arrived.
+          Receipt = stock arriving in the warehouse — a physical fact,
+                     independent of whether the invoice has been paid.
+
+        Posts DR goods_in_transit_account (a clearing account — falls back to
+        inventory_account if unmapped) [+ DR VAT input if any] / CR Accounts
+        Payable, for the PO's full subtotal/tax (nothing has been received
+        yet, so there is no partial-batch quantity to prorate against).
+
+        Marks the PO billed_before_receipt so a LATER physical receipt (goods
+        do eventually turn up) does not bill the supplier a second time for
+        the same PO — see _upsert_bill_for_po's early branch. That later
+        receipt still records real stock movements and still moves the value
+        out of the clearing account into Inventory; it just does not touch
+        the Bill or Accounts Payable again.
+        """
+        from apps.accounting.services import AccountingService, AccountMappingService, safe_post_gl
+        from apps.bills.models import Bill, BillItem
+
+        closed = {
+            PurchaseOrder.Status.RECEIVED,
+            PurchaseOrder.Status.CLOSED,
+            PurchaseOrder.Status.CANCELED,
+        }
+        if po.status in closed:
+            raise ValueError(f"This purchase order is already {po.status} and cannot be converted to a bill.")
+        if not po.supplier_id:
+            raise ValueError("This purchase order has no supplier and cannot be billed.")
+        if Bill.objects.filter(organisation=po.organisation, source_purchase_order=po).exists():
+            raise ValueError(
+                "This purchase order already has a bill. Use Receive Goods to add a further "
+                "receipt to it instead of converting again."
+            )
+
+        subtotal = Decimal(str(po.subtotal or 0))
+        tax = Decimal(str(po.tax_amount or 0))
+        total = subtotal + tax
+        if total <= 0:
+            raise ValueError("This purchase order has no value to bill.")
+
+        today = timezone.now().date()
+        bill = Bill.objects.create(
+            organisation=po.organisation,
+            supplier=po.supplier,
+            status=Bill.RECEIVED,
+            issue_date=today,
+            due_date=today + timedelta(days=30),
+            reference=po.po_number,
+            source_purchase_order=po,
+            subtotal=subtotal,
+            tax_amount=tax,
+            total_amount=total,
+            amount_due=total,
+            notes=f"Converted from PO {po.po_number} — supplier invoice received before goods",
+            created_by=created_by,
+        )
+        BillItem.objects.create(
+            organisation=po.organisation,
+            bill=bill,
+            description=f"Billed against {po.po_number} (goods not yet received)",
+            quantity=Decimal("1"),
+            unit_cost=subtotal,
+            line_total=subtotal,
+        )
+
+        po.billed_before_receipt = True
+        po.save(update_fields=["billed_before_receipt", "updated_at"])
+
+        def _post():
+            zero = Decimal("0")
+            transit_acct = AccountMappingService.get_or_create_mapping(po.organisation).goods_in_transit_account \
+                or AccountMappingService.resolve(po.organisation, "inventory_account")
+            ap_acct = AccountingService._resolve_party_account(
+                po.organisation, po.supplier, 'payable_account', 'accounts_payable', '2001')
+            lines = [
+                (transit_acct, subtotal, zero),
+                (ap_acct, zero, total),
+            ]
+            if tax > zero:
+                vat_acct = AccountMappingService.resolve(po.organisation, "vat_input_account")
+                lines.append((vat_acct, tax, zero))
+            AccountingService.post_journal_entry(
+                po.organisation,
+                f"Bill converted from PO {po.po_number} (pre-receipt)",
+                today,
+                lines,
+                created_by,
+                ref=po.po_number,
+                source_type="po_convert_to_bill",
+                source_ref=str(po.id),
+            )
+
+        safe_post_gl(_post, model_instance=bill)
+        logger.info("PO %s converted to bill %s by %s (pre-receipt)", po.po_number, bill.bill_number, created_by)
+        return po
+
 
 def _upsert_bill_for_po(po: PurchaseOrder, batch_subtotal: Decimal, batch_tax: Decimal, received_by) -> None:
     """
@@ -149,6 +256,43 @@ def _upsert_bill_for_po(po: PurchaseOrder, batch_subtotal: Decimal, batch_tax: D
     today = timezone.now().date()
     due_date = today + timedelta(days=30)
     batch_total = batch_subtotal + batch_tax
+
+    if po.billed_before_receipt:
+        # The supplier invoice was already booked in full via convert_to_bill
+        # — this receipt is goods physically arriving for a PO already paid
+        # for on paper. Billing again here would double the amount owed.
+        # Only the stock side of the entry happens: move this batch's value
+        # out of the goods-in-transit clearing account into Inventory. No new
+        # VAT line — VAT was already claimed against the supplier invoice at
+        # conversion time, not against the physical receipt.
+        bill = Bill.objects.filter(organisation=po.organisation, source_purchase_order=po).first()
+
+        def _post_transit_clearing():
+            zero = Decimal("0")
+            inv_acct = AccountMappingService.resolve(po.organisation, "inventory_account")
+            transit_acct = AccountMappingService.get_or_create_mapping(po.organisation).goods_in_transit_account \
+                or inv_acct
+            if transit_acct.id == inv_acct.id:
+                # No clearing account configured — convert_to_bill already
+                # debited plain Inventory (the same fallback), so the value
+                # is already sitting where it needs to be. A DR/CR of the
+                # same account for the same amount would be a real, posted,
+                # zero-effect journal entry cluttering the ledger for no
+                # reason — skip it.
+                return
+            AccountingService.post_journal_entry(
+                po.organisation,
+                f"Goods received against pre-billed PO {po.po_number}",
+                today,
+                [(inv_acct, batch_subtotal, zero), (transit_acct, zero, batch_subtotal)],
+                received_by,
+                ref=po.po_number,
+                source_type="po_receipt_clearing",
+                source_ref=str(po.id),
+            )
+
+        safe_post_gl(_post_transit_clearing, model_instance=bill)
+        return
 
     # Look up by the real FK first — falls back to the legacy string match only
     # for bills auto-created before source_purchase_order existed.

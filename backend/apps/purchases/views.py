@@ -44,7 +44,7 @@ class PurchaseOrderViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet
 
     def get_queryset(self):
         org = self._get_organisation()
-        qs = PurchaseOrder.objects.filter(organisation=org).select_related("supplier", "warehouse").prefetch_related("items__product")
+        qs = PurchaseOrder.objects.filter(organisation=org).select_related("supplier", "warehouse").prefetch_related("items__product", "bills_from_po")
         date_from = self.request.query_params.get('date_from')
         date_to = self.request.query_params.get('date_to')
         if date_from:
@@ -124,6 +124,22 @@ class PurchaseOrderViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet
         except ValueError as exc:
             # Over-receipt or a closed order — the service is the single place
             # both receive paths are checked (NEW-12).
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(PurchaseOrderSerializer(po).data)
+
+    @action(detail=True, methods=["post"], url_path="convert-to-bill")
+    def convert_to_bill(self, request, pk=None):
+        """
+        POST /api/v1/purchases/orders/{id}/convert-to-bill/
+
+        Bill the supplier for this PO's full ordered value before any goods
+        have been physically received — for when the invoice arrives first.
+        See PurchaseService.convert_to_bill for the accounting behind it.
+        """
+        po = self.get_object()
+        try:
+            po = PurchaseService.convert_to_bill(po, request.user)
+        except ValueError as exc:
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(PurchaseOrderSerializer(po).data)
 

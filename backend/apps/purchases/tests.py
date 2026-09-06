@@ -11,7 +11,7 @@ from apps.inventory.models import Product, Warehouse, StockItem
 from apps.inventory.services import InventoryService
 from apps.suppliers.models import Supplier
 from apps.purchases.models import PurchaseOrder, PurchaseOrderItem, PurchaseReturn
-from apps.purchases.services import PurchaseReturnService
+from apps.purchases.services import PurchaseReturnService, PurchaseService
 
 
 class PurchaseReturnTests(TestCase):
@@ -361,3 +361,171 @@ class PurchaseTaxInclusiveExclusiveTests(TestCase):
         attrs = self._validate(p, "1150")
         self.assertAlmostEqual(float(attrs["tax_amount"]), 150.0, places=2)
         self.assertAlmostEqual(float(attrs["line_total"]), 1150.0, places=2)
+
+
+class ConvertToBillTests(TestCase):
+    """
+    S3/S3b: an explicit "bill the supplier before goods arrive" action,
+    distinct from the existing receive-triggers-bill flow. Covers correct GL
+    posting, the double-billing guard when goods are later physically
+    received, and behaviour with and without a configured goods-in-transit
+    clearing account.
+    """
+
+    def setUp(self):
+        self.user = _make_user("convbill_owner@example.com")
+        self.org = _make_org(self.user, "Convert Bill Org")
+        _upgrade_to_business(self.org)
+        self.supplier = Supplier.objects.create(organisation=self.org, name="Early Invoice Supplies")
+        self.warehouse = Warehouse.objects.create(organisation=self.org, name="Main", is_default=True)
+        self.product = Product.objects.create(
+            organisation=self.org, sku="CB-1", name="Widget", product_type="physical",
+            cost_price=Decimal("100"), selling_price=Decimal("150"),
+        )
+        self.po = PurchaseOrder.objects.create(
+            organisation=self.org, po_number=PurchaseOrder.generate_number(self.org),
+            supplier=self.supplier, warehouse=self.warehouse, status="sent",
+            order_date=date(2026, 6, 1), subtotal=Decimal("1000"),
+            tax_amount=Decimal("75"), total_amount=Decimal("1075"), created_by=self.user,
+        )
+        self.po_item = PurchaseOrderItem.objects.create(
+            organisation=self.org, purchase_order=self.po, product=self.product,
+            quantity_ordered=Decimal("10"), quantity_received=Decimal("0"),
+            unit_cost=Decimal("100"), line_total=Decimal("1000"), tax_rate=Decimal("7.5"),
+        )
+
+    def _journal_lines(self, source_type, source_ref):
+        return list(JournalEntry.objects.get(
+            organisation=self.org, source_type=source_type, source_ref=source_ref,
+        ).lines.all())
+
+    def test_convert_creates_a_bill_for_the_full_po_value(self):
+        from apps.bills.models import Bill
+        po = PurchaseService.convert_to_bill(self.po, self.user)
+        self.assertTrue(po.billed_before_receipt)
+
+        bill = Bill.objects.get(organisation=self.org, source_purchase_order=po)
+        self.assertEqual(Decimal(str(bill.subtotal)), Decimal("1000"))
+        self.assertEqual(Decimal(str(bill.tax_amount)), Decimal("75"))
+        self.assertEqual(Decimal(str(bill.total_amount)), Decimal("1075"))
+        self.assertEqual(bill.gl_post_status, "posted")
+
+    def test_convert_posts_goods_in_transit_debit_and_ap_credit_when_unmapped(self):
+        # No goods_in_transit_account configured — falls back to plain
+        # Inventory, exactly like _upsert_bill_for_po's own unmapped fallback.
+        po = PurchaseService.convert_to_bill(self.po, self.user)
+        lines = self._journal_lines("po_convert_to_bill", str(po.id))
+        by_code = {l.account.code: (Decimal(str(l.debit)), Decimal(str(l.credit))) for l in lines}
+        inv_acct = AccountMappingService.resolve(self.org, "inventory_account")
+        ap_acct = AccountMappingService.resolve(self.org, "accounts_payable")
+        vat_acct = AccountMappingService.resolve(self.org, "vat_input_account")
+        self.assertEqual(by_code[inv_acct.code][0], Decimal("1000"))
+        self.assertEqual(by_code[ap_acct.code][1], Decimal("1075"))
+        self.assertEqual(by_code[vat_acct.code][0], Decimal("75"))
+
+    def test_convert_posts_to_dedicated_clearing_account_when_mapped(self):
+        from apps.accounting.models import Account
+        transit_acct = Account.objects.create(
+            organisation=self.org, code="1250", name="Goods In Transit",
+            account_type="asset", normal_balance="debit",
+        )
+        mapping = AccountMappingService.get_or_create_mapping(self.org)
+        mapping.goods_in_transit_account = transit_acct
+        mapping.save(update_fields=["goods_in_transit_account"])
+
+        po = PurchaseService.convert_to_bill(self.po, self.user)
+        lines = self._journal_lines("po_convert_to_bill", str(po.id))
+        by_code = {l.account.code: (Decimal(str(l.debit)), Decimal(str(l.credit))) for l in lines}
+        inv_acct = AccountMappingService.resolve(self.org, "inventory_account")
+        self.assertNotIn(inv_acct.code, by_code)
+        self.assertEqual(by_code["1250"][0], Decimal("1000"))
+
+    def test_cannot_convert_twice(self):
+        PurchaseService.convert_to_bill(self.po, self.user)
+        self.po.refresh_from_db()
+        with self.assertRaises(ValueError):
+            PurchaseService.convert_to_bill(self.po, self.user)
+
+    def test_cannot_convert_a_received_po(self):
+        self.po.status = PurchaseOrder.Status.RECEIVED
+        self.po.save(update_fields=["status"])
+        with self.assertRaises(ValueError):
+            PurchaseService.convert_to_bill(self.po, self.user)
+
+    def test_cannot_convert_a_po_with_no_supplier(self):
+        self.po.supplier = None
+        self.po.save(update_fields=["supplier"])
+        with self.assertRaises(ValueError):
+            PurchaseService.convert_to_bill(self.po, self.user)
+
+    def test_later_physical_receipt_does_not_double_bill(self):
+        # The core guard: goods arrive AFTER the supplier invoice was already
+        # booked in full — the bill's total must not grow, no second bill,
+        # but stock must still move for real.
+        from apps.bills.models import Bill
+        po = PurchaseService.convert_to_bill(self.po, self.user)
+        bill_before = Bill.objects.get(organisation=self.org, source_purchase_order=po)
+        total_before = Decimal(str(bill_before.total_amount))
+
+        po = PurchaseService.receive_purchase_order(
+            po, [{"item_id": str(self.po_item.id), "quantity_received": "10"}], self.user,
+        )
+
+        bills = Bill.objects.filter(organisation=self.org, source_purchase_order=po)
+        self.assertEqual(bills.count(), 1)
+        bill_after = bills.first()
+        self.assertEqual(Decimal(str(bill_after.total_amount)), total_before)
+
+        si = StockItem.objects.get(organisation=self.org, product=self.product, warehouse=self.warehouse)
+        self.assertEqual(si.quantity_on_hand, Decimal("10.00"))
+
+    def test_later_physical_receipt_moves_value_from_clearing_to_inventory(self):
+        from apps.accounting.models import Account
+        transit_acct = Account.objects.create(
+            organisation=self.org, code="1251", name="Goods In Transit",
+            account_type="asset", normal_balance="debit",
+        )
+        mapping = AccountMappingService.get_or_create_mapping(self.org)
+        mapping.goods_in_transit_account = transit_acct
+        mapping.save(update_fields=["goods_in_transit_account"])
+
+        po = PurchaseService.convert_to_bill(self.po, self.user)
+        po = PurchaseService.receive_purchase_order(
+            po, [{"item_id": str(self.po_item.id), "quantity_received": "10"}], self.user,
+        )
+
+        lines = self._journal_lines("po_receipt_clearing", str(po.id))
+        by_code = {l.account.code: (Decimal(str(l.debit)), Decimal(str(l.credit))) for l in lines}
+        inv_acct = AccountMappingService.resolve(self.org, "inventory_account")
+        self.assertEqual(by_code[inv_acct.code][0], Decimal("1000"))
+        self.assertEqual(by_code["1251"][1], Decimal("1000"))
+
+    def test_later_physical_receipt_posts_no_redundant_entry_when_unmapped(self):
+        # Both conversion and receipt fell back to plain Inventory — DR then
+        # CR the same account for the same amount would be a real but
+        # pointless zero-effect journal entry. Must not be posted at all.
+        po = PurchaseService.convert_to_bill(self.po, self.user)
+        po = PurchaseService.receive_purchase_order(
+            po, [{"item_id": str(self.po_item.id), "quantity_received": "10"}], self.user,
+        )
+        self.assertFalse(
+            JournalEntry.objects.filter(
+                organisation=self.org, source_type="po_receipt_clearing", source_ref=str(po.id),
+            ).exists()
+        )
+
+    def test_purchase_order_serializer_exposes_the_linked_bill(self):
+        from apps.purchases.serializers import PurchaseOrderSerializer
+        po = PurchaseService.convert_to_bill(self.po, self.user)
+        data = PurchaseOrderSerializer(po).data
+        self.assertTrue(data["billed_before_receipt"])
+        self.assertIsNotNone(data["bill_id"])
+        self.assertTrue(data["bill_number"].startswith("BILL"))
+
+    def test_bill_serializer_exposes_the_source_po(self):
+        from apps.bills.models import Bill
+        from apps.bills.serializers import BillSerializer
+        po = PurchaseService.convert_to_bill(self.po, self.user)
+        bill = Bill.objects.get(organisation=self.org, source_purchase_order=po)
+        data = BillSerializer(bill).data
+        self.assertEqual(data["source_po_number"], po.po_number)

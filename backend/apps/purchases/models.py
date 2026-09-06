@@ -53,6 +53,13 @@ class PurchaseOrder(TenantAwareModel):
     delivery_notes = models.CharField(max_length=255, blank=True, help_text="Custom delivery instructions")
     notes = models.TextField(blank=True)
     receipt = models.FileField(upload_to="purchase_receipts/", null=True, blank=True)
+    # Set when this PO was billed via the explicit "Convert to Bill" action
+    # BEFORE any physical receipt — the supplier invoice arrived first. When
+    # true, a later goods receipt on this PO must NOT bill the supplier again
+    # (that money is already booked): it only moves the value from the
+    # goods-in-transit clearing account into Inventory. See
+    # PurchaseService.convert_to_bill / _upsert_bill_for_po.
+    billed_before_receipt = models.BooleanField(default=False)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="purchase_orders"
     )

@@ -1283,6 +1283,7 @@ export const purchaseApi = {
   removeReceipt: (id: string) => api.post(`/purchases/orders/${id}/clear_receipt/`),
   receive: (id: string, items: object[]) => api.post(`/purchases/orders/${id}/receive/`, { items }),
   quickReceive: (id: string) => api.post(`/purchases/orders/${id}/quick-receive/`),
+  convertToBill: (id: string) => api.post(`/purchases/orders/${id}/convert-to-bill/`),
   etaAlerts: () => api.get('/purchases/orders/eta-alerts/'),
 }
 
@@ -2023,11 +2024,12 @@ export const importApi = {
   // Employee bulk import — same shape as customers/accounts (no AI column
   // mapping needed for this one), see ImportEmployeesView on the backend.
   employees: (file: File) => _importPost('/import/employees/', file),
+  purchase_orders: (file: File) => _importPost('/import/purchase_orders/', file),
   /** POST /import/suggest-mapping/ — AI column name mapper */
   suggestMapping: (entity: string, headers: string[]) =>
     api.post('/import/suggest-mapping/', { entity, headers }),
   /** GET /import/template/<entity>/ — download CSV template */
-  templateUrl: (entity: 'products' | 'customers' | 'suppliers' | 'accounts' | 'employees') =>
+  templateUrl: (entity: 'products' | 'customers' | 'suppliers' | 'accounts' | 'employees' | 'purchase_orders') =>
     `/import/template/${entity}/`,
 }
 

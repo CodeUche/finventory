@@ -56,6 +56,19 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
     def get_supplier_name(self, obj):
         return obj.supplier.name if obj.supplier_id else "Walk-in / No Supplier"
     warehouse_name = serializers.CharField(source="warehouse.name", read_only=True)
+    # The Bill this PO produced, however it got there — auto-created on
+    # receipt (_upsert_bill_for_po) or explicit convert_to_bill. Surfaces the
+    # PO↔Bill link the reviewer asked for without a second round-trip.
+    bill_id = serializers.SerializerMethodField()
+    bill_number = serializers.SerializerMethodField()
+
+    def get_bill_id(self, obj):
+        bill = obj.bills_from_po.first()
+        return str(bill.id) if bill else None
+
+    def get_bill_number(self, obj):
+        bill = obj.bills_from_po.first()
+        return bill.bill_number if bill else None
 
     class Meta:
         model = PurchaseOrder
@@ -64,8 +77,9 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
             "warehouse", "warehouse_name", "status", "order_date", "expected_date",
             "received_date", "subtotal", "discount_amount", "tax_amount", "delivery_amount", "total_amount",
             "delivery_type", "delivery_notes", "notes", "receipt", "items", "created_at",
+            "billed_before_receipt", "bill_id", "bill_number",
         ]
-        read_only_fields = ["id", "po_number", "subtotal", "discount_amount", "tax_amount", "total_amount", "created_at"]
+        read_only_fields = ["id", "po_number", "subtotal", "discount_amount", "tax_amount", "total_amount", "created_at", "billed_before_receipt"]
         extra_kwargs = {
             "notes": {"max_length": 2000, "required": False, "allow_blank": True},
             "supplier": {"required": False, "allow_null": True},

@@ -116,6 +116,7 @@ class AccountMappingService:
         'shipping_income_account': (['revenue'],          ['4090', '4'],  ['shipping', 'delivery', 'freight', 'carriage']),
         'cogs_account':            (['cogs'],             ['5001', '5'],  ['cost', 'cogs', 'goods']),
         'inventory_account':       (['asset'],            ['1200', '12'], ['inventory', 'stock']),
+        'goods_in_transit_account': (['asset'],           ['1250'],       ['goods in transit', 'gr/ir', 'gr ir', 'unbilled receipt', 'clearing']),
         'accounts_receivable':     (['asset'],            ['1100', '11'], ['receivable', 'debtor']),
         'cash_account':            (['asset'],            ['1001', '10'], ['cash']),
         'bank_account':            (['asset'],            ['1002', '10'], ['bank', 'current account']),
@@ -130,6 +131,23 @@ class AccountMappingService:
         'general_expense_account': (['expense'],          ['6700', '67'], ['sundry', 'general', 'miscellaneous', 'other expenses']),
         'bank_charges_account':    (['expense'],          ['6500', '65'], ['bank charge', 'bank charges', 'commission', 'fee']),
     }
+
+    # For most roles above, a bare type-match (3 points, the threshold in
+    # _find_best_match) is an acceptable auto-guess — those roles are
+    # REQUIRED (checked in check_strict_gl_mode), so the system needs SOME
+    # account there and a wrong guess is easy to notice and correct via
+    # Settings. These two are different: they're optional, off-by-default
+    # roles whose whole point is "null means: fall back to existing
+    # behaviour, unless a human deliberately opts in". A prefix like '4' or
+    # '1' matches nearly every revenue/asset account in any seeded chart of
+    # accounts, so a bare type-match auto-fills them to essentially a random
+    # account (whichever sorts first) on EVERY new organisation, silently
+    # defeating that fallback the moment the org is created — caught only by
+    # a test that actually checked account CODES rather than trusting
+    # gl_post_status == 'posted'. Requiring an actual keyword hit means these
+    # only ever auto-suggest when an account genuinely named for the purpose
+    # already exists; otherwise they stay null until someone maps them by hand.
+    ROLES_REQUIRING_KEYWORD_MATCH = {'shipping_income_account', 'goods_in_transit_account'}
 
     @classmethod
     def get_item_class_defaults(cls, organisation) -> dict:
@@ -158,15 +176,26 @@ class AccountMappingService:
         for role, (types, prefixes, keywords) in cls.ROLE_HINTS.items():
             if getattr(mapping, f'{role}_id') is not None:
                 continue  # already set, don't overwrite
-            best = cls._find_best_match(accounts, types, prefixes, keywords)
+            require_kw = role in cls.ROLES_REQUIRING_KEYWORD_MATCH
+            best = cls._find_best_match(accounts, types, prefixes, keywords, require_keyword=require_kw)
             if best:
                 setattr(mapping, role, best)
         mapping.save()
 
     @classmethod
-    def _find_best_match(cls, accounts, types, prefixes, keywords):
-        """Score each account: type match (3pts) + code prefix (2pts) + keyword in name (1pt each)."""
-        best, best_score = None, 0
+    def _find_best_match(cls, accounts, types, prefixes, keywords, require_keyword=False):
+        """Score each account: type match (3pts) + code prefix (2pts) + keyword in name (1pt each).
+
+        require_keyword: when True, a bare type/prefix match (which nearly
+        every account of that type/prefix gets, in any seeded chart of
+        accounts) is not enough to qualify — at least one keyword must
+        actually appear in the account name. Use this for optional,
+        off-by-default roles where auto-filling a plausible-but-wrong
+        account would silently defeat their "null means fall back" design;
+        the required roles keep the looser threshold since the system needs
+        SOME account there and a merely-plausible guess is easy to correct.
+        """
+        best, best_score, best_had_keyword = None, 0, False
         for acct in accounts:
             score = 0
             if acct.account_type in types:
@@ -176,12 +205,16 @@ class AccountMappingService:
                     score += 2
                     break
             name_lower = acct.name.lower()
-            for kw in keywords:
-                if kw in name_lower:
-                    score += 1
+            had_keyword = any(kw in name_lower for kw in keywords)
+            if had_keyword:
+                score += sum(1 for kw in keywords if kw in name_lower)
             if score > best_score:
-                best, best_score = acct, score
-        return best if best_score >= 3 else None
+                best, best_score, best_had_keyword = acct, score, had_keyword
+        if best_score < 3:
+            return None
+        if require_keyword and not best_had_keyword:
+            return None
+        return best
 
     @classmethod
     def resolve(cls, organisation, role: str) -> 'Account':
@@ -198,7 +231,8 @@ class AccountMappingService:
         """Return the best-guess account without raising. Used for UI suggestions."""
         accounts = list(Account.objects.filter(organisation=organisation, is_deleted=False))
         hints = cls.ROLE_HINTS.get(role, ([], [], []))
-        return cls._find_best_match(accounts, *hints)
+        require_kw = role in cls.ROLES_REQUIRING_KEYWORD_MATCH
+        return cls._find_best_match(accounts, *hints, require_keyword=require_kw)
 
 
 class AccountingService:

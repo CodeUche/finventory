@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { api, bypassNextGets } from '@/services/api'
-import { Upload, Download, CheckCircle, XCircle, AlertTriangle, FileText, Users, BookOpen, UsersRound, Loader2, Maximize2, X, Sparkles, ChevronDown, ChevronUp, Truck } from 'lucide-react'
+import { Upload, Download, CheckCircle, XCircle, AlertTriangle, FileText, Users, BookOpen, UsersRound, Loader2, Maximize2, X, Sparkles, ChevronDown, ChevronUp, Truck, ClipboardList } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { importApi } from '@/services/api'
 import { save } from '@tauri-apps/plugin-dialog'
@@ -64,7 +64,7 @@ function parseCSV(text: string): string[][] {
   return [cleanHeaders, ...dataRows]
 }
 
-type Entity = 'products' | 'customers' | 'suppliers' | 'accounts' | 'employees'
+type Entity = 'products' | 'customers' | 'suppliers' | 'accounts' | 'employees' | 'purchase_orders'
 type ImportError = { row: number; field: string; message: string }
 type ImportResult = { created: number; updated: number; errors: ImportError[]; total_rows: number; warehouses_created?: number; stock_assigned?: number; balances_set?: number }
 
@@ -131,6 +131,13 @@ const ENTITIES: { key: Entity; label: string; icon: React.ReactNode; description
       + 'next_of_kin_relationship, emergency_contact_name, emergency_contact_phone, grade, bank_name, '
       + 'bank_code, account_number, account_name, pfa_name, pfa_number, pension_pin, tin, state_of_residence, '
       + 'basic_salary, housing_allowance, transport_allowance, leave_allowance, other_allowances',
+  },
+  {
+    key: 'purchase_orders',
+    label: 'Purchase Orders',
+    icon: <ClipboardList size={20} />,
+    description: 'Bring in existing purchase orders from another system. One row per line item — suppliers, warehouses and products must already exist.',
+    columns: 'po_number*, supplier_name*, warehouse_name*, order_date*, product_sku*, quantity*, unit_cost*, expected_date, discount_percent, delivery_amount, notes',
   },
 ]
 

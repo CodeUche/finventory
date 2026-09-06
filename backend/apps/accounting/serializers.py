@@ -253,6 +253,7 @@ def _account_summary(account):
 
 MAPPING_ROLES = [
     'revenue_account', 'shipping_income_account', 'cogs_account', 'inventory_account',
+    'goods_in_transit_account',
     'accounts_receivable', 'cash_account', 'bank_account', 'accounts_payable',
     'vat_output_account', 'vat_input_account', 'paye_account', 'pension_account',
     'nhf_account', 'wht_account', 'salary_expense_account', 'general_expense_account',
@@ -268,7 +269,7 @@ MAPPING_ROLE_MODULES = [
     {'key': 'customer', 'label': 'Customers & Sales', 'roles': [
         'accounts_receivable', 'revenue_account', 'shipping_income_account', 'vat_output_account']},
     {'key': 'supplier', 'label': 'Suppliers & Purchases', 'roles': [
-        'accounts_payable', 'vat_input_account']},
+        'accounts_payable', 'vat_input_account', 'goods_in_transit_account']},
     {'key': 'inventory', 'label': 'Inventory & COGS', 'roles': [
         'inventory_account', 'cogs_account']},
     {'key': 'payroll', 'label': 'Payroll', 'roles': [
@@ -279,7 +280,8 @@ MAPPING_ROLE_MODULES = [
 MAPPING_ROLE_LABELS = {
     'revenue_account': 'Revenue', 'shipping_income_account': 'Shipping / Delivery Income',
     'cogs_account': 'Cost of Goods Sold',
-    'inventory_account': 'Inventory', 'accounts_receivable': 'Accounts Receivable',
+    'inventory_account': 'Inventory', 'goods_in_transit_account': 'Goods In Transit (Unbilled Receipt Clearing)',
+    'accounts_receivable': 'Accounts Receivable',
     'cash_account': 'Cash', 'bank_account': 'Bank', 'accounts_payable': 'Accounts Payable',
     'vat_output_account': 'VAT Output (Sales)', 'vat_input_account': 'VAT Input (Purchases)',
     'paye_account': 'PAYE Payable', 'pension_account': 'Pension Payable',
