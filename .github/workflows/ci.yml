@@ -255,86 +255,33 @@ jobs:
         working-directory: frontend
         run: npm audit --audit-level=high || true
 
-# ─── Deploy — Backend (Railway) ───────────────────────────────────────────────
-# Runs only on push to main after all checks pass.
-# Requires these GitHub secrets:
-#   RAILWAY_TOKEN              — Railway project token (Settings → Tokens)
-#   RAILWAY_BACKEND_SERVICE    — Service name as shown in Railway dashboard
-#   BACKEND_HEALTH_URL         — Full URL e.g. https://api.audity.com/api/v1/health/
-# See .github/SECRETS.md for full setup guide.
-  deploy-backend:
-    name: Deploy — Backend → Railway
-    runs-on: ubuntu-latest
-    # e2e-smoke runs against the CURRENT live production stack (Railway
-    # auto-deployed the new code on push). Only promote if smoke passes.
-    needs: [backend-test, frontend-build, security-scan, e2e-smoke]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    environment: production
-    # Non-fatal: Railway GitHub integration already auto-deploys on push.
-    # This job re-deploys only when RAILWAY_TOKEN is configured, and its
-    # failure must never block downstream jobs.
-    continue-on-error: true
-
-    # Keep deploys serialised — never cancel a deploy in-flight.
-    concurrency:
-      group: deploy-production-backend
-      cancel-in-progress: false
-
-    steps:
-      # Gracefully skip the whole job when Railway secrets are not yet configured.
-      # Once RAILWAY_TOKEN is added to GitHub Secrets, deploys activate automatically.
-      - name: Check Railway credentials
-        id: preflight
-        run: |
-          if [ -z "$RAILWAY_TOKEN" ]; then
-            echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "::notice title=Deploy Skipped::RAILWAY_TOKEN not configured — skipping deployment. See .github/SECRETS.md to set up Railway."
-          else
-            echo "configured=true" >> "$GITHUB_OUTPUT"
-          fi
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-
-      - uses: actions/checkout@v4
-        if: steps.preflight.outputs.configured == 'true'
-
-      - name: Install Railway CLI
-        if: steps.preflight.outputs.configured == 'true'
-        run: npm install -g @railway/cli@latest
-
-      - name: Deploy to Railway
-        if: steps.preflight.outputs.configured == 'true'
-        # Railway CLI v3: `railway up` uploads + deploys. `--detach` returns
-        # immediately so CI doesn't block waiting for the rollout to finish.
-        # RAILWAY_SERVICE_NAME is the env-var form; --service flag is the flag form.
-        working-directory: backend
-        run: |
-          railway up \
-            --service "${{ secrets.RAILWAY_BACKEND_SERVICE }}" \
-            --environment production \
-            --detach
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-
-      # Verify rollout — poll health endpoint; non-fatal if Railway is slow to wake.
-      - name: Verify deployment health
-        if: steps.preflight.outputs.configured == 'true'
-        continue-on-error: true
-        run: |
-          echo "Waiting 45 s for Railway to roll out..."
-          sleep 45
-          HEALTH_URL="${{ secrets.BACKEND_HEALTH_URL }}"
-          if [ -z "$HEALTH_URL" ]; then
-            HEALTH_URL="https://audity-backend-production-30f9.up.railway.app/api/v1/health/"
-          fi
-          for i in 1 2 3; do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$HEALTH_URL" || echo "000")
-            echo "Health check $i/3: HTTP $STATUS"
-            [ "$STATUS" = "200" ] && echo "✓ Backend healthy" && exit 0
-            sleep 15
-          done
-          echo "::warning title=Health Check::Backend health check did not return 200 — check Railway dashboard."
-          exit 0
+# ─── Deploy — Backend ─────────────────────────────────────────────────────────
+# There is deliberately NO automatic backend deploy job here.
+#
+# The Railway deploy that used to live at this spot was removed on 2026-09-06:
+# the backend now runs on AWS ECS, and Railway is a frozen read-only copy kept
+# only so desktop clients that have not updated yet can still read. Re-deploying
+# it would have redeployed a decommissioned environment — the merge of PR #9
+# triggered exactly that and had to be cancelled by hand.
+#
+# Deploys are intentionally manual, matching the IAM decision in
+# infra/terraform/github_oidc.tf: the OIDC role can push to ECR and nothing
+# else, because Terraform owns the task definitions and rolls the services.
+# Granting ecs:* to a workflow that never deploys would only widen what a
+# compromised workflow could reach.
+#
+# To ship a backend change:
+#   1. Merge to main. `build-backend-image` below pushes an image to ECR tagged
+#      with the commit SHA.
+#   2. Run the migrations once, as a standalone task (never per-container —
+#      see the concurrent-migrate race documented in infra/terraform/ecs.tf):
+#        aws ecs run-task --cluster audity-cluster #          --task-definition audity-migrate --launch-type FARGATE #          --network-configuration "awsvpcConfiguration={subnets=[...],securityGroups=[...]}"
+#   3. Roll the services with that image:
+#        cd infra/terraform
+#        terraform apply -var image_tag=<commit-sha> -var field_encryption_key=<...>
+#
+# If this ever becomes automatic, the migrate task MUST gate the service update,
+# and the OIDC role needs ecs:UpdateService / ecs:RunTask / iam:PassRole added.
 
 # ─── Build — Tauri Desktop (Windows) ──────────────────────────────────────────
 # Runs only on version tags (v*.*.*) — NOT on every push to main.
@@ -387,7 +334,7 @@ jobs:
         run: npm ci
 
       - name: Build Tauri app
-        # tauri:build:cloud always targets the Railway production API (via .env.cloud)
+        # tauri:build:cloud targets the AWS production API (via .env.cloud)
         run: npm run tauri:build:cloud
         env:
           # Tauri v2 update signing — safe to omit if auto-update not configured yet.
@@ -416,18 +363,20 @@ jobs:
           retention-days: 90
 
 # ─── E2E — Playwright smoke suite ────────────────────────────────────────────
-# Runs after deploy-backend completes so it tests the freshly deployed stack.
-# Requires these GitHub secrets:
-#   TEST_EMAIL      — email of a real account on Railway production
+# Tests the live AWS stack. Requires these GitHub secrets:
+#   TEST_EMAIL      — email of a real account on AWS production (Aurora)
 #   TEST_PASSWORD   — password for that account
 # BASE_URL is hardcoded to the Vercel frontend URL (no secret needed).
+#
+# NOTE: BASE_URL deliberately points at the `audity` project's git-main
+# deployment, NOT at audity-review.vercel.app. That review link is the one
+# handed to investors, an embassy and external reviewers — automated tests must
+# never write data into what they are looking at.
   e2e-smoke:
     name: E2E — Playwright Smoke
     runs-on: ubuntu-latest
-    # Railway auto-deploys via GitHub integration on push to main, so we do
-    # NOT depend on deploy-backend here — that job is a fallback for manual
-    # token-based deploys and can fail without blocking E2E.
-    # The warmup step below polls until Railway's new deployment is live.
+    # Backend deploys are manual (see the Deploy — Backend note above), so this
+    # tests whatever is currently live on AWS rather than gating a deploy.
     needs: [backend-test, frontend-build]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
@@ -451,13 +400,14 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
-      # ── 1. Wake the Railway backend ─────────────────────────────────────────
-      # Railway's free tier sleeps after inactivity; cold-start takes ~20 s.
-      # We poll the health endpoint up to 8 times (120 s total).
-      - name: Warm up Railway backend
+      # ── 1. Confirm the AWS backend is healthy ───────────────────────────────
+      # ECS tasks do not sleep, so this is a readiness check rather than a wake
+      # -up: it catches a mid-deploy or unhealthy stack before Playwright starts
+      # and produces a wall of confusing UI failures.
+      - name: Check AWS backend health
         run: |
-          API="https://audity-backend-production-30f9.up.railway.app/api/v1/health/"
-          echo "Polling Railway backend at $API …"
+          API="https://api.auditytechnologies.com/api/v1/health/"
+          echo "Polling AWS backend at $API …"
           for i in $(seq 1 8); do
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 "$API" || echo "000")
             echo "  attempt $i/8: HTTP $STATUS"
@@ -467,8 +417,7 @@ jobs:
           done
 
       # ── 2. Wait for Vercel to finish deploying the latest commit ────────────
-      # Railway's GitHub integration auto-deploys on push; Vercel does too, but
-      # both happen ASYNC relative to this CI job. We poll the Vercel preview URL
+      # Vercel auto-deploys on push, ASYNC relative to this CI job. We poll the Vercel preview URL
       # for up to 3 min so E2E tests always hit freshly deployed code.
       - name: Wait for Vercel frontend deployment
         run: |
@@ -491,7 +440,7 @@ jobs:
         run: npm run test:smoke
         env:
           BASE_URL: https://audity-git-main-auditytechnologies.vercel.app
-          API_URL: https://audity-backend-production-30f9.up.railway.app
+          API_URL: https://api.auditytechnologies.com
           TEST_EMAIL: ${{ secrets.TEST_EMAIL }}
           TEST_PASSWORD: ${{ secrets.TEST_PASSWORD }}
 
@@ -563,9 +512,12 @@ jobs:
 # Auth is OIDC; no AWS keys live in GitHub. The role ARN is not a secret, and
 # trust is scoped in infra/terraform/github_oidc.tf to this repo and branch.
 #
-# The Railway deploy job above is intentionally untouched: Railway must keep
-# serving desktop/mobile clients that still have its hostname compiled in,
-# until those clients have updated.
+# This job only PUSHES an image. It does not deploy — see the Deploy — Backend
+# note above for why that is deliberate and how to actually ship one.
+#
+# Railway itself is left running (frozen, read-only) because desktop clients
+# that have not updated still have its hostname compiled in and cannot be
+# redirected. It is retired once those clients have moved.
   build-backend-image:
     name: Build — Backend image → ECR
     runs-on: ubuntu-latest
