@@ -228,6 +228,29 @@ class BudgetViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         }, status=status.HTTP_200_OK)
 
 
+class BudgetLineViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+    """
+    Phase 7: a flat, addressable resource for an individual BudgetLine —
+    PATCH support for fields add_line/bulk_lines don't cover editing after
+    creation (sub_category, forecast_amount, and file attachment uploads,
+    which need a real multipart-accepting endpoint DRF's ModelViewSet gives
+    for free). Purely additive alongside add_line/bulk_lines, which keep
+    working exactly as before — this is just a second, more conventional
+    way to reach an already-created line. Same permission stack and org
+    scoping as every other viewset in this app.
+    """
+    serializer_class = BudgetLineSerializer
+    permission_classes = [IsAuthenticated, IsManagerOrSuperuser, _PlanBudget, _ModAccess_budgets]
+
+    def get_queryset(self):
+        org = self._get_organisation()
+        qs = BudgetLine.objects.filter(organisation=org).select_related('budget', 'account', 'category')
+        budget_id = self.request.query_params.get('budget')
+        if budget_id:
+            qs = qs.filter(budget_id=budget_id)
+        return qs
+
+
 class BudgetPeriodViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     """Named financial periods (FY2026, Q1 2026, ...) a Budget can be pinned
     to. Same permission stack and audit-log discipline as BudgetViewSet.

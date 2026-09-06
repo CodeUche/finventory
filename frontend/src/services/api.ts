@@ -1765,6 +1765,15 @@ export const budgetApi = {
   monitoring: (params?: object) => api.get('/budgets/monitoring/', { params }),
 }
 
+/** Individual BudgetLine access (Phase 7) — PATCH support for editing an
+ * already-created line (sub_category, forecast_amount, attachment upload),
+ * which add_line/bulk_lines don't cover. Pass a FormData body for an
+ * attachment upload; a plain object for everything else. */
+export const budgetLineApi = {
+  update: (id: string, data: object | FormData) => api.patch(`/budgets/lines/${id}/`, data),
+  delete: (id: string) => api.delete(`/budgets/lines/${id}/`),
+}
+
 /** Named financial periods a Budget can be pinned to (Phase 5). */
 export const budgetPeriodApi = {
   list: () => api.get('/budgets/periods/'),
@@ -2041,11 +2050,12 @@ export const importApi = {
   // mapping needed for this one), see ImportEmployeesView on the backend.
   employees: (file: File) => _importPost('/import/employees/', file),
   purchase_orders: (file: File) => _importPost('/import/purchase_orders/', file),
+  budgets: (file: File) => _importPost('/import/budgets/', file),
   /** POST /import/suggest-mapping/ — AI column name mapper */
   suggestMapping: (entity: string, headers: string[]) =>
     api.post('/import/suggest-mapping/', { entity, headers }),
   /** GET /import/template/<entity>/ — download CSV template */
-  templateUrl: (entity: 'products' | 'customers' | 'suppliers' | 'accounts' | 'employees' | 'purchase_orders') =>
+  templateUrl: (entity: 'products' | 'customers' | 'suppliers' | 'accounts' | 'employees' | 'purchase_orders' | 'budgets') =>
     `/import/template/${entity}/`,
 }
 

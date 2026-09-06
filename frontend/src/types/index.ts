@@ -1463,17 +1463,27 @@ export interface BudgetLine {
   category: string | null
   category_name: string
   category_type: 'expense' | 'revenue'
+  /** Phase 7 (B6b): free-text refinement within revenue/expense. */
+  sub_category?: string
   period_month: number | null
   budgeted_amount: string
+  /** Phase 7 (B10): a planner's forward estimate, separate from the
+   * committed budgeted_amount — purely informational. */
+  forecast_amount?: string | null
   unit_price?: string | null
   quantity?: string
   description?: string
   actual_amount?: string
   variance?: string
+  /** Phase 7 (B10b): variance / budgeted_amount * 100, server-computed —
+   * only present on get_variance_report / get_monitoring_rows responses. */
+  variance_pct?: number
   /** Optional link to the real Chart of Accounts — additive, never required. */
   account?: string | null
   account_code?: string | null
   account_name?: string | null
+  /** Phase 7 (B6c): supporting document URL, if one was uploaded. */
+  attachment?: string | null
 }
 
 export interface Budget {
@@ -1542,10 +1552,13 @@ export interface BudgetMonitoringRow {
   budget_status: 'draft' | 'active' | 'closed'
   category_name: string
   category_type: 'expense' | 'revenue'
+  sub_category?: string
   period_month: number | null
   budgeted_amount: string
+  forecast_amount?: string | null
   actual_amount: string
   variance: string
+  variance_pct?: number
   over_budget: boolean
   account: { id: string; code: string; name: string } | null
 }

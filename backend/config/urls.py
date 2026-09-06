@@ -127,7 +127,7 @@ urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 
 # Platform admin API (superusers only) + Audit log (owner/admin/superuser)
 from apps.core.admin_views import AuditLogView, PlatformStatsView, PlatformUsersView, PlatformUserDetailView
-from apps.core.import_views import ImportProductsView, ImportCustomersView, ImportSuppliersView, ImportAccountsView, ImportEmployeesView, ImportPurchaseOrdersView, ImportTemplateView, SuggestColumnMappingView
+from apps.core.import_views import ImportProductsView, ImportCustomersView, ImportSuppliersView, ImportAccountsView, ImportEmployeesView, ImportPurchaseOrdersView, ImportBudgetsView, ImportTemplateView, SuggestColumnMappingView
 from rest_framework.routers import DefaultRouter
 from apps.helpdesk.views import PlatformTicketViewSet
 _platform_router = DefaultRouter()
@@ -145,6 +145,7 @@ urlpatterns += [
     path('api/v1/import/accounts/', ImportAccountsView.as_view(), name='import-accounts'),
     path('api/v1/import/employees/', ImportEmployeesView.as_view(), name='import-employees'),
     path('api/v1/import/purchase_orders/', ImportPurchaseOrdersView.as_view(), name='import-purchase-orders'),
+    path('api/v1/import/budgets/', ImportBudgetsView.as_view(), name='import-budgets'),
     path('api/v1/import/template/<str:entity>/', ImportTemplateView.as_view(), name='import-template'),
     path('api/v1/import/suggest-mapping/', SuggestColumnMappingView.as_view(), name='import-suggest-mapping'),
 ]

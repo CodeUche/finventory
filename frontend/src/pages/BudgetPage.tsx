@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
-import { Plus, X, PieChart, Loader2, ChevronDown, ChevronUp, HelpCircle, RefreshCw, BarChart3, ShieldCheck, Landmark, Briefcase, Grid3x3, LayoutList, LayoutGrid } from 'lucide-react'
+import { Plus, X, PieChart, Loader2, ChevronDown, ChevronUp, HelpCircle, RefreshCw, BarChart3, ShieldCheck, Landmark, Briefcase, Grid3x3, LayoutList, LayoutGrid, Upload, FileText, Download } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { budgetApi, accountingApi, bypassNextGets } from '@/services/api'
+import { budgetApi, budgetLineApi, accountingApi, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatAmountInput, stripCommas } from '@/lib/utils'
 import { sumBudgetedAmount } from '@/lib/budgetGrid'
 import AmountInput from '@/components/AmountInput'
@@ -11,10 +11,16 @@ import DateInput from '@/components/DateInput'
 import BudgetGridEditor from '@/components/BudgetGridEditor'
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from '@/lib/categories'
 import { useAuthStore } from '@/store/authStore'
+import { saveBlobFile } from '@/lib/saveBlobFile'
 import type { Budget, Account } from '@/types'
 
 interface BudgetForm { name: string; fiscal_year: string; period_type: string; notes: string; budget_type: string; start_date: string; end_date: string }
-interface LineForm { category_name: string; custom_name: string; category_type: string; period_month: string; budgeted_amount: string; unit_price: string; quantity: string; description: string; account: string }
+interface LineForm { category_name: string; custom_name: string; category_type: string; sub_category: string; period_month: string; budgeted_amount: string; forecast_amount: string; unit_price: string; quantity: string; description: string; account: string }
+interface VarianceRow {
+  id: string; category_name: string; category_type: 'expense' | 'revenue'; sub_category?: string
+  period_month: number | null; budgeted_amount: string; forecast_amount?: string | null
+  actual_amount: string; variance: string; variance_pct: number; over_budget: boolean
+}
 
 const now = new Date()
 const CURRENT_YEAR = now.getFullYear()
@@ -25,7 +31,7 @@ const CURRENT_YEAR = now.getFullYear()
 const MIN_YEAR = CURRENT_YEAR - 10
 const MAX_YEAR = CURRENT_YEAR + 10
 const BLANK_BUDGET: BudgetForm = { name: '', fiscal_year: String(CURRENT_YEAR), period_type: 'monthly', notes: '', budget_type: 'operational', start_date: '', end_date: '' }
-const BLANK_LINE: LineForm = { category_name: '', custom_name: '', category_type: 'expense', period_month: '', budgeted_amount: '', unit_price: '', quantity: '1', description: '', account: '' }
+const BLANK_LINE: LineForm = { category_name: '', custom_name: '', category_type: 'expense', sub_category: '', period_month: '', budgeted_amount: '', forecast_amount: '', unit_price: '', quantity: '1', description: '', account: '' }
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const STATUS_BADGE: Record<string, string> = { draft: 'badge-slate', active: 'badge-green', closed: 'badge-red' }
@@ -56,7 +62,7 @@ function isManagerOrAbove(memberRole: string | null, isSuperuser?: boolean): boo
 }
 
 export default function BudgetPage() {
-  const { memberRole, user } = useAuthStore()
+  const { memberRole, user, organisation } = useAuthStore()
   const [budgets, setBudgets] = useState<Budget[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
   const [loading, setLoading] = useState(true)
@@ -81,6 +87,12 @@ export default function BudgetPage() {
   // editing one budget's rate doesn't clobber another's in-progress edit.
   const [taxRateDraft, setTaxRateDraft] = useState<Record<string, string>>({})
   const [savingTaxRate, setSavingTaxRate] = useState<string | null>(null)
+
+  // Phase 7 (B6): per-budget line-type filter — "a filtered single view
+  // instead of separate Revenue/Expense budget pages" (confirmed design).
+  const [lineTypeFilter, setLineTypeFilter] = useState<Record<string, 'all' | 'revenue' | 'expense'>>({})
+  // Phase 7 (B6c): which line's attachment upload is in flight.
+  const [uploadingAttachment, setUploadingAttachment] = useState<string | null>(null)
 
   const load = async () => {
     setLoading(true)
@@ -182,6 +194,157 @@ export default function BudgetPage() {
     }
   }
 
+  const handleUploadAttachment = async (lineId: string, file: File) => {
+    setUploadingAttachment(lineId)
+    try {
+      const fd = new FormData()
+      fd.append('attachment', file)
+      await budgetLineApi.update(lineId, fd)
+      toast.success('Attachment uploaded')
+      load()
+    } catch (err: any) {
+      const apiErr = err?.response?.data?.error
+      const msg = typeof apiErr === 'string' ? apiErr : (apiErr?.message ?? 'Failed to upload attachment')
+      toast.error(msg)
+    } finally {
+      setUploadingAttachment(null)
+    }
+  }
+
+  // Phase 7 (B9/B10b): Budget Report export — a PDF (line detail + variance %,
+  // same roll-up math as the header panel) and a CSV of the same rows.
+  const downloadBudgetReportCSV = (budget: Budget, rows: VarianceRow[]) => {
+    const header = ['Category', 'Sub-Category', 'Type', 'Month', 'Budgeted', 'Forecast', 'Actual', 'Variance', 'Variance %']
+    const csvRows = rows.map((r) => [
+      r.category_name, r.sub_category || '', r.category_type,
+      r.period_month ? MONTH_NAMES[r.period_month - 1] : 'All',
+      r.budgeted_amount, r.forecast_amount ?? '', r.actual_amount, r.variance, r.variance_pct.toFixed(1),
+    ])
+    const csv = [header, ...csvRows].map((row) =>
+      row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(',')
+    ).join('\n')
+    saveBlobFile(new Blob([csv], { type: 'text/csv' }), `budget-report-${budget.name.replace(/\s+/g, '-')}-${budget.fiscal_year}.csv`)
+  }
+
+  const downloadBudgetReportPDF = async (budget: Budget, rows: VarianceRow[]) => {
+    const { jsPDF } = await import('jspdf')
+    const { default: autoTable } = await import('jspdf-autotable')
+    const { applyDocHeader, buildTableStyle, addDocFooter, pdfMoney, COLORS, TYPE, resolveOrgLogo } = await import('@/lib/pdfUtils')
+
+    const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' })
+    doc.setLineHeightFactor(1.15)
+    const pageW = doc.internal.pageSize.getWidth()
+
+    const toRgb = (hex?: string): [number, number, number] => {
+      const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex ?? '')
+      if (!m) return [249, 115, 22]
+      return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)]
+    }
+    const BRAND = toRgb(organisation?.brand_color) as [number, number, number]
+    const DARK = COLORS.DARK
+    const MUTED = COLORS.MUTED
+    const LIGHT = COLORS.LIGHT
+    const RULE = COLORS.RULE
+    const tmpl = organisation?.invoice_template ?? 'classic'
+    const logoData: string | null = await resolveOrgLogo(organisation?.logo)
+    const pdfFont = 'helvetica'
+    const displayName = organisation?.show_company_name_on_pdf === false
+      ? '' : (organisation?.invoice_company_name?.trim() || organisation?.name || 'Audity')
+
+    let y = applyDocHeader(doc, {
+      tmpl, pageW, BRAND, DARK, MUTED,
+      landscape: true,
+      logoData,
+      displayName,
+      orgAddress: organisation?.address,
+      orgEmail: organisation?.email,
+      orgPhone: organisation?.phone,
+      pdfFont,
+      showCompanyName: organisation?.show_company_name_on_pdf !== false,
+      docTitle: 'BUDGET REPORT',
+      metaRows: [
+        ['Budget', budget.name],
+        ['Fiscal Year', String(budget.fiscal_year)],
+        ['Generated', new Date().toISOString().split('T')[0]],
+      ],
+    })
+
+    // ── Roll-up KPI cards — same math as the on-screen panel ──────────────
+    const totalIncome = sumBudgetedAmount(budget.lines.filter((l) => l.category_type === 'revenue'))
+    const totalExpense = sumBudgetedAmount(budget.lines.filter((l) => l.category_type === 'expense'))
+    const expectedProfit = totalIncome - totalExpense
+    const taxRate = parseFloat(String(budget.tax_rate ?? 0)) || 0
+    const tax = expectedProfit * (taxRate / 100)
+    const budgetAmount = expectedProfit - tax
+    const kpis = [
+      { label: 'Total Income (A)', value: pdfMoney(totalIncome), color: DARK },
+      { label: 'Total Expense (B)', value: pdfMoney(totalExpense), color: DARK },
+      { label: 'Expected Profit (C)', value: pdfMoney(expectedProfit), color: expectedProfit < 0 ? COLORS.RED : COLORS.GREEN },
+      { label: `Tax (D, ${taxRate}%)`, value: pdfMoney(tax), color: DARK },
+      { label: 'Budget Amount (E)', value: pdfMoney(budgetAmount), color: DARK },
+    ] as const
+    const kpiW = (pageW - 20) / kpis.length
+    kpis.forEach((k, i) => {
+      const kx = 10 + i * kpiW
+      doc.setFillColor(...LIGHT); doc.setDrawColor(...RULE); doc.setLineWidth(0.25)
+      doc.roundedRect(kx, y, kpiW - 2, 22, 2, 2, 'FD')
+      doc.setFontSize(TYPE.SMALL.size); doc.setFont(pdfFont, 'normal'); doc.setTextColor(...MUTED)
+      doc.text(k.label.toUpperCase(), kx + (kpiW - 2) / 2, y + 7, { align: 'center' })
+      doc.setFontSize(TYPE.H2.size); doc.setFont(pdfFont, 'bold'); doc.setTextColor(...k.color)
+      doc.text(k.value, kx + (kpiW - 2) / 2, y + 16, { align: 'center' })
+    })
+    y += 26
+
+    const body = rows.map((r) => [
+      r.category_name, r.sub_category || '—', r.category_type,
+      r.period_month ? MONTH_NAMES[r.period_month - 1] : 'All',
+      pdfMoney(parseFloat(r.budgeted_amount)),
+      r.forecast_amount ? pdfMoney(parseFloat(r.forecast_amount)) : '—',
+      pdfMoney(parseFloat(r.actual_amount)),
+      pdfMoney(parseFloat(r.variance)),
+      `${r.variance_pct.toFixed(1)}%`,
+    ])
+    const overBudgetRows = rows.map((r, i) => (r.over_budget ? i : -1)).filter((i) => i >= 0)
+
+    autoTable(doc, {
+      ...buildTableStyle(BRAND, pdfFont, { landscape: true }),
+      startY: y,
+      head: [['Category', 'Sub-Category', 'Type', 'Month', 'Budgeted', 'Forecast', 'Actual', 'Variance', 'Variance %']],
+      body,
+      didParseCell: (data: any) => {
+        if (data.section === 'body' && overBudgetRows.includes(data.row.index) && (data.column.index === 7 || data.column.index === 8)) {
+          data.cell.styles.textColor = COLORS.RED
+        }
+      },
+    })
+
+    addDocFooter(doc, {
+      orgName: organisation?.name ?? 'Company',
+      docTitle: 'BUDGET REPORT',
+      docRef: `${budget.name} (${budget.fiscal_year})`,
+      BRAND,
+      pdfFont,
+      landscape: true,
+    })
+
+    await saveBlobFile(doc.output('blob'), `budget-report-${budget.name.replace(/\s+/g, '-')}-${budget.fiscal_year}.pdf`)
+  }
+
+  const [downloadingReport, setDownloadingReport] = useState<string | null>(null)
+  const handleDownloadReport = async (budget: Budget, format: 'pdf' | 'csv') => {
+    setDownloadingReport(budget.id)
+    try {
+      const { data } = await budgetApi.variance(budget.id)
+      const rows = data as VarianceRow[]
+      if (format === 'csv') downloadBudgetReportCSV(budget, rows)
+      else await downloadBudgetReportPDF(budget, rows)
+    } catch {
+      toast.error('Failed to generate budget report')
+    } finally {
+      setDownloadingReport(null)
+    }
+  }
+
   // Resolve the final category_name (use custom if "Other" selected)
   const resolvedCategoryName = () => {
     if (lineForm.category_name === 'Other (Custom)') return lineForm.custom_name.trim()
@@ -210,8 +373,10 @@ export default function BudgetPage() {
       await budgetApi.addLine(addLineBudgetId, {
         category_name: catName,
         category_type: lineForm.category_type,
+        sub_category: lineForm.sub_category,
         period_month: lineForm.period_month ? parseInt(lineForm.period_month) : null,
         budgeted_amount: parseFloat(stripCommas(lineForm.budgeted_amount)),
+        ...(lineForm.forecast_amount ? { forecast_amount: parseFloat(stripCommas(lineForm.forecast_amount)) } : {}),
         ...(lineForm.unit_price ? { unit_price: parseFloat(stripCommas(lineForm.unit_price)) } : {}),
         quantity: parseFloat(lineForm.quantity) || 1,
         description: lineForm.description,
@@ -221,6 +386,11 @@ export default function BudgetPage() {
       setAddLineBudgetId(null)
       setLineForm(BLANK_LINE)
       setAccountTouched(false)
+      // add_line's URL has a UUID mid-path (/budgets/{id}/add_line/, not a
+      // trailing one), so the axios write-through cache's invalidation
+      // heuristic can't match it — same gap already documented and worked
+      // around for bulk_lines/approve elsewhere in this file.
+      bypassNextGets()
       load()
     } catch { toast.error('Failed to add budget line') }
     finally { setSavingLine(false) }
@@ -371,6 +541,22 @@ export default function BudgetPage() {
                   >
                     <Grid3x3 size={11} /> Monthly Grid
                   </button>
+                  <button
+                    onClick={() => handleDownloadReport(b, 'pdf')}
+                    disabled={downloadingReport === b.id}
+                    className="text-xs px-2.5 py-1 rounded-lg bg-surface-700 text-slate-300 hover:bg-surface-600 transition-colors inline-flex items-center gap-1 disabled:opacity-50"
+                    title="Download this budget's variance report as a PDF"
+                  >
+                    {downloadingReport === b.id ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />} Report (PDF)
+                  </button>
+                  <button
+                    onClick={() => handleDownloadReport(b, 'csv')}
+                    disabled={downloadingReport === b.id}
+                    className="text-xs px-2.5 py-1 rounded-lg bg-surface-700 text-slate-300 hover:bg-surface-600 transition-colors inline-flex items-center gap-1 disabled:opacity-50"
+                    title="Download this budget's variance report as a CSV"
+                  >
+                    <Download size={11} /> CSV
+                  </button>
                   {!b.approved_by && b.status !== 'closed' && isManagerOrAbove(memberRole, user?.is_superuser) && (
                     <button
                       onClick={() => handleApprove(b)}
@@ -454,30 +640,66 @@ export default function BudgetPage() {
                       No budget lines yet.{' '}
                       <button onClick={() => { setAddLineBudgetId(b.id); setLineForm(BLANK_LINE); setAccountTouched(false) }} className="text-brand-400 hover:underline">Add a line</button>
                     </div>
-                  ) : (
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b border-surface-700 bg-surface-800/50">
-                          {['Category', 'Account', 'Type', 'Month', 'Budgeted'].map((h) => (
-                            <th key={h} className="px-4 py-2.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-surface-700">
-                        {b.lines.map((line) => (
-                          <tr key={line.id} className="table-row">
-                            <td className="px-4 py-3 text-slate-300">{line.category_name || 'Uncategorized'}</td>
-                            <td className="px-4 py-3 text-slate-500">
-                              {line.account_name ? `${line.account_code ? line.account_code + ' · ' : ''}${line.account_name}` : '—'}
-                            </td>
-                            <td className="px-4 py-3"><span className={line.category_type === 'revenue' ? 'badge-green' : 'badge-red'}>{line.category_type}</span></td>
-                            <td className="px-4 py-3 text-slate-400">{line.period_month ? MONTH_NAMES[line.period_month - 1] : 'All'}</td>
-                            <td className="px-4 py-3 font-mono text-white">{formatCurrency(line.budgeted_amount)}</td>
-                          </tr>
+                  ) : (() => {
+                    const activeFilter = lineTypeFilter[b.id] ?? 'all'
+                    const filteredLines = b.lines.filter((l) => activeFilter === 'all' || l.category_type === activeFilter)
+                    return (
+                    <>
+                      <div className="flex items-center gap-1 px-4 pt-3">
+                        {(['all', 'revenue', 'expense'] as const).map((f) => (
+                          <button
+                            key={f}
+                            onClick={() => setLineTypeFilter((prev) => ({ ...prev, [b.id]: f }))}
+                            className={`text-xs px-2.5 py-1 rounded-lg transition-colors ${activeFilter === f ? 'bg-brand-500/20 text-brand-400' : 'text-slate-500 hover:text-slate-300'}`}
+                          >
+                            {f === 'all' ? 'All' : f === 'revenue' ? 'Revenue' : 'Expense'}
+                          </button>
                         ))}
-                      </tbody>
-                    </table>
-                  )}
+                      </div>
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-surface-700 bg-surface-800/50">
+                            {['Category', 'Sub-Category', 'Account', 'Type', 'Month', 'Budgeted', 'Forecast', ''].map((h) => (
+                              <th key={h} className="px-4 py-2.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-surface-700">
+                          {filteredLines.map((line) => (
+                            <tr key={line.id} className="table-row">
+                              <td className="px-4 py-3 text-slate-300">{line.category_name || 'Uncategorized'}</td>
+                              <td className="px-4 py-3 text-slate-500">{line.sub_category || '—'}</td>
+                              <td className="px-4 py-3 text-slate-500">
+                                {line.account_name ? `${line.account_code ? line.account_code + ' · ' : ''}${line.account_name}` : '—'}
+                              </td>
+                              <td className="px-4 py-3"><span className={line.category_type === 'revenue' ? 'badge-green' : 'badge-red'}>{line.category_type}</span></td>
+                              <td className="px-4 py-3 text-slate-400">{line.period_month ? MONTH_NAMES[line.period_month - 1] : 'All'}</td>
+                              <td className="px-4 py-3 font-mono text-white">{formatCurrency(line.budgeted_amount)}</td>
+                              <td className="px-4 py-3 font-mono text-slate-400">{line.forecast_amount ? formatCurrency(line.forecast_amount) : '—'}</td>
+                              <td className="px-4 py-3">
+                                {line.attachment ? (
+                                  <a href={line.attachment} target="_blank" rel="noreferrer" className="text-brand-400 hover:underline text-xs inline-flex items-center gap-1">
+                                    <FileText size={12} /> View
+                                  </a>
+                                ) : (
+                                  <label className="text-slate-500 hover:text-white cursor-pointer inline-flex items-center gap-1" title="Attach a supporting document">
+                                    {uploadingAttachment === line.id ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
+                                    <input
+                                      type="file"
+                                      className="hidden"
+                                      disabled={uploadingAttachment === line.id}
+                                      onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUploadAttachment(line.id, f) }}
+                                    />
+                                  </label>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </>
+                    )
+                  })()}
                 </div>
               )}
             </div>
@@ -612,6 +834,15 @@ export default function BudgetPage() {
                 </div>
               )}
               <div className="col-span-2">
+                <label className="text-xs text-slate-400 mb-1 block">Sub-Category <span className="text-slate-600 font-normal">(optional — a finer split within {lineForm.category_type})</span></label>
+                <input
+                  className="input"
+                  placeholder="e.g. Online Sales, Fuel…"
+                  value={lineForm.sub_category}
+                  onChange={(e) => setLineForm({ ...lineForm, sub_category: e.target.value })}
+                />
+              </div>
+              <div className="col-span-2">
                 <label className="text-xs text-slate-400 mb-1 block">
                   GL Account <span className="text-slate-600 font-normal">(optional — links this line to your Chart of Accounts)</span>
                 </label>
@@ -671,6 +902,15 @@ export default function BudgetPage() {
                     {formatAmountInput(lineForm.unit_price)} × {lineForm.quantity} = calculated above
                   </p>
                 )}
+              </div>
+              <div className="col-span-2">
+                <label className="text-xs text-slate-400 mb-1 block">Forecast Amount <span className="text-slate-600 font-normal">(optional — a forward-looking estimate, separate from the committed budget)</span></label>
+                <AmountInput
+                  className="input"
+                  placeholder="e.g. 550,000"
+                  value={lineForm.forecast_amount}
+                  onChange={(v) => setLineForm({ ...lineForm, forecast_amount: v })}
+                />
               </div>
               <div className="col-span-2">
                 <label className="text-xs text-slate-400 mb-1 block">Description <span className="text-slate-600 font-normal">(optional)</span></label>

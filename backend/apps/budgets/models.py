@@ -82,11 +82,22 @@ class BudgetLine(TenantAwareModel):
     category = models.ForeignKey(ExpenseCategory, null=True, blank=True, on_delete=models.SET_NULL)
     category_name = models.CharField(max_length=200)  # denormalised in case category deleted
     category_type = models.CharField(max_length=20, choices=TYPE_CHOICES, default=EXPENSE)
+    # Phase 7 (B6b): free-text refinement WITHIN revenue/expense (e.g.
+    # "Online Sales" under Revenue, "Fuel" under Expense) — additive, parallel
+    # to how category_name denormalises the category FK.
+    sub_category = models.CharField(max_length=200, blank=True, default='')
     period_month = models.PositiveIntegerField(null=True, blank=True)  # null = annual
     budgeted_amount = MoneyField(default=0)
+    # Phase 7 (B10): a planner's forward-looking estimate, separate from the
+    # committed budgeted_amount — purely informational, never posted to GL.
+    forecast_amount = MoneyField(null=True, blank=True)
     unit_price = MoneyField(null=True, blank=True)
     quantity = models.DecimalField(max_digits=10, decimal_places=2, default=1)
     description = models.CharField(max_length=500, blank=True)
+    # Phase 7 (B6c): supporting document for this line (a quote, an invoice,
+    # a contract) — same plain FileField pattern as Account.attachment /
+    # JournalEntry.attachment.
+    attachment = models.FileField(upload_to='budget_line_attachments/', null=True, blank=True)
     # Optional link to the real Chart of Accounts, additive to the free-text
     # category above. Phase 1 only: this is a plain FK for reporting/grouping
     # purposes — it does NOT feed GL posting (see apps/accounting/services.py,

@@ -96,6 +96,17 @@ PURCHASE_ORDER_REQUIRED = ["po_number", "supplier_name", "warehouse_name", "orde
 PURCHASE_ORDER_OPTIONAL = ["expected_date", "discount_percent", "delivery_amount", "notes"]
 PURCHASE_ORDER_ALL = PURCHASE_ORDER_REQUIRED + PURCHASE_ORDER_OPTIONAL
 
+# Budgets: same one-row-per-LINE / grouped-by-header convention as Purchase
+# Orders above. A budget is identified by (budget_name, fiscal_year) — the
+# first row seen for that pair creates the Budget header, every subsequent
+# row with the same pair adds another BudgetLine to it. Create-only, same
+# reasoning as PurchaseOrders: a Budget already has its own edit screen
+# (including the monthly grid), so silently rewriting an existing budget's
+# lines from a re-imported file could clobber in-progress editing.
+BUDGET_REQUIRED = ["budget_name", "fiscal_year", "category_name", "category_type", "budgeted_amount"]
+BUDGET_OPTIONAL = ["period_month", "sub_category", "account_code", "forecast_amount", "budget_type", "notes"]
+BUDGET_ALL = BUDGET_REQUIRED + BUDGET_OPTIONAL
+
 VALID_EMPLOYMENT_TYPES = ["full_time", "part_time", "contract"]
 VALID_GENDERS = ["male", "female", ""]
 VALID_MARITAL_STATUSES = ["single", "married", "divorced", "widowed", ""]
@@ -1455,6 +1466,166 @@ class ImportPurchaseOrdersView(APIView):
         })
 
 
+class ImportBudgetsView(APIView):
+    """
+    Bulk-create Budgets (with their BudgetLines) from a CSV file.
+
+    One CSV row per BUDGET LINE — see BUDGET_REQUIRED's comment above for the
+    grouping rule. Existing budgets (matched by budget_name + fiscal_year)
+    are left untouched: create-only, same reasoning as
+    ImportPurchaseOrdersView above.
+    """
+
+    permission_classes = [IsAuthenticated, IsVerified, IsManagerOrSuperuser]
+
+    def post(self, request):
+        org = _get_or_resolve_org(request)
+        if not org:
+            return Response({"error": "Organisation not found"}, status=400)
+
+        file_obj = request.FILES.get("file")
+        if not file_obj:
+            return Response({"error": "No file uploaded"}, status=400)
+
+        try:
+            headers, rows = _parse_csv(file_obj)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=400)
+
+        ok, used = _check_import_quota(org, len(rows))
+        if not ok:
+            return Response(
+                {"error": f"Daily import quota exceeded ({DAILY_IMPORT_ROW_QUOTA:,} rows/day, {used:,} already used today). Try again tomorrow."},
+                status=429,
+            )
+
+        missing_cols = [c for c in BUDGET_REQUIRED if c not in headers]
+        if missing_cols:
+            return Response(
+                {"error": f"CSV missing required columns: {', '.join(missing_cols)}"},
+                status=400,
+            )
+
+        from django.db import transaction
+        from apps.accounting.models import Account
+        from apps.budgets.models import Budget, BudgetLine
+        from apps.budgets.views import BudgetViewSet as _BudgetViewSet
+
+        errors = []
+        account_cache: dict[str, "Account | None"] = {}
+
+        def _get_account(code):
+            key = code.strip().lower()
+            if key not in account_cache:
+                account_cache[key] = Account.objects.filter(organisation=org, code__iexact=code.strip()).first()
+            return account_cache[key]
+
+        # Pass 1: validate every row and group into per-budget line lists.
+        # Nothing is written until every row in the file has passed.
+        budget_groups: dict[tuple, dict] = {}
+        already_existing = set(
+            Budget.objects.filter(organisation=org).values_list("name", "fiscal_year")
+        )
+
+        for idx, row in enumerate(rows, start=2):
+            row_num = idx
+            if _missing_required(row, BUDGET_REQUIRED, errors, row_num):
+                continue
+
+            budget_name = row["budget_name"].strip()
+            fiscal_year = _int_val(row["fiscal_year"], "fiscal_year", errors, row_num)
+            if fiscal_year is None:
+                continue
+            key = (budget_name, fiscal_year)
+            if key in already_existing:
+                errors.append({"row": row_num, "field": "budget_name",
+                               "message": f"Budget '{budget_name}' ({fiscal_year}) already exists — import is create-only, skipping this row."})
+                continue
+
+            category_type = (row.get("category_type") or "").strip().lower()
+            if category_type not in (BudgetLine.EXPENSE, BudgetLine.REVENUE):
+                errors.append({"row": row_num, "field": "category_type",
+                               "message": f"category_type must be '{BudgetLine.EXPENSE}' or '{BudgetLine.REVENUE}', got '{category_type}'"})
+                continue
+
+            budgeted_amount = _money(row["budgeted_amount"], "budgeted_amount", errors, row_num)
+            if budgeted_amount is None:
+                continue
+
+            period_month = None
+            if (row.get("period_month") or "").strip():
+                period_month = _int_val(row["period_month"], "period_month", errors, row_num)
+                if period_month is None:
+                    continue
+                if period_month < 1 or period_month > 12:
+                    errors.append({"row": row_num, "field": "period_month", "message": "period_month must be between 1 and 12"})
+                    continue
+
+            forecast_amount = None
+            if (row.get("forecast_amount") or "").strip():
+                forecast_amount = _money(row["forecast_amount"], "forecast_amount", errors, row_num)
+                if forecast_amount is None:
+                    continue
+
+            account = None
+            if (row.get("account_code") or "").strip():
+                account = _get_account(row["account_code"])
+                if account is None:
+                    errors.append({"row": row_num, "field": "account_code",
+                                   "message": f"Account code '{row['account_code']}' not found in your Chart of Accounts."})
+                    continue
+
+            budget_type = (row.get("budget_type") or Budget.OPERATIONAL).strip().lower() or Budget.OPERATIONAL
+            if budget_type not in (Budget.OPERATIONAL, Budget.CAPITAL):
+                errors.append({"row": row_num, "field": "budget_type",
+                               "message": f"budget_type must be '{Budget.OPERATIONAL}' or '{Budget.CAPITAL}', got '{budget_type}'"})
+                continue
+
+            group = budget_groups.setdefault(key, {
+                "budget_type": budget_type, "notes": row.get("notes", ""), "lines": [],
+            })
+            # A budget's header fields (budget_type, notes) are read from its
+            # FIRST row only — later rows for the same (name, fiscal_year)
+            # pair only ever contribute a line, same rule as PO import.
+            group["lines"].append({
+                "category_name": row["category_name"].strip(),
+                "category_type": category_type,
+                "sub_category": (row.get("sub_category") or "").strip(),
+                "period_month": period_month,
+                "budgeted_amount": budgeted_amount,
+                "forecast_amount": forecast_amount,
+                "account": account,
+            })
+
+        if not budget_groups:
+            return Response({
+                "created": 0, "budgets_created": 0, "errors": errors, "total_rows": len(rows),
+            })
+
+        # Pass 2: everything validated — write it.
+        created_budgets = 0
+        created_lines = 0
+        with transaction.atomic():
+            for (budget_name, fiscal_year), group in budget_groups.items():
+                budget = Budget.objects.create(
+                    organisation=org, name=budget_name, fiscal_year=fiscal_year,
+                    budget_type=group["budget_type"], notes=group["notes"],
+                )
+                for line in group["lines"]:
+                    category = _BudgetViewSet._resolve_category(org, line["category_name"])
+                    BudgetLine.objects.create(organisation=org, budget=budget, category=category, **line)
+                    created_lines += 1
+                created_budgets += 1
+
+        return Response({
+            "created": created_budgets,
+            "budgets_created": created_budgets,
+            "lines_created": created_lines,
+            "errors": errors,
+            "total_rows": len(rows),
+        })
+
+
 # ---------------------------------------------------------------------------
 # Template download
 # ---------------------------------------------------------------------------
@@ -1466,6 +1637,7 @@ TEMPLATES = {
     "accounts": ACCOUNT_ALL,
     "employees": EMPLOYEE_ALL,
     "purchase_orders": PURCHASE_ORDER_ALL,
+    "budgets": BUDGET_ALL,
 }
 
 SAMPLE_ROWS = {
@@ -1510,6 +1682,14 @@ SAMPLE_ROWS = {
         ["PO-0001", "ABC Distributors Ltd", "Main Warehouse", "2026-01-10", "SKU002", "5", "1800.00", "2026-01-20", "0", "5000", "First order of the year"],
         ["PO-0002", "Kobo Trading & Services Ltd", "Main Warehouse", "2026-02-01", "SKU001", "10", "3100.00", "", "5", "0", ""],
     ],
+    # Column order must match BUDGET_ALL. One row per BUDGET LINE — the two
+    # rows here share budget_name+fiscal_year "2026 Operating Budget"/2026, so
+    # they import as ONE budget with two lines; "2026 Capex Plan" is separate.
+    "budgets": [
+        ["2026 Operating Budget", "2026", "Sales Revenue", "revenue", "5000000", "1", "Online Sales", "", "5500000", "operational", "Main annual plan"],
+        ["2026 Operating Budget", "2026", "Rent", "expense", "300000", "1", "", "", "300000", "operational", "Main annual plan"],
+        ["2026 Capex Plan", "2026", "New Equipment", "expense", "2000000", "", "", "", "", "capital", ""],
+    ],
 }
 
 
@@ -1520,7 +1700,7 @@ class ImportTemplateView(APIView):
         from django.http import HttpResponse
 
         if entity not in TEMPLATES:
-            return Response({"error": f"Unknown entity '{entity}'. Choose: products, customers, suppliers, accounts, employees, purchase_orders"}, status=400)
+            return Response({"error": f"Unknown entity '{entity}'. Choose: products, customers, suppliers, accounts, employees, purchase_orders, budgets"}, status=400)
 
         columns = TEMPLATES[entity]
         sample_rows = SAMPLE_ROWS.get(entity, [])

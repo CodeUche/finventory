@@ -13,9 +13,9 @@ class BudgetLineSerializer(serializers.ModelSerializer):
     class Meta:
         model = BudgetLine
         fields = [
-            'id', 'category', 'category_name', 'category_type', 'period_month',
-            'budgeted_amount', 'unit_price', 'quantity', 'description',
-            'actual_amount', 'variance', 'account', 'account_code', 'account_name',
+            'id', 'category', 'category_name', 'category_type', 'sub_category', 'period_month',
+            'budgeted_amount', 'forecast_amount', 'unit_price', 'quantity', 'description',
+            'actual_amount', 'variance', 'account', 'account_code', 'account_name', 'attachment',
         ]
         read_only_fields = ['id']
 

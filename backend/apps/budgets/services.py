@@ -116,14 +116,18 @@ class BudgetService:
         for line in lines:
             actual = BudgetService._actual_for_line(line, budget, org)
             variance = line.budgeted_amount - actual
+            variance_pct = float(variance / line.budgeted_amount * 100) if line.budgeted_amount else 0.0
             result.append({
                 'id': str(line.id),
                 'category_name': line.category_name,
                 'category_type': line.category_type,
+                'sub_category': line.sub_category,
                 'period_month': line.period_month,
                 'budgeted_amount': line.budgeted_amount,
+                'forecast_amount': line.forecast_amount,
                 'actual_amount': actual,
                 'variance': variance,
+                'variance_pct': variance_pct,
                 'over_budget': variance < 0,
             })
         return result
@@ -148,6 +152,7 @@ class BudgetService:
             for line in budget.lines.all():
                 actual = BudgetService._actual_for_line(line, budget, org)
                 variance = line.budgeted_amount - actual
+                variance_pct = float(variance / line.budgeted_amount * 100) if line.budgeted_amount else 0.0
                 account = None
                 if line.account_id:
                     account = {
@@ -163,10 +168,13 @@ class BudgetService:
                     'budget_status': budget.status,
                     'category_name': line.category_name,
                     'category_type': line.category_type,
+                    'sub_category': line.sub_category,
                     'period_month': line.period_month,
                     'budgeted_amount': line.budgeted_amount,
+                    'forecast_amount': line.forecast_amount,
                     'actual_amount': actual,
                     'variance': variance,
+                    'variance_pct': variance_pct,
                     'over_budget': variance < 0,
                     'account': account,
                 })
