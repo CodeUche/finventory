@@ -12,7 +12,7 @@ the kind of state-changing, production-affecting action the operating
 rules require flagging rather than running automatically.
 
 Usage:
-    python manage.py setup_telegram_webhook https://audity-backend-production-30f9.up.railway.app/api/v1/connectors/webhook/telegram/ \\
+    python manage.py setup_telegram_webhook https://api.auditytechnologies.com/api/v1/connectors/webhook/telegram/ \\
         [--secret <TELEGRAM_WEBHOOK_SECRET value, if you set one>]
 
 Verify afterwards with Telegram's own getWebhookInfo (no write, safe to run

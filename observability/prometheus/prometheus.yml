@@ -28,27 +28,37 @@ scrape_configs:
     metrics_path: /metrics
     scheme: https
     # The host machine intercepts TLS (corporate/AV proxy injects its own CA),
-    # so the container can't verify the public Railway cert. Metrics scraping
-    # over an already-trusted public endpoint — skipping verification is fine here.
+    # so the container can't verify the public cert. Metrics scraping over an
+    # already-trusted public endpoint — skipping verification is fine here.
     tls_config:
       insecure_skip_verify: true
     static_configs:
-      - targets: ["audity-backend-production-30f9.up.railway.app"]
+      - targets: ["api.auditytechnologies.com"]
         labels:
           service: backend
           env: production
 
-  # ─── Uptime — Railway production health ──────────────────────
+  # ─── Uptime — production health ──────────────────────────────
   - job_name: blackbox-production
     metrics_path: /probe
     params:
       module: [http_2xx]
     static_configs:
       - targets:
-          - https://audity-backend-production-30f9.up.railway.app/api/v1/health/
+          - https://api.auditytechnologies.com/api/v1/health/
         labels:
           service: uptime
           env: production
+      # Railway is frozen and read-only, but desktop clients older than 0.3.37
+      # still have its hostname compiled in and cannot be redirected, so it is
+      # load-bearing until they have all updated. It silently fell over on
+      # 2026-09-06 and was only noticed by chance hours later — hence its own
+      # probe. Delete this target when Railway is decommissioned.
+      - targets:
+          - https://audity-backend-production-30f9.up.railway.app/api/v1/health/
+        labels:
+          service: uptime
+          env: legacy-readonly
     relabel_configs:
       - source_labels: [__address__]
         target_label: __param_target
