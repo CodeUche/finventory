@@ -3,6 +3,7 @@ account/date fields, the monitoring endpoint, and the Expense.budget-link
 variance fix (an expense explicitly linked to Budget A must never be
 attributed to Budget B just because both have a same-named category)."""
 
+from datetime import date
 from decimal import Decimal
 from unittest.mock import patch
 
@@ -14,7 +15,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from apps.accounting.models import Account
 from apps.accounting.services import AccountingService
 from apps.authentication.models import User
-from apps.budgets.models import Budget, BudgetLine
+from apps.budgets.models import Budget, BudgetLine, BudgetPeriod, BudgetAllocation
 from apps.budgets.services import BudgetService
 from apps.core.models import AuditLog
 from apps.expenses.models import Expense, ExpenseCategory
@@ -625,3 +626,282 @@ class BudgetBulkLinesTests(TestCase):
         res = staff_client.post(f"/api/v1/budgets/{self.budget.id}/bulk_lines/", payload, format="json")
         self.assertEqual(res.status_code, 403)
         self.assertEqual(BudgetLine.objects.filter(budget=self.budget).count(), 0)
+
+
+class BudgetPeriodTests(TestCase):
+    """Phase 5: named financial periods a Budget can be pinned to. CRUD,
+    tenant isolation, and the approve action (which is what moves a period
+    from draft to active — there's no separate activate toggle in the UI)."""
+
+    def setUp(self):
+        self.owner = _make_user("period_owner@example.com")
+        self.org = _make_org(self.owner, "Period Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.owner, self.org)
+
+        self.other_owner = _make_user("period_other_owner@example.com")
+        self.other_org = _make_org(self.other_owner, "Period Other Org")
+        _upgrade_to_business(self.other_org)
+        self.other_client = _auth_client(self.other_owner, self.other_org)
+
+    def test_create_period(self):
+        res = self.client.post("/api/v1/budgets/periods/", {
+            "name": "FY2026", "financial_year": 2026,
+            "start_date": "2026-01-01", "end_date": "2026-12-31",
+        })
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        self.assertEqual(res.data["status"], "draft")
+        self.assertIsNone(res.data["approved_by"])
+
+    def test_list_and_update_period(self):
+        period = BudgetPeriod.objects.create(
+            organisation=self.org, name="Q1 2026", financial_year=2026,
+            start_date="2026-01-01", end_date="2026-03-31",
+        )
+        res = self.client.get("/api/v1/budgets/periods/")
+        self.assertEqual(res.status_code, 200)
+        ids = {row["id"] for row in ((res.data["results"] if isinstance(res.data, dict) else res.data))}
+        self.assertIn(str(period.id), ids)
+
+        res = self.client.patch(f"/api/v1/budgets/periods/{period.id}/", {"name": "Q1 2026 Revised"})
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        period.refresh_from_db()
+        self.assertEqual(period.name, "Q1 2026 Revised")
+
+    def test_delete_period(self):
+        period = BudgetPeriod.objects.create(
+            organisation=self.org, name="To Delete", financial_year=2026,
+            start_date="2026-01-01", end_date="2026-12-31",
+        )
+        res = self.client.delete(f"/api/v1/budgets/periods/{period.id}/")
+        self.assertIn(res.status_code, (200, 204))
+        self.assertFalse(BudgetPeriod.objects.filter(id=period.id).exists())
+
+    def test_approve_sets_status_and_approver(self):
+        period = BudgetPeriod.objects.create(
+            organisation=self.org, name="FY2026", financial_year=2026,
+            start_date="2026-01-01", end_date="2026-12-31",
+        )
+        res = self.client.post(f"/api/v1/budgets/periods/{period.id}/approve/")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        period.refresh_from_db()
+        self.assertEqual(period.status, BudgetPeriod.ACTIVE)
+        self.assertEqual(period.approved_by_id, self.owner.id)
+        self.assertIsNotNone(period.approved_at)
+
+    def test_approve_writes_audit_log(self):
+        period = BudgetPeriod.objects.create(
+            organisation=self.org, name="FY2026", financial_year=2026,
+            start_date="2026-01-01", end_date="2026-12-31",
+        )
+        before_count = AuditLog.objects.filter(model_name='BudgetPeriod', action=AuditLog.UPDATE).count()
+        res = self.client.post(f"/api/v1/budgets/periods/{period.id}/approve/")
+        self.assertEqual(res.status_code, 200)
+        after_count = AuditLog.objects.filter(model_name='BudgetPeriod', action=AuditLog.UPDATE).count()
+        self.assertEqual(after_count, before_count + 1)
+
+    def test_staff_cannot_approve(self):
+        period = BudgetPeriod.objects.create(
+            organisation=self.org, name="FY2026", financial_year=2026,
+            start_date="2026-01-01", end_date="2026-12-31",
+        )
+        staff_user = _make_user("period_staff@example.com")
+        Membership.objects.create(user=staff_user, organisation=self.org, role="staff", is_active=True)
+        staff_client = _auth_client(staff_user, self.org)
+        res = staff_client.post(f"/api/v1/budgets/periods/{period.id}/approve/")
+        self.assertEqual(res.status_code, 403)
+        period.refresh_from_db()
+        self.assertEqual(period.status, BudgetPeriod.DRAFT)
+
+    def test_tenant_isolation_cannot_see_other_orgs_period(self):
+        period = BudgetPeriod.objects.create(
+            organisation=self.org, name="FY2026", financial_year=2026,
+            start_date="2026-01-01", end_date="2026-12-31",
+        )
+        res = self.other_client.get("/api/v1/budgets/periods/")
+        self.assertEqual(res.status_code, 200)
+        ids = {row["id"] for row in (res.data["results"] if isinstance(res.data, dict) else res.data)}
+        self.assertNotIn(str(period.id), ids)
+
+        res = self.other_client.get(f"/api/v1/budgets/periods/{period.id}/")
+        self.assertEqual(res.status_code, 404)
+
+    def test_tenant_isolation_cannot_edit_other_orgs_period(self):
+        period = BudgetPeriod.objects.create(
+            organisation=self.org, name="FY2026", financial_year=2026,
+            start_date="2026-01-01", end_date="2026-12-31",
+        )
+        res = self.other_client.patch(f"/api/v1/budgets/periods/{period.id}/", {"name": "Hijacked"})
+        self.assertEqual(res.status_code, 404)
+        period.refresh_from_db()
+        self.assertEqual(period.name, "FY2026")
+
+        res = self.other_client.post(f"/api/v1/budgets/periods/{period.id}/approve/")
+        self.assertEqual(res.status_code, 404)
+        period.refresh_from_db()
+        self.assertEqual(period.status, BudgetPeriod.DRAFT)
+
+
+class BudgetAllocationTests(TestCase):
+    """Phase 5: GL-account-level allocations of a Budget's total. CRUD,
+    tenant isolation on both the account FK and the budget FK, and
+    spent/remaining computed from real posted GL activity — covering both
+    the BudgetPeriod date-range path and the fiscal-year fallback."""
+
+    def setUp(self):
+        self.owner = _make_user("alloc_owner@example.com")
+        self.org = _make_org(self.owner, "Alloc Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.owner, self.org)
+        self.utilities = Account.objects.get(organisation=self.org, code="6200")
+        self.cash = Account.objects.get(organisation=self.org, code="1001")
+
+        self.other_owner = _make_user("alloc_other_owner@example.com")
+        self.other_org = _make_org(self.other_owner, "Alloc Other Org")
+        _upgrade_to_business(self.other_org)
+        self.other_client = _auth_client(self.other_owner, self.other_org)
+
+        self.budget = Budget.objects.create(
+            organisation=self.org, name="2026 Ops Budget", fiscal_year=2026,
+        )
+
+    def _post_je(self, org, owner, amount, entry_date, debit_account, credit_account):
+        zero = Decimal("0")
+        return AccountingService.post_journal_entry(
+            org, "Test JE", entry_date,
+            [(debit_account, Decimal(amount), zero), (credit_account, zero, Decimal(amount))],
+            owner,
+        )
+
+    def test_create_allocation(self):
+        res = self.client.post("/api/v1/budgets/allocations/", {
+            "budget": str(self.budget.id), "account": str(self.utilities.id),
+            "allocated_amount": "50000", "notes": "Utilities for the year",
+        })
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        self.assertEqual(res.data["account_code"], "6200")
+        self.assertEqual(res.data["budget_name"], "2026 Ops Budget")
+        self.assertEqual(Decimal(str(res.data["spent_amount"])), Decimal("0"))
+        self.assertEqual(Decimal(str(res.data["remaining_amount"])), Decimal("50000"))
+
+    def test_list_filter_by_budget(self):
+        other_budget = Budget.objects.create(
+            organisation=self.org, name="Other Budget", fiscal_year=2026,
+        )
+        alloc_a = BudgetAllocation.objects.create(
+            organisation=self.org, budget=self.budget, account=self.utilities, allocated_amount=Decimal("10000"),
+        )
+        BudgetAllocation.objects.create(
+            organisation=self.org, budget=other_budget, account=self.utilities, allocated_amount=Decimal("20000"),
+        )
+        res = self.client.get("/api/v1/budgets/allocations/", {"budget": str(self.budget.id)})
+        self.assertEqual(res.status_code, 200)
+        rows = (res.data["results"] if isinstance(res.data, dict) else res.data)
+        ids = {row["id"] for row in rows}
+        self.assertEqual(ids, {str(alloc_a.id)})
+
+    def test_update_allocation(self):
+        allocation = BudgetAllocation.objects.create(
+            organisation=self.org, budget=self.budget, account=self.utilities, allocated_amount=Decimal("10000"),
+        )
+        res = self.client.patch(f"/api/v1/budgets/allocations/{allocation.id}/", {"allocated_amount": "25000", "notes": "Revised"})
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        allocation.refresh_from_db()
+        self.assertEqual(allocation.allocated_amount, Decimal("25000"))
+        self.assertEqual(allocation.notes, "Revised")
+
+    def test_delete_allocation(self):
+        allocation = BudgetAllocation.objects.create(
+            organisation=self.org, budget=self.budget, account=self.utilities, allocated_amount=Decimal("10000"),
+        )
+        res = self.client.delete(f"/api/v1/budgets/allocations/{allocation.id}/")
+        self.assertIn(res.status_code, (200, 204))
+        self.assertFalse(BudgetAllocation.objects.filter(id=allocation.id).exists())
+
+    def test_rejects_foreign_org_account(self):
+        foreign_account = Account.objects.get(organisation=self.other_org, code="6200")
+        res = self.client.post("/api/v1/budgets/allocations/", {
+            "budget": str(self.budget.id), "account": str(foreign_account.id), "allocated_amount": "5000",
+        })
+        self.assertEqual(res.status_code, 400, msg=str(res.data))
+        self.assertEqual(BudgetAllocation.objects.count(), 0)
+
+    def test_rejects_foreign_org_budget(self):
+        foreign_budget = Budget.objects.create(
+            organisation=self.other_org, name="Foreign Budget", fiscal_year=2026,
+        )
+        res = self.client.post("/api/v1/budgets/allocations/", {
+            "budget": str(foreign_budget.id), "account": str(self.utilities.id), "allocated_amount": "5000",
+        })
+        self.assertEqual(res.status_code, 400, msg=str(res.data))
+        self.assertEqual(BudgetAllocation.objects.count(), 0)
+
+    def test_tenant_isolation_cannot_see_other_orgs_allocation(self):
+        allocation = BudgetAllocation.objects.create(
+            organisation=self.org, budget=self.budget, account=self.utilities, allocated_amount=Decimal("10000"),
+        )
+        res = self.other_client.get("/api/v1/budgets/allocations/")
+        self.assertEqual(res.status_code, 200)
+        rows = (res.data["results"] if isinstance(res.data, dict) else res.data)
+        ids = {row["id"] for row in rows}
+        self.assertNotIn(str(allocation.id), ids)
+
+        res = self.other_client.get(f"/api/v1/budgets/allocations/{allocation.id}/")
+        self.assertEqual(res.status_code, 404)
+
+    def test_spent_and_remaining_fiscal_year_fallback(self):
+        """No BudgetPeriod set on the budget -> falls back to the whole
+        calendar fiscal_year. Activity outside that year must not count."""
+        allocation = BudgetAllocation.objects.create(
+            organisation=self.org, budget=self.budget, account=self.utilities, allocated_amount=Decimal("20000"),
+        )
+        self._post_je(self.org, self.owner, "8000", date(2026, 3, 5), self.utilities, self.cash)
+        self._post_je(self.org, self.owner, "4500", date(2026, 11, 20), self.utilities, self.cash)
+        self._post_je(self.org, self.owner, "9999", date(2025, 12, 31), self.utilities, self.cash)  # prior year, excluded
+
+        actuals = BudgetService.get_allocation_actuals(allocation)
+        self.assertEqual(actuals["spent_amount"], Decimal("12500"))
+        self.assertEqual(actuals["remaining_amount"], Decimal("7500"))
+
+    def test_spent_and_remaining_period_date_range(self):
+        """A BudgetPeriod on the budget narrows the window to its own
+        start/end date, overriding the bare fiscal-year fallback."""
+        period = BudgetPeriod.objects.create(
+            organisation=self.org, name="Q1 2026", financial_year=2026,
+            start_date="2026-01-01", end_date="2026-03-31",
+        )
+        self.budget.period = period
+        self.budget.save(update_fields=["period"])
+
+        allocation = BudgetAllocation.objects.create(
+            organisation=self.org, budget=self.budget, account=self.utilities, allocated_amount=Decimal("15000"),
+        )
+        self._post_je(self.org, self.owner, "6000", date(2026, 2, 10), self.utilities, self.cash)  # in range
+        self._post_je(self.org, self.owner, "9000", date(2026, 6, 1), self.utilities, self.cash)   # in fiscal year, outside period
+
+        actuals = BudgetService.get_allocation_actuals(allocation)
+        self.assertEqual(actuals["spent_amount"], Decimal("6000"))
+        self.assertEqual(actuals["remaining_amount"], Decimal("9000"))
+
+    def test_serializer_spent_and_remaining_via_api(self):
+        """End-to-end: the GET /allocations/ response itself carries the
+        computed spent/remaining figures, not just the service directly."""
+        allocation = BudgetAllocation.objects.create(
+            organisation=self.org, budget=self.budget, account=self.utilities, allocated_amount=Decimal("10000"),
+        )
+        self._post_je(self.org, self.owner, "3000", date(2026, 4, 1), self.utilities, self.cash)
+
+        res = self.client.get(f"/api/v1/budgets/allocations/{allocation.id}/")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.assertEqual(Decimal(str(res.data["spent_amount"])), Decimal("3000"))
+        self.assertEqual(Decimal(str(res.data["remaining_amount"])), Decimal("7000"))
+
+    def test_staff_cannot_create_allocation(self):
+        staff_user = _make_user("alloc_staff@example.com")
+        Membership.objects.create(user=staff_user, organisation=self.org, role="staff", is_active=True)
+        staff_client = _auth_client(staff_user, self.org)
+        res = staff_client.post("/api/v1/budgets/allocations/", {
+            "budget": str(self.budget.id), "account": str(self.utilities.id), "allocated_amount": "5000",
+        })
+        self.assertEqual(res.status_code, 403)
+        self.assertEqual(BudgetAllocation.objects.count(), 0)

@@ -1491,6 +1491,41 @@ export interface Budget {
   approved_by: string | null
   approved_by_name?: string | null
   approved_at: string | null
+  /** Optional link to a named BudgetPeriod (Phase 5) — additive, null on
+   * every pre-existing budget. When set, BudgetAllocation actuals use the
+   * period's start/end date instead of the bare fiscal_year. */
+  period?: string | null
+  period_name?: string | null
+}
+
+/** A named financial period (e.g. "FY2026", "Q1 2026") a Budget can be
+ * pinned to (GET/POST/PATCH /budgets/periods/). */
+export interface BudgetPeriod {
+  id: string
+  name: string
+  financial_year: number
+  start_date: string
+  end_date: string
+  status: 'draft' | 'active' | 'closed'
+  approved_by: string | null
+  approved_by_name?: string | null
+  approved_at: string | null
+}
+
+/** A GL-account-level allocation of a Budget's total
+ * (GET/POST/PATCH/DELETE /budgets/allocations/). spent_amount/remaining_amount
+ * are computed server-side from posted GL activity, not editable. */
+export interface BudgetAllocation {
+  id: string
+  budget: string
+  budget_name?: string | null
+  account: string
+  account_code?: string | null
+  account_name?: string | null
+  allocated_amount: string
+  spent_amount?: string
+  remaining_amount?: string
+  notes?: string
 }
 
 /** One row of the flat, cross-budget Budget Monitoring table

@@ -1,3 +1,4 @@
+from datetime import date
 from decimal import Decimal
 from django.db.models import Sum, Q
 from .models import Budget, BudgetLine
@@ -68,6 +69,44 @@ class BudgetService:
         qs = qs.filter(Q(budget=budget) | Q(budget__isnull=True))
         agg = qs.aggregate(t=Sum('amount'))
         return agg['t'] or Decimal('0')
+
+    @staticmethod
+    def get_allocation_actuals(allocation):
+        """
+        Spent/remaining for a single BudgetAllocation, derived directly from
+        posted GL activity on allocation.account — same debit/credit-normal
+        netting idiom as _actual_for_line above, but keyed off a date RANGE
+        rather than a fiscal year + optional month.
+
+        Date range: the allocation's Budget's BudgetPeriod (start_date/
+        end_date) when set; otherwise the whole calendar fiscal_year as a
+        fallback so allocations on a period-less (legacy) Budget still work.
+        """
+        org = allocation.organisation
+        budget = allocation.budget
+        if budget.period_id:
+            start = budget.period.start_date
+            end = budget.period.end_date
+        else:
+            start = date(budget.fiscal_year, 1, 1)
+            end = date(budget.fiscal_year, 12, 31)
+
+        qs = JournalLine.objects.filter(
+            journal_entry__organisation=org,
+            journal_entry__status=JournalEntry.POSTED,
+            account_id=allocation.account_id,
+            journal_entry__entry_date__gte=start,
+            journal_entry__entry_date__lte=end,
+        )
+        agg = qs.aggregate(d=Sum('debit'), c=Sum('credit'))
+        debits = agg['d'] or Decimal('0')
+        credits = agg['c'] or Decimal('0')
+        if allocation.account.effective_normal_balance == 'debit':
+            spent_amount = debits - credits
+        else:
+            spent_amount = credits - debits
+        remaining_amount = allocation.allocated_amount - spent_amount
+        return {'spent_amount': spent_amount, 'remaining_amount': remaining_amount}
 
     @staticmethod
     def get_variance_report(budget):

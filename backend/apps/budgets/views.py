@@ -15,8 +15,10 @@ _ModAccess_budgets = requires_module("budget")
 
 
 _PlanBudget = plan_requires('budget')
-from .models import Budget, BudgetLine
-from .serializers import BudgetSerializer, BudgetLineSerializer
+from .models import Budget, BudgetLine, BudgetPeriod, BudgetAllocation
+from .serializers import (
+    BudgetSerializer, BudgetLineSerializer, BudgetPeriodSerializer, BudgetAllocationSerializer,
+)
 from .services import BudgetService
 
 
@@ -224,3 +226,64 @@ class BudgetViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             'updated': updated_count,
             'lines': BudgetLineSerializer(result_lines, many=True).data,
         }, status=status.HTTP_200_OK)
+
+
+class BudgetPeriodViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+    """Named financial periods (FY2026, Q1 2026, ...) a Budget can be pinned
+    to. Same permission stack and audit-log discipline as BudgetViewSet.
+    Create/update/destroy audit logging comes from TenantFilterMixin's
+    defaults (org injection + field-diff log) — no override needed here,
+    same as this app's other viewsets rely on it for perform_create."""
+    serializer_class = BudgetPeriodSerializer
+    permission_classes = [IsAuthenticated, IsManagerOrSuperuser, _PlanBudget, _ModAccess_budgets]
+
+    def get_queryset(self):
+        org = self._get_organisation()
+        return BudgetPeriod.objects.filter(organisation=org)
+
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        """Approves the period and moves it to active status — a
+        BudgetPeriod has no separate activate/close toggle in the UI, so
+        approval is what transitions draft -> active. Permission-gated the
+        same as the rest of this viewset (manager-or-above / superuser)."""
+        period = self.get_object()
+        before_status = period.status
+        before_approved_by = period.approved_by_id
+        period.status = BudgetPeriod.ACTIVE
+        period.approved_by = request.user
+        period.approved_at = timezone.now()
+        period.save(update_fields=['status', 'approved_by', 'approved_at'])
+        try:
+            AuditLog.log(
+                action=AuditLog.UPDATE, user=request.user,
+                organisation=self._get_organisation(),
+                model_name='BudgetPeriod', object_id=str(period.id),
+                object_repr=period.name,
+                changes={
+                    'status': {'from': before_status, 'to': period.status},
+                    'approved_by': {'from': str(before_approved_by), 'to': str(request.user.id)},
+                    'approved_at': {'from': '', 'to': str(period.approved_at)},
+                },
+                request=request,
+            )
+        except Exception:
+            pass
+        return Response(BudgetPeriodSerializer(period).data)
+
+
+class BudgetAllocationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+    """GL-account-level allocations of a Budget's total. Same permission
+    stack as BudgetViewSet/BudgetPeriodViewSet. Create/update/destroy audit
+    logging comes from TenantFilterMixin's defaults, same as
+    BudgetPeriodViewSet above."""
+    serializer_class = BudgetAllocationSerializer
+    permission_classes = [IsAuthenticated, IsManagerOrSuperuser, _PlanBudget, _ModAccess_budgets]
+
+    def get_queryset(self):
+        org = self._get_organisation()
+        qs = BudgetAllocation.objects.filter(organisation=org).select_related('budget', 'account')
+        budget_id = self.request.query_params.get('budget')
+        if budget_id:
+            qs = qs.filter(budget_id=budget_id)
+        return qs

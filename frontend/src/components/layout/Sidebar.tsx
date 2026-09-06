@@ -39,6 +39,8 @@ export const navGroups: { label: string | null; alwaysGroup?: boolean; items: { 
       { name: 'Beginning Balances', href: '/accounting/beginning-balances', icon: Scale, module: 'accounting' },
       { name: 'Journal Entries', href: '/accounting/journal', icon: BookMarked, module: 'accounting' },
       { name: 'Budgets', href: '/budgets', icon: PieChart, module: 'budget' },
+      { name: 'Budget Periods', href: '/budgets/periods', icon: CalendarDays, module: 'budget' },
+      { name: 'Budget Allocations', href: '/budgets/allocations', icon: Wallet, module: 'budget' },
       { name: 'Fixed Assets', href: '/accounting/assets', icon: Landmark, module: 'accounting' },
       { name: 'Bank Reconciliation', href: '/accounting/reconciliation', icon: Scale, module: 'accounting' },
       { name: 'GL Health', href: '/accounting/gl-health', icon: ShieldCheck, module: 'accounting' },

@@ -1765,6 +1765,22 @@ export const budgetApi = {
   monitoring: (params?: object) => api.get('/budgets/monitoring/', { params }),
 }
 
+/** Named financial periods a Budget can be pinned to (Phase 5). */
+export const budgetPeriodApi = {
+  list: () => api.get('/budgets/periods/'),
+  create: (data: object) => api.post('/budgets/periods/', data),
+  update: (id: string, data: object) => api.patch(`/budgets/periods/${id}/`, data),
+  approve: (id: string) => api.post(`/budgets/periods/${id}/approve/`),
+}
+
+/** GL-account-level allocations of a Budget's total (Phase 5). */
+export const budgetAllocationApi = {
+  list: (params?: { budget?: string }) => api.get('/budgets/allocations/', { params }),
+  create: (data: object) => api.post('/budgets/allocations/', data),
+  update: (id: string, data: object) => api.patch(`/budgets/allocations/${id}/`, data),
+  delete: (id: string) => api.delete(`/budgets/allocations/${id}/`),
+}
+
 export const recurringApi = {
   list: () => api.get('/sales/recurring/'),
   create: (data: object) => api.post('/sales/recurring/', data),
