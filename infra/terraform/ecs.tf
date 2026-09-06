@@ -8,9 +8,21 @@
 ########################################################################
 
 variable "image_tag" {
-  description = "ECR image tag to deploy. The repo is IMMUTABLE (see ecr.tf), so each new build needs a new tag — e.g. a git SHA in the eventual CI job (Phase 6, not part of this session). Bootstrap value below is pushed once, manually, during this session's bring-up."
+  description = <<-EOT
+    ECR image tag to deploy - a git SHA, as pushed by the build-backend-image CI
+    job. The repo is IMMUTABLE (see ecr.tf), so every build needs a new tag.
+
+    DELIBERATELY HAS NO DEFAULT. It used to default to the "bootstrap-v7" image
+    from bring-up, which meant any apply that forgot -var image_tag silently
+    rolled all four task definitions back to that ancient build, reverting
+    production code with no warning. Caught on 2026-09-06 while reconciling
+    post-cutover drift. A missing value must fail loudly rather than quietly
+    ship an old image.
+
+    Find the tag that is actually deployed with:
+      aws ecs describe-task-definition --task-definition audity-api --query 'taskDefinition.containerDefinitions[0].image' --output text
+  EOT
   type        = string
-  default     = "bootstrap-v7"
 }
 
 resource "aws_ecs_cluster" "main" {
