@@ -197,9 +197,7 @@ export default function BudgetPage() {
   const handleUploadAttachment = async (lineId: string, file: File) => {
     setUploadingAttachment(lineId)
     try {
-      const fd = new FormData()
-      fd.append('attachment', file)
-      await budgetLineApi.update(lineId, fd)
+      await budgetLineApi.uploadAttachment(lineId, file)
       toast.success('Attachment uploaded')
       load()
     } catch (err: any) {

@@ -332,7 +332,7 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
     let runBalance = parseFloat(statementData.summary.opening_balance ?? '0')
     ledger.push(['', '', 'BALANCE BROUGHT FORWARD', '', '', '', '', '', '', fmtMoney(runBalance)])
 
-    type Evt = { date: string; type: 'invoice' | 'payment' | 'debit'; data: any }
+    type Evt = { date: string; type: 'invoice' | 'payment' | 'debit' | 'return'; data: any }
     const events: Evt[] = []
     for (const inv of statementData.invoices)
       events.push({ date: inv.issue_date, type: 'invoice', data: inv })
@@ -340,6 +340,8 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
       events.push({ date: p.received_at ? String(p.received_at).split('T')[0] : '', type: 'payment', data: p })
     for (const d of (statementData.debits ?? []))
       events.push({ date: d.debit_date, type: 'debit', data: d })
+    for (const r of (statementData.returns ?? []))
+      events.push({ date: r.created_at ? String(r.created_at).split('T')[0] : '', type: 'return', data: r })
     events.sort((a, b) => a.date.localeCompare(b.date))
 
     for (const e of events) {
@@ -381,6 +383,16 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
           '', '', '', '',
           '', fmtMoney(parseFloat(p.amount)), fmtMoney(runBalance),
         ])
+      } else if (e.type === 'return') {
+        const r = e.data
+        runBalance -= parseFloat(r.amount)
+        creditRowIndices.push(ledger.length)
+        ledger.push([
+          formatDate(e.date), r.invoice_number || '—',
+          `Return${r.reason ? ` · ${r.reason}` : ''}`,
+          '', '', '', '',
+          '', fmtMoney(parseFloat(r.amount)), fmtMoney(runBalance),
+        ])
       } else {
         const d = e.data
         runBalance += parseFloat(d.amount)
@@ -399,7 +411,7 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
     // total including brought-forward, so it lines up with the ledger rows
     // above it and with summary.balance_due, not just this period's movement.
     const totalCharged = parseFloat(statementData.summary.total_charged)
-    const totalCredit  = parseFloat(statementData.summary.total_paid)
+    const totalCredit  = parseFloat(statementData.summary.total_paid) + parseFloat(statementData.summary.total_returns ?? '0')
     grandTotalRowIndex.push(ledger.length)
     ledger.push(['', '', 'GRAND TOTAL', '', '', '', '',
       fmtMoney(totalCharged), fmtMoney(totalCredit),

@@ -176,9 +176,17 @@ class PurchaseService:
                 "receipt to it instead of converting again."
             )
 
+        # Use the PO's own authoritative components — subtotal is gross (before
+        # discount), so discount and delivery must both be folded in here.
+        # Bill has no separate discount/delivery fields, so net_goods carries
+        # both into the single "goods" value the bill and journal share;
+        # net_goods + tax always equals po.total_amount by construction.
         subtotal = Decimal(str(po.subtotal or 0))
+        discount = Decimal(str(po.discount_amount or 0))
         tax = Decimal(str(po.tax_amount or 0))
-        total = subtotal + tax
+        delivery = Decimal(str(po.delivery_amount or 0))
+        net_goods = subtotal - discount + delivery
+        total = net_goods + tax
         if total <= 0:
             raise ValueError("This purchase order has no value to bill.")
 
@@ -191,7 +199,7 @@ class PurchaseService:
             due_date=today + timedelta(days=30),
             reference=po.po_number,
             source_purchase_order=po,
-            subtotal=subtotal,
+            subtotal=net_goods,
             tax_amount=tax,
             total_amount=total,
             amount_due=total,
@@ -203,8 +211,8 @@ class PurchaseService:
             bill=bill,
             description=f"Billed against {po.po_number} (goods not yet received)",
             quantity=Decimal("1"),
-            unit_cost=subtotal,
-            line_total=subtotal,
+            unit_cost=net_goods,
+            line_total=net_goods,
         )
 
         po.billed_before_receipt = True
@@ -217,7 +225,7 @@ class PurchaseService:
             ap_acct = AccountingService._resolve_party_account(
                 po.organisation, po.supplier, 'payable_account', 'accounts_payable', '2001')
             lines = [
-                (transit_acct, subtotal, zero),
+                (transit_acct, net_goods, zero),
                 (ap_acct, zero, total),
             ]
             if tax > zero:
@@ -252,6 +260,7 @@ def _upsert_bill_for_po(po: PurchaseOrder, batch_subtotal: Decimal, batch_tax: D
     """
     from apps.bills.models import Bill, BillItem
     from apps.accounting.services import AccountingService, AccountMappingService, safe_post_gl
+    from apps.accounting.models import JournalEntry
 
     today = timezone.now().date()
     due_date = today + timedelta(days=30)
@@ -280,6 +289,15 @@ def _upsert_bill_for_po(po: PurchaseOrder, batch_subtotal: Decimal, batch_tax: D
                 # zero-effect journal entry cluttering the ledger for no
                 # reason — skip it.
                 return
+            # post_journal_entry is idempotent on (source_type, source_ref) — a
+            # PO can be received in several partial batches, each needing its
+            # own clearing entry, so the ref must be per-receipt, not per-PO
+            # (a bare po.id here would make every batch after the first a
+            # no-op: its value would silently never leave goods-in-transit).
+            receipt_seq = JournalEntry.objects.filter(
+                organisation=po.organisation, source_type="po_receipt_clearing",
+                source_ref__startswith=f"{po.id}:",
+            ).count() + 1
             AccountingService.post_journal_entry(
                 po.organisation,
                 f"Goods received against pre-billed PO {po.po_number}",
@@ -288,7 +306,7 @@ def _upsert_bill_for_po(po: PurchaseOrder, batch_subtotal: Decimal, batch_tax: D
                 received_by,
                 ref=po.po_number,
                 source_type="po_receipt_clearing",
-                source_ref=str(po.id),
+                source_ref=f"{po.id}:{receipt_seq}",
             )
 
         safe_post_gl(_post_transit_clearing, model_instance=bill)

@@ -466,6 +466,8 @@ class SaleService:
         # UI passes a value here; every other caller of update_sale omits it
         # and keeps today's behaviour of carrying the old amount forward.
         shipping = Decimal(str(shipping_amount)) if shipping_amount is not None else Decimal(str(invoice.shipping_amount or 0))
+        if shipping < 0:
+            raise ValueError("Shipping amount cannot be negative.")
         total = subtotal - total_discount + total_tax + shipping
 
         # Recalculate financials; preserve existing payments

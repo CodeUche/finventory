@@ -1,6 +1,6 @@
 from django.db import transaction
 from django.utils import timezone
-from rest_framework import viewsets, status
+from rest_framework import viewsets, status, mixins
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -228,7 +228,14 @@ class BudgetViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         }, status=status.HTTP_200_OK)
 
 
-class BudgetLineViewSet(TenantFilterMixin, viewsets.ModelViewSet):
+class BudgetLineViewSet(
+    TenantFilterMixin,
+    mixins.RetrieveModelMixin,
+    mixins.ListModelMixin,
+    mixins.UpdateModelMixin,
+    mixins.DestroyModelMixin,
+    viewsets.GenericViewSet,
+):
     """
     Phase 7: a flat, addressable resource for an individual BudgetLine —
     PATCH support for fields add_line/bulk_lines don't cover editing after
@@ -238,6 +245,10 @@ class BudgetLineViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     working exactly as before — this is just a second, more conventional
     way to reach an already-created line. Same permission stack and org
     scoping as every other viewset in this app.
+
+    Update-only (no create): lines are created via Budget.add_line/bulk_lines,
+    which set `budget` — a field BudgetLineSerializer doesn't expose, so a bare
+    POST here would hit BudgetLine's non-nullable `budget` FK and 500.
     """
     serializer_class = BudgetLineSerializer
     permission_classes = [IsAuthenticated, IsManagerOrSuperuser, _PlanBudget, _ModAccess_budgets]

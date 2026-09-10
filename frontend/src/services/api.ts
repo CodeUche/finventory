@@ -1767,10 +1767,13 @@ export const budgetApi = {
 
 /** Individual BudgetLine access (Phase 7) — PATCH support for editing an
  * already-created line (sub_category, forecast_amount, attachment upload),
- * which add_line/bulk_lines don't cover. Pass a FormData body for an
- * attachment upload; a plain object for everything else. */
+ * which add_line/bulk_lines don't cover. Attachment upload goes through
+ * uploadAttachment, not update — Tauri's HTTP plugin serializes a raw
+ * FormData body as application/x-www-form-urlencoded, not multipart, so it
+ * needs the same explicit-boundary path every other file upload uses. */
 export const budgetLineApi = {
-  update: (id: string, data: object | FormData) => api.patch(`/budgets/lines/${id}/`, data),
+  update: (id: string, data: object) => api.patch(`/budgets/lines/${id}/`, data),
+  uploadAttachment: (id: string, file: File) => _multipartPatch(`/budgets/lines/${id}/`, file, 'attachment'),
   delete: (id: string) => api.delete(`/budgets/lines/${id}/`),
 }
 

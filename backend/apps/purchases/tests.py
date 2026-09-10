@@ -410,6 +410,29 @@ class ConvertToBillTests(TestCase):
         self.assertEqual(Decimal(str(bill.total_amount)), Decimal("1075"))
         self.assertEqual(bill.gl_post_status, "posted")
 
+    def test_convert_bills_the_authoritative_po_total_with_discount_and_delivery(self):
+        # Regression: convert_to_bill used to recompute total as subtotal+tax,
+        # silently dropping discount_amount and delivery_amount — a discounted
+        # PO got overbilled, a PO with delivery charges got underbilled.
+        from apps.bills.models import Bill
+        self.po.discount_amount = Decimal("100")
+        self.po.delivery_amount = Decimal("50")
+        self.po.total_amount = Decimal("1000") - Decimal("100") + Decimal("75") + Decimal("50")
+        self.po.save(update_fields=["discount_amount", "delivery_amount", "total_amount"])
+
+        po = PurchaseService.convert_to_bill(self.po, self.user)
+        bill = Bill.objects.get(organisation=self.org, source_purchase_order=po)
+        self.assertEqual(Decimal(str(bill.subtotal)), Decimal("950"))  # 1000 - 100 + 50
+        self.assertEqual(Decimal(str(bill.tax_amount)), Decimal("75"))
+        self.assertEqual(Decimal(str(bill.total_amount)), Decimal(str(po.total_amount)))
+
+        lines = self._journal_lines("po_convert_to_bill", str(po.id))
+        by_code = {l.account.code: (Decimal(str(l.debit)), Decimal(str(l.credit))) for l in lines}
+        inv_acct = AccountMappingService.resolve(self.org, "inventory_account")
+        ap_acct = AccountMappingService.resolve(self.org, "accounts_payable")
+        self.assertEqual(by_code[inv_acct.code][0], Decimal("950"))
+        self.assertEqual(by_code[ap_acct.code][1], Decimal(str(po.total_amount)))
+
     def test_convert_posts_goods_in_transit_debit_and_ap_credit_when_unmapped(self):
         # No goods_in_transit_account configured — falls back to plain
         # Inventory, exactly like _upsert_bill_for_po's own unmapped fallback.
@@ -494,11 +517,43 @@ class ConvertToBillTests(TestCase):
             po, [{"item_id": str(self.po_item.id), "quantity_received": "10"}], self.user,
         )
 
-        lines = self._journal_lines("po_receipt_clearing", str(po.id))
+        lines = self._journal_lines("po_receipt_clearing", f"{po.id}:1")
         by_code = {l.account.code: (Decimal(str(l.debit)), Decimal(str(l.credit))) for l in lines}
         inv_acct = AccountMappingService.resolve(self.org, "inventory_account")
         self.assertEqual(by_code[inv_acct.code][0], Decimal("1000"))
         self.assertEqual(by_code["1251"][1], Decimal("1000"))
+
+    def test_later_partial_receipts_each_get_their_own_clearing_entry(self):
+        # Regression: post_journal_entry is idempotent on (source_type,
+        # source_ref). A per-PO ref for this entry meant every receipt after
+        # the first silently no-op'd — its batch value never left
+        # goods-in-transit. Two separate partial receipts must each post.
+        from apps.accounting.models import Account
+        transit_acct = Account.objects.create(
+            organisation=self.org, code="1251", name="Goods In Transit",
+            account_type="asset", normal_balance="debit",
+        )
+        mapping = AccountMappingService.get_or_create_mapping(self.org)
+        mapping.goods_in_transit_account = transit_acct
+        mapping.save(update_fields=["goods_in_transit_account"])
+
+        po = PurchaseService.convert_to_bill(self.po, self.user)
+        po = PurchaseService.receive_purchase_order(
+            po, [{"item_id": str(self.po_item.id), "quantity_received": "6"}], self.user,
+        )
+        po = PurchaseService.receive_purchase_order(
+            po, [{"item_id": str(self.po_item.id), "quantity_received": "4"}], self.user,
+        )
+
+        first = self._journal_lines("po_receipt_clearing", f"{po.id}:1")
+        second = self._journal_lines("po_receipt_clearing", f"{po.id}:2")
+        first_by_code = {l.account.code: (Decimal(str(l.debit)), Decimal(str(l.credit))) for l in first}
+        second_by_code = {l.account.code: (Decimal(str(l.debit)), Decimal(str(l.credit))) for l in second}
+        inv_acct = AccountMappingService.resolve(self.org, "inventory_account")
+        self.assertEqual(first_by_code[inv_acct.code][0], Decimal("600"))
+        self.assertEqual(first_by_code["1251"][1], Decimal("600"))
+        self.assertEqual(second_by_code[inv_acct.code][0], Decimal("400"))
+        self.assertEqual(second_by_code["1251"][1], Decimal("400"))
 
     def test_later_physical_receipt_posts_no_redundant_entry_when_unmapped(self):
         # Both conversion and receipt fell back to plain Inventory — DR then
@@ -510,7 +565,8 @@ class ConvertToBillTests(TestCase):
         )
         self.assertFalse(
             JournalEntry.objects.filter(
-                organisation=self.org, source_type="po_receipt_clearing", source_ref=str(po.id),
+                organisation=self.org, source_type="po_receipt_clearing",
+                source_ref__startswith=f"{po.id}:",
             ).exists()
         )
 
