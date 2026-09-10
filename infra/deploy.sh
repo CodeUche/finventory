@@ -81,13 +81,40 @@ say "Migrations succeeded"
 
 # ── 3. Roll the services ─────────────────────────────────────────────────────
 say "Rolling services onto ${TAG:0:12}"
-FEK="$(aws secretsmanager get-secret-value --secret-id audity/field_encryption_key \
-        --region "$REGION" --query SecretString --output text)"
+# Every var-backed secret must be re-supplied on EVERY apply, not just the one
+# the image needs. local.static_secrets_with_value in secrets.tf decides
+# membership from the CURRENT var value, so a var left empty drops its key out
+# of the for_each and Terraform plans to DESTROY the live secret version.
+# prevent_destroy then aborts the whole apply. Not hypothetical: seven
+# third-party credentials were added on 2026-09-10 and the next deploy would
+# have died on exactly this.
+#
+# So read each one back out of Secrets Manager and forward it as a TF_VAR.
+# Anything genuinely unset stays unset, which is correct - it was never in the
+# for_each to begin with.
+#
+# APP_DATABASE_URL is deliberately EXCLUDED: its version was removed from
+# Terraform state on 2026-09-06 so that a forgotten var could never destroy the
+# database credentials. Re-supplying it here would quietly pull it back under
+# Terraform management and undo that. Rotate it with put-secret-value instead.
+SECRET_VARS="field_encryption_key brevo_api_key sentry_dsn paystack_secret_key
+flutterwave_secret_key nango_secret_key nango_webhook_secret telegram_bot_token
+telegram_webhook_secret groq_api_key posthog_api_key digitax_app_api_key
+digitax_webhook_secret"
+
+for name in $SECRET_VARS; do
+  val="$(aws secretsmanager get-secret-value --secret-id "audity/$name"           --region "$REGION" --query SecretString --output text 2>/dev/null || true)"
+  if [ -n "$val" ] && [ "$val" != "None" ]; then
+    export "TF_VAR_$name=$val"
+    echo "  forwarding $name (${#val} chars)"
+  fi
+done
+
+[ -n "${TF_VAR_field_encryption_key:-}" ] || fail "audity/field_encryption_key has no value - cannot apply."
 
 # NOTE: on the Windows dev machine, Avast's TLS interception breaks terraform's
 # plugin handshake — run terraform through Docker there. See project memory.
-( cd "$TF_DIR" && TF_VAR_field_encryption_key="$FEK" TF_VAR_image_tag="$TAG" \
-    terraform apply -input=false -auto-approve )
+( cd "$TF_DIR" && TF_VAR_image_tag="$TAG" terraform apply -input=false -auto-approve )
 
 # ── 4. Verify ────────────────────────────────────────────────────────────────
 say "Waiting for the rollout to settle"
