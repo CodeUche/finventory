@@ -75,7 +75,15 @@ SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SECURE_HSTS_SECONDS = 31536000
 SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 SECURE_HSTS_PRELOAD = True
-SECURE_SSL_REDIRECT = True
+# Default True (secure by default everywhere this has HTTPS already, e.g.
+# Railway). Overridable via env var only for the pre-cutover AWS bring-up,
+# where the ALB deliberately has no HTTPS listener yet (no ACM cert without
+# a real domain — that's Phase 8 of the migration plan) — with this stuck
+# True there, every request including the ALB health check gets a 301 to
+# an HTTPS endpoint that doesn't exist, and the target group never goes
+# healthy. Must be set back to True (or just unset) once the HTTPS
+# listener + real domain land.
+SECURE_SSL_REDIRECT = config("SECURE_SSL_REDIRECT", default=True, cast=bool)
 SESSION_COOKIE_SECURE = True
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = "Strict"
@@ -90,7 +98,35 @@ PERMISSIONS_POLICY = "geolocation=(), microphone=(), camera=(), payment=(), usb=
 
 # Whitenoise for static files
 MIDDLEWARE.insert(1, "whitenoise.middleware.WhiteNoiseMiddleware")  # noqa: F405
-STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
+
+# ─── Storage backends (Django 5.1 STORAGES) ──────────────────────────────────
+# Django 4.2 deprecated STATICFILES_STORAGE / DEFAULT_FILE_STORAGE and Django
+# 5.1 REMOVED them — assigning either name is now silently ignored (no warning,
+# no error). This file used to set exactly those two names, which meant that in
+# production:
+#   * whitenoise's compressed/manifest static storage was never actually
+#     active — Django fell back to plain StaticFilesStorage; and
+#   * USE_S3=True did nothing — uploads kept landing on the container's
+#     ephemeral local disk and were wiped on every redeploy/autoscale event.
+# Both aliases must therefore be declared together in one STORAGES dict.
+#
+# "default" below is the local-filesystem fallback; the USE_S3 block further
+# down swaps in the S3 backend. "staticfiles" is whitenoise either way.
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"
+    },
+}
+
+# Manifest lookups are deliberately non-strict. Both the image build and the
+# container start command run `collectstatic ... || true`, so a failed collect
+# leaves no staticfiles.json behind. Under whitenoise's strict default, every
+# {% static %} lookup (Django admin, DRF browsable API) would then raise
+# ValueError and 500 the page — a failure mode that could not occur before,
+# only because the manifest storage above was not in effect at all. Non-strict
+# degrades gracefully to the un-hashed filename instead.
+WHITENOISE_MANIFEST_STRICT = False
 
 # Sentry error tracking
 import sentry_sdk  # noqa: E402
@@ -111,28 +147,85 @@ if SENTRY_DSN:
 # Set USE_S3=True in .env to activate. All other S3_* vars are then required.
 _use_s3 = config("USE_S3", default=False, cast=bool)
 if _use_s3:
-    # Required env vars when USE_S3=True
-    AWS_ACCESS_KEY_ID = config("S3_ACCESS_KEY_ID")
-    AWS_SECRET_ACCESS_KEY = config("S3_SECRET_ACCESS_KEY")
+    # S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY are optional: leave them unset
+    # to let boto3 fall back to its default credential chain (e.g. an ECS
+    # task IAM role on AWS — no long-lived static keys to leak or rotate).
+    # Still required for providers without IAM-role-style auth (Cloudflare
+    # R2, DigitalOcean Spaces) — set them there as before.
+    _s3_access_key = config("S3_ACCESS_KEY_ID", default="")
+    _s3_secret_key = config("S3_SECRET_ACCESS_KEY", default="")
+    AWS_ACCESS_KEY_ID = _s3_access_key or None
+    AWS_SECRET_ACCESS_KEY = _s3_secret_key or None
     AWS_STORAGE_BUCKET_NAME = config("S3_BUCKET_NAME")
     AWS_S3_REGION_NAME = config("S3_REGION", default="auto")  # 'auto' works for Cloudflare R2
     # For non-AWS providers set the endpoint URL:
     #   Cloudflare R2:  https://<account_id>.r2.cloudflarestorage.com
     #   DigitalOcean:   https://<region>.digitaloceanspaces.com
-    AWS_S3_ENDPOINT_URL = config("S3_ENDPOINT_URL", default="")  # leave blank for AWS S3
-    AWS_S3_CUSTOM_DOMAIN = config("S3_CUSTOM_DOMAIN", default="")  # CDN domain (optional)
+    # These two must be UNSET (not empty-string) when talking to real AWS S3.
+    # boto3 validates endpoint_url eagerly and raises
+    # `ValueError: Invalid endpoint: ` on "", rather than treating it as
+    # "use the default AWS endpoint" — so assigning "" breaks every S3 call.
+    # Same story for the custom domain: "" would build URLs like "https:///key".
+    # Only non-AWS providers (Cloudflare R2, DigitalOcean Spaces) set them.
+    # This was invisible until USE_S3 genuinely took effect: while
+    # DEFAULT_FILE_STORAGE was being silently ignored under Django 5.1, the
+    # S3 backend was never constructed, so the bad values were never used.
+    _s3_endpoint_url = config("S3_ENDPOINT_URL", default="")
+    _s3_custom_domain = config("S3_CUSTOM_DOMAIN", default="")
+    if _s3_endpoint_url:
+        # Presigned media URLs carry the signature in the query string, so a
+        # plaintext endpoint would put a credential-bearing URL on the wire
+        # until it expires. Refuse to start rather than silently downgrade.
+        if not _s3_endpoint_url.startswith("https://"):
+            from django.core.exceptions import ImproperlyConfigured
+            raise ImproperlyConfigured(
+                "[PRODUCTION] S3_ENDPOINT_URL must use https:// — got "
+                f"'{_s3_endpoint_url[:40]}'. Presigned URLs would otherwise be "
+                "transmitted in cleartext."
+            )
+        AWS_S3_ENDPOINT_URL = _s3_endpoint_url
+    AWS_S3_USE_SSL = True
+    if _s3_custom_domain:
+        AWS_S3_CUSTOM_DOMAIN = _s3_custom_domain
     AWS_DEFAULT_ACL = None          # Cloudflare R2 / private bucket — no public ACL
     AWS_S3_OBJECT_PARAMETERS = {"CacheControl": "max-age=86400"}
     AWS_QUERYSTRING_AUTH = True     # Signed URLs — prevents direct public access
     AWS_QUERYSTRING_EXPIRE = 3600   # Signed URL TTL: 1 hour
 
-    DEFAULT_FILE_STORAGE = "storages.backends.s3boto3.S3Boto3Storage"
-    # Media files go under the media/ prefix in the bucket
-    MEDIA_URL = (
-        f"https://{AWS_S3_CUSTOM_DOMAIN}/media/"
-        if AWS_S3_CUSTOM_DOMAIN
-        else f"{AWS_S3_ENDPOINT_URL}/{AWS_STORAGE_BUCKET_NAME}/media/"
-    )
+    # Django 5.1: the default-storage backend is selected through the STORAGES
+    # dict declared above. DEFAULT_FILE_STORAGE is removed and would be
+    # ignored. Only the "default" alias is swapped — staticfiles stays on
+    # whitenoise, which serves them from the container, not from S3.
+    #
+    # The S3 tunables above stay as module-level AWS_* settings rather than
+    # moving into STORAGES["default"]["OPTIONS"]. django-storages 1.14 reads
+    # both, but module-level keeps a single source of truth: other code (the
+    # AWS migration's media-upload scripts, a future collectstatic-to-S3) can
+    # read settings.AWS_STORAGE_BUCKET_NAME directly without reaching into the
+    # STORAGES dict, and there is no chance of the two copies drifting apart.
+    STORAGES["default"] = {"BACKEND": "storages.backends.s3boto3.S3Boto3Storage"}
+
+    # Object keys are the models' own `upload_to` paths at bucket root: there
+    # is deliberately NO AWS_LOCATION prefix, because the file paths already
+    # stored in the database are unprefixed (e.g. "org_logos/logo_<uuid>.jpg").
+    # Adding one would orphan every existing row.
+    #
+    # Note: S3Boto3Storage.url() (what FileField.url actually calls) builds
+    # its own signed URL from the bucket/region/custom-domain settings above
+    # and does NOT read MEDIA_URL — this setting is only a fallback for any
+    # code that manually references settings.MEDIA_URL directly. It points at
+    # the bucket root (no trailing "media/" segment, which used to be here and
+    # matched no real object key) so that MEDIA_URL + <file field value>
+    # resolves to the same object the storage backend would serve. That holds
+    # for all three provider shapes below.
+    if _s3_custom_domain:
+        MEDIA_URL = f"https://{_s3_custom_domain}/"
+    elif _s3_endpoint_url:
+        # R2 / DigitalOcean-style: bucket is a path segment under the endpoint
+        MEDIA_URL = f"{_s3_endpoint_url}/{AWS_STORAGE_BUCKET_NAME}/"
+    else:
+        # Real AWS S3, no CDN in front yet: bucket is a subdomain
+        MEDIA_URL = f"https://{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com/"
 
 # ─── Cloud platform database / redis URL parsing ──────────────────────────────
 # Railway, Render, Heroku etc. expose a single DATABASE_URL connection string.
@@ -159,10 +252,20 @@ if _app_database_url:
     )
 
 # Railway exposes REDIS_URL automatically when you add a Redis service.
+# NOTE: this only drives the Django cache (CACHES). It deliberately does NOT
+# also force CELERY_BROKER_URL/CELERY_RESULT_BACKEND to the same value —
+# base.py already does `config("CELERY_BROKER_URL", default=REDIS_URL)`,
+# which correctly falls back to REDIS_URL when Celery has no separate
+# connection string of its own, but still lets an explicitly-set
+# CELERY_BROKER_URL/CELERY_RESULT_BACKEND win. That distinction matters on
+# AWS: the Django cache lives on ElastiCache Serverless (cluster-protocol,
+# single-key ops only), while Celery's broker needs a plain non-cluster
+# Redis node (Serverless's CROSSSLOT errors crash celery-worker on startup
+# otherwise — Celery's kombu transport issues multi-key MULTI/EXEC
+# operations that Redis Cluster mode rejects). Forcing both to REDIS_URL
+# here would silently re-break that split on every deploy.
 _redis_url = config("REDIS_URL", default="")
 if _redis_url:
-    CELERY_BROKER_URL = _redis_url  # noqa: F405
-    CELERY_RESULT_BACKEND = _redis_url  # noqa: F405
     CACHES["default"]["LOCATION"] = _redis_url  # noqa: F405
 
 # ─── ALLOWED_HOSTS: auto-include Railway deployment domain ────────────────────

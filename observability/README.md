@@ -81,7 +81,7 @@ see the warning below):
 
 ```sql
 CREATE ROLE grafana_ro WITH LOGIN PASSWORD 'choose-a-strong-password';
-GRANT CONNECT ON DATABASE railway TO grafana_ro;   -- Railway's DB is usually "railway"
+GRANT CONNECT ON DATABASE audity TO grafana_ro;
 GRANT USAGE ON SCHEMA public TO grafana_ro;
 GRANT SELECT ON core_auditlog TO grafana_ro;
 ALTER ROLE grafana_ro BYPASSRLS;                   -- see RLS warning below
@@ -91,16 +91,17 @@ ALTER ROLE grafana_ro BYPASSRLS;                   -- see RLS warning below
 > per-request `app.current_org_id` GUC. If the datasource role is *subject* to RLS,
 > audit queries can silently return **0 rows** even though the data is there. Grant
 > `BYPASSRLS` (needs a superuser to grant), **or** connect the datasource with the
-> Railway DB owner/superuser role (which bypasses RLS). `core_auditlog` is not a
+> Aurora master role (which bypasses RLS). `core_auditlog` is not a
 > tenant table, but this guarantees correctness regardless of any policy on it.
 
-**2. Fill `AUDIT_DB_*` in `.env`** with the Railway **public TCP proxy** endpoint
-(Railway → Postgres service → *Connect* → "Public Network" gives host/port/db):
+**2. Fill `AUDIT_DB_*` in `.env`.** Production Postgres is Aurora on AWS since
+2026-09-06. It has NO public endpoint — it lives in private subnets — so either
+run this stack inside the VPC, or open a tunnel and point at `127.0.0.1`:
 
 ```
-AUDIT_DB_HOST=containers-us-west-xx.railway.app
-AUDIT_DB_PORT=6543
-AUDIT_DB_NAME=railway
+AUDIT_DB_HOST=127.0.0.1
+AUDIT_DB_PORT=5432
+AUDIT_DB_NAME=audity
 AUDIT_DB_USER=grafana_ro
 AUDIT_DB_PASSWORD=...
 AUDIT_DB_SSLMODE=require

@@ -1,0 +1,4 @@
+# Shell scripts must keep LF endings. Checked out with CRLF on Windows they fail
+# at the shebang with an unhelpful "bad interpreter: /usr/bin/env bash^M", and
+# infra/deploy.sh also runs on Linux.
+*.sh text eol=lf

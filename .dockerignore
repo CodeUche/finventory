@@ -1,0 +1,52 @@
+# No .dockerignore existed before this — Docker's build context was the
+# entire repo, and `COPY backend/ ./backend/` was baking in stale compiled
+# bytecode (backend/config/settings/__pycache__/*.pyc, some dated months
+# before any settings changes this session) that silently shadowed fresh
+# .py source in the built image, plus a 289MB local test venv. This is
+# what caused celery-worker to keep using an old REDIS_URL-only broker
+# config well after the source fix — Python was running the stale .pyc,
+# not the current .py.
+
+# Python bytecode / caches — the actual bug this file fixes
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+
+# Local virtualenvs — never needed in the image (production.txt is
+# installed fresh in the builder stage)
+backend/.venv-test/
+backend/.venv/
+backend/venv/
+backend/env/
+
+# Local dev artifacts
+backend/logs/
+backend/media/
+backend/staticfiles/
+backend/db.sqlite3
+*.log
+
+# VCS / editor / CI
+.git/
+.gitignore
+.github/
+.claude/
+.vscode/
+.idea/
+
+# Frontend / desktop — irrelevant to the backend image, often huge
+frontend/
+finventory-frontend/
+node_modules/
+
+# Infra tooling — irrelevant to the backend image
+infra/
+observability/
+
+# Misc large/irrelevant local files
+*.md
+!README.md

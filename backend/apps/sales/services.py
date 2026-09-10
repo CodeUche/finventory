@@ -286,8 +286,26 @@ class SaleService:
         # means unit_price already contains it, so the tax is backed OUT of
         # after_discount instead of added — line_total stays what the customer
         # was quoted either way; only the tax/subtotal split changes.
+        # Per-line VAT override: an explicit rate wins, then a chosen TaxClass,
+        # then the product's own default — lets a line be taxed differently
+        # from what the product is normally configured for (e.g. a one-off
+        # rate, or a class the product wasn't assigned).
         tax_rate = Decimal("0")
-        if product.is_taxable and product.tax_class:
+        rate_override = item_data.get("tax_rate")
+        class_override_id = item_data.get("tax_class_id")
+        resolved_override = False
+        if rate_override is not None:
+            tax_rate = Decimal(str(rate_override))
+            resolved_override = True
+        elif class_override_id:
+            from apps.tax.models import TaxClass
+            override_class = TaxClass.objects.filter(
+                id=class_override_id, organisation=organisation, is_active=True
+            ).first()
+            if override_class:
+                tax_rate = override_class.rate
+                resolved_override = True
+        if not resolved_override and product.is_taxable and product.tax_class:
             tax_rate = product.tax_class.rate
         if product.tax_type == Product.TaxType.INCLUSIVE and tax_rate > 0:
             tax_amount = round_money(after_discount * tax_rate / (Decimal("100") + tax_rate))

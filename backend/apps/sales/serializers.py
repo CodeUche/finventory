@@ -111,6 +111,14 @@ class CreateSaleSerializer(serializers.Serializer):
             max_digits=5, decimal_places=2, default=0, min_value=Decimal("0"), max_value=Decimal("100")
         )
         batch_id = serializers.UUIDField(required=False, allow_null=True)
+        # Per-line VAT override: pick a configured TaxClass, or set an explicit
+        # rate directly. Omit both to keep using the product's own default tax
+        # class — see SaleService._process_line_item for the resolution order.
+        tax_class_id = serializers.UUIDField(required=False, allow_null=True)
+        tax_rate = serializers.DecimalField(
+            max_digits=5, decimal_places=2, required=False, allow_null=True,
+            min_value=Decimal("0"), max_value=Decimal("100"),
+        )
 
     customer_id = serializers.UUIDField(required=False, allow_null=True)
     warehouse_id = serializers.UUIDField()

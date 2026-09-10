@@ -5,7 +5,8 @@ import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { useModuleAccess } from '@/hooks/useModuleAccess'
 import { usePagination } from '@/hooks/usePagination'
 import Pagination from '@/components/Pagination'
-import { Plus, Search, Package, AlertTriangle, X, Pencil, Loader2, TrendingUp, TrendingDown, History, Maximize2, Minimize2, ShieldCheck, FileDown, Table2, ArrowDownCircle, Trash2, RefreshCw, CheckSquare, ChevronDown, Upload } from 'lucide-react'
+import { Plus, Search, Package, AlertTriangle, X, Pencil, Loader2, TrendingUp, TrendingDown, History, Maximize2, Minimize2, ShieldCheck, FileDown, Table2, ArrowDownCircle, Trash2, RefreshCw, CheckSquare, ChevronDown, Upload, Printer } from 'lucide-react'
+import PrintLabelModal from '@/components/PrintLabelModal'
 import toast from 'react-hot-toast'
 import { inventoryApi, taxApi, salesApi, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatAmountInput, stripCommas, formatDate } from '@/lib/utils'
@@ -334,6 +335,10 @@ export default function ProductsPage() {
   const [saving, setSaving] = useState(false)
   const [galleryImages, setGalleryImages] = useState<ProductImage[]>([])
   const [galleryUploading, setGalleryUploading] = useState(false)
+  // New Product has no id yet to attach images to, so files picked before
+  // creation are held here (with an object-URL preview) and uploaded right
+  // after the product itself is created — optional, same as editing.
+  const [pendingImages, setPendingImages] = useState<{ file: File; previewUrl: string }[]>([])
   const [dragImageId, setDragImageId] = useState<string | null>(null)
   const [variantList, setVariantList] = useState<ProductVariantSummary[]>([])
   const [comboComponentsList, setComboComponentsList] = useState<ComboComponent[]>([])
@@ -343,6 +348,7 @@ export default function ProductsPage() {
   const [variantSaving, setVariantSaving] = useState(false)
   const [comboPickableProducts, setComboPickableProducts] = useState<Product[]>([])
   const [customFieldRows, setCustomFieldRows] = useState<{ label: string; value: string }[]>([])
+  const [printLabelProduct, setPrintLabelProduct] = useState<Product | null>(null)
   const [form, setForm] = useState({ ...BLANK })
   const [taxClasses, setTaxClasses] = useState<TaxClass[]>([])
   const [sortBy, setSortBy] = useState('name')
@@ -407,9 +413,15 @@ export default function ProductsPage() {
 
   const openCreate = () => {
     setEditId(null)
+    // Invalidate any in-flight edit-detail request — otherwise a response
+    // that lands after switching from Edit to Create can still pass the
+    // "same product" guard in openEdit and wipe out images just staged here.
+    editReqRef.current = ''
     setForm({ ...BLANK })
     setBatchForm({ ...BLANK_BATCH })
     setGalleryImages([])
+    pendingImages.forEach((p) => URL.revokeObjectURL(p.previewUrl))
+    setPendingImages([])
     setVariantList([])
     setComboComponentsList([])
     setNewVariant({ sku: '', name: '', attributes: '', cost_price: '', selling_price: '' })
@@ -499,6 +511,7 @@ export default function ProductsPage() {
         variant_attributes: data.variant_attributes ?? {},
       }))
       setGalleryImages(data.images ?? [])
+      setPendingImages((prev) => { prev.forEach((p) => URL.revokeObjectURL(p.previewUrl)); return [] })
       setVariantList(data.variants ?? [])
       setComboComponentsList(data.combo_components ?? [])
       setCustomFieldRows(
@@ -527,6 +540,20 @@ export default function ProductsPage() {
       }
     }).catch(() => { setEditStockQty('0') })
     setShowModal(true)
+  }
+
+  // New Product (no editId yet): stage files locally instead of uploading.
+  const handlePendingImagesSelected = (files: FileList | null) => {
+    if (!files || files.length === 0) return
+    const staged = Array.from(files).map((file) => ({ file, previewUrl: URL.createObjectURL(file) }))
+    setPendingImages((prev) => [...prev, ...staged])
+  }
+  const removePendingImage = (previewUrl: string) => {
+    setPendingImages((prev) => {
+      const removed = prev.find((p) => p.previewUrl === previewUrl)
+      if (removed) URL.revokeObjectURL(removed.previewUrl)
+      return prev.filter((p) => p.previewUrl !== previewUrl)
+    })
   }
 
   const handleImageFilesSelected = async (files: FileList | null) => {
@@ -769,6 +796,25 @@ export default function ProductsPage() {
         }
       } else {
         const { data: newProduct } = await inventoryApi.createProduct(payload)
+        // Upload any images staged before the product existed. Optional and
+        // best-effort — a failed image shouldn't undo an otherwise-successful
+        // product creation, just warn so the user knows to retry from Edit.
+        if (pendingImages.length > 0) {
+          let imageFailures = 0
+          for (const { file, previewUrl } of pendingImages) {
+            try {
+              const resp = await inventoryApi.uploadProductImage(newProduct.id, file)
+              if (!resp.ok) imageFailures++
+            } catch {
+              imageFailures++
+            }
+            URL.revokeObjectURL(previewUrl)
+          }
+          setPendingImages([])
+          if (imageFailures > 0) {
+            toast.error(`${imageFailures} image${imageFailures > 1 ? 's' : ''} could not be uploaded — add ${imageFailures > 1 ? 'them' : 'it'} from Edit`)
+          }
+        }
         // Set opening stock if a warehouse was selected (always register product in warehouse)
         const qty = parseFloat(batchForm.quantity) || 0
         if (batchForm.warehouse && form.product_type === 'physical') {
@@ -1199,7 +1245,26 @@ export default function ProductsPage() {
           <div className="bg-surface-800 border border-surface-700 rounded-2xl w-full max-w-lg shadow-2xl animate-slide-up max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between p-6 border-b border-surface-700">
               <h2 className="font-semibold text-white text-lg">{editId ? 'Edit Product' : 'New Product'}</h2>
-              <button onClick={() => setShowModal(false)} className="btn-ghost p-1.5"><X size={18} /></button>
+              <div className="flex items-center gap-1">
+                {editId && editHydrated && (
+                  <button
+                    type="button"
+                    onClick={() => setPrintLabelProduct({
+                      id: editId,
+                      sku: form.sku,
+                      name: form.name,
+                      barcode: (form as any).barcode ?? '',
+                      barcode_symbology: (form as any).barcode_symbology ?? 'code128',
+                      selling_price: stripCommas(form.selling_price),
+                    } as Product)}
+                    className="btn-ghost p-1.5 text-slate-400 hover:text-white"
+                    title="Print barcode label"
+                  >
+                    <Printer size={18} />
+                  </button>
+                )}
+                <button onClick={() => setShowModal(false)} className="btn-ghost p-1.5"><X size={18} /></button>
+              </div>
             </div>
             <form onSubmit={handleSave} className="p-6 space-y-4">
               {/* Product Type */}
@@ -1255,9 +1320,40 @@ export default function ProductsPage() {
                 </div>
               </div>
               <div className="rounded-xl border border-surface-700/60 p-4 space-y-3">
-                <p className="text-sm font-semibold text-white">Product Images</p>
+                <p className="text-sm font-semibold text-white">Product Images <span className="text-slate-500 font-normal">(optional)</span></p>
                 {!editId ? (
-                  <p className="text-xs text-slate-500">Save the product first, then add photos.</p>
+                  <>
+                    <label className="flex flex-col items-center justify-center gap-1.5 border-2 border-dashed rounded-xl py-6 transition-colors border-surface-600 hover:border-brand-500 cursor-pointer">
+                      <Upload size={20} className="text-slate-400" />
+                      <span className="text-sm text-slate-300">Add images</span>
+                      <span className="text-[11px] text-slate-500">Supported formats: JPG, PNG, GIF — uploaded once you save</span>
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/gif,image/webp"
+                        multiple
+                        className="hidden"
+                        onChange={(e) => { handlePendingImagesSelected(e.target.files); e.target.value = '' }}
+                      />
+                    </label>
+                    {pendingImages.length === 0 ? (
+                      <p className="text-xs text-slate-500 text-center py-2">No images yet. Add photos using the area above.</p>
+                    ) : (
+                      <div className="grid grid-cols-4 gap-3">
+                        {pendingImages.map((p) => (
+                          <div key={p.previewUrl} className="relative group aspect-square rounded-lg overflow-hidden border-2 border-surface-700">
+                            <img src={p.previewUrl} alt="" className="w-full h-full object-cover" />
+                            <button
+                              type="button"
+                              onClick={() => removePendingImage(p.previewUrl)}
+                              className="absolute top-1 right-1 bg-black/60 hover:bg-red-600 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                            >
+                              <X size={12} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
                 ) : !editHydrated ? (
                   <p className="text-xs text-slate-500">Loading…</p>
                 ) : (
@@ -1921,6 +2017,10 @@ export default function ProductsPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {printLabelProduct && (
+        <PrintLabelModal product={printLabelProduct} onClose={() => setPrintLabelProduct(null)} />
       )}
     </div>
   )
