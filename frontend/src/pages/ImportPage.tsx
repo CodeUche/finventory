@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { api, bypassNextGets } from '@/services/api'
-import { Upload, Download, CheckCircle, XCircle, AlertTriangle, FileText, Users, BookOpen, UsersRound, Loader2, Maximize2, X, Sparkles, ChevronDown, ChevronUp, Truck } from 'lucide-react'
+import { Upload, Download, CheckCircle, XCircle, AlertTriangle, FileText, Users, BookOpen, UsersRound, Loader2, Maximize2, X, Sparkles, ChevronDown, ChevronUp, Truck, ClipboardList, PieChart } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { importApi } from '@/services/api'
 import { save } from '@tauri-apps/plugin-dialog'
@@ -64,9 +64,9 @@ function parseCSV(text: string): string[][] {
   return [cleanHeaders, ...dataRows]
 }
 
-type Entity = 'products' | 'customers' | 'suppliers' | 'accounts' | 'employees'
+type Entity = 'products' | 'customers' | 'suppliers' | 'accounts' | 'employees' | 'purchase_orders' | 'budgets'
 type ImportError = { row: number; field: string; message: string }
-type ImportResult = { created: number; updated: number; errors: ImportError[]; total_rows: number; warehouses_created?: number; stock_assigned?: number; balances_set?: number }
+type ImportResult = { created: number; updated: number; errors: ImportError[]; total_rows: number; warehouses_created?: number; stock_assigned?: number; balances_set?: number; lines_created?: number }
 
 // All product fields with human-readable labels
 const PRODUCT_FIELD_LABELS: Record<string, string> = {
@@ -131,6 +131,20 @@ const ENTITIES: { key: Entity; label: string; icon: React.ReactNode; description
       + 'next_of_kin_relationship, emergency_contact_name, emergency_contact_phone, grade, bank_name, '
       + 'bank_code, account_number, account_name, pfa_name, pfa_number, pension_pin, tin, state_of_residence, '
       + 'basic_salary, housing_allowance, transport_allowance, leave_allowance, other_allowances',
+  },
+  {
+    key: 'purchase_orders',
+    label: 'Purchase Orders',
+    icon: <ClipboardList size={20} />,
+    description: 'Bring in existing purchase orders from another system. One row per line item — suppliers, warehouses and products must already exist.',
+    columns: 'po_number*, supplier_name*, warehouse_name*, order_date*, product_sku*, quantity*, unit_cost*, expected_date, discount_percent, delivery_amount, notes',
+  },
+  {
+    key: 'budgets',
+    label: 'Budgets',
+    icon: <PieChart size={20} />,
+    description: 'Bring in existing budgets from a spreadsheet. One row per budget line — lines sharing the same budget name and fiscal year import as one multi-line budget.',
+    columns: 'budget_name*, fiscal_year*, category_name*, category_type*, budgeted_amount*, period_month, sub_category, account_code, forecast_amount, budget_type, notes',
   },
 ]
 

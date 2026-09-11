@@ -1,11 +1,14 @@
 """Tests for customers: CRUD, customer statement, credit tracking."""
 
+from decimal import Decimal
+
 from django.test import TestCase
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.authentication.models import User
 from apps.customers.models import Customer
+from apps.sales.models import Invoice
 from apps.tenancy.services import OrganisationService
 
 
@@ -107,3 +110,108 @@ class CustomerCRUDTests(TestCase):
         client = APIClient()
         res = client.get("/api/v1/customers/")
         self.assertEqual(res.status_code, 401)
+
+
+class CustomerStatementOpeningBalanceTests(TestCase):
+    """
+    C3/C3c: the statement now reports a balance BROUGHT FORWARD into the
+    requested date range, so it reconciles instead of silently assuming the
+    period starts at zero. Derived backward from customer.outstanding_balance
+    (today's always-correct live figure) by undoing everything dated on or
+    after date_from.
+    """
+
+    def setUp(self):
+        from apps.inventory.models import Product, Warehouse
+        from apps.sales.models import SalePayment
+
+        self.SalePayment = SalePayment
+
+        self.user = _make_user("stmtowner@example.com")
+        self.org = _make_org(self.user, "Statement Org")
+        self.client = _auth_client(self.user, self.org)
+        self.customer = Customer.objects.create(organisation=self.org, code="STC001", name="Statement Customer")
+        self.warehouse = Warehouse.objects.create(organisation=self.org, name="Main", is_default=True)
+        self.product = Product.objects.create(
+            organisation=self.org, sku="STMT-P1", name="Statement Item",
+            product_type="service", cost_price=0, selling_price=10000, unit_of_measure="unit",
+        )
+
+    def _invoice(self, issue_date, unit_price="10000.00", payment_method="credit"):
+        # Through the real API (like every other invoice test in this suite) —
+        # calling SaleService.create_sale directly would need a real `date`
+        # object for issue_date rather than "YYYY-MM-DD", since that coercion
+        # normally happens in InvoiceSerializer.issue_date (a DateField)
+        # before the service ever sees it.
+        res = self.client.post("/api/v1/sales/invoices/", {
+            "customer_id": str(self.customer.id),
+            "warehouse_id": str(self.warehouse.id),
+            "payment_method": payment_method,
+            "issue_date": issue_date,
+            "items": [{"product_id": str(self.product.id), "quantity": 1, "unit_price": unit_price}],
+        }, format="json")
+        self.assertIn(res.status_code, (200, 201), msg=str(res.data))
+        return Invoice.objects.get(id=res.data["id"])
+
+    def _backdated_payment(self, invoice, amount, when):
+        res = self.client.post(f"/api/v1/sales/invoices/{invoice.id}/pay/", {
+            "amount": str(amount), "method": "cash",
+        }, format="json")
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        payment = self.SalePayment.objects.filter(invoice=invoice).latest("received_at")
+        self.SalePayment.objects.filter(id=payment.id).update(received_at=when)
+        return payment
+
+    def test_opening_balance_excludes_period_transactions(self):
+        # Before the window: one invoice, fully unpaid → contributes 10000 to opening.
+        self._invoice(issue_date="2026-01-10")
+        # Inside the window: another invoice — must NOT be counted in opening.
+        self._invoice(issue_date="2026-03-15")
+
+        res = self.client.get(f"/api/v1/customers/{self.customer.id}/statement/", {
+            "date_from": "2026-03-01", "date_to": "2026-03-31",
+        })
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        summary = res.data["summary"]
+        self.assertEqual(Decimal(summary["opening_balance"]), Decimal("10000.0000"))
+        self.assertEqual(Decimal(summary["total_invoiced"]), Decimal("10000.0000"))  # just the March one
+        self.assertEqual(Decimal(summary["balance_due"]), Decimal("20000.0000"))     # 10000 b/f + 10000 in-period
+
+    def test_opening_balance_reflects_a_prior_payment(self):
+        inv = self._invoice(issue_date="2026-01-10")
+        self._backdated_payment(inv, Decimal("4000"), timezone_aware("2026-01-20"))
+
+        res = self.client.get(f"/api/v1/customers/{self.customer.id}/statement/", {
+            "date_from": "2026-02-01", "date_to": "2026-02-28",
+        })
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        summary = res.data["summary"]
+        self.assertEqual(Decimal(summary["opening_balance"]), Decimal("6000.0000"))  # 10000 - 4000
+
+    def test_balance_due_reconciles_to_live_outstanding_balance_when_date_to_is_today(self):
+        from django.utils import timezone
+        self._invoice(issue_date="2026-01-10")
+        self._invoice(issue_date=str(timezone.now().date()))
+
+        self.customer.refresh_from_db()
+        res = self.client.get(f"/api/v1/customers/{self.customer.id}/statement/", {
+            "date_from": "2026-01-01",
+        })
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        summary = res.data["summary"]
+        self.assertEqual(Decimal(summary["balance_due"]), Decimal(str(self.customer.outstanding_balance)))
+
+    def test_opening_balance_is_zero_with_no_prior_activity(self):
+        self._invoice(issue_date="2026-06-01")
+        res = self.client.get(f"/api/v1/customers/{self.customer.id}/statement/", {
+            "date_from": "2026-06-01", "date_to": "2026-06-30",
+        })
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.assertEqual(Decimal(res.data["summary"]["opening_balance"]), Decimal("0"))
+
+
+def timezone_aware(date_str):
+    from django.utils import timezone
+    import datetime
+    d = datetime.datetime.strptime(date_str, "%Y-%m-%d")
+    return timezone.make_aware(d)

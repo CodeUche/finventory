@@ -1283,6 +1283,7 @@ export const purchaseApi = {
   removeReceipt: (id: string) => api.post(`/purchases/orders/${id}/clear_receipt/`),
   receive: (id: string, items: object[]) => api.post(`/purchases/orders/${id}/receive/`, { items }),
   quickReceive: (id: string) => api.post(`/purchases/orders/${id}/quick-receive/`),
+  convertToBill: (id: string) => api.post(`/purchases/orders/${id}/convert-to-bill/`),
   etaAlerts: () => api.get('/purchases/orders/eta-alerts/'),
 }
 
@@ -1764,6 +1765,34 @@ export const budgetApi = {
   monitoring: (params?: object) => api.get('/budgets/monitoring/', { params }),
 }
 
+/** Individual BudgetLine access (Phase 7) — PATCH support for editing an
+ * already-created line (sub_category, forecast_amount, attachment upload),
+ * which add_line/bulk_lines don't cover. Attachment upload goes through
+ * uploadAttachment, not update — Tauri's HTTP plugin serializes a raw
+ * FormData body as application/x-www-form-urlencoded, not multipart, so it
+ * needs the same explicit-boundary path every other file upload uses. */
+export const budgetLineApi = {
+  update: (id: string, data: object) => api.patch(`/budgets/lines/${id}/`, data),
+  uploadAttachment: (id: string, file: File) => _multipartPatch(`/budgets/lines/${id}/`, file, 'attachment'),
+  delete: (id: string) => api.delete(`/budgets/lines/${id}/`),
+}
+
+/** Named financial periods a Budget can be pinned to (Phase 5). */
+export const budgetPeriodApi = {
+  list: () => api.get('/budgets/periods/'),
+  create: (data: object) => api.post('/budgets/periods/', data),
+  update: (id: string, data: object) => api.patch(`/budgets/periods/${id}/`, data),
+  approve: (id: string) => api.post(`/budgets/periods/${id}/approve/`),
+}
+
+/** GL-account-level allocations of a Budget's total (Phase 5). */
+export const budgetAllocationApi = {
+  list: (params?: { budget?: string }) => api.get('/budgets/allocations/', { params }),
+  create: (data: object) => api.post('/budgets/allocations/', data),
+  update: (id: string, data: object) => api.patch(`/budgets/allocations/${id}/`, data),
+  delete: (id: string) => api.delete(`/budgets/allocations/${id}/`),
+}
+
 export const recurringApi = {
   list: () => api.get('/sales/recurring/'),
   create: (data: object) => api.post('/sales/recurring/', data),
@@ -2023,11 +2052,13 @@ export const importApi = {
   // Employee bulk import — same shape as customers/accounts (no AI column
   // mapping needed for this one), see ImportEmployeesView on the backend.
   employees: (file: File) => _importPost('/import/employees/', file),
+  purchase_orders: (file: File) => _importPost('/import/purchase_orders/', file),
+  budgets: (file: File) => _importPost('/import/budgets/', file),
   /** POST /import/suggest-mapping/ — AI column name mapper */
   suggestMapping: (entity: string, headers: string[]) =>
     api.post('/import/suggest-mapping/', { entity, headers }),
   /** GET /import/template/<entity>/ — download CSV template */
-  templateUrl: (entity: 'products' | 'customers' | 'suppliers' | 'accounts' | 'employees') =>
+  templateUrl: (entity: 'products' | 'customers' | 'suppliers' | 'accounts' | 'employees' | 'purchase_orders' | 'budgets') =>
     `/import/template/${entity}/`,
 }
 

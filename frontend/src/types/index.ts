@@ -416,6 +416,9 @@ export interface PurchaseOrder {
   receipt: string | null
   created_at: string
   items?: PurchaseOrderItem[]
+  billed_before_receipt?: boolean
+  bill_id?: string | null
+  bill_number?: string | null
 }
 
 export interface PurchaseReturnItem {
@@ -444,6 +447,34 @@ export interface PurchaseReturn {
   total_amount: string
   gl_post_status: string
   items: PurchaseReturnItem[]
+  created_at: string
+}
+
+export interface SaleReturnItem {
+  id: string
+  original_item: string
+  product: string
+  product_name: string
+  product_sku: string
+  quantity_returned: string
+  unit_price: string
+  refund_amount: string
+}
+
+export interface SaleReturn {
+  id: string
+  return_number: string
+  invoice: string
+  invoice_number: string
+  customer_name: string | null
+  reason: 'defective' | 'wrong_item' | 'customer_change' | 'overcharge' | 'other'
+  notes: string
+  return_date: string
+  total_refund: string
+  restocked: boolean
+  processed_by: string
+  processed_by_name: string | null
+  items: SaleReturnItem[]
   created_at: string
 }
 
@@ -1432,17 +1463,27 @@ export interface BudgetLine {
   category: string | null
   category_name: string
   category_type: 'expense' | 'revenue'
+  /** Phase 7 (B6b): free-text refinement within revenue/expense. */
+  sub_category?: string
   period_month: number | null
   budgeted_amount: string
+  /** Phase 7 (B10): a planner's forward estimate, separate from the
+   * committed budgeted_amount — purely informational. */
+  forecast_amount?: string | null
   unit_price?: string | null
   quantity?: string
   description?: string
   actual_amount?: string
   variance?: string
+  /** Phase 7 (B10b): variance / budgeted_amount * 100, server-computed —
+   * only present on get_variance_report / get_monitoring_rows responses. */
+  variance_pct?: number
   /** Optional link to the real Chart of Accounts — additive, never required. */
   account?: string | null
   account_code?: string | null
   account_name?: string | null
+  /** Phase 7 (B6c): supporting document URL, if one was uploaded. */
+  attachment?: string | null
 }
 
 export interface Budget {
@@ -1460,6 +1501,45 @@ export interface Budget {
   approved_by: string | null
   approved_by_name?: string | null
   approved_at: string | null
+  /** Optional link to a named BudgetPeriod (Phase 5) — additive, null on
+   * every pre-existing budget. When set, BudgetAllocation actuals use the
+   * period's start/end date instead of the bare fiscal_year. */
+  period?: string | null
+  period_name?: string | null
+  /** Phase 6 (B7): a plain percentage used only for the client-computed
+   * Expected Profit / Tax / Budget Amount roll-up panel — not wired into
+   * TaxService/TaxConfig. Defaults to 0, never null. */
+  tax_rate: string
+}
+
+/** A named financial period (e.g. "FY2026", "Q1 2026") a Budget can be
+ * pinned to (GET/POST/PATCH /budgets/periods/). */
+export interface BudgetPeriod {
+  id: string
+  name: string
+  financial_year: number
+  start_date: string
+  end_date: string
+  status: 'draft' | 'active' | 'closed'
+  approved_by: string | null
+  approved_by_name?: string | null
+  approved_at: string | null
+}
+
+/** A GL-account-level allocation of a Budget's total
+ * (GET/POST/PATCH/DELETE /budgets/allocations/). spent_amount/remaining_amount
+ * are computed server-side from posted GL activity, not editable. */
+export interface BudgetAllocation {
+  id: string
+  budget: string
+  budget_name?: string | null
+  account: string
+  account_code?: string | null
+  account_name?: string | null
+  allocated_amount: string
+  spent_amount?: string
+  remaining_amount?: string
+  notes?: string
 }
 
 /** One row of the flat, cross-budget Budget Monitoring table
@@ -1472,10 +1552,13 @@ export interface BudgetMonitoringRow {
   budget_status: 'draft' | 'active' | 'closed'
   category_name: string
   category_type: 'expense' | 'revenue'
+  sub_category?: string
   period_month: number | null
   budgeted_amount: string
+  forecast_amount?: string | null
   actual_amount: string
   variance: string
+  variance_pct?: number
   over_budget: boolean
   account: { id: string; code: string; name: string } | null
 }

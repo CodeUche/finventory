@@ -89,6 +89,12 @@ export default function BillsPage() {
 
   const [showModal, setShowModal] = useState(false)
   const [editingBillId, setEditingBillId] = useState<string | null>(null)
+  // S4: a bill auto-created from a PO (on receipt, or via "Convert to Bill")
+  // has its vendor, tax and line items DERIVED from that PO/receipt — freely
+  // rewriting them here would desync the bill from what was actually
+  // ordered/received, with nothing to reconcile back against. Set whenever
+  // editing such a bill; drives which fields below get locked read-only.
+  const [editingSourcePoNumber, setEditingSourcePoNumber] = useState<string | null>(null)
   const [form, setForm] = useState<BillForm>(BLANK_BILL)
   // Reviewer feedback: the New Bill modal read as cluttered/confusing — Folder,
   // Bill Status, and Reference are secondary to entering what's owed, so they're
@@ -163,6 +169,7 @@ export default function BillsPage() {
 
   const openCreate = () => {
     setEditingBillId(null)
+    setEditingSourcePoNumber(null)
     setForm(BLANK_BILL)
     setLines([{ ...BLANK_LINE }])
     setShowMoreOptions(false)
@@ -180,6 +187,7 @@ export default function BillsPage() {
 
   const openEdit = (b: Bill) => {
     setEditingBillId(b.id)
+    setEditingSourcePoNumber(b.source_po_number ?? null)
     const subtotal = parseFloat((b as any).subtotal ?? '0')
     const taxAmount = parseFloat(b.tax_amount ?? '0')
     const effectiveTaxPct = subtotal > 0 ? ((taxAmount / subtotal) * 100).toFixed(2) : '0'
@@ -490,15 +498,28 @@ export default function BillsPage() {
               <h2 className="text-lg font-bold text-white">{editingBillId ? 'Edit Bill' : 'New Bill'}</h2>
               <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-white"><X size={20} /></button>
             </div>
+            {editingSourcePoNumber && (
+              <div className="rounded-lg border border-brand-500/30 bg-brand-500/10 px-3 py-2 text-xs text-brand-300">
+                This bill was created from Purchase Order <span className="font-mono font-semibold">{editingSourcePoNumber}</span>.
+                Vendor, tax and line items come from the PO/receipt and are locked here to keep the two in sync — process a
+                Purchase Return on the PO if the quantities or amounts were wrong. Due date, folder, status and notes are
+                still yours to change.
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2">
                 <label className="text-xs text-slate-400 mb-1 block">Vendor *<FieldTooltip text="The supplier or company who sent you this bill. Select from your suppliers list, or enter a custom name." /></label>
-                <select className="input" value={form.supplier} onChange={(e) => setForm({ ...form, supplier: e.target.value, customVendor: '' })}>
+                <select
+                  className="input disabled:opacity-60 disabled:cursor-not-allowed"
+                  value={form.supplier}
+                  disabled={!!editingSourcePoNumber}
+                  onChange={(e) => setForm({ ...form, supplier: e.target.value, customVendor: '' })}
+                >
                   <option value="">— Select Vendor —</option>
                   <option value="other">Other / Custom Vendor</option>
                   {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </select>
-                {form.supplier === 'other' && (
+                {form.supplier === 'other' && !editingSourcePoNumber && (
                   <input
                     className="input mt-2"
                     placeholder="Enter vendor / supplier name"
@@ -522,8 +543,9 @@ export default function BillsPage() {
                 <label className="text-xs text-slate-400 mb-1 block">Tax Class or Rate %<FieldTooltip text="The VAT or tax charged by the supplier. Select a tax class or enter a percentage manually — e.g. 7.5 for 7.5% VAT." /></label>
                 <div className="flex gap-2">
                   <select
-                    className="input flex-1 text-sm"
+                    className="input flex-1 text-sm disabled:opacity-60 disabled:cursor-not-allowed"
                     value={form.tax_class_id}
+                    disabled={!!editingSourcePoNumber}
                     onChange={(e) => handleTaxClassChange(e.target.value)}
                   >
                     <option value="">— Tax Class —</option>
@@ -533,8 +555,9 @@ export default function BillsPage() {
                   </select>
                   <div className="relative w-24 shrink-0">
                     <input
-                      type="text" inputMode="decimal" className="input pr-6 text-sm" placeholder="0"
+                      type="text" inputMode="decimal" className="input pr-6 text-sm disabled:opacity-60 disabled:cursor-not-allowed" placeholder="0"
                       value={form.tax_percent}
+                      disabled={!!editingSourcePoNumber}
                       onChange={(e) => setForm({ ...form, tax_percent: e.target.value, tax_class_id: '' })}
                     />
                     <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs">%</span>
@@ -594,8 +617,9 @@ export default function BillsPage() {
                     <div className="grid grid-cols-12 gap-2 items-center">
                       <div className="col-span-5">
                         <select
-                          className="input py-1.5 text-sm"
+                          className="input py-1.5 text-sm disabled:opacity-60 disabled:cursor-not-allowed"
                           value={line.category_label}
+                          disabled={!!editingSourcePoNumber}
                           onChange={(e) => updateLine(i, 'category_label', e.target.value)}
                         >
                           <option value="">— Category (optional) —</option>
@@ -603,33 +627,38 @@ export default function BillsPage() {
                         </select>
                       </div>
                       <div className="col-span-2">
-                        <input type="number" min="1" className="input py-1.5 text-sm" placeholder="Qty" value={line.quantity} onChange={(e) => updateLine(i, 'quantity', e.target.value)} />
+                        <input type="number" min="1" className="input py-1.5 text-sm disabled:opacity-60 disabled:cursor-not-allowed" placeholder="Qty" value={line.quantity} disabled={!!editingSourcePoNumber} onChange={(e) => updateLine(i, 'quantity', e.target.value)} />
                       </div>
                       <div className="col-span-4">
-                        <AmountInput className="input py-1.5 text-sm" placeholder="Unit Cost" value={line.unit_cost} onChange={(v) => updateLine(i, 'unit_cost', v)} />
+                        <AmountInput className="input py-1.5 text-sm disabled:opacity-60 disabled:cursor-not-allowed" placeholder="Unit Cost" value={line.unit_cost} disabled={!!editingSourcePoNumber} onChange={(v) => updateLine(i, 'unit_cost', v)} />
                       </div>
-                      <div className="col-span-1 flex justify-center">
-                        <button onClick={() => setLines(lines.filter((_, idx) => idx !== i))} className="p-1 text-slate-500 hover:text-red-400 transition-colors"><Trash2 size={14} /></button>
-                      </div>
+                      {!editingSourcePoNumber && (
+                        <div className="col-span-1 flex justify-center">
+                          <button onClick={() => setLines(lines.filter((_, idx) => idx !== i))} className="p-1 text-slate-500 hover:text-red-400 transition-colors"><Trash2 size={14} /></button>
+                        </div>
+                      )}
                     </div>
                     <div className="text-xs text-slate-500 flex items-center gap-1 px-0.5 -mb-1">Description <FieldTooltip text="A short note about what this bill line is for. Helps you identify it later." /></div>
                     <input
-                      className="input py-1.5 text-sm"
+                      className="input py-1.5 text-sm disabled:opacity-60 disabled:cursor-not-allowed"
                       placeholder="Description"
                       value={line.description}
+                      disabled={!!editingSourcePoNumber}
                       onChange={(e) => updateLine(i, 'description', e.target.value)}
                     />
                     <label className="mt-1.5 flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
-                      <input type="checkbox" className="accent-brand-500" checked={line.capitalise} onChange={() => toggleCapitalise(i)} />
+                      <input type="checkbox" className="accent-brand-500" checked={line.capitalise} disabled={!!editingSourcePoNumber} onChange={() => toggleCapitalise(i)} />
                       Capitalise as fixed asset
                       <FieldTooltip text="Books this line to Fixed Assets (1500) instead of an expense and creates an asset record on approval." />
                     </label>
                   </div>
                 ))}
               </div>
-              <button onClick={() => setLines([...lines, { ...BLANK_LINE }])} className="btn-ghost text-sm mt-2 flex items-center gap-1">
-                <Plus size={13} /> Add Line
-              </button>
+              {!editingSourcePoNumber && (
+                <button onClick={() => setLines([...lines, { ...BLANK_LINE }])} className="btn-ghost text-sm mt-2 flex items-center gap-1">
+                  <Plus size={13} /> Add Line
+                </button>
+              )}
             </div>
 
             {/* Totals summary */}

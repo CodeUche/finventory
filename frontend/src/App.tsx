@@ -25,6 +25,7 @@ const StockPage = React.lazy(() => import('@/pages/inventory/StockPage'))
 const WarehousesPage = React.lazy(() => import('@/pages/inventory/WarehousesPage'))
 const BatchesPage = React.lazy(() => import('@/pages/inventory/BatchesPage'))
 const SalesPage = React.lazy(() => import('@/pages/sales/SalesPage'))
+const SalesReturnsPage = React.lazy(() => import('@/pages/sales/SalesReturnsPage'))
 const NewSalePage = React.lazy(() => import('@/pages/sales/NewSalePage'))
 const NewInvoicePage = React.lazy(() => import('@/pages/sales/NewInvoicePage'))
 const EditInvoicePage = React.lazy(() => import('@/pages/sales/EditInvoicePage'))
@@ -35,6 +36,7 @@ const CustomersPage = React.lazy(() => import('@/pages/customers/CustomersPage')
 const ExpensesPage = React.lazy(() => import('@/pages/expenses/ExpensesPage'))
 const CreditsPage = React.lazy(() => import('@/pages/CreditsPage'))
 const PurchasesPage = React.lazy(() => import('@/pages/PurchasesPage'))
+const PurchaseReturnsPage = React.lazy(() => import('@/pages/PurchaseReturnsPage'))
 const BillsPage = React.lazy(() => import('@/pages/BillsPage'))
 const BillFoldersPage = React.lazy(() => import('@/pages/bills/BillFoldersPage'))
 const SuppliersPage = React.lazy(() => import('@/pages/SuppliersPage'))
@@ -55,6 +57,8 @@ const HRAnalyticsPage = React.lazy(() => import('@/pages/payroll/HRAnalyticsPage
 const EmployeePortalPage = React.lazy(() => import('@/pages/ess/EmployeePortalPage'))
 const BudgetPage = React.lazy(() => import('@/pages/BudgetPage'))
 const BudgetMonitoringPage = React.lazy(() => import('@/pages/BudgetMonitoringPage'))
+const BudgetPeriodsPage = React.lazy(() => import('@/pages/BudgetPeriodsPage'))
+const BudgetAllocationsPage = React.lazy(() => import('@/pages/BudgetAllocationsPage'))
 const ReportsPage = React.lazy(() => import('@/pages/reports/ReportsPage'))
 const BalanceSheetPage = React.lazy(() => import('@/pages/reports/BalanceSheetPage'))
 const SalesByCustomerPage = React.lazy(() => import('@/pages/reports/SalesByCustomerPage'))
@@ -345,6 +349,7 @@ export default function App() {
 
         {/* Sales */}
         <Route path="sales"     element={<ModuleRoute module="sales"><SalesPage /></ModuleRoute>} />
+        <Route path="sales/returns" element={<ModuleRoute module="sales"><SalesReturnsPage /></ModuleRoute>} />
         <Route path="sales/new" element={<WriteModuleRoute module="sales"><NewSalePage /></WriteModuleRoute>} />
         <Route path="sales/invoices/new" element={<WriteModuleRoute module="sales"><NewInvoicePage /></WriteModuleRoute>} />
         <Route path="sales/invoices/:id/edit" element={<WriteModuleRoute module="sales"><EditInvoicePage /></WriteModuleRoute>} />
@@ -354,6 +359,7 @@ export default function App() {
 
         {/* Procurement */}
         <Route path="purchases"      element={<ModuleRoute module="purchases"><PurchasesPage /></ModuleRoute>} />
+        <Route path="purchases/returns" element={<ModuleRoute module="purchases"><PurchaseReturnsPage /></ModuleRoute>} />
         <Route path="bills"          element={<ModuleRoute module="bills"><BillsPage /></ModuleRoute>} />
         <Route path="bills/folders"  element={<ModuleRoute module="bills"><BillFoldersPage /></ModuleRoute>} />
         <Route path="suppliers"      element={<ModuleRoute module="suppliers"><SuppliersPage /></ModuleRoute>} />
@@ -391,6 +397,8 @@ export default function App() {
         <Route path="expenses"              element={<ModuleRoute module="expenses"><ExpensesPage /></ModuleRoute>} />
         <Route path="budgets"               element={<ModuleRoute module="budget"><BudgetPage /></ModuleRoute>} />
         <Route path="budgets/monitoring"    element={<ModuleRoute module="budget"><BudgetMonitoringPage /></ModuleRoute>} />
+        <Route path="budgets/periods"       element={<ModuleRoute module="budget"><BudgetPeriodsPage /></ModuleRoute>} />
+        <Route path="budgets/allocations"   element={<ModuleRoute module="budget"><BudgetAllocationsPage /></ModuleRoute>} />
         <Route path="reports"                       element={<ModuleRoute module="reports"><ReportsPage /></ModuleRoute>} />
         <Route path="reports/balance-sheet"         element={<ModuleRoute module="accounting"><BalanceSheetPage /></ModuleRoute>} />
         <Route path="reports/stock"                 element={<ModuleRoute module="inventory"><StockReportsPage /></ModuleRoute>} />

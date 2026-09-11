@@ -1,3 +1,4 @@
+from datetime import date
 from decimal import Decimal
 from django.db.models import Sum, Q
 from .models import Budget, BudgetLine
@@ -70,6 +71,44 @@ class BudgetService:
         return agg['t'] or Decimal('0')
 
     @staticmethod
+    def get_allocation_actuals(allocation):
+        """
+        Spent/remaining for a single BudgetAllocation, derived directly from
+        posted GL activity on allocation.account — same debit/credit-normal
+        netting idiom as _actual_for_line above, but keyed off a date RANGE
+        rather than a fiscal year + optional month.
+
+        Date range: the allocation's Budget's BudgetPeriod (start_date/
+        end_date) when set; otherwise the whole calendar fiscal_year as a
+        fallback so allocations on a period-less (legacy) Budget still work.
+        """
+        org = allocation.organisation
+        budget = allocation.budget
+        if budget.period_id:
+            start = budget.period.start_date
+            end = budget.period.end_date
+        else:
+            start = date(budget.fiscal_year, 1, 1)
+            end = date(budget.fiscal_year, 12, 31)
+
+        qs = JournalLine.objects.filter(
+            journal_entry__organisation=org,
+            journal_entry__status=JournalEntry.POSTED,
+            account_id=allocation.account_id,
+            journal_entry__entry_date__gte=start,
+            journal_entry__entry_date__lte=end,
+        )
+        agg = qs.aggregate(d=Sum('debit'), c=Sum('credit'))
+        debits = agg['d'] or Decimal('0')
+        credits = agg['c'] or Decimal('0')
+        if allocation.account.effective_normal_balance == 'debit':
+            spent_amount = debits - credits
+        else:
+            spent_amount = credits - debits
+        remaining_amount = allocation.allocated_amount - spent_amount
+        return {'spent_amount': spent_amount, 'remaining_amount': remaining_amount}
+
+    @staticmethod
     def get_variance_report(budget):
         lines = budget.lines.all()
         org = budget.organisation
@@ -77,14 +116,18 @@ class BudgetService:
         for line in lines:
             actual = BudgetService._actual_for_line(line, budget, org)
             variance = line.budgeted_amount - actual
+            variance_pct = float(variance / line.budgeted_amount * 100) if line.budgeted_amount else 0.0
             result.append({
                 'id': str(line.id),
                 'category_name': line.category_name,
                 'category_type': line.category_type,
+                'sub_category': line.sub_category,
                 'period_month': line.period_month,
                 'budgeted_amount': line.budgeted_amount,
+                'forecast_amount': line.forecast_amount,
                 'actual_amount': actual,
                 'variance': variance,
+                'variance_pct': variance_pct,
                 'over_budget': variance < 0,
             })
         return result
@@ -109,6 +152,7 @@ class BudgetService:
             for line in budget.lines.all():
                 actual = BudgetService._actual_for_line(line, budget, org)
                 variance = line.budgeted_amount - actual
+                variance_pct = float(variance / line.budgeted_amount * 100) if line.budgeted_amount else 0.0
                 account = None
                 if line.account_id:
                     account = {
@@ -124,10 +168,13 @@ class BudgetService:
                     'budget_status': budget.status,
                     'category_name': line.category_name,
                     'category_type': line.category_type,
+                    'sub_category': line.sub_category,
                     'period_month': line.period_month,
                     'budgeted_amount': line.budgeted_amount,
+                    'forecast_amount': line.forecast_amount,
                     'actual_amount': actual,
                     'variance': variance,
+                    'variance_pct': variance_pct,
                     'over_budget': variance < 0,
                     'account': account,
                 })

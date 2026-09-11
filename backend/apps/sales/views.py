@@ -327,7 +327,8 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
             "notes": "...",            (optional)
             "issue_date": "YYYY-MM-DD",
             "due_date": "YYYY-MM-DD",
-            "payment_method": "..."
+            "payment_method": "...",
+            "shipping_amount": "..."   (optional; omit to leave unchanged)
           }
         """
         if not self._check_invoice_edit_permission(request):
@@ -381,6 +382,7 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
                 issue_date=parse_date(request.data.get("issue_date")),
                 due_date=parse_date(request.data.get("due_date")),
                 payment_method=request.data.get("payment_method"),
+                shipping_amount=request.data.get("shipping_amount"),
             )
         except (ValueError, Exception) as exc:
             logger.error("[edit_lines] %s – %s", type(exc).__name__, exc)
@@ -1138,13 +1140,20 @@ class SaleReturnViewSet(TenantFilterMixin, viewsets.ReadOnlyModelViewSet):
 
     serializer_class = SaleReturnSerializer
     permission_classes = [IsAuthenticated, IsStaff, _ModAccess_sales]
-    search_fields = ["return_number", "invoice__invoice_number"]
+    search_fields = ["return_number", "invoice__invoice_number", "invoice__customer__name"]
 
     def get_queryset(self):
         org = self._get_organisation()
-        return SaleReturn.objects.filter(organisation=org).select_related(
-            "invoice", "processed_by"
+        qs = SaleReturn.objects.filter(organisation=org).select_related(
+            "invoice", "invoice__customer", "processed_by"
         ).prefetch_related("items__product")
+        date_from = self.request.query_params.get("date_from")
+        date_to = self.request.query_params.get("date_to")
+        if date_from:
+            qs = qs.filter(return_date__gte=date_from)
+        if date_to:
+            qs = qs.filter(return_date__lte=date_to)
+        return qs
 
 
 class RecurringInvoiceViewSet(TenantFilterMixin, viewsets.ModelViewSet):

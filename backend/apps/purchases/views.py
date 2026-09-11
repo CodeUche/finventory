@@ -44,7 +44,7 @@ class PurchaseOrderViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet
 
     def get_queryset(self):
         org = self._get_organisation()
-        qs = PurchaseOrder.objects.filter(organisation=org).select_related("supplier", "warehouse").prefetch_related("items__product")
+        qs = PurchaseOrder.objects.filter(organisation=org).select_related("supplier", "warehouse").prefetch_related("items__product", "bills_from_po")
         date_from = self.request.query_params.get('date_from')
         date_to = self.request.query_params.get('date_to')
         if date_from:
@@ -124,6 +124,22 @@ class PurchaseOrderViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet
         except ValueError as exc:
             # Over-receipt or a closed order — the service is the single place
             # both receive paths are checked (NEW-12).
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(PurchaseOrderSerializer(po).data)
+
+    @action(detail=True, methods=["post"], url_path="convert-to-bill")
+    def convert_to_bill(self, request, pk=None):
+        """
+        POST /api/v1/purchases/orders/{id}/convert-to-bill/
+
+        Bill the supplier for this PO's full ordered value before any goods
+        have been physically received — for when the invoice arrives first.
+        See PurchaseService.convert_to_bill for the accounting behind it.
+        """
+        po = self.get_object()
+        try:
+            po = PurchaseService.convert_to_bill(po, request.user)
+        except ValueError as exc:
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(PurchaseOrderSerializer(po).data)
 
@@ -219,13 +235,20 @@ class PurchaseReturnViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, IsStaff, _PlanPurchases, _ModAccess_purchases]
     http_method_names = ["get", "post", "head", "options"]
     filterset_fields = ["supplier", "purchase_order"]
-    search_fields = ["return_number"]
+    search_fields = ["return_number", "supplier__name", "purchase_order__po_number"]
 
     def get_queryset(self):
         org = self._get_organisation()
-        return (PurchaseReturn.objects.filter(organisation=org)
-                .select_related("supplier", "purchase_order")
-                .prefetch_related("items__product"))
+        qs = (PurchaseReturn.objects.filter(organisation=org)
+              .select_related("supplier", "purchase_order")
+              .prefetch_related("items__product"))
+        date_from = self.request.query_params.get("date_from")
+        date_to = self.request.query_params.get("date_to")
+        if date_from:
+            qs = qs.filter(return_date__gte=date_from)
+        if date_to:
+            qs = qs.filter(return_date__lte=date_to)
+        return qs
 
     def create(self, request, *args, **kwargs):
         from apps.inventory.models import Product

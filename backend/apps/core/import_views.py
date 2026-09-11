@@ -84,6 +84,29 @@ EMPLOYEE_OPTIONAL = [
 ]
 EMPLOYEE_ALL = EMPLOYEE_REQUIRED + EMPLOYEE_OPTIONAL
 
+# Purchase Orders: one CSV ROW per PO LINE, not per PO — a multi-line PO
+# repeats its header columns (po_number, supplier_name, ...) on every one of
+# its line rows. Rows are grouped by po_number: the first row seen for a
+# given po_number creates the PO header, every subsequent row with the same
+# po_number adds another line to it. po_number is therefore required (not
+# auto-generated) — importing is for bringing EXISTING historical PO numbers
+# across from an old system, where an auto-grouping heuristic would be both
+# unnecessary and unreliable.
+PURCHASE_ORDER_REQUIRED = ["po_number", "supplier_name", "warehouse_name", "order_date", "product_sku", "quantity", "unit_cost"]
+PURCHASE_ORDER_OPTIONAL = ["expected_date", "discount_percent", "delivery_amount", "notes"]
+PURCHASE_ORDER_ALL = PURCHASE_ORDER_REQUIRED + PURCHASE_ORDER_OPTIONAL
+
+# Budgets: same one-row-per-LINE / grouped-by-header convention as Purchase
+# Orders above. A budget is identified by (budget_name, fiscal_year) — the
+# first row seen for that pair creates the Budget header, every subsequent
+# row with the same pair adds another BudgetLine to it. Create-only, same
+# reasoning as PurchaseOrders: a Budget already has its own edit screen
+# (including the monthly grid), so silently rewriting an existing budget's
+# lines from a re-imported file could clobber in-progress editing.
+BUDGET_REQUIRED = ["budget_name", "fiscal_year", "category_name", "category_type", "budgeted_amount"]
+BUDGET_OPTIONAL = ["period_month", "sub_category", "account_code", "forecast_amount", "budget_type", "notes"]
+BUDGET_ALL = BUDGET_REQUIRED + BUDGET_OPTIONAL
+
 VALID_EMPLOYMENT_TYPES = ["full_time", "part_time", "contract"]
 VALID_GENDERS = ["male", "female", ""]
 VALID_MARITAL_STATUSES = ["single", "married", "divorced", "widowed", ""]
@@ -1224,6 +1247,386 @@ class ImportEmployeesView(APIView):
 
 
 # ---------------------------------------------------------------------------
+# Purchase Order import
+# ---------------------------------------------------------------------------
+
+class ImportPurchaseOrdersView(APIView):
+    """
+    Bulk-create Purchase Orders (with their line items) from a CSV file.
+
+    One CSV row per PO LINE — see PURCHASE_ORDER_REQUIRED's comment above for
+    the grouping rule. Existing purchase orders (matched by po_number) are
+    left untouched: unlike the other importers this is create-only, since a
+    PO already has its own edit screen and its own receive/convert workflow —
+    silently rewriting an in-progress PO's lines out from under a partial
+    receipt would corrupt quantity_received bookkeeping.
+    """
+
+    permission_classes = [IsAuthenticated, IsVerified, IsManagerOrSuperuser]
+
+    def post(self, request):
+        org = _get_or_resolve_org(request)
+        if not org:
+            return Response({"error": "Organisation not found"}, status=400)
+
+        file_obj = request.FILES.get("file")
+        if not file_obj:
+            return Response({"error": "No file uploaded"}, status=400)
+
+        try:
+            headers, rows = _parse_csv(file_obj)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=400)
+
+        ok, used = _check_import_quota(org, len(rows))
+        if not ok:
+            return Response(
+                {"error": f"Daily import quota exceeded ({DAILY_IMPORT_ROW_QUOTA:,} rows/day, {used:,} already used today). Try again tomorrow."},
+                status=429,
+            )
+
+        missing_cols = [c for c in PURCHASE_ORDER_REQUIRED if c not in headers]
+        if missing_cols:
+            return Response(
+                {"error": f"CSV missing required columns: {', '.join(missing_cols)}"},
+                status=400,
+            )
+
+        from django.db import transaction
+        from apps.suppliers.models import Supplier
+        from apps.inventory.models import Product, Warehouse
+        from apps.purchases.models import PurchaseOrder, PurchaseOrderItem
+
+        errors = []
+        supplier_cache: dict[str, "Supplier | None"] = {}
+        warehouse_cache: dict[str, "Warehouse | None"] = {}
+        product_cache: dict[str, "Product | None"] = {}
+
+        def _get_supplier(name):
+            key = name.strip().lower()
+            if key not in supplier_cache:
+                supplier_cache[key] = Supplier.objects.filter(organisation=org, name__iexact=name.strip()).first()
+            return supplier_cache[key]
+
+        def _get_warehouse(name):
+            key = name.strip().lower()
+            if key not in warehouse_cache:
+                warehouse_cache[key] = Warehouse.objects.filter(organisation=org, name__iexact=name.strip()).first()
+            return warehouse_cache[key]
+
+        def _get_product(sku):
+            key = sku.strip().lower()
+            if key not in product_cache:
+                product_cache[key] = Product.objects.filter(organisation=org, sku__iexact=sku.strip()).first()
+            return product_cache[key]
+
+        # Pass 1: validate every row and group into per-PO line lists. Nothing
+        # is written to the database until every row in the file has passed —
+        # same all-or-nothing contract as the other importers, so a mistake on
+        # row 40 of a 50-row file doesn't leave 39 POs half-created.
+        po_groups: dict[str, dict] = {}
+        already_existing = set(
+            PurchaseOrder.objects.filter(organisation=org).values_list("po_number", flat=True)
+        )
+
+        for idx, row in enumerate(rows, start=2):
+            row_num = idx
+            if _missing_required(row, PURCHASE_ORDER_REQUIRED, errors, row_num):
+                continue
+
+            po_number = row["po_number"].strip()
+            if po_number in already_existing:
+                errors.append({"row": row_num, "field": "po_number",
+                               "message": f"Purchase order '{po_number}' already exists — import is create-only, skipping this row."})
+                continue
+
+            supplier = _get_supplier(row["supplier_name"])
+            if supplier is None:
+                errors.append({"row": row_num, "field": "supplier_name",
+                               "message": f"Supplier '{row['supplier_name']}' not found. Import suppliers first."})
+                continue
+
+            warehouse = _get_warehouse(row["warehouse_name"])
+            if warehouse is None:
+                errors.append({"row": row_num, "field": "warehouse_name",
+                               "message": f"Warehouse '{row['warehouse_name']}' not found. Add it first under Inventory → Warehouses."})
+                continue
+
+            product = _get_product(row["product_sku"])
+            if product is None:
+                errors.append({"row": row_num, "field": "product_sku",
+                               "message": f"Product SKU '{row['product_sku']}' not found. Import products first."})
+                continue
+
+            order_date = _date_val(row["order_date"], "order_date", errors, row_num)
+            if order_date is None:
+                continue
+
+            expected_date = None
+            if (row.get("expected_date") or "").strip():
+                expected_date = _date_val(row["expected_date"], "expected_date", errors, row_num)
+                if expected_date is None:
+                    continue
+
+            quantity = _money(row["quantity"], "quantity", errors, row_num)
+            if quantity is None or quantity <= 0:
+                if quantity is not None:
+                    errors.append({"row": row_num, "field": "quantity", "message": "Quantity must be greater than zero"})
+                continue
+
+            unit_cost = _money(row["unit_cost"], "unit_cost", errors, row_num)
+            if unit_cost is None:
+                continue
+
+            discount_percent = Decimal("0")
+            if (row.get("discount_percent") or "").strip():
+                discount_percent = _money(row["discount_percent"], "discount_percent", errors, row_num)
+                if discount_percent is None:
+                    continue
+
+            delivery_amount = Decimal("0")
+            if (row.get("delivery_amount") or "").strip():
+                delivery_amount = _money(row["delivery_amount"], "delivery_amount", errors, row_num)
+                if delivery_amount is None:
+                    continue
+
+            # Same VAT rule as the PO create API (PurchaseOrderItemSerializer.validate):
+            # tax comes from the product's OWN tax_class, never from the CSV.
+            gross = quantity * unit_cost
+            discount_amount = (gross * discount_percent / Decimal("100")).quantize(Decimal("0.01"))
+            after_discount = gross - discount_amount
+            tax_rate = Decimal("0")
+            if product.is_taxable and product.tax_class_id:
+                tax_rate = product.tax_class.rate
+            if product.tax_type == product.TaxType.INCLUSIVE and tax_rate > 0:
+                tax_amount = (after_discount * tax_rate / (Decimal("100") + tax_rate)).quantize(Decimal("0.01"))
+                line_total = after_discount
+            else:
+                tax_amount = (after_discount * tax_rate / Decimal("100")).quantize(Decimal("0.01"))
+                line_total = after_discount + tax_amount
+
+            group = po_groups.setdefault(po_number, {
+                "supplier": supplier, "warehouse": warehouse,
+                "order_date": order_date, "expected_date": expected_date,
+                "delivery_amount": delivery_amount,
+                "notes": row.get("notes", ""),
+                "lines": [],
+                "first_row": row_num,
+            })
+            # A PO's header fields are read from its FIRST row only — later
+            # rows for the same po_number only ever contribute a line, so a
+            # typo'd supplier/warehouse/date on row 2 of a 3-line PO can't
+            # quietly change what rows 1 and 3 already committed to.
+            group["lines"].append({
+                "product": product, "quantity_ordered": quantity, "unit_cost": unit_cost,
+                "discount_percent": discount_percent, "discount_amount": discount_amount,
+                "tax_rate": tax_rate, "tax_amount": tax_amount, "line_total": line_total,
+            })
+
+        if not po_groups:
+            return Response({
+                "created": 0, "purchase_orders_created": 0, "errors": errors, "total_rows": len(rows),
+            })
+
+        # Pass 2: everything validated — write it.
+        created_pos = 0
+        created_lines = 0
+        with transaction.atomic():
+            for po_number, group in po_groups.items():
+                subtotal = sum((l["quantity_ordered"] * l["unit_cost"] - l["discount_amount"]) for l in group["lines"])
+                tax_total = sum(l["tax_amount"] for l in group["lines"])
+                total_amount = subtotal + tax_total + group["delivery_amount"]
+
+                po = PurchaseOrder.objects.create(
+                    organisation=org,
+                    po_number=po_number,
+                    supplier=group["supplier"],
+                    warehouse=group["warehouse"],
+                    status=PurchaseOrder.Status.SENT,
+                    order_date=group["order_date"],
+                    expected_date=group["expected_date"],
+                    subtotal=subtotal,
+                    tax_amount=tax_total,
+                    delivery_amount=group["delivery_amount"],
+                    total_amount=total_amount,
+                    notes=group["notes"],
+                    created_by=request.user,
+                )
+                for line in group["lines"]:
+                    PurchaseOrderItem.objects.create(organisation=org, purchase_order=po, **line)
+                    created_lines += 1
+                created_pos += 1
+
+        return Response({
+            "created": created_pos,
+            "purchase_orders_created": created_pos,
+            "lines_created": created_lines,
+            "errors": errors,
+            "total_rows": len(rows),
+        })
+
+
+class ImportBudgetsView(APIView):
+    """
+    Bulk-create Budgets (with their BudgetLines) from a CSV file.
+
+    One CSV row per BUDGET LINE — see BUDGET_REQUIRED's comment above for the
+    grouping rule. Existing budgets (matched by budget_name + fiscal_year)
+    are left untouched: create-only, same reasoning as
+    ImportPurchaseOrdersView above.
+    """
+
+    permission_classes = [IsAuthenticated, IsVerified, IsManagerOrSuperuser]
+
+    def post(self, request):
+        org = _get_or_resolve_org(request)
+        if not org:
+            return Response({"error": "Organisation not found"}, status=400)
+
+        file_obj = request.FILES.get("file")
+        if not file_obj:
+            return Response({"error": "No file uploaded"}, status=400)
+
+        try:
+            headers, rows = _parse_csv(file_obj)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=400)
+
+        ok, used = _check_import_quota(org, len(rows))
+        if not ok:
+            return Response(
+                {"error": f"Daily import quota exceeded ({DAILY_IMPORT_ROW_QUOTA:,} rows/day, {used:,} already used today). Try again tomorrow."},
+                status=429,
+            )
+
+        missing_cols = [c for c in BUDGET_REQUIRED if c not in headers]
+        if missing_cols:
+            return Response(
+                {"error": f"CSV missing required columns: {', '.join(missing_cols)}"},
+                status=400,
+            )
+
+        from django.db import transaction
+        from apps.accounting.models import Account
+        from apps.budgets.models import Budget, BudgetLine
+        from apps.budgets.views import BudgetViewSet as _BudgetViewSet
+
+        errors = []
+        account_cache: dict[str, "Account | None"] = {}
+
+        def _get_account(code):
+            key = code.strip().lower()
+            if key not in account_cache:
+                account_cache[key] = Account.objects.filter(organisation=org, code__iexact=code.strip()).first()
+            return account_cache[key]
+
+        # Pass 1: validate every row and group into per-budget line lists.
+        # Nothing is written until every row in the file has passed.
+        budget_groups: dict[tuple, dict] = {}
+        already_existing = set(
+            Budget.objects.filter(organisation=org).values_list("name", "fiscal_year")
+        )
+
+        for idx, row in enumerate(rows, start=2):
+            row_num = idx
+            if _missing_required(row, BUDGET_REQUIRED, errors, row_num):
+                continue
+
+            budget_name = row["budget_name"].strip()
+            fiscal_year = _int_val(row["fiscal_year"], "fiscal_year", errors, row_num)
+            if fiscal_year is None:
+                continue
+            key = (budget_name, fiscal_year)
+            if key in already_existing:
+                errors.append({"row": row_num, "field": "budget_name",
+                               "message": f"Budget '{budget_name}' ({fiscal_year}) already exists — import is create-only, skipping this row."})
+                continue
+
+            category_type = (row.get("category_type") or "").strip().lower()
+            if category_type not in (BudgetLine.EXPENSE, BudgetLine.REVENUE):
+                errors.append({"row": row_num, "field": "category_type",
+                               "message": f"category_type must be '{BudgetLine.EXPENSE}' or '{BudgetLine.REVENUE}', got '{category_type}'"})
+                continue
+
+            budgeted_amount = _money(row["budgeted_amount"], "budgeted_amount", errors, row_num)
+            if budgeted_amount is None:
+                continue
+
+            period_month = None
+            if (row.get("period_month") or "").strip():
+                period_month = _int_val(row["period_month"], "period_month", errors, row_num)
+                if period_month is None:
+                    continue
+                if period_month < 1 or period_month > 12:
+                    errors.append({"row": row_num, "field": "period_month", "message": "period_month must be between 1 and 12"})
+                    continue
+
+            forecast_amount = None
+            if (row.get("forecast_amount") or "").strip():
+                forecast_amount = _money(row["forecast_amount"], "forecast_amount", errors, row_num)
+                if forecast_amount is None:
+                    continue
+
+            account = None
+            if (row.get("account_code") or "").strip():
+                account = _get_account(row["account_code"])
+                if account is None:
+                    errors.append({"row": row_num, "field": "account_code",
+                                   "message": f"Account code '{row['account_code']}' not found in your Chart of Accounts."})
+                    continue
+
+            budget_type = (row.get("budget_type") or Budget.OPERATIONAL).strip().lower() or Budget.OPERATIONAL
+            if budget_type not in (Budget.OPERATIONAL, Budget.CAPITAL):
+                errors.append({"row": row_num, "field": "budget_type",
+                               "message": f"budget_type must be '{Budget.OPERATIONAL}' or '{Budget.CAPITAL}', got '{budget_type}'"})
+                continue
+
+            group = budget_groups.setdefault(key, {
+                "budget_type": budget_type, "notes": row.get("notes", ""), "lines": [],
+            })
+            # A budget's header fields (budget_type, notes) are read from its
+            # FIRST row only — later rows for the same (name, fiscal_year)
+            # pair only ever contribute a line, same rule as PO import.
+            group["lines"].append({
+                "category_name": row["category_name"].strip(),
+                "category_type": category_type,
+                "sub_category": (row.get("sub_category") or "").strip(),
+                "period_month": period_month,
+                "budgeted_amount": budgeted_amount,
+                "forecast_amount": forecast_amount,
+                "account": account,
+            })
+
+        if not budget_groups:
+            return Response({
+                "created": 0, "budgets_created": 0, "errors": errors, "total_rows": len(rows),
+            })
+
+        # Pass 2: everything validated — write it.
+        created_budgets = 0
+        created_lines = 0
+        with transaction.atomic():
+            for (budget_name, fiscal_year), group in budget_groups.items():
+                budget = Budget.objects.create(
+                    organisation=org, name=budget_name, fiscal_year=fiscal_year,
+                    budget_type=group["budget_type"], notes=group["notes"],
+                )
+                for line in group["lines"]:
+                    category = _BudgetViewSet._resolve_category(org, line["category_name"])
+                    BudgetLine.objects.create(organisation=org, budget=budget, category=category, **line)
+                    created_lines += 1
+                created_budgets += 1
+
+        return Response({
+            "created": created_budgets,
+            "budgets_created": created_budgets,
+            "lines_created": created_lines,
+            "errors": errors,
+            "total_rows": len(rows),
+        })
+
+
+# ---------------------------------------------------------------------------
 # Template download
 # ---------------------------------------------------------------------------
 
@@ -1233,6 +1636,8 @@ TEMPLATES = {
     "suppliers": SUPPLIER_ALL,
     "accounts": ACCOUNT_ALL,
     "employees": EMPLOYEE_ALL,
+    "purchase_orders": PURCHASE_ORDER_ALL,
+    "budgets": BUDGET_ALL,
 }
 
 SAMPLE_ROWS = {
@@ -1268,6 +1673,23 @@ SAMPLE_ROWS = {
          "", "", "", "", "", "", "Zenith Bank", "057", "0987654321", "Tunde Balogun",
          "", "", "", "", "LA", "200000.00", "60000.00", "25000.00", "10000.00", "0.00"],
     ],
+    # Column order must match PURCHASE_ORDER_ALL. One row per PO LINE — the two
+    # rows here share po_number "PO-0001", so they import as ONE two-line PO;
+    # "PO-0002" is a separate, single-line PO. Supplier, warehouse and product
+    # must already exist (import those first).
+    "purchase_orders": [
+        ["PO-0001", "ABC Distributors Ltd", "Main Warehouse", "2026-01-10", "SKU001", "24", "3200.00", "2026-01-20", "0", "5000", "First order of the year"],
+        ["PO-0001", "ABC Distributors Ltd", "Main Warehouse", "2026-01-10", "SKU002", "5", "1800.00", "2026-01-20", "0", "5000", "First order of the year"],
+        ["PO-0002", "Kobo Trading & Services Ltd", "Main Warehouse", "2026-02-01", "SKU001", "10", "3100.00", "", "5", "0", ""],
+    ],
+    # Column order must match BUDGET_ALL. One row per BUDGET LINE — the two
+    # rows here share budget_name+fiscal_year "2026 Operating Budget"/2026, so
+    # they import as ONE budget with two lines; "2026 Capex Plan" is separate.
+    "budgets": [
+        ["2026 Operating Budget", "2026", "Sales Revenue", "revenue", "5000000", "1", "Online Sales", "", "5500000", "operational", "Main annual plan"],
+        ["2026 Operating Budget", "2026", "Rent", "expense", "300000", "1", "", "", "300000", "operational", "Main annual plan"],
+        ["2026 Capex Plan", "2026", "New Equipment", "expense", "2000000", "", "", "", "", "capital", ""],
+    ],
 }
 
 
@@ -1278,7 +1700,7 @@ class ImportTemplateView(APIView):
         from django.http import HttpResponse
 
         if entity not in TEMPLATES:
-            return Response({"error": f"Unknown entity '{entity}'. Choose: products, customers, suppliers, accounts, employees"}, status=400)
+            return Response({"error": f"Unknown entity '{entity}'. Choose: products, customers, suppliers, accounts, employees, purchase_orders, budgets"}, status=400)
 
         columns = TEMPLATES[entity]
         sample_rows = SAMPLE_ROWS.get(entity, [])

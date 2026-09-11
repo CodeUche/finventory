@@ -113,8 +113,10 @@ class AccountMappingService:
     # Maps role name → (account_type list, code prefix list, name keywords)
     ROLE_HINTS = {
         'revenue_account':         (['revenue'],          ['4001', '4'],  ['sales', 'revenue', 'income']),
+        'shipping_income_account': (['revenue'],          ['4090', '4'],  ['shipping', 'delivery', 'freight', 'carriage']),
         'cogs_account':            (['cogs'],             ['5001', '5'],  ['cost', 'cogs', 'goods']),
         'inventory_account':       (['asset'],            ['1200', '12'], ['inventory', 'stock']),
+        'goods_in_transit_account': (['asset'],           ['1250'],       ['goods in transit', 'gr/ir', 'gr ir', 'unbilled receipt', 'clearing']),
         'accounts_receivable':     (['asset'],            ['1100', '11'], ['receivable', 'debtor']),
         'cash_account':            (['asset'],            ['1001', '10'], ['cash']),
         'bank_account':            (['asset'],            ['1002', '10'], ['bank', 'current account']),
@@ -129,6 +131,23 @@ class AccountMappingService:
         'general_expense_account': (['expense'],          ['6700', '67'], ['sundry', 'general', 'miscellaneous', 'other expenses']),
         'bank_charges_account':    (['expense'],          ['6500', '65'], ['bank charge', 'bank charges', 'commission', 'fee']),
     }
+
+    # For most roles above, a bare type-match (3 points, the threshold in
+    # _find_best_match) is an acceptable auto-guess — those roles are
+    # REQUIRED (checked in check_strict_gl_mode), so the system needs SOME
+    # account there and a wrong guess is easy to notice and correct via
+    # Settings. These two are different: they're optional, off-by-default
+    # roles whose whole point is "null means: fall back to existing
+    # behaviour, unless a human deliberately opts in". A prefix like '4' or
+    # '1' matches nearly every revenue/asset account in any seeded chart of
+    # accounts, so a bare type-match auto-fills them to essentially a random
+    # account (whichever sorts first) on EVERY new organisation, silently
+    # defeating that fallback the moment the org is created — caught only by
+    # a test that actually checked account CODES rather than trusting
+    # gl_post_status == 'posted'. Requiring an actual keyword hit means these
+    # only ever auto-suggest when an account genuinely named for the purpose
+    # already exists; otherwise they stay null until someone maps them by hand.
+    ROLES_REQUIRING_KEYWORD_MATCH = {'shipping_income_account', 'goods_in_transit_account'}
 
     @classmethod
     def get_item_class_defaults(cls, organisation) -> dict:
@@ -157,15 +176,26 @@ class AccountMappingService:
         for role, (types, prefixes, keywords) in cls.ROLE_HINTS.items():
             if getattr(mapping, f'{role}_id') is not None:
                 continue  # already set, don't overwrite
-            best = cls._find_best_match(accounts, types, prefixes, keywords)
+            require_kw = role in cls.ROLES_REQUIRING_KEYWORD_MATCH
+            best = cls._find_best_match(accounts, types, prefixes, keywords, require_keyword=require_kw)
             if best:
                 setattr(mapping, role, best)
         mapping.save()
 
     @classmethod
-    def _find_best_match(cls, accounts, types, prefixes, keywords):
-        """Score each account: type match (3pts) + code prefix (2pts) + keyword in name (1pt each)."""
-        best, best_score = None, 0
+    def _find_best_match(cls, accounts, types, prefixes, keywords, require_keyword=False):
+        """Score each account: type match (3pts) + code prefix (2pts) + keyword in name (1pt each).
+
+        require_keyword: when True, a bare type/prefix match (which nearly
+        every account of that type/prefix gets, in any seeded chart of
+        accounts) is not enough to qualify — at least one keyword must
+        actually appear in the account name. Use this for optional,
+        off-by-default roles where auto-filling a plausible-but-wrong
+        account would silently defeat their "null means fall back" design;
+        the required roles keep the looser threshold since the system needs
+        SOME account there and a merely-plausible guess is easy to correct.
+        """
+        best, best_score, best_had_keyword = None, 0, False
         for acct in accounts:
             score = 0
             if acct.account_type in types:
@@ -175,12 +205,16 @@ class AccountMappingService:
                     score += 2
                     break
             name_lower = acct.name.lower()
-            for kw in keywords:
-                if kw in name_lower:
-                    score += 1
+            had_keyword = any(kw in name_lower for kw in keywords)
+            if had_keyword:
+                score += sum(1 for kw in keywords if kw in name_lower)
             if score > best_score:
-                best, best_score = acct, score
-        return best if best_score >= 3 else None
+                best, best_score, best_had_keyword = acct, score, had_keyword
+        if best_score < 3:
+            return None
+        if require_keyword and not best_had_keyword:
+            return None
+        return best
 
     @classmethod
     def resolve(cls, organisation, role: str) -> 'Account':
@@ -197,7 +231,8 @@ class AccountMappingService:
         """Return the best-guess account without raising. Used for UI suggestions."""
         accounts = list(Account.objects.filter(organisation=organisation, is_deleted=False))
         hints = cls.ROLE_HINTS.get(role, ([], [], []))
-        return cls._find_best_match(accounts, *hints)
+        require_kw = role in cls.ROLES_REQUIRING_KEYWORD_MATCH
+        return cls._find_best_match(accounts, *hints, require_keyword=require_kw)
 
 
 class AccountingService:
@@ -1699,6 +1734,13 @@ class AccountingService:
             asset_account = ar_acct
 
         revenue_acct_default = AccountMappingService.resolve(organisation, 'revenue_account')
+        # Optional and deliberately non-raising, unlike .resolve() above: an org
+        # that has never configured this (every org before this field existed)
+        # must keep posting shipping to plain revenue exactly as before, not
+        # start throwing GLAccountNotConfigured on its next invoice with a
+        # delivery charge.
+        shipping_acct = AccountMappingService.get_or_create_mapping(organisation).shipping_income_account \
+            or revenue_acct_default
 
         # Per-item Sales/COGS/Wages overrides (Product.sales_account/cogs_account/
         # wages_account) only change how this journal is BUILT, never posted, so
@@ -1745,7 +1787,20 @@ class AccountingService:
             ]
 
         if not has_override:
-            lines.append((revenue_acct, zero, revenue))
+            invoice_shipping = Decimal(str(invoice.shipping_amount or 0))
+            if invoice_shipping != zero and shipping_acct.id != revenue_acct.id:
+                # A distinct shipping-income account is configured — split it
+                # out so the income statement shows delivery income separately
+                # from product/service revenue. `revenue` (total - tax) has
+                # shipping baked in, so the product-only credit is the
+                # remainder.
+                lines.append((revenue_acct, zero, revenue - invoice_shipping))
+                lines.append((shipping_acct, zero, invoice_shipping))
+            else:
+                # No distinct account configured (the default for every org
+                # before this field existed) — unchanged: one line, shipping
+                # bundled into plain revenue exactly as before.
+                lines.append((revenue_acct, zero, revenue))
         else:
             # Per-item buckets can only ever account for the ITEM lines. An
             # invoice's delivery/shipping charge belongs to no item, so it has
@@ -1753,14 +1808,13 @@ class AccountingService:
             # exactly the shipping amount and post_journal_entry rejects the
             # whole invoice. The non-override branch above never hit this
             # because its single `revenue` figure (total - tax) already
-            # carries the shipping inside it. Shipping goes to the org's
-            # default revenue account, which is precisely where the
-            # non-override branch puts it too - so a shipped invoice posts to
-            # the same account whether or not any item overrides its own.
+            # carries the shipping inside it. Shipping goes to the resolved
+            # shipping-income account (falling back to plain revenue when
+            # unconfigured), matching the non-override branch above.
             shipping = Decimal(str(invoice.shipping_amount or 0))
             revenue_buckets = {}
             if shipping != zero:
-                revenue_buckets[revenue_acct_default.id] = [revenue_acct_default, shipping]
+                revenue_buckets[shipping_acct.id] = [shipping_acct, shipping]
             for i in items:
                 amt = Decimal(str(i.line_total or 0)) - Decimal(str(i.tax_amount or 0))
                 if amt == 0:

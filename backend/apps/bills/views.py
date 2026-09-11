@@ -86,7 +86,7 @@ class BillViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
 
     def get_queryset(self):
         org = self._get_organisation()
-        qs = Bill.objects.filter(organisation=org).select_related('supplier').prefetch_related('items', 'payments')
+        qs = Bill.objects.filter(organisation=org).select_related('supplier', 'source_purchase_order').prefetch_related('items', 'payments')
         status_f = self.request.query_params.get('status')
         if status_f:
             qs = qs.filter(status=status_f)

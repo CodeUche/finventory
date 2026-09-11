@@ -203,6 +203,25 @@ class SupplierViewSet(FriendlyUniqueErrorMixin, TenantFilterMixin, viewsets.Mode
             + all_time_billed - all_time_paid - all_time_returned
         )
 
+        # Balance brought forward — same derivation as CustomerViewSet.statement:
+        # walk the always-correct current_balance BACKWARD by undoing everything
+        # dated on or after date_from, rather than forward from the take-on
+        # (simpler here than in reverse, but kept identical in shape/reasoning
+        # for the two statements to stay consistent).
+        future_billed = Decimal(str(
+            Bill.objects.filter(organisation=request.organisation, supplier=supplier, issue_date__gte=date_from)
+            .exclude(status=Bill.VOIDED).aggregate(t=Sum("total_amount"))["t"] or 0
+        ))
+        future_paid = Decimal(str(
+            BillPayment.objects.filter(organisation=request.organisation, bill__supplier=supplier, payment_date__gte=date_from)
+            .aggregate(t=Sum("amount"))["t"] or 0
+        ))
+        future_returned = Decimal(str(
+            PurchaseReturn.objects.filter(organisation=request.organisation, supplier=supplier, return_date__gte=date_from)
+            .aggregate(t=Sum("total_amount"))["t"] or 0
+        ))
+        opening_balance = current_balance - (future_billed - future_paid - future_returned)
+
         return Response({
             "supplier": SupplierSerializer(supplier).data,
             "period_start": date_from,
@@ -220,11 +239,14 @@ class SupplierViewSet(FriendlyUniqueErrorMixin, TenantFilterMixin, viewsets.Mode
                 for r in returns_qs
             ],
             "summary": {
+                "opening_balance": str(opening_balance),
                 "total_billed": str(total_billed),
                 "total_tax": str(total_tax),
                 "total_returns": str(total_returns),
                 "total_paid": str(total_paid),
-                "balance_due": str(total_billed - total_paid - total_returns),
+                # Now includes the opening balance, so this ties out to
+                # current_balance whenever date_to is today.
+                "balance_due": str(opening_balance + total_billed - total_paid - total_returns),
                 "outstanding_balance": str(current_balance),
                 "payment_by_method": payment_by_method,
             },

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, Minus, Plus, Search, Trash2, User, AlertTriangle, Loader2, Info } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { customerApi, inventoryApi, salesApi } from '@/services/api'
+import { customerApi, inventoryApi, salesApi, taxApi } from '@/services/api'
 import { formatCurrency, stripCommas } from '@/lib/utils'
 import AmountInput from '@/components/AmountInput'
 import EditableTotal from '@/components/EditableTotal'
@@ -121,10 +121,41 @@ export default function EditInvoicePage() {
 
   const removeFromCart = (id: string) => setCart((prev) => prev.filter((c) => c.product.id !== id))
 
+  // VAT preview — mirrors NewInvoicePage's calc exactly (exclusive tax only;
+  // matches what the backend's _process_line_item actually posts on save) so
+  // editing an invoice shows the same figures creating one would have.
+  const [taxRates, setTaxRates] = useState<Record<string, number>>({})
+  useEffect(() => {
+    taxApi.classes().then(({ data }) => {
+      const list = data.results ?? data
+      const map: Record<string, number> = {}
+      for (const cls of list) map[cls.id] = parseFloat(cls.rate)
+      setTaxRates(map)
+    }).catch(() => {})
+  }, [])
+
+  const lineVat = (c: CartItem) => {
+    if (!c.product.is_taxable || !c.product.tax_class) return 0
+    const rate = taxRates[c.product.tax_class] ?? 0
+    const lineSubtotal = c.unit_price * c.quantity
+    const afterDiscount = lineSubtotal - (lineSubtotal * c.discount_percent) / 100
+    return (afterDiscount * rate) / 100
+  }
+
+  // Delivery / shipping — editable here for parity with New Invoice; seeded
+  // from the invoice's existing value in load() below.
+  const [shippingAmount, setShippingAmount] = useState('')
+  const shippingNum = parseFloat(stripCommas(shippingAmount)) || 0
+
   // Totals
-  const subtotal     = cart.reduce((s, c) => s + c.unit_price * c.quantity, 0)
+  const subtotal      = cart.reduce((s, c) => s + c.unit_price * c.quantity, 0)
   const discountTotal = cart.reduce((s, c) => s + (c.unit_price * c.quantity * c.discount_percent) / 100, 0)
-  const grandTotal   = subtotal - discountTotal
+  const taxTotal      = cart.reduce((s, c) => s + lineVat(c), 0)
+  // Line-items-only total (post-discount, pre-VAT) — what EditableTotal back-
+  // solves unit prices against, same reasoning as New Invoice: it has no
+  // notion of tax or shipping, so those must never be folded into its target.
+  const lineItemsTotal = subtotal - discountTotal
+  const grandTotal    = lineItemsTotal + taxTotal + shippingNum
 
   // Warehouses
   const [warehouses, setWarehouses] = useState<WarehouseType[]>([])
@@ -156,6 +187,7 @@ export default function EditInvoicePage() {
       setPaymentMethod((inv as any).payment_method ?? 'cash')
       setIssueDate(isoToDDMMYYYY(inv.issue_date ?? ''))
       setDueDate(isoToDDMMYYYY((inv as any).due_date ?? ''))
+      setShippingAmount((inv as any).shipping_amount && parseFloat((inv as any).shipping_amount) > 0 ? String((inv as any).shipping_amount) : '')
 
       // Pre-populate customer display
       if ((inv as any).customer_name) {
@@ -212,6 +244,7 @@ export default function EditInvoicePage() {
         due_date: ddmmyyyyToISO(dueDate) || undefined,
         warehouse_id: selectedWarehouse || undefined,
         customer_id: selectedCustomer?.id ?? null,
+        shipping_amount: shippingNum.toFixed(4),
       }
 
       await salesApi.editLines(id, payload)
@@ -324,6 +357,7 @@ export default function EditInvoicePage() {
                           <th className="pb-2 text-center w-28">Qty</th>
                           <th className="pb-2 text-right w-32">Unit Price</th>
                           <th className="pb-2 text-right w-20">Disc %</th>
+                          <th className="pb-2 text-right w-24">VAT</th>
                           <th className="pb-2 text-right w-28">Line Total</th>
                           <th className="pb-2 w-8" />
                         </tr>
@@ -367,6 +401,9 @@ export default function EditInvoicePage() {
                                   className="input text-right w-16 text-sm py-1.5"
                                 />
                               </td>
+                              <td className="py-2.5 text-right text-slate-400" title={c.product.is_taxable && c.product.tax_class ? `${(taxRates[c.product.tax_class] ?? 0)}% VAT` : 'Not taxable'}>
+                                {c.product.is_taxable && c.product.tax_class ? formatCurrency(lineVat(c)) : '—'}
+                              </td>
                               <td className="py-2.5 text-right font-medium text-white">
                                 {formatCurrency(lineTotal)}
                               </td>
@@ -389,13 +426,24 @@ export default function EditInvoicePage() {
                   {discountTotal > 0 && (
                     <div className="flex justify-between text-sm"><span className="text-slate-400">Discounts</span><span className="text-red-400">− {formatCurrency(discountTotal)}</span></div>
                   )}
-                  <div className="font-bold text-base border-t border-surface-700 pt-2">
+                  <div className="text-base">
                     <EditableTotal
-                      total={grandTotal}
-                      valueClass="text-emerald-400"
+                      total={lineItemsTotal}
+                      valueClass="text-white font-semibold"
                       lines={cart.map((c) => ({ quantity: c.quantity, unitPrice: c.unit_price, discountPercent: c.discount_percent }))}
                       onApply={(prices) => setCart((prev) => prev.map((c, i) => ({ ...c, unit_price: prices[i] })))}
                     />
+                  </div>
+                  {taxTotal > 0 && (
+                    <div className="flex justify-between text-sm"><span className="text-slate-400">VAT</span><span className="text-white">+ {formatCurrency(taxTotal)}</span></div>
+                  )}
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="text-slate-400">Delivery / Shipping</span>
+                    <AmountInput className="input py-1 text-sm text-right max-w-[140px]" placeholder="0.00" value={shippingAmount} onChange={setShippingAmount} />
+                  </div>
+                  <div className="flex justify-between font-bold text-base border-t border-surface-700 pt-2">
+                    <span className="text-white">Total</span>
+                    <span className="text-emerald-400">{formatCurrency(grandTotal)}</span>
                   </div>
                 </div>
               )}
