@@ -2,3 +2,9 @@
 # at the shebang with an unhelpful "bad interpreter: /usr/bin/env bash^M", and
 # infra/deploy.sh also runs on Linux.
 *.sh text eol=lf
+
+# Node scripts run on Linux CI as well as Windows, and CRLF in them shows up as a
+# permanent phantom diff that makes a clean worktree look dirty. Scoped to these
+# extensions deliberately — a repo-wide `* text=auto` would re-normalise hundreds
+# of files at once and collide with other people's in-flight work.
+*.mjs text eol=lf
