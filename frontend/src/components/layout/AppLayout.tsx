@@ -340,7 +340,9 @@ export default function AppLayout() {
               {cacheAge
                 ? <>Showing cached data from <strong>{cacheAge}</strong>. </>
                 : 'Cached data will appear as you navigate. '}
-              New entries are queued and sync automatically when reconnected.
+              New entries are queued and sync automatically when reconnected —
+              but accountant access, billing and organisation settings need a
+              live connection and will not go through yet.
             </span>
           </div>
         )}
