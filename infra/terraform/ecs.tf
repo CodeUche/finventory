@@ -231,7 +231,17 @@ resource "aws_ecs_task_definition" "api" {
     # repeat per task, and collectstatic specifically MUST run per-task
     # since Fargate tasks don't share storage — each container needs its
     # own populated staticfiles dir for Whitenoise to serve from.
-    command      = ["sh", "-c", "(python manage.py collectstatic --no-input --clear 2>/dev/null || true) && if [ -n \"$DJANGO_SUPERUSER_EMAIL\" ] && [ -n \"$DJANGO_SUPERUSER_PASSWORD\" ]; then python manage.py createsuperuser --no-input --email \"$DJANGO_SUPERUSER_EMAIL\" 2>/dev/null || true; fi && gunicorn config.wsgi:application --bind 0.0.0.0:${var.container_port} --workers 2 --worker-class sync --worker-tmp-dir /dev/shm --access-logfile - --error-logfile - --log-level info --timeout 120"]
+    #
+    # --keep-alive 75 must stay LONGER than the ALB's idle_timeout (60s, set in
+    # alb.tf). Gunicorn's default is 2s, so the ALB was still holding pooled
+    # connections that gunicorn had already closed; when it reused one, it
+    # returned a 502 of its own. That 502 never reaches Django, so it appears in
+    # no application log and in no target-5xx metric — only in the load
+    # balancer's HTTPCode_ELB_5XX_Count. In the browser it surfaces as a CORS
+    # error (an ALB-generated 502 carries no CORS headers) and a red
+    # "Connection failed: Network Error" toast. Measured 2026-09-18: 4 in an
+    # hour of clicking, 7 across the preceding quiet week.
+    command      = ["sh", "-c", "(python manage.py collectstatic --no-input --clear 2>/dev/null || true) && if [ -n \"$DJANGO_SUPERUSER_EMAIL\" ] && [ -n \"$DJANGO_SUPERUSER_PASSWORD\" ]; then python manage.py createsuperuser --no-input --email \"$DJANGO_SUPERUSER_EMAIL\" 2>/dev/null || true; fi && gunicorn config.wsgi:application --bind 0.0.0.0:${var.container_port} --workers 2 --worker-class sync --worker-tmp-dir /dev/shm --access-logfile - --error-logfile - --log-level info --timeout 120 --keep-alive 75"]
     portMappings = [{ containerPort = var.container_port, protocol = "tcp" }]
     environment  = local.common_environment
     secrets      = local.common_secrets
