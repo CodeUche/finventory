@@ -90,10 +90,20 @@ locals {
   # setting CORS_ALLOWED_ORIGINS at all silently drops them. That is exactly how
   # the 2026-09-06 cutover broke login — CORS_ALLOWED_ORIGINS held a single
   # leftover validation URL, so the real frontend was refused by the browser.
+  # http://tauri.localhost is the WINDOWS desktop origin. Tauri v2 serves the
+  # app over a custom scheme on macOS/Linux (tauri://localhost) but over
+  # http://tauri.localhost on Windows, and Windows is the desktop platform we
+  # actually ship. Requests normally leave through the Rust HTTP plugin, which
+  # is not subject to CORS at all — but api.ts falls back to the WebView's own
+  # fetch whenever that plugin throws, and on Windows that fallback was refused
+  # by the browser because this origin was allowed nowhere. Observed live on
+  # 2026-09-18: with TLS-inspecting antivirus in the way, the Rust path fails,
+  # the fallback is CORS-blocked, and the desktop app cannot sign in at all —
+  # with no error toast, because the request never reaches the server.
   cors_origins = join(",", compact(concat(
     [var.frontend_url],
     var.additional_cors_origins,
-    ["tauri://localhost", "capacitor://localhost", "http://localhost"],
+    ["tauri://localhost", "http://tauri.localhost", "capacitor://localhost", "http://localhost"],
   )))
 
   # Plain (non-secret) runtime config shared by all three services.
