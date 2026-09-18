@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { useNotifications, EtaAlert, CustomerOutstandingAlert } from '@/contexts/NotificationsContext'
 import { orgApi } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
-import { formatCurrency, formatDate } from '@/lib/utils'
+import { formatCurrency, formatDate, apiErrorMessage } from '@/lib/utils'
 import { cn } from '@/lib/utils'
 import toast from 'react-hot-toast'
 
@@ -56,8 +56,7 @@ export default function NotificationBell() {
       dismissPartnerRequest(alertId)
       toast.success('Accountant access approved')
     } catch (err: any) {
-      const msg = err?.response?.data?.error
-      toast.error(typeof msg === 'string' ? msg : msg?.message ?? 'Failed to approve')
+      toast.error(apiErrorMessage(err, 'Failed to approve'))
     } finally {
       setPartnerActionId(null)
     }
@@ -72,8 +71,7 @@ export default function NotificationBell() {
       dismissPartnerRequest(alertId)
       toast.success('Request rejected')
     } catch (err: any) {
-      const msg = err?.response?.data?.error
-      toast.error(typeof msg === 'string' ? msg : msg?.message ?? 'Failed to reject')
+      toast.error(apiErrorMessage(err, 'Failed to reject'))
     } finally {
       setPartnerActionId(null)
     }

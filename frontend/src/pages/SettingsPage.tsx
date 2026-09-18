@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { User, Building2, Shield, Loader2, Camera, CreditCard, CheckCircle, Mail, Lock, Unlock, LandmarkIcon, UsersRound, UserPlus, X, ChevronDown, ChevronUp, ChevronRight, Bot, Layout, Copy, Trash2, ShieldCheck, Key, Clock, XCircle, Send, Globe, AlertTriangle, Wifi, WifiOff, RefreshCw, Activity, FileText, GitBranch, Upload, GraduationCap, Bell } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { authApi, orgApi, paymentGatewayApi, accountingApi, teamApi, urlToDataUrl, partnerApi, einvoicingApi, notificationApi } from '@/services/api'
-import { SUPPORTED_CURRENCIES } from '@/lib/utils'
+import { SUPPORTED_CURRENCIES, apiErrorMessage } from '@/lib/utils'
 import ImportPage from '@/pages/ImportPage'
 import type { FirsConfig, FirsStats, FirsSubmission, SandboxProgress, GoLiveChecklist } from '@/types'
 import type { AxiosError } from 'axios'
@@ -1215,8 +1215,7 @@ export default function SettingsPage() {
       setPartnerRequests((prev) => prev.map((r) => r.id === reqId ? data : r))
       toast.success('Request rejected')
     } catch (err: any) {
-      const msg = err?.response?.data?.error
-      toast.error(typeof msg === 'string' ? msg : msg?.message ?? 'Failed to reject')
+      toast.error(apiErrorMessage(err, 'Failed to reject'))
     } finally {
       setRejectingReq(null)
     }
@@ -1245,8 +1244,7 @@ export default function SettingsPage() {
       setGeneratedToken({ token: data.token, partner_email: data.partner_email })
       setInviteEmail('')
     } catch (err: any) {
-      const msg = err?.response?.data?.error
-      toast.error(typeof msg === 'string' ? msg : msg?.message ?? 'Failed to generate invite')
+      toast.error(apiErrorMessage(err, 'Failed to generate invite'))
     } finally {
       setGeneratingInvite(false)
     }
