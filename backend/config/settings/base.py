@@ -418,13 +418,20 @@ SIMPLE_JWT = {
 # ─── CORS ─────────────────────────────────────────────────────────────────────
 CORS_ALLOWED_ORIGINS: list[str] = config(
     "CORS_ALLOWED_ORIGINS",
-    # tauri://localhost  → Tauri v2 desktop app origin
+    # tauri://localhost  → Tauri v2 desktop app origin (macOS/Linux)
+    # http://tauri.localhost → Tauri v2 desktop app origin on WINDOWS, which is
+    #   the desktop platform we ship. Desktop requests normally go out through
+    #   the Rust HTTP plugin (no CORS at all), but api.ts falls back to the
+    #   WebView's own fetch when that plugin throws — and without this entry
+    #   that fallback is refused by the browser, so the app cannot sign in and
+    #   shows no error, because the request never reaches the server.
     # capacitor://localhost → Capacitor Android/iOS WebView origin
     # http://localhost  → Capacitor Android http scheme fallback
     default=(
         "http://localhost:3000,"
         "http://127.0.0.1:3000,"
         "tauri://localhost,"
+        "http://tauri.localhost,"
         "capacitor://localhost,"
         "http://localhost"
     ),
@@ -456,6 +463,7 @@ CSRF_TRUSTED_ORIGINS: list[str] = config(
     default=(
         "http://localhost:3000,"
         "tauri://localhost,"
+        "http://tauri.localhost,"
         "capacitor://localhost,"
         "http://localhost"
     ),

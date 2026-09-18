@@ -289,3 +289,44 @@ class RLSSyncFallbackTest(TestCase):
         # (may be called more than once — belt-and-suspenders — but always with the right ID)
         mock_set_org.assert_called_with(str(org.id))
         self.assertGreaterEqual(mock_set_org.call_count, 1)
+
+
+
+class DesktopCorsOriginTests(TestCase):
+    """The Windows desktop app's WebView origin must be allowed in PRODUCTION.
+
+    Tauri v2 serves the app from tauri://localhost on macOS/Linux but from
+    http://tauri.localhost on Windows, which is the desktop platform we ship.
+    Desktop requests normally leave through the Rust HTTP plugin, where CORS
+    does not apply — but api.ts falls back to the WebView's own fetch whenever
+    that plugin throws (TLS-inspecting antivirus, a corporate proxy, the
+    documented plugin-init race). Without this origin allowed, that fallback is
+    refused by the browser, so the app cannot sign in AND shows no error,
+    because the request never reaches the server.
+
+    development.py already carried this origin (added after the same failure was
+    hit against the local stack); base.py's default and the deployed ECS
+    environment did not, so only production was exposed. Observed live against
+    api.auditytechnologies.com on 2026-09-18.
+    """
+
+    WINDOWS_DESKTOP_ORIGIN = "http://tauri.localhost"
+
+    def test_active_settings_allow_windows_desktop_origin(self):
+        from django.conf import settings
+
+        self.assertIn(self.WINDOWS_DESKTOP_ORIGIN, settings.CORS_ALLOWED_ORIGINS)
+        self.assertIn(self.WINDOWS_DESKTOP_ORIGIN, settings.CSRF_TRUSTED_ORIGINS)
+
+    def test_deployed_cors_list_includes_windows_desktop_origin(self):
+        """Production does not use base.py's default — it reads the env var that
+        Terraform builds in local.cors_origins, so that list is what has to be
+        right. Asserting only on Django settings would pass while production
+        stayed broken, which is exactly how this shipped.
+        """
+        import pathlib
+
+        ecs_tf = pathlib.Path(__file__).resolve().parents[3] / "infra" / "terraform" / "ecs.tf"
+        if not ecs_tf.exists():
+            self.skipTest("infra/terraform not present in this checkout")
+        self.assertIn(f'"{self.WINDOWS_DESKTOP_ORIGIN}"', ecs_tf.read_text(encoding="utf-8"))
