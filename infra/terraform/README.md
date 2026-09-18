@@ -42,10 +42,20 @@ terraform init \
 DRY_RUN=1 ./infra/deploy.sh    # shows what would happen, changes nothing
 ```
 
-It checks the image exists in ECR, runs the migrations once as a standalone
-task, and only rolls the services if those migrations succeed — then waits for
-the rollout and checks the health endpoint. The manual steps below are what it
-automates, kept for when something goes wrong mid-deploy.
+It checks the image exists in ECR, points the migrate task definition at that
+image, runs the migrations once as a standalone task, and only rolls the
+services if those migrations succeed — then waits for the rollout, confirms all
+three services really landed on that image, and checks the health endpoint. The
+manual steps below are what it automates, kept for when something goes wrong
+mid-deploy.
+
+**Never skip step 2 below (or its equivalent in the script).** The migrate task
+definition keeps whatever image the last deploy left on it. Migrating with the
+previous release's code reports "No migrations to apply" and exits 0, so the
+exit-code check passes while the new release's migrations are never applied.
+Release `1576db6c` shipped that way on 2026-09-11 and left production throwing
+500s on purchase orders, bills and budgets for six days, with seven migrations
+silently skipped.
 
 **Deploys are deliberately manual.** CI builds and pushes an image to ECR and
 stops: the GitHub OIDC role has ECR rights and nothing else, so a compromised
