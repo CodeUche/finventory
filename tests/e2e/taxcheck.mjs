@@ -1,0 +1,25 @@
+import { chromium } from "@playwright/test";
+const BASE = "http://localhost:3000";
+const SHOTS = process.env.SHOT_DIR;
+const b = await chromium.launch();
+const p = await (await b.newContext({ viewport:{width:1500,height:1000} })).newPage();
+await p.goto(`${BASE}/login`, { waitUntil:"domcontentloaded" });
+await p.locator('input[type="email"]').first().fill(process.env.CLICKTHROUGH_EMAIL || "inv.verify@audity.local");
+await p.locator('input[type="password"]').first().fill(process.env.CLICKTHROUGH_PASSWORD || "");
+await p.locator('button[type="submit"]').first().click();
+await p.waitForURL(u=>!/\/login/.test(u.toString()),{timeout:25000});
+await p.goto(`${BASE}/inventory/products`, { waitUntil:"domcontentloaded" });
+await p.waitForTimeout(2500);
+await p.getByRole("button",{name:/add product/i}).first().click();
+await p.waitForTimeout(2500);
+const before = await p.locator("select").count();
+const cb = p.getByText(/Taxable \(apply VAT on sales\)/i).first();
+await cb.click({timeout:8000}).catch(()=>{});
+await p.waitForTimeout(1500);
+const after = await p.locator("select").count();
+console.log(`selects before ticking Taxable: ${before}, after: ${after}`);
+const opts = await p.evaluate(()=>Array.from(document.querySelectorAll("select")).map(s=>({
+  first: s.options[0]?.text||"", all: Array.from(s.options).map(o=>o.text).join(" | ").slice(0,110)})));
+opts.forEach((o,i)=>console.log(`  [${i}] ${o.all}`));
+await p.screenshot({path:`${SHOTS}/taxable-ticked.png`, fullPage:true});
+await b.close();
