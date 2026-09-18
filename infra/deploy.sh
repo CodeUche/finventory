@@ -14,12 +14,14 @@
 #
 # What it does, in order:
 #   1. Resolves the image tag and checks that image actually exists in ECR
-#   2. Runs migrations ONCE as a standalone task and waits for it to succeed
+#   2. Reads the secrets every terraform apply has to be handed back
+#   3. Points the migrate task definition at THE IMAGE BEING DEPLOYED
+#   4. Runs migrations ONCE as a standalone task and waits for it to succeed
 #      (never per-container — see the concurrent-migrate race in ecs.tf)
-#   3. Rolls the three services onto the new image via terraform apply
-#   4. Waits for the rollout and checks the health endpoint
+#   5. Rolls the three services onto the new image via terraform apply
+#   6. Waits for the rollout, re-checks what is live, and checks health
 #
-# Migrations gate the rollout: if step 2 fails, nothing is deployed.
+# Migrations gate the rollout: if step 4 fails, nothing is deployed.
 
 set -euo pipefail
 
@@ -52,7 +54,69 @@ say "Currently deployed: ${CURRENT:0:12}    Deploying: ${TAG:0:12}"
 
 if [ "$DRY_RUN" = "1" ]; then say "DRY_RUN=1 — stopping here, nothing changed."; exit 0; fi
 
-# ── 2. Migrations, once, as a standalone task ────────────────────────────────
+# ── 2. Secrets every terraform apply has to be handed back ───────────────────
+# Every var-backed secret must be re-supplied on EVERY apply, not just the one
+# the image needs. local.static_secrets_with_value in secrets.tf decides
+# membership from the CURRENT var value, so a var left empty drops its key out
+# of the for_each and Terraform plans to DESTROY the live secret version.
+# prevent_destroy then aborts the whole apply. Not hypothetical: seven
+# third-party credentials were added on 2026-09-10 and the next deploy would
+# have died on exactly this.
+#
+# So read each one back out of Secrets Manager and forward it as a TF_VAR.
+# Anything genuinely unset stays unset, which is correct - it was never in the
+# for_each to begin with.
+#
+# APP_DATABASE_URL is deliberately EXCLUDED: its version was removed from
+# Terraform state on 2026-09-06 so that a forgotten var could never destroy the
+# database credentials. Re-supplying it here would quietly pull it back under
+# Terraform management and undo that. Rotate it with put-secret-value instead.
+SECRET_VARS="field_encryption_key brevo_api_key sentry_dsn paystack_secret_key
+flutterwave_secret_key nango_secret_key nango_webhook_secret telegram_bot_token
+telegram_webhook_secret groq_api_key posthog_api_key digitax_app_api_key
+digitax_webhook_secret"
+
+for name in $SECRET_VARS; do
+  val="$(aws secretsmanager get-secret-value --secret-id "audity/$name" \
+          --region "$REGION" --query SecretString --output text 2>/dev/null || true)"
+  if [ -n "$val" ] && [ "$val" != "None" ]; then
+    export "TF_VAR_$name=$val"
+    echo "  forwarding $name (${#val} chars)"
+  fi
+done
+
+[ -n "${TF_VAR_field_encryption_key:-}" ] || fail "audity/field_encryption_key has no value - cannot apply."
+
+# ── 3. Point the migrate task definition at the image being deployed ─────────
+# THIS STEP IS THE WHOLE POINT OF THE ORDERING. The migrate task definition is
+# Terraform-managed and keeps whatever image the LAST deploy left on it, so
+# without this the migration step below runs the PREVIOUS release's code — which
+# of course reports "No migrations to apply", exits 0, and sails through the
+# gate below while the new release's migrations are never applied.
+#
+# That is not a theoretical failure. On 2026-09-11 release 1576db6c deployed
+# exactly that way: migrations "succeeded" against 23bbaf68 at 16:41, the
+# services rolled onto the new image at 17:01, and production spent six days
+# throwing 500s (purchases.billed_before_receipt / budgets.period_id do not
+# exist) on the purchase orders, bills and budgets pages. Seven migrations were
+# silently skipped. The old image can NEVER detect this — it always has nothing
+# to apply — so the exit-code gate in step 4 is worthless on its own.
+#
+# -target is deliberate and matches the manual runbook in terraform/README.md:
+# a plain apply here would also roll api/worker/beat onto the new image against
+# an unmigrated database, which is the failure we are ordering around.
+say "Pointing the migrate task definition at ${TAG:0:12}"
+( cd "$TF_DIR" && TF_VAR_image_tag="$TAG" terraform apply -input=false -auto-approve \
+    -target=aws_ecs_task_definition.migrate )
+
+MIGRATE_IMAGE="$(aws ecs describe-task-definition --task-definition audity-migrate --region "$REGION" \
+  --query 'taskDefinition.containerDefinitions[0].image' --output text | cut -d: -f2)"
+[ "$MIGRATE_IMAGE" = "$TAG" ] || fail "The migrate task definition is on ${MIGRATE_IMAGE:0:12}, not ${TAG:0:12}.
+Migrating with the wrong image is how the 2026-09-11 silent-skip happened, so this stops here.
+Nothing has been deployed."
+say "Migrate task definition confirmed on ${TAG:0:12}"
+
+# ── 4. Migrations, once, as a standalone task ────────────────────────────────
 say "Running migrations as a one-off task"
 SUBNETS="$(cd "$TF_DIR" && terraform output -json private_app_subnet_ids | tr -d '[]"\n ' )"
 SG="$(cd "$TF_DIR" && terraform output -raw ecs_tasks_security_group_id)"
@@ -79,47 +143,34 @@ if [ "$EXIT_CODE" != "0" ]; then
 fi
 say "Migrations succeeded"
 
-# ── 3. Roll the services ─────────────────────────────────────────────────────
+# ── 5. Roll the services ─────────────────────────────────────────────────────
 say "Rolling services onto ${TAG:0:12}"
-# Every var-backed secret must be re-supplied on EVERY apply, not just the one
-# the image needs. local.static_secrets_with_value in secrets.tf decides
-# membership from the CURRENT var value, so a var left empty drops its key out
-# of the for_each and Terraform plans to DESTROY the live secret version.
-# prevent_destroy then aborts the whole apply. Not hypothetical: seven
-# third-party credentials were added on 2026-09-10 and the next deploy would
-# have died on exactly this.
-#
-# So read each one back out of Secrets Manager and forward it as a TF_VAR.
-# Anything genuinely unset stays unset, which is correct - it was never in the
-# for_each to begin with.
-#
-# APP_DATABASE_URL is deliberately EXCLUDED: its version was removed from
-# Terraform state on 2026-09-06 so that a forgotten var could never destroy the
-# database credentials. Re-supplying it here would quietly pull it back under
-# Terraform management and undo that. Rotate it with put-secret-value instead.
-SECRET_VARS="field_encryption_key brevo_api_key sentry_dsn paystack_secret_key
-flutterwave_secret_key nango_secret_key nango_webhook_secret telegram_bot_token
-telegram_webhook_secret groq_api_key posthog_api_key digitax_app_api_key
-digitax_webhook_secret"
-
-for name in $SECRET_VARS; do
-  val="$(aws secretsmanager get-secret-value --secret-id "audity/$name"           --region "$REGION" --query SecretString --output text 2>/dev/null || true)"
-  if [ -n "$val" ] && [ "$val" != "None" ]; then
-    export "TF_VAR_$name=$val"
-    echo "  forwarding $name (${#val} chars)"
-  fi
-done
-
-[ -n "${TF_VAR_field_encryption_key:-}" ] || fail "audity/field_encryption_key has no value - cannot apply."
-
 # NOTE: on the Windows dev machine, Avast's TLS interception breaks terraform's
 # plugin handshake — run terraform through Docker there. See project memory.
 ( cd "$TF_DIR" && TF_VAR_image_tag="$TAG" terraform apply -input=false -auto-approve )
 
-# ── 4. Verify ────────────────────────────────────────────────────────────────
+# ── 6. Verify ────────────────────────────────────────────────────────────────
 say "Waiting for the rollout to settle"
 aws ecs wait services-stable --cluster "$CLUSTER" \
   --services audity-api audity-worker audity-beat --region "$REGION"
+
+# The apply above is the one place a forgotten/empty -var can quietly put a
+# different image on a service (see var.image_tag's header comment in ecs.tf —
+# a stale default once reverted production code). Migrations have already run
+# for $TAG at this point, so a service left on anything else is the same
+# code/database mismatch this script exists to prevent. Say so loudly.
+say "Confirming what is actually live"
+for svc in api worker beat; do
+  LIVE="$(aws ecs describe-task-definition --task-definition "audity-$svc" --region "$REGION" \
+    --query 'taskDefinition.containerDefinitions[0].image' --output text | cut -d: -f2)"
+  if [ "$LIVE" = "$TAG" ]; then
+    echo "  audity-$svc: ${LIVE:0:12} ok"
+  else
+    fail "audity-$svc is on ${LIVE:0:12}, but migrations ran for ${TAG:0:12}.
+The database and that service are now out of step — the exact 2026-09-11 failure mode.
+Re-run this script, or check that the apply above got -var image_tag=$TAG."
+  fi
+done
 
 say "Health check"
 for i in 1 2 3 4 5; do
