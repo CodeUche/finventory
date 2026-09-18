@@ -105,3 +105,25 @@ export function getStatusColor(status: string): string {
   }
   return map[status] ?? 'badge-slate'
 }
+
+/**
+ * Message for a failed API call that says WHICH kind of failure it was.
+ *
+ * Account-level actions (`/tenancy/`, `/subscriptions/`, `/platform/`,
+ * `/audit-log/`) are deliberately never queued offline — see NEVER_QUEUE in
+ * services/api.ts — so when the network is down they fail on the wire with no
+ * response at all. Reporting that as a bare "Failed to reject" reads as if the
+ * server refused the action: on 2026-09-18 an owner chased a phantom bug in
+ * accountant access that was really just a dead connection, with the offline
+ * banner showing on the same screen.
+ *
+ * Everything else keeps the existing envelope handling, which copes with both
+ * `{error: {message}}` and `{error: "string"}`.
+ */
+export function apiErrorMessage(err: any, fallback: string): string {
+  if (!err?.response || err?.code === 'ERR_NETWORK') {
+    return "You're offline — this action needs a live connection. Try again once you're back online."
+  }
+  const apiErr = err.response?.data?.error
+  return typeof apiErr === 'string' ? apiErr : (apiErr?.message ?? fallback)
+}
