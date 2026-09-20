@@ -538,8 +538,15 @@ jobs:
       # The signature is not optional: the updater verifies it against the
       # pubkey baked into the app, and a manifest without the matching .sig is
       # rejected silently by the client.
+      # NOT gated on the release being new, unlike the step above. The release
+      # and the manifest are two separate publishes, and the manifest is the one
+      # users actually depend on. If it fails — a missing token, a Vercel blip —
+      # the release already exists, so gating this on "new release" would make
+      # every re-run skip the very step that failed, and the version would stay
+      # invisible to every installed app with a green tick next to it. That is
+      # this pipeline's original sin and it is not being rebuilt here.
+      # Republishing an unchanged manifest is harmless; it is the same files.
       - name: Assemble the download site and update manifest
-        if: steps.ver.outputs.exists == 'false'
         env:
           V: ${{ steps.ver.outputs.version }}
           TAG: ${{ steps.ver.outputs.tag }}
@@ -577,7 +584,6 @@ jobs:
           echo "manifest:"; cat site/latest.json | head -12
 
       - name: Publish the update manifest to the updater endpoint
-        if: steps.ver.outputs.exists == 'false'
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: team_Nc8plyYqiLZHvRM4zx4iKlFU
@@ -591,7 +597,6 @@ jobs:
           npx --yes vercel@latest deploy site --prod --yes --token "$VERCEL_TOKEN"
 
       - name: Confirm installed apps can see the new version
-        if: steps.ver.outputs.exists == 'false'
         env:
           V: ${{ steps.ver.outputs.version }}
         run: |
