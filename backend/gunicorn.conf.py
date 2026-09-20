@@ -22,8 +22,14 @@ threads = 2
 timeout = 120
 # Graceful restart: finish in-flight requests before exiting
 graceful_timeout = 30
-# Keep idle connections alive for 5 s (reduces TCP overhead for API clients)
-keepalive = 5
+# Keep idle connections alive LONGER than the load balancer's idle timeout
+# (the AWS ALB uses 60s). If gunicorn closes a pooled connection first, the ALB
+# can reuse one that is already going away and answer the client with a 502 that
+# Django never sees — no app log, no target-5xx metric, just a failed request in
+# the browser. AWS's own guidance is to keep the backend above the balancer.
+# The deployed ECS command passes --keep-alive explicitly (see infra/terraform/
+# ecs.tf); this keeps any other way of starting gunicorn consistent with it.
+keepalive = 75
 
 # ── Binding ────────────────────────────────────────────────────────────────────
 bind = f"0.0.0.0:{os.environ.get('PORT', '8000')}"

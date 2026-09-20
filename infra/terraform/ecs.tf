@@ -90,10 +90,20 @@ locals {
   # setting CORS_ALLOWED_ORIGINS at all silently drops them. That is exactly how
   # the 2026-09-06 cutover broke login — CORS_ALLOWED_ORIGINS held a single
   # leftover validation URL, so the real frontend was refused by the browser.
+  # http://tauri.localhost is the WINDOWS desktop origin. Tauri v2 serves the
+  # app over a custom scheme on macOS/Linux (tauri://localhost) but over
+  # http://tauri.localhost on Windows, and Windows is the desktop platform we
+  # actually ship. Requests normally leave through the Rust HTTP plugin, which
+  # is not subject to CORS at all — but api.ts falls back to the WebView's own
+  # fetch whenever that plugin throws, and on Windows that fallback was refused
+  # by the browser because this origin was allowed nowhere. Observed live on
+  # 2026-09-18: with TLS-inspecting antivirus in the way, the Rust path fails,
+  # the fallback is CORS-blocked, and the desktop app cannot sign in at all —
+  # with no error toast, because the request never reaches the server.
   cors_origins = join(",", compact(concat(
     [var.frontend_url],
     var.additional_cors_origins,
-    ["tauri://localhost", "capacitor://localhost", "http://localhost"],
+    ["tauri://localhost", "http://tauri.localhost", "capacitor://localhost", "http://localhost"],
   )))
 
   # Plain (non-secret) runtime config shared by all three services.
@@ -221,7 +231,17 @@ resource "aws_ecs_task_definition" "api" {
     # repeat per task, and collectstatic specifically MUST run per-task
     # since Fargate tasks don't share storage — each container needs its
     # own populated staticfiles dir for Whitenoise to serve from.
-    command      = ["sh", "-c", "(python manage.py collectstatic --no-input --clear 2>/dev/null || true) && if [ -n \"$DJANGO_SUPERUSER_EMAIL\" ] && [ -n \"$DJANGO_SUPERUSER_PASSWORD\" ]; then python manage.py createsuperuser --no-input --email \"$DJANGO_SUPERUSER_EMAIL\" 2>/dev/null || true; fi && gunicorn config.wsgi:application --bind 0.0.0.0:${var.container_port} --workers 2 --worker-class sync --worker-tmp-dir /dev/shm --access-logfile - --error-logfile - --log-level info --timeout 120"]
+    #
+    # --keep-alive 75 must stay LONGER than the ALB's idle_timeout (60s, set in
+    # alb.tf). Gunicorn's default is 2s, so the ALB was still holding pooled
+    # connections that gunicorn had already closed; when it reused one, it
+    # returned a 502 of its own. That 502 never reaches Django, so it appears in
+    # no application log and in no target-5xx metric — only in the load
+    # balancer's HTTPCode_ELB_5XX_Count. In the browser it surfaces as a CORS
+    # error (an ALB-generated 502 carries no CORS headers) and a red
+    # "Connection failed: Network Error" toast. Measured 2026-09-18: 4 in an
+    # hour of clicking, 7 across the preceding quiet week.
+    command      = ["sh", "-c", "(python manage.py collectstatic --no-input --clear 2>/dev/null || true) && if [ -n \"$DJANGO_SUPERUSER_EMAIL\" ] && [ -n \"$DJANGO_SUPERUSER_PASSWORD\" ]; then python manage.py createsuperuser --no-input --email \"$DJANGO_SUPERUSER_EMAIL\" 2>/dev/null || true; fi && gunicorn config.wsgi:application --bind 0.0.0.0:${var.container_port} --workers 2 --worker-class sync --worker-tmp-dir /dev/shm --access-logfile - --error-logfile - --log-level info --timeout 120 --keep-alive 75"]
     portMappings = [{ containerPort = var.container_port, protocol = "tcp" }]
     environment  = local.common_environment
     secrets      = local.common_secrets
