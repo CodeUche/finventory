@@ -297,9 +297,18 @@ jobs:
     name: Build — Desktop (Windows)
     runs-on: windows-latest
     needs: [frontend-build]
-    # Only build + publish installers when a version tag is pushed.
-    # Keeps .exe / .msi private on this public repo until launch.
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Builds on every push to main, and on a version tag.
+    #
+    # Main pushes used to be excluded, which sounds harmless but produced the
+    # exact drift that hurt on 2026-09-20: the web app auto-deploys from main,
+    # while desktop waited for a tag nobody pushed, so installed apps sat on
+    # 0.3.37 while main was on 0.3.44 — seven versions of fixes that never
+    # reached the desktop users who are the larger half of the user base.
+    # Every push already bumps the version (the release rule), so every push
+    # is a release; this makes the pipeline agree with that.
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
 
     concurrency:
       group: build-desktop-${{ github.ref }}
@@ -455,10 +464,12 @@ jobs:
 # Push a tag like `v1.0.0` to trigger a GitHub Release with both installers.
 # Pre-release tags: v1.0.0-beta, v1.0.0-rc1, v1.0.0-alpha
   create-release:
-    name: GitHub Release
+    name: GitHub Release + desktop update manifest
     runs-on: ubuntu-latest
     needs: [build-desktop]
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
 
     # This job writes to the repo (creates a release).
     permissions:
@@ -483,13 +494,121 @@ jobs:
           name: audity-windows-nsis
           path: dist/
 
+      # On a tag push the tag IS the version. On a main push we derive it from
+      # package.json, the single source of truth that sync-version.mjs stamps
+      # into every platform. If that version was already released (someone
+      # pushed without bumping) we stop rather than overwrite: the Tauri
+      # updater only fires on a strictly-greater version, so re-publishing the
+      # same number reaches nobody and would just replace a good release's
+      # assets.
+      - name: Resolve release version
+        id: ver
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V="$(node -p "require('./frontend/package.json').version")"
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then TAG="$GITHUB_REF_NAME"; else TAG="v$V"; fi
+          echo "version=$V"  >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG"    >> "$GITHUB_OUTPUT"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::Release $TAG already exists — skipping. Bump frontend/package.json to ship a new build."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Create GitHub Release
+        if: steps.ver.outputs.exists == 'false'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.ver.outputs.tag }}
           files: dist/*
           generate_release_notes: true
           fail_on_unmatched_files: true
           draft: false
+
+      # ── The step that actually reaches installed desktop apps ──────────────
+      # Everything above only produces files. Installed apps learn about a
+      # release from ONE place: the updater endpoint in tauri.conf.json,
+      # https://get-audity.vercel.app/latest.json. Until now that file (and the
+      # download page beside it) was written by hand, outside the repo — so a
+      # tagged build could pass CI green and still never reach a single user.
+      # That is why 0.3.37 was the newest version anyone had installed.
+      #
+      # The signature is not optional: the updater verifies it against the
+      # pubkey baked into the app, and a manifest without the matching .sig is
+      # rejected silently by the client.
+      # NOT gated on the release being new, unlike the step above. The release
+      # and the manifest are two separate publishes, and the manifest is the one
+      # users actually depend on. If it fails — a missing token, a Vercel blip —
+      # the release already exists, so gating this on "new release" would make
+      # every re-run skip the very step that failed, and the version would stay
+      # invisible to every installed app with a green tick next to it. That is
+      # this pipeline's original sin and it is not being rebuilt here.
+      # Republishing an unchanged manifest is harmless; it is the same files.
+      - name: Assemble the download site and update manifest
+        env:
+          V: ${{ steps.ver.outputs.version }}
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          set -euo pipefail
+          SETUP="$(ls dist/*setup.exe | head -1)"
+          [ -f "${SETUP}.sig" ] || { echo "No ${SETUP}.sig — the build did not sign. Check TAURI_SIGNING_PRIVATE_KEY."; exit 1; }
+
+          mkdir -p site
+          cp release-site/index.html release-site/favicon.svg site/
+          cp "$SETUP" site/Audity-Setup.exe
+          # The download page shows the version to the user; keep it honest.
+          sed -i -E "s/Version [0-9]+\.[0-9]+\.[0-9]+/Version ${V}/" site/index.html
+
+          # Release notes shown in the app's update dialog. release-site/notes.md
+          # is the human-written version; fall back to the commit subject so an
+          # un-edited file still ships something truthful rather than nothing.
+          NOTES="$(sed -n '/^---$/,$p' release-site/notes.md | tail -n +2 | sed '/^[[:space:]]*$/d' || true)"
+          [ -n "$NOTES" ] || NOTES="$(git log -1 --pretty=%s)"
+
+          SIG="$(cat "${SETUP}.sig")" NOTES="$NOTES" VER="$V" node -e '
+            const fs = require("fs");
+            fs.writeFileSync("site/latest.json", JSON.stringify({
+              version: process.env.VER,
+              notes: process.env.NOTES,
+              pub_date: new Date().toISOString(),
+              platforms: {
+                "windows-x86_64": {
+                  signature: process.env.SIG,
+                  url: "https://get-audity.vercel.app/Audity-Setup.exe",
+                },
+              },
+            }, null, 2) + "\n");
+          '
+          echo "manifest:"; cat site/latest.json | head -12
+
+      - name: Publish the update manifest to the updater endpoint
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: team_Nc8plyYqiLZHvRM4zx4iKlFU
+          VERCEL_PROJECT_ID: prj_Wsbvch8JQp68luGeiclcvmUUogEl   # get-audity
+        run: |
+          set -euo pipefail
+          if [ -z "${VERCEL_TOKEN:-}" ]; then
+            echo "::error::VERCEL_TOKEN is not set — the build is released on GitHub but NO desktop app will see it. Add the secret."
+            exit 1
+          fi
+          npx --yes vercel@latest deploy site --prod --yes --token "$VERCEL_TOKEN"
+
+      - name: Confirm installed apps can see the new version
+        env:
+          V: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          for i in 1 2 3 4 5; do
+            LIVE="$(curl -fsS https://get-audity.vercel.app/latest.json | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).version" || echo none)"
+            echo "  attempt $i: endpoint serves $LIVE (want $V)"
+            [ "$LIVE" = "$V" ] && exit 0
+            sleep 10
+          done
+          echo "::error::The updater endpoint is not serving $V. Installed apps will not update."
+          exit 1
           prerelease: >-
             ${{
               contains(github.ref_name, '-alpha') ||
@@ -517,6 +636,54 @@ jobs:
 # Railway itself is left running (frozen, read-only) because desktop clients
 # that have not updated still have its hostname compiled in and cannot be
 # redirected. It is retired once those clients have moved.
+
+# ─── Reviewer link ───────────────────────────────────────────────────────────
+# audity-review.vercel.app is a SEPARATE Vercel project from the main web app,
+# and unlike the main app it has no git integration — so merging to main never
+# touched it. It was last deployed by hand at the AWS cutover and sat 14 days
+# behind: the investors, embassy and external reviewers holding that link were
+# looking at a build that predated the entire reviewer-feedback release they
+# had asked for, against a backend whose budgets endpoints were 500ing.
+#
+# Deployed here rather than by connecting the project to git, because the
+# project's root directory is "." (it has always been deployed from frontend/),
+# and repointing that on a live investor-facing project is a riskier change
+# than an explicit job.
+  deploy-review-link:
+    name: Deploy — Reviewer link
+    runs-on: ubuntu-latest
+    needs: [frontend-build]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    concurrency:
+      group: deploy-review-link
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Deploy audity-review to production
+        working-directory: frontend
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: team_Nc8plyYqiLZHvRM4zx4iKlFU
+          VERCEL_PROJECT_ID: prj_BtfJluJoa7TJlXwtwoYZcz93J3cx   # audity-review
+        run: |
+          set -euo pipefail
+          if [ -z "${VERCEL_TOKEN:-}" ]; then
+            echo "::error::VERCEL_TOKEN is not set — the reviewer link will keep drifting behind main. Add the secret."
+            exit 1
+          fi
+          # Build on Vercel (not --prebuilt) so the project's own production env
+          # vars — VITE_API_BASE_URL, pointing at the AWS API — are applied,
+          # exactly as a manual `vercel --prod` from this directory does.
+          npx --yes vercel@latest deploy --prod --yes --token "$VERCEL_TOKEN"
+
   build-backend-image:
     name: Build — Backend image → ECR
     runs-on: ubuntu-latest
