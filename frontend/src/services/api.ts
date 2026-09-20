@@ -36,14 +36,58 @@ const _tauriReady: Promise<void> = Promise.resolve()
 // the app (useNetworkStatus, offline banner) works correctly.
 let _effectivelyOffline = false
 
-function _signalOffline() {
-  if (_effectivelyOffline) return          // already signalled
+// Being offline is a conclusion drawn from two failures in a row, not a reflex
+// to one. Flipping the whole UI on a SINGLE failed request is what made the app
+// feel glitchy: one ALB 502 or one wifi stutter dropped the amber banner and a
+// "Connection failed" toast onto a perfectly healthy session, and the next
+// successful poll took them away again — a visible flicker every few minutes on
+// a connection that was never down. (Measured 2026-09-20: the load balancer
+// generates its own 502s because gunicorn's keep-alive is shorter than the
+// balancer's idle timeout — see infra/terraform/ecs.tf.)
+//
+// Two exceptions keep genuine outages instant:
+//   - navigator.onLine === false flips immediately; the OS already knows.
+//   - once truly offline every request fails, so the second one arrives within
+//     moments and the banner still appears right away.
+const OFFLINE_CONFIRM_FAILURES = 2
+const FAILURE_WINDOW_MS = 60_000
+let _recentFailures = 0
+let _lastFailureAt = 0
+
+/** Returns true only when this call actually flipped the app into offline mode. */
+function _signalOffline(): boolean {
+  if (_effectivelyOffline) return false    // already signalled
+  const now = Date.now()
+  // Two failures an hour apart are two unrelated blips, not a dead connection,
+  // so the count only accumulates inside a short window.
+  _recentFailures = now - _lastFailureAt > FAILURE_WINDOW_MS ? 1 : _recentFailures + 1
+  _lastFailureAt = now
+  if (navigator.onLine && _recentFailures < OFFLINE_CONFIRM_FAILURES) return false
   _effectivelyOffline = true
+  _recentFailures = 0
   if (navigator.onLine) window.dispatchEvent(new Event('offline'))  // synthetic
   _startProbe()  // begin polling so we know when connectivity is restored
+  // Announce the transition here rather than at a call site: several paths flip
+  // the app offline (a GET falling back to cache returns early, a mutation goes
+  // to the queue, a bare failure rejects), so announcing per call site meant
+  // whether the user was told depended on which path happened to flip first.
+  // Once per transition, one toast slot, and the amber banner carries the state
+  // from then on. Suppressed in an offline grace session, where the blue
+  // "sign in to sync" banner already explains things.
+  if (!useAuthStore.getState().isOfflineSession) {
+    toast.error('Connection lost — showing saved data until you are back online.', {
+      id: 'offline-network-err',
+      duration: 6000,
+    })
+  }
+  return true
 }
 
 function _signalOnline() {
+  // A success clears the streak even when we never flipped — otherwise one
+  // failure now and one an hour later would still add up to "offline".
+  _recentFailures = 0
+  _lastFailureAt = 0
   if (!_effectivelyOffline) return         // wasn't offline
   _effectivelyOffline = false
   window.dispatchEvent(new Event('online'))  // triggers flush in useNetworkStatus
@@ -360,6 +404,12 @@ async function _mergeLocalStore(orgId: string, url: string, cacheData: unknown):
  * Called from both the request interceptor and the error interceptor.
  */
 function _buildOfflineMutationAdapter(config: InternalAxiosRequestConfig): AxiosAdapter {
+  // Same reason as the cache fallback in the error interceptor: the optimistic
+  // response below is fabricated locally but still passes through the success
+  // interceptor, which would otherwise read it as a live network response and
+  // declare the connection restored — while the write is in fact sitting in the
+  // offline queue. Mark it before the adapter ever runs.
+  ;(config as InternalAxiosRequestConfig & { _fromCache?: boolean })._fromCache = true
   return async (): Promise<AxiosResponse> => {
     const method = config.method?.toLowerCase() ?? 'post'
     const url = config.url ?? ''
@@ -633,6 +683,14 @@ api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
   // ── Offline cache: serve cached GET responses when network is unavailable ──
   // (or when running an offline grace session — see treatAsOffline above)
   if (treatAsOffline && !isMutation) {
+    // Everything this adapter returns is assembled locally, so mark the config
+    // before it runs. Without this the success interceptor reads each cached
+    // read as a live network response and calls _signalOnline(): once offline,
+    // every GET served from cache declared the connection restored, the next
+    // real request failed and set it back, and the amber banner plus the
+    // "Connection failed" toast blinked roughly every 850ms for as long as the
+    // outage lasted. Traced 2026-09-20 on /tenancy/.../my_membership/.
+    ;(config as ExtConfig)._fromCache = true
     const cacheUrl = (config.url ?? '') + (config.params ? '?' + new URLSearchParams(config.params as Record<string, string>).toString() : '')
     config.adapter = async (): Promise<AxiosResponse> => {
       const orgId = getStoredOrgId() ?? 'anonymous'
@@ -772,6 +830,16 @@ api.interceptors.response.use(
           if (entry) {
             _signalOffline()
             const merged = await _mergeLocalStore(orgId, url, entry.data)
+            // Mark it as locally fabricated BEFORE handing it back. This
+            // response still travels through the success interceptor, which
+            // treats anything unmarked as proof the network is alive and calls
+            // _signalOnline(). Serving a page from cache was therefore reported
+            // as "connection restored": every failed poll flipped the app
+            // offline and the cache fallback flipped it straight back, ~850ms
+            // apart, so the amber banner and the "Connection failed" toast
+            // blinked continuously while nothing was reachable. Measured
+            // 2026-09-20 on /tenancy/.../my_membership/.
+            ;(original as ExtConfig)._fromCache = true
             const cachedResp = { data: merged, status: 200, statusText: 'OK (cached)', headers: {}, config: original } as AxiosResponse
             _settleDedupe(cachedResp)
             return cachedResp
@@ -818,17 +886,12 @@ api.interceptors.response.use(
         _inflightGets.delete(original._dedupeKey)
       }
 
-      // Only show "Connection failed" on the first failure — once the amber
-      // offline banner is visible, further network error toasts are noise.
-      // Also suppressed during an offline grace session (the blue "sign in to
-      // sync" banner already explains the state; a cache miss there is expected,
-      // not a connection failure).
-      if (!_effectivelyOffline && !useAuthStore.getState().isOfflineSession) {
-        toast.error(`Connection failed: ${error.message ?? 'Network error'}`, {
-          id: 'offline-network-err',
-          duration: 6000,
-        })
-      }
+      // _signalOffline() owns the user-facing announcement (one toast per
+      // offline transition, wherever the transition happens). A single isolated
+      // blip stays silent on purpose: the GET was already served from cache
+      // above, a queueable mutation was already queued, and anything else
+      // rejects to its caller, which reports it per action — see
+      // apiErrorMessage in lib/utils.ts. Nothing is swallowed.
       _signalOffline()
       return Promise.reject(error)
     }
