@@ -409,3 +409,81 @@ class ExemptibleUserRateThrottleTests(TestCase):
         from apps.core.throttles import ExemptibleUserRateThrottle, LoginRateThrottle
 
         self.assertFalse(issubclass(LoginRateThrottle, ExemptibleUserRateThrottle))
+
+    @override_settings(THROTTLE_EXEMPT_EMAILS=frozenset({"ci.smoke@audity.africa"}))
+    def test_exemption_covers_per_view_volume_throttles(self):
+        """
+        The exemption must reach FinancialWriteThrottle, not just the default.
+
+        Views like sales/bills/expenses set throttle_classes explicitly, which
+        REPLACES the defaults — so exempting only the global catch-all left the
+        very endpoints the smoke suite hammers still throttled. That is why the
+        first attempt at this exemption changed nothing: 258 HTTP 429s on
+        /sales/invoices/, /bills/ and /expenses/ after it shipped.
+        """
+        from apps.core.throttles import FinancialWriteThrottle, ThrottleExemptionMixin
+
+        self.assertTrue(issubclass(FinancialWriteThrottle, ThrottleExemptionMixin))
+        user = User.objects.create_user(email="ci.smoke@audity.africa", password="x" * 12)
+        throttle = FinancialWriteThrottle()
+        self.assertTrue(all(throttle.allow_request(self._request_for(user), None) for _ in range(500)))
+
+    @override_settings(THROTTLE_EXEMPT_EMAILS=frozenset({"ci.smoke@audity.africa"}))
+    def test_security_throttles_never_inherit_the_exemption(self):
+        """Auth-facing limits must stay enforced for exempt accounts too."""
+        from apps.core.throttles import (
+            LoginRateThrottle, MFAVerifyRateThrottle, PasswordChangeRateThrottle,
+            RegisterRateThrottle, ThrottleExemptionMixin, TokenRefreshRateThrottle,
+        )
+
+        for cls in (LoginRateThrottle, RegisterRateThrottle, PasswordChangeRateThrottle,
+                    TokenRefreshRateThrottle, MFAVerifyRateThrottle):
+            self.assertFalse(
+                issubclass(cls, ThrottleExemptionMixin),
+                f"{cls.__name__} must not be exemptible — it guards authentication",
+            )
+
+    def test_financial_write_throttle_ignores_reads(self):
+        """
+        Reads must not spend the write budget.
+
+        The throttle is attached to whole ViewSets, so before this every GET of
+        /sales/invoices/ or /bills/ counted against 60/minute — a limit built
+        for double-submit attacks — and the dashboard polls those lists.
+        """
+        from apps.core.throttles import FinancialWriteThrottle
+
+        throttle = FinancialWriteThrottle()
+        user = User.objects.create_user(email="busy@example.com", password="x" * 12)
+        read = self.factory.get("/api/v1/sales/invoices/")
+        read.user = user
+        self.assertTrue(all(throttle.allow_request(read, None) for _ in range(500)))
+
+    def test_financial_write_throttle_still_counts_writes(self):
+        from rest_framework.throttling import UserRateThrottle
+
+        from apps.core.throttles import FinancialWriteThrottle
+
+        throttle = FinancialWriteThrottle()
+        user = User.objects.create_user(email="writer@example.com", password="x" * 12)
+        write = self.factory.post("/api/v1/sales/invoices/")
+        write.user = user
+        with patch.object(UserRateThrottle, "allow_request", return_value=True) as parent:
+            throttle.allow_request(write, None)
+        parent.assert_called_once()
+
+    def test_financial_viewsets_keep_a_read_limit(self):
+        """
+        throttle_classes REPLACES the defaults, so the views must name the
+        per-user throttle explicitly or reads end up with no limit at all now
+        that the write throttle ignores them.
+        """
+        from apps.bills.views import BillViewSet
+        from apps.core.throttles import ExemptibleUserRateThrottle, FinancialWriteThrottle
+        from apps.expenses.views import ExpenseViewSet
+        from apps.sales.views import InvoiceViewSet
+
+        for viewset in (InvoiceViewSet, BillViewSet, ExpenseViewSet):
+            classes = getattr(viewset, "throttle_classes", [])
+            self.assertIn(FinancialWriteThrottle, classes, viewset.__name__)
+            self.assertIn(ExemptibleUserRateThrottle, classes, viewset.__name__)

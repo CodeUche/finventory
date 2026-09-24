@@ -11,12 +11,13 @@ limits are shared across multiple worker processes.
 """
 
 from django.conf import settings
+from rest_framework.permissions import SAFE_METHODS
 from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 
 
 # ── Global authenticated catch-all ─────────────────────────────────────────────
 
-class ExemptibleUserRateThrottle(UserRateThrottle):
+class ThrottleExemptionMixin:
     """
     The "user" catch-all, with an allow-list of accounts that skip it.
 
@@ -40,6 +41,10 @@ class ExemptibleUserRateThrottle(UserRateThrottle):
             if email and email in getattr(settings, "THROTTLE_EXEMPT_EMAILS", frozenset()):
                 return True
         return super().allow_request(request, view)
+
+
+class ExemptibleUserRateThrottle(ThrottleExemptionMixin, UserRateThrottle):
+    """The global "user" catch-all, honouring the allow-list."""
 
 
 # ── Authentication endpoints ───────────────────────────────────────────────────
@@ -151,12 +156,26 @@ class AISupportRateThrottle(AnonRateThrottle):
     scope = "ai_support"
 
 
-class FinancialWriteThrottle(UserRateThrottle):
+class FinancialWriteThrottle(ThrottleExemptionMixin, UserRateThrottle):
     """
-    60 financial write operations per minute per authenticated user.
+    60 financial WRITE operations per minute per authenticated user.
 
     Applied to invoice creation, payment recording, expense creation, and bill
     payment. Prevents automated double-submit attacks while allowing normal
     business throughput (1 transaction/second is well within limits).
+
+    Reads are deliberately exempt. This is attached to whole ViewSets, and
+    because throttle_classes REPLACES the defaults, every GET of
+    /sales/invoices/ and /bills/ was being charged against a 60/minute write
+    budget — while losing the ordinary hourly read allowance entirely. The
+    dashboard polls exactly those lists, so a busy user on a normal working day
+    could exhaust a limit built for double-submit attacks. The views pair this
+    with the ordinary per-user throttle so reads are still bounded, just
+    bounded by the read limit.
     """
     scope = "financial_write"
+
+    def allow_request(self, request, view):
+        if request.method in SAFE_METHODS:
+            return True
+        return super().allow_request(request, view)

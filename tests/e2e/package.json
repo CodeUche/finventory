@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "test": "playwright test",
+    "test:core": "playwright test --project=core",
     "test:smoke": "playwright test --project=smoke",
     "test:chromium": "playwright test --project=chromium",
     "test:firefox": "playwright test --project=firefox",

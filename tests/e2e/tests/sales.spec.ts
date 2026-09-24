@@ -126,9 +126,14 @@ test.describe("@smoke Dashboard", () => {
   test("dashboard shows key metric tiles after login", async ({ page }) => {
     await loginAndGo(page);
     // Wait for at least one metric tile / card
+    // .first() is required: without it this matches every tile AND every label
+    // on the page — 8 elements — and strict mode fails the assertion. The test
+    // could therefore only pass on a dashboard that had rendered nothing, which
+    // is the exact opposite of what it is checking.
     await expect(
       page.locator("[data-testid='metric-card'], .metric-card, .stat-card")
         .or(page.getByText(/total sales|revenue|invoices/i))
+        .first()
     ).toBeVisible({ timeout: 8_000 });
   });
 

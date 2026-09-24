@@ -23,7 +23,7 @@ _ModAccess_sales = requires_module("sales")
 # so the server asks for the same key rather than lumping them under sales.
 _ModAccess_recurring = requires_module("recurring")
 
-from apps.core.throttles import FinancialWriteThrottle
+from apps.core.throttles import ExemptibleUserRateThrottle, FinancialWriteThrottle
 
 _PlanRecurring = plan_requires('recurring')
 from apps.customers.models import Customer
@@ -83,7 +83,10 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
 
     serializer_class = InvoiceSerializer
     permission_classes = [IsAuthenticated, IsStaff, _ModAccess_sales]
-    throttle_classes = [FinancialWriteThrottle]
+    # Writes: 60/min. Reads: the ordinary per-user hourly allowance — listing
+    # both because throttle_classes REPLACES the defaults, so naming only the
+    # write throttle left reads charged against the write budget.
+    throttle_classes = [FinancialWriteThrottle, ExemptibleUserRateThrottle]
     filterset_class = InvoiceFilter
     search_fields = ["invoice_number", "customer__name"]
     ordering_fields = ["issue_date", "total_amount", "status"]
