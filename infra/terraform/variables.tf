@@ -281,9 +281,21 @@ variable "frontend_url" {
 }
 
 variable "additional_cors_origins" {
-  description = "Extra browser origins allowed to call the API, beyond var.frontend_url and the always-included Tauri/Capacitor origins. Use for preview or validation deployments."
+  description = <<-EOT
+    Extra browser origins allowed to call the API, beyond var.frontend_url and
+    the always-included Tauri/Capacitor origins. Use for preview or validation
+    deployments.
+
+    The git-main deployment of the `audity` Vercel project is here because the
+    E2E smoke suite runs against it (see ci.yml, which deliberately does NOT
+    point the tests at audity-review so automated runs never write data into
+    what investors and reviewers are looking at). Without this origin the API
+    refuses the suite's preflight, every browser login fails, and the whole
+    suite reports as broken pages rather than as a CORS refusal — which is
+    exactly how it presented on 2026-09-24.
+  EOT
   type        = list(string)
-  default     = []
+  default     = ["https://audity-git-main-auditytechnologies.vercel.app"]
 }
 
 variable "support_ticket_email" {

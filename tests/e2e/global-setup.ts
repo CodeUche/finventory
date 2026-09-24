@@ -10,15 +10,21 @@
  * failing run doesn't permanently disable tests.
  */
 
-import { FullConfig } from "@playwright/test";
+import { FullConfig, chromium } from "@playwright/test";
 import * as fs from "fs";
 import * as path from "path";
 
 const SENTINEL = path.join(__dirname, ".login-failed");
+// One signed-in session, reused by every test — see saveSignedInState below.
+const AUTH_STATE = path.join(__dirname, ".auth", "state.json");
 
 export default async function globalSetup(config: FullConfig) {
   // Always clean up the sentinel from a previous run first.
   try { fs.unlinkSync(SENTINEL); } catch { /* didn't exist */ }
+  // playwright.config.ts points every context at AUTH_STATE, and a context
+  // fails to create if the file is missing — so write an empty one up front
+  // and overwrite it below when we actually sign in.
+  writeEmptyState();
 
   const EMAIL = process.env.TEST_EMAIL    || "";
   const PASS  = process.env.TEST_PASSWORD || "";
@@ -39,8 +45,8 @@ export default async function globalSetup(config: FullConfig) {
     });
 
     if (resp.ok) {
-      // Credentials are valid — no sentinel, tests run normally.
       console.log("  ✓ test credentials validated against production API");
+      await saveSignedInState(EMAIL, PASS);
       return;
     }
 
@@ -76,5 +82,52 @@ export default async function globalSetup(config: FullConfig) {
     console.warn(`  ⚠ Credential pre-check: backend unreachable (${err}) — login-dependent tests will be SKIPPED`);
     fs.writeFileSync(SENTINEL, new Date().toISOString());
     return;
+  }
+}
+
+/** An anonymous storage state, so contexts can always be created. */
+function writeEmptyState() {
+  fs.mkdirSync(path.dirname(AUTH_STATE), { recursive: true });
+  fs.writeFileSync(AUTH_STATE, JSON.stringify({ cookies: [], origins: [] }));
+}
+
+/**
+ * Sign in ONCE and save the session for every test to reuse.
+ *
+ * Each test used to sign in for itself. The API throttles login at 20/minute
+ * per IP, so a 68-test suite generated 91 HTTP 429s in a single run
+ * (measured 2026-09-24) and the throttled tests failed as "page didn't load"
+ * — reading like a broken app rather than a rate limit. One login for the
+ * whole suite removes the cause instead of raising the limit.
+ *
+ * This also catches something the HTTP pre-check above cannot: the API
+ * accepting credentials over curl while the BROWSER cannot sign in, which is
+ * what a missing CORS origin looks like. That exact gap hid here for weeks.
+ */
+async function saveSignedInState(email: string, password: string) {
+  const BASE = process.env.BASE_URL || "http://localhost:3000";
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ ignoreHTTPSErrors: true });
+    await page.goto(`${BASE}/login`, { waitUntil: "domcontentloaded" });
+    await page.locator('input[type="email"]').first().fill(email);
+    await page.locator('input[type="password"]').first().fill(password);
+    await page.locator('button[type="submit"]').first().click();
+    await page.waitForURL((u) => !u.pathname.includes("/login"), { timeout: 30_000 });
+    await page.context().storageState({ path: AUTH_STATE });
+    console.log("  ✓ signed in once at " + BASE + " — session shared by all tests");
+  } catch (err) {
+    throw new Error(
+      [
+        `The API accepted these credentials but the browser could not sign in at ${BASE}.`,
+        `  ${err}`,
+        ``,
+        `  The usual cause is CORS: that origin is not in CORS_ALLOWED_ORIGINS, so the`,
+        `  browser blocks the login request while curl succeeds. Check`,
+        `  additional_cors_origins in infra/terraform/variables.tf.`,
+      ].join("\n")
+    );
+  } finally {
+    await browser.close();
   }
 }

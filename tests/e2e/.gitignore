@@ -1,0 +1,4 @@
+.auth/
+.login-failed
+test-results/
+playwright-report/

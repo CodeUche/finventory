@@ -14,6 +14,12 @@
 import { test, expect } from "@playwright/test";
 import { EMAIL, PASS, credentialsWork } from "./helpers";
 
+// These exercise the sign-in screen itself, so they must start signed OUT —
+// the shared session in playwright.config.ts would redirect them away from
+// /login before they could assert anything.
+test.use({ storageState: { cookies: [], origins: [] } });
+
+
 const BASE = process.env.BASE_URL || "http://localhost:3000";
 const API  = process.env.API_URL  || (process.env.BASE_URL ? process.env.BASE_URL.replace(/\/api\/v1\/?$/, "") : "http://localhost:8000");
 

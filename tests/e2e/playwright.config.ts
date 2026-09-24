@@ -1,4 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
+import * as path from "path";
 
 const BASE_URL = process.env.BASE_URL || "http://localhost:3000";
 
@@ -17,6 +18,12 @@ export default defineConfig({
 
   use: {
     baseURL: BASE_URL,
+    // Start every test from the session global-setup signed in with, instead of
+    // logging in per test. The API throttles login at 20/minute per IP, and a
+    // full suite of per-test logins produced 91 HTTP 429s in one run. Tests
+    // that exercise the login screen itself opt out with
+    // test.use({ storageState: { cookies: [], origins: [] } }).
+    storageState: path.join(__dirname, ".auth", "state.json"),
     trace: "on-first-retry",
     screenshot: "only-on-failure",
     video: "retain-on-failure",

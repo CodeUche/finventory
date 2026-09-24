@@ -50,6 +50,12 @@ export function skipIfNoCredentials(test: { skip(reason?: string): void }) {
  * the redirect doesn't happen the credentials are bad.
  */
 export async function loginAndGo(page: Page, path = "/dashboard") {
+  // The shared session from global-setup usually means we are already signed
+  // in, so go straight there and only fall back to the form if the app bounces
+  // us to /login. This is what keeps the suite under the login rate limit.
+  await page.goto(path);
+  if (!page.url().includes("/login")) return;
+
   await page.goto("/login");
   await page.locator('input[type="email"]').fill(EMAIL);
   await page.locator('input[type="password"]').first().fill(PASS);
@@ -66,7 +72,7 @@ export async function loginAndGo(page: Page, path = "/dashboard") {
     throw new Error(
       "LOGIN FAILED — page stayed on /login after submit. " +
       "Check that TEST_EMAIL / TEST_PASSWORD GitHub secrets match a real user " +
-      "on the Railway production database."
+      "on the AWS production database (Aurora)."
     );
   }
 

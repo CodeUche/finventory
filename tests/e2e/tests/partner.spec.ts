@@ -23,7 +23,17 @@ const PARTNER_EMAIL = process.env.TEST_PARTNER_EMAIL || process.env.TEST_EMAIL |
 const PARTNER_PASS  = process.env.TEST_PARTNER_PASSWORD || process.env.TEST_PASSWORD || "";
 const hasPartnerCredentials = Boolean(PARTNER_EMAIL && PARTNER_PASS);
 
+// True when these specs are running as the ordinary test user (no dedicated
+// partner account configured), in which case the shared session from
+// global-setup is already the right session and logging in again just burns
+// another request against the 20/minute login throttle.
+const usingSharedSession = !process.env.TEST_PARTNER_EMAIL;
+
 async function loginAsPartner(page: Page) {
+  if (usingSharedSession) {
+    await page.goto("/partner");
+    if (!page.url().includes("/login")) return;
+  }
   await page.goto("/login");
   await page.locator('input[type="email"]').fill(PARTNER_EMAIL);
   await page.locator('input[type="password"]').first().fill(PARTNER_PASS);
@@ -39,7 +49,7 @@ test.beforeEach(({}, testInfo) => {
   // partner dashboard is broken" rather than "nobody could log in". Every other
   // spec already gates on this; partner was the one that did not, and it was
   // the only red in an otherwise silently-skipped suite.
-  if (!credentialsWork()) testInfo.skip();
+  if (!credentialsWork) testInfo.skip();
 });
 
 // ─── Partner Dashboard ─────────────────────────────────────────────────────────
