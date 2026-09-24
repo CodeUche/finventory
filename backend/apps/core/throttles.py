@@ -16,7 +16,7 @@ from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 
 # ── Global authenticated catch-all ─────────────────────────────────────────────
 
-class ExemptibleUserRateThrottle(UserRateThrottle):
+class ThrottleExemptionMixin:
     """
     The "user" catch-all, with an allow-list of accounts that skip it.
 
@@ -40,6 +40,10 @@ class ExemptibleUserRateThrottle(UserRateThrottle):
             if email and email in getattr(settings, "THROTTLE_EXEMPT_EMAILS", frozenset()):
                 return True
         return super().allow_request(request, view)
+
+
+class ExemptibleUserRateThrottle(ThrottleExemptionMixin, UserRateThrottle):
+    """The global "user" catch-all, honouring the allow-list."""
 
 
 # ── Authentication endpoints ───────────────────────────────────────────────────
@@ -151,7 +155,7 @@ class AISupportRateThrottle(AnonRateThrottle):
     scope = "ai_support"
 
 
-class FinancialWriteThrottle(UserRateThrottle):
+class FinancialWriteThrottle(ThrottleExemptionMixin, UserRateThrottle):
     """
     60 financial write operations per minute per authenticated user.
 

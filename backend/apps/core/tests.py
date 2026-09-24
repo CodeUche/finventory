@@ -409,3 +409,36 @@ class ExemptibleUserRateThrottleTests(TestCase):
         from apps.core.throttles import ExemptibleUserRateThrottle, LoginRateThrottle
 
         self.assertFalse(issubclass(LoginRateThrottle, ExemptibleUserRateThrottle))
+
+    @override_settings(THROTTLE_EXEMPT_EMAILS=frozenset({"ci.smoke@audity.africa"}))
+    def test_exemption_covers_per_view_volume_throttles(self):
+        """
+        The exemption must reach FinancialWriteThrottle, not just the default.
+
+        Views like sales/bills/expenses set throttle_classes explicitly, which
+        REPLACES the defaults — so exempting only the global catch-all left the
+        very endpoints the smoke suite hammers still throttled. That is why the
+        first attempt at this exemption changed nothing: 258 HTTP 429s on
+        /sales/invoices/, /bills/ and /expenses/ after it shipped.
+        """
+        from apps.core.throttles import FinancialWriteThrottle, ThrottleExemptionMixin
+
+        self.assertTrue(issubclass(FinancialWriteThrottle, ThrottleExemptionMixin))
+        user = User.objects.create_user(email="ci.smoke@audity.africa", password="x" * 12)
+        throttle = FinancialWriteThrottle()
+        self.assertTrue(all(throttle.allow_request(self._request_for(user), None) for _ in range(500)))
+
+    @override_settings(THROTTLE_EXEMPT_EMAILS=frozenset({"ci.smoke@audity.africa"}))
+    def test_security_throttles_never_inherit_the_exemption(self):
+        """Auth-facing limits must stay enforced for exempt accounts too."""
+        from apps.core.throttles import (
+            LoginRateThrottle, MFAVerifyRateThrottle, PasswordChangeRateThrottle,
+            RegisterRateThrottle, ThrottleExemptionMixin, TokenRefreshRateThrottle,
+        )
+
+        for cls in (LoginRateThrottle, RegisterRateThrottle, PasswordChangeRateThrottle,
+                    TokenRefreshRateThrottle, MFAVerifyRateThrottle):
+            self.assertFalse(
+                issubclass(cls, ThrottleExemptionMixin),
+                f"{cls.__name__} must not be exemptible — it guards authentication",
+            )
