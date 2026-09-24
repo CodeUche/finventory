@@ -11,7 +11,15 @@ export default defineConfig(({ mode }) => {
   // every fetch in the WebView2 context and strips the Authorization header
   // on cross-origin requests, causing 401 on all authenticated API calls.
   const isTauri = mode === 'desktop' || mode === 'android' || mode === 'cloud' ||
+    mode === 'staging-desktop' ||
     process.env.TAURI_DEBUG !== undefined || process.env.TAURI_ENV_DEBUG !== undefined
+
+  // The staging stack runs the API on 8001 and the frontend on 5174, so a
+  // staging browser tab can never be mistaken for, or fight for a port with,
+  // the ordinary dev stack on 8000/3000. Keyed off the mode rather than an
+  // environment variable because npm scripts cannot set one portably on Windows
+  // without pulling in cross-env.
+  const isStaging = mode === 'staging' || mode === 'staging-desktop'
 
   return {
   plugins: [
@@ -111,12 +119,13 @@ export default defineConfig(({ mode }) => {
     // Tauri expects exactly 3000. VITE_DEV_PORT lets a second, isolated dev
     // stack run alongside it (e.g. E2E against a throwaway database) without
     // fighting the primary one for the port.
-    port: Number(process.env.VITE_DEV_PORT) || 3000,
+    port: Number(process.env.VITE_DEV_PORT) || (isStaging ? 5174 : 3000),
     strictPort: true,
     proxy: {
       // Active only during `vite` dev server — not in packaged builds
       '/api': {
-        target: process.env.VITE_PROXY_TARGET || 'http://localhost:8000',
+        target: process.env.VITE_PROXY_TARGET
+          || (isStaging ? 'http://localhost:8001' : 'http://localhost:8000'),
         changeOrigin: true,
       },
     },
