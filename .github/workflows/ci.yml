@@ -445,7 +445,10 @@ jobs:
           done
 
       - name: Run smoke tests
-        run: npm run test:smoke
+        # The core slice, not the full suite: a full run exceeds the WAF's
+        # per-IP rate limit and fails on its own traffic. See the project
+        # comments in tests/e2e/playwright.config.ts.
+        run: npm run test:core
         env:
           BASE_URL: https://audity-git-main-auditytechnologies.vercel.app
           API_URL: https://api.auditytechnologies.com

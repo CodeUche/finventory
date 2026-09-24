@@ -39,7 +39,36 @@ export default defineConfig({
   },
 
   projects: [
-    // ── Fast smoke suite — run before every deploy ───────────────────────────
+    // ── What CI runs on every push ───────────────────────────────────────────
+    // A deliberately small slice of @smoke: sign-in, navigation, the sales
+    // path, customers, and the API-level checks.
+    //
+    // The full smoke project below is too expensive to run against production.
+    // It loads 68 pages that fire 30-40 API calls each — 2,594 requests in 8
+    // minutes, measured 2026-09-24 — which trips the WAF's own RateLimitPerIP
+    // rule (2000 requests per IP per 5 minutes) partway through. The suite then
+    // fails on 403s the WAF produced, i.e. CI gets blocked as an attacker by
+    // the very system it is testing, and the failures look like broken pages.
+    //
+    // Cutting the page count is the fix, rather than widening a DDoS rule for
+    // the convenience of a test run. Keep this list short on purpose: if you
+    // add files here, re-measure the request volume before merging.
+    {
+      name: "core",
+      grep: /@smoke/,
+      testMatch: [
+        "**/smoke.spec.ts",
+        "**/auth.spec.ts",
+        "**/navigation.spec.ts",
+        "**/sales.spec.ts",
+        "**/customers.spec.ts",
+      ],
+      use: { ...devices["Desktop Chrome"] },
+    },
+
+    // ── Full smoke suite — run by hand, or against a non-production stack ────
+    // Exceeds the production WAF's per-IP rate limit in a single run; see the
+    // note on the core project above before pointing this at production.
     {
       name: "smoke",
       grep: /@smoke/,

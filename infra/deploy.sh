@@ -173,8 +173,38 @@ Re-run this script, or check that the apply above got -var image_tag=$TAG."
 done
 
 say "Health check"
+# curl reports 000 for "never got a reply", which covers a genuinely dead
+# service AND a local TLS problem. On a workstation running TLS-inspecting
+# antivirus, curl's certificate-revocation check fails against the intercepted
+# chain and returns 000 for an endpoint that is perfectly healthy — this script
+# reported exactly that false failure on 2026-09-24 after a deploy that had in
+# fact succeeded, which is worse than no check: it teaches you to ignore it.
+#
+# So on 000 specifically, retry once with revocation checking disabled. If THAT
+# succeeds the service is up and the local machine was the problem; say so
+# rather than passing silently, because the operator should know their check is
+# degraded. Any other status is a real answer from a real server and is
+# reported as-is.
+health_probe() {
+  local extra="${1:-}"
+  # shellcheck disable=SC2086
+  curl -s -o /dev/null -w '%{http_code}' --max-time 15 $extra "$HEALTH_URL" 2>/dev/null || echo 000
+}
+
 for i in 1 2 3 4 5; do
-  STATUS="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$HEALTH_URL" || echo 000)"
+  STATUS="$(health_probe)"
+  if [ "$STATUS" = "000" ]; then
+    RELAXED="$(health_probe --ssl-no-revoke)"
+    if [ "$RELAXED" = "200" ]; then
+      echo "  attempt $i/5: HTTP 200 (only with --ssl-no-revoke)"
+      say "Deployed ${TAG:0:12} successfully"
+      echo "  NOTE: the plain probe could not complete a TLS handshake from THIS machine"
+      echo "  (TLS-inspecting antivirus breaks curl's revocation check). The service is"
+      echo "  healthy; your local health check is the degraded part."
+      exit 0
+    fi
+    STATUS="$RELAXED"
+  fi
   echo "  attempt $i/5: HTTP $STATUS"
   if [ "$STATUS" = "200" ]; then
     say "Deployed ${TAG:0:12} successfully"
