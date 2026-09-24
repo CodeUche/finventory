@@ -11,7 +11,7 @@ from apps.core.permissions import requires_module
 # record means no access, and only what was granted is granted.
 _ModAccess_bills = requires_module("bills")
 
-from apps.core.throttles import FinancialWriteThrottle
+from apps.core.throttles import ExemptibleUserRateThrottle, FinancialWriteThrottle
 
 _PlanBills = plan_requires('bills')
 from apps.suppliers.models import Supplier
@@ -82,7 +82,10 @@ class BillViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
     ]
     serializer_class = BillSerializer
     permission_classes = [IsAuthenticated, IsStaff, _PlanBills, _ModAccess_bills]
-    throttle_classes = [FinancialWriteThrottle]
+    # Writes: 60/min. Reads: the ordinary per-user hourly allowance — listing
+    # both because throttle_classes REPLACES the defaults, so naming only the
+    # write throttle left reads charged against the write budget.
+    throttle_classes = [FinancialWriteThrottle, ExemptibleUserRateThrottle]
 
     def get_queryset(self):
         org = self._get_organisation()

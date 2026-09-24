@@ -12,7 +12,7 @@ from apps.core.permissions import requires_module
 # record means no access, and only what was granted is granted.
 _ModAccess_expenses = requires_module("expenses")
 
-from apps.core.throttles import FinancialWriteThrottle
+from apps.core.throttles import ExemptibleUserRateThrottle, FinancialWriteThrottle
 
 from .models import Expense, ExpenseCategory, ExpenseGroup
 from .serializers import ExpenseCategorySerializer, ExpenseSerializer, ExpenseGroupSerializer
@@ -104,7 +104,10 @@ class ExpenseViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
     queryset = Expense.objects.select_related("category", "recorded_by")
     serializer_class = ExpenseSerializer
     permission_classes = [IsAuthenticated, IsStaff, _ModAccess_expenses]
-    throttle_classes = [FinancialWriteThrottle]
+    # Writes: 60/min. Reads: the ordinary per-user hourly allowance — listing
+    # both because throttle_classes REPLACES the defaults, so naming only the
+    # write throttle left reads charged against the write budget.
+    throttle_classes = [FinancialWriteThrottle, ExemptibleUserRateThrottle]
     filterset_class = ExpenseFilter
     search_fields = ["description", "reference"]
     ordering_fields = ["expense_date", "amount"]
