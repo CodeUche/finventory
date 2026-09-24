@@ -328,6 +328,17 @@ MEDIA_ROOT = BASE_DIR / "media"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # ─── Django REST Framework ────────────────────────────────────────────────────
+# Accounts exempt from the global per-user rate limit (named scopes such as
+# login and register still apply). Comma-separated emails; empty by default so
+# no environment is exempt unless it says so. Used for the E2E smoke account,
+# whose single suite run costs more requests than the hourly ceiling allows —
+# see ExemptibleUserRateThrottle in apps/core/throttles.py.
+THROTTLE_EXEMPT_EMAILS = frozenset(
+    e.strip().lower()
+    for e in config("THROTTLE_EXEMPT_EMAILS", default="").split(",")
+    if e.strip()
+)
+
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "apps.authentication.backends.VersionedJWTAuthentication",
@@ -362,7 +373,7 @@ REST_FRAMEWORK = {
     # Rate limiting — per-scope limits applied on auth endpoints
     "DEFAULT_THROTTLE_CLASSES": [
         "rest_framework.throttling.AnonRateThrottle",
-        "rest_framework.throttling.UserRateThrottle",
+        "apps.core.throttles.ExemptibleUserRateThrottle",
     ],
     "DEFAULT_THROTTLE_RATES": {
         # ── Global fallback limits ─────────────────────────────────────────

@@ -302,3 +302,21 @@ variable "support_ticket_email" {
   type    = string
   default = "support@auditytechnologies.com"
 }
+
+variable "throttle_exempt_emails" {
+  description = <<-EOT
+    Comma-separated accounts that skip the GLOBAL per-user rate limit only.
+    Named scopes — login, register, password reset — still apply, so this
+    cannot weaken brute-force or signup-spam protection.
+
+    Holds the E2E smoke account. One suite run loads ~68 pages at 30-40 API
+    calls each: 2,594 requests in 8 minutes against a 3000/hour ceiling, so the
+    suite throttled itself and the affected tests failed as "the page didn't
+    load" rather than as a quota problem (measured 2026-09-24).
+
+    Keep this list to accounts you control. Anything here can call the API as
+    fast as it likes.
+  EOT
+  type        = string
+  default     = "ci.smoke@audity.africa"
+}

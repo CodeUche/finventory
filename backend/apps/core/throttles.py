@@ -10,7 +10,36 @@ Django's cache backend counts requests; in production this must be Redis so
 limits are shared across multiple worker processes.
 """
 
+from django.conf import settings
 from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
+
+
+# ── Global authenticated catch-all ─────────────────────────────────────────────
+
+class ExemptibleUserRateThrottle(UserRateThrottle):
+    """
+    The "user" catch-all, with an allow-list of accounts that skip it.
+
+    Exists for the E2E smoke account. A full suite run loads ~68 pages, each
+    firing 30-40 API calls, which measured 2,594 requests in 8 minutes against
+    a 3000/hour ceiling — so the suite throttled ITSELF and the affected tests
+    failed as "the page didn't load", reading like application faults. Measured
+    2026-09-24.
+
+    Deliberately narrow: this exempts only the global per-user rate. Login,
+    registration, password reset and every other named scope still apply to
+    these accounts, so the brute-force and spam guards are untouched. The
+    allow-list is env-driven and empty by default, so no deployment is exempt
+    unless someone sets THROTTLE_EXEMPT_EMAILS explicitly.
+    """
+
+    def allow_request(self, request, view):
+        user = getattr(request, "user", None)
+        if user is not None and user.is_authenticated:
+            email = (getattr(user, "email", "") or "").strip().lower()
+            if email and email in getattr(settings, "THROTTLE_EXEMPT_EMAILS", frozenset()):
+                return True
+        return super().allow_request(request, view)
 
 
 # ── Authentication endpoints ───────────────────────────────────────────────────
