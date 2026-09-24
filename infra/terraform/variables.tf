@@ -182,8 +182,24 @@ variable "sentry_dsn" {
 }
 
 variable "default_from_email" {
-  type    = string
-  default = ""
+  description = <<-EOT
+    The From address on every email the platform sends, and it must be a sender
+    VERIFIED IN BREVO or Brevo rejects the message. Currently the only verified
+    sender is info@auditytechnologies.com.
+
+    DELIBERATELY NOT EMPTY. This defaulted to "", and because ecs.tf passes it
+    to the container unconditionally, production ran with DEFAULT_FROM_EMAIL set
+    to an empty string — which OVERRIDES the fallback in production.py rather
+    than falling back to it. Every outbound email then failed inside Django with
+    "Invalid email address '' parsed from '' in from_email".
+
+    Found on 2026-09-24 when a registration returned 503 "Could not send
+    verification email": sign-up was impossible on production, and would have
+    stayed that way until someone tried it. Password resets, invitations and
+    emailed documents share the same sender.
+  EOT
+  type        = string
+  default     = "Audity <info@auditytechnologies.com>"
 }
 
 variable "paystack_secret_key" {

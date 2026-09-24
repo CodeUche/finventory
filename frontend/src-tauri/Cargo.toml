@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.3.45"
+version = "0.3.47"
 description = "Audity — Business Management App"
 authors = ["Audity"]
 license = ""
