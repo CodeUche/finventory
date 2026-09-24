@@ -146,6 +146,7 @@ locals {
     { name = "FRONTEND_URL", value = var.frontend_url },
     { name = "BACKEND_URL", value = "http://${aws_lb.main.dns_name}" },
     { name = "SUPPORT_TICKET_EMAIL", value = var.support_ticket_email },
+    { name = "THROTTLE_EXEMPT_EMAILS", value = var.throttle_exempt_emails },
     { name = "DEFAULT_FROM_EMAIL", value = var.default_from_email },
     { name = "PAYSTACK_PUBLIC_KEY", value = var.paystack_public_key },
     { name = "POSTHOG_HOST", value = "https://us.i.posthog.com" },

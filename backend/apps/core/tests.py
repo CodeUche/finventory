@@ -9,7 +9,7 @@ variable always matches the application-level org, never diverges.
 
 from unittest.mock import MagicMock, call, patch
 
-from django.test import TestCase, RequestFactory
+from django.test import TestCase, RequestFactory, override_settings
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
 
@@ -330,3 +330,82 @@ class DesktopCorsOriginTests(TestCase):
         if not ecs_tf.exists():
             self.skipTest("infra/terraform not present in this checkout")
         self.assertIn(f'"{self.WINDOWS_DESKTOP_ORIGIN}"', ecs_tf.read_text(encoding="utf-8"))
+
+
+class ExemptibleUserRateThrottleTests(TestCase):
+    """
+    The E2E smoke account skips the global per-user rate limit, and nothing else
+    does — see ExemptibleUserRateThrottle for why the exemption exists.
+    """
+
+    def setUp(self):
+        from apps.core.throttles import ExemptibleUserRateThrottle
+
+        self.throttle = ExemptibleUserRateThrottle()
+        self.factory = RequestFactory()
+
+    def _request_for(self, user):
+        request = self.factory.get("/api/v1/sales/invoices/")
+        request.user = user
+        return request
+
+    @override_settings(THROTTLE_EXEMPT_EMAILS=frozenset({"ci.smoke@audity.africa"}))
+    def test_listed_account_is_never_throttled(self):
+        user = User.objects.create_user(email="ci.smoke@audity.africa", password="x" * 12)
+        request = self._request_for(user)
+        # Far beyond any configured rate — an unexempted user would be blocked.
+        self.assertTrue(all(self.throttle.allow_request(request, None) for _ in range(5_000)))
+
+    @override_settings(THROTTLE_EXEMPT_EMAILS=frozenset({"ci.smoke@audity.africa"}))
+    def test_matching_is_case_insensitive(self):
+        user = User.objects.create_user(email="CI.Smoke@Audity.Africa", password="x" * 12)
+        self.assertTrue(self.throttle.allow_request(self._request_for(user), None))
+
+    @override_settings(THROTTLE_EXEMPT_EMAILS=frozenset())
+    def test_nobody_is_exempt_by_default(self):
+        """
+        An empty allow-list must fall straight through to normal throttling.
+
+        Asserted by delegation rather than by counting requests: the test
+        settings use DummyCache, so throttle history is never stored and NO
+        request is ever refused — a counting assertion would pass whether or
+        not the exemption leaked.
+        """
+        from rest_framework.throttling import UserRateThrottle
+
+        user = User.objects.create_user(email="someone@example.com", password="x" * 12)
+        with patch.object(UserRateThrottle, "allow_request", return_value=True) as parent:
+            self.throttle.allow_request(self._request_for(user), None)
+        parent.assert_called_once()
+
+    @override_settings(THROTTLE_EXEMPT_EMAILS=frozenset({"ci.smoke@audity.africa"}))
+    def test_exempt_account_skips_the_parent_entirely(self):
+        """The mirror of the test above: a listed account never reaches it."""
+        from rest_framework.throttling import UserRateThrottle
+
+        user = User.objects.create_user(email="ci.smoke@audity.africa", password="x" * 12)
+        with patch.object(UserRateThrottle, "allow_request", return_value=False) as parent:
+            allowed = self.throttle.allow_request(self._request_for(user), None)
+        self.assertTrue(allowed)
+        parent.assert_not_called()
+
+    @override_settings(THROTTLE_EXEMPT_EMAILS=frozenset({"ci.smoke@audity.africa"}))
+    def test_anonymous_request_is_not_exempt(self):
+        from django.contrib.auth.models import AnonymousUser
+        from rest_framework.throttling import UserRateThrottle
+
+        with patch.object(UserRateThrottle, "allow_request", return_value=True) as parent:
+            self.throttle.allow_request(self._request_for(AnonymousUser()), None)
+        parent.assert_called_once()
+
+    @override_settings(THROTTLE_EXEMPT_EMAILS=frozenset({"ci.smoke@audity.africa"}))
+    def test_exemption_does_not_cover_login(self):
+        """
+        The guard that matters: exemption applies to the global 'user' scope
+        only. LoginRateThrottle is an AnonRateThrottle keyed by IP and must not
+        inherit the exemption, or the allow-list would weaken brute-force
+        protection for the listed address.
+        """
+        from apps.core.throttles import ExemptibleUserRateThrottle, LoginRateThrottle
+
+        self.assertFalse(issubclass(LoginRateThrottle, ExemptibleUserRateThrottle))
