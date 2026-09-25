@@ -41,7 +41,12 @@ services:
     ports:
       # 5433, so the dev database on 5432 is untouched and you can never
       # connect psql to the wrong one by habit.
-      - "5433:5432"
+      #
+      # 127.0.0.1 is not decoration. A ports entry with no host IP publishes on
+      # every interface, which would put this database, and the passwordless
+      # Redis below that Celery uses as its broker, on the local network for any
+      # device to reach. On Linux, Docker's iptables rules bypass ufw as well.
+      - "127.0.0.1:5433:5432"
 
   # ─── Redis (staging) ────────────────────────────────────────
   redis:
@@ -55,7 +60,9 @@ services:
       timeout: 5s
       retries: 10
     ports:
-      - "6380:6379"
+      # Loopback only: this Redis has no password and is the Celery broker, so
+      # anything that can reach it can read the queues and enqueue work.
+      - "127.0.0.1:6380:6379"
 
   # ─── Django API ─────────────────────────────────────────────
   api:
@@ -89,7 +96,10 @@ services:
       - staging_media:/app/backend/media
       - staging_logs:/app/backend/logs
     ports:
-      - "8001:8000"
+      # Loopback only. Other containers reach the API over the compose network by
+      # service name, and on Docker Desktop host.docker.internal still resolves
+      # to a loopback-published port.
+      - "127.0.0.1:8001:8000"
     depends_on:
       db:
         condition: service_healthy
@@ -119,7 +129,7 @@ services:
       sh -c "
       python manage.py migrate --noinput &&
       python manage.py setup_periodic_tasks &&
-      (python manage.py collectstatic --no-input 2>/dev/null || true) &&
+      python manage.py collectstatic --no-input &&
       exec gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 2 --threads 2 --access-logfile - --error-logfile - --log-level info --timeout 120
       "
 

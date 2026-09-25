@@ -117,6 +117,13 @@ volume. `USE_S3` is ignored.
 `STAGING_SENTRY_DSN` is read. Staging exists to produce errors; they must not
 page anyone.
 
+**It is not reachable from the network.** Every published port is bound to
+`127.0.0.1`, not to all interfaces. This matters more than it looks: the staging
+Redis has no password and is the Celery broker, so a port published on every
+interface would let any device on the same network read the queues and enqueue
+work for the worker to run. On Linux, Docker's iptables rules would also bypass
+a host firewall such as ufw.
+
 **The seed command will not run anywhere else.** `seed_staging` aborts unless
 `settings.IS_STAGING` is true, which only `config.settings.staging` sets. Every
 seeded address is on a `.test` domain, which RFC 2606 reserves and nothing

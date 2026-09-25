@@ -146,7 +146,9 @@ cmd_down() {
 }
 
 cmd_reset() {
-  require_docker
+  # ensure_env, because dc() always passes --env-file: without the file, even
+  # `down -v` fails, which would make `fresh` unusable on a fresh clone.
+  require_docker; ensure_env
   say "This DELETES the staging database, Redis, media and static volumes"
   note "The dev stack (finventory-db-1) and production are not touched."
   printf '    Type "reset" to confirm: '
