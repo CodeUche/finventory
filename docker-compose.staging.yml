@@ -1,0 +1,196 @@
+# ============================================================
+# Audity staging stack
+# ============================================================
+# A production-shaped environment you can break. Runs entirely on this machine,
+# on its own ports and its own volumes, so it never collides with the ordinary
+# dev stack (finventory-db-1 on 5432, runserver on 8000) and cannot reach
+# production.
+#
+#   API      http://localhost:8001
+#   Postgres localhost:5433   (database: audity_staging)
+#   Redis    localhost:6380
+#
+# Do not run this by hand. Use ./scripts/staging.sh, which creates
+# .env.staging with real generated secrets first. Bare `docker compose
+# -f docker-compose.staging.yml up` will fail the start-up guards in
+# backend/config/settings/staging.py, which is the intended behaviour.
+#
+# `name:` below keeps every container, network and volume under the
+# audity-staging- prefix. That prefix is the safety line: nothing here shares a
+# volume with the dev stack, so resetting staging can never drop dev data.
+
+name: audity-staging
+
+services:
+
+  # ─── PostgreSQL (staging) ───────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    volumes:
+      - staging_postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: ${DB_NAME:-audity_staging}
+      POSTGRES_USER: ${DB_USER:-audity_staging}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set in .env.staging}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-audity_staging} -d ${DB_NAME:-audity_staging}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      # 5433, so the dev database on 5432 is untouched and you can never
+      # connect psql to the wrong one by habit.
+      #
+      # 127.0.0.1 is not decoration. A ports entry with no host IP publishes on
+      # every interface, which would put this database, and the passwordless
+      # Redis below that Celery uses as its broker, on the local network for any
+      # device to reach. On Linux, Docker's iptables rules bypass ufw as well.
+      - "127.0.0.1:5433:5432"
+
+  # ─── Redis (staging) ────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - staging_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      # Loopback only: this Redis has no password and is the Celery broker, so
+      # anything that can reach it can read the queues and enqueue work.
+      - "127.0.0.1:6380:6379"
+
+  # ─── Django API ─────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      # The same image production runs, not the builder stage: the point of
+      # staging is that the packaging is production's too. The app code is
+      # bind-mounted over it, so a code change needs only a restart, not a
+      # rebuild (./scripts/staging.sh restart).
+      target: runtime
+    restart: unless-stopped
+    env_file:
+      - .env.staging
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.staging
+      # .env.staging holds the HOST view of these (localhost:5433 / :6380) so
+      # that native `manage.py` runs work too. Inside the compose network the
+      # services are reachable by name on their real ports, so override here;
+      # `environment:` wins over `env_file:`.
+      DB_HOST: db
+      DB_PORT: "5432"
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      PORT: "8000"
+    volumes:
+      - ./backend:/app/backend
+      # Kept in volumes, not on the host, so collectstatic and the log files do
+      # not litter the working tree or show up as untracked changes.
+      - staging_static:/app/backend/staticfiles
+      - staging_media:/app/backend/media
+      - staging_logs:/app/backend/logs
+    ports:
+      # Loopback only. Other containers reach the API over the compose network by
+      # service name, and on Docker Desktop host.docker.internal still resolves
+      # to a loopback-published port.
+      - "127.0.0.1:8001:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/', timeout=5).status==200 else 1)\""]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    # Every line of this folded block sits at the SAME indentation on purpose.
+    # A YAML folded scalar joins equally-indented lines with a space but keeps a
+    # newline before any line that is indented further, so splitting the gunicorn
+    # flags onto deeper-indented continuation lines silently hands them to `sh`
+    # as separate commands instead of to gunicorn. That happened here: gunicorn
+    # fell back to backend/gunicorn.conf.py and started 2 x CPU + 1 = 25
+    # preloaded workers on this machine.
+    #
+    # --workers 2 is the point of overriding it: staging shares a laptop with the
+    # dev stack and a browser, and does not need production's worker count.
+    #
+    # No --reload, deliberately. Production does not use it either, and staging
+    # is meant to be production-shaped. `./scripts/staging.sh restart` picks up a
+    # backend code change in a second or two.
+    command: >
+      sh -c "
+      python manage.py migrate --noinput &&
+      python manage.py setup_periodic_tasks &&
+      python manage.py collectstatic --no-input &&
+      exec gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 2 --threads 2 --access-logfile - --error-logfile - --log-level info --timeout 120
+      "
+
+  # ─── Celery worker ──────────────────────────────────────────
+  worker:
+    build:
+      context: .
+      target: runtime
+    restart: unless-stopped
+    env_file:
+      - .env.staging
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.staging
+      DB_HOST: db
+      DB_PORT: "5432"
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+    volumes:
+      - ./backend:/app/backend
+      - staging_media:/app/backend/media
+      - staging_logs:/app/backend/logs
+    depends_on:
+      api:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    command: celery -A config.celery worker --loglevel=info --concurrency=2
+
+  # ─── Celery beat (scheduled jobs) ───────────────────────────
+  # Running beat here is the whole reason the nightly jobs can be proved at all:
+  # they have never had an environment other than production to fire in.
+  beat:
+    build:
+      context: .
+      target: runtime
+    restart: unless-stopped
+    env_file:
+      - .env.staging
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.staging
+      DB_HOST: db
+      DB_PORT: "5432"
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+    volumes:
+      - ./backend:/app/backend
+      - staging_logs:/app/backend/logs
+    depends_on:
+      api:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    command: >
+      celery -A config.celery beat --loglevel=info
+      --scheduler django_celery_beat.schedulers:DatabaseScheduler
+
+volumes:
+  staging_postgres_data:
+  staging_redis_data:
+  staging_static:
+  staging_media:
+  staging_logs:

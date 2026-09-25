@@ -4,3 +4,10 @@
 test-results/
 playwright-report/
 .env*
+
+# Staging env files hold only a localhost API port, no secrets, and are
+# committed so the staging stack works on a fresh clone. The root .gitignore
+# negates these too, but a nested .gitignore wins for files in its own
+# directory, so the exception has to be repeated here.
+!.env.staging
+!.env.staging-desktop

@@ -26,6 +26,14 @@ frontend/.env.desktop
 frontend/.env.android
 !frontend/.env.cloud
 !frontend/.env.example
+# Staging env files are committed on purpose: the template holds only
+# placeholders (scripts/staging.sh generates the real secrets into the
+# gitignored .env.staging), and the two frontend ones contain nothing but a
+# localhost port. Committing them is what makes the staging stack one command
+# to stand up on a fresh clone.
+!.env.staging.example
+!frontend/.env.staging
+!frontend/.env.staging-desktop
 
 # Django
 *.log

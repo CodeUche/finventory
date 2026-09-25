@@ -1,0 +1,7 @@
+{
+  "productName": "Audity Staging",
+  "identifier": "africa.audity.staging",
+  "build": {
+    "beforeBuildCommand": "npm run build:staging-desktop"
+  }
+}
