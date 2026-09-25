@@ -58,18 +58,23 @@ ensure_env() {
   [ -f "$ENV_TEMPLATE" ] || fail "Missing $ENV_TEMPLATE"
 
   say "First run: creating .env.staging with freshly generated secrets"
-  local secret field dbpass
+  local secret field dbpass seedpass
   secret="$(node -e 'console.log(require("crypto").randomBytes(48).toString("base64url"))')"
   field="$(node -e 'console.log(require("crypto").randomBytes(32).toString("base64url"))')"
   dbpass="$(node -e 'console.log(require("crypto").randomBytes(18).toString("base64url"))')"
+  # Also the seeded sign-in password, so the repository never carries a working
+  # credential, not even for throwaway local accounts.
+  seedpass="$(node -e 'console.log(require("crypto").randomBytes(12).toString("base64url"))')"
 
-  SECRET="$secret" FIELD="$field" DBPASS="$dbpass" \
+  SECRET="$secret" FIELD="$field" DBPASS="$dbpass" SEEDPASS="$seedpass" \
   node -e '
     const fs = require("fs");
     let t = fs.readFileSync(process.argv[1], "utf8");
     t = t.replace(/^SECRET_KEY=.*$/m,           "SECRET_KEY=" + process.env.SECRET);
     t = t.replace(/^FIELD_ENCRYPTION_KEY=.*$/m, "FIELD_ENCRYPTION_KEY=" + process.env.FIELD);
     t = t.replace(/^DB_PASSWORD=.*$/m,          "DB_PASSWORD=" + process.env.DBPASS);
+    t = t.replace(/^STAGING_SEED_PASSWORD=.*$/m,
+                  "STAGING_SEED_PASSWORD=" + process.env.SEEDPASS);
     fs.writeFileSync(process.argv[2], t);
   ' "$ENV_TEMPLATE" "$ENV_FILE"
 

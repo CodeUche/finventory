@@ -16,8 +16,8 @@ production and were found there:
 - A rate limit that emptied the navigation bar once a real session made enough
   requests. Development had throttling effectively off.
 - A static-file manifest lookup that only exists when `DEBUG=False`.
-- Seven database migrations that were skipped by a deploy and took production
-  down for six days.
+- Migrations that a deploy did not actually apply, with nothing downstream
+  noticing until the schema and the code had drifted apart.
 
 Staging keeps every production behaviour that can bite you and relaxes only what
 a plain-HTTP localhost stack physically cannot do (TLS redirects, `Secure`
@@ -55,8 +55,10 @@ cd frontend
 npm run dev:staging          # http://localhost:5174
 ```
 
-Sign in with any of the seeded accounts. The password is printed by the seed
-command and defaults to `StagingPass123!`:
+Sign in with any of the seeded accounts. The seed command generates the password
+and prints it once, so no working credential is ever written down in this repo.
+Re-run `seed` if you lose it, or set `STAGING_SEED_PASSWORD` in your own
+`.env.staging` to pin one:
 
 | Role | Email |
 |---|---|
@@ -139,19 +141,10 @@ looks right on top of them proves nothing.
 feature branch  ->  staging  ->  pull request  ->  main  ->  production
 ```
 
-Work never starts on `main`. A guard on this machine refuses any commit, push or
-merge that would write to `main`, and refuses a version-tag push, because that
-triggers the release build that ships installers to users. When a change is ready
-and you want it on `main`, say so and the guard is opened for a limited window:
-
-```bash
-bash ~/.claude/hooks/allow-main.sh 30 "reason"   # open
-bash ~/.claude/hooks/lock-main.sh                # close again
-```
-
-Every write to `main` made through an open window is appended to
-`~/.claude/hooks/main-writes.log`, so there is a record of what was authorised
-and when.
+Work does not start on `main` and is not pushed there directly. A change is
+built on a branch, proved against this staging stack, and reaches `main` only
+through a reviewed pull request. Pushing a version tag is a separate, deliberate
+act, because that triggers the release build that ships installers to users.
 
 ## Secrets
 

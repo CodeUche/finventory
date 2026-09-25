@@ -31,6 +31,8 @@ USAGE
     ./scripts/staging.sh seed
     ./scripts/staging.sh manage seed_staging --wipe    # start the demo org over
 """
+import secrets
+import string
 from decimal import Decimal
 
 from django.conf import settings
@@ -40,7 +42,20 @@ from django.utils import timezone
 
 ORG_SLUG = "audity-staging-demo"
 ORG_NAME = "Staging Demo Trading Ltd"
-DEFAULT_PASSWORD = "StagingPass123!"
+
+# Placeholder the template ships with; treated as "no password chosen".
+UNSET = "GENERATED_ON_FIRST_RUN"
+
+
+def _mint_password() -> str:
+    """A fresh password per seed, printed once and stored nowhere else.
+
+    No literal credential belongs in this repository, not even one that only
+    unlocks throwaway accounts in a local database. Mirrors the approach in
+    demo_account.py.
+    """
+    alphabet = string.ascii_letters + string.digits + "!@#$%^&*-_"
+    return "".join(secrets.choice(alphabet) for _ in range(20))
 
 # (email, first, last, role)
 USERS = [
@@ -116,7 +131,11 @@ class Command(BaseCommand):
             )
 
         from decouple import config as env
-        password = opts["password"] or env("STAGING_SEED_PASSWORD", default=DEFAULT_PASSWORD)
+        password = opts["password"] or env("STAGING_SEED_PASSWORD", default="")
+        minted = False
+        if not password or password == UNSET:
+            password = _mint_password()
+            minted = True
 
         if opts["wipe"]:
             self._wipe()
@@ -131,7 +150,7 @@ class Command(BaseCommand):
             self._customers(org)
             self._suppliers(org)
 
-        self._report(org, password)
+        self._report(org, password, minted)
 
     # ── steps ────────────────────────────────────────────────────────────────
     def _wipe(self):
@@ -331,13 +350,21 @@ class Command(BaseCommand):
         self.stdout.write(f"  suppliers: {n} new")
 
     # ── output ───────────────────────────────────────────────────────────────
-    def _report(self, org, password):
+    def _report(self, org, password, minted=False):
         self.stdout.write("")
         self.stdout.write(self.style.SUCCESS("Staging seeded."))
         self.stdout.write("")
         self.stdout.write(f"  Organisation   {org.name}")
         self.stdout.write(f"  Org ID         {org.pk}")
         self.stdout.write(f"  Password       {password}   (all four accounts)")
+        if minted:
+            self.stdout.write(
+                "                 generated for this run and shown only here. Set "
+                "STAGING_SEED_PASSWORD"
+            )
+            self.stdout.write(
+                "                 in your own .env.staging to pin one instead."
+            )
         self.stdout.write("")
         for email, _, _, role in USERS:
             self.stdout.write(f"  {role:<11}{email}")
