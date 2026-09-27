@@ -131,7 +131,7 @@ locals {
     DIGITAX_WEBHOOK_SECRET  = var.digitax_webhook_secret
   }
 
-  # Phase 2: depends on aws_rds_cluster.main / aws_elasticache_serverless_cache.main
+  # Phase 2: depends on aws_rds_cluster.main
   # / aws_elasticache_replication_group.celery. Adding CELERY_BROKER_URL/
   # CELERY_RESULT_BACKEND here — rather than a separate resource block —
   # means they flow through the existing secret-container/version/IAM/ECS

@@ -1,23 +1,26 @@
 ########################################################################
-# Redis: TWO separate resources, not one — a real bug caught in staging.
+# ONE Redis node, serving both the django_redis cache and Celery.
 #
-# ElastiCache Serverless for Redis speaks Redis Cluster protocol even
-# though it exposes a single endpoint. django_redis's cache only ever does
-# single-key GET/SET, so that's invisible there — but Celery's kombu Redis
-# transport issues multi-key MULTI/EXEC operations on worker startup
-# ("mingle" bootstep), which Cluster mode rejects outright: every
-# celery-worker task crashed on boot with "CROSSSLOT Keys in request
-# don't hash to the same slot" until this split existed.
+# It used to be two. ElastiCache Serverless for Redis speaks Redis Cluster
+# protocol even behind its single endpoint, and Celery's kombu transport
+# issues multi-key MULTI/EXEC operations on worker startup ("mingle"), which
+# Cluster mode rejects: every celery-worker task crashed on boot with
+# "CROSSSLOT Keys in request don't hash to the same slot". So Celery got its
+# own plain non-cluster node while the cache stayed on Serverless.
 #
-# So: ElastiCache Serverless stays exactly as originally designed for the
-# django_redis cache only (scale-to-near-zero, single-key ops only, cost
-# per variables.tf's caps) — aws_elasticache_serverless_cache.main below.
-# Celery's broker/result-backend gets its own small, plain (non-cluster)
-# ElastiCache node — aws_elasticache_replication_group.celery below,
-# num_cache_clusters=1 (no failover/replica — same "smallest thing that
-# works" reasoning as everywhere else in this budget). This is the one
-# other fixed-cost line item in this design besides the NAT Gateway,
-# ~$12-15/mo, still trivial against the $500 budget.
+# That split was removed on 2026-09-28 on cost grounds. Serverless bills a
+# ~1 GB storage minimum regardless of use, which came to $85.82 in September,
+# about a third of the whole AWS bill, for a cache CloudWatch measured at
+# 0.00 MB used with $0.002 of request activity. The node below costs $9.33/mo
+# and was already running.
+#
+# Both now live here on separate DB indexes (cache 2, broker 0, results 1),
+# which a plain node supports and Cluster mode does not. Note the coupling
+# this introduces: one node is now a single point of failure for the cache AND
+# the task queue, where before each had its own. Neither ever had a replica,
+# so this trades two single points for one rather than adding risk, but a
+# replica here is the obvious next hardening step if uptime matters more than
+# the ~$9/mo it would add.
 ########################################################################
 
 resource "aws_security_group" "redis" {
@@ -43,7 +46,6 @@ resource "aws_security_group" "redis" {
   tags = { Name = "${var.project}-redis-sg" }
 }
 
-
 # ─── Redis credentials ──────────────────────────────────────────────────────
 # Neither cache required authentication before this. Both sit in private
 # subnets reachable only from the ECS task security group, so this is defence
@@ -60,87 +62,6 @@ resource "aws_security_group" "redis" {
 resource "random_password" "celery_redis_auth" {
   length  = 64
   special = false
-}
-
-resource "random_password" "serverless_redis_auth" {
-  length  = 64
-  special = false
-}
-
-# ElastiCache Serverless does NOT accept an auth_token — it authenticates via
-# RBAC user groups, so the two caches need different mechanisms.
-#
-# A user group must contain a user named "default"; ours is explicitly switched
-# off so the only way in is the named application user.
-resource "aws_elasticache_user" "default_off" {
-  user_id       = "${var.project}-default-off"
-  user_name     = "default"
-  engine        = "redis"
-  access_string = "off -@all"
-
-  authentication_mode {
-    type = "no-password-required"
-  }
-
-  # ElastiCache reports this back as "no-password", never the
-  # "no-password-required" it accepts on write, so Terraform proposes the same
-  # update on every plan forever. Applying it changes nothing (confirmed
-  # 2026-09-06: applied, then still present in the next plan). Ignored so that
-  # a non-empty plan stays meaningful signal instead of routine noise that
-  # trains people to skim past it. This user is switched off entirely
-  # (access_string "off -@all"), so its auth mode is not a live control anyway.
-  lifecycle {
-    ignore_changes = [authentication_mode]
-  }
-}
-
-resource "aws_elasticache_user" "app" {
-  user_id       = "${var.project}-app"
-  user_name     = "audity_app"
-  engine        = "redis"
-  # Full command and key access within this cache. django_redis needs a broad
-  # command set, and the cache is dedicated to this application.
-  access_string = "on ~* +@all"
-
-  authentication_mode {
-    type      = "password"
-    passwords = [random_password.serverless_redis_auth.result]
-  }
-  # Deliberately NO ignore_changes on the password. It was here initially and
-  # caused a real outage of the cache: the generated password was regenerated
-  # (the first attempt used punctuation ElastiCache rejects), but ignore_changes
-  # stopped Terraform pushing the new value to the user, so the user kept the
-  # old password while REDIS_URL carried the new one — "invalid username-password
-  # pair". The password and the connection string must move together.
-}
-
-resource "aws_elasticache_user_group" "main" {
-  user_group_id = "${var.project}-redis-users"
-  engine        = "redis"
-  user_ids      = [aws_elasticache_user.default_off.user_id, aws_elasticache_user.app.user_id]
-
-  lifecycle {
-    ignore_changes = [user_ids]
-  }
-}
-
-resource "aws_elasticache_serverless_cache" "main" {
-  engine             = "redis"
-  name               = "${var.project}-redis"
-  description        = "django_redis cache only - see cache.tf header note for why Celery is not here"
-  subnet_ids         = aws_subnet.private_data[*].id
-  security_group_ids = [aws_security_group.redis.id]
-  user_group_id      = aws_elasticache_user_group.main.user_group_id
-
-  cache_usage_limits {
-    data_storage {
-      maximum = var.redis_max_storage_gb
-      unit    = "GB"
-    }
-    ecpu_per_second {
-      maximum = var.redis_max_ecpu_per_second
-    }
-  }
 }
 
 # ─── Celery broker/result-backend — plain (non-cluster) node ───────────────
