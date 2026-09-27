@@ -76,7 +76,20 @@ locals {
   # Serverless authenticates via RBAC, so the username is part of the URL.
   # urlencode on the password: the generated set includes characters (#, ?, /,
   # :) that would otherwise terminate or reroute the URL's parsing.
-  redis_url = "rediss://${aws_elasticache_user.app.user_name}:${urlencode(random_password.serverless_redis_auth.result)}@${aws_elasticache_serverless_cache.main.endpoint[0].address}:${aws_elasticache_serverless_cache.main.endpoint[0].port}/0?ssl_cert_reqs=required"
+  # The django_redis cache shares the Celery node rather than having its own
+  # ElastiCache Serverless cache. Serverless bills a ~1 GB storage minimum
+  # whether you use it or not: in September 2026 that was $85.82, a third of the
+  # entire AWS bill, for a cache CloudWatch measured at 0.00 MB used with
+  # $0.002 of request activity. The Celery node is a $9.33/mo t4g.micro that was
+  # already running and already sized for far more than this.
+  #
+  # DB 2, because the broker uses 0 and the result backend uses 1 below. Redis
+  # DB indexes are a real separation on a plain (non-cluster) node, which this
+  # is; they are exactly what the cluster-protocol Serverless cache could not
+  # offer. Nothing durable lives in this cache: sessions are database-backed
+  # (no SESSION_ENGINE is set), so the only content is DRF throttle counters,
+  # which reset harmlessly.
+  redis_url = "rediss://:${urlencode(random_password.celery_redis_auth.result)}@${aws_elasticache_replication_group.celery.primary_endpoint_address}:${aws_elasticache_replication_group.celery.port}/2?ssl_cert_reqs=required"
 
   # Celery's own dedicated (non-cluster) node — see cache.tf header note for
   # why this can't just reuse redis_url above. /0 and /1 (broker vs backend)
