@@ -16,7 +16,7 @@ output "aurora_reader_endpoint" {
 }
 
 output "redis_endpoint" {
-  value = aws_elasticache_serverless_cache.main.endpoint[0].address
+  value = aws_elasticache_replication_group.celery.primary_endpoint_address
 }
 
 output "media_bucket_name" {

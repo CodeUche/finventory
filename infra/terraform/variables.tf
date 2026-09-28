@@ -146,19 +146,6 @@ variable "aurora_multi_az" {
   default     = false
 }
 
-# ─── Cache (ElastiCache Serverless for Redis) ──────────────────────────────
-variable "redis_max_storage_gb" {
-  description = "Cap on ElastiCache Serverless data storage — prevents runaway cost from a cache/broker leak."
-  type        = number
-  default     = 2
-}
-
-variable "redis_max_ecpu_per_second" {
-  description = "Cap on ElastiCache Serverless compute (ECPUs/sec) — same cost-ceiling reasoning."
-  type        = number
-  default     = 2000
-}
-
 variable "celery_redis_node_type" {
   description = "Smallest ElastiCache node type for the dedicated Celery broker/result-backend (non-cluster — see cache.tf header note)."
   type        = string
