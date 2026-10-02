@@ -268,6 +268,7 @@ const BLANK = {
   inventory_account: '', sales_account: '', cogs_account: '', wages_account: '',
   costing_method: 'average',
   is_active: true,
+  is_published: false,
   description: '', barcode: '', barcode_symbology: 'code128', category: '',
   parent_product: '', variant_attributes: {} as Record<string, string>,
 }
@@ -466,6 +467,7 @@ export default function ProductsPage() {
       alcohol_percentage: String(p.alcohol_percentage ?? ''),
       volume_ml: String(p.volume_ml ?? ''),
       is_taxable: p.is_taxable ?? false,
+      is_published: (p as any).is_published ?? false,
       tax_class: p.tax_class ?? '',
       tax_type: (p as any).tax_type ?? 'exclusive',
       inventory_account: p.inventory_account ?? '',
@@ -1652,6 +1654,15 @@ export default function ProductsPage() {
                     className="w-4 h-4 accent-orange-500"
                   />
                   <span className="text-sm text-slate-300">Active <span className="text-slate-500">(uncheck to deactivate / hide from sales)</span></span>
+                </label>
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.is_published}
+                    onChange={(e) => setForm((f) => ({ ...f, is_published: e.target.checked }))}
+                    className="w-4 h-4 accent-orange-500"
+                  />
+                  <span className="text-sm text-slate-300">Show on my online shop <span className="text-slate-500">(customers can order it from your storefront page)</span></span>
                 </label>
                 <label className="flex items-center gap-3 cursor-pointer">
                   <input
