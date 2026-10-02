@@ -260,3 +260,60 @@ class ReportsModuleAccessTests(TestCase):
         for url in self.REPORTS:
             self.assertEqual(self.owner_client.get(url).status_code, 200, url)
 
+
+class SalaryAdvanceAccessTests(TestCase):
+    """
+    Salary advances checked role and plan only, so a staff member with no HR
+    access could read an employee's accrued pay, raise an advance for them and
+    approve — i.e. disburse — it themselves.
+    """
+
+    def setUp(self):
+        from apps.payroll.models import AdvancePolicy, AdvanceRequest
+
+        self.owner = _make_user("adv_owner@example.com")
+        self.org = _make_org(self.owner, "Advance Org")
+        self.owner_client = _auth_client(self.owner, self.org)
+        AdvancePolicy.objects.update_or_create(organisation=self.org, defaults={"is_enabled": True})
+        self.emp = Employee.objects.create(
+            organisation=self.org, employee_id="A-1",
+            first_name="Ada", last_name="Pay", email="adv_emp@example.com",
+            hire_date=date(2025, 1, 6), basic_salary=Decimal("300000"),
+        )
+        self.advance = AdvanceRequest.objects.create(
+            organisation=self.org, employee=self.emp, amount=Decimal("6000"),
+            total_recoverable=Decimal("6000"), period_year=2026, period_month=6,
+        )
+
+    def _approve(self, client):
+        return client.post(f"/api/v1/payroll/advances/{self.advance.id}/approve/", {}, format="json")
+
+    def test_staff_without_hr_access_cannot_read_or_raise_advances(self):
+        _, client, _ = _member(self.org, "adv_none@example.com", "staff")
+        self.assertEqual(client.get("/api/v1/payroll/advances/").status_code, 403)
+        self.assertEqual(
+            client.get(f"/api/v1/payroll/advances/eligibility/{self.emp.id}/").status_code, 403,
+            "eligibility exposes the employee's accrued pay",
+        )
+        res = client.post("/api/v1/payroll/advances/", {"employee": str(self.emp.id), "amount": "6000"}, format="json")
+        self.assertEqual(res.status_code, 403)
+
+    def test_staff_cannot_approve_even_with_hr_edit(self):
+        _, client, _ = _member(self.org, "adv_edit@example.com", "staff", "payroll", "edit")
+        self.assertEqual(self._approve(client).status_code, 403)
+        self.advance.refresh_from_db()
+        self.assertEqual(self.advance.status, "pending")
+
+    def test_manager_with_hr_access_can_approve(self):
+        _, client, _ = _member(self.org, "adv_mgr@example.com", "manager", "payroll", "edit")
+        res = self._approve(client)
+        self.assertNotEqual(res.status_code, 403, res.content[:300])
+
+    def test_no_one_approves_their_own_advance(self):
+        user, client, _ = _member(self.org, "adv_self@example.com", "manager", "payroll", "edit")
+        self.emp.user = user
+        self.emp.save(update_fields=["user"])
+        self.assertEqual(self._approve(client).status_code, 403)
+        self.advance.refresh_from_db()
+        self.assertEqual(self.advance.status, "pending")
+

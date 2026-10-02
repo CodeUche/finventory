@@ -2678,7 +2678,17 @@ class EmployeeBenefitViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
 class AdvanceRequestViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     serializer_class = AdvanceRequestSerializer
-    permission_classes = [IsAuthenticated, IsStaff, _PlanPayroll]
+    # _HRAccess: every advance names an employee and their accrued pay. Without
+    # the tick check, a staff member refused the staff list could still read
+    # pay figures through eligibility, raise an advance for anyone, and —
+    # with approve open at staff level — disburse it themselves.
+    permission_classes = [IsAuthenticated, IsStaff, _PlanPayroll, _HRAccess]
+
+    def get_permissions(self):
+        """Disbursing pay is a manager decision, same as EmployeeLoanViewSet."""
+        if self.action in ('approve', 'reject'):
+            return [IsAuthenticated(), IsManager(), _PlanPayroll(), _HRAccess()]
+        return super().get_permissions()
 
     def get_queryset(self):
         org = self._get_organisation()
@@ -2727,6 +2737,12 @@ class AdvanceRequestViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         advance = self.get_object()
         if advance.status != AdvanceRequest.PENDING:
             return Response({'error': 'Only pending advances can be approved.'}, status=400)
+        if advance.employee.user_id and advance.employee.user_id == request.user.id:
+            # The approval step is a second pair of eyes — see _is_own_loan.
+            return Response(
+                {'error': 'You cannot approve your own advance. Ask another manager.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         can_fund, reason = EWAService.can_employer_fund(advance.organisation, advance.amount)
         if not can_fund:
