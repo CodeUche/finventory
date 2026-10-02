@@ -72,7 +72,9 @@ class QuoteViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                 'quantity': Decimal(str(item['quantity'])),
                 'unit_price': Decimal(str(item.get('unit_price', product.selling_price))),
                 'discount_percent': Decimal(str(item.get('discount_percent', '0'))),
-                'tax_rate': Decimal(str(item.get('tax_rate', '0'))),
+                # None = use the product's own VAT rate (the Quotes screen never
+                # sends one); an explicit value, including 0, is honoured.
+                'tax_rate': None if item.get('tax_rate') in (None, '') else Decimal(str(item['tax_rate'])),
             })
 
         quote_data = {

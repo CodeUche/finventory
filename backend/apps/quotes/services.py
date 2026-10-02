@@ -14,16 +14,27 @@ class QuoteService:
             created_by=user,
             **validated_data
         )
-        subtotal = Decimal('0')
+        # Priced exactly as the invoice it converts into will be (SaleService's
+        # per-line rounding and inclusive/exclusive VAT rule). Quotes took the
+        # rate only from the request — which the Quotes screen never sends — so
+        # a taxed product was quoted without VAT and invoiced with it: quoted
+        # 3,000, billed 3,225.
+        from apps.core.utils import round_money
+        from apps.sales.services import SaleService
+
+        total = Decimal('0')
         tax_total = Decimal('0')
         for item_data in items_data_list:
             product = item_data['product']
             qty = item_data['quantity']
             price = item_data.get('unit_price', product.selling_price)
             discount_pct = item_data.get('discount_percent', Decimal('0'))
-            tax_rate = item_data.get('tax_rate', Decimal('0'))
-            line = qty * price * (1 - discount_pct / 100)
-            tax = line * (tax_rate / 100)
+            tax_rate = item_data.get('tax_rate')
+            if tax_rate is None:
+                tax_rate = SaleService.default_tax_rate(product)
+            gross = round_money(qty * price)
+            line = gross - round_money(gross * discount_pct / Decimal('100'))
+            tax, line_with_tax = SaleService.apply_tax(product, line, tax_rate)
             QuoteItem.objects.create(
                 organisation=organisation,
                 quote=quote,
@@ -34,11 +45,11 @@ class QuoteService:
                 tax_rate=tax_rate,
                 line_total=line,
             )
-            subtotal += line
+            total += line_with_tax
             tax_total += tax
-        quote.subtotal = subtotal
+        quote.subtotal = total - tax_total
         quote.tax_amount = tax_total
-        quote.total_amount = subtotal + tax_total
+        quote.total_amount = total
         quote.save()
         return quote
 
@@ -56,6 +67,9 @@ class QuoteService:
                 'quantity': qi.quantity,
                 'unit_price': qi.unit_price,
                 'discount_percent': qi.discount_percent,
+                # Bill the VAT that was quoted, even if the product's tax setup
+                # changed since.
+                'tax_rate': qi.tax_rate,
             })
         # Use credit if there's a named customer, bank_transfer otherwise
         payment_method = 'credit' if quote.customer else 'bank_transfer'
