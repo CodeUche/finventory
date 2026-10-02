@@ -221,7 +221,22 @@ def _parse_csv(file_obj):
       - headers_lower: deduplicated, lowercased, non-empty column names
       - rows: list of dicts keyed by those headers
     """
-    text = file_obj.read().decode("utf-8-sig")
+    raw = file_obj.read()
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        # Excel's plain "CSV (Comma delimited)" on Windows writes Windows-1252,
+        # so "Café" arrived as a raw codec error ("'utf-8' codec can't decode
+        # byte 0xe9…"). Fall back to it before giving up.
+        try:
+            text = raw.decode("cp1252")
+        except UnicodeDecodeError:
+            text = None
+    if text is None or "\x00" in text:
+        raise ValueError(
+            "This file isn't a readable CSV. In Excel use File → Save As → "
+            "'CSV UTF-8 (Comma delimited)', then upload that file."
+        )
     raw_reader = csv.reader(io.StringIO(text))
     all_rows = [row for row in raw_reader]
 
