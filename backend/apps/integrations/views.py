@@ -19,7 +19,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.permissions import IsStaff, _get_or_resolve_org
+from apps.core.permissions import IsOwnerOrAdmin, _get_or_resolve_org
 from apps.subscriptions.models import IntegrationProduct, OrganisationIntegrationEntitlement
 
 from .authentication import APIKeyAuthentication
@@ -141,7 +141,11 @@ class WebhookSubscriptionViewSet(viewsets.ModelViewSet):
     the Celery task.
     """
 
-    permission_classes = [IsAuthenticated, IsStaff]
+    # Owner/admin, like payment-gateway settings. A subscription sends this
+    # organisation's invoice, payment and new-employee events to any URL its
+    # creator chooses, so at staff level it let someone refused Sales and HR
+    # route that same data out of the company.
+    permission_classes = [IsAuthenticated, IsOwnerOrAdmin]
     http_method_names = ["get", "post", "delete", "head", "options"]
 
     def get_queryset(self):
@@ -220,7 +224,8 @@ class APIKeyViewSet(viewsets.ModelViewSet):
     IntegrationProduct entitlement being ACTIVE, same as webhooks.
     """
 
-    permission_classes = [IsAuthenticated, IsStaff]
+    # Owner/admin for the same reason as webhooks: a key reads the event feed.
+    permission_classes = [IsAuthenticated, IsOwnerOrAdmin]
     http_method_names = ["get", "post", "delete", "head", "options"]
 
     def get_queryset(self):

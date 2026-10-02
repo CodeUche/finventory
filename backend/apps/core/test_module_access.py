@@ -317,3 +317,23 @@ class SalaryAdvanceAccessTests(TestCase):
         self.advance.refresh_from_db()
         self.assertEqual(self.advance.status, "pending")
 
+
+class IntegrationManagementAccessTests(TestCase):
+    """Webhooks send the organisation's events to any URL; staff must not set one up."""
+
+    def setUp(self):
+        self.owner = _make_user("int_owner@example.com")
+        self.org = _make_org(self.owner, "Integration Org")
+        self.owner_client = _auth_client(self.owner, self.org)
+        self.body = {"target_url": "https://example.com/hook", "event_types": ["invoice.created"]}
+
+    def test_staff_cannot_create_a_webhook_or_api_key(self):
+        _, client, _ = _member(self.org, "int_staff@example.com", "staff")
+        self.assertEqual(client.post("/api/v1/integrations/webhooks/", self.body, format="json").status_code, 403)
+        self.assertEqual(client.post("/api/v1/integrations/api-keys/", {"name": "k"}, format="json").status_code, 403)
+        self.assertEqual(client.get("/api/v1/integrations/webhooks/").status_code, 403)
+
+    def test_owner_and_admin_still_can(self):
+        self.assertEqual(self.owner_client.get("/api/v1/integrations/webhooks/").status_code, 200)
+        _, admin, _ = _member(self.org, "int_admin@example.com", "admin")
+        self.assertEqual(admin.get("/api/v1/integrations/webhooks/").status_code, 200)
