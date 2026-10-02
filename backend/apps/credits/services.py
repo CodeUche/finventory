@@ -70,6 +70,7 @@ class CreditService:
             AccountingService.post_credit_payment_journal(
                 organisation, customer, amount, recorded_by,
                 txn.description, timezone.now().date(), method=method,
+                source_ref=f"CRPAY-{txn.id}",
             )
         except Exception as exc:
             logger.warning("post_credit_payment_journal failed for %s: %s", customer.name, exc)

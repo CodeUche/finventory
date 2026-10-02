@@ -4485,6 +4485,35 @@ class PartyGLAccountOverrideTests(TestCase):
         accts = {l.account_id for l in entry.lines.all()}
         self.assertIn(self.dedicated_ar.id, accts)
 
+    def test_every_credit_payment_posts_not_just_the_first(self):
+        """
+        Regression: the journal was keyed on the customer, so the idempotency
+        check posted a customer's first payment and silently skipped every later
+        one — invoices read "paid" while Cash and AR never moved. Covers a second
+        invoice for the same customer and an invoice paid in two instalments.
+        """
+        from django.db.models import Sum
+        from apps.sales.services import SaleService
+
+        def sale():
+            return SaleService.create_sale(
+                organisation=self.org, created_by=self.user, customer=self.customer, warehouse=self.wh,
+                items=[{"product_id": str(self.product.id), "quantity": 1, "unit_price": "65000"}],
+                payment_method="credit",
+            )
+
+        first, second = sale(), sale()
+        SaleService.record_payment(first, Decimal("65000"), "cash", self.user)
+        SaleService.record_payment(second, Decimal("15000"), "bank_transfer", self.user)
+        SaleService.record_payment(second, Decimal("50000"), "cash", self.user)
+
+        entries = JournalEntry.objects.filter(organisation=self.org, source_type="credit_payment")
+        self.assertEqual(entries.count(), 3)
+        ar_credited = JournalLine.objects.filter(
+            journal_entry__in=entries, account=self.dedicated_ar,
+        ).aggregate(total=Sum("credit"))["total"]
+        self.assertEqual(ar_credited, Decimal("130000"))
+
     def test_po_receipt_auto_bill_uses_supplier_override(self):
         from apps.purchases.models import PurchaseOrder, PurchaseOrderItem
         from apps.purchases.services import PurchaseService

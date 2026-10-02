@@ -1917,8 +1917,16 @@ class AccountingService:
         )
 
     @staticmethod
-    def post_credit_payment_journal(organisation, customer, amount: Decimal, user=None, description="", date=None, invoice=None, method="cash"):
-        """DR Cash/Bank → CR Accounts Receivable when a credit customer pays."""
+    def post_credit_payment_journal(organisation, customer, amount: Decimal, user=None, description="", date=None, invoice=None, method="cash", source_ref=None):
+        """DR Cash/Bank → CR Accounts Receivable when a credit customer pays.
+
+        `source_ref` must identify THIS payment. post_journal_entry skips any
+        entry whose source_type+source_ref already exists, so a key shared by
+        several payments (the customer, or an invoice paid in instalments)
+        posts the first one and silently drops every later one — the invoice
+        reads "paid" while Cash and AR never move. Callers pass the payment
+        record's id; without one, each call gets a fresh key.
+        """
         from django.utils import timezone
         zero = Decimal('0')
         amt = Decimal(str(amount))
@@ -1932,7 +1940,9 @@ class AccountingService:
             (ar_acct, zero, amt),     # CR Accounts Receivable
         ]
         ref_date = date or timezone.now().date()
-        source_ref = f"CRPAY-{customer.id}" if not invoice else f"CRPAY-{invoice.id}"
+        if not source_ref:
+            import uuid
+            source_ref = f"CRPAY-{uuid.uuid4().hex}"
         return AccountingService.post_journal_entry(
             organisation,
             description or f"Credit payment – {customer.name}",
