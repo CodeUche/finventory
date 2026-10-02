@@ -264,6 +264,24 @@ class SaleService:
         return invoice
 
     @staticmethod
+    def default_tax_rate(product) -> Decimal:
+        """The VAT rate a product carries by default: its tax class's, when taxable."""
+        if product.is_taxable and product.tax_class:
+            return Decimal(str(product.tax_class.rate))
+        return Decimal("0")
+
+    @staticmethod
+    def apply_tax(product, after_discount: Decimal, tax_rate: Decimal):
+        """(tax_amount, line_total) for one line. Exclusive adds the tax on top;
+        inclusive backs it out of a price that already contains it. Shared with
+        the restaurant order screen's totals so a split bill adds up to the
+        invoice it becomes."""
+        if product.tax_type == Product.TaxType.INCLUSIVE and tax_rate > 0:
+            return round_money(after_discount * tax_rate / (Decimal("100") + tax_rate)), after_discount
+        tax_amount = round_money(after_discount * tax_rate / Decimal("100"))
+        return tax_amount, after_discount + tax_amount
+
+    @staticmethod
     def _process_line_item(organisation, invoice, warehouse, item_data, created_by, skip_stock: bool = False) -> dict:
         """Process one line item: validate, create record, deduct stock."""
         product = Product.objects.select_for_update().get(
@@ -317,14 +335,9 @@ class SaleService:
             if override_class:
                 tax_rate = override_class.rate
                 resolved_override = True
-        if not resolved_override and product.is_taxable and product.tax_class:
-            tax_rate = product.tax_class.rate
-        if product.tax_type == Product.TaxType.INCLUSIVE and tax_rate > 0:
-            tax_amount = round_money(after_discount * tax_rate / (Decimal("100") + tax_rate))
-            line_total = after_discount
-        else:
-            tax_amount = round_money(after_discount * tax_rate / Decimal("100"))
-            line_total = after_discount + tax_amount
+        if not resolved_override:
+            tax_rate = SaleService.default_tax_rate(product)
+        tax_amount, line_total = SaleService.apply_tax(product, after_discount, tax_rate)
 
         # Specific Unit costing sells FROM a chosen lot, so the batch has to be
         # resolved before the movement. batch_id was already accepted by the

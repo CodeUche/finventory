@@ -59,6 +59,25 @@ class POSModuleTests(TestCase):
         total = sum(Decimal(str(s["amount"])) for s in res.data["splits"])
         self.assertEqual(total, Decimal(str(res.data["total"])))
 
+    def test_paying_the_split_settles_a_taxed_order_in_full(self):
+        """The order and its split left VAT out while the invoice charged it:
+        diners paid the split and the invoice was left part-paid, VAT owing."""
+        from apps.tax.models import TaxClass
+        self.product.is_taxable = True
+        self.product.tax_class = TaxClass.objects.create(organisation=self.org, name="VAT", rate=Decimal("7.5"))
+        self.product.save(update_fields=["is_taxable", "tax_class"])
+        oid = self._create_order(qty=2).data["id"]          # 2 x 1,000 + 7.5% = 2,150
+        order = self.client.get(f"/api/v1/pos/orders/{oid}/").data
+        self.assertEqual(Decimal(str(order["amount_due"])), Decimal("2150"))
+        split = self.client.post(f"/api/v1/pos/orders/{oid}/split_bill/", {"mode": "equal", "n": 2}, format="json").data
+        self.assertEqual(Decimal(str(split["total"])), Decimal("2150"))
+        tenders = [{"method": "cash", "amount": str(s["amount"])} for s in split["splits"]]
+        res = self.client.post(f"/api/v1/pos/orders/{oid}/finalize/", {"tenders": tenders}, format="json")
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        inv = Invoice.objects.get(id=POSOrder.objects.get(id=oid).invoice_id)
+        self.assertEqual(inv.total_amount, Decimal("2150"))
+        self.assertEqual(inv.status, Invoice.Status.PAID)
+
     def test_finalize_creates_invoice_reduces_stock_frees_table(self):
         oid = self._create_order(qty=2).data["id"]
         res = self.client.post(f"/api/v1/pos/orders/{oid}/finalize/", {

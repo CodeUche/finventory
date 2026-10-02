@@ -172,6 +172,30 @@ class POSOrder(TenantAwareModel):
         from decimal import Decimal
         return sum((i.line_total for i in self.items.all()), Decimal("0"))
 
+    @property
+    def vat_added(self):
+        """VAT the sale will add on top of the item prices (VAT-inclusive
+        products already hold theirs). Finalising raises an invoice through
+        SaleService, which charges this; the order and its bill split used to
+        leave it out, so diners paid the split and the invoice was left with
+        the VAT owing."""
+        from decimal import Decimal
+        from apps.core.utils import round_money
+        from apps.sales.services import SaleService
+        total = Decimal("0")
+        for item in self.items.select_related("product__tax_class"):
+            after = round_money(Decimal(str(item.quantity)) * Decimal(str(item.unit_price)))
+            tax, line_total = SaleService.apply_tax(item.product, after, SaleService.default_tax_rate(item.product))
+            total += line_total - after
+        return total
+
+    @property
+    def amount_due(self):
+        """What the customer pays: items + VAT added + service charge + tip."""
+        from decimal import Decimal
+        return (self.items_subtotal + self.vat_added
+                + Decimal(str(self.service_charge or 0)) + Decimal(str(self.tip_amount or 0)))
+
 
 class POSOrderItem(TenantAwareModel):
     class KitchenStatus(models.TextChoices):

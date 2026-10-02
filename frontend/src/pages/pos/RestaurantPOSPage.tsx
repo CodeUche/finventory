@@ -2,11 +2,15 @@ import { useEffect, useMemo, useState, useCallback } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { ClipboardList, Plus, Minus, Trash2, ClipboardCheck, GitBranch, CreditCard, X, Loader2, Search } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { inventoryApi, posApi } from '@/services/api'
+import { inventoryApi, posApi, taxApi } from '@/services/api'
 import { formatCurrency } from '@/lib/utils'
+import { productTaxRate, saleTotals } from '@/lib/saleMath'
 import { useAuthStore } from '@/store/authStore'
 
-interface Product { id: string; name: string; sku: string; selling_price: string | number }
+interface Product {
+  id: string; name: string; sku: string; selling_price: string | number
+  is_taxable?: boolean; tax_class?: string | null; tax_type?: 'exclusive' | 'inclusive'
+}
 interface Table { id: string; name: string; status: string; section: string }
 interface CartLine { product: Product; quantity: number; unit_price: number }
 interface Tender { method: string; amount: string }
@@ -72,8 +76,22 @@ export default function RestaurantPOSPage() {
     return q ? products.filter((p) => p.name.toLowerCase().includes(q) || p.sku?.toLowerCase().includes(q)) : products
   }, [search, products])
 
-  const subtotal = cart.reduce((s, l) => s + l.quantity * l.unit_price, 0)
-  const total = subtotal + (parseFloat(serviceCharge) || 0) + (parseFloat(tip) || 0)
+  // VAT is charged when the order becomes an invoice, so it belongs in the
+  // total the diners are asked for — see lib/saleMath and POSOrder.amount_due.
+  const [taxRates, setTaxRates] = useState<Record<string, number>>({})
+  useEffect(() => {
+    taxApi.classes().then(({ data }) => {
+      const list: { id: string; rate: string }[] = data.results ?? data
+      setTaxRates(Object.fromEntries(list.map((c) => [c.id, parseFloat(c.rate) || 0])))
+    }).catch(() => {})
+  }, [])
+  const totals = saleTotals(cart.map((l) => ({
+    unitPrice: l.unit_price, quantity: l.quantity,
+    taxRate: productTaxRate(l.product, taxRates), inclusive: l.product.tax_type === 'inclusive',
+  })))
+  const subtotal = totals.subtotal
+  const vatAdded = totals.total - totals.subtotal
+  const total = totals.total + (parseFloat(serviceCharge) || 0) + (parseFloat(tip) || 0)
 
   const addToCart = (p: Product) => {
     setCart((c) => {
@@ -235,6 +253,9 @@ export default function RestaurantPOSPage() {
             </label>
           </div>
           <div className="flex justify-between text-sm text-slate-300"><span>Subtotal</span><span>{formatCurrency(subtotal)}</span></div>
+          {vatAdded > 0 && (
+            <div className="flex justify-between text-sm text-blue-400"><span>VAT</span><span>+ {formatCurrency(vatAdded)}</span></div>
+          )}
           <div className="flex justify-between text-base font-bold text-white"><span>Total</span><span>{formatCurrency(total)}</span></div>
           <div className={`grid ${isRestaurant ? 'grid-cols-3' : 'grid-cols-2'} gap-2`}>
             {isRestaurant && (

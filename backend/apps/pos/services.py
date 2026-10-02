@@ -121,7 +121,9 @@ class POSOrderService:
     def split_bill(order, mode="equal", n=2, splits=None):
         """Compute a bill split. Returns a list of amounts (does not post anything).
         mode: 'equal' (n ways), 'custom' (explicit amounts), 'by_items' (list of item-id groups)."""
-        total = Decimal(str(order.items_subtotal)) + Decimal(str(order.service_charge or 0)) + Decimal(str(order.tip_amount or 0))
+        # amount_due includes the VAT the invoice will charge — a split that
+        # leaves it out has diners pay less than the invoice they settle.
+        total = Decimal(str(order.amount_due))
         if mode == "equal":
             n = max(1, int(n or 2))
             base = (total / n).quantize(Decimal("0.01"))

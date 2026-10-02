@@ -40,6 +40,8 @@ class POSOrderSerializer(serializers.ModelSerializer):
     table_name = serializers.CharField(source="table.name", read_only=True, default=None)
     customer_name = serializers.CharField(source="customer.name", read_only=True, default=None)
     items_subtotal = serializers.DecimalField(max_digits=15, decimal_places=2, read_only=True)
+    vat_added = serializers.DecimalField(max_digits=15, decimal_places=2, read_only=True)
+    amount_due = serializers.DecimalField(max_digits=15, decimal_places=2, read_only=True)
     invoice_number = serializers.CharField(source="invoice.invoice_number", read_only=True, default=None)
 
     class Meta:
@@ -47,7 +49,8 @@ class POSOrderSerializer(serializers.ModelSerializer):
         fields = ["id", "order_number", "order_type", "table", "table_name", "room_number",
                   "waiter", "waiter_name", "customer", "customer_name", "status",
                   "service_charge", "tip_amount", "notes", "warehouse", "invoice",
-                  "invoice_number", "items", "items_subtotal", "created_at", "updated_at"]
+                  "invoice_number", "items", "items_subtotal", "vat_added", "amount_due",
+                  "created_at", "updated_at"]
         read_only_fields = ["id", "order_number", "table_name", "waiter_name", "customer_name",
-                            "invoice", "invoice_number", "items", "items_subtotal",
+                            "invoice", "invoice_number", "items", "items_subtotal", "vat_added", "amount_due",
                             "created_at", "updated_at"]
