@@ -8,12 +8,19 @@
    channels so Tailwind's brand-300/400/500/600 (and /opacity variants) resolve
    per-theme automatically. */
 :root {
+  /* Tells the browser the page is dark so it draws native controls (select,
+     date picker, scrollbars) dark too. Without it Safari/WebKit draws every
+     <select> as a white native control while our text stays light — the sort,
+     status and currency dropdowns were white boxes with unreadable text on
+     iPhone and Mac. Chromium honoured our background, which hid it. */
+  color-scheme: dark;
   --brand-300: 239 208 111; /* #EFD06F gold */
   --brand-400: 232 182 90;  /* #E8B65A gold */
   --brand-500: 212 160 23;  /* #D4A017 gold */
   --brand-600: 184 137 31;  /* #B8891F gold */
 }
 html.light {
+  color-scheme: light;
   --brand-300: 28 47 92;    /* #1C2F5C navy */
   --brand-400: 28 47 92;    /* #1C2F5C navy */
   --brand-500: 8 31 68;     /* #081F44 navy */
