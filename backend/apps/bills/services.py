@@ -127,8 +127,20 @@ class BillService:
     @staticmethod
     @transaction.atomic
     def record_payment(bill, amount, payment_date, method, reference, notes, user, wht_rate_id=None):
+        # Re-read with a row lock so two concurrent payments cannot both pass the
+        # balance check, and refuse anything above what is owed — mirrors
+        # SaleService.record_payment. Without this a paid bill accepted further
+        # payments: amount_paid exceeded the total and the excess was posted to
+        # the ledger as cash out against a liability that no longer existed.
+        bill = Bill.objects.select_for_update().get(pk=bill.pk)
         if bill.status == Bill.VOIDED:
             raise ValueError("Cannot pay a voided bill")
+        if bill.status == Bill.PAID:
+            raise ValueError("This bill has already been fully paid.")
+        if amount > bill.amount_due:
+            raise ValueError(
+                f"Payment of {amount} exceeds the outstanding balance of {bill.amount_due}."
+            )
         payment = BillPayment.objects.create(
             organisation=bill.organisation,
             bill=bill,

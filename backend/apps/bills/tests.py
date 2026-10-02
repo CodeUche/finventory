@@ -87,6 +87,43 @@ class BillStatusBypassTests(TestCase):
             "bill reads as paid while amount_paid is 0 — AP aging is now wrong",
         )
 
+    def test_approving_own_bill_is_refused_with_reason_not_a_crash(self):
+        """The segregation-of-duties rule raised ValueError past the view: a 500
+        and "An unexpected error occurred" instead of the actual reason."""
+        res = self.client.post(f"/api/v1/bills/{self.bill.id}/approve/")
+        self.assertEqual(res.status_code, 400, res.content[:300])
+        self.assertIn("cannot approve a bill you created", res.json()["error"])
+        self.bill.refresh_from_db()
+        self.assertEqual(self.bill.status, Bill.RECEIVED)
+
+    def _pay(self, amount):
+        return self.client.post(
+            f"/api/v1/bills/{self.bill.id}/pay/",
+            {"amount": amount, "payment_date": str(date.today()), "method": "cash"},
+            format="json",
+        )
+
+    def test_payment_above_amount_due_is_refused(self):
+        res = self._pay("1000.01")
+        self.assertEqual(res.status_code, 400, res.content[:300])
+        self.bill.refresh_from_db()
+        self.assertEqual(self.bill.amount_paid, Decimal("0"))
+        self.assertEqual(self.bill.payments.count(), 0)
+
+    def test_paid_bill_cannot_be_paid_again(self):
+        self.assertEqual(self._pay("1000").status_code, 200)
+        res = self._pay("1")
+        self.assertEqual(res.status_code, 400, res.content[:300])
+        self.bill.refresh_from_db()
+        self.assertEqual(self.bill.amount_paid, Decimal("1000"))
+        self.assertEqual(self.bill.status, Bill.PAID)
+
+    def test_payment_response_reflects_the_new_balance(self):
+        res = self._pay("400")
+        self.assertEqual(res.status_code, 200, res.content[:300])
+        self.assertEqual(Decimal(res.json()["amount_due"]), Decimal("600"))
+        self.assertEqual(res.json()["status"], Bill.PARTIALLY_PAID)
+
     # --- what must keep working -------------------------------------------
 
     def test_can_still_edit_administrative_fields(self):

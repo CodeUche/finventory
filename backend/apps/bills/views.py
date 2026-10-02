@@ -288,7 +288,11 @@ class BillViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
     def approve(self, request, pk=None):
         bill = self.get_object()
         previous_status = bill.status
-        bill = BillService.approve_bill(bill, request.user)
+        try:
+            bill = BillService.approve_bill(bill, request.user)
+        except ValueError as e:
+            # e.g. "You cannot approve a bill you created." — a rule, not a crash.
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             from apps.core.models import AuditLog
@@ -321,6 +325,8 @@ class BillViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
             )
         except ValueError as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        # The service updates a row-locked copy, not this instance.
+        bill.refresh_from_db()
 
         try:
             from apps.core.models import AuditLog
