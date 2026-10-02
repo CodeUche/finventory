@@ -3067,6 +3067,21 @@ class DepreciationMethodTests(TestCase):
         entry = asset.depreciation_entries.get(period_year=2026, period_month=7)
         self.assertAlmostEqual(float(entry.depreciation_amount), 25000.0, places=2)
 
+    def test_charges_are_posted_to_the_kobo(self):
+        """Reducing balance gave 16,666.6667-style charges that reached the ledger
+        unrounded, so the GL carried fractions of a kobo and drifted from the register."""
+        asset = self._make_asset(
+            depreciation_method="reducing_balance", reducing_balance_rate=Decimal("20"),
+            purchase_cost=Decimal("1000000"), asset_code="D-KOBO",
+        )
+        for month in (7, 8, 9):
+            AccountingService.run_depreciation(self.org, 2026, month, created_by=self.user)
+        amounts = [e.depreciation_amount for e in asset.depreciation_entries.order_by("period_month")]
+        # 1,000,000 x 20%/12 = 16,666.67; then on 983,333.33 -> 16,388.89; then on 966,944.44 -> 16,115.74.
+        self.assertEqual(amounts, [Decimal("16666.67"), Decimal("16388.89"), Decimal("16115.74")])
+        for a in amounts:
+            self.assertEqual(a, a.quantize(Decimal("0.01")))
+
     def test_pro_rata_first_period(self):
         # Purchased 16 July → 16 days of a 31-day month. SL monthly = 1,200,000/60 = 20,000.
         # Pro-rata = 20,000 × 16/31 = 10,322.58.

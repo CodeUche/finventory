@@ -1217,7 +1217,13 @@ class AccountingService:
                 active_days = days_in_month - pd.day + 1
                 if 0 < active_days < days_in_month:
                     monthly = monthly * Decimal(active_days) / Decimal(days_in_month)
-        return monthly
+        # To the kobo. Reducing balance (and any straight line that does not
+        # divide evenly) produced charges like 16,666.6667 that were posted as
+        # is, so the ledger carried fractions of a kobo (302,379.327 on staging)
+        # and drifted from the register. The caller's clamp to the remaining
+        # depreciable base still makes the final period land exactly.
+        from decimal import ROUND_HALF_UP
+        return monthly.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
     @staticmethod
     def run_depreciation_catch_up(organisation, up_to_year, up_to_month, created_by=None, draft=False):
