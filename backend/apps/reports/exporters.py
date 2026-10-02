@@ -487,6 +487,8 @@ def export_excel(
     )
 
     buf = io.BytesIO()
+    from apps.core.export_safety import neutralise_workbook
+    neutralise_workbook(wb)
     wb.save(buf)
     buf.seek(0)
 

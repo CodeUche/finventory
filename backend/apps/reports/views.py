@@ -937,6 +937,8 @@ class ReportBulkExportView(BaseDateRangeView):
                 title=s["label"], subtitle=subtitle, org_name=org_name, totals=s["totals"],
             )
         buf = io.BytesIO()
+        from apps.core.export_safety import neutralise_workbook
+        neutralise_workbook(wb)
         wb.save(buf)
         return buf.getvalue()
 
@@ -963,6 +965,8 @@ class ReportBulkExportView(BaseDateRangeView):
                     title=s["label"], subtitle=subtitle, org_name=org_name, totals=s["totals"],
                 )
                 sheet_buf = io.BytesIO()
+                from apps.core.export_safety import neutralise_workbook
+                neutralise_workbook(wb)
                 wb.save(sheet_buf)
                 arcname = _unique_sheet_name(s["key"], used_names, ext=".xlsx")
                 zf.writestr(arcname, sheet_buf.getvalue())
