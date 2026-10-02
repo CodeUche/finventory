@@ -107,6 +107,24 @@ class PaymentAttributionTests(TillTestBase):
         self._take("500", method="pos")
         self.assertEqual(session.payments.count(), 2)
 
+    def test_a_sale_paid_at_the_counter_attaches_to_the_shift(self):
+        """Counter and Register sales are paid inside create_sale, not via
+        record_payment. That payment carried no till link, so the till saw
+        none of its own takings and the whole drawer read as an overage."""
+        from apps.inventory.models import Product
+        product = Product.objects.create(
+            organisation=self.org, sku="TILL-SVC", name="Service",
+            product_type="service", cost_price=0, selling_price=Decimal("1500"),
+        )
+        session = TillService.open_session(self.org, self.user, "20000")
+        SaleService.create_sale(
+            organisation=self.org, created_by=self.user, customer=None, warehouse=self.warehouse,
+            items=[{"product_id": str(product.id), "quantity": 1}],
+            payment_method="cash", amount_paid=Decimal("1500"),
+        )
+        self.assertEqual(session.payments.count(), 1)
+        self.assertEqual(TillService.expected_cash(session), Decimal("21500"))
+
     def test_payments_before_a_shift_are_not_attached(self):
         self._take("900")
         session = TillService.open_session(self.org, self.user, "20000")

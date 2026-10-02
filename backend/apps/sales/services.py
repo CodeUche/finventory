@@ -219,6 +219,11 @@ class SaleService:
                     method=payment_method,
                     reference="",
                     received_by=created_by,
+                    # Counter and Register sales are paid here, at the moment of
+                    # sale. Without the till link (record_payment already set it)
+                    # the till saw none of its own takings: the Z-report showed
+                    # zero sales and the whole drawer was posted as an "overage".
+                    till_session=SaleService._open_till_for(organisation, created_by),
                 )
                 invoice.amount_paid = paid
                 invoice.amount_due = effective_due - paid
