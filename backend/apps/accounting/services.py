@@ -1531,6 +1531,67 @@ class AccountingService:
         return grant
 
     @staticmethod
+    def assert_period_open(organisation, entry_date, user, ref='', source=''):
+        """
+        Refuse posting into a locked period unless `user` holds an active
+        posting grant for it (which is then audit-logged). Shared by automatic
+        posting (post_journal_entry) and the manual journal Post/Approve
+        actions, which used to flip a draft to posted without checking.
+        """
+        from .exceptions import PeriodLockedError
+
+        if not entry_date:
+            return
+        locked_period = FinancialPeriod.objects.filter(
+            organisation=organisation,
+            year=entry_date.year,
+            month=entry_date.month,
+            is_locked=True,
+        ).first()
+        if not locked_period:
+            return
+        if AccountingService._has_active_grant(locked_period, user):
+            # Posted into a locked period under an administrator grant — record it.
+            try:
+                from apps.core.models import AuditLog
+                AuditLog.log(
+                    action=AuditLog.UPDATE, user=user, organisation=organisation,
+                    model_name='FinancialPeriod', object_id=str(locked_period.id),
+                    object_repr=str(locked_period),
+                    changes={'event': 'locked_period_post_via_grant', 'ref': ref, 'source': source},
+                )
+            except Exception:
+                pass
+            return
+        raise PeriodLockedError(f"Period {locked_period} is locked. Unlock it before posting.")
+
+    @staticmethod
+    def validate_manual_lines(amounts):
+        """
+        Rules for a hand-entered journal, given (debit, credit) per line.
+
+        The old check let debits and credits differ by up to 0.01 and said
+        nothing about signs, so a journal 1 kobo out, one with negative
+        amounts, one with a debit and a credit on the same line, and an
+        all-zero one were all accepted and posted; the first left the trial
+        balance out by 0.01.
+        """
+        cent = Decimal('0.01')
+        total_debit = total_credit = Decimal('0')
+        for debit, credit in amounts:
+            debit, credit = Decimal(str(debit or 0)), Decimal(str(credit or 0))
+            if debit < 0 or credit < 0:
+                raise ValueError('Amounts cannot be negative. Put the amount in the other column instead.')
+            if debit > 0 and credit > 0:
+                raise ValueError('A line can carry a debit or a credit, not both.')
+            total_debit += debit
+            total_credit += credit
+        if total_debit.quantize(cent) != total_credit.quantize(cent):
+            raise ValueError(f'Journal entry not balanced: debits={total_debit}, credits={total_credit}')
+        if total_debit == 0:
+            raise ValueError('Journal entry has no amounts.')
+
+    @staticmethod
     def post_journal_entry(
         organisation,
         description: str,
@@ -1553,34 +1614,9 @@ class AccountingService:
 
         Raises PeriodLockedError if the entry_date falls in a locked period.
         """
-        from .exceptions import PeriodLockedError
-
-        # Period lock check — honour a time-boxed posting grant for the acting user.
-        if entry_date:
-            locked_period = FinancialPeriod.objects.filter(
-                organisation=organisation,
-                year=entry_date.year,
-                month=entry_date.month,
-                is_locked=True,
-            ).first()
-            if locked_period:
-                if AccountingService._has_active_grant(locked_period, created_by):
-                    # Posted into a locked period under an administrator grant — record it.
-                    try:
-                        from apps.core.models import AuditLog
-                        AuditLog.log(
-                            action=AuditLog.UPDATE, user=created_by, organisation=organisation,
-                            model_name='FinancialPeriod', object_id=str(locked_period.id),
-                            object_repr=str(locked_period),
-                            changes={'event': 'locked_period_post_via_grant', 'ref': ref,
-                                     'source': f'{source_type}/{source_ref}'},
-                        )
-                    except Exception:
-                        pass
-                else:
-                    raise PeriodLockedError(
-                        f"Period {locked_period} is locked. Unlock it before posting."
-                    )
+        AccountingService.assert_period_open(
+            organisation, entry_date, created_by, ref=ref, source=f'{source_type}/{source_ref}',
+        )
 
         # Idempotency: return existing entry if same source already posted
         if source_type and source_ref:

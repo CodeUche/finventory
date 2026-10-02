@@ -463,11 +463,10 @@ class JournalEntryViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         return qs.order_by('-entry_date', '-created_at')
 
     def _build_lines(self, org, lines_data):
-        """Validate balance and return JournalLine instances (unsaved)."""
-        total_debit = sum(Decimal(str(l.get('debit', '0'))) for l in lines_data)
-        total_credit = sum(Decimal(str(l.get('credit', '0'))) for l in lines_data)
-        if abs(total_debit - total_credit) > Decimal('0.01'):
-            raise ValueError(f'Journal entry not balanced: debits={total_debit}, credits={total_credit}')
+        """Validate the lines and return JournalLine instances (unsaved)."""
+        AccountingService.validate_manual_lines(
+            (l.get('debit', '0'), l.get('credit', '0')) for l in lines_data
+        )
         instances = []
         for line in lines_data:
             acct = Account.objects.get(id=line['account'], organisation=org)
@@ -555,10 +554,24 @@ class JournalEntryViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         entry = self.get_object()
         if entry.status == JournalEntry.POSTED:
             return Response({'error': 'Already posted'}, status=400)
+        error = self._posting_error(entry, request.user)
+        if error:
+            return Response({'error': error}, status=400)
         entry.status = JournalEntry.POSTED
         entry.posted_by = request.user
         entry.save()
         return Response(JournalEntrySerializer(entry).data)
+
+    def _posting_error(self, entry, user):
+        """Why this draft cannot be posted, or None. Re-checks drafts saved before
+        the line rules existed, and the period lock, which posting skipped."""
+        from .exceptions import PeriodLockedError
+        try:
+            AccountingService.validate_manual_lines((l.debit, l.credit) for l in entry.lines.all())
+            AccountingService.assert_period_open(entry.organisation, entry.entry_date, user, ref=entry.reference)
+        except (ValueError, PeriodLockedError) as e:
+            return str(e)
+        return None
 
     @action(detail=True, methods=['post'])
     def reverse(self, request, pk=None):
@@ -572,6 +585,22 @@ class JournalEntryViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             return Response({'error': 'Only posted entries can be reversed.'}, status=400)
 
         org = self._get_organisation()
+        # One live reversal per entry. Reversing twice made two drafts, and
+        # posting both reversed the original twice. The reversal is tagged with
+        # the original's id; a deleted draft frees it up again (its row stays,
+        # soft-deleted, so the tag gets a counter to stay unique).
+        from django.db.models import Q
+        tagged = JournalEntry.all_objects.filter(
+            organisation=org, source_type='journal_reversal',
+        ).filter(Q(source_ref=str(original.id)) | Q(source_ref__startswith=f'{original.id}:'))
+        live = tagged.filter(is_deleted=False).first()
+        if live:
+            return Response(
+                {'error': f'{original.reference} already has a reversal ({live.reference}, {live.status}).'},
+                status=400,
+            )
+        prior = tagged.count()
+        reversal_ref = str(original.id) if prior == 0 else f'{original.id}:{prior + 1}'
         reversal_date = request.data.get('reversal_date', original.entry_date)
 
         def _safe_desc(text, max_len=200):
@@ -586,6 +615,8 @@ class JournalEntryViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                 entry_date=reversal_date,
                 created_by=request.user,
                 status=JournalEntry.DRAFT,
+                source_type='journal_reversal',
+                source_ref=reversal_ref,
             )
             for line in original.lines.all():
                 JournalLine.objects.create(
@@ -663,6 +694,9 @@ class JournalEntryViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         entry.approval_note = request.data.get('note', '')
         entry.save(update_fields=['approval_status', 'approved_by', 'approved_at', 'approval_note'])
         if request.data.get('post') and entry.status != JournalEntry.POSTED:
+            error = self._posting_error(entry, request.user)
+            if error:
+                return Response({'error': f'Approved, but not posted: {error}'}, status=400)
             entry.status = JournalEntry.POSTED
             entry.posted_by = request.user
             entry.save(update_fields=['status', 'posted_by'])

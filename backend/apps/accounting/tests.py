@@ -4931,3 +4931,83 @@ class ItemClassGLDefaultTests(TestCase):
         }, format="json")
         self.assertEqual(res.status_code, 200, msg=str(res.data))
         self.assertEqual(res.data["cogs_account_code"], "5910")
+
+
+class ManualJournalRulesTests(TestCase):
+    """
+    Hand-entered journals: a 0.01 imbalance, negative amounts, a debit and a
+    credit on one line, and an all-zero entry were all accepted and posted,
+    and Post / Approve-and-post skipped the period lock entirely. On staging
+    the first left the trial balance out by 0.01.
+    """
+
+    def setUp(self):
+        self.user = _make_user("manual_je@example.com")
+        self.org = _make_org(self.user, "Manual JE Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+        postable = Account.objects.filter(organisation=self.org, allow_posting=True).order_by("code")
+        self.a, self.b = postable[0], postable[1]
+
+    def _create(self, dr_a, cr_a, dr_b, cr_b, date="2026-01-15"):
+        return self.client.post("/api/v1/accounting/journal/", {
+            "description": "Manual", "entry_date": date,
+            "lines": [
+                {"account": str(self.a.id), "debit": dr_a, "credit": cr_a},
+                {"account": str(self.b.id), "debit": dr_b, "credit": cr_b},
+            ],
+        }, format="json")
+
+    def test_a_one_kobo_imbalance_is_refused(self):
+        self.assertEqual(self._create("100.00", "0", "0", "99.99").status_code, 400)
+
+    def test_negative_amounts_are_refused(self):
+        self.assertEqual(self._create("-50", "0", "0", "-50").status_code, 400)
+
+    def test_a_line_cannot_carry_both_a_debit_and_a_credit(self):
+        self.assertEqual(self._create("50", "50", "10", "10").status_code, 400)
+
+    def test_an_all_zero_journal_is_refused(self):
+        self.assertEqual(self._create("0", "0", "0", "0").status_code, 400)
+
+    def test_a_valid_journal_still_posts(self):
+        res = self._create("250.00", "0", "0", "250.00")
+        self.assertEqual(res.status_code, 201, res.data)
+        res = self.client.post(f"/api/v1/accounting/journal/{res.data['id']}/post_entry/")
+        self.assertEqual(res.status_code, 200, res.data)
+
+    def test_an_old_invalid_draft_cannot_be_posted(self):
+        entry = JournalEntry.objects.create(
+            organisation=self.org, description="Legacy draft", entry_date="2026-01-15",
+            status=JournalEntry.DRAFT, created_by=self.user,
+        )
+        JournalLine.objects.create(journal_entry=entry, account=self.a, debit=Decimal("100"), credit=0)
+        JournalLine.objects.create(journal_entry=entry, account=self.b, debit=0, credit=Decimal("99.99"))
+        res = self.client.post(f"/api/v1/accounting/journal/{entry.id}/post_entry/")
+        self.assertEqual(res.status_code, 400)
+        entry.refresh_from_db()
+        self.assertEqual(entry.status, JournalEntry.DRAFT)
+
+    def test_posting_into_a_locked_period_is_refused(self):
+        FinancialPeriod.objects.create(organisation=self.org, year=2026, month=1, is_locked=True)
+        res = self._create("250.00", "0", "0", "250.00")
+        self.assertEqual(res.status_code, 201, res.data)
+        for path in ("post_entry/", "approve/"):
+            payload = {"post": True} if path == "approve/" else {}
+            res2 = self.client.post(f"/api/v1/accounting/journal/{res.data['id']}/{path}", payload, format="json")
+            self.assertEqual(res2.status_code, 400, (path, res2.data))
+        self.assertEqual(JournalEntry.objects.get(id=res.data["id"]).status, JournalEntry.DRAFT)
+
+    def test_an_entry_can_only_be_reversed_once_at_a_time(self):
+        """Reversing twice made two drafts; posting both reversed the original twice."""
+        res = self._create("250.00", "0", "0", "250.00")
+        entry_id = res.data["id"]
+        self.client.post(f"/api/v1/accounting/journal/{entry_id}/post_entry/")
+        first = self.client.post(f"/api/v1/accounting/journal/{entry_id}/reverse/")
+        self.assertEqual(first.status_code, 201, first.data)
+        second = self.client.post(f"/api/v1/accounting/journal/{entry_id}/reverse/")
+        self.assertEqual(second.status_code, 400, second.data)
+        # Deleting the unposted reversal draft frees the entry to be reversed again.
+        JournalEntry.objects.get(id=first.data["id"]).delete()
+        third = self.client.post(f"/api/v1/accounting/journal/{entry_id}/reverse/")
+        self.assertEqual(third.status_code, 201, third.data)
