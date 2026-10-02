@@ -4535,6 +4535,38 @@ class PartyGLAccountOverrideTests(TestCase):
         self.assertIn(self.dedicated_ap.id, accts)
         self.assertNotIn(self.default_ap.id, accts)
 
+    def test_every_partial_po_receipt_posts_to_the_ledger(self):
+        """
+        Regression: receipts were keyed on the PO, so the idempotency check
+        posted the first partial receipt and dropped every later one — the bill
+        reached the full value while Inventory and AP stayed at the first batch.
+        """
+        from django.db.models import Sum
+        from apps.purchases.models import PurchaseOrder, PurchaseOrderItem
+        from apps.purchases.services import PurchaseService
+        po = PurchaseOrder.objects.create(
+            organisation=self.org, supplier=self.supplier, warehouse=self.wh,
+            po_number=PurchaseOrder.generate_number(self.org),
+            order_date=timezone.now().date(),
+            subtotal=Decimal("250000"), tax_amount=Decimal("0"), total_amount=Decimal("250000"),
+            created_by=self.user,
+        )
+        po_item = PurchaseOrderItem.objects.create(
+            organisation=self.org, purchase_order=po, product=self.product,
+            quantity_ordered=Decimal("5"), unit_cost=Decimal("50000"), line_total=Decimal("250000"),
+        )
+        for qty in ("2", "1", "2"):
+            po = PurchaseService.receive_purchase_order(
+                po, [{"item_id": str(po_item.id), "quantity_received": qty}], self.user,
+            )
+
+        entries = JournalEntry.objects.filter(organisation=self.org, source_type="po_receipt")
+        self.assertEqual(entries.count(), 3)
+        ap_credited = JournalLine.objects.filter(
+            journal_entry__in=entries, account=self.dedicated_ap,
+        ).aggregate(total=Sum("credit"))["total"]
+        self.assertEqual(ap_credited, Decimal("250000"))
+
     def test_bill_payment_journal_uses_supplier_override(self):
         from apps.bills.models import Bill, BillPayment
         from apps.accounting.services import AccountingService as AS

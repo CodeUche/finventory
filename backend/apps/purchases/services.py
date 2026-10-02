@@ -5,6 +5,7 @@ from datetime import timedelta
 from decimal import Decimal
 
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.inventory.models import Batch
@@ -368,6 +369,14 @@ def _upsert_bill_for_po(po: PurchaseOrder, batch_subtotal: Decimal, batch_tax: D
         if batch_tax > zero:
             vat_acct = AccountMappingService.resolve(po.organisation, "vat_input_account")
             lines.append((vat_acct, batch_tax, zero))  # DR VAT Input (recoverable)
+        # Per-receipt ref, same reason as po_receipt_clearing above: the journal
+        # is idempotent on (source_type, source_ref), so a bare po.id posted the
+        # first partial receipt and silently dropped every later one — the bill
+        # grew while Inventory and AP in the ledger did not. The first receipt
+        # keeps the bare po.id so entries already in the ledger still match.
+        prior = JournalEntry.objects.filter(
+            organisation=po.organisation, source_type="po_receipt",
+        ).filter(Q(source_ref=str(po.id)) | Q(source_ref__startswith=f"{po.id}:")).count()
         AccountingService.post_journal_entry(
             po.organisation,
             f"Goods received {po.po_number}",
@@ -376,7 +385,7 @@ def _upsert_bill_for_po(po: PurchaseOrder, batch_subtotal: Decimal, batch_tax: D
             received_by,
             ref=po.po_number,
             source_type="po_receipt",
-            source_ref=str(po.id),
+            source_ref=str(po.id) if prior == 0 else f"{po.id}:{prior + 1}",
         )
 
     safe_post_gl(_post, model_instance=bill)
