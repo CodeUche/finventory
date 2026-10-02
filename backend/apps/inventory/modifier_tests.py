@@ -292,3 +292,30 @@ class ModifierApiTests(ModifierTestBase):
         )
         res = outsider.get("/api/v1/inventory/modifier-groups/")
         self.assertEqual(res.data["count"], 0)
+
+
+class InvoiceModifierTests(ModifierTestBase):
+    """
+    The till Register sells through /sales/invoices/, not the restaurant order
+    flow. Its sale serializer did not declare `modifiers`, so DRF dropped them
+    and a "Large" with extras was charged the plain base price.
+    """
+
+    def test_the_sale_endpoint_prices_modifiers(self):
+        res = self.client.post("/api/v1/sales/invoices/", {
+            "warehouse_id": str(self.warehouse.id), "payment_method": "cash",
+            "items": [{
+                "product_id": str(self.jollof.id), "quantity": "1", "unit_price": "2500",
+                "modifiers": [str(self.large.id), str(self.chicken.id)],
+            }],
+        }, format="json")
+        self.assertEqual(res.status_code, 201, res.content[:300])
+        self.assertEqual(Decimal(res.json()["items"][0]["unit_price"]), Decimal("4200"))
+
+    def test_an_invalid_choice_is_a_clear_refusal_not_a_crash(self):
+        res = self.client.post("/api/v1/sales/invoices/", {
+            "warehouse_id": str(self.warehouse.id), "payment_method": "cash",
+            "items": [{"product_id": str(self.jollof.id), "quantity": "1",
+                       "modifiers": ["00000000-0000-0000-0000-000000000000"]}],
+        }, format="json")
+        self.assertEqual(res.status_code, 422, res.content[:300])

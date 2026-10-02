@@ -302,7 +302,7 @@ class ProductListSerializer(ProductSerializer):
             "brand", "unit_of_measure", "product_type",
             "alcohol_percentage", "volume_ml",
             "cost_price", "owner_cost_price", "selling_price",
-            "reorder_level", "is_active", "is_taxable", "tax_class",
+            "reorder_level", "is_active", "is_taxable", "tax_class", "tax_type",
             "total_stock",
         ]
         read_only_fields = ["id", "total_stock"]

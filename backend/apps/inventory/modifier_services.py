@@ -15,7 +15,7 @@ from .modifier_models import ModifierGroup, ModifierOption
 ZERO = Decimal("0")
 
 
-class ModifierError(Exception):
+class ModifierError(ValueError):
     """A choice the cashier or customer needs to correct."""
 
 

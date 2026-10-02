@@ -15,11 +15,12 @@ import {
   Printer, Search, ShoppingCart, Trash2, Wallet, X,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { inventoryApi, salesApi, tillApi } from '@/services/api'
+import { inventoryApi, salesApi, taxApi, tillApi } from '@/services/api'
 import { printReceipt } from '@/lib/receipt'
 import type { ReceiptData } from '@/lib/receipt'
 import { useReceiptDefaults } from '@/hooks/useReceiptDefaults'
 import { formatCurrency, formatDate } from '@/lib/utils'
+import { productTaxRate, saleTotals, type SaleLineInput } from '@/lib/saleMath'
 import { useAuthStore } from '@/store/authStore'
 import type { Product } from '@/types'
 
@@ -201,10 +202,36 @@ export default function PosRegisterPage() {
 
   const removeLine = (key: string) => setLines((prev) => prev.filter((l) => l.key !== key))
 
-  const total = useMemo(
-    () => lines.reduce((sum, l) => sum + l.unit_price * l.quantity, 0),
-    [lines],
+  // ── Warehouse & VAT ─────────────────────────────────────────────────────
+  // A till has a sales location but no warehouse of its own, so it sells from
+  // the organisation's default warehouse — the same default /sales/new uses.
+  // The sale endpoint requires it; without it every register sale was refused.
+  const [warehouseId, setWarehouseId] = useState<string>('')
+  useEffect(() => {
+    inventoryApi.warehouses().then(({ data }) => {
+      const list: { id: string; is_default?: boolean }[] = data.results ?? data
+      const def = list.find((w) => w.is_default) ?? list[0]
+      if (def) setWarehouseId(def.id)
+    }).catch(() => {})
+  }, [])
+  const [taxRates, setTaxRates] = useState<Record<string, number>>({})
+  useEffect(() => {
+    taxApi.classes().then(({ data }) => {
+      const list: { id: string; rate: string }[] = data.results ?? data
+      setTaxRates(Object.fromEntries(list.map((c) => [c.id, parseFloat(c.rate) || 0])))
+    }).catch(() => {})
+  }, [])
+
+  // VAT is charged server-side from each product's tax class, so it has to be
+  // in what the cashier collects — see lib/saleMath.
+  const totals = useMemo(
+    () => saleTotals(lines.map((l): SaleLineInput => ({
+      unitPrice: l.unit_price, quantity: l.quantity,
+      taxRate: productTaxRate(l.product, taxRates), inclusive: l.product.tax_type === 'inclusive',
+    }))),
+    [lines, taxRates],
   )
+  const total = totals.total
   const change = Math.max(0, (parseFloat(tendered) || 0) - total)
 
   /** A scanner types fast and sends Enter — read the element, not React state. */
@@ -258,16 +285,23 @@ export default function PosRegisterPage() {
   }
 
   // ── Take payment ────────────────────────────────────────────────────────
+  // Synchronous guard: `busy` disables the tenders a render late, and a
+  // double-tap at a busy counter must not ring the sale up twice.
+  const payingRef = useRef(false)
   const takePayment = async (method: string) => {
     if (lines.length === 0) { toast.error('Basket is empty'); return }
+    if (!warehouseId) { toast.error('No warehouse to sell from — set a default warehouse first'); return }
+    if (payingRef.current) return
+    payingRef.current = true
     setBusy(true)
     try {
       const { data } = await salesApi.create({
         payment_method: method,
+        warehouse_id: warehouseId,
         amount_paid: total.toFixed(2),
         amount_tendered: method === 'cash' && tendered ? tendered : null,
         items: lines.map((l) => ({
-          product: l.product.id,
+          product_id: l.product.id,
           quantity: String(l.quantity),
           // The base selling price, NOT unit_price — unit_price already
           // includes the modifier delta, and the backend recomputes that
@@ -289,8 +323,11 @@ export default function PosRegisterPage() {
           unit_price: l.unit_price, line_total: l.unit_price * l.quantity,
           modifiers: l.modifierNames,
         })),
-        subtotal: total, total,
-        payments: [{ method, amount: total }],
+        // The saved invoice's own figures — what the customer was charged.
+        subtotal: data?.subtotal ?? totals.subtotal,
+        tax: data?.tax_amount ?? totals.tax,
+        total: data?.total_amount ?? total,
+        payments: [{ method, amount: data?.amount_paid ?? total }],
         amountTendered: method === 'cash' && tendered ? tendered : undefined,
         change: method === 'cash' && tendered ? change : undefined,
         firsIrn: data?.firs_irn,
@@ -303,7 +340,7 @@ export default function PosRegisterPage() {
     } catch (err) {
       const apiErr = (err as { response?: { data?: { error?: unknown } } })?.response?.data?.error
       toast.error(typeof apiErr === 'string' ? apiErr : 'Could not complete the sale')
-    } finally { setBusy(false) }
+    } finally { payingRef.current = false; setBusy(false) }
   }
 
   const tiles = query.trim() ? results : catalogue
@@ -441,6 +478,11 @@ export default function PosRegisterPage() {
           </div>
 
           <div className="border-t border-surface-700 p-4">
+            {totals.tax > 0 && (
+              <div className="mb-1 flex justify-between text-xs text-slate-500">
+                <span>incl. VAT</span><span className="font-mono">{formatCurrency(totals.tax)}</span>
+              </div>
+            )}
             <div className="mb-3 flex items-baseline justify-between">
               <span className="text-sm text-slate-400">Total</span>
               <span className="font-mono text-3xl font-bold text-white">{formatCurrency(total)}</span>

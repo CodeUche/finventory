@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AlertTriangle, ArrowLeft, Loader2, Minus, Plus, Search, ShoppingCart, Trash2, User, UserCheck, Warehouse, X } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { customerApi, inventoryApi, locationApi, salesApi, tillApi } from '@/services/api'
+import { customerApi, inventoryApi, locationApi, salesApi, taxApi, tillApi } from '@/services/api'
 import { printReceipt } from '@/lib/receipt'
 import { useReceiptDefaults } from '@/hooks/useReceiptDefaults'
 import { formatCurrency, formatDate, stripCommas } from '@/lib/utils'
+import { productTaxRate, saleLine, saleTotals, type SaleLineInput } from '@/lib/saleMath'
 import AmountInput from '@/components/AmountInput'
 import EditableTotal from '@/components/EditableTotal'
 import { useNotifications } from '@/contexts/NotificationsContext'
@@ -230,12 +231,30 @@ export default function NewSalePage() {
   const removeFromCart = (id: string) => setCart((prev) => prev.filter((c) => c.product.id !== id))
 
   // ── Totals ────────────────────────────────────────────────────────────────
-  const subtotal = cart.reduce((sum, c) => sum + c.unit_price * c.quantity, 0)
-  const discountTotal = cart.reduce(
-    (sum, c) => sum + (c.unit_price * c.quantity * c.discount_percent) / 100,
-    0,
-  )
-  const grandTotal = subtotal - discountTotal
+  // VAT is charged server-side from each product's tax class, so it has to be
+  // in the total the cashier collects. It used to be left out: a ₦1,500 item
+  // at 7.5% showed ₦1,500, the cashier took ₦1,500, and the sale was saved as
+  // ₦1,612.50 part-paid with ₦112.50 "owed" by a walk-in customer.
+  const [taxRates, setTaxRates] = useState<Record<string, number>>({})
+  useEffect(() => {
+    taxApi.classes().then(({ data }) => {
+      const list: { id: string; rate: string }[] = data.results ?? data
+      setTaxRates(Object.fromEntries(list.map((c) => [c.id, parseFloat(c.rate) || 0])))
+    }).catch(() => {})
+  }, [])
+  const toSaleLine = (c: CartItem): SaleLineInput => ({
+    unitPrice: c.unit_price, quantity: c.quantity, discountPercent: c.discount_percent,
+    taxRate: productTaxRate(c.product, taxRates), inclusive: c.product.tax_type === 'inclusive',
+  })
+  const amounts = cart.map((c) => saleLine(toSaleLine(c)))
+  const subtotal = amounts.reduce((sum, a) => sum + a.subtotal, 0)
+  const discountTotal = amounts.reduce((sum, a) => sum + a.discount, 0)
+  // Line items after discount, before VAT added on top — what EditableTotal
+  // back-solves unit prices against.
+  const lineItemsTotal = subtotal - discountTotal
+  const taxTotal = amounts.reduce((sum, a, i) => sum + (cart[i].product.tax_type === 'inclusive' ? 0 : a.tax), 0)
+  const taxIncluded = amounts.reduce((sum, a, i) => sum + (cart[i].product.tax_type === 'inclusive' ? a.tax : 0), 0)
+  const grandTotal = saleTotals(cart.map(toSaleLine)).total
 
   // ── Warehouses ────────────────────────────────────────────────────────────
   const [warehouses, setWarehouses] = useState<WarehouseType[]>([])
@@ -263,6 +282,8 @@ export default function NewSalePage() {
   const [applyCredit, setApplyCredit] = useState(false)
   const [notes, setNotes] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  // Synchronous guard — see NewInvoicePage: the disabled state lands a render late.
+  const submittingRef = useRef(false)
 
   const customerStoreCredit = parseFloat(selectedCustomer?.store_credit ?? '0')
   const creditApplied = applyCredit && customerStoreCredit > 0
@@ -314,6 +335,8 @@ export default function NewSalePage() {
       toast.error(`"${zeroPriceItem.product.name}" has a zero or negative price — please correct it before saving`)
       return
     }
+    if (submittingRef.current) return
+    submittingRef.current = true
     setSubmitting(true)
     try {
       const { data: created } = await salesApi.create(buildPayload(isProforma))
@@ -329,16 +352,20 @@ export default function NewSalePage() {
           date: formatDate(created.issue_date ?? new Date().toISOString()),
           cashier: currentUserName,
           customer: selectedCustomer?.name,
-          lines: cart.map((c) => ({
+          lines: cart.map((c, i) => ({
             name: c.product.name,
             qty: c.quantity,
             unit_price: c.unit_price,
-            line_total: c.unit_price * c.quantity * (1 - c.discount_percent / 100),
+            line_total: amounts[i].lineTotal,
           })),
-          subtotal, discount: discountTotal, total: grandTotal,
-          payments: paymentMethod === 'credit' ? [] : [{ method: paymentMethod, amount: grandTotal }],
+          // The saved invoice's own figures — what the customer was charged.
+          subtotal: created.subtotal ?? subtotal,
+          discount: created.discount_amount ?? discountTotal,
+          tax: created.tax_amount ?? taxTotal,
+          total: created.total_amount ?? grandTotal,
+          payments: paymentMethod === 'credit' ? [] : [{ method: paymentMethod, amount: created.amount_paid ?? grandTotal }],
           amountTendered: tenderedNum || undefined,
-          change: tenderedNum ? Math.max(0, tenderedNum - grandTotal) : undefined,
+          change: tenderedNum ? Math.max(0, tenderedNum - (parseFloat(created.total_amount) || grandTotal)) : undefined,
           firsIrn: created.firs_irn,
           qrCodeBase64: created.firs_qr_code,
         })
@@ -362,6 +389,7 @@ export default function NewSalePage() {
       }
       toast.error(msg)
     } finally {
+      submittingRef.current = false
       setSubmitting(false)
     }
   }
@@ -777,12 +805,30 @@ export default function NewSalePage() {
               )}
               <div className="border-t border-surface-700 pt-2 text-base">
                 <EditableTotal
-                  total={grandTotal}
+                  total={lineItemsTotal}
                   valueClass="text-white font-semibold"
                   lines={cart.map((c) => ({ quantity: c.quantity, unitPrice: c.unit_price, discountPercent: c.discount_percent }))}
                   onApply={(prices) => setCart((prev) => prev.map((c, i) => ({ ...c, unit_price: prices[i] })))}
                 />
               </div>
+              {taxTotal > 0 && (
+                <div className="flex justify-between text-blue-400">
+                  <span>VAT</span>
+                  <span>+ {formatCurrency(taxTotal)}</span>
+                </div>
+              )}
+              {taxIncluded > 0 && (
+                <div className="flex justify-between text-slate-500 text-xs">
+                  <span>VAT included in prices</span>
+                  <span>{formatCurrency(taxIncluded)}</span>
+                </div>
+              )}
+              {taxTotal > 0 && (
+                <div className="flex justify-between text-white font-semibold text-base border-t border-surface-700 pt-2">
+                  <span>Grand Total</span>
+                  <span>{formatCurrency(grandTotal)}</span>
+                </div>
+              )}
               {creditApplied > 0 && (
                 <>
                   <div className="flex justify-between text-emerald-400">

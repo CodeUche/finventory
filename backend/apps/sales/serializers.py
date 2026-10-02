@@ -119,6 +119,12 @@ class CreateSaleSerializer(serializers.Serializer):
             max_digits=5, decimal_places=2, required=False, allow_null=True,
             min_value=Decimal("0"), max_value=Decimal("100"),
         )
+        # Chosen modifier options (Size, Extras…). Priced and validated
+        # server-side by ModifierService — the till sends only the IDs. Was
+        # undeclared, so DRF dropped it and a "Large" sold at the base price.
+        modifiers = serializers.ListField(
+            child=serializers.UUIDField(), required=False, allow_empty=True, max_length=50,
+        )
 
     customer_id = serializers.UUIDField(required=False, allow_null=True)
     warehouse_id = serializers.UUIDField()
