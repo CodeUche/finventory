@@ -166,9 +166,22 @@ class ReportService:
 
         Revenue − COGS = Gross Profit
         Gross Profit − Operating Expenses = Net Profit
+
+        Revenue is VAT-exclusive and net of sales returns, and COGS is net of
+        the cost of restocked returns — the same figures the ledger posts.
+        It used to be SUM(invoice.total_amount), so output VAT (a liability
+        owed to the tax authority) was reported as income, and returns were
+        never deducted from either revenue or COGS.
+
+        ``revenue.gross_sales`` is that net revenue, because every consumer
+        (dashboard KPIs, ratios, the waterfall) already treats it as "Revenue"
+        and needs Revenue − COGS = Gross Profit to hold. The breakdown sits
+        beside it: ``sales_excl_vat`` (invoiced, before returns) − ``returns``.
         """
+        from django.db.models import DecimalField, ExpressionWrapper
+
         from apps.expenses.models import Expense
-        from apps.sales.models import Invoice, SaleItem
+        from apps.sales.models import Invoice, SaleItem, SaleReturnItem
 
         rev_qs = Invoice.objects.filter(
             organisation=organisation,
@@ -196,11 +209,32 @@ class ReportService:
         inc_qs = _date_filter(inc_qs, "expense_date", date_from, date_to)
         income_data = inc_qs.aggregate(total_misc_income=Sum("amount"))
 
-        total_revenue = revenue_data["total_revenue"] or Decimal("0")
-        total_cogs = cogs_data["total_cogs"] or Decimal("0")
+        # Returns are recognised on their own date, as the ledger posts them.
+        ret_qs = SaleReturnItem.objects.filter(
+            organisation=organisation,
+            sale_return__invoice__status__in=["paid", "confirmed", "partially_paid", "credit", "overdue"],
+        )
+        ret_qs = _date_filter(ret_qs, "sale_return__return_date", date_from, date_to)
+        returns_data = ret_qs.aggregate(
+            refunded=Sum("refund_amount"), tax_refunded=Sum("tax_refund"),
+        )
+        # Cost comes back only when the goods do, at the line's own unit cost.
+        returned_cost = ret_qs.filter(
+            sale_return__restocked=True, original_item__quantity__gt=0,
+        ).aggregate(
+            total=Sum(ExpressionWrapper(
+                F("original_item__cost_of_goods") * F("quantity_returned") / F("original_item__quantity"),
+                output_field=DecimalField(max_digits=20, decimal_places=4),
+            ))
+        )["total"] or Decimal("0")
+
+        tax_collected = revenue_data["total_tax_collected"] or Decimal("0")
+        sales_excl_vat = (revenue_data["total_revenue"] or Decimal("0")) - tax_collected
+        returns = (returns_data["refunded"] or Decimal("0")) - (returns_data["tax_refunded"] or Decimal("0"))
+        total_revenue = sales_excl_vat - returns
+        total_cogs = (cogs_data["total_cogs"] or Decimal("0")) - returned_cost.quantize(Decimal("0.01"))
         total_expenses = expense_data["total_expenses"] or Decimal("0")
         misc_income = income_data["total_misc_income"] or Decimal("0")
-        tax_collected = revenue_data["total_tax_collected"] or Decimal("0")
 
         total_income = total_revenue + misc_income
         gross_profit = total_income - total_cogs
@@ -211,6 +245,8 @@ class ReportService:
             "period_end": date_to,
             "revenue": {
                 "gross_sales": total_revenue,
+                "sales_excl_vat": sales_excl_vat,
+                "returns": returns,
                 "tax_collected": tax_collected,
                 "discounts": revenue_data["total_discounts"] or Decimal("0"),
             },

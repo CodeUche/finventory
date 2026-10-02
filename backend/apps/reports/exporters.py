@@ -218,8 +218,15 @@ def flatten_for_export(data: Any):
         headers = ["Section", "Item", "Value"]
         rows = []
         pnl = data["profit_and_loss"]
+        # gross_sales is net revenue (excl. VAT, after returns) — see
+        # ReportService.profit_and_loss; name it for what it is.
+        revenue_labels = {
+            "gross_sales": "Net Sales", "sales_excl_vat": "Sales (excl. VAT)",
+            "returns": "Less: Sales Returns", "tax_collected": "VAT Collected (owed, not income)",
+            "discounts": "Discounts Given",
+        }
         for k, v in (pnl.get("revenue") or {}).items():
-            rows.append(["Profit & Loss", f"Revenue — {_prettify(k)}", v])
+            rows.append(["Profit & Loss", f"Revenue — {revenue_labels.get(k, _prettify(k))}", v])
         for k in ("cost_of_goods_sold", "gross_profit", "operating_expenses", "net_profit"):
             if k in pnl:
                 rows.append(["Profit & Loss", _prettify(k), pnl[k]])

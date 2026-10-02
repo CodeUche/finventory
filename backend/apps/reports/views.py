@@ -209,9 +209,11 @@ class ProfitAndLossView(BaseDateRangeView):
         def _rows(d):
             rev = d.get("revenue", {})
             return [
-                ["Gross Sales", rev.get("gross_sales", 0)],
-                ["Tax Collected", rev.get("tax_collected", 0)],
-                ["Discounts", rev.get("discounts", 0)],
+                ["Sales (excl. VAT)", rev.get("sales_excl_vat", 0)],
+                ["Less: Sales Returns", rev.get("returns", 0)],
+                ["Net Sales", rev.get("gross_sales", 0)],
+                ["VAT Collected (owed, not income)", rev.get("tax_collected", 0)],
+                ["Discounts Given", rev.get("discounts", 0)],
                 ["Cost of Goods Sold", d.get("cost_of_goods_sold", 0)],
                 ["Gross Profit", d.get("gross_profit", 0)],
                 ["Gross Margin %", d.get("gross_margin_pct", 0)],

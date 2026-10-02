@@ -482,7 +482,8 @@ export interface SaleReturn {
 export interface PnL {
   period_start: string
   period_end: string
-  revenue: { gross_sales: string; tax_collected: string; discounts: string }
+  /** gross_sales is net revenue: excl. VAT, after returns (sales_excl_vat − returns). */
+  revenue: { gross_sales: string; sales_excl_vat?: string; returns?: string; tax_collected: string; discounts: string }
   cost_of_goods_sold: string
   gross_profit: string
   gross_margin_pct: string
