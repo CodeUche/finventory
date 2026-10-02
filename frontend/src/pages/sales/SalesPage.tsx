@@ -502,7 +502,7 @@ export default function SalesPage() {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('')
-  const [sortBy, setSortBy] = useState('-issue_date')
+  const [sortBy, setSortBy] = useState('-issue_date,-created_at')
   const [selected, setSelected] = useState<Invoice | null>(null)
   const [detail, setDetail] = useState<Invoice | null>(null)
   const [acting, setActing] = useState(false)
@@ -973,8 +973,8 @@ export default function SalesPage() {
           value={sortBy}
           onChange={setSortBy}
           options={[
-            { label: 'Newest first', value: '-issue_date' },
-            { label: 'Oldest first', value: 'issue_date' },
+            { label: 'Newest first', value: '-issue_date,-created_at' },
+            { label: 'Oldest first', value: 'issue_date,created_at' },
             { label: 'Amount ↓', value: '-total_amount' },
             { label: 'Amount ↑', value: 'total_amount' },
           ]}
