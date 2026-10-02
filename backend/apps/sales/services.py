@@ -128,6 +128,7 @@ class SaleService:
         subtotal = Decimal("0")
         total_discount = Decimal("0")
         total_tax = Decimal("0")
+        lines_total = Decimal("0")
 
         for item_data in items:
             line = SaleService._process_line_item(
@@ -141,8 +142,14 @@ class SaleService:
             subtotal += line["subtotal"]
             total_discount += line["discount_amount"]
             total_tax += line["tax_amount"]
+            lines_total += line["line_total"]
 
-        total = subtotal - total_discount + total_tax + shipping
+        # Sum the lines, not subtotal − discount + tax: a VAT-inclusive line's
+        # tax is already inside its price (line_total == after-discount), so
+        # adding total_tax on top charged that VAT twice — a 1,075 shelf price
+        # billed 1,150 and posted 1,075 as revenue with a phantom 75 owed.
+        # For exclusive lines line_total is after-discount + tax: same figure.
+        total = lines_total + shipping
 
         # Clamp credit to total (can't apply more credit than the invoice total)
         credit_to_apply = min(credit_to_apply, total)
@@ -465,6 +472,7 @@ class SaleService:
         subtotal = Decimal("0")
         total_discount = Decimal("0")
         total_tax = Decimal("0")
+        lines_total = Decimal("0")
 
         for item_data in items:
             line = SaleService._process_line_item(
@@ -478,6 +486,7 @@ class SaleService:
             subtotal += line["subtotal"]
             total_discount += line["discount_amount"]
             total_tax += line["tax_amount"]
+            lines_total += line["line_total"]
 
         # None means "leave it alone" (the caller didn't touch shipping) —
         # distinct from an explicit 0, which clears it. Only the edit-invoice
@@ -486,7 +495,8 @@ class SaleService:
         shipping = Decimal(str(shipping_amount)) if shipping_amount is not None else Decimal(str(invoice.shipping_amount or 0))
         if shipping < 0:
             raise ValueError("Shipping amount cannot be negative.")
-        total = subtotal - total_discount + total_tax + shipping
+        # Sum the lines — see create_sale: VAT-inclusive lines already hold their tax.
+        total = lines_total + shipping
 
         # Recalculate financials; preserve existing payments
         invoice.subtotal = subtotal
