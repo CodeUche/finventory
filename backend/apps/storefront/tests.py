@@ -398,6 +398,18 @@ class MerchantSettingsTests(StorefrontTestBase):
         )
         self.assertEqual(res.status_code, 400)
 
+    def test_a_merchant_can_publish_a_product_through_the_api(self):
+        """Nothing could set is_published (it was not on ProductSerializer),
+        so every shop stayed empty however the merchant configured it."""
+        product = Product.objects.create(
+            organisation=self.org, sku="PUB", name="To Publish",
+            cost_price=Decimal("1"), selling_price=Decimal("2"),
+        )
+        res = self.client.patch(f"/api/v1/inventory/products/{product.id}/", {"is_published": True}, format="json")
+        self.assertEqual(res.status_code, 200, res.data)
+        product.refresh_from_db()
+        self.assertTrue(product.is_published)
+
     def test_products_are_unpublished_by_default(self):
         """Enabling a shop must not dump the whole catalogue onto the internet."""
         product = Product.objects.create(
@@ -456,6 +468,17 @@ class DeliveryChargeTests(StorefrontTestBase):
         self.shop.save(update_fields=["fixed_delivery_charge", "free_delivery_threshold"])
         res = self._deliver()
         self.assertEqual(Decimal(str(res.data["total"])), Decimal("18400"))
+
+    def test_the_invoice_carries_the_delivery_charge_the_customer_agreed_to(self):
+        """Accepting a delivery order raised an invoice with no delivery on it."""
+        self.shop.fixed_delivery_charge = Decimal("1500")
+        self.shop.save(update_fields=["fixed_delivery_charge"])
+        res = self._deliver()
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        order = StorefrontOrder.objects.get(reference=res.data["reference"])
+        self.client.post(f"/api/v1/storefront/orders/{order.id}/accept/")
+        order.refresh_from_db()
+        self.assertEqual(order.invoice.shipping_amount, Decimal("1500"))
 
     def test_charge_never_applies_to_pickup(self):
         self.shop.fixed_delivery_charge = Decimal("1500")

@@ -223,6 +223,10 @@ class StorefrontService:
             payment_method="credit",
             notes=f"Storefront order {order.reference}",
             sold_by="Storefront",
+            # The delivery charge the customer agreed to at checkout. It was
+            # left off, so the merchant's invoice silently dropped it: an order
+            # shown as 3,000 + 500 delivery was invoiced with no delivery.
+            shipping_amount=max(order.total - order.subtotal, ZERO),
         )
 
     @staticmethod
