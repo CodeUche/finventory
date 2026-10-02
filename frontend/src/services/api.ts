@@ -1032,7 +1032,14 @@ api.interceptors.response.use(
     } else if (status === 402) {
       const msg = typeof errData === 'string' ? errData : errData?.message ?? 'Plan limit reached'
       toast.error(msg, { id: 'plan-limit', duration: 8000 })
-    } else if (errData?.message && status !== 401 && !isAuthUrl) {
+    } else if (
+      errData?.message && status !== 401 && !isAuthUrl &&
+      // Issued in the background at every sign-in and non-fatal by design
+      // (LoginPage swallows its errors). It is limited to 5/hour per user, so
+      // the 6th sign-in in an hour flashed "Request was throttled. Expected
+      // available in N seconds." at someone who had just signed in fine.
+      !original.url?.includes('/auth/offline-verifier/')
+    ) {
       const toastId = `api-err-${status}-${original.url}`
       toast.error(errData.message, { id: toastId, duration: 4000 })
     }
