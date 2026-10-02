@@ -17,7 +17,13 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.permissions import IsManagerOrSuperuser, IsStaff
+from apps.core.permissions import IsManagerOrSuperuser, IsStaff, requires_module
+
+# The owner's per-person "Reports" tick. Without it these views checked only
+# role, so a team member refused /customers/ and /sales/invoices/ could read
+# the same customers (names, emails, phones, balances) and sales through the
+# report endpoints instead. See requires_module in apps/core/permissions.py.
+_ModAccess_reports = requires_module("reports")
 
 from .exporters import _org_display_name, _write_report_sheet, dispatch_export, flatten_for_export
 from .period_utils import period_label, resolve_period
@@ -32,7 +38,7 @@ class BaseDateRangeView(APIView):
     provides a helper for optionally returning an export file instead of JSON.
     """
 
-    permission_classes = [IsAuthenticated, IsStaff]
+    permission_classes = [IsAuthenticated, IsStaff, _ModAccess_reports]
 
     def get_organisation(self):
         """
@@ -843,7 +849,7 @@ class ReportBulkExportView(BaseDateRangeView):
     IsStaff that plain report viewing uses.
     """
 
-    permission_classes = [IsAuthenticated, IsManagerOrSuperuser]
+    permission_classes = [IsAuthenticated, IsManagerOrSuperuser, _ModAccess_reports]
 
     def post(self, request):
         keys = request.data.get("keys")

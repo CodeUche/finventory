@@ -223,3 +223,40 @@ class ModuleKeysAgreeTests(TestCase):
             f"{unknown} is not in ModulePermission.MODULE_CHOICES, so no "
             f"permission row can ever match it and access is denied to all",
         )
+
+
+class ReportsModuleAccessTests(TestCase):
+    """
+    The report endpoints checked role only. A team member refused /customers/
+    and /sales/invoices/ could read the same customers — names, emails, phones,
+    balances — and every sale through /reports/customer-details/ and friends.
+    """
+
+    REPORTS = (
+        "/api/v1/reports/customer-details/",
+        "/api/v1/reports/sales-by-customer/",
+        "/api/v1/reports/pnl/",
+    )
+
+    def setUp(self):
+        self.owner = _make_user("rep_owner@example.com")
+        self.org = _make_org(self.owner, "Reports Org")
+        self.owner_client = _auth_client(self.owner, self.org)
+
+    def test_staff_without_the_reports_tick_cannot_read_reports(self):
+        _, client, _ = _member(self.org, "rep_none@example.com", "staff")
+        for url in self.REPORTS:
+            self.assertEqual(
+                client.get(url).status_code, 403,
+                f"{url} answered a team member with no Reports access",
+            )
+
+    def test_staff_with_the_reports_tick_can(self):
+        _, client, _ = _member(self.org, "rep_view@example.com", "staff", "reports", "view")
+        for url in self.REPORTS:
+            self.assertEqual(client.get(url).status_code, 200, url)
+
+    def test_owner_is_unaffected(self):
+        for url in self.REPORTS:
+            self.assertEqual(self.owner_client.get(url).status_code, 200, url)
+
