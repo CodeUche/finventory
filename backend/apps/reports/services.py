@@ -98,9 +98,12 @@ class ReportService:
             qs.values("product__id", "product__name", "product__sku")
             .annotate(
                 total_quantity=Sum("quantity"),
-                total_revenue=Sum("line_total"),
+                # line_total carries the line's VAT (added on top, or inside an
+                # inclusive price); tax_amount is that VAT either way. VAT is
+                # owed to the tax authority, so it is neither revenue nor margin.
+                total_revenue=Sum("line_total") - Sum("tax_amount"),
                 total_cogs=Sum("cost_of_goods"),
-                gross_profit=Sum("line_total") - Sum("cost_of_goods"),
+                gross_profit=Sum("line_total") - Sum("tax_amount") - Sum("cost_of_goods"),
             )
             .order_by("-total_revenue")[:limit]
         )
@@ -356,9 +359,12 @@ class ReportService:
             qs.values("product__id", "product__name", "product__sku")
             .annotate(
                 total_quantity=Sum("quantity"),
-                total_revenue=Sum("line_total"),
+                # line_total carries the line's VAT (added on top, or inside an
+                # inclusive price); tax_amount is that VAT either way. VAT is
+                # owed to the tax authority, so it is neither revenue nor margin.
+                total_revenue=Sum("line_total") - Sum("tax_amount"),
                 total_cogs=Sum("cost_of_goods"),
-                gross_profit=Sum("line_total") - Sum("cost_of_goods"),
+                gross_profit=Sum("line_total") - Sum("tax_amount") - Sum("cost_of_goods"),
             )
             .order_by("-total_revenue")
         )

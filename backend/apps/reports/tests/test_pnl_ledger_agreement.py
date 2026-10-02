@@ -79,3 +79,22 @@ class ProfitAndLossAgreesWithLedgerTests(TestCase):
         # And the same figures the ledger holds.
         self.assertEqual(Decimal(str(rev["gross_sales"])), self._ledger("4001"))
         self.assertEqual(Decimal(str(pnl["cost_of_goods_sold"])), self._ledger("5001"))
+
+    def test_product_reports_exclude_vat_from_revenue_and_margin(self):
+        """Top Products / Sales by Product summed line_total, which carries VAT,
+        so each product's revenue and gross profit were overstated by its VAT."""
+        from apps.reports.services import ReportService
+        from apps.sales.services import SaleService
+
+        SaleService.create_sale(
+            organisation=self.org, created_by=self.user, customer=self.customer, warehouse=self.wh,
+            items=[{"product_id": str(self.product.id), "quantity": 3, "discount_percent": "10"}],
+            payment_method="credit",
+        )
+        for rows in (
+            ReportService.sales_by_product(self.org, None, None),
+            ReportService.top_products(self.org, None, None),
+        ):
+            row = rows[0]
+            self.assertEqual(Decimal(str(row["revenue"])), Decimal("4050.00"))
+            self.assertEqual(Decimal(str(row["gross_profit"])), Decimal("1050.00"))
