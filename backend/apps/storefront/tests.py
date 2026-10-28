@@ -315,6 +315,26 @@ class AcceptOrderTests(StorefrontTestBase):
             Customer.objects.filter(organisation=self.org, phone="08030000000").count(), 1,
         )
 
+    def _accept(self, **overrides):
+        ref = self._place(**overrides).data["reference"]
+        order = StorefrontOrder.objects.get(reference=ref)
+        self.client.post(f"/api/v1/storefront/orders/{order.id}/accept/")
+        order.refresh_from_db()
+        return order
+
+    def test_the_same_person_in_a_different_phone_format_is_still_one_customer(self):
+        first = self._accept()
+        second = self._accept(customer_phone="+234 803 000 0000", customer_name="ada  BUYER")
+        self.assertEqual(first.invoice.customer_id, second.invoice.customer_id)
+
+    def test_someone_else_using_a_customers_phone_is_not_booked_to_that_customer(self):
+        """Phone-only matching put an anonymous buyer's order, as money owed,
+        on an existing customer's account."""
+        owner_of_number = self._accept()
+        stranger = self._accept(customer_name="Someone Else")
+        self.assertNotEqual(owner_of_number.invoice.customer_id, stranger.invoice.customer_id)
+        self.assertIn("Ada Buyer", stranger.invoice.customer.notes)
+
     def test_another_merchant_cannot_see_or_accept_the_order(self):
         order = self._order()
         other_user = _user("nosy@example.com")

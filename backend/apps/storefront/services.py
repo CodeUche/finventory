@@ -242,28 +242,58 @@ class StorefrontService:
         )
 
     @staticmethod
-    def _customer_for(order: StorefrontOrder):
-        """Reuse a customer on the phone number, otherwise create one.
+    def normalise_phone(raw: str) -> str:
+        """Digits only, in Nigerian international form (234...), so "0803 111
+        2222", "+234 803 111 2222" and "2348031112222" compare equal. Anything
+        that is not a recognisable Nigerian mobile keeps its digits unchanged."""
+        import re
+        digits = re.sub(r"\D", "", raw or "")
+        if digits.startswith("234") and len(digits) == 13:
+            return digits
+        if digits.startswith("0") and len(digits) == 11:
+            return "234" + digits[1:]
+        if len(digits) == 10 and digits[0] in "789":
+            return "234" + digits
+        return digits
 
-        Matching on phone keeps a repeat buyer as one customer rather than a
-        new record per order, which is what makes a statement meaningful.
+    @staticmethod
+    def normalise_name(raw: str) -> str:
+        import re
+        return re.sub(r"[^a-z0-9]+", " ", (raw or "").lower()).strip()
+
+    @staticmethod
+    def _customer_for(order: StorefrontOrder):
+        """Reuse a customer only when the phone number AND the name match.
+
+        Matching on phone alone let an anonymous buyer type someone else's
+        number and have the order, as money owed, booked to that person's
+        account. A duplicate customer is a small nuisance; debt on the wrong
+        person is not. When the phone belongs to a different name a new
+        customer is created and the merchant is told who else uses the number.
         """
         from apps.customers.models import Customer
 
-        phone = (order.customer_phone or "").strip()
+        phone = StorefrontService.normalise_phone(order.customer_phone)
+        name = StorefrontService.normalise_name(order.customer_name)
+        also_used_by = ""
         if phone:
-            existing = Customer.objects.filter(
-                organisation=order.organisation, phone=phone,
-            ).first()
-            if existing:
-                return existing
+            for existing in Customer.objects.filter(
+                organisation=order.organisation, phone__contains=phone[-4:],
+            ):
+                if StorefrontService.normalise_phone(existing.phone) != phone:
+                    continue
+                if StorefrontService.normalise_name(existing.name) == name:
+                    return existing
+                also_used_by = also_used_by or existing.name
         return Customer.objects.create(
             organisation=order.organisation,
             code=f"WEB-{order.reference}",
             name=order.customer_name or "Storefront customer",
-            phone=phone,
+            phone=(order.customer_phone or "").strip(),
             email=order.customer_email or "",
             address=order.delivery_address or "",
+            notes=(f"Phone number also used by existing customer \"{also_used_by}\" - "
+                   f"not linked automatically." if also_used_by else ""),
         )
 
     @staticmethod
