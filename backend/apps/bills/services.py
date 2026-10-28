@@ -138,6 +138,12 @@ class BillService:
             raise ValueError("Cannot pay a voided bill")
         if bill.status == Bill.PAID:
             raise ValueError("This bill has already been fully paid.")
+        # Approval exists to stop paying for goods that were not ordered or
+        # received, or at the wrong price. A draft was never posted to AP at
+        # all, so paying it left the supplier with a debit balance and the cost
+        # out of profit and loss.
+        if bill.status not in (Bill.APPROVED, Bill.PARTIALLY_PAID, Bill.OVERDUE):
+            raise ValueError("Approve this bill before paying it.")
         if amount > bill.amount_due:
             raise ValueError(
                 f"Payment of {amount} exceeds the outstanding balance of {bill.amount_due}."
@@ -188,8 +194,9 @@ class BillService:
     @staticmethod
     @transaction.atomic
     def approve_bill(bill, approver):
-        if bill.created_by and bill.created_by == approver:
-            raise ValueError("You cannot approve a bill you created.")
+        from apps.core.approvals import check_approval
+        check_approval(bill.organisation, bill.created_by, approver, "bill",
+                       object_id=bill.id, model_name="Bill")
         bill.status = Bill.APPROVED
         bill.approved_by = approver
         bill.save()

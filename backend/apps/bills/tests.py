@@ -87,14 +87,32 @@ class BillStatusBypassTests(TestCase):
             "bill reads as paid while amount_paid is 0 — AP aging is now wrong",
         )
 
-    def test_approving_own_bill_is_refused_with_reason_not_a_crash(self):
-        """The segregation-of-duties rule raised ValueError past the view: a 500
-        and "An unexpected error occurred" instead of the actual reason."""
+    def test_approving_own_bill_is_refused_with_reason_when_someone_else_can_approve(self):
+        """The rule raised ValueError past the view: a 500 and "An unexpected
+        error occurred" instead of the actual reason."""
+        from apps.payroll.test_track_a import _make_user as mk_user
+        from apps.tenancy.models import Membership
+        Membership.objects.create(user=mk_user("second_admin@example.com"), organisation=self.org,
+                                  role="admin", is_active=True)
         res = self.client.post(f"/api/v1/bills/{self.bill.id}/approve/")
         self.assertEqual(res.status_code, 400, res.content[:300])
-        self.assertIn("cannot approve a bill you created", res.json()["error"])
+        self.assertIn("another person can approve", res.json()["error"])
         self.bill.refresh_from_db()
         self.assertEqual(self.bill.status, Bill.RECEIVED)
+
+    def test_a_sole_owner_can_approve_their_own_bill(self):
+        """Nobody else can approve, so refusing would strand the business."""
+        res = self.client.post(f"/api/v1/bills/{self.bill.id}/approve/")
+        self.assertEqual(res.status_code, 200, res.content[:300])
+        self.bill.refresh_from_db()
+        self.assertEqual(self.bill.status, Bill.APPROVED)
+
+    def test_a_bill_cannot_be_paid_before_it_is_approved(self):
+        for status in (Bill.DRAFT, Bill.RECEIVED):
+            Bill.objects.filter(pk=self.bill.pk).update(status=status)
+            res = self._pay("100")
+            self.assertEqual(res.status_code, 400, (status, res.content[:200]))
+            self.assertIn("Approve this bill", res.json()["error"])
 
     def _pay(self, amount):
         return self.client.post(
@@ -104,6 +122,7 @@ class BillStatusBypassTests(TestCase):
         )
 
     def test_payment_above_amount_due_is_refused(self):
+        Bill.objects.filter(pk=self.bill.pk).update(status=Bill.APPROVED)
         res = self._pay("1000.01")
         self.assertEqual(res.status_code, 400, res.content[:300])
         self.bill.refresh_from_db()
@@ -111,6 +130,7 @@ class BillStatusBypassTests(TestCase):
         self.assertEqual(self.bill.payments.count(), 0)
 
     def test_paid_bill_cannot_be_paid_again(self):
+        Bill.objects.filter(pk=self.bill.pk).update(status=Bill.APPROVED)
         self.assertEqual(self._pay("1000").status_code, 200)
         res = self._pay("1")
         self.assertEqual(res.status_code, 400, res.content[:300])
@@ -119,6 +139,7 @@ class BillStatusBypassTests(TestCase):
         self.assertEqual(self.bill.status, Bill.PAID)
 
     def test_payment_response_reflects_the_new_balance(self):
+        Bill.objects.filter(pk=self.bill.pk).update(status=Bill.APPROVED)
         res = self._pay("400")
         self.assertEqual(res.status_code, 200, res.content[:300])
         self.assertEqual(Decimal(res.json()["amount_due"]), Decimal("600"))

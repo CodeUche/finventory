@@ -5061,3 +5061,45 @@ class ManualJournalRulesTests(TestCase):
         JournalEntry.objects.get(id=first.data["id"]).delete()
         third = self.client.post(f"/api/v1/accounting/journal/{entry_id}/reverse/")
         self.assertEqual(third.status_code, 201, third.data)
+
+
+class JournalApprovalRuleTests(TestCase):
+    """Journals allowed self-approval outright and could be approved without
+    being submitted. Same rule as bills and payroll: approve your own only when
+    nobody else can."""
+
+    def setUp(self):
+        from apps.payroll.test_track_a import _make_user as mk_user
+        self.mk_user = mk_user
+        self.user = _make_user("jr_owner@example.com")
+        self.org = _make_org(self.user, "Journal Rule Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+        a, b = list(Account.objects.filter(organisation=self.org, allow_posting=True).order_by("code")[:2])
+        res = self.client.post("/api/v1/accounting/journal/", {
+            "description": "Rule", "entry_date": "2026-01-15",
+            "lines": [{"account": str(a.id), "debit": "100", "credit": "0"},
+                      {"account": str(b.id), "debit": "0", "credit": "100"}],
+        }, format="json")
+        self.entry_id = res.data["id"]
+
+    def _approve(self):
+        return self.client.post(f"/api/v1/accounting/journal/{self.entry_id}/approve/", {}, format="json")
+
+    def test_cannot_approve_without_submitting(self):
+        self.assertEqual(self._approve().status_code, 400)
+
+    def test_sole_owner_may_approve_their_own_and_it_is_marked(self):
+        self.client.post(f"/api/v1/accounting/journal/{self.entry_id}/submit_for_approval/")
+        res = self._approve()
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertIn("Self-approved (sole approver)", res.data["approval_note"])
+
+    def test_with_a_second_approver_you_cannot_approve_your_own(self):
+        from apps.tenancy.models import Membership
+        Membership.objects.create(user=self.mk_user("jr_admin@example.com"), organisation=self.org,
+                                  role="admin", is_active=True)
+        self.client.post(f"/api/v1/accounting/journal/{self.entry_id}/submit_for_approval/")
+        res = self._approve()
+        self.assertEqual(res.status_code, 403, res.data)
+        self.assertIn("Ask", res.data["error"])

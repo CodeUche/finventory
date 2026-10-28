@@ -794,12 +794,14 @@ class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                     {'error': 'This payroll must be submitted for approval first.'},
                     status=400,
                 )
-        # Segregation of duties: the person who submitted cannot approve
-        if run.submitted_by and run.submitted_by == request.user:
-            return Response(
-                {'error': 'You cannot approve a payroll run you submitted. A different owner or admin must approve.'},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+        # Segregation of duties, one rule everywhere (apps/core/approvals.py):
+        # the submitter may approve only when nobody else can.
+        from apps.core.approvals import check_approval
+        try:
+            check_approval(run.organisation, run.submitted_by, request.user, "payroll run",
+                           object_id=run.id, model_name="PayrollRun", request=request)
+        except ValueError as e:
+            return Response({'error': str(e)}, status=status.HTTP_403_FORBIDDEN)
         run.status = PayrollRun.APPROVED
         run.approved_by = request.user
         run.save()

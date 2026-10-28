@@ -688,10 +688,21 @@ class JournalEntryViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     def approve(self, request, pk=None):
         """Approve a pending journal and (optionally) post it in one step."""
         entry = self.get_object()
+        # Only an entry that was submitted can be approved; approving a draft
+        # skipped the review step altogether.
+        if entry.approval_status != JournalEntry.PENDING:
+            return Response({'error': 'Submit this journal for approval first.'}, status=400)
+        from apps.core.approvals import SELF_APPROVED_NOTE, check_approval
+        try:
+            self_approved = check_approval(entry.organisation, entry.created_by, request.user, "journal",
+                                           object_id=entry.id, model_name="JournalEntry", request=request)
+        except ValueError as e:
+            return Response({'error': str(e)}, status=403)
         entry.approval_status = JournalEntry.APPROVED
         entry.approved_by = request.user
         entry.approved_at = timezone.now()
-        entry.approval_note = request.data.get('note', '')
+        note = request.data.get('note', '')
+        entry.approval_note = f"{SELF_APPROVED_NOTE}. {note}".strip() if self_approved else note
         entry.save(update_fields=['approval_status', 'approved_by', 'approved_at', 'approval_note'])
         if request.data.get('post') and entry.status != JournalEntry.POSTED:
             error = self._posting_error(entry, request.user)
