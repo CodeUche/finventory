@@ -155,3 +155,50 @@ class BillStatusBypassTests(TestCase):
         self.bill.refresh_from_db()
         self.assertEqual(self.bill.amount_paid, Decimal("1000"))
         self.assertEqual(self.bill.status, Bill.PAID)
+
+
+class ApprovePoBillTests(TestCase):
+    """Approving a bill that came from a PO delivery posted it a second time
+    under a key the duplicate check could not see: AP doubled, the cost hit
+    General Expense as well as Inventory, input VAT was claimed twice."""
+
+    def test_approving_a_po_bill_posts_nothing_new(self):
+        from apps.accounting.models import Account, JournalEntry
+        from apps.accounting.services import AccountingService
+        from apps.bills.services import BillService
+        from apps.inventory.models import Product, Warehouse
+        from apps.purchases.models import PurchaseOrder, PurchaseOrderItem
+        from apps.purchases.services import PurchaseService
+        from apps.tenancy.models import Membership
+        from apps.payroll.test_track_a import _make_user as mk_user
+
+        owner = _make_user("po_bill_owner@example.com")
+        org = _make_org(owner, "PO Bill Org")
+        _upgrade_to_business(org)
+        approver = mk_user("po_bill_approver@example.com")
+        Membership.objects.create(user=approver, organisation=org, role="admin", is_active=True)
+        supplier = Supplier.objects.create(organisation=org, name="Supplier Z")
+        wh = Warehouse.objects.create(organisation=org, name="Main", is_default=True)
+        product = Product.objects.create(organisation=org, sku="POB", name="Goods",
+                                         cost_price=Decimal("1000"), selling_price=Decimal("1500"))
+        po = PurchaseOrder.objects.create(
+            organisation=org, supplier=supplier, warehouse=wh, po_number=PurchaseOrder.generate_number(org),
+            order_date=date.today(), subtotal=Decimal("10000"), tax_amount=Decimal("750"),
+            total_amount=Decimal("10750"), created_by=owner,
+        )
+        item = PurchaseOrderItem.objects.create(
+            organisation=org, purchase_order=po, product=product, quantity_ordered=Decimal("10"),
+            unit_cost=Decimal("1000"), line_total=Decimal("10000"), tax_rate=Decimal("7.5"),
+        )
+        PurchaseService.receive_purchase_order(po, [{"item_id": str(item.id), "quantity_received": "10"}], owner)
+        bill = Bill.objects.get(organisation=org, source_purchase_order=po)
+        ap = Account.objects.get(organisation=org, code="2001")
+        before = AccountingService._ledger_balance(ap)
+        entries = JournalEntry.objects.filter(organisation=org).count()
+
+        BillService.approve_bill(bill, approver)
+
+        bill.refresh_from_db()
+        self.assertEqual(bill.status, Bill.APPROVED)
+        self.assertEqual(AccountingService._ledger_balance(ap), before)
+        self.assertEqual(JournalEntry.objects.filter(organisation=org).count(), entries)

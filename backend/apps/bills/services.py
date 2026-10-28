@@ -1,6 +1,7 @@
 import logging
 from decimal import Decimal
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 from apps.expenses.models import ExpenseCategory
 from .models import Bill, BillItem, BillPayment
@@ -192,6 +193,23 @@ class BillService:
         bill.status = Bill.APPROVED
         bill.approved_by = approver
         bill.save()
+
+        # A bill raised from a purchase order already reached the ledger when
+        # the goods were received (po_receipt) or the PO was converted to a bill
+        # (po_convert_to_bill). Posting again on approval, under a different
+        # key the duplicate check cannot see, booked the same supplier invoice
+        # twice: AP doubled, the cost went to General Expense as well as
+        # Inventory, and input VAT was claimed twice. Approval is then a status
+        # change only.
+        if bill.source_purchase_order_id:
+            from apps.accounting.models import JournalEntry
+            po_id = str(bill.source_purchase_order_id)
+            already_posted = JournalEntry.objects.filter(
+                organisation=bill.organisation,
+                source_type__in=("po_receipt", "po_convert_to_bill"),
+            ).filter(Q(source_ref=po_id) | Q(source_ref__startswith=f"{po_id}:")).exists()
+            if already_posted:
+                return bill
 
         # Auto-post journal entry (non-blocking)
         from apps.accounting.services import AccountingService, safe_post_gl
