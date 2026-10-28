@@ -95,6 +95,7 @@ export default function StorefrontPage() {
     && (freeDeliveryThreshold === null || subtotal < freeDeliveryThreshold)
     ? fixedDeliveryCharge : 0
   const total = subtotal + deliveryFee
+  const vatInCart = lines.reduce((s, l) => s + Number(l.product.vat_included) * l.qty, 0)
 
   const placeOrder = async () => {
     setProblem('')
@@ -175,6 +176,11 @@ export default function StorefrontPage() {
               <span>Total</span>
               <span className="font-mono">{money(shop.currency, placed.total)}</span>
             </div>
+            {placed.items.some((i) => Number(i.vat_amount) > 0) && (
+              <p className="mt-1 text-right text-xs text-slate-400">
+                Includes VAT of {money(shop.currency, placed.items.reduce((s, i) => s + Number(i.vat_amount || 0), 0))}
+              </p>
+            )}
           </div>
 
           {shop.payment.bank_transfer && shop.payment.bank_accounts[0] && (
@@ -271,6 +277,7 @@ export default function StorefrontPage() {
             <div className="p-3">
               <p className="text-sm font-semibold leading-tight">{p.name}</p>
               <p className="mt-1 font-mono text-sm">{money(shop.currency, p.selling_price)}</p>
+              {Number(p.vat_included) > 0 && <p className="text-xs text-slate-400">VAT included</p>}
               <button
                 onClick={() => add(p)}
                 disabled={!p.in_stock || !shop.accepts_orders}
@@ -377,6 +384,11 @@ export default function StorefrontPage() {
                 <span className="text-sm text-slate-500">Total</span>
                 <span className="font-mono text-2xl font-bold">{money(shop.currency, total)}</span>
               </div>
+              {vatInCart > 0 && (
+                <p className="-mt-2 mb-3 text-right text-xs text-slate-400">
+                  Prices include VAT of {money(shop.currency, vatInCart)}
+                </p>
+              )}
               {form.fulfilment === 'delivery' && fixedDeliveryCharge > 0 && deliveryFee > 0 && freeDeliveryThreshold !== null && (
                 <p className="mb-2 text-xs text-slate-500">
                   Free delivery on orders over {money(shop.currency, freeDeliveryThreshold)}.

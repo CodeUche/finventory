@@ -15,6 +15,9 @@ from decimal import Decimal
 from django.db import transaction
 from django.db.models import Sum
 
+from apps.core.utils import round_money
+from apps.sales.services import SaleService
+
 from .models import Storefront, StorefrontOrder, StorefrontOrderItem
 
 logger = logging.getLogger(__name__)
@@ -136,12 +139,19 @@ class StorefrontService:
         subtotal = ZERO
         for product_id, quantity in wanted.items():
             product = products[product_id]
-            price = Decimal(str(product.selling_price or 0))
-            line_total = (price * quantity).quantize(Decimal("0.01"))
+            net_price = Decimal(str(product.selling_price or 0))
+            rate = SaleService.default_tax_rate(product)
+            line_net = round_money(Decimal(str(quantity)) * net_price)
+            # What the customer pays, VAT included, worked out by the SAME
+            # function the invoice uses, so the shop and the invoice cannot
+            # disagree (NTA 2025 values the price paid as including the VAT).
+            vat, line_total = SaleService.apply_tax(product, line_net, rate)
             StorefrontOrderItem.objects.create(
                 organisation=shop.organisation, order=order, product=product,
                 product_name=product.name, quantity=quantity,
-                unit_price=price, line_total=line_total,
+                unit_price=round_money(line_total / Decimal(str(quantity)), 4) if quantity else line_total,
+                line_total=line_total,
+                net_unit_price=net_price, tax_rate=rate, vat_amount=vat,
             )
             subtotal += line_total
 
@@ -194,14 +204,32 @@ class StorefrontService:
 
     @staticmethod
     def _lines(order: StorefrontOrder) -> list[dict]:
-        return [
-            {
-                "product_id": str(item.product_id),
-                "quantity": item.quantity,
-                "unit_price": item.unit_price,
-            }
-            for item in order.items.all() if item.product_id
-        ]
+        """Invoice lines that reproduce exactly what the customer was shown.
+
+        New orders copy the price and VAT rate recorded at order time. Orders
+        placed before VAT-inclusive display stored the pre-VAT price as what
+        the customer saw, so the invoice used to add VAT on top of it; for
+        those, the VAT is taken out of the total they were shown instead.
+        """
+        lines = []
+        for item in order.items.all():
+            if not item.product_id:
+                continue
+            if item.tax_rate is not None:
+                lines.append({
+                    "product_id": str(item.product_id), "quantity": item.quantity,
+                    "unit_price": item.net_unit_price, "tax_rate": item.tax_rate,
+                })
+                continue
+            rate = SaleService.default_tax_rate(item.product)
+            shown = Decimal(str(item.unit_price))
+            exclusive = item.product.tax_type != "inclusive"
+            net = round_money(shown / (Decimal("1") + rate / Decimal("100")), 4) if (rate > 0 and exclusive) else shown
+            lines.append({
+                "product_id": str(item.product_id), "quantity": item.quantity,
+                "unit_price": net, "tax_rate": rate,
+            })
+        return lines
 
     @staticmethod
     def _to_invoice(order: StorefrontOrder, user=None):

@@ -534,3 +534,84 @@ class DeliveryChargeTests(StorefrontTestBase):
         self.shop.refresh_from_db()
         self.assertEqual(self.shop.fixed_delivery_charge, Decimal("2000"))
         self.assertEqual(self.shop.free_delivery_threshold, Decimal("25000"))
+
+
+class VatInclusivePricingTests(StorefrontTestBase):
+    """The shop shows the price the customer pays, VAT included, and the invoice
+    raised from the order matches it to the kobo."""
+
+    def setUp(self):
+        super().setUp()
+        from apps.tax.models import TaxClass
+        self.vat = TaxClass.objects.create(organisation=self.org, name="VAT", rate=Decimal("7.5"))
+
+    def _taxable(self, sku, price, tax_type="exclusive"):
+        product = self._product(sku, sku, cost="100", price=price, stock=50)
+        product.is_taxable = True
+        product.tax_class = self.vat
+        product.tax_type = tax_type
+        product.save()
+        return product
+
+    def _order_for(self, product, qty, **overrides):
+        res = self._place(items=[{"product": str(product.id), "quantity": str(qty)}], **overrides)
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        return StorefrontOrder.objects.get(reference=res.data["reference"])
+
+    def test_catalogue_price_includes_vat(self):
+        product = self._taxable("VATP", "1999")
+        data = self.public.get(f"/api/v1/shop/{self.shop.slug}/products/").data
+        rows = data["results"] if isinstance(data, dict) else data
+        row = next(r for r in rows if r["id"] == str(product.id))
+        self.assertEqual(Decimal(row["selling_price"]), Decimal("2148.93"))
+        self.assertEqual(Decimal(row["vat_included"]), Decimal("149.93"))
+
+    def test_order_total_is_what_the_customer_was_shown_and_the_invoice_matches(self):
+        product = self._taxable("VATP", "1999")
+        order = self._order_for(product, 3)
+        self.assertEqual(order.total, Decimal("6446.78"))
+        self.client.post(f"/api/v1/storefront/orders/{order.id}/accept/")
+        order.refresh_from_db()
+        self.assertEqual(Decimal(str(order.invoice.total_amount)), Decimal("6446.78"))
+
+    def test_inclusive_product_is_not_taxed_twice(self):
+        product = self._taxable("INCL", "1075", tax_type="inclusive")
+        order = self._order_for(product, 2)
+        self.assertEqual(order.total, Decimal("2150.00"))
+        self.client.post(f"/api/v1/storefront/orders/{order.id}/accept/")
+        order.refresh_from_db()
+        self.assertEqual(Decimal(str(order.invoice.total_amount)), Decimal("2150.00"))
+
+    def test_delivery_is_added_after_the_vat_inclusive_subtotal(self):
+        product = self._taxable("VATP", "2790.70")   # 3,000.00 with VAT
+        self.shop.fixed_delivery_charge = Decimal("500")
+        self.shop.save(update_fields=["fixed_delivery_charge"])
+        order = self._order_for(product, 1, fulfilment="delivery", delivery_address="12 Allen Ave")
+        self.assertEqual(order.subtotal, Decimal("3000.00"))
+        self.assertEqual(order.total, Decimal("3500.00"))
+        self.client.post(f"/api/v1/storefront/orders/{order.id}/accept/")
+        order.refresh_from_db()
+        self.assertEqual(Decimal(str(order.invoice.total_amount)), Decimal("3500.00"))
+
+    def test_free_delivery_threshold_is_judged_on_the_price_paid(self):
+        product = self._taxable("VATP", "2790.70")   # 3,000.00 with VAT
+        self.shop.fixed_delivery_charge = Decimal("500")
+        self.shop.free_delivery_threshold = Decimal("3000")
+        self.shop.save(update_fields=["fixed_delivery_charge", "free_delivery_threshold"])
+        order = self._order_for(product, 1, fulfilment="delivery", delivery_address="12 Allen Ave")
+        self.assertEqual(order.total, Decimal("3000.00"))
+
+    def test_an_order_placed_before_this_change_is_invoiced_at_the_total_shown(self):
+        """Old orders stored the pre-VAT price as what the customer saw, and the
+        invoice then added VAT on top. They are now invoiced at what was shown."""
+        product = self._taxable("OLDP", "1000")
+        order = self._order_for(product, 1)
+        order.items.update(
+            unit_price=Decimal("1075.00"), line_total=Decimal("1075.00"),
+            net_unit_price=Decimal("0"), tax_rate=None, vat_amount=Decimal("0"),
+        )
+        order.subtotal = order.total = Decimal("1075.00")
+        order.save(update_fields=["subtotal", "total"])
+        self.client.post(f"/api/v1/storefront/orders/{order.id}/accept/")
+        order.refresh_from_db()
+        self.assertEqual(Decimal(str(order.invoice.total_amount)), Decimal("1075.00"))
