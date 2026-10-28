@@ -19,6 +19,20 @@ logger = logging.getLogger(__name__)
 class PurchaseService:
 
     @staticmethod
+    def _line_net(item, qty):
+        """Net value (after the line's discount, before VAT) of `qty` units."""
+        gross = Decimal(str(qty)) * Decimal(str(item.unit_cost))
+        return gross - gross * Decimal(str(item.discount_percent or 0)) / Decimal("100")
+
+    @staticmethod
+    def _ordered_net_value(po) -> Decimal:
+        return sum((PurchaseService._line_net(i, i.quantity_ordered) for i in po.items.all()), Decimal("0"))
+
+    @staticmethod
+    def _received_net_value(po) -> Decimal:
+        return sum((PurchaseService._line_net(i, i.quantity_received) for i in po.items.all()), Decimal("0"))
+
+    @staticmethod
     @transaction.atomic
     def receive_purchase_order(po: PurchaseOrder, received_items: list[dict], received_by) -> PurchaseOrder:
         """
@@ -50,6 +64,8 @@ class PurchaseService:
         all_received = True
         batch_subtotal = Decimal("0")  # net of discount, excl. VAT
         batch_tax = Decimal("0")
+        to_stock = []   # (item, qty, batch, net value) recorded after delivery is allocated
+        net_before = PurchaseService._received_net_value(po)  # value received by earlier receipts
 
         for item_data in received_items:
             try:
@@ -102,21 +118,39 @@ class PurchaseService:
                     batch.quantity += qty
                     batch.save(update_fields=["quantity", "updated_at"])
 
-            # Record stock movement
+            to_stock.append((item, qty, batch, net))
+
+            if not item.is_fully_received:
+                all_received = False
+
+        # Delivery / freight is part of the cost of what was bought (IFRS for
+        # SMEs Section 13). Spread it over receipts by value received, using a
+        # running total so partial receipts add up to exactly the PO's charge:
+        # the last receipt takes whatever rounding remains.
+        delivery_total = Decimal(str(po.delivery_amount or 0))
+        po_net = PurchaseService._ordered_net_value(po)
+        delivery_share = Decimal("0")
+        if delivery_total > 0 and po_net > 0:
+            net_after = PurchaseService._received_net_value(po)   # same basis as net_before
+            def _cum(net_value):
+                return (delivery_total * min(net_value, po_net) / po_net).quantize(Decimal("0.01"))
+            delivery_share = _cum(net_after) - _cum(net_before)
+
+        for item, qty, batch, net in to_stock:
+            item_delivery = (delivery_share * net / batch_subtotal) if batch_subtotal > 0 else Decimal("0")
             InventoryService.record_movement(
                 organisation=po.organisation,
                 product=item.product,
                 warehouse=po.warehouse,
                 quantity=qty,
                 movement_type="purchase_in",
-                unit_cost=item.unit_cost,
+                # Landed cost: the supplier price plus this item's share of delivery.
+                unit_cost=Decimal(str(item.unit_cost)) + (item_delivery / qty if qty else Decimal("0")),
                 reference=po.po_number,
                 batch=batch,
                 created_by=received_by,
             )
-
-            if not item.is_fully_received:
-                all_received = False
+        batch_subtotal += delivery_share   # the bill and the Inventory debit carry it too
 
         po.status = (
             PurchaseOrder.Status.RECEIVED if all_received
