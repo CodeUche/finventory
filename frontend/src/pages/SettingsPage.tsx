@@ -3765,6 +3765,7 @@ export default function SettingsPage() {
               />
             </div>
             {([
+              { key: 'charges_vat', label: 'This business charges VAT', hint: 'Turn off if you are not registered to charge VAT (for example, under the small-business exemption). Sales, quotes and the shop then add no VAT. Ask your tax adviser before changing this.' },
               { key: 'fixed_asset_revaluation_enabled', label: 'Enable revaluation (IAS 16)', hint: 'Off by default — SME cost model. Enabling needs practitioner sign-off.' },
               { key: 'capital_allowance_nta2025_enabled', label: 'Enable NTA-2025 capital allowances', hint: 'Drives the CIT computation. Keep OFF until a licensed tax practitioner signs off the rates.' },
             ] as const).map((row) => {

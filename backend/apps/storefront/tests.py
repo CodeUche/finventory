@@ -615,3 +615,34 @@ class VatInclusivePricingTests(StorefrontTestBase):
         self.client.post(f"/api/v1/storefront/orders/{order.id}/accept/")
         order.refresh_from_db()
         self.assertEqual(Decimal(str(order.invoice.total_amount)), Decimal("1075.00"))
+
+
+class BusinessDoesNotChargeVatTests(VatInclusivePricingTests):
+    """With the "charges VAT" switch off, nothing adds VAT: shop price, order and invoice."""
+
+    def setUp(self):
+        super().setUp()
+        self.org.charges_vat = False
+        self.org.save(update_fields=["charges_vat"])
+
+    def test_shop_price_and_invoice_carry_no_vat(self):
+        product = self._taxable("NOVAT", "1999")
+        data = self.public.get(f"/api/v1/shop/{self.shop.slug}/products/").data
+        rows = data["results"] if isinstance(data, dict) else data
+        row = next(r for r in rows if r["id"] == str(product.id))
+        self.assertEqual(Decimal(row["selling_price"]), Decimal("1999.00"))
+        self.assertEqual(Decimal(row["vat_included"]), Decimal("0"))
+        order = self._order_for(product, 3)
+        self.assertEqual(order.total, Decimal("5997.00"))
+        self.client.post(f"/api/v1/storefront/orders/{order.id}/accept/")
+        order.refresh_from_db()
+        self.assertEqual(Decimal(str(order.invoice.total_amount)), Decimal("5997.00"))
+        self.assertEqual(Decimal(str(order.invoice.tax_amount)), Decimal("0"))
+
+    # The parent's VAT-charging expectations do not apply to a non-VAT business.
+    test_catalogue_price_includes_vat = None
+    test_order_total_is_what_the_customer_was_shown_and_the_invoice_matches = None
+    test_inclusive_product_is_not_taxed_twice = None
+    test_delivery_is_added_after_the_vat_inclusive_subtotal = None
+    test_free_delivery_threshold_is_judged_on_the_price_paid = None
+    test_an_order_placed_before_this_change_is_invoiced_at_the_total_shown = None

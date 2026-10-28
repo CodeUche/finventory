@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState, useCallback } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { ClipboardList, Plus, Minus, Trash2, ClipboardCheck, GitBranch, CreditCard, X, Loader2, Search } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { inventoryApi, posApi, taxApi } from '@/services/api'
+import { inventoryApi, posApi } from '@/services/api'
 import { formatCurrency } from '@/lib/utils'
+import { useTaxRates } from '@/hooks/useTaxRates'
 import { productTaxRate, saleTotals } from '@/lib/saleMath'
 import { useAuthStore } from '@/store/authStore'
 
@@ -78,13 +79,7 @@ export default function RestaurantPOSPage() {
 
   // VAT is charged when the order becomes an invoice, so it belongs in the
   // total the diners are asked for — see lib/saleMath and POSOrder.amount_due.
-  const [taxRates, setTaxRates] = useState<Record<string, number>>({})
-  useEffect(() => {
-    taxApi.classes().then(({ data }) => {
-      const list: { id: string; rate: string }[] = data.results ?? data
-      setTaxRates(Object.fromEntries(list.map((c) => [c.id, parseFloat(c.rate) || 0])))
-    }).catch(() => {})
-  }, [])
+  const taxRates = useTaxRates()
   const totals = saleTotals(cart.map((l) => ({
     unitPrice: l.unit_price, quantity: l.quantity,
     taxRate: productTaxRate(l.product, taxRates), inclusive: l.product.tax_type === 'inclusive',

@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AlertTriangle, ArrowLeft, Loader2, Minus, Plus, Search, ShoppingCart, Trash2, User, UserCheck, Warehouse, X } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { customerApi, inventoryApi, locationApi, salesApi, taxApi, tillApi } from '@/services/api'
+import { customerApi, inventoryApi, locationApi, salesApi, tillApi } from '@/services/api'
 import { printReceipt } from '@/lib/receipt'
 import { useReceiptDefaults } from '@/hooks/useReceiptDefaults'
 import { formatCurrency, formatDate, stripCommas } from '@/lib/utils'
+import { useTaxRates } from '@/hooks/useTaxRates'
 import { productTaxRate, saleLine, saleTotals, type SaleLineInput } from '@/lib/saleMath'
 import AmountInput from '@/components/AmountInput'
 import EditableTotal from '@/components/EditableTotal'
@@ -235,13 +236,7 @@ export default function NewSalePage() {
   // in the total the cashier collects. It used to be left out: a ₦1,500 item
   // at 7.5% showed ₦1,500, the cashier took ₦1,500, and the sale was saved as
   // ₦1,612.50 part-paid with ₦112.50 "owed" by a walk-in customer.
-  const [taxRates, setTaxRates] = useState<Record<string, number>>({})
-  useEffect(() => {
-    taxApi.classes().then(({ data }) => {
-      const list: { id: string; rate: string }[] = data.results ?? data
-      setTaxRates(Object.fromEntries(list.map((c) => [c.id, parseFloat(c.rate) || 0])))
-    }).catch(() => {})
-  }, [])
+  const taxRates = useTaxRates()
   const toSaleLine = (c: CartItem): SaleLineInput => ({
     unitPrice: c.unit_price, quantity: c.quantity, discountPercent: c.discount_percent,
     taxRate: productTaxRate(c.product, taxRates), inclusive: c.product.tax_type === 'inclusive',

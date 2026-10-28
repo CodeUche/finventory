@@ -69,6 +69,7 @@ export interface Organisation {
   /** Which tender types POS checkout / invoice collection currently offer.
    *  Free-form strings (matches TillTenderCount.method), all four enabled by default. */
   enabled_payment_types?: string[]
+  charges_vat?: boolean
 }
 
 export interface ProductImage {

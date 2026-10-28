@@ -15,11 +15,12 @@ import {
   Printer, Search, ShoppingCart, Trash2, Wallet, X,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { inventoryApi, salesApi, taxApi, tillApi } from '@/services/api'
+import { inventoryApi, salesApi, tillApi } from '@/services/api'
 import { printReceipt } from '@/lib/receipt'
 import type { ReceiptData } from '@/lib/receipt'
 import { useReceiptDefaults } from '@/hooks/useReceiptDefaults'
 import { formatCurrency, formatDate } from '@/lib/utils'
+import { useTaxRates } from '@/hooks/useTaxRates'
 import { productTaxRate, saleTotals, type SaleLineInput } from '@/lib/saleMath'
 import { useAuthStore } from '@/store/authStore'
 import type { Product } from '@/types'
@@ -214,13 +215,7 @@ export default function PosRegisterPage() {
       if (def) setWarehouseId(def.id)
     }).catch(() => {})
   }, [])
-  const [taxRates, setTaxRates] = useState<Record<string, number>>({})
-  useEffect(() => {
-    taxApi.classes().then(({ data }) => {
-      const list: { id: string; rate: string }[] = data.results ?? data
-      setTaxRates(Object.fromEntries(list.map((c) => [c.id, parseFloat(c.rate) || 0])))
-    }).catch(() => {})
-  }, [])
+  const taxRates = useTaxRates()
 
   // VAT is charged server-side from each product's tax class, so it has to be
   // in what the cashier collects — see lib/saleMath.

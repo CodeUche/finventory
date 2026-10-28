@@ -57,7 +57,7 @@ class StorefrontService:
         products = (
             Product.objects
             .filter(organisation=shop.organisation, is_active=True, is_published=True)
-            .select_related("category")
+            .select_related("category", "organisation", "tax_class")
             .order_by("name")
         )
         stock = {

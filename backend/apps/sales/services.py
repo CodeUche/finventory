@@ -266,7 +266,10 @@ class SaleService:
 
     @staticmethod
     def default_tax_rate(product) -> Decimal:
-        """The VAT rate a product carries by default: its tax class's, when taxable."""
+        """The VAT rate a product carries by default: its tax class's, when taxable
+        and the business charges VAT at all."""
+        if not product.organisation.charges_vat:
+            return Decimal("0")
         if product.is_taxable and product.tax_class:
             return Decimal(str(product.tax_class.rate))
         return Decimal("0")
@@ -338,6 +341,8 @@ class SaleService:
                 resolved_override = True
         if not resolved_override:
             tax_rate = SaleService.default_tax_rate(product)
+        if not organisation.charges_vat:
+            tax_rate = Decimal("0")   # not registered for VAT: nothing to add, whatever the line says
         tax_amount, line_total = SaleService.apply_tax(product, after_discount, tax_rate)
 
         # Specific Unit costing sells FROM a chosen lot, so the batch has to be
