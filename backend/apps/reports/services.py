@@ -186,9 +186,15 @@ class ReportService:
         from apps.expenses.models import Expense
         from apps.sales.models import Invoice, SaleItem, SaleReturnItem
 
+        # Every invoice the ledger has posted a sale for. "returned" counts too:
+        # a fully returned invoice keeps its sale in the month it was made and
+        # its return in the month of the return, as the ledger does. Leaving it
+        # out dropped the sale AND the return, so a September sale returned in
+        # October silently vanished from a re-run September P&L.
+        posted_statuses = ["paid", "confirmed", "partially_paid", "credit", "overdue", "returned"]
         rev_qs = Invoice.objects.filter(
             organisation=organisation,
-            status__in=["paid", "confirmed", "partially_paid", "credit", "overdue"],
+            status__in=posted_statuses,
         )
         rev_qs = _date_filter(rev_qs, "issue_date", date_from, date_to)
         revenue_data = rev_qs.aggregate(
@@ -199,7 +205,7 @@ class ReportService:
 
         cogs_qs = SaleItem.objects.filter(
             organisation=organisation,
-            invoice__status__in=["paid", "confirmed", "partially_paid", "credit", "overdue"],
+            invoice__status__in=posted_statuses,
         )
         cogs_qs = _date_filter(cogs_qs, "invoice__issue_date", date_from, date_to)
         cogs_data = cogs_qs.aggregate(total_cogs=Sum("cost_of_goods"))
@@ -215,7 +221,7 @@ class ReportService:
         # Returns are recognised on their own date, as the ledger posts them.
         ret_qs = SaleReturnItem.objects.filter(
             organisation=organisation,
-            sale_return__invoice__status__in=["paid", "confirmed", "partially_paid", "credit", "overdue"],
+            sale_return__invoice__status__in=posted_statuses,
         )
         ret_qs = _date_filter(ret_qs, "sale_return__return_date", date_from, date_to)
         returns_data = ret_qs.aggregate(

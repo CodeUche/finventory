@@ -98,3 +98,33 @@ class ProfitAndLossAgreesWithLedgerTests(TestCase):
             row = rows[0]
             self.assertEqual(Decimal(str(row["revenue"])), Decimal("4050.00"))
             self.assertEqual(Decimal(str(row["gross_profit"])), Decimal("1050.00"))
+
+    def test_a_sale_returned_in_a_later_month_stays_in_its_own_month(self):
+        """A fully returned invoice turns status "returned"; the P&L excluded
+        that status, so the September sale vanished from September once it was
+        returned in October, while the ledger still held it there."""
+        from datetime import date
+        from apps.reports.services import ReportService
+        from apps.sales.services import SaleService
+
+        invoice = SaleService.create_sale(
+            organisation=self.org, created_by=self.user, customer=self.customer, warehouse=self.wh,
+            items=[{"product_id": str(self.product.id), "quantity": 2}],
+            payment_method="credit", issue_date=date(2026, 9, 10),
+        )
+        SaleService.process_return(
+            organisation=self.org, invoice=invoice,
+            items=[{"sale_item_id": str(invoice.items.first().id), "quantity_returned": "2"}],
+            reason="defective", notes="", processed_by=self.user, restocked=True,
+            return_date=date(2026, 10, 5),
+        )
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.status, "returned")
+
+        sep = ReportService.profit_and_loss(self.org, date(2026, 9, 1), date(2026, 9, 30))
+        oct_ = ReportService.profit_and_loss(self.org, date(2026, 10, 1), date(2026, 10, 31))
+        self.assertEqual(Decimal(str(sep["revenue"]["gross_sales"])), Decimal("3000.00"))
+        self.assertEqual(Decimal(str(sep["cost_of_goods_sold"])), Decimal("2000.00"))
+        self.assertEqual(Decimal(str(oct_["revenue"]["returns"])), Decimal("3000.00"))
+        self.assertEqual(Decimal(str(oct_["revenue"]["gross_sales"])), Decimal("-3000.00"))
+        self.assertEqual(Decimal(str(oct_["cost_of_goods_sold"])), Decimal("-2000.00"))
