@@ -12,6 +12,10 @@ from .models import CreditTransaction
 logger = logging.getLogger(__name__)
 
 
+class _SkipGL(Exception):
+    """Internal: caller asked for no cash-receipt journal."""
+
+
 class CreditService:
 
     @staticmethod
@@ -37,19 +41,23 @@ class CreditService:
     @staticmethod
     @transaction.atomic
     def record_payment(organisation, customer, amount: Decimal, recorded_by, description="",
-                       due_date=None, method="cash") -> CreditTransaction:
+                       due_date=None, method="cash", post_gl=True) -> CreditTransaction:
         """Record a credit payment (reduces outstanding balance) and post GL entry.
 
         `method` decides which asset account is debited — a transfer or card
         payment must land in bank, not cash, or the cash-up count can never
         agree with the ledger.
         """
-        # Clamp only a genuine overpayment against a debit balance. A customer whose
-        # balance is already negative is in credit (take-on prepayment / unapplied
-        # credit note) — clamping there would erase that credit and desynchronise the
-        # sub-ledger from the AR control account.
-        raw_balance = customer.outstanding_balance - amount
-        new_balance = raw_balance if customer.outstanding_balance < 0 else max(raw_balance, Decimal("0"))
+        # No clamp: an overpayment leaves the customer in credit (negative
+        # balance). The ledger records the full receipt (DR Cash, CR AR), so the
+        # customer record must carry the same amount or the AR control account
+        # can never reconcile to it. The credit is money owed back to the
+        # customer; reports show it as a liability, not a negative receivable.
+        #
+        # post_gl=False is for callers whose own journal already moves AR (a
+        # sales return posts DR Revenue/VAT, CR AR). Posting a cash receipt on
+        # top booked money that never arrived and credited AR twice.
+        new_balance = customer.outstanding_balance - amount
         txn = CreditTransaction.objects.create(
             organisation=organisation,
             customer=customer,
@@ -65,6 +73,8 @@ class CreditService:
 
         # Post GL: DR Cash/Bank (per tender) → CR 1100 Accounts Receivable
         try:
+            if not post_gl:
+                raise _SkipGL
             from apps.accounting.services import AccountingService
             from django.utils import timezone
             AccountingService.post_credit_payment_journal(
@@ -72,6 +82,8 @@ class CreditService:
                 txn.description, timezone.now().date(), method=method,
                 source_ref=f"CRPAY-{txn.id}",
             )
+        except _SkipGL:
+            pass
         except Exception as exc:
             logger.warning("post_credit_payment_journal failed for %s: %s", customer.name, exc)
 
@@ -142,4 +154,17 @@ class CreditService:
                 **buckets,
             })
 
-        return sorted(report, key=lambda x: x["outstanding_balance"], reverse=True)
+        # Customers in credit (negative balance) are owed money back; the
+        # filter above hides them, so list them in their own rows at the end.
+        for customer in Customer.objects.filter(organisation=organisation, outstanding_balance__lt=0):
+            report.append({
+                "customer_id": str(customer.id),
+                "customer_name": customer.name,
+                "customer_code": customer.code,
+                "outstanding_balance": customer.outstanding_balance,
+                "current": 0, "30_60": 0, "61_90": 0, "over_90": 0,
+                "in_credit": True,
+            })
+
+        owing = sorted((r for r in report if not r.get("in_credit")), key=lambda x: x["outstanding_balance"], reverse=True)
+        return owing + [r for r in report if r.get("in_credit")]

@@ -1124,6 +1124,7 @@ class SaleService:
                 amount=total_refund,
                 recorded_by=processed_by,
                 description=f"Sales return – {sale_return.return_number}",
+                post_gl=False,   # the return's own journal below credits AR
             )
 
         # Post reversing GL journal: DR Revenue (net), DR VAT Payable, CR AR/Cash

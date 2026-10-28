@@ -954,7 +954,13 @@ class AccountingService:
             bal = AccountingService._ledger_balance(acct, as_of=as_of)
             row = {'code': acct.code, 'name': acct.name, 'balance': bal}
             if acct.account_type == AccountType.ASSET:
-                if bal != 0:
+                if acct.code == '1100' and bal < 0:
+                    # Customers have paid more than they owe: that is money owed
+                    # back to them (IFRS for SMEs: advance received is a
+                    # liability), not a negative receivable. Presentation only;
+                    # totals still balance.
+                    liabilities_data.append({'code': acct.code, 'name': 'Customer credit balances', 'balance': -bal})
+                elif bal != 0:
                     assets_data.append(row)
             elif acct.account_type == AccountType.LIABILITY:
                 if bal != 0:

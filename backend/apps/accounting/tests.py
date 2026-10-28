@@ -2676,7 +2676,9 @@ class NegativeCustomerBalancePaymentTests(TestCase):
         self.cust.refresh_from_db()
         self.assertEqual(self.cust.outstanding_balance, Decimal("-600"))
 
-    def test_overpayment_against_a_debit_balance_still_clamps_at_zero(self):
+    def test_overpayment_against_a_debit_balance_leaves_the_customer_in_credit(self):
+        """No clamp: the ledger takes the full 500 (DR Cash, CR AR), so the
+        customer record must show -300 or the AR control can never reconcile."""
         self.cust.outstanding_balance = Decimal("200")
         self.cust.save(update_fields=["outstanding_balance"])
         from apps.credits.services import CreditService
@@ -2684,7 +2686,40 @@ class NegativeCustomerBalancePaymentTests(TestCase):
             self.org, self.cust, Decimal("500"), recorded_by=self.user,
         )
         self.cust.refresh_from_db()
+        self.assertEqual(self.cust.outstanding_balance, Decimal("-300"))
+
+    def test_returning_a_credit_sale_posts_no_cash_receipt(self):
+        """A return on a credit sale used to call record_payment, which also
+        posted DR Cash / CR AR: cash that never arrived and AR credited twice."""
+        from apps.inventory.models import Product, Warehouse
+        from apps.inventory.services import InventoryService
+        from apps.sales.services import SaleService
+
+        self.cust.outstanding_balance = Decimal("0")   # this class starts the customer in credit
+        self.cust.save(update_fields=["outstanding_balance"])
+        wh = Warehouse.objects.create(organisation=self.org, name="Main", is_default=True)
+        product = Product.objects.create(
+            organisation=self.org, sku="RET1", name="Item", cost_price=Decimal("100"), selling_price=Decimal("1000"),
+        )
+        InventoryService.record_movement(
+            organisation=self.org, product=product, warehouse=wh, quantity=Decimal("5"),
+            movement_type="purchase_in", unit_cost=Decimal("100"), reference="SEED", created_by=self.user,
+        )
+        invoice = SaleService.create_sale(
+            organisation=self.org, created_by=self.user, customer=self.cust, warehouse=wh,
+            items=[{"product_id": str(product.id), "quantity": 1}], payment_method="credit",
+        )
+        SaleService.process_return(
+            organisation=self.org, invoice=invoice,
+            items=[{"sale_item_id": str(invoice.items.first().id), "quantity_returned": "1"}],
+            reason="defective", notes="", processed_by=self.user,
+        )
+        self.cust.refresh_from_db()
         self.assertEqual(self.cust.outstanding_balance, Decimal("0"))
+        ar = Account.objects.get(organisation=self.org, code="1100")
+        self.assertEqual(AccountingService._ledger_balance(ar), Decimal("0"))
+        cash = Account.objects.get(organisation=self.org, code="1001")
+        self.assertEqual(AccountingService._ledger_balance(cash), Decimal("0"))
 
 
 class FixedAssetAcquisitionTests(TestCase):
