@@ -2163,7 +2163,9 @@ class AccountingService:
         CR Employee Loans Receivable       = loan installments recovered
         CR Other Income                    = penalties withheld
         CR Salaries & Wages Expense        = attendance deductions (cost not incurred)
-        CR Bank / Net Pay                  = total_net LESS leave encashment (see below)
+        CR Net Salaries Payable            = total_net LESS leave encashment (see below)
+                                             (Bank is credited when the run is PAID, by
+                                             post_payroll_payment_journal)
 
         Leave encashment (total_encashment) is carved OUT of both the Salaries
         & Wages Expense debit and the Bank/Net-Pay credit here, and posted
@@ -2213,7 +2215,12 @@ class AccountingService:
         salary_acct  = AccountMappingService.resolve(organisation, 'salary_expense_account')
         paye_acct    = AccountMappingService.resolve(organisation, 'paye_account')
         pension_acct = AccountMappingService.resolve(organisation, 'pension_account')
-        bank_acct    = AccountMappingService.resolve(organisation, 'bank_account')
+        # Approval is a decision, not a payment: no money has moved. Net pay is
+        # owed to employees until the run is paid, so it is a liability. It used
+        # to credit Bank here, which put the ledger's Bank ahead of the real
+        # bank statement from approval until the transfer (and hid failed or
+        # skipped transfers, which must stay as money still owed).
+        net_pay_acct = AccountingService.net_salaries_payable_account(organisation)
 
         # Employer-cost accounts (fall back gracefully if not mapped)
         try:
@@ -2237,7 +2244,7 @@ class AccountingService:
             # -- Credit side -------------------------------------------------
             (paye_acct,    zero, paye),            # CR PAYE Payable
             (pension_acct, zero, total_pension),   # CR Pension Payable (employee + employer)
-            (bank_acct,    zero, net),             # CR Bank / Net Pay
+            (net_pay_acct, zero, net),             # CR Net Salaries Payable
         ]
         if nhf > zero:
             lines.append((nhf_acct, zero, nhf))      # CR NHF Payable
@@ -2298,6 +2305,46 @@ class AccountingService:
             AccountingService.post_leave_encashment_settlement(organisation, payroll_run, user)
 
         return entry
+
+    @staticmethod
+    def net_salaries_payable_account(organisation):
+        return AccountingService._get_or_create_account(
+            organisation, '2400', 'Net Salaries Payable', AccountType.LIABILITY
+        )
+
+    @staticmethod
+    def post_payroll_payment_journal(organisation, payroll_run, user=None):
+        """
+        DR Net Salaries Payable / CR Bank when a payroll run is paid.
+
+        Runs approved BEFORE Net Salaries Payable existed credited Bank at
+        approval, so there is nothing to clear: those are detected by their
+        journal (no line on the payable account) and skipped, which is what
+        stops Bank being credited twice.
+        """
+        from datetime import date as _date
+        zero = Decimal('0')
+        payable = AccountingService.net_salaries_payable_account(organisation)
+        original = JournalEntry.objects.filter(
+            organisation=organisation, source_type='payroll', source_ref=str(payroll_run.id),
+        ).first()
+        if original is None or not original.lines.filter(account=payable).exists():
+            return None
+        net = Decimal(str(payroll_run.total_net or 0)) - Decimal(str(getattr(payroll_run, 'total_encashment', 0) or 0))
+        if net <= zero:
+            return None
+        pay_date = payroll_run.payment_date
+        if isinstance(pay_date, str):
+            pay_date = _date.fromisoformat(pay_date)
+        return AccountingService.post_journal_entry(
+            organisation,
+            f"Payroll paid {payroll_run.period_year}-{payroll_run.period_month:02d}",
+            pay_date or _date.today(),
+            [(payable, net, zero),
+             (AccountMappingService.resolve(organisation, 'bank_account'), zero, net)],
+            user, ref=f"PAYPAID-{payroll_run.id}",
+            source_type='payroll_payment', source_ref=str(payroll_run.id),
+        )
 
     @staticmethod
     def post_leave_encashment_settlement(organisation, payroll_run, user=None):

@@ -833,6 +833,12 @@ class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             run.payment_date = request.data.get('payment_date', timezone.now().date())
             run.save()
             run.payslips.filter(status=PayslipLine.CALCULATED).update(status=PayslipLine.PAID)
+        # Money has now gone out: clear Net Salaries Payable against Bank.
+        from apps.accounting.services import AccountingService, safe_post_gl
+        safe_post_gl(
+            AccountingService.post_payroll_payment_journal, run.organisation, run, request.user,
+            model_instance=run,
+        )
         return Response(PayrollRunSerializer(run).data)
 
     @action(detail=True, methods=['post'])

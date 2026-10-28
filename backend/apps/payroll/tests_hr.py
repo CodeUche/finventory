@@ -1141,3 +1141,56 @@ class BankExportTests(TestCase):
             cost,
             Decimal(str(self.run.total_net)) + Decimal(str(self.run.total_paye)),
         )
+
+
+class PayrollNetPayLiabilityTests(TestCase):
+    """Approval credited Bank for net pay before any money moved, so the
+    ledger's Bank led the bank statement and failed transfers vanished. Net pay
+    is now owed (a liability) from approval until the run is paid."""
+
+    def setUp(self):
+        from apps.accounting.tests import _make_user as mk, _make_org as mo, _upgrade_to_business
+        from apps.payroll.test_track_a import _employee, _run
+        self.user = mk("netpay@example.com")
+        self.org = mo(self.user, "Net Pay Org")
+        _upgrade_to_business(self.org)
+        _employee(self.org)
+        self.run = _run(self.org, self.user, year=2026, month=6)
+        PayrollService.run_payroll(self.run)
+        self.run.refresh_from_db()
+        self.net = Decimal(str(self.run.total_net))
+
+    def _bal(self, code, normal="debit"):
+        from apps.accounting.models import Account
+        from apps.accounting.services import AccountingService
+        acct = Account.objects.get(organisation=self.org, code=code)
+        value = AccountingService._ledger_balance(acct)
+        return value
+
+    def test_approval_owes_net_pay_and_leaves_bank_alone(self):
+        from apps.accounting.services import AccountingService
+        AccountingService.post_payroll_journal(self.org, self.run, user=self.user)
+        self.assertEqual(self._bal("2400"), self.net)      # owed to employees
+        self.assertEqual(self._bal("1002"), Decimal("0"))  # no money has moved
+
+    def test_paying_the_run_clears_the_liability_against_bank(self):
+        from apps.accounting.services import AccountingService
+        AccountingService.post_payroll_journal(self.org, self.run, user=self.user)
+        AccountingService.post_payroll_payment_journal(self.org, self.run, user=self.user)
+        AccountingService.post_payroll_payment_journal(self.org, self.run, user=self.user)  # replay: no second entry
+        self.assertEqual(self._bal("2400"), Decimal("0"))
+        self.assertEqual(self._bal("1002"), -self.net)
+
+    def test_a_run_approved_under_the_old_rule_is_not_credited_to_bank_twice(self):
+        """Old runs credited Bank at approval; there is no payable to clear."""
+        from apps.accounting.models import JournalEntry, JournalLine
+        from apps.accounting.services import AccountingService, AccountMappingService
+        bank = AccountMappingService.resolve(self.org, "bank_account")
+        salary = AccountMappingService.resolve(self.org, "salary_expense_account")
+        AccountingService.post_journal_entry(
+            self.org, "old-style payroll", self.run.created_at.date(),
+            [(salary, self.net, Decimal("0")), (bank, Decimal("0"), self.net)], self.user,
+            ref=f"PAY-{self.run.id}", source_type="payroll", source_ref=str(self.run.id),
+        )
+        self.assertIsNone(AccountingService.post_payroll_payment_journal(self.org, self.run, user=self.user))
+        self.assertEqual(self._bal("1002"), -self.net)   # credited once, at approval
