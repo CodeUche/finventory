@@ -493,6 +493,7 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
                     processed_by=request.user,
                     restocked=d.get("restocked", True),
                     return_date=d.get("return_date"),
+                    refund_method=d.get("refund_method"),
                 )
             return Response(SaleReturnSerializer(sale_return).data, status=201)
         except ValueError as e:

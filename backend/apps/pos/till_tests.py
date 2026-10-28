@@ -448,3 +448,64 @@ class TillApiTests(TillTestBase):
         res = self.client.get("/api/v1/pos/till-sessions/")
         results = res.data.get("results", res.data)
         self.assertEqual(len(results), 0)
+
+
+class CashRefundTests(TillTestBase):
+    """A cash refund came out of nobody's till: the return credited Accounts
+    Receivable (even for a walk-in) and the till read a shortage equal to the
+    refund."""
+
+    def setUp(self):
+        super().setUp()
+        from apps.inventory.models import Product
+        from apps.inventory.services import InventoryService
+        self.product = Product.objects.create(
+            organisation=self.org, sku="RFND", name="Item", cost_price=Decimal("100"),
+            selling_price=Decimal("1000"),
+        )
+        InventoryService.record_movement(
+            organisation=self.org, product=self.product, warehouse=self.warehouse, quantity=Decimal("10"),
+            movement_type="purchase_in", unit_cost=Decimal("100"), reference="SEED", created_by=self.user,
+        )
+
+    def _cash_sale(self):
+        return SaleService.create_sale(
+            organisation=self.org, created_by=self.user, customer=None, warehouse=self.warehouse,
+            items=[{"product_id": str(self.product.id), "quantity": 2}],
+            payment_method="cash", amount_paid=Decimal("2000"),
+        )
+
+    def _return(self, invoice, qty="1", **kw):
+        return SaleService.process_return(
+            organisation=self.org, invoice=invoice,
+            items=[{"sale_item_id": str(invoice.items.first().id), "quantity_returned": qty}],
+            reason="defective", notes="", processed_by=self.user, **kw,
+        )
+
+    def test_a_cash_refund_comes_out_of_the_till_and_the_ledger_cash(self):
+        session = TillService.open_session(self.org, self.user, "10000")
+        invoice = self._cash_sale()
+        self.assertEqual(TillService.expected_cash(session), Decimal("12000"))
+        self._return(invoice)
+        self.assertEqual(TillService.expected_cash(session), Decimal("11000"))   # refund taken off
+        self.assertEqual(self._gl("1001"), Decimal("1000"))      # 2,000 in, 1,000 out
+        self.assertEqual(self._gl("1100"), Decimal("0"))         # no receivable credit for a walk-in
+
+    def test_a_refund_is_never_more_than_was_paid(self):
+        invoice = self._cash_sale()
+        self._return(invoice, qty="1")
+        self._return(invoice, qty="1")
+        self.assertEqual(self._gl("1001"), Decimal("0"))
+        refunds = sum((-p.amount for p in invoice.payments.filter(amount__lt=0)), Decimal("0"))
+        self.assertEqual(refunds, Decimal("2000"))
+
+    def test_a_credit_sale_return_still_reduces_what_the_customer_owes(self):
+        invoice = SaleService.create_sale(
+            organisation=self.org, created_by=self.user, customer=self.customer, warehouse=self.warehouse,
+            items=[{"product_id": str(self.product.id), "quantity": 1}], payment_method="credit",
+        )
+        self._return(invoice)
+        self.customer.refresh_from_db()
+        self.assertEqual(self.customer.outstanding_balance, Decimal("0"))
+        self.assertEqual(self._gl("1001"), Decimal("0"))
+        self.assertEqual(self._gl("1100"), Decimal("0"))

@@ -16,6 +16,7 @@ import logging
 from decimal import Decimal
 
 from django.db import transaction
+from django.db.models import Sum
 from django.utils import timezone
 
 from apps.core.utils import round_money
@@ -1010,6 +1011,23 @@ class SaleService:
         logger.info("Invoice %s deleted by %s for org %s", invoice.invoice_number, actor, invoice.organisation.id)
 
     @staticmethod
+    def _refund_payout(invoice, total_refund, refund_method):
+        """(amount paid out, tender) for a return. Never more than what the
+        customer actually paid on this invoice and has not already had back."""
+        original = invoice.payment_method
+        if refund_method not in ("cash", "bank", "account"):
+            refund_method = "account" if original == Invoice.PaymentMethod.CREDIT else (
+                "cash" if original == Invoice.PaymentMethod.CASH else "bank")
+        if refund_method == "account" and not invoice.customer_id and original != Invoice.PaymentMethod.CREDIT:
+            # A walk-in has no account to credit: pay back the way they paid.
+            refund_method = "cash" if original == Invoice.PaymentMethod.CASH else "bank"
+        if refund_method == "account":
+            return Decimal("0"), None
+        refunded = -(invoice.payments.filter(amount__lt=0).aggregate(t=Sum("amount"))["t"] or Decimal("0"))
+        paid_net = max(Decimal(str(invoice.amount_paid or 0)) - Decimal(str(refunded)), Decimal("0"))
+        return min(Decimal(str(total_refund)), paid_net), ("cash" if refund_method == "cash" else "bank_transfer")
+
+    @staticmethod
     @transaction.atomic
     def process_return(
         organisation,
@@ -1020,12 +1038,17 @@ class SaleService:
         processed_by,
         restocked: bool = True,
         return_date=None,
+        refund_method: str = None,
     ) -> SaleReturn:
         """
         Process a sales return / credit note.
 
         Args:
             items: List of {sale_item_id, quantity_returned}
+            refund_method: "cash" (paid out of the till), "bank" (transfer back),
+                or "account" (off what the customer owes). Defaults to how the
+                invoice was originally paid. A cash/bank refund pays out at most
+                what was actually paid; any rest reduces what is owed.
         """
         from django.utils import timezone as tz
 
@@ -1115,13 +1138,28 @@ class SaleService:
         if total_sold > 0 and total_returned >= total_sold:
             Invoice.objects.filter(pk=invoice.pk).update(status=Invoice.Status.RETURNED)
 
+        # How the customer is made whole. Every return used to credit Accounts
+        # Receivable, even for a walk-in cash sale: an AR credit with no customer
+        # behind it, Cash in the ledger above the drawer, and the till reading a
+        # shortage equal to the refund.
+        payout, payout_tender = SaleService._refund_payout(invoice, total_refund, refund_method)
+        ar_part = total_refund - payout
+        if payout > 0:
+            from apps.sales.models import SalePayment
+            SalePayment.objects.create(
+                organisation=organisation, invoice=invoice, amount=-payout, method=payout_tender,
+                reference=sale_return.return_number, notes=f"Refund for {sale_return.return_number}",
+                received_by=processed_by,
+                till_session=SaleService._open_till_for(organisation, processed_by) if payout_tender == "cash" else None,
+            )
+
         # Update AR if credit sale
-        if invoice.customer and invoice.payment_method == Invoice.PaymentMethod.CREDIT:
+        if ar_part > 0 and invoice.customer and invoice.payment_method == Invoice.PaymentMethod.CREDIT:
             from apps.credits.services import CreditService
             CreditService.record_payment(
                 organisation=organisation,
                 customer=invoice.customer,
-                amount=total_refund,
+                amount=ar_part,
                 recorded_by=processed_by,
                 description=f"Sales return – {sale_return.return_number}",
                 post_gl=False,   # the return's own journal below credits AR
@@ -1139,8 +1177,11 @@ class SaleService:
             lines = [
                 (revenue_acct, net_refund,       zero),           # DR Revenue (reversal)
                 (vat_acct,     total_tax_refund,  zero),          # DR VAT Payable (reversal)
-                (ar_acct,      zero,              total_refund),  # CR AR / customer
             ]
+            if ar_part > zero:
+                lines.append((ar_acct, zero, ar_part))            # CR AR / customer
+            if payout > zero:                                     # CR Cash / Bank actually paid out
+                lines.append((AccountingService.tender_asset_account(organisation, payout_tender), zero, payout))
             # Reverse COGS/Inventory for the restocked portion, so the GL Inventory
             # balance stays in step with the physical stock InventoryService already restored
             if total_cogs_refund > zero:

@@ -554,6 +554,8 @@ export default function SalesPage() {
   const [showReturn, setShowReturn] = useState(false)
   const [returnItems, setReturnItems] = useState<ReturnLineItem[]>([])
   const [returnReason, setReturnReason] = useState('other')
+  // '' = the way the invoice was paid (the server decides)
+  const [refundMethod, setRefundMethod] = useState('')
   const [returnNotes, setReturnNotes] = useState('')
   const [returnDate, setReturnDate] = useState(() => new Date().toISOString().split('T')[0])
   const [returnRestocked, setReturnRestocked] = useState(true)
@@ -929,6 +931,7 @@ export default function SalesPage() {
         notes: returnNotes,
         return_date: returnDate,
         restocked: returnRestocked,
+        ...(refundMethod ? { refund_method: refundMethod } : {}),
       })
       toast.success('Return processed successfully')
       setShowReturn(false)
@@ -1571,6 +1574,20 @@ export default function SalesPage() {
                     <option key={r.value} value={r.value}>{r.label}</option>
                   ))}
                 </select>
+              </div>
+
+              {/* How the customer is refunded */}
+              <div>
+                <label className="label">Refund how?</label>
+                <select className="input" value={refundMethod} onChange={(e) => setRefundMethod(e.target.value)}>
+                  <option value="">The way they paid (recommended)</option>
+                  <option value="cash">Cash from the till</option>
+                  <option value="bank">Bank transfer</option>
+                  <option value="account">Take it off what they owe</option>
+                </select>
+                <p className="text-xs text-slate-500 mt-1">
+                  Cash and bank refunds pay back at most what was actually paid on this invoice.
+                </p>
               </div>
 
               {/* Return date */}

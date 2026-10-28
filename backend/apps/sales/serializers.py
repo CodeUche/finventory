@@ -212,6 +212,8 @@ class ProcessReturnSerializer(serializers.Serializer):
     notes = serializers.CharField(required=False, default="", allow_blank=True, max_length=2000)
     restocked = serializers.BooleanField(default=True)
     return_date = serializers.DateField(required=False)
+    # How the customer is refunded; omitted = the way the invoice was paid.
+    refund_method = serializers.ChoiceField(choices=["cash", "bank", "account"], required=False, allow_null=True)
 
 
 class RecurringInvoiceSerializer(serializers.ModelSerializer):
