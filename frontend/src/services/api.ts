@@ -1002,6 +1002,10 @@ api.interceptors.response.use(
       toast.error(`Server error: ${msg}`, { id: `500-${original.url}`, duration: 8000 })
     } else if (
       status === 403 && !isAuthUrl &&
+      // The plan lookup runs in the background for every member to gate the
+      // sidebar; for a member who may not read it, nothing is wrong and nothing
+      // needs saying.
+      !original.url?.includes('/subscriptions/current/') &&
       !window.location.pathname.startsWith('/onboarding') &&
       !window.location.pathname.startsWith('/platform-admin')
     ) {
@@ -1038,7 +1042,8 @@ api.interceptors.response.use(
       // (LoginPage swallows its errors). It is limited to 5/hour per user, so
       // the 6th sign-in in an hour flashed "Request was throttled. Expected
       // available in N seconds." at someone who had just signed in fine.
-      !original.url?.includes('/auth/offline-verifier/')
+      !original.url?.includes('/auth/offline-verifier/') &&
+      !(status === 403 && original.url?.includes('/subscriptions/current/'))
     ) {
       const toastId = `api-err-${status}-${original.url}`
       toast.error(errData.message, { id: toastId, duration: 4000 })

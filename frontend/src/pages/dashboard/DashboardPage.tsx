@@ -41,6 +41,8 @@ import {
 } from 'date-fns'
 import AIChatModal from '@/components/AIChatModal'
 import { useThemeAccent } from '@/hooks/useTheme'
+import { useModuleAccess } from '@/hooks/useModuleAccess'
+import { useAuthStore } from '@/store/authStore'
 
 // ─── Period helpers ────────────────────────────────────────────────────────────
 
@@ -453,7 +455,38 @@ function ReportShortcuts({
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
+/**
+ * What a team member without module access sees. The dashboard used to load
+ * every widget regardless: a member with no access got ₦0.00 for revenue and
+ * profit, "No invoices yet", quick actions they could not use, and a red "no
+ * access" toast per refused request. ₦0.00 reads as lost data, not as "no
+ * permission".
+ */
 export default function DashboardPage() {
+  const reports = useModuleAccess('reports')
+  const sales = useModuleAccess('sales')
+  const inventory = useModuleAccess('inventory')
+  const { user, organisation } = useAuthStore()
+
+  if (!reports.canView && !sales.canView && !inventory.canView) {
+    return (
+      <div className="card p-8 max-w-xl mx-auto mt-10 text-center space-y-2">
+        <h1 className="text-xl font-bold text-white">
+          Welcome{user?.first_name ? `, ${user.first_name}` : ''}
+        </h1>
+        <p className="text-slate-300">
+          You have joined {organisation?.name ?? 'this business'}, but you don&apos;t have access to any areas yet.
+        </p>
+        <p className="text-sm text-slate-500">
+          Ask the business owner to give you access in Settings &gt; Team.
+        </p>
+      </div>
+    )
+  }
+  return <DashboardContent canReports={reports.canView} canSales={sales.canView} canInventory={inventory.canView} />
+}
+
+function DashboardContent({ canReports, canSales, canInventory }: { canReports: boolean; canSales: boolean; canInventory: boolean }) {
   const navigate = useNavigate()
   const accent   = useThemeAccent()
 
@@ -499,23 +532,27 @@ export default function DashboardPage() {
 
     const { priorFrom, priorTo } = getPriorDateRange(dateFrom, dateTo)
 
+    // A request the member may not make is never sent (so no "no access" toast
+    // and no zero figure pretending to be data); its widget stays empty.
+    const gate = (ok: boolean, call: () => Promise<any>) => (ok ? call() : Promise.reject(new Error('no access')))
+
     const fetchAll = async () => {
       const [
         pnlRes, salesRes, priorSalesRes, topProdRes, expRes,
         arRes, apRes, custRes, stockRes, overdueRes, recentRes,
       ] = await Promise.allSettled([
-        reportApi.pnl({ date_from: dateFrom, date_to: dateTo }),
-        reportApi.sales({ date_from: dateFrom, date_to: dateTo, group_by: 'day' }),
+        gate(canReports, () => reportApi.pnl({ date_from: dateFrom, date_to: dateTo })),
+        gate(canReports, () => reportApi.sales({ date_from: dateFrom, date_to: dateTo, group_by: 'day' })),
         // Phase 1C: prior-period sales for the comparison overlay
-        reportApi.sales({ date_from: priorFrom, date_to: priorTo, group_by: 'day' }),
-        reportApi.topProducts({ date_from: dateFrom, date_to: dateTo, limit: 5 }),
-        reportApi.expenses({ date_from: dateFrom, date_to: dateTo }),
-        reportApi.arAging(),
-        reportApi.apAging(),
-        reportApi.topCustomers({ date_from: dateFrom, date_to: dateTo, limit: 10 }),
-        inventoryApi.stock(),
-        salesApi.invoices({ status: 'overdue', page_size: 5 }),
-        salesApi.invoices({ page_size: 6 }),
+        gate(canReports, () => reportApi.sales({ date_from: priorFrom, date_to: priorTo, group_by: 'day' })),
+        gate(canReports, () => reportApi.topProducts({ date_from: dateFrom, date_to: dateTo, limit: 5 })),
+        gate(canReports, () => reportApi.expenses({ date_from: dateFrom, date_to: dateTo })),
+        gate(canReports, () => reportApi.arAging()),
+        gate(canReports, () => reportApi.apAging()),
+        gate(canReports, () => reportApi.topCustomers({ date_from: dateFrom, date_to: dateTo, limit: 10 })),
+        gate(canInventory, () => inventoryApi.stock()),
+        gate(canSales, () => salesApi.invoices({ status: 'overdue', page_size: 5 })),
+        gate(canSales, () => salesApi.invoices({ page_size: 6 })),
       ])
 
       if (pnlRes.status === 'fulfilled')
@@ -590,7 +627,7 @@ export default function DashboardPage() {
     }, 60_000)
 
     return () => clearInterval(interval)
-  }, [dateFrom, dateTo, _refreshTick])
+  }, [dateFrom, dateTo, _refreshTick, canReports, canSales, canInventory])
 
   // Fetch FIRS compliance stats once on mount (non-blocking)
   useEffect(() => {

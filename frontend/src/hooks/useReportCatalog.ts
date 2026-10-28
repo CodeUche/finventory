@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { reportApi } from '@/services/api'
+import { useModuleAccess } from '@/hooks/useModuleAccess'
 import type { CatalogEntry } from '@/lib/reportCategories'
 
 /**
@@ -15,15 +16,19 @@ import type { CatalogEntry } from '@/lib/reportCategories'
 export function useReportCatalog() {
   const [catalog, setCatalog] = useState<CatalogEntry[]>([])
   const [loading, setLoading] = useState(true)
+  // Members without the Reports tick have no report tree, and asking anyway
+  // produced a red "no access" pop-up on every page load.
+  const canReports = useModuleAccess('reports').canView
 
   useEffect(() => {
+    if (!canReports) { setLoading(false); return }
     let cancelled = false
     reportApi.catalog()
       .then(({ data }) => { if (!cancelled) setCatalog(data?.reports ?? []) })
       .catch(() => { /* sidebar silently falls back to an empty tree — the main Reports page surfaces the real error */ })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [])
+  }, [canReports])
 
   return { catalog, loading }
 }
