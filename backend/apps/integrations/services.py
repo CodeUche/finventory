@@ -267,6 +267,42 @@ def _build_pinned_session(pinned_ip: str) -> requests.Session:
     return session
 
 
+WEBHOOKS_REQUIRED_MESSAGE = (
+    "Webhooks need the Custom Webhooks add-on (or an Enterprise plan). "
+    "Buy it from Settings > Integrations to turn them on."
+)
+
+
+def org_has_webhooks(organisation) -> bool:
+    """Entitled = the Custom Webhooks add-on is ACTIVE, or the plan is Enterprise
+    (the Billing page already lists webhooks under Enterprise)."""
+    if OrganisationIntegrationEntitlement.objects.filter(
+        organisation=organisation, product__key="webhooks",
+        status=OrganisationIntegrationEntitlement.Status.ACTIVE,
+    ).exists():
+        return True
+    try:
+        return "enterprise" in (organisation.subscription.plan.slug or "")
+    except Exception:
+        return False
+
+
+def _legacy_grace_active(subscription: WebhookSubscription) -> bool:
+    """A subscription created before the gate keeps delivering until the grace date."""
+    from datetime import date
+
+    from django.conf import settings
+
+    raw = getattr(settings, "WEBHOOK_LEGACY_GRACE_UNTIL", "") or ""
+    if not raw:
+        return False
+    try:
+        until = date.fromisoformat(raw)
+    except ValueError:
+        return False
+    return timezone.now().date() <= until
+
+
 def deliver_event_to_subscription(subscription: WebhookSubscription, event: DomainEvent) -> WebhookDelivery:
     """
     Deliver one event to one subscription, synchronously. Used by both the
@@ -292,6 +328,17 @@ def deliver_event_to_subscription(subscription: WebhookSubscription, event: Doma
     if not org_can_receive_integration_delivery(subscription.organisation):
         # Subscription lapsed — pause delivery, do NOT mark failed.
         return delivery
+
+    if subscription.integration_product_id is None:
+        # No product linked (what the Integrations page creates). These used to
+        # skip the paid check entirely. Without the add-on they now pause: the
+        # delivery stays pending and the setup is kept, so buying the add-on
+        # resumes sending with nothing lost.
+        if not org_has_webhooks(subscription.organisation) and not _legacy_grace_active(subscription):
+            delivery.last_error = "Paused: " + WEBHOOKS_REQUIRED_MESSAGE
+            delivery.last_attempted_at = timezone.now()
+            delivery.save(update_fields=["last_error", "last_attempted_at", "updated_at"])
+            return delivery
 
     if subscription.integration_product_id is not None:
         is_entitled = OrganisationIntegrationEntitlement.objects.filter(

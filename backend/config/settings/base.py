@@ -333,6 +333,13 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # no environment is exempt unless it says so. Used for the E2E smoke account,
 # whose single suite run costs more requests than the hourly ceiling allows —
 # see ExemptibleUserRateThrottle in apps/core/throttles.py.
+# Webhooks now need the Custom Webhooks add-on or an Enterprise plan. Webhook
+# subscriptions that were already running free keep delivering until this date
+# (YYYY-MM-DD), then pause (never deleted) until the add-on is bought. Empty =
+# no grace period for them. Set it to about 60 days after the release that
+# introduces the gate, after telling owners.
+WEBHOOK_LEGACY_GRACE_UNTIL = config("WEBHOOK_LEGACY_GRACE_UNTIL", default="")
+
 THROTTLE_EXEMPT_EMAILS = frozenset(
     e.strip().lower()
     for e in config("THROTTLE_EXEMPT_EMAILS", default="").split(",")

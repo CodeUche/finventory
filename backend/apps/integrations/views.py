@@ -168,6 +168,11 @@ class WebhookSubscriptionViewSet(viewsets.ModelViewSet):
         _, error = _check_entitlement(org, integration_product_id)
         if error is not None:
             return error
+        if not integration_product_id:
+            # Leaving the product out used to skip the paid check altogether.
+            from .services import WEBHOOKS_REQUIRED_MESSAGE, org_has_webhooks
+            if not org_has_webhooks(org):
+                return Response({"error": WEBHOOKS_REQUIRED_MESSAGE}, status=403)
 
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
