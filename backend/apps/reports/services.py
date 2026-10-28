@@ -34,6 +34,12 @@ def _date_filter(qs, field: str, date_from: Optional[date], date_to: Optional[da
     return qs
 
 
+# Every invoice the ledger has posted a sale for. "returned" is included: a fully
+# returned invoice keeps its sale in its own month and its return in the month
+# of the return, exactly as the ledger does.
+POSTED_SALE_STATUSES = ["paid", "confirmed", "partially_paid", "credit", "overdue", "returned"]
+
+
 class ReportService:
 
     # ─── Sales Reports ────────────────────────────────────────────────────────
@@ -121,40 +127,63 @@ class ReportService:
         ]
 
     @staticmethod
+    def _net_sales_by_customer(organisation, date_from, date_to) -> dict:
+        """{customer id (None = walk-in): net sales} - VAT-exclusive, after returns.
+
+        The same basis as the Profit & Loss: invoices by issue date, less returns
+        by return date, so every customer's figure plus the walk-in row adds up
+        to the P&L's net sales exactly. "Billed" amounts (incl. VAT) belong to
+        collecting money; this is for judging which customers matter.
+        """
+        from apps.sales.models import Invoice, SaleReturnItem
+
+        inv = Invoice.objects.filter(organisation=organisation, status__in=POSTED_SALE_STATUSES)
+        inv = _date_filter(inv, "issue_date", date_from, date_to)
+        out = {}
+        for r in inv.values("customer_id").annotate(t=Sum("total_amount"), v=Sum("tax_amount")):
+            out[r["customer_id"]] = (r["t"] or Decimal("0")) - (r["v"] or Decimal("0"))
+        ret = SaleReturnItem.objects.filter(
+            organisation=organisation, sale_return__invoice__status__in=POSTED_SALE_STATUSES,
+        )
+        ret = _date_filter(ret, "sale_return__return_date", date_from, date_to)
+        for r in ret.values("sale_return__invoice__customer_id").annotate(t=Sum("refund_amount"), v=Sum("tax_refund")):
+            key = r["sale_return__invoice__customer_id"]
+            out[key] = out.get(key, Decimal("0")) - ((r["t"] or Decimal("0")) - (r["v"] or Decimal("0")))
+        return out
+
+    @staticmethod
     def top_customers(
         organisation,
         date_from: Optional[date],
         date_to: Optional[date],
         limit: int = 10,
     ) -> list[dict]:
-        """Top N customers by revenue."""
+        """Top N customers, ranked by net sales (excl. VAT, after returns).
+
+        `revenue` is what they were billed (incl. VAT); `net_sales` is what the
+        business earned from them, on the Profit & Loss basis.
+        """
         from apps.sales.models import Invoice
 
+        net = ReportService._net_sales_by_customer(organisation, date_from, date_to)
         qs = Invoice.objects.filter(
-            organisation=organisation,
-            status__in=["paid", "confirmed", "partially_paid", "credit", "overdue"],
-            customer__isnull=False,
+            organisation=organisation, status__in=POSTED_SALE_STATUSES, customer__isnull=False,
         )
         qs = _date_filter(qs, "issue_date", date_from, date_to)
-
-        qs = (
-            qs.values("customer__id", "customer__name", "customer__code")
-            .annotate(
-                total_revenue=Sum("total_amount"),
-                invoice_count=Count("id"),
-            )
-            .order_by("-total_revenue")[:limit]
-        )
-        return [
+        rows = [
             {
                 "customer_id": r["customer__id"],
                 "customer_name": r["customer__name"],
                 "customer_code": r["customer__code"],
                 "revenue": r["total_revenue"],
+                "net_sales": net.get(r["customer__id"], Decimal("0")),
                 "invoice_count": r["invoice_count"],
             }
-            for r in qs
+            for r in qs.values("customer__id", "customer__name", "customer__code")
+            .annotate(total_revenue=Sum("total_amount"), invoice_count=Count("id"))
         ]
+        rows.sort(key=lambda r: r["net_sales"], reverse=True)
+        return rows[:limit]
 
     # ─── P&L Report ──────────────────────────────────────────────────────────
 
@@ -287,37 +316,32 @@ class ReportService:
         """All customers with revenue totals for the period (NULL customer = walk-in)."""
         from apps.sales.models import Invoice
 
-        qs = Invoice.objects.filter(
-            organisation=organisation,
-            status__in=["paid", "confirmed", "partially_paid", "credit", "overdue"],
-        )
+        net = ReportService._net_sales_by_customer(organisation, date_from, date_to)
+        qs = Invoice.objects.filter(organisation=organisation, status__in=POSTED_SALE_STATUSES)
         qs = _date_filter(qs, "issue_date", date_from, date_to)
-        qs = (
-            qs.values(
-                "customer__id", "customer__name",
-                "customer__code", "customer__email",
-            )
-            .annotate(
-                total_revenue=Sum("total_amount"),
-                invoice_count=Count("id"),
-                total_paid=Sum("amount_paid"),
-                total_outstanding=Sum("amount_due"),
-            )
-            .order_by("-total_revenue")
+        qs = qs.values("customer__id", "customer__name", "customer__code", "customer__email").annotate(
+            total_revenue=Sum("total_amount"),
+            invoice_count=Count("id"),
+            total_paid=Sum("amount_paid"),
+            total_outstanding=Sum("amount_due"),
         )
-        return [
+        rows = [
             {
                 "customer_id": str(r["customer__id"]) if r["customer__id"] else None,
                 "customer_name": r["customer__name"] or "Walk-in",
                 "customer_code": r["customer__code"],
                 "customer_email": r["customer__email"],
                 "invoice_count": r["invoice_count"],
+                # Billed incl. VAT, shown beside paid / outstanding (also billed amounts).
                 "revenue": r["total_revenue"],
+                "net_sales": net.get(r["customer__id"], Decimal("0")),
                 "amount_paid": r["total_paid"],
                 "amount_outstanding": r["total_outstanding"],
             }
             for r in qs
         ]
+        rows.sort(key=lambda r: r["net_sales"], reverse=True)
+        return rows
 
     @staticmethod
     def customer_invoices(
@@ -958,12 +982,16 @@ class ReportService:
 
         customers = Customer.objects.filter(organisation=organisation)
 
+        # Only invoices that were really sold: it used to count drafts, proformas
+        # and voided invoices in "total_sales".
         sales_map = dict(
-            Invoice.objects.filter(organisation=organisation, customer__in=customers)
+            Invoice.objects.filter(organisation=organisation, customer__in=customers,
+                                   status__in=POSTED_SALE_STATUSES)
             .values("customer_id")
             .annotate(total=Sum("total_amount"))
             .values_list("customer_id", "total")
         )
+        net_map = ReportService._net_sales_by_customer(organisation, None, None)
         payments_map = dict(
             SalePayment.objects.filter(
                 organisation=organisation, invoice__customer__in=customers
@@ -983,7 +1011,8 @@ class ReportService:
                 "phone": c.phone,
                 "outstanding_balance": c.outstanding_balance,
                 "credit_limit": c.credit_limit,
-                "total_sales": sales_map.get(c.id) or Decimal("0"),
+                "total_sales": sales_map.get(c.id) or Decimal("0"),   # billed, incl. VAT
+                "net_sales": net_map.get(c.id) or Decimal("0"),       # excl. VAT, after returns
                 "total_payments": payments_map.get(c.id) or Decimal("0"),
             }
             for c in customers

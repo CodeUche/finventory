@@ -128,3 +128,33 @@ class ProfitAndLossAgreesWithLedgerTests(TestCase):
         self.assertEqual(Decimal(str(oct_["revenue"]["returns"])), Decimal("3000.00"))
         self.assertEqual(Decimal(str(oct_["revenue"]["gross_sales"])), Decimal("-3000.00"))
         self.assertEqual(Decimal(str(oct_["cost_of_goods_sold"])), Decimal("-2000.00"))
+
+    def test_customer_net_sales_add_up_to_the_profit_and_loss(self):
+        """Customer reports now show net sales (excl. VAT, after returns) beside
+        what was billed. Per customer plus walk-in must equal the P&L's net sales."""
+        from datetime import date
+        from apps.reports.services import ReportService
+        from apps.sales.services import SaleService
+
+        sale = lambda cust, qty, d: SaleService.create_sale(
+            organisation=self.org, created_by=self.user, customer=cust, warehouse=self.wh,
+            items=[{"product_id": str(self.product.id), "quantity": qty}],
+            payment_method="credit" if cust else "cash", issue_date=d,
+            **({} if cust else {"amount_paid": Decimal("1612.50") * qty}),
+        )
+        a = sale(self.customer, 3, date(2026, 9, 10))
+        sale(None, 2, date(2026, 9, 12))                                  # walk-in
+        SaleService.process_return(
+            organisation=self.org, invoice=a,
+            items=[{"sale_item_id": str(a.items.first().id), "quantity_returned": "1"}],
+            reason="defective", notes="", processed_by=self.user, restocked=True,
+            return_date=date(2026, 10, 5),
+        )
+        df, dt = date(2026, 9, 1), date(2026, 10, 31)
+        rows = ReportService.sales_by_customer(self.org, df, dt)
+        pnl = ReportService.profit_and_loss(self.org, df, dt)
+        self.assertEqual(sum(r["net_sales"] for r in rows), Decimal(str(pnl["revenue"]["gross_sales"])))
+        named = [r for r in rows if r["customer_name"] == "Buyer"][0]
+        self.assertEqual(named["net_sales"], Decimal("3000.00"))          # 3 x 1,500 - 1 returned
+        top = ReportService.top_customers(self.org, df, dt)
+        self.assertEqual(top[0]["net_sales"], Decimal("3000.00"))

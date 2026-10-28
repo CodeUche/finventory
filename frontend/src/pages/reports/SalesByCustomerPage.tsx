@@ -65,7 +65,8 @@ export default function SalesByCustomerPage() {
 
   const rowKey = (r: SalesByCustomerRow) => r.customer_id ?? 'walk-in'
 
-  const totalRevenue = rows.reduce((s, r) => s + parseFloat(r.revenue || '0'), 0)
+  const totalBilled = rows.reduce((s, r) => s + parseFloat(r.revenue || '0'), 0)
+  const totalNet = rows.reduce((s, r) => s + parseFloat(r.net_sales || '0'), 0)
 
   return (
     <div className="space-y-5">
@@ -96,8 +97,12 @@ export default function SalesByCustomerPage() {
             <p className="text-lg font-semibold text-white">{rows.length}</p>
           </div>
           <div className="bg-surface-800 border border-surface-700 rounded-xl px-4 py-3">
-            <p className="text-xs text-slate-500 mb-0.5">Total Revenue</p>
-            <p className="text-lg font-semibold text-emerald-400">{formatCurrency(totalRevenue)}</p>
+            <p className="text-xs text-slate-500 mb-0.5">Net sales (excl. VAT, after returns)</p>
+            <p className="text-lg font-semibold text-emerald-400">{formatCurrency(totalNet)}</p>
+          </div>
+          <div className="bg-surface-800 border border-surface-700 rounded-xl px-4 py-3">
+            <p className="text-xs text-slate-500 mb-0.5">Billed (incl. VAT)</p>
+            <p className="text-lg font-semibold text-slate-200">{formatCurrency(totalBilled)}</p>
           </div>
         </div>
       )}
@@ -111,7 +116,8 @@ export default function SalesByCustomerPage() {
               <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-wide">Customer</th>
               <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-wide">Code</th>
               <th className="px-4 py-3 text-right text-xs font-semibold text-slate-400 uppercase tracking-wide">Invoices</th>
-              <th className="px-4 py-3 text-right text-xs font-semibold text-slate-400 uppercase tracking-wide">Revenue</th>
+              <th className="px-4 py-3 text-right text-xs font-semibold text-slate-400 uppercase tracking-wide">Net sales</th>
+              <th className="px-4 py-3 text-right text-xs font-semibold text-slate-400 uppercase tracking-wide">Billed (incl. VAT)</th>
               <th className="px-4 py-3 text-right text-xs font-semibold text-slate-400 uppercase tracking-wide">Paid</th>
               <th className="px-4 py-3 text-right text-xs font-semibold text-slate-400 uppercase tracking-wide">Outstanding</th>
             </tr>
@@ -119,13 +125,13 @@ export default function SalesByCustomerPage() {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={7} className="px-4 py-12 text-center">
+                <td colSpan={8} className="px-4 py-12 text-center">
                   <Loader2 size={22} className="animate-spin mx-auto text-slate-500" />
                 </td>
               </tr>
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-4 py-10 text-center text-slate-500">
+                <td colSpan={8} className="px-4 py-10 text-center text-slate-500">
                   No sales for the selected period.
                 </td>
               </tr>
@@ -154,14 +160,15 @@ export default function SalesByCustomerPage() {
                       <td className="px-4 py-3 text-slate-200 font-medium">{row.customer_name}</td>
                       <td className="px-4 py-3 text-slate-400">{row.customer_code || <span className="text-slate-600">—</span>}</td>
                       <td className="px-4 py-3 text-right tabular-nums text-slate-300">{row.invoice_count}</td>
-                      <td className="px-4 py-3 text-right tabular-nums text-emerald-400 font-medium">{formatCurrency(row.revenue)}</td>
+                      <td className="px-4 py-3 text-right tabular-nums text-emerald-400 font-medium">{formatCurrency(row.net_sales ?? row.revenue)}</td>
+                      <td className="px-4 py-3 text-right tabular-nums text-slate-300">{formatCurrency(row.revenue)}</td>
                       <td className="px-4 py-3 text-right tabular-nums text-slate-300">{formatCurrency(row.amount_paid)}</td>
                       <td className="px-4 py-3 text-right tabular-nums text-amber-400">{formatCurrency(row.amount_outstanding)}</td>
                     </tr>
 
                     {open && (
                       <tr key={`${key}-detail`} className="border-b border-surface-700 bg-surface-900/60">
-                        <td colSpan={7} className="px-6 py-3">
+                        <td colSpan={8} className="px-6 py-3">
                           {loadingDetail === key ? (
                             <div className="py-4 text-center">
                               <Loader2 size={18} className="animate-spin mx-auto text-slate-500" />

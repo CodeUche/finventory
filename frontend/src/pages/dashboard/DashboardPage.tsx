@@ -198,9 +198,14 @@ function HealthRatioStrip({
   const gm = parseFloat(pnl.gross_margin_pct ?? 0)
   const nm = parseFloat(pnl.net_margin_pct ?? 0)
 
-  // Customer concentration: top-3 revenue as % of total
-  const top3Revenue = topCustomers.slice(0, 3).reduce((s: number, c: any) => s + parseFloat(c.revenue ?? 0), 0)
+  // Customer concentration: top-3 net sales as % of total net sales. Both sides
+  // are on the Profit & Loss basis (excl. VAT, after returns); the top customers
+  // used to be billed amounts (incl. VAT, before returns) over P&L revenue, which
+  // overstated the share and could push it past 100%. With 5 or fewer named
+  // customers the share only says "how much is not walk-in", so no verdict.
+  const top3Revenue = topCustomers.slice(0, 3).reduce((s: number, c: any) => s + parseFloat(c.net_sales ?? c.revenue ?? 0), 0)
   const concentration = revenue > 0 ? Math.round((top3Revenue / revenue) * 100) : null
+  const fewCustomers = topCustomers.length <= 5
 
   const ratios: {
     label: string; value: string; note: string
@@ -235,9 +240,9 @@ function HealthRatioStrip({
     {
       label: 'Cust. Concentration',
       value: concentration != null ? `Top 3 = ${concentration}%` : '—',
-      note: 'Revenue from top 3 customers',
-      // > 50 % in top 3 = concentration risk
-      status: concentration == null ? 'neutral' : concentration <= 40 ? 'good' : concentration <= 60 ? 'warn' : 'bad',
+      note: fewCustomers ? `Net sales; only ${topCustomers.length} named customers, too few to judge` : 'Net sales from top 3 customers',
+      // > 50 % in top 3 = concentration risk (house thresholds, not a published benchmark)
+      status: concentration == null || fewCustomers ? 'neutral' : concentration <= 40 ? 'good' : concentration <= 60 ? 'warn' : 'bad',
     },
   ]
 

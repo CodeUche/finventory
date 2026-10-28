@@ -499,7 +499,10 @@ export interface SalesByCustomerRow {
   customer_code: string | null
   customer_email: string | null
   invoice_count: number
+  /** Billed, incl. VAT (compare with amount_paid / amount_outstanding). */
   revenue: string
+  /** Excl. VAT, after returns: the Profit & Loss basis. */
+  net_sales?: string
   amount_paid: string
   amount_outstanding: string
 }
