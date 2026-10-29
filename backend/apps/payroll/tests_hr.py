@@ -1160,6 +1160,10 @@ class PayrollNetPayLiabilityTests(TestCase):
         self.run.refresh_from_db()
         self.net = Decimal(str(self.run.total_net))
 
+    def _payable_code(self):
+        from apps.accounting.models import Account
+        return Account.objects.get(organisation=self.org, name="Net Salaries Payable").code
+
     def _bal(self, code, normal="debit"):
         from apps.accounting.models import Account
         from apps.accounting.services import AccountingService
@@ -1170,7 +1174,8 @@ class PayrollNetPayLiabilityTests(TestCase):
     def test_approval_owes_net_pay_and_leaves_bank_alone(self):
         from apps.accounting.services import AccountingService
         AccountingService.post_payroll_journal(self.org, self.run, user=self.user)
-        self.assertEqual(self._bal("2400"), self.net)      # owed to employees
+        self.assertEqual(self._bal(self._payable_code()), self.net)  # owed to employees
+        self.assertEqual(self._bal("2400"), Decimal("0"))  # WHT Payable stays untouched
         self.assertEqual(self._bal("1002"), Decimal("0"))  # no money has moved
 
     def test_paying_the_run_clears_the_liability_against_bank(self):
@@ -1178,7 +1183,7 @@ class PayrollNetPayLiabilityTests(TestCase):
         AccountingService.post_payroll_journal(self.org, self.run, user=self.user)
         AccountingService.post_payroll_payment_journal(self.org, self.run, user=self.user)
         AccountingService.post_payroll_payment_journal(self.org, self.run, user=self.user)  # replay: no second entry
-        self.assertEqual(self._bal("2400"), Decimal("0"))
+        self.assertEqual(self._bal(self._payable_code()), Decimal("0"))
         self.assertEqual(self._bal("1002"), -self.net)
 
     def test_a_run_approved_under_the_old_rule_is_not_credited_to_bank_twice(self):

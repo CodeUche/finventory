@@ -2308,9 +2308,20 @@ class AccountingService:
 
     @staticmethod
     def net_salaries_payable_account(organisation):
-        return AccountingService._get_or_create_account(
-            organisation, '2400', 'Net Salaries Payable', AccountType.LIABILITY
-        )
+        """Net pay owed to employees. Found by name: 2400 is WHT Payable in the
+        standard chart, so the code alone would mix the two liabilities."""
+        name = 'Net Salaries Payable'
+        existing = Account.objects.filter(
+            organisation=organisation, name=name, account_type=AccountType.LIABILITY,
+        ).first()
+        if existing:
+            return existing
+        for code in ('2900', '2905', '2915', '2920', '2925'):
+            if not Account.objects.filter(organisation=organisation, code=code).exists():
+                return AccountingService._get_or_create_account(
+                    organisation, code, name, AccountType.LIABILITY
+                )
+        raise ValueError('No free account code is left for Net Salaries Payable.')
 
     @staticmethod
     def post_payroll_payment_journal(organisation, payroll_run, user=None):
