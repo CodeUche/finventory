@@ -40,6 +40,7 @@ import {
   format, subDays, subMonths, subYears, startOfYear, differenceInDays,
 } from 'date-fns'
 import AIChatModal from '@/components/AIChatModal'
+import ReportsAccessNotice from '@/components/ReportsAccessNotice'
 import { useThemeAccent } from '@/hooks/useTheme'
 import { useModuleAccess } from '@/hooks/useModuleAccess'
 import { useAuthStore } from '@/store/authStore'
@@ -483,7 +484,12 @@ export default function DashboardPage() {
       </div>
     )
   }
-  return <DashboardContent canReports={reports.canView} canSales={sales.canView} canInventory={inventory.canView} />
+  return (
+    <div className="space-y-6">
+      <ReportsAccessNotice />
+      <DashboardContent canReports={reports.canView} canSales={sales.canView} canInventory={inventory.canView} />
+    </div>
+  )
 }
 
 function DashboardContent({ canReports, canSales, canInventory }: { canReports: boolean; canSales: boolean; canInventory: boolean }) {

@@ -1217,6 +1217,9 @@ export const teamApi = {
   deleteMember: (id: string) => api.delete(`/tenancy/memberships/${id}/`),
   setPermissions: (id: string, permissions: { module: string; access_level: string }[]) =>
     api.post(`/tenancy/memberships/${id}/set_permissions/`, { permissions }),
+  reportsAccessGap: () => api.get('/tenancy/memberships/reports_access_gap/'),
+  grantReports: (membershipIds: string[]) =>
+    api.post('/tenancy/memberships/grant_reports/', { membership_ids: membershipIds }),
 }
 
 export const inventoryApi = {

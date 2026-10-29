@@ -3741,6 +3741,32 @@ export default function SettingsPage() {
             </button>
           </div>
 
+          {/* VAT registration */}
+          <div className="rounded-xl bg-slate-800 border border-slate-700 px-5 py-4 flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium text-white">This business charges VAT</p>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Turn off if you are not registered to charge VAT (for example, under the small-business exemption).
+                Sales, quotes and the shop then add no VAT. Ask your tax adviser before changing this.
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={organisation?.charges_vat !== false}
+              aria-label="This business charges VAT"
+              onClick={async () => {
+                try {
+                  const { data } = await orgApi.update(organisation!.id, { charges_vat: organisation?.charges_vat === false })
+                  updateOrganisation(data); toast.success('VAT setting updated')
+                } catch { toast.error('Failed to update VAT setting') }
+              }}
+              className={`relative inline-flex h-6 w-11 shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none ${organisation?.charges_vat !== false ? 'bg-brand-600' : 'bg-slate-600'}`}
+            >
+              <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${organisation?.charges_vat !== false ? 'translate-x-5' : 'translate-x-0'}`} />
+            </button>
+          </div>
+
           {/* Fixed-Asset Policy */}
           <div className="rounded-xl bg-slate-800 border border-slate-700 px-5 py-4 space-y-4">
             <div>
@@ -3765,7 +3791,6 @@ export default function SettingsPage() {
               />
             </div>
             {([
-              { key: 'charges_vat', label: 'This business charges VAT', hint: 'Turn off if you are not registered to charge VAT (for example, under the small-business exemption). Sales, quotes and the shop then add no VAT. Ask your tax adviser before changing this.' },
               { key: 'fixed_asset_revaluation_enabled', label: 'Enable revaluation (IAS 16)', hint: 'Off by default — SME cost model. Enabling needs practitioner sign-off.' },
               { key: 'capital_allowance_nta2025_enabled', label: 'Enable NTA-2025 capital allowances', hint: 'Drives the CIT computation. Keep OFF until a licensed tax practitioner signs off the rates.' },
             ] as const).map((row) => {
