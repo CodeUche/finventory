@@ -160,36 +160,27 @@ export default function RegisterPage() {
 
   // ── Registration form ────────────────────────────────────────────────────────
   return (
-    <AuthShell>
+    <AuthShell title="Get Started!" subtitle={<>Set up your books in minutes<br />Free for 30 days</>} tab="up">
       <div className="au-card au-card-wide">
-        <div className="au-eyebrow">Get started</div>
-        <h2 className="au-title">Create your workspace</h2>
-        <p className="au-sub">Set up your books in minutes — free for 30 days.</p>
-
-        <div className="au-switch">
-          <button type="button" onClick={() => navigate('/login')}>Sign in</button>
-          <button type="button" className="on">Create account</button>
-        </div>
-
         <form onSubmit={handleSubmit}>
           <div className="au-grid2">
             <div className="au-field">
-              <label>First name</label>
+              <label>First Name</label>
               <input className="au-input" value={form.first_name} onChange={update('first_name')} required placeholder="John" />
             </div>
             <div className="au-field">
-              <label>Last name</label>
+              <label>Last Name</label>
               <input className="au-input" value={form.last_name} onChange={update('last_name')} required placeholder="Doe" />
             </div>
           </div>
 
           <div className="au-field">
-            <label>Email address</label>
+            <label>Email</label>
             <input type="email" className="au-input" value={form.email} onChange={update('email')} required placeholder="john@company.com" />
           </div>
 
           <div className="au-field">
-            <label>Phone number</label>
+            <label>Phone Number</label>
             <input type="tel" className="au-input" value={form.phone} onChange={update('phone')} placeholder="+234 800 000 0000" />
           </div>
 
@@ -234,7 +225,7 @@ export default function RegisterPage() {
           </div>
 
           <div className="au-field">
-            <label>Confirm password</label>
+            <label>Confirm Password</label>
             <input
               type={showPw ? 'text' : 'password'}
               className="au-input"
@@ -256,7 +247,7 @@ export default function RegisterPage() {
               style={{ marginTop: 2 }}
             />
             <span>
-              I have read and agree to the{' '}
+              I accept the{' '}
               <a href="/legal/terms" target="_blank" rel="noopener" className="au-link">Terms &amp; Conditions</a>,{' '}
               <a href="/legal/privacy" target="_blank" rel="noopener" className="au-link">Privacy Policy</a>, and{' '}
               <a href="/legal/dpa" target="_blank" rel="noopener" className="au-link">Data Processing Agreement</a>.
@@ -265,7 +256,7 @@ export default function RegisterPage() {
 
           <button type="submit" disabled={loading || !agreed} className="au-btn" style={{ marginTop: 8 }}>
             {loading ? <Loader2 size={18} className="animate-spin" /> : null}
-            {loading ? 'Creating account…' : 'Create account'}
+            {loading ? 'Creating account…' : 'Sign up'}
           </button>
         </form>
       </div>

@@ -322,23 +322,14 @@ export default function LoginPage() {
 
   // ── Sign-in screen ─────────────────────────────────────────────────────────
   return (
-    <AuthShell>
+    <AuthShell title="Welcome Back!" subtitle="Login to your AUDITY account" tab="in">
       <div className="au-card">
-        <div className="au-eyebrow">Welcome back</div>
-        <h2 className="au-title">Sign in to Audity</h2>
-        <p className="au-sub">Pick up exactly where you left off.</p>
-
-        <div className="au-switch">
-          <button type="button" className="on">Sign in</button>
-          <button type="button" onClick={() => navigate('/register')}>Create account</button>
-        </div>
-
         {/* Email-not-verified banner */}
         {showVerifyBanner && (
           <div className="au-alert">
-            <AlertCircle size={18} style={{ color: '#E8B65A', flex: 'none', marginTop: 1 }} />
+            <AlertCircle size={18} style={{ color: 'var(--head)', flex: 'none', marginTop: 1 }} />
             <div style={{ flex: 1, minWidth: 0 }}>
-              <p style={{ fontSize: 13.5, fontWeight: 600, color: '#E8B65A' }}>Email not verified</p>
+              <p style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--head)' }}>Email not verified</p>
               <p className="au-sub" style={{ fontSize: 12.5, margin: '2px 0 0' }}>Check your inbox for a verification link.</p>
               <button
                 onClick={handleResendVerification}
@@ -355,7 +346,7 @@ export default function LoginPage() {
 
         <form onSubmit={handleSubmit}>
           <div className="au-field">
-            <label>Work email</label>
+            <label>Email</label>
             <input
               type="email"
               value={form.email}
@@ -369,7 +360,7 @@ export default function LoginPage() {
           <div className="au-field">
             <div className="au-field-head">
               <label>Password</label>
-              <Link to="/forgot-password" className="au-link" style={{ fontSize: 12.5 }}>Forgot password?</Link>
+              <Link to="/forgot-password" className="au-link" style={{ fontSize: 13 }}>Forgot Password?</Link>
             </div>
             <div className="au-pw">
               <input
@@ -408,7 +399,7 @@ export default function LoginPage() {
           <p className="au-foot">
             Team member?{' '}
             <button type="button" onClick={() => navigate('/staff-login')} className="au-link">
-              Staff sign in →
+              Staff sign in
             </button>
           </p>
         </form>
