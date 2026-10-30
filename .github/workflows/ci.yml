@@ -559,7 +559,7 @@ jobs:
           [ -f "${SETUP}.sig" ] || { echo "No ${SETUP}.sig — the build did not sign. Check TAURI_SIGNING_PRIVATE_KEY."; exit 1; }
 
           mkdir -p site
-          cp release-site/index.html release-site/favicon.svg site/
+          cp release-site/index.html release-site/favicon.svg release-site/auth-bg-dark.jpg release-site/auth-bg-light.png site/
           cp "$SETUP" site/Audity-Setup.exe
           # The download page shows the version to the user; keep it honest.
           sed -i -E "s/Version [0-9]+\.[0-9]+\.[0-9]+/Version ${V}/" site/index.html

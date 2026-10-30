@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400;1,9..144,500&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet" />
 <script>
   // Set theme before first paint (no flash). Persisted, else follows the OS.
   (function(){
@@ -22,115 +22,107 @@
 </script>
 <style>
   :root{
-    /* ── Dark (default) ── */
-    --ink:#eef3fc; --muted:#94a2c0; --head:#ffffff; --em:#7ee3b6; --line:#8FA4D6;
-    --page-grad:linear-gradient(160deg,#0a1730,#070d1d 55%,#05060d);
-    --glow1:rgba(28,47,92,.55); --glow2:rgba(20,90,64,.30); --compass-op:.5;
-    --card-bg:linear-gradient(160deg,rgba(255,255,255,.07),rgba(255,255,255,.03));
-    --card-bd:rgba(255,255,255,.12);
-    --card-sh:0 30px 80px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.14);
-    --btn:linear-gradient(180deg,#F4D06F,#D4A017); --btn-tx:#081F44;
-    --btn-sh:0 12px 30px rgba(212,160,23,.35); --btn-sh-hi:0 16px 38px rgba(212,160,23,.44);
-    --em-soft:rgba(126,227,182,.07); --em-soft-bd:rgba(126,227,182,.22);
-    --num-bg:rgba(126,227,182,.14); --step-tx:#D7DEEC; --info-tx:#CFE9DC; --foot:#6C7A9C;
-    --demo-bg:#2ED8A7; --demo-bg-hi:#3CE9B6; --demo-tx:#04231a; --demo-sh:0 10px 26px rgba(46,216,167,.34);
+    /* ── Dark (default) — same tokens as the app's sign-in page ── */
+    --bg-img:url('/auth-bg-dark.jpg'); --bg-fallback:#050521;
+    --ink:#F4F2FF; --muted:#9C98B8; --head:#FFFFFF; --em:#2563EB; --link:#A499FF;
+    --card-bg:rgba(255,255,255,.07); --card-bd:rgba(255,255,255,.16); --card-sh:inset 0 1px 0 rgba(255,255,255,.08);
+    --btn:#021233; --btn-tx:#FFFFFF; --btn-sh:0 10px 26px rgba(0,0,0,.45);
+    --toggle-bd:rgba(222,216,255,.7);
+    --soft-bg:rgba(255,255,255,.05); --soft-bd:rgba(255,255,255,.12);
+    --num-bg:#E6E0FF; --num-tx:#110099;
+    --brand-name:#FFFFFF; --brand-tag:#E4E1F5; --focus:#A499FF;
+    --demo-bg:#E6E0FF; --demo-tx:#110099;
   }
   html.light{
-    /* ── Light (paper) — mirrors the login page's light theme ── */
-    --ink:#11203a; --muted:#5b6478; --head:#081F44; --em:#0f6e49; --line:#1C2F5C;
-    --page-grad:linear-gradient(155deg,#FBFAF7,#F7F6F2 60%,#F3F1EA);
-    --glow1:rgba(28,47,92,.06); --glow2:rgba(31,157,107,.07); --compass-op:.32;
-    --card-bg:rgba(255,255,255,.86); --card-bd:rgba(255,255,255,.7);
-    --card-sh:0 1px 1px rgba(8,31,68,.04), 0 30px 70px rgba(8,31,68,.13);
-    --btn:#081F44; --btn-tx:#ffffff;
-    --btn-sh:0 12px 26px rgba(8,31,68,.22); --btn-sh-hi:0 16px 34px rgba(8,31,68,.30);
-    --em-soft:rgba(15,110,73,.07); --em-soft-bd:rgba(15,110,73,.24);
-    --num-bg:rgba(15,110,73,.10); --step-tx:#334155; --info-tx:#14532d; --foot:#7A869B;
-    --demo-bg:#0f9e6a; --demo-bg-hi:#0b8a5c; --demo-tx:#ffffff; --demo-sh:0 10px 24px rgba(15,158,106,.30);
+    /* ── Light ── */
+    --bg-img:url('/auth-bg-light.png'); --bg-fallback:#DADADA;
+    --ink:#1C1B1F; --muted:#55545C; --head:#111111; --link:#110099;
+    --card-bg:rgba(205,205,205,.6); --card-bd:rgba(255,255,255,.55); --card-sh:0 14px 34px rgba(0,0,0,.18);
+    --btn:#2563EB; --btn-tx:#FFFFFF; --btn-sh:0 10px 24px rgba(37,99,235,.35);
+    --toggle-bd:#7C86C4;
+    --soft-bg:rgba(255,255,255,.45); --soft-bd:rgba(0,0,0,.1);
+    --num-bg:#110099; --num-tx:#FFFFFF;
+    --brand-name:#1C1B1F; --brand-tag:#2E2D33; --focus:#110099;
+    --demo-bg:#110099; --demo-tx:#FFFFFF;
   }
   *{box-sizing:border-box;margin:0;padding:0}
   html{-webkit-text-size-adjust:100%}
   body{
-    font-family:'Inter',system-ui,-apple-system,sans-serif; color:var(--ink);
-    min-height:100vh; position:relative; overflow-x:hidden; -webkit-font-smoothing:antialiased;
-    background:
-      radial-gradient(70% 60% at 12% 8%, var(--glow1), transparent 60%),
-      radial-gradient(60% 70% at 92% 96%, var(--glow2), transparent 60%),
-      var(--page-grad);
-    display:flex; flex-direction:column; align-items:center; padding:40px 20px 52px;
-    transition:color .25s;
+    font-family:'Roboto',system-ui,-apple-system,sans-serif; color:var(--ink);
+    min-height:100vh; overflow-x:hidden; -webkit-font-smoothing:antialiased;
+    background:var(--bg-img) center/cover no-repeat fixed, var(--bg-fallback);
+    display:flex; flex-direction:column;
   }
+  a{color:var(--link); font-weight:500; text-decoration:none}
+  a:hover{text-decoration:underline}
 
-  /* Top-right controls: standout demo button + theme toggle */
-  .topbar{position:fixed; top:18px; right:20px; z-index:9; display:flex; align-items:center; gap:10px}
-  .btn-demo{display:inline-flex; align-items:center; gap:8px; padding:9px 16px; border-radius:11px;
-    background:var(--demo-bg); color:var(--demo-tx); font:inherit; font-size:13.5px; font-weight:700;
-    text-decoration:none; border:0; box-shadow:var(--demo-sh); transition:transform .16s, box-shadow .16s, background .16s}
-  .btn-demo:hover{background:var(--demo-bg-hi); transform:translateY(-1px)}
-  .btn-demo svg{width:15px; height:15px}
-  .toggle{display:flex; align-items:center; gap:7px;
-    padding:8px 13px; border-radius:11px; cursor:pointer; font:inherit; font-size:13px; font-weight:600;
-    color:var(--ink); background:var(--card-bg); border:1px solid var(--card-bd);
-    -webkit-backdrop-filter:blur(14px); backdrop-filter:blur(14px); transition:.16s}
-  .toggle:hover{color:var(--em)}
-  .toggle svg{width:15px; height:15px}
+  /* Top-right: Book a demo + theme toggle */
+  .topbar{position:fixed; top:18px; right:24px; z-index:9; display:flex; align-items:center; gap:10px}
+  .btn-demo{display:inline-flex; align-items:center; gap:8px; padding:7px 14px; border-radius:8px;
+    background:var(--demo-bg); color:var(--demo-tx); font-size:14px; font-weight:500}
+  .btn-demo:hover{text-decoration:none; opacity:.9}
+  .btn-demo svg,.toggle svg{width:16px; height:16px}
+  .toggle{display:flex; align-items:center; gap:8px; padding:6px 12px; border-radius:8px; cursor:pointer;
+    font:inherit; font-size:14px; color:var(--ink); background:transparent; border:1px solid var(--toggle-bd)}
+  .toggle:hover{background:color-mix(in srgb,var(--ink) 8%,transparent)}
   html:not(.light) .toggle .i-moon,html.light .toggle .i-sun{display:none}
-  /* Small screens: keep the top-right cluster compact */
-  @media(max-width:480px){
-    .btn-demo span{display:none}
-    .toggle span{display:none}
-    .topbar{top:14px; right:14px; gap:8px}
-  }
+  @media(max-width:560px){ .btn-demo span,.toggle span{display:none} .topbar{top:14px;right:14px} }
 
-  /* Compass backdrop */
-  .compass{position:fixed; inset:0; z-index:0; overflow:hidden; pointer-events:none; opacity:var(--compass-op);
-    -webkit-mask-image:radial-gradient(80% 80% at 82% 42%,#000,transparent 78%);
-    mask-image:radial-gradient(80% 80% at 82% 42%,#000,transparent 78%)}
-  .compass svg{position:absolute; inset:0; width:100%; height:100%}
-  .c-line{stroke:var(--line); fill:none}
-  .c-em{stroke:var(--em); fill:none} .c-em-f{fill:var(--em)}
+  /* Layout: brand panel left, download card right */
+  .stage{flex:1; display:grid; grid-template-columns:1fr 1fr; align-items:center; gap:40px;
+    padding:56px clamp(24px,5.5vw,96px) 24px}
+  .left{display:flex; flex-direction:column; gap:clamp(48px,9vh,96px)}
+  .copy{display:flex; flex-direction:column; gap:20px}
+  .eyebrow{font-size:12px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:var(--link)}
+  h1{font-weight:400; font-size:clamp(32px,3.4vw,48px); line-height:1.15; color:var(--head)}
+  h1 em{font-style:normal; color:var(--em)}
+  .lead{opacity:.92; font-size:clamp(15px,1.2vw,18px); line-height:1.55; max-width:34em}
+  .note{opacity:.85; font-size:13px; line-height:1.6; max-width:46ch}
+  .right{display:flex; flex-direction:column; align-items:center; width:100%; max-width:600px; justify-self:end}
 
-  .wrap{position:relative; z-index:1; width:100%; max-width:620px; display:flex; flex-direction:column; align-items:center; text-align:center}
-  .logo{width:min(360px,84vw); height:auto; display:block; margin-bottom:34px}
+  /* Logo (drawn in code so it follows the theme) */
+  .brand{display:flex; align-items:center; gap:clamp(16px,2vw,32px)}
+  .diamond{height:clamp(84px,8.5vw,116px); width:auto; flex:none; filter:drop-shadow(0 6px 18px rgba(37,99,235,.35))}
+  .wordmark{display:flex; flex-direction:column; align-items:flex-start}
+  .name{font-weight:500; font-size:clamp(48px,5vw,68px); line-height:1; letter-spacing:.015em; color:var(--brand-name)}
+  .tag{margin-top:8px; padding-top:4px; border-top:1px solid color-mix(in srgb,var(--brand-name) 70%,transparent);
+    font-size:clamp(10px,.85vw,12px); letter-spacing:.06em; font-weight:500; color:var(--brand-tag); white-space:nowrap}
+  .brand-sm{display:none}
+  .m-head{display:none; text-align:center; margin-bottom:22px}
+  .m-head h1{font-size:30px; margin-top:8px}
 
-  .eyebrow{display:inline-flex; align-items:center; gap:8px; font-size:11.5px; font-weight:700;
-    letter-spacing:.14em; text-transform:uppercase; color:var(--em); margin-bottom:18px}
-  .eyebrow .dot{width:6px;height:6px;border-radius:50%;background:var(--em)}
-  h1{font-family:'Fraunces',Georgia,serif; font-weight:500; font-size:clamp(32px,6.5vw,52px);
-    line-height:1.05; letter-spacing:-.02em; color:var(--head); margin-bottom:16px}
-  h1 em{font-style:italic; color:var(--em)}
-  .lead{color:var(--muted); font-size:16.5px; line-height:1.62; max-width:46ch; margin-bottom:32px}
-
-  .btn{display:inline-flex; align-items:center; justify-content:center; gap:11px;
-    background:var(--btn); color:var(--btn-tx); font-family:'Inter',sans-serif;
-    font-size:16.5px; font-weight:800; text-decoration:none; padding:16px 32px; border-radius:12px;
-    box-shadow:var(--btn-sh); transition:transform .18s, box-shadow .18s; border:0; cursor:pointer}
-  .btn:hover{transform:translateY(-2px); box-shadow:var(--btn-sh-hi)}
+  /* Glass card — rounded top-left and bottom-right only */
+  .card{width:100%; background:var(--card-bg); border:1px solid var(--card-bd); border-radius:96px 0 96px 0;
+    padding:48px 48px 40px; box-shadow:var(--card-sh); -webkit-backdrop-filter:blur(14px); backdrop-filter:blur(14px)}
+  .btn{display:flex; align-items:center; justify-content:center; gap:10px; width:calc(100% - 8%); margin:0 auto;
+    height:52px; padding:0 16px; border-radius:8px; background:var(--btn); color:var(--btn-tx);
+    font-size:14px; font-weight:500; letter-spacing:.03em; text-transform:uppercase; transition:.18s}
+  .btn:hover{text-decoration:none; transform:translateY(-1px); box-shadow:var(--btn-sh)}
+  .btn:focus-visible{outline:2px solid var(--focus); outline-offset:3px}
   .btn svg{width:20px; height:20px}
-  .btn2 svg{width:17px; height:17px}
-  .meta{color:var(--muted); font-size:13px; margin-top:15px; opacity:.9}
-  .os-note{display:none; margin-top:16px; font-size:13.5px; color:var(--em);
-    background:var(--em-soft); border:1px solid var(--em-soft-bd); border-radius:10px; padding:10px 15px; max-width:44ch}
+  .meta{color:var(--muted); font-size:13px; margin-top:14px; text-align:center}
+  .os-note{display:none; margin-top:14px; font-size:13.5px; background:var(--soft-bg); border:1px solid var(--soft-bd);
+    border-radius:8px; padding:10px 14px}
+  h2{font-size:14px; font-weight:500; letter-spacing:.04em; text-transform:uppercase; margin:30px 0 16px}
+  .step{display:flex; gap:14px; margin-bottom:14px}
+  .num{flex:none; width:28px; height:28px; border-radius:8px; background:var(--num-bg); color:var(--num-tx);
+    font-weight:500; font-size:14px; display:flex; align-items:center; justify-content:center}
+  .step p{font-size:14.5px; line-height:1.55}
+  .step b,.info b{font-weight:500; color:var(--head)}
+  .info{background:var(--soft-bg); border:1px solid var(--soft-bd); border-radius:8px; padding:13px 15px;
+    margin-top:6px; font-size:13.5px; line-height:1.56}
+  .alt{margin-top:22px; font-size:14px; text-align:center}
 
-  .card{width:100%; text-align:left; background:var(--card-bg); border:1px solid var(--card-bd);
-    border-radius:20px; padding:26px 26px 22px; margin-top:40px; box-shadow:var(--card-sh);
-    -webkit-backdrop-filter:blur(16px) saturate(130%); backdrop-filter:blur(16px) saturate(130%)}
-  .card h2{font-size:12px; text-transform:uppercase; letter-spacing:.12em; color:var(--line);
-    margin-bottom:18px; font-weight:700}
-  .step{display:flex; gap:14px; margin-bottom:16px}
-  .step:last-of-type{margin-bottom:2px}
-  .num{flex:none; width:27px; height:27px; border-radius:8px; background:var(--num-bg);
-    color:var(--em); font-weight:800; font-size:13px; display:flex; align-items:center; justify-content:center}
-  .step p{font-size:14.5px; line-height:1.55; color:var(--step-tx)}
-  .step b{color:var(--head); font-weight:600}
-  .info{background:var(--em-soft); border:1px solid var(--em-soft-bd); border-radius:12px;
-    padding:13px 15px; margin-top:10px; font-size:13.5px; line-height:1.56; color:var(--info-tx)}
-  .info b{color:var(--em)}
-
-  .alt{margin-top:30px; font-size:14.5px; color:var(--muted)}
-  .alt a{color:var(--em); font-weight:600; text-decoration:none}
-  .alt a:hover{text-decoration:underline}
-  .foot{margin-top:32px; font-size:12.5px; color:var(--foot); line-height:1.65; max-width:46ch}
+  @media(max-width:920px){
+    .stage{grid-template-columns:1fr; padding:72px 20px 24px; gap:24px}
+    .left{display:none}
+    .m-head{display:block}
+    .right{justify-self:center}
+    .brand-sm{display:flex; margin-bottom:20px}
+    .brand-sm .diamond{height:56px} .brand-sm .name{font-size:36px}
+    .card{border-radius:56px 0 56px 0; padding:36px 22px 30px}
+    .btn{width:100%}
+  }
 </style>
 </head>
 <body>
@@ -146,64 +138,62 @@
     </button>
   </div>
 
-  <div class="compass" aria-hidden="true">
-    <svg viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <g transform="translate(1120 430)" opacity="0.6">
-        <g class="c-line" stroke-width="1">
-          <path d="M0 -81 L70 0 L0 81 L-70 0 Z"/>
-          <path d="M0 -162 L140 0 L0 162 L-140 0 Z"/>
-          <path d="M0 -244 L210 0 L0 244 L-210 0 Z"/>
-          <path d="M0 -325 L280 0 L0 325 L-280 0 Z"/>
-          <path d="M0 -406 L350 0 L0 406 L-350 0 Z" opacity="0.6"/>
-        </g>
-        <g class="c-line" stroke-width="1" stroke-dasharray="2 7" opacity="0.7">
-          <line x1="0" y1="-440" x2="0" y2="440"/>
-          <line x1="-400" y1="0" x2="400" y2="0"/>
-        </g>
-        <path d="M0 -325 L18 -300 L-18 -300 Z" class="c-em-f" opacity="0.85"/>
-        <circle r="22" class="c-em" stroke-width="1.2" opacity="0.7"/>
-        <circle r="5" class="c-em-f"/>
-      </g>
-    </svg>
-  </div>
-
-  <div class="wrap">
-    <img class="logo" id="logo" alt="Audity — Accounting · Compliance · ERP" />
-    <script>document.getElementById('logo').src = window.__auTheme==='light' ? '/audity-logo-light.svg' : '/audity-logo-dark.svg';</script>
-
-    <span class="eyebrow"><span class="dot"></span> Private Beta</span>
-    <h1>Audity for <em>Windows</em></h1>
-    <p class="lead">Your accounting &amp; inventory suite, installed as a desktop app — reconciled, audit-ready, and working even when the internet drops.</p>
-
-    <a class="btn" href="/Audity-Setup.exe" download id="dl">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-4-4m4 4l4-4"/><path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
-      Download for Windows
-    </a>
-    <div class="meta">Version 0.3.40 &nbsp;·&nbsp; ~6 MB &nbsp;·&nbsp; Windows 10 / 11 (64-bit)</div>
-    <div class="os-note" id="osNote">Heads up — this installer is for <b>Windows PCs</b>. On other devices, use the browser version linked below.</div>
-
-    <div class="card">
-      <h2>Installing — about a minute</h2>
-      <div class="step"><div class="num">1</div><p>Click <b>Download for Windows</b>. If your browser asks, choose <b>Keep</b> to finish the download.</p></div>
-      <div class="step"><div class="num">2</div><p>Open <b>Audity-Setup.exe</b> and follow the prompts. Audity launches automatically when it's done.</p></div>
-      <div class="step"><div class="num">3</div><p>Sign in with the credentials we sent you — and you're in.</p></div>
-      <div class="info"><b>If Windows shows a “Windows protected your PC” screen:</b> that's expected for new apps in beta — Audity is safe. Click <b>More info</b>, then <b>Run anyway</b>.</div>
+  <div class="stage">
+    <div class="left">
+      <div class="brand" role="img" aria-label="Audity — Accounting, Compliance, ERP">
+        <svg class="diamond" viewBox="0 0 80 96" aria-hidden="true">
+          <defs>
+            <linearGradient id="f1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#5A77F5"/><stop offset="1" stop-color="#2F45D8"/></linearGradient>
+            <linearGradient id="f2" x1="1" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3D5CF0"/><stop offset="1" stop-color="#2536B8"/></linearGradient>
+            <linearGradient id="f3" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2B3FC0"/><stop offset="1" stop-color="#141E78"/></linearGradient>
+            <linearGradient id="f4" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2A3CC4"/><stop offset="1" stop-color="#1A2690"/></linearGradient>
+            <radialGradient id="glow"><stop offset="0" stop-color="#fff" stop-opacity=".95"/><stop offset="1" stop-color="#9FB2FF" stop-opacity="0"/></radialGradient>
+          </defs>
+          <polygon points="40,0 0,48 40,48" fill="url(#f1)"/>
+          <polygon points="40,0 80,48 40,48" fill="url(#f2)"/>
+          <polygon points="0,48 40,96 40,48" fill="url(#f3)"/>
+          <polygon points="80,48 40,96 40,48" fill="url(#f4)"/>
+          <circle cx="40" cy="48" r="6" fill="url(#glow)"/>
+        </svg>
+        <div class="wordmark"><span class="name">AUDITY</span><span class="tag">ACCOUNTING · COMPLIANCE · ERP</span></div>
+      </div>
+      <div class="copy">
+        <span class="eyebrow">Private Beta</span>
+        <h1>Audity for <em>Windows</em></h1>
+        <p class="lead">Your accounting &amp; inventory suite, installed as a desktop app — reconciled, audit-ready, and working even when the internet drops.</p>
+        <p class="note">New to Audity? Use <b>Book a demo</b> (top right) and we'll walk you through setup on a quick virtual call.<br/>Private beta build — please keep this link within your team.</p>
+      </div>
     </div>
 
-    <p class="alt">Prefer not to install? <a href="https://audity-review.vercel.app" target="_blank" rel="noopener">Open Audity in your browser →</a></p>
+    <main class="right">
+      <div class="brand brand-sm" role="img" aria-label="Audity">
+        <svg class="diamond" viewBox="0 0 80 96" aria-hidden="true"><polygon points="40,0 0,48 40,48" fill="#4A66EE"/><polygon points="40,0 80,48 40,48" fill="#3552E4"/><polygon points="0,48 40,96 40,48" fill="#1F2C9C"/><polygon points="80,48 40,96 40,48" fill="#2434B4"/></svg>
+        <div class="wordmark"><span class="name">AUDITY</span></div>
+      </div>
+      <div class="m-head"><span class="eyebrow">Private Beta</span><h1>Audity for <em>Windows</em></h1></div>
+      <div class="card">
+        <a class="btn" href="/Audity-Setup.exe" download id="dl">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-4-4m4 4l4-4"/><path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
+          Download for Windows
+        </a>
+        <div class="meta">Version 0.3.52 &nbsp;·&nbsp; ~6 MB &nbsp;·&nbsp; Windows 10 / 11 (64-bit)</div>
+        <div class="os-note" id="osNote">Heads up — this installer is for <b>Windows PCs</b>. On other devices, use the browser version linked below.</div>
 
-    <p class="foot">
-      New to Audity? Use <b>Book a demo</b> (top right) and we'll walk you through setup on a quick virtual call.<br/>
-      Private beta build — please keep this link within your team.
-    </p>
+        <h2>Installing — about a minute</h2>
+        <div class="step"><div class="num">1</div><p>Click <b>Download for Windows</b>. If your browser asks, choose <b>Keep</b> to finish the download.</p></div>
+        <div class="step"><div class="num">2</div><p>Open <b>Audity-Setup.exe</b> and follow the prompts. Audity launches automatically when it's done.</p></div>
+        <div class="step"><div class="num">3</div><p>Sign in with the credentials we sent you — and you're in.</p></div>
+        <div class="info"><b>If Windows shows a “Windows protected your PC” screen:</b> that's expected for new apps in beta — Audity is safe. Click <b>More info</b>, then <b>Run anyway</b>.</div>
+
+        <p class="alt">Prefer not to install? <a href="https://audity-review.vercel.app" target="_blank" rel="noopener">Open Audity in your browser →</a></p>
+      </div>
+    </main>
   </div>
 
   <script>
-    var logo = document.getElementById('logo');
     var label = document.getElementById('tglLabel');
     function applyTheme(t){
       document.documentElement.classList.toggle('light', t === 'light');
-      logo.src = t === 'light' ? '/audity-logo-light.svg' : '/audity-logo-dark.svg';
       label.textContent = t === 'light' ? 'Dark' : 'Light';
       try{ localStorage.setItem('audity-dl-theme', t); }catch(e){}
     }
