@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { api, bypassNextGets } from '@/services/api'
-import { Upload, Download, CheckCircle, XCircle, AlertTriangle, FileText, Users, BookOpen, UsersRound, Loader2, Maximize2, X, Sparkles, ChevronDown, ChevronUp, Truck, ClipboardList, PieChart } from 'lucide-react'
+import { Upload, Download, CheckCircle, XCircle, AlertTriangle, FileText, Users, BookOpen, UsersRound, Loader2, Maximize2, X, Sparkles, ChevronDown, ChevronUp, Truck, ClipboardList, PieChart, Info } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { importApi } from '@/services/api'
 import { save } from '@tauri-apps/plugin-dialog'
@@ -66,7 +66,11 @@ function parseCSV(text: string): string[][] {
 
 type Entity = 'products' | 'customers' | 'suppliers' | 'accounts' | 'employees' | 'purchase_orders' | 'budgets'
 type ImportError = { row: number; field: string; message: string }
-type ImportResult = { created: number; updated: number; errors: ImportError[]; total_rows: number; warehouses_created?: number; stock_assigned?: number; balances_set?: number; lines_created?: number }
+/** `skipped` holds rows the importer deliberately left alone, e.g. a purchase
+ *  order or budget that already exists. Those are the intended outcome of
+ *  re-running a file, so they are shown as neutral information, never as
+ *  errors. `errors` stays for rows that genuinely failed. */
+type ImportResult = { created: number; updated: number; errors: ImportError[]; skipped?: ImportError[]; total_rows: number; warehouses_created?: number; stock_assigned?: number; balances_set?: number; lines_created?: number }
 
 // All product fields with human-readable labels
 const PRODUCT_FIELD_LABELS: Record<string, string> = {
@@ -136,14 +140,14 @@ const ENTITIES: { key: Entity; label: string; icon: React.ReactNode; description
     key: 'purchase_orders',
     label: 'Purchase Orders',
     icon: <ClipboardList size={20} />,
-    description: 'Bring in existing purchase orders from another system. One row per line item — suppliers, warehouses and products must already exist.',
+    description: 'Bring in purchase orders from another system. Import your suppliers first, then your products, then upload this file. One row per line item, and any warehouse that is missing gets created for you.',
     columns: 'po_number*, supplier_name*, warehouse_name*, order_date*, product_sku*, quantity*, unit_cost*, expected_date, discount_percent, delivery_amount, notes',
   },
   {
     key: 'budgets',
     label: 'Budgets',
     icon: <PieChart size={20} />,
-    description: 'Bring in existing budgets from a spreadsheet. One row per budget line — lines sharing the same budget name and fiscal year import as one multi-line budget.',
+    description: 'Bring in existing budgets from a spreadsheet. One row per budget line, and lines sharing the same budget name and fiscal year import as one budget. A budget that is already there is left alone.',
     columns: 'budget_name*, fiscal_year*, category_name*, category_type*, budgeted_amount*, period_month, sub_category, account_code, forecast_amount, budget_type, notes',
   },
 ]
@@ -224,11 +228,17 @@ export default function ImportPage() {
       const importMapping = entity === 'products' ? mapping : undefined
       const { data } = await importApi[entity](file as any, importMapping as any)
       setResult(data)
+      const skippedCount = data.skipped?.length ?? 0
       if (data.errors.length === 0) {
         const stockMsg = data.stock_assigned ? `, ${data.stock_assigned} stocked` : ''
         const whMsg = data.warehouses_created ? `, ${data.warehouses_created} warehouse(s) created` : ''
         const balMsg = data.balances_set ? `, ${data.balances_set} opening balance(s) posted` : ''
-        toast.success(`Import complete: ${data.created} created, ${data.updated} updated${stockMsg}${whMsg}${balMsg}`)
+        // Skipped rows are not a problem, so they ride along on the success
+        // toast rather than turning the whole import amber.
+        const skipMsg = skippedCount
+          ? `, ${skippedCount} row${skippedCount === 1 ? '' : 's'} already existed and ${skippedCount === 1 ? 'was' : 'were'} skipped`
+          : ''
+        toast.success(`Import complete: ${data.created} created, ${data.updated} updated${stockMsg}${whMsg}${balMsg}${skipMsg}`)
       } else {
         toast(`Import done with ${data.errors.length} error(s)`, { icon: '⚠️' })
       }
@@ -571,6 +581,15 @@ export default function ImportPage() {
                 </div>
               </div>
             )}
+            {(result.skipped?.length ?? 0) > 0 && (
+              <div className="rounded-xl border border-surface-600 bg-surface-800/60 p-4 flex items-center gap-3">
+                <Info size={20} className="text-slate-400" />
+                <div>
+                  <p className="text-xs text-slate-400">Already there</p>
+                  <p className="text-xl font-bold text-slate-200">{result.skipped?.length}</p>
+                </div>
+              </div>
+            )}
             <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 flex items-center gap-3">
               <XCircle size={20} className="text-red-400" />
               <div>
@@ -600,6 +619,35 @@ export default function ImportPage() {
                       <td className="px-4 py-2 text-slate-300">{e.row}</td>
                       <td className="px-4 py-2 text-amber-300 font-mono">{e.field}</td>
                       <td className="px-4 py-2 text-red-300">{e.message}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {(result.skipped?.length ?? 0) > 0 && (
+            <div className="rounded-xl border border-surface-600 overflow-hidden">
+              <div className="px-4 py-2 bg-surface-800/60 border-b border-surface-700 flex items-center gap-2">
+                <Info size={14} className="text-slate-400" />
+                <p className="text-xs font-medium text-slate-300">
+                  {result.skipped?.length} row{(result.skipped?.length ?? 0) === 1 ? '' : 's'} already existed and {(result.skipped?.length ?? 0) === 1 ? 'was' : 'were'} skipped. Nothing went wrong, and nothing was changed.
+                </p>
+              </div>
+              <table className="w-full text-xs">
+                <thead className="bg-surface-900">
+                  <tr>
+                    <th className="px-4 py-2 text-left text-slate-400 font-medium">Row</th>
+                    <th className="px-4 py-2 text-left text-slate-400 font-medium">Field</th>
+                    <th className="px-4 py-2 text-left text-slate-400 font-medium">Why it was skipped</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.skipped?.map((s, i) => (
+                    <tr key={i} className="border-t border-surface-700">
+                      <td className="px-4 py-2 text-slate-300">{s.row}</td>
+                      <td className="px-4 py-2 text-slate-400 font-mono">{s.field}</td>
+                      <td className="px-4 py-2 text-slate-300">{s.message}</td>
                     </tr>
                   ))}
                 </tbody>
