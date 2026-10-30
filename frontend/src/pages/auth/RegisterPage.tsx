@@ -225,7 +225,7 @@ export default function RegisterPage() {
           </div>
 
           <div className="au-field">
-            <label>Confirm Password</label>
+            <label>Password</label>
             <input
               type={showPw ? 'text' : 'password'}
               className="au-input"
@@ -233,6 +233,7 @@ export default function RegisterPage() {
               onChange={update('password_confirm')}
               required
               placeholder="Confirm password"
+              aria-label="Confirm password"
             />
             {form.password_confirm.length > 0 && form.password !== form.password_confirm && (
               <p style={{ fontSize: 12, color: '#ef4444', marginTop: 6 }}>Passwords do not match</p>
