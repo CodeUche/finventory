@@ -232,7 +232,7 @@ export default function RegisterPage() {
               value={form.password_confirm}
               onChange={update('password_confirm')}
               required
-              placeholder="Repeat password"
+              placeholder="Confirm password"
             />
             {form.password_confirm.length > 0 && form.password !== form.password_confirm && (
               <p style={{ fontSize: 12, color: '#ef4444', marginTop: 6 }}>Passwords do not match</p>
