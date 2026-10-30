@@ -12,7 +12,5 @@ Editing this file before a release is the difference between a user seeing
 
 ---
 
-Bills can now be paid in parts, and the app is clearer about what is happening
-when your connection drops: it shows saved data instead of blinking between
-online and offline, and tells you plainly when something needs a live
-connection.
+Sign in and sign up have a fresh new look, and so does the download page.
+The app now uses the new Audity colours and lettering on those screens.
