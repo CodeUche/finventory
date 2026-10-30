@@ -46,6 +46,12 @@ class FindLedgerDamageTests(TestCase):
         from apps.credits.models import CreditTransaction
         from apps.credits.services import CreditService
 
+        CreditTransaction.objects.create(                                     # the debt both payments settle
+            organisation=self.org, customer=self.customer, amount=Decimal("800"), balance_after=800, recorded_by=self.user,
+            transaction_type=CreditTransaction.TransactionType.DEBIT, description="Credit sale – INV-A",
+        )
+        self.customer.outstanding_balance = Decimal("800")
+        self.customer.save(update_fields=["outstanding_balance"])
         CreditService.record_payment(self.org, self.customer, Decimal("500"), recorded_by=self.user,
                                      description="Credit payment – INV-A")   # fixed code: posted
         CreditTransaction.objects.create(                                     # old code: never posted

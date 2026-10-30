@@ -83,8 +83,10 @@ class Command(BaseCommand):
         # An invoice charged VAT twice and part-paid at the shelf price also
         # "owes" its VAT; that is one problem with one repair, so list it once.
         unpaid = self._vat_left_unpaid(org, skip={i["invoice"] for i in twice["items"]})
+        payments = self._missed_credit_payments(org)
         return {
-            "missed_credit_payments": self._missed_credit_payments(org),
+            "missed_credit_payments": payments,
+            "overpaid_payments": self._overpaid_payments(org),
             "missed_po_receipts": self._missed_po_receipts(org),
             "vat_left_unpaid": unpaid,
             "vat_charged_twice": twice,
@@ -110,10 +112,22 @@ class Command(BaseCommand):
         by_ref = {e.source_ref: e for e in entries}
         legacy_used = set()
         out = []
+        # What each customer owed just before each transaction. The old code cut a
+        # balance off at zero, so a payment larger than the debt was stored as if
+        # only the debt had been paid. Only the part that was owed is evident from
+        # the books; the excess may be a typing slip, so it is left to a person.
+        owed_before = {}
+        running = {}
+        for t in (CreditTransaction.objects.filter(organisation=org).order_by("created_at", "id")
+                  .only("id", "customer_id", "balance_after")):
+            owed_before[t.id] = running.get(t.customer_id, Decimal("0"))
+            running[t.customer_id] = _d(t.balance_after)
+
         payments = (CreditTransaction.objects
                     .filter(organisation=org, transaction_type=CreditTransaction.TransactionType.CREDIT)
                     .filter(Q(description__startswith="Credit payment") | Q(description__startswith="Payment received"))
                     .select_related("customer").order_by("created_at"))
+        excess = []
         for txn in payments:
             if f"CRPAY-{txn.id}" in by_ref:
                 continue
@@ -122,11 +136,28 @@ class Command(BaseCommand):
                     and self._entry_amount(legacy).quantize(CENT) == _d(txn.amount).quantize(CENT)):
                 legacy_used.add(legacy.id)
                 continue
-            out.append({"payment": str(txn.id), "customer": txn.customer.name if txn.customer else "",
-                        "date": txn.created_at.date().isoformat(), "amount": _money(txn.amount),
-                        "description": txn.description,
-                        "repair": "post DR Cash/Bank, CR Accounts Receivable for this payment"})
+            recorded = _d(txn.amount)
+            fixable = min(recorded, max(owed_before.get(txn.id, Decimal("0")), Decimal("0")))
+            name = txn.customer.name if txn.customer else ""
+            if recorded - fixable > CENT:
+                excess.append({"payment": str(txn.id), "customer": name,
+                               "date": txn.created_at.date().isoformat(), "recorded": _money(recorded),
+                               "owed_at_the_time": _money(fixable), "not_owed": _money(recorded - fixable),
+                               "decision": "The payment was larger than the customer owed. Confirm whether the "
+                                           "extra money really arrived before anything is posted for it."})
+            if fixable > CENT:
+                out.append({"payment": str(txn.id), "customer": name,
+                            "date": txn.created_at.date().isoformat(), "amount": _money(fixable),
+                            "recorded_amount": _money(recorded), "description": txn.description,
+                            "repair": "post DR Cash/Bank, CR Accounts Receivable for the part that was owed"})
+        self._payment_excess = excess
         return {"items": out, "total": _money(sum((_d(i["amount"]) for i in out), Decimal("0")))}
+
+    def _overpaid_payments(self, org):
+        """Payments larger than the debt they were recorded against (see above).
+        Run after _missed_credit_payments, which collects them."""
+        items = getattr(self, "_payment_excess", [])
+        return {"items": items, "total": _money(sum((_d(i["not_owed"]) for i in items), Decimal("0")))}
 
     def _missed_po_receipts(self, org):
         from apps.accounting.models import JournalEntry
@@ -143,6 +174,11 @@ class Command(BaseCommand):
                         .filter(Q(source_ref=str(po.id)) | Q(source_ref__startswith=f"{po.id}:"))
                         .prefetch_related("lines"))
             posted = sum((sum((_d(l.credit) for l in e.lines.all()), Decimal("0")) for e in receipts), Decimal("0"))
+            # A bill approved on its own already booked its payable; counting only
+            # receipts would book it a second time.
+            approvals = (JournalEntry.objects.filter(organisation=org, source_type="bill_approved", source_ref=str(bill.id))
+                         .prefetch_related("lines"))
+            posted += sum((sum((_d(l.credit) for l in e.lines.all()), Decimal("0")) for e in approvals), Decimal("0"))
             missing = _d(bill.total_amount) - posted
             if missing > CENT:
                 out.append({"bill": bill.bill_number, "purchase_order": po.po_number,

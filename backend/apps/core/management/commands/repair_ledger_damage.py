@@ -38,7 +38,7 @@ from django.utils import timezone
 CENT = Decimal("0.01")
 SYSTEM_EMAIL = "data-repair@system.audity.africa"
 SOURCE_TYPE = "data_repair"
-MANUAL_KINDS = ("vat_left_unpaid", "vat_charged_twice", "quote_billed_above_quote",
+MANUAL_KINDS = ("overpaid_payments", "vat_left_unpaid", "vat_charged_twice", "quote_billed_above_quote",
                 "till_missed_takings", "depreciation_fractions")
 
 
