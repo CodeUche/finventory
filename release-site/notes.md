@@ -12,5 +12,4 @@ Editing this file before a release is the difference between a user seeing
 
 ---
 
-Sign in and sign up have a fresh new look, and so does the download page.
-The app now uses the new Audity colours and lettering on those screens.
+The Download button on the dark download page is now easier to see.
