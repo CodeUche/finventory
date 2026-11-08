@@ -1,15 +1,15 @@
 /**
  * AuthShell — shared chrome for all auth pages (login, register, staff login,
- * MFA, verification screens). Renders the "Compass" background graphic, the
- * editorial left panel (real Audity diamond logo + headline), a theme toggle,
- * and a right-hand slot for the page's form card.
+ * MFA, verification screens). Follows the Audity design system: photo
+ * background, brand panel on the left (logo, headline), and on the right an
+ * optional heading + Sign in / Sign up tabs above the glass form card.
  *
  * Fully theme-aware: styling lives in src/styles/auth.css and keys off the
  * html.light / html.dark class managed by useTheme.
  */
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useId, useState, type ReactNode } from 'react'
+import { Link } from 'react-router-dom'
 import { Moon, Sun } from 'lucide-react'
-import AudityLogo from '@/components/AudityLogo'
 import { getStoredTheme, setTheme, type Theme } from '@/hooks/useTheme'
 import '@/styles/auth.css'
 
@@ -27,71 +27,104 @@ function ThemeToggle() {
       onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
       aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
     >
-      {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
+      {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
       <span>{theme === 'dark' ? 'Light' : 'Dark'}</span>
     </button>
   )
 }
 
-interface Props {
-  children: ReactNode
-  /** Headline shown on the editorial panel. Defaults to the brand line. */
-  headline?: ReactNode
-  lead?: string
+/** Audity diamond + wordmark, drawn in code so it follows the theme. */
+function AuthLogo({ className }: { className?: string }) {
+  // Unique gradient ids: the logo renders twice, and a hidden copy would otherwise win the id lookup.
+  const id = useId().replace(/:/g, '')
+  return (
+    <div className={`au-brand ${className ?? ''}`} role="img" aria-label="Audity — Accounting, Compliance, ERP">
+      <svg className="au-diamond" viewBox="0 0 80 96" aria-hidden="true">
+        <defs>
+          <linearGradient id={`f1-${id}`} x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stopColor="#5A77F5" /><stop offset="1" stopColor="#2F45D8" />
+          </linearGradient>
+          <linearGradient id={`f2-${id}`} x1="1" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor="#3D5CF0" /><stop offset="1" stopColor="#2536B8" />
+          </linearGradient>
+          <linearGradient id={`f3-${id}`} x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stopColor="#2B3FC0" /><stop offset="1" stopColor="#141E78" />
+          </linearGradient>
+          <linearGradient id={`f4-${id}`} x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stopColor="#2A3CC4" /><stop offset="1" stopColor="#1A2690" />
+          </linearGradient>
+          <radialGradient id={`glow-${id}`}>
+            <stop offset="0" stopColor="#fff" stopOpacity=".95" /><stop offset="1" stopColor="#9FB2FF" stopOpacity="0" />
+          </radialGradient>
+        </defs>
+        <polygon points="40,0 0,48 40,48" fill={`url(#f1-${id})`} />
+        <polygon points="40,0 80,48 40,48" fill={`url(#f2-${id})`} />
+        <polygon points="0,48 40,96 40,48" fill={`url(#f3-${id})`} />
+        <polygon points="80,48 40,96 40,48" fill={`url(#f4-${id})`} />
+        <circle cx="40" cy="48" r="6" fill={`url(#glow-${id})`} />
+      </svg>
+      <div className="au-wordmark">
+        <span className="au-name">AUDITY</span>
+        <span className="au-tag">ACCOUNTING · COMPLIANCE · ERP</span>
+      </div>
+    </div>
+  )
 }
 
-export default function AuthShell({ children, headline, lead }: Props) {
+interface Props {
+  children: ReactNode
+  /** Headline shown on the brand panel. Defaults to the brand line. */
+  headline?: ReactNode
+  lead?: string
+  /** Heading above the card (design: "Welcome Back!" / "Get Started!"). */
+  title?: string
+  subtitle?: ReactNode
+  /** Shows the Sign in / Sign up tabs, with this one active. */
+  tab?: 'in' | 'up'
+}
+
+export default function AuthShell({ children, headline, lead, title, subtitle, tab }: Props) {
   return (
     <div className="audity-auth">
-      {/* ---- Compass background graphic ---- */}
-      <div className="au-canvas" aria-hidden="true">
-        <svg className="au-bg au-compass" viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <g transform="translate(1040 450)" opacity="0.5">
-            <g className="au-line" strokeWidth="1">
-              <path d="M0 -81 L70 0 L0 81 L-70 0 Z" />
-              <path d="M0 -162 L140 0 L0 162 L-140 0 Z" />
-              <path d="M0 -244 L210 0 L0 244 L-210 0 Z" />
-              <path d="M0 -325 L280 0 L0 325 L-280 0 Z" />
-              <path d="M0 -406 L350 0 L0 406 L-350 0 Z" opacity="0.6" />
-            </g>
-            <g className="au-line" strokeWidth="1" strokeDasharray="2 7" opacity="0.7">
-              <line x1="0" y1="-440" x2="0" y2="440" />
-              <line x1="-400" y1="0" x2="400" y2="0" />
-            </g>
-            <g className="au-line" strokeWidth="1.4">
-              <line x1="0" y1="-406" x2="0" y2="-386" />
-              <line x1="0" y1="406" x2="0" y2="386" />
-              <line x1="-350" y1="0" x2="-330" y2="0" />
-              <line x1="350" y1="0" x2="330" y2="0" />
-            </g>
-            <path d="M0 -325 L18 -300 L-18 -300 Z" className="au-gold-f" opacity="0.8" />
-            <circle r="22" className="au-gold" strokeWidth="1.2" opacity="0.7" />
-            <circle r="5" className="au-gold-f" />
-          </g>
-        </svg>
-      </div>
-
       <ThemeToggle />
 
       <div className="au-stage">
         <div className="au-left">
-          <AudityLogo variant="horizontal" className="au-logo" />
-          <h1 className="au-display">
-            {headline ?? (<>Numbers you can <em>finally</em> trust.</>)}
-          </h1>
-          <p className="au-lead">
-            {lead ?? 'Every sale, bill and journal entry — reconciled automatically and audit-ready, the moment it happens.'}
-          </p>
-          <div className="au-trust"><span className="au-dot" /> Trusted by growing businesses across Africa.</div>
+          <AuthLogo className="au-logo" />
+          <div className="au-copy">
+            <h1 className="au-display">
+              {headline ?? (<>Every number tells the <em>truth</em>.</>)}
+            </h1>
+            <p className="au-lead">
+              {lead ?? 'Accounting that keeps up with your business. Every figure backed by certainty.'}
+            </p>
+            <p className="au-trust">. . .For businesses built to last.</p>
+          </div>
         </div>
 
-        <main className="au-right">{children}</main>
+        <main className="au-right">
+          <AuthLogo className="au-logo-sm" />
+          {title && (
+            <header className="au-head">
+              <h2>{title}</h2>
+              {subtitle && <p>{subtitle}</p>}
+            </header>
+          )}
+          {tab && (
+            <nav className="au-tabs" aria-label="Sign in or sign up">
+              <Link to="/login" className={tab === 'in' ? 'on' : ''} aria-current={tab === 'in' ? 'page' : undefined}>Sign in</Link>
+              <span className="au-tabs-bar" aria-hidden="true" />
+              <Link to="/register" className={tab === 'up' ? 'on' : ''} aria-current={tab === 'up' ? 'page' : undefined}>Sign up</Link>
+            </nav>
+          )}
+          {children}
+        </main>
       </div>
 
-      <footer style={{ position: 'relative', zIndex: 1, textAlign: 'center', padding: '8px 20px 28px', fontSize: 12.5 }}>
-        <a href="/legal/terms" target="_blank" rel="noopener" className="au-link" style={{ margin: '0 10px' }}>Terms</a>
-        <a href="/legal/privacy" target="_blank" rel="noopener" className="au-link" style={{ margin: '0 10px' }}>Privacy</a>
-        <a href="/legal/dpa" target="_blank" rel="noopener" className="au-link" style={{ margin: '0 10px' }}>Data Processing</a>
+      <footer className="au-footer">
+        <a href="/legal/terms" target="_blank" rel="noopener" className="au-link">Terms</a>
+        <a href="/legal/privacy" target="_blank" rel="noopener" className="au-link">Privacy</a>
+        <a href="/legal/dpa" target="_blank" rel="noopener" className="au-link">Data Processing</a>
       </footer>
     </div>
   )
