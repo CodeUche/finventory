@@ -141,7 +141,7 @@ class PurchaseOrderImportTests(TestCase):
         self.assertEqual(Decimal(str(po.subtotal)), Decimal("900.00"))
         self.assertEqual(Decimal(str(po.total_amount)), Decimal("1400.00"))
 
-    def test_existing_po_number_is_left_untouched(self):
+    def test_existing_po_number_is_reported_as_skipped_not_an_error(self):
         existing = PurchaseOrder.objects.create(
             organisation=self.org, po_number="PO-EXIST", supplier=self.supplier,
             warehouse=self.warehouse, status="sent", order_date="2025-01-01",
@@ -155,7 +155,11 @@ class PurchaseOrderImportTests(TestCase):
         res = self._post(self.URL, csv_text)
         self.assertEqual(res.status_code, 200, msg=str(res.data))
         self.assertEqual(res.data["purchase_orders_created"], 0)
-        self.assertTrue(any(e["field"] == "po_number" for e in res.data["errors"]))
+        # Re-importing a file is normal, so an already-present PO is reported
+        # under "skipped" and must NOT appear as an error: a screen full of red
+        # for intended behaviour reads as a broken import.
+        self.assertTrue(any(s["field"] == "po_number" for s in res.data["skipped"]))
+        self.assertEqual(res.data["errors"], [])
         existing.refresh_from_db()
         self.assertEqual(existing.items.count(), 0)  # untouched, not appended to
 

@@ -123,7 +123,7 @@ class BudgetImportTests(TestCase):
         self.assertEqual(line.account_id, account.id)
         self.assertEqual(Decimal(str(line.forecast_amount)), Decimal("55000"))
 
-    def test_existing_budget_key_is_left_untouched(self):
+    def test_existing_budget_key_is_reported_as_skipped_not_an_error(self):
         existing = Budget.objects.create(organisation=self.org, name="Existing", fiscal_year=2026)
         csv_text = (
             "budget_name,fiscal_year,category_name,category_type,budgeted_amount\n"
@@ -132,7 +132,9 @@ class BudgetImportTests(TestCase):
         res = self._post(self.URL, csv_text)
         self.assertEqual(res.status_code, 200, msg=str(res.data))
         self.assertEqual(res.data["budgets_created"], 0)
-        self.assertTrue(any(e["field"] == "budget_name" for e in res.data["errors"]))
+        # Same contract as the PO importer: an intended skip is not an error.
+        self.assertTrue(any(s["field"] == "budget_name" for s in res.data["skipped"]))
+        self.assertEqual(res.data["errors"], [])
         existing.refresh_from_db()
         self.assertEqual(existing.lines.count(), 0)  # untouched, not appended to
 
