@@ -294,6 +294,26 @@ def _find_live_first(model, **lookup):
     )
 
 
+def _revive_warehouse(wh):
+    """
+    Bring a soft-deleted warehouse back, without letting it take over the default.
+
+    Warehouse.save() makes a warehouse that is flagged is_default the only
+    default and demotes the current one. A deleted former default would
+    therefore silently steal the flag on revival, and POS and storefront sales
+    would start deducting stock from it. If another live warehouse already is
+    the default, the revived one comes back as an ordinary warehouse.
+    """
+    wh.is_deleted = False
+    wh.deleted_at = None
+    wh.is_active = True
+    if wh.is_default and type(wh).objects.filter(
+        organisation=wh.organisation, is_default=True,
+    ).exclude(pk=wh.pk).exists():
+        wh.is_default = False
+    wh.save()
+
+
 def _money(val, field, errors, row_num):
     """Parse a money string; append to errors on failure."""
     try:
@@ -599,10 +619,7 @@ class ImportProductsView(APIView):
             existing = _find_live_first(Warehouse, organisation=org, name__iexact=name)
             if existing is not None:
                 if existing.is_deleted:
-                    existing.is_deleted = False
-                    existing.deleted_at = None
-                    existing.is_active = True
-                    existing.save()
+                    _revive_warehouse(existing)
                 wh, wh_new = existing, False
             else:
                 wh = Warehouse.objects.create(organisation=org, name=name.strip(), is_active=True)
@@ -987,11 +1004,22 @@ class ImportSuppliersView(APIView):
                     or Supplier.all_objects.filter(organisation=org, code=code).first()
                 )
             else:
-                existing = (
-                    Supplier.objects.filter(organisation=org, name__iexact=name).first()
-                    or Supplier.all_objects.filter(organisation=org, name__iexact=name).first()
-                )
-                if existing is not None and existing.code:
+                live_matches = list(Supplier.objects.filter(organisation=org, name__iexact=name)[:2])
+                if len(live_matches) > 1:
+                    # `name` is not unique, so a row with no code cannot say which
+                    # of several same-named suppliers it means. Guessing would
+                    # overwrite the wrong one's contact details or balance.
+                    errors.append({"row": row_num, "field": "code",
+                                   "message": f"More than one supplier is called '{name}'. Add that supplier's code to this row so the right one is updated."})
+                    continue
+                existing = live_matches[0] if live_matches else Supplier.all_objects.filter(organisation=org, name__iexact=name).first()
+                # A deleted supplier's code may have been taken since by a live
+                # supplier with another name. Reviving it with that code would
+                # break the (organisation, code) constraint, so it gets a fresh code.
+                if existing is not None and existing.code and not (
+                    existing.is_deleted
+                    and Supplier.objects.filter(organisation=org, code=existing.code).exists()
+                ):
                     code = existing.code
                 else:
                     # Same auto-code scheme as SupplierSerializer.create() for the UI,
@@ -1413,10 +1441,7 @@ class ImportPurchaseOrdersView(APIView):
             existing = _find_live_first(Warehouse, organisation=org, name__iexact=name.strip())
             if existing is not None:
                 if existing.is_deleted:
-                    existing.is_deleted = False
-                    existing.deleted_at = None
-                    existing.is_active = True
-                    existing.save()
+                    _revive_warehouse(existing)
                 wh, wh_new = existing, False
             else:
                 wh = Warehouse.objects.create(organisation=org, name=name.strip(), is_active=True)
@@ -1461,6 +1486,13 @@ class ImportPurchaseOrdersView(APIView):
             # The warehouse is resolved (and created if new) in pass 2, inside
             # the transaction, so a file that fails validation writes nothing.
             warehouse_name = row["warehouse_name"].strip()
+            if len(warehouse_name) > 200:
+                # Warehouse.name is 200 characters. Catching it here gives a row
+                # error; letting the insert fail would roll the whole batch back
+                # behind a generic 500.
+                errors.append({"row": row_num, "field": "warehouse_name",
+                               "message": "Warehouse name is longer than 200 characters."})
+                continue
 
             product = _get_product(row["product_sku"])
             if product is None:
@@ -1533,7 +1565,11 @@ class ImportPurchaseOrdersView(APIView):
                 "tax_rate": tax_rate, "tax_amount": tax_amount, "line_total": line_total,
             })
 
-        if not po_groups:
+        # All-or-nothing, as promised above. Without the `errors` check a PO with
+        # one good line and one bad line was written with only the good line, a
+        # warehouse could be created for a file that was then rejected in part,
+        # and re-importing the corrected file skipped that PO as "already exists".
+        if errors or not po_groups:
             return Response({
                 "created": 0, "purchase_orders_created": 0, "warehouses_created": 0,
                 "errors": errors, "skipped": skipped, "total_rows": len(rows),
@@ -1717,7 +1753,9 @@ class ImportBudgetsView(APIView):
                 "account": account,
             })
 
-        if not budget_groups:
+        # All-or-nothing, same as purchase orders: a budget with one good line and
+        # one bad line must not be written with only the good line.
+        if errors or not budget_groups:
             return Response({
                 "created": 0, "budgets_created": 0,
                 "errors": errors, "skipped": skipped, "total_rows": len(rows),

@@ -626,7 +626,7 @@ export default function ImportPage() {
               <div className="px-4 py-2 bg-surface-800/60 border-b border-surface-700 flex items-center gap-2">
                 <Info size={14} className="text-slate-400" />
                 <p className="text-xs font-medium text-slate-300">
-                  {result.skipped?.length} row{(result.skipped?.length ?? 0) === 1 ? '' : 's'} already existed and {(result.skipped?.length ?? 0) === 1 ? 'was' : 'were'} skipped. Nothing went wrong, and nothing was changed.
+                  {result.skipped?.length} row{(result.skipped?.length ?? 0) === 1 ? '' : 's'} already existed and {(result.skipped?.length ?? 0) === 1 ? 'was' : 'were'} skipped and left unchanged.
                 </p>
               </div>
               <table className="w-full text-xs">
