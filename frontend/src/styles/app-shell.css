@@ -46,6 +46,11 @@ html.light body .app-shell.app-shell{
 .app-shell .fixed.right-0,
 .app-shell .fixed.left-0{margin:0 !important}
 
+/* breadcrumb trail in the designer's lavender */
+.app-shell nav[aria-label="Breadcrumb"] a{color:var(--sh-link) !important;opacity:.85}
+.app-shell nav[aria-label="Breadcrumb"] a:hover{opacity:1;text-decoration:underline}
+.app-shell nav[aria-label="Breadcrumb"] span.font-medium{color:var(--sh-head) !important}
+
 /* ---------------------------------------------------------------- top bar */
 .sh-top{
   position:relative;z-index:40;height:var(--sh-top-h);flex:none;display:flex;align-items:center;gap:20px;

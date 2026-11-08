@@ -1,0 +1,136 @@
+/* ============================================================================
+   Audity design kit (.ds) — the designer's page look for list/form screens.
+   Wrap a page in <DsPage> (or give its root class "ds") and its existing
+   buttons, inputs, tables, cards, badges and headings take the new design.
+   Reads the shell's --sh-* tokens, so it follows html.light / dark.
+   Not-yet-designed pages are never wrapped and keep their current look.
+   ========================================================================== */
+
+.ds{
+  /* ---- DARK (derived: the designs are light only) ---- */
+  --ds-title:#FFFFFF; --ds-ink:#F4F2FF; --ds-muted:#A9A6C4; --ds-link:#A499FF; --ds-danger:#FF8A8A;
+  --ds-card:rgba(255,255,255,.07); --ds-card-bd:rgba(255,255,255,.16);
+  --ds-field:rgba(255,255,255,.06); --ds-field-bd:rgba(222,216,255,.55);
+  --ds-th-bg:rgba(125,140,255,.22); --ds-th-tx:#C8D3FF;
+  --ds-row:rgba(255,255,255,.05); --ds-row-bd:rgba(160,175,255,.25); --ds-row-hover:rgba(125,140,255,.14);
+  --ds-tile:rgba(125,140,255,.18); --ds-tile-bd:rgba(164,153,255,.55); --ds-tile-tx:#C8D3FF;
+  --ds-btn:#E6E0FF; --ds-btn-tx:#110099; --ds-btn-sh:0 8px 22px rgba(164,153,255,.28);
+  --ds-outline:#A499FF; --ds-outline-tx:#C8C1FF;
+  --ds-good:#4ADE80; --ds-bad:#FF8A8A; --ds-warn:#FBBF24;
+  --ds-pill-green-bg:rgba(34,197,94,.18);  --ds-pill-green-tx:#86EFAC;
+  --ds-pill-red-bg:rgba(239,68,68,.20);    --ds-pill-red-tx:#FF9B9B;
+  --ds-pill-yel-bg:rgba(250,204,21,.20);   --ds-pill-yel-tx:#FDE68A;
+  --ds-pill-gry-bg:rgba(255,255,255,.10);  --ds-pill-gry-tx:#C8C5E0;
+  --ds-pill-blue-bg:rgba(37,99,235,.25);   --ds-pill-blue-tx:#9DB8FF;
+  --ds-shadow:inset 0 1px 0 rgba(255,255,255,.08);
+  font-family:'Roboto',system-ui,sans-serif;color:var(--ds-ink);
+}
+html.light .ds{
+  /* ---- LIGHT (designer's screens) ---- */
+  --ds-title:#111111; --ds-ink:#1C1B1F; --ds-muted:#55545C; --ds-link:#110099; --ds-danger:#990000;
+  --ds-card:rgba(252,252,246,.96); --ds-card-bd:#B9B4F2;
+  --ds-field:rgba(253,253,248,.95); --ds-field-bd:#77767F;
+  --ds-th-bg:#CFDAFB; --ds-th-tx:#0B3487;
+  --ds-row:#FCFCF6; --ds-row-bd:#A9B6E8; --ds-row-hover:#EEF1FD;
+  --ds-tile:#D2DEFA; --ds-tile-bd:#8E87E6; --ds-tile-tx:#1558EA;
+  --ds-btn:#021233; --ds-btn-tx:#FFFFFF; --ds-btn-sh:0 8px 20px rgba(2,18,51,.30);
+  --ds-outline:#110099; --ds-outline-tx:#110099;
+  --ds-good:#0A6B0A; --ds-bad:#B3001B; --ds-warn:#8A5A00;
+  --ds-pill-green-bg:#D5F7D2; --ds-pill-green-tx:#0A5A0A;
+  --ds-pill-red-bg:#FFCCCC;   --ds-pill-red-tx:#990000;
+  --ds-pill-yel-bg:#FFE98A;   --ds-pill-yel-tx:#4D3B00;
+  --ds-pill-gry-bg:#E4E4E4;   --ds-pill-gry-tx:#55545C;
+  --ds-pill-blue-bg:#D2DEFA;  --ds-pill-blue-tx:#0B3487;
+  --ds-shadow:0 1px 2px rgba(0,0,0,.06);
+}
+
+/* ---- headings and text ---- */
+.ds h1{font-size:22px;font-weight:700;line-height:1.25;color:var(--ds-title)}
+.ds h1 + p, .ds h1 ~ p.text-slate-400, .ds h1 ~ p.text-slate-500{color:var(--ds-ink);font-size:16px}
+.ds h2, .ds h3{color:var(--ds-title)}
+.ds .text-white, .ds .text-slate-100, .ds .text-slate-200{color:var(--ds-title)}
+.ds .text-slate-300{color:var(--ds-ink)}
+.ds .text-slate-400, .ds .text-slate-500{color:var(--ds-muted)}
+.ds .text-brand-300, .ds .text-brand-400, .ds .text-brand-500{color:var(--ds-link)}
+.ds .text-green-400, .ds .text-emerald-400{color:var(--ds-good)}
+.ds .text-red-400, .ds .text-red-500{color:var(--ds-bad)}
+.ds .text-amber-400, .ds .text-yellow-400{color:var(--ds-warn)}
+
+/* ---- surfaces ---- */
+.ds .card, .ds .card-sm, .ds .stat-card{
+  background:var(--ds-card);border:1.5px solid var(--ds-card-bd);border-radius:12px;box-shadow:var(--ds-shadow);
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+}
+.ds .bg-surface-800, .ds .bg-surface-900{background-color:var(--ds-card);border-color:var(--ds-card-bd)}
+.ds .border-surface-700, .ds .border-surface-800{border-color:var(--ds-card-bd)}
+
+/* ---- buttons ---- */
+.ds .btn-primary{
+  background:var(--ds-btn);color:var(--ds-btn-tx);border:1.5px solid transparent;border-radius:8px;
+  font-weight:500;padding:10px 20px;box-shadow:var(--ds-btn-sh);
+}
+.ds .btn-primary:hover{background:var(--ds-btn);filter:brightness(1.1)}
+.ds .btn-secondary{
+  background:transparent;color:var(--ds-outline-tx);border:1.5px solid var(--ds-outline);border-radius:8px;font-weight:500;padding:10px 20px;
+}
+.ds .btn-secondary:hover{background:color-mix(in srgb,var(--ds-outline) 10%,transparent)}
+.ds .btn-ghost{color:var(--ds-link);border-radius:8px}
+.ds .btn-ghost:hover{background:color-mix(in srgb,var(--ds-link) 10%,transparent);color:var(--ds-link)}
+.ds .btn-danger{
+  background:transparent;color:var(--ds-danger);border:1.5px solid var(--ds-danger);border-radius:8px;
+}
+
+/* ---- inputs ---- */
+.ds .input, .ds select.input, .ds input.input, .ds textarea.input{
+  background:var(--ds-field);border:1.5px solid var(--ds-field-bd);border-radius:8px;color:var(--ds-ink);font-size:15px;
+}
+.ds .input::placeholder{color:var(--ds-muted)}
+.ds .input:focus{border-color:var(--ds-link);box-shadow:0 0 0 3px color-mix(in srgb,var(--ds-link) 22%,transparent)}
+.ds .label{color:var(--ds-ink);font-weight:500}
+
+/* ---- tables: periwinkle header band, off-white rows ---- */
+.ds table{border-collapse:separate;border-spacing:0;width:100%}
+.ds thead tr{background:var(--ds-th-bg);border:0}
+.ds thead th, .ds th{
+  background:var(--ds-th-bg);color:var(--ds-th-tx) !important;font-weight:700;font-size:13px;text-transform:uppercase;letter-spacing:.02em;
+  border-bottom:1px solid var(--ds-row-bd);
+}
+.ds tbody tr, .ds .table-row{background:var(--ds-row);border-bottom:1px solid var(--ds-row-bd);transition:background .12s}
+.ds tbody tr:hover, .ds .table-row:hover{background:var(--ds-row-hover)}
+.ds tbody td{color:var(--ds-ink);border-bottom:1px solid var(--ds-row-bd)}
+.ds tbody td.font-mono, .ds td .font-mono{font-family:'Roboto',system-ui,sans-serif}
+
+/* ---- badges become pills ---- */
+.ds .badge, .ds [class*="badge-"]{border-radius:999px;font-weight:500;padding:3px 12px;font-size:13px;border-width:1px}
+.ds .badge-green{background:var(--ds-pill-green-bg);color:var(--ds-pill-green-tx);border-color:color-mix(in srgb,var(--ds-pill-green-tx) 35%,transparent)}
+.ds .badge-red{background:var(--ds-pill-red-bg);color:var(--ds-pill-red-tx);border-color:color-mix(in srgb,var(--ds-pill-red-tx) 35%,transparent)}
+.ds .badge-yellow, .ds .badge-orange{background:var(--ds-pill-yel-bg);color:var(--ds-pill-yel-tx);border-color:color-mix(in srgb,var(--ds-pill-yel-tx) 35%,transparent)}
+.ds .badge-slate{background:var(--ds-pill-gry-bg);color:var(--ds-pill-gry-tx);border-color:color-mix(in srgb,var(--ds-pill-gry-tx) 35%,transparent)}
+.ds .badge-blue, .ds .badge-purple{background:var(--ds-pill-blue-bg);color:var(--ds-pill-blue-tx);border-color:color-mix(in srgb,var(--ds-pill-blue-tx) 35%,transparent)}
+
+/* ---- page header and empty state helpers (used by the kit and hubs) ---- */
+.ds-head{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:24px}
+.ds-head h1{margin:0}
+.ds-head p{margin:4px 0 0;color:var(--ds-ink);font-size:16px}
+.ds-empty{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:48px 16px;text-align:center;
+  background:var(--ds-card);border:1.5px solid var(--ds-card-bd);border-radius:12px;color:var(--ds-link);font-size:18px;
+}
+
+/* ---- hub pages: big tiles ---- */
+.ds-hub{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:20px}
+.ds-hub-tile{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;min-height:150px;padding:22px 16px;
+  text-align:center;text-decoration:none;font-size:18px;font-weight:500;color:var(--ds-ink);
+  background:var(--ds-card);border:1.5px solid var(--ds-link);border-radius:10px;box-shadow:var(--ds-shadow);
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);transition:.16s;
+}
+.ds-hub-tile:hover{transform:translateY(-2px);box-shadow:var(--ds-btn-sh)}
+.ds-hub-tile:focus-visible{outline:2px solid var(--ds-link);outline-offset:3px}
+.ds-hub-ico{color:var(--ds-link)}
+
+@media(max-width:640px){
+  .ds h1{font-size:20px}
+  .ds-hub{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+  .ds-hub-tile{min-height:120px;font-size:16px}
+}

@@ -63,6 +63,17 @@ const SECTION_MAP: Record<string, string> = {
   expenses:   'Cash Flow',
 }
 
+// Where each section crumb leads: the hub page of that sidebar group.
+const SECTION_HUB: Record<string, string> = {
+  inventory:  '/hub/inventory',
+  accounting: '/hub/accounting',
+  sales:      '/hub/sales-pos',
+  bills:      '/hub/procurement',
+  purchases:  '/hub/procurement',
+  suppliers:  '/hub/procurement',
+  payroll:    '/hub/hr',
+}
+
 interface Crumb {
   label: string
   href: string
@@ -86,7 +97,8 @@ function buildCrumbs(pathname: string): Crumb[] {
   if (section) {
     // Add section crumb only when there's a sub-page (e.g. /inventory/stock)
     // and the section is different from the page itself
-    const sectionHref = `/${firstSeg}`
+    // The middle crumb opens the group's hub page (the designer's "Home > Inventory > Products").
+    const sectionHref = SECTION_HUB[firstSeg] ?? `/${firstSeg}`
     if (segments.length > 1) {
       crumbs.push({ label: section, href: sectionHref })
     } else {

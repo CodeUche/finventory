@@ -13,6 +13,8 @@ import DashboardPage from '@/pages/dashboard/DashboardPage'
 // ~4.9 MB single bundle into per-route chunks — critical for the cloud build
 // on slow connections, harmless for the Tauri desktop build (local disk).
 const SubAccountLoginPage = React.lazy(() => import('@/pages/auth/SubAccountLoginPage'))
+import DsPage from '@/components/DsPage'
+const HubPage = React.lazy(() => import('@/pages/hubs/HubPage'))
 const RegisterPage = React.lazy(() => import('@/pages/auth/RegisterPage'))
 const OnboardingPage = React.lazy(() => import('@/pages/auth/OnboardingPage'))
 const ForgotPasswordPage = React.lazy(() => import('@/pages/auth/ForgotPasswordPage'))
@@ -338,56 +340,57 @@ export default function App() {
       >
         <Route index element={<HomeRedirect />} />
         <Route path="dashboard" element={<DashboardPage />} />
+        <Route path="hub/:slug" element={<HubPage />} />
 
         {/* Inventory */}
-        <Route path="inventory/products"      element={<ModuleRoute module="inventory"><ProductsPage /></ModuleRoute>} />
-        <Route path="inventory/stock"         element={<ModuleRoute module="inventory"><StockPage /></ModuleRoute>} />
-        <Route path="inventory/warehouses"    element={<ModuleRoute module="inventory"><WarehousesPage /></ModuleRoute>} />
-        <Route path="inventory/batches"       element={<ModuleRoute module="inventory"><BatchesPage /></ModuleRoute>} />
+        <Route path="inventory/products"      element={<ModuleRoute module="inventory"><DsPage><ProductsPage /></DsPage></ModuleRoute>} />
+        <Route path="inventory/stock"         element={<ModuleRoute module="inventory"><DsPage><StockPage /></DsPage></ModuleRoute>} />
+        <Route path="inventory/warehouses"    element={<ModuleRoute module="inventory"><DsPage><WarehousesPage /></DsPage></ModuleRoute>} />
+        <Route path="inventory/batches"       element={<ModuleRoute module="inventory"><DsPage><BatchesPage /></DsPage></ModuleRoute>} />
         {/* Legacy URL — redirect to new reports module path */}
         <Route path="inventory/stock-reports" element={<Navigate to="/reports/stock" replace />} />
 
         {/* Sales */}
-        <Route path="sales"     element={<ModuleRoute module="sales"><SalesPage /></ModuleRoute>} />
+        <Route path="sales"     element={<ModuleRoute module="sales"><DsPage><SalesPage /></DsPage></ModuleRoute>} />
         <Route path="sales/returns" element={<ModuleRoute module="sales"><SalesReturnsPage /></ModuleRoute>} />
-        <Route path="sales/new" element={<WriteModuleRoute module="sales"><NewSalePage /></WriteModuleRoute>} />
-        <Route path="sales/invoices/new" element={<WriteModuleRoute module="sales"><NewInvoicePage /></WriteModuleRoute>} />
+        <Route path="sales/new" element={<WriteModuleRoute module="sales"><DsPage><NewSalePage /></DsPage></WriteModuleRoute>} />
+        <Route path="sales/invoices/new" element={<WriteModuleRoute module="sales"><DsPage><NewInvoicePage /></DsPage></WriteModuleRoute>} />
         <Route path="sales/invoices/:id/edit" element={<WriteModuleRoute module="sales"><EditInvoicePage /></WriteModuleRoute>} />
-        <Route path="locations" element={<ModuleRoute module="sales"><LocationsPage /></ModuleRoute>} />
-        <Route path="quotes"    element={<ModuleRoute module="quotes"><QuotesPage /></ModuleRoute>} />
-        <Route path="recurring" element={<ModuleRoute module="recurring"><RecurringInvoicesPage /></ModuleRoute>} />
+        <Route path="locations" element={<ModuleRoute module="sales"><DsPage><LocationsPage /></DsPage></ModuleRoute>} />
+        <Route path="quotes"    element={<ModuleRoute module="quotes"><DsPage><QuotesPage /></DsPage></ModuleRoute>} />
+        <Route path="recurring" element={<ModuleRoute module="recurring"><DsPage><RecurringInvoicesPage /></DsPage></ModuleRoute>} />
 
         {/* Procurement */}
         <Route path="purchases"      element={<ModuleRoute module="purchases"><PurchasesPage /></ModuleRoute>} />
-        <Route path="purchases/returns" element={<ModuleRoute module="purchases"><PurchaseReturnsPage /></ModuleRoute>} />
-        <Route path="bills"          element={<ModuleRoute module="bills"><BillsPage /></ModuleRoute>} />
-        <Route path="bills/folders"  element={<ModuleRoute module="bills"><BillFoldersPage /></ModuleRoute>} />
-        <Route path="suppliers"      element={<ModuleRoute module="suppliers"><SuppliersPage /></ModuleRoute>} />
+        <Route path="purchases/returns" element={<ModuleRoute module="purchases"><DsPage><PurchaseReturnsPage /></DsPage></ModuleRoute>} />
+        <Route path="bills"          element={<ModuleRoute module="bills"><DsPage><BillsPage /></DsPage></ModuleRoute>} />
+        <Route path="bills/folders"  element={<ModuleRoute module="bills"><DsPage><BillFoldersPage /></DsPage></ModuleRoute>} />
+        <Route path="suppliers"      element={<ModuleRoute module="suppliers"><DsPage><SuppliersPage /></DsPage></ModuleRoute>} />
 
         {/* CRM */}
-        <Route path="customers" element={<ModuleRoute module="customers"><CustomersPage /></ModuleRoute>} />
-        <Route path="credits"   element={<ModuleRoute module="customers"><CreditsPage /></ModuleRoute>} />
+        <Route path="customers" element={<ModuleRoute module="customers"><DsPage><CustomersPage /></DsPage></ModuleRoute>} />
+        <Route path="credits"   element={<ModuleRoute module="customers"><DsPage><CreditsPage /></DsPage></ModuleRoute>} />
 
         {/* Accounting */}
-        <Route path="pos/restaurant"  element={<ModuleRoute module="sales"><RestaurantPOSPage /></ModuleRoute>} />
+        <Route path="pos/restaurant"  element={<ModuleRoute module="sales"><DsPage><RestaurantPOSPage /></DsPage></ModuleRoute>} />
         <Route path="pos/tables"      element={<ModuleRoute module="sales"><TablesPage /></ModuleRoute>} />
         <Route path="pos/kitchen"     element={<ModuleRoute module="sales"><KitchenPage /></ModuleRoute>} />
-        <Route path="accounting/coa"             element={<ModuleRoute module="accounting"><ChartOfAccountsPage /></ModuleRoute>} />
-        <Route path="accounting/beginning-balances" element={<ModuleRoute module="accounting"><BeginningBalancesPage /></ModuleRoute>} />
-        <Route path="accounting/journal"          element={<ModuleRoute module="accounting"><JournalPage /></ModuleRoute>} />
+        <Route path="accounting/coa"             element={<ModuleRoute module="accounting"><DsPage><ChartOfAccountsPage /></DsPage></ModuleRoute>} />
+        <Route path="accounting/beginning-balances" element={<ModuleRoute module="accounting"><DsPage><BeginningBalancesPage /></DsPage></ModuleRoute>} />
+        <Route path="accounting/journal"          element={<ModuleRoute module="accounting"><DsPage><JournalPage /></DsPage></ModuleRoute>} />
         <Route path="accounting/general-ledger"   element={<ModuleRoute module="accounting"><GeneralLedgerPage /></ModuleRoute>} />
-        <Route path="accounting/assets"           element={<ModuleRoute module="accounting"><AssetsPage /></ModuleRoute>} />
+        <Route path="accounting/assets"           element={<ModuleRoute module="accounting"><DsPage><AssetsPage /></DsPage></ModuleRoute>} />
         <Route path="accounting/depreciation"     element={<ModuleRoute module="accounting"><DepreciationPage /></ModuleRoute>} />
-        <Route path="accounting/reconciliation"   element={<ModuleRoute module="accounting"><BankReconciliationPage /></ModuleRoute>} />
-        <Route path="accounting/gl-health"        element={<ModuleRoute module="accounting"><GLHealthPage /></ModuleRoute>} />
+        <Route path="accounting/reconciliation"   element={<ModuleRoute module="accounting"><DsPage><BankReconciliationPage /></DsPage></ModuleRoute>} />
+        <Route path="accounting/gl-health"        element={<ModuleRoute module="accounting"><DsPage><GLHealthPage /></DsPage></ModuleRoute>} />
 
         {/* Payroll */}
         {/* HR — canonical /hr/* paths. The old /payroll/* URLs are kept as
             redirects so bookmarks and the shipped desktop build keep working. */}
-        <Route path="hr/employees"   element={<ModuleRoute module="payroll"><EmployeesPage /></ModuleRoute>} />
-        <Route path="hr/runs"        element={<ModuleRoute module="payroll"><PayrollPage /></ModuleRoute>} />
-        <Route path="hr/org-chart"   element={<ModuleRoute module="payroll"><OrgChartPage /></ModuleRoute>} />
-        <Route path="hr/leave"       element={<ModuleRoute module="payroll"><LeavePage /></ModuleRoute>} />
+        <Route path="hr/employees"   element={<ModuleRoute module="payroll"><DsPage><EmployeesPage /></DsPage></ModuleRoute>} />
+        <Route path="hr/runs"        element={<ModuleRoute module="payroll"><DsPage><PayrollPage /></DsPage></ModuleRoute>} />
+        <Route path="hr/org-chart"   element={<ModuleRoute module="payroll"><DsPage><OrgChartPage /></DsPage></ModuleRoute>} />
+        <Route path="hr/leave"       element={<ModuleRoute module="payroll"><DsPage><LeavePage /></DsPage></ModuleRoute>} />
         <Route path="hr/analytics"   element={<ModuleRoute module="payroll"><HRAnalyticsPage /></ModuleRoute>} />
         <Route path="hr/compliance"  element={<ModuleRoute module="payroll"><CompliancePage /></ModuleRoute>} />
         <Route path="payroll/employees" element={<Navigate to="/hr/employees" replace />} />
@@ -395,10 +398,10 @@ export default function App() {
 
         {/* Finance */}
         <Route path="expenses"              element={<ModuleRoute module="expenses"><ExpensesPage /></ModuleRoute>} />
-        <Route path="budgets"               element={<ModuleRoute module="budget"><BudgetPage /></ModuleRoute>} />
+        <Route path="budgets"               element={<ModuleRoute module="budget"><DsPage><BudgetPage /></DsPage></ModuleRoute>} />
         <Route path="budgets/monitoring"    element={<ModuleRoute module="budget"><BudgetMonitoringPage /></ModuleRoute>} />
-        <Route path="budgets/periods"       element={<ModuleRoute module="budget"><BudgetPeriodsPage /></ModuleRoute>} />
-        <Route path="budgets/allocations"   element={<ModuleRoute module="budget"><BudgetAllocationsPage /></ModuleRoute>} />
+        <Route path="budgets/periods"       element={<ModuleRoute module="budget"><DsPage><BudgetPeriodsPage /></DsPage></ModuleRoute>} />
+        <Route path="budgets/allocations"   element={<ModuleRoute module="budget"><DsPage><BudgetAllocationsPage /></DsPage></ModuleRoute>} />
         <Route path="reports"                       element={<ModuleRoute module="reports"><ReportsPage /></ModuleRoute>} />
         <Route path="reports/balance-sheet"         element={<ModuleRoute module="accounting"><BalanceSheetPage /></ModuleRoute>} />
         <Route path="reports/stock"                 element={<ModuleRoute module="inventory"><StockReportsPage /></ModuleRoute>} />
@@ -412,10 +415,10 @@ export default function App() {
         <Route path="audit-log" element={<AuditLogPage />} />
         <Route path="helpdesk" element={<TicketsPage />} />
         <Route path="messages" element={<MessagesPage />} />
-        <Route path="payments/transfers" element={<ModuleRoute module="sales"><TransferConfirmationsPage /></ModuleRoute>} />
-        <Route path="payments/settlement" element={<ModuleRoute module="sales"><SettlementPage /></ModuleRoute>} />
-        <Route path="pos/till" element={<ModuleRoute module="sales"><TillSessionPage /></ModuleRoute>} />
-        <Route path="storefront" element={<ModuleRoute module="sales"><StorefrontAdminPage /></ModuleRoute>} />
+        <Route path="payments/transfers" element={<ModuleRoute module="sales"><DsPage><TransferConfirmationsPage /></DsPage></ModuleRoute>} />
+        <Route path="payments/settlement" element={<ModuleRoute module="sales"><DsPage><SettlementPage /></DsPage></ModuleRoute>} />
+        <Route path="pos/till" element={<ModuleRoute module="sales"><DsPage><TillSessionPage /></DsPage></ModuleRoute>} />
+        <Route path="storefront" element={<ModuleRoute module="sales"><DsPage><StorefrontAdminPage /></DsPage></ModuleRoute>} />
 
         {/* Settings — always accessible for personal profile/security; org tabs filtered inside the page */}
         <Route path="settings" element={<SettingsPage />} />
@@ -426,9 +429,9 @@ export default function App() {
             can still reach it via a direct URL from support. */}
         <Route path="integrations" element={<ModuleRoute module="settings"><IntegrationsPage /></ModuleRoute>} />
         <Route path="import"   element={<WriteModuleRoute module="settings"><ImportPage /></WriteModuleRoute>} />
-        <Route path="partner"           element={<PartnerRoute><PartnerDashboardPage /></PartnerRoute>} />
+        <Route path="partner"           element={<PartnerRoute><DsPage><PartnerDashboardPage /></DsPage></PartnerRoute>} />
         <Route path="partner/report"    element={<PartnerRoute><PartnerReportPage /></PartnerRoute>} />
-        <Route path="partner/invoices"  element={<PartnerRoute><PartnerInvoicesPage /></PartnerRoute>} />
+        <Route path="partner/invoices"  element={<PartnerRoute><DsPage><PartnerInvoicesPage /></DsPage></PartnerRoute>} />
 
         {/* Platform Admin — superuser only */}
         <Route path="platform-admin" element={<SuperuserRoute><PlatformAdminPage /></SuperuserRoute>} />

@@ -19,6 +19,8 @@ import { CATEGORY_ORDER } from '@/lib/reportCategories'
 import { useReportCatalog } from '@/hooks/useReportCatalog'
 import type { ModuleKey } from '@/types'
 import '@/styles/app-shell.css'
+import { useCanSeeNavItem } from '@/lib/navAccess'
+import { HUB_FOR_GROUP } from '@/pages/hubs/hubConfig'
 import { DesignerIcon, type DesignerIconName } from '@/assets/designer-icons'
 
 /** Wraps a designer icon so it can sit in the nav data like a lucide icon. */
@@ -215,39 +217,12 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ open, onClose, billingOnly = false }: SidebarProps) {
-  const { user, organisation, tokens, logout, memberRole, modulePermissions, planModules, planName } = useAuthStore()
+  const { user, organisation, tokens, logout, memberRole, modulePermissions, planModules } = useAuthStore()
   const navigate = useNavigate()
 
-  // null = membership not yet loaded; treat as restricted (not full access) until confirmed
-  const isOwnerOrAdmin = user?.is_superuser === true || memberRole === 'owner' || memberRole === 'admin'
+  // Visibility rules live in one shared hook (also used by the hub pages).
+  const { canSeeItem, isOwnerOrAdmin } = useCanSeeNavItem()
   const { pathname, search } = useLocation()
-
-  // Returns true if the nav item should be visible.
-  // Checks: ownerOnly → plan modules → sub-account RBAC permissions
-  const canSeeItem = (mod?: ModuleKey, ownerOnly?: boolean, partnerOnly?: boolean, businessType?: string) => {
-    const membershipLoading = memberRole === null && !user?.is_superuser
-    if (partnerOnly && (!FEATURES.PARTNER_CHANNEL || !user?.has_partner_profile)) return false
-    if (partnerOnly && !user?.is_superuser && !planName?.startsWith('partner')) return false
-    // Business-type gate (e.g. restaurant-only POS): hide once the org's type is known
-    // and differs. Fail-open while the org type is still loading.
-    const orgBusinessType = (organisation as { business_type?: string } | null)?.business_type
-    if (businessType && orgBusinessType && orgBusinessType !== businessType) return false
-    // Owner-only items (Billing & Plans, Connectors, Tickets...) have no module,
-    // so this test must run before the "no module" early return below.
-    if (ownerOnly && !isOwnerOrAdmin && !user?.is_superuser) return false
-    if (!mod) return true                             // no module restriction (dashboard, settings)
-    if (user?.is_superuser) return true              // superusers always see everything
-    // Plan-level gate: if the active plan restricts modules, only show allowed ones
-    if (planModules !== null && !planModules.includes(mod)) return false
-    // While membership is loading, hide all module items — sub-accounts must not see
-    // modules they have no access to, even briefly. Sub-account login now pre-loads
-    // membership in the response so this window is typically zero for staff logins.
-    if (membershipLoading) return false
-    if (ownerOnly && !isOwnerOrAdmin) return false   // explicitly owner-only items
-    if (isOwnerOrAdmin) return true                   // owners/admins see all plan-allowed modules
-    const level = modulePermissions?.[mod]
-    return level === 'view' || level === 'write' || level === 'edit'
-  }
 
   // Track which groups are collapsed.
   // A group starts collapsed only if it contains no active route.
@@ -456,7 +431,19 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
                 )}
               </button>
               {!isCollapsed && (
-                <div className="sh-sub">{visibleItems.map((item) => renderLink(item))}</div>
+                <div className="sh-sub">
+                  {HUB_FOR_GROUP[group.label] && (
+                    <NavLink
+                      to={`/hub/${HUB_FOR_GROUP[group.label].slug}`}
+                      title={`${GROUP_TITLES[group.label] ?? group.label} overview`}
+                      className={({ isActive }) => rowClass(isActive)}
+                    >
+                      <LayoutGrid size={20} className="sh-ico shrink-0" />
+                      <span className="sh-label">Overview</span>
+                    </NavLink>
+                  )}
+                  {visibleItems.map((item) => renderLink(item))}
+                </div>
               )}
             </div>
           )
