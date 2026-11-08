@@ -287,10 +287,13 @@ export default function AppLayout() {
 
   return (
     <div className="app-shell relative flex flex-col h-screen overflow-hidden">
+      {/* One stacking context for top bar + sidebar + page, so page modals (z-50)
+          paint above the top bar (z-40) exactly as they did before the redesign. */}
+      <div className="relative z-10 flex flex-col flex-1 min-h-0">
       {/* Top bar spans the full width; the sidebar and page sit beneath it. */}
       <TopBar onMenuClick={() => setSidebarOpen(true)} />
 
-      <div className="relative z-10 flex flex-1 min-h-0">
+      <div className="flex flex-1 min-h-0">
 
       {/* Mobile overlay */}
       {sidebarOpen && (
@@ -304,7 +307,7 @@ export default function AppLayout() {
       <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} billingOnly={subscriptionBillingOnly} />
 
       {/* Main content */}
-      <div className="relative z-10 flex flex-col flex-1 min-w-0 overflow-hidden">
+      <div className="relative flex flex-col flex-1 min-w-0 overflow-hidden">
         {/* Support access banner — superuser viewing an org they aren't a member of.
             Derived LIVE (not only from the transient supportAccess flag): after a
             refresh the flag is gone but the persisted org context can still be a
@@ -440,6 +443,7 @@ export default function AppLayout() {
             </div>
           )}
         </main>
+      </div>
       </div>
       </div>
 

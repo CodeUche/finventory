@@ -391,15 +391,12 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
 
           const renderLink = (item: typeof visibleItems[number], withCollapse = false) => {
             const isLocked = billingOnly && item.href !== '/billing'
-            if (isLocked) {
-              return (
-                <span key={item.href} className="sh-row sh-row-locked">
-                  <item.icon size={20} className="sh-ico shrink-0" />
-                  <span className="sh-label">{item.name}</span>
-                </span>
-              )
-            }
-            const link = (
+            const node = isLocked ? (
+              <span key={item.href} className="sh-row sh-row-locked">
+                <item.icon size={20} className="sh-ico shrink-0" />
+                <span className="sh-label">{item.name}</span>
+              </span>
+            ) : (
               <NavLink
                 key={item.href}
                 to={item.href}
@@ -411,10 +408,10 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
                 <span className="sh-label">{item.name}</span>
               </NavLink>
             )
-            if (!withCollapse) return link
+            if (!withCollapse) return node
             return (
               <div key={item.href} className="relative">
-                {link}
+                {node}
                 <button
                   onClick={toggleMini}
                   title={mini ? 'Expand sidebar' : 'Collapse sidebar'}
@@ -598,13 +595,14 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
         {user?.is_superuser && (
           <NavLink
             to="/platform-admin"
+            title="Platform Admin"
             className={({ isActive }) => cn(rowClass(isActive), 'sh-row-danger')}
           >
             <Shield size={20} className="sh-ico shrink-0" />
             <span className="sh-label">Platform Admin</span>
           </NavLink>
         )}
-        <button onClick={handleLogout} className="sh-row sh-row-danger">
+        <button onClick={handleLogout} title="Sign out" className="sh-row sh-row-danger">
           <ICON.signOut size={20} className="sh-ico shrink-0" />
           <span className="sh-label">Sign out</span>
         </button>

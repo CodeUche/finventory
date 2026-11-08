@@ -47,7 +47,7 @@ html.light body .app-shell.app-shell{
 }
 .sh-top-logo{display:flex;align-items:center;width:var(--sh-side-w);flex:none;padding-left:28px}
 .sh-top .sh-menu{display:none}
-.sh-search{position:relative;flex:1;max-width:540px;min-width:0}
+.sh-search{position:relative;flex:1;max-width:540px;min-width:200px}
 .sh-search input{
   width:100%;height:46px;padding:0 40px 0 46px;border-radius:999px;font:inherit;font-size:15px;
   color:var(--sh-ink);background:var(--sh-field-bg);border:1.5px solid var(--sh-field-bd);transition:.16s;
@@ -158,6 +158,7 @@ html.light body .app-shell.app-shell{
 }
 
 /* ---- responsive ---- */
+@media(max-width:1279px){ .sh-date{display:none} .sh-actions{margin-left:auto} }
 @media(max-width:1023px){
   .sh-top{gap:10px;padding:0 12px}
   .sh-top-logo{width:auto;padding-left:0}
@@ -166,6 +167,7 @@ html.light body .app-shell.app-shell{
   .sh-aside{top:var(--sh-top-h) !important}
 }
 @media(max-width:640px){
+  .sh-search{min-width:0}
   .brand-logo-word{display:none}
   .sh-top{gap:6px;padding:0 10px}
   .sh-search input{height:40px;font-size:14px;padding-left:38px;padding-right:30px}

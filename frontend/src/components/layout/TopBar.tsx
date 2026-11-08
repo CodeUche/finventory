@@ -11,6 +11,7 @@ import MessagesBell from '@/components/MessagesBell'
 import { SyncStatusBadge } from '@/components/SyncStatusBadge'
 import { getStoredTheme, setTheme, type Theme } from '@/hooks/useTheme'
 import BrandLogo from '@/components/BrandLogo'
+import { offlineCache } from '@/lib/offlineCache'
 import '@/styles/app-shell.css'
 
 const CURRENCIES = SUPPORTED_CURRENCIES
@@ -58,8 +59,19 @@ export default function TopBar({ onMenuClick }: TopBarProps) {
     if (refreshing) return
     setRefreshing(true)
     try {
-      bypassNextGets()
-      window.dispatchEvent(new CustomEvent('audity:data-changed'))
+      bypassNextGets(8000)
+      // Same clean-up the dashboard's own refresh used to do: drop cached reports,
+      // membership and plan responses, and ask AppLayout to re-load them.
+      void Promise.allSettled([
+        offlineCache.invalidatePrefix('/reports/'),
+        offlineCache.invalidatePrefix('/tenancy/organisations/my_membership/'),
+        offlineCache.invalidatePrefix('/tenancy/memberships/'),
+        offlineCache.invalidatePrefix('/tenancy/organisations/'),
+        offlineCache.invalidatePrefix('/subscriptions/current/'),
+      ]).then(() => {
+        window.dispatchEvent(new CustomEvent('audity:app-refresh'))
+        window.dispatchEvent(new CustomEvent('audity:data-changed'))
+      })
     } finally {
       // Spin briefly so the action always reads as "something happened",
       // even when the page's own fetch resolves instantly from cache.

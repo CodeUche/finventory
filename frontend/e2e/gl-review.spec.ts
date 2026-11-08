@@ -148,7 +148,7 @@ test.describe('Opening Balances', () => {
     await openModal(page)
 
     for (const tab of ['Customers', 'Suppliers', 'Inventory']) {
-      await page.getByRole('button', { name: tab, exact: true }).click()
+      await page.getByRole('button', { name: tab, exact: true }).last().click()
       await expect(page.getByRole('button', { name: 'Dr', exact: true }).first())
         .toBeVisible({ timeout: 20_000 })
       await expect(page.getByRole('button', { name: 'Cr', exact: true }).first()).toBeVisible()
