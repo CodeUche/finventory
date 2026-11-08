@@ -3,8 +3,7 @@ import { api, bypassNextGets } from '@/services/api'
 import { Upload, Download, CheckCircle, XCircle, AlertTriangle, FileText, Users, BookOpen, UsersRound, Loader2, Maximize2, X, Sparkles, ChevronDown, ChevronUp, Truck, ClipboardList, PieChart, Info } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { importApi } from '@/services/api'
-import { save } from '@tauri-apps/plugin-dialog'
-import { writeFile } from '@tauri-apps/plugin-fs'
+import { saveBlobFile } from '@/lib/saveBlobFile'
 
 /** Parse a full CSV text and return [headerRow, ...dataRows] with smart header detection.
  *  Handles exported spreadsheets that have title/blank rows before the actual header.
@@ -70,7 +69,7 @@ type ImportError = { row: number; field: string; message: string }
  *  order or budget that already exists. Those are the intended outcome of
  *  re-running a file, so they are shown as neutral information, never as
  *  errors. `errors` stays for rows that genuinely failed. */
-type ImportResult = { created: number; updated: number; errors: ImportError[]; skipped?: ImportError[]; total_rows: number; warehouses_created?: number; stock_assigned?: number; balances_set?: number; lines_created?: number }
+type ImportResult = { created: number; updated?: number; errors: ImportError[]; skipped?: ImportError[]; total_rows: number; warehouses_created?: number; stock_assigned?: number; balances_set?: number; lines_created?: number }
 
 // All product fields with human-readable labels
 const PRODUCT_FIELD_LABELS: Record<string, string> = {
@@ -238,7 +237,7 @@ export default function ImportPage() {
         const skipMsg = skippedCount
           ? `, ${skippedCount} row${skippedCount === 1 ? '' : 's'} already existed and ${skippedCount === 1 ? 'was' : 'were'} skipped`
           : ''
-        toast.success(`Import complete: ${data.created} created, ${data.updated} updated${stockMsg}${whMsg}${balMsg}${skipMsg}`)
+        toast.success(`Import complete: ${data.created} created, ${data.updated ?? 0} updated${stockMsg}${whMsg}${balMsg}${skipMsg}`)
       } else {
         toast(`Import done with ${data.errors.length} error(s)`, { icon: '⚠️' })
       }
@@ -261,14 +260,10 @@ export default function ImportPage() {
   async function downloadTemplate() {
     try {
       const resp = await api.get(importApi.templateUrl(entity), { responseType: 'arraybuffer' })
-      const defaultName = `${entity}_import_template.csv`
-      const filePath = await save({
-        defaultPath: defaultName,
-        filters: [{ name: 'CSV', extensions: ['csv'] }],
-      })
-      if (!filePath) return
-      await writeFile(filePath, new Uint8Array(resp.data))
-      toast.success(`Template saved to ${filePath.split(/[\\/]/).pop()}`)
+      // saveBlobFile opens the native Save-As dialog on desktop and starts an
+      // ordinary download in a browser. Calling the Tauri dialog and file
+      // plugins directly here failed outright on the web build.
+      await saveBlobFile(new Blob([resp.data], { type: 'text/csv' }), `${entity}_import_template.csv`)
     } catch {
       toast.error('Failed to download template')
     }
@@ -551,7 +546,7 @@ export default function ImportPage() {
               <CheckCircle size={20} className="text-indigo-400" />
               <div>
                 <p className="text-xs text-slate-400">Updated</p>
-                <p className="text-xl font-bold text-indigo-400">{result.updated}</p>
+                <p className="text-xl font-bold text-indigo-400">{result.updated ?? 0}</p>
               </div>
             </div>
             {result.warehouses_created !== undefined && (
