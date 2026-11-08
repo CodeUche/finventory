@@ -58,7 +58,10 @@ CUSTOMER_ALL = CUSTOMER_REQUIRED + CUSTOMER_OPTIONAL
 
 # Supplier: only "name" is required, matching the New Supplier form — "code" is
 # optional here too (auto-generated the same way SupplierSerializer.create() does
-# for the UI) rather than mandatory the way it is for customers.
+# for the UI) rather than mandatory the way it is for customers. When "code" is
+# blank the importer matches an existing supplier on its NAME, so re-running the
+# same file updates that supplier instead of minting a new code and a duplicate
+# record. See ImportSuppliersView below.
 SUPPLIER_REQUIRED = ["name"]
 SUPPLIER_OPTIONAL = [
     "code", "contact_person", "email", "phone", "address",
@@ -268,6 +271,47 @@ def _parse_csv(file_obj):
         )
 
     return headers_lower, rows
+
+
+def _find_live_first(model, **lookup):
+    """
+    Return the live record matching `lookup`, else a soft-deleted one, else None.
+
+    The unique constraints on Warehouse (organisation, name), Product
+    (organisation, sku) and Supplier (organisation, code) only cover live rows
+    (condition is_deleted=False), so a live record and a deleted record can
+    share one identity. The live record must always win: reviving a deleted
+    twin while a live one exists would put two live rows on one identity and
+    break the constraint.
+
+    Falling back to a deleted record is a deliberate policy, not a technical
+    need: re-importing an identity revives what was deleted, with its history,
+    instead of starting a second record beside it.
+    """
+    return (
+        model.objects.filter(**lookup).first()
+        or model.all_objects.filter(**lookup).first()
+    )
+
+
+def _revive_warehouse(wh):
+    """
+    Bring a soft-deleted warehouse back, without letting it take over the default.
+
+    Warehouse.save() makes a warehouse that is flagged is_default the only
+    default and demotes the current one. A deleted former default would
+    therefore silently steal the flag on revival, and POS and storefront sales
+    would start deducting stock from it. If another live warehouse already is
+    the default, the revived one comes back as an ordinary warehouse.
+    """
+    wh.is_deleted = False
+    wh.deleted_at = None
+    wh.is_active = True
+    if wh.is_default and type(wh).objects.filter(
+        organisation=wh.organisation, is_default=True,
+    ).exclude(pk=wh.pk).exists():
+        wh.is_default = False
+    wh.save()
 
 
 def _money(val, field, errors, row_num):
@@ -560,24 +604,27 @@ class ImportProductsView(APIView):
         warehouse_cache: dict = {}
 
         def _get_or_create_warehouse(name: str):
+            """
+            Return (warehouse, created_just_now).
+
+            The second value is True only on the call that actually created the
+            warehouse. A cache hit returns False, so a file with ten rows for
+            one new warehouse reports one warehouse created, not ten.
+            """
             key = name.strip().lower()
             if key in warehouse_cache:
-                return warehouse_cache[key]
-            # Include soft-deleted rows (see the product lookup below) so a
-            # previously deleted warehouse is revived rather than hitting the
-            # (organisation, name) unique constraint on re-import.
-            existing = Warehouse.all_objects.filter(organisation=org, name__iexact=name).first()
+                return warehouse_cache[key], False
+            # A live warehouse wins; otherwise a deleted one of that name is
+            # revived rather than duplicated (see _find_live_first).
+            existing = _find_live_first(Warehouse, organisation=org, name__iexact=name)
             if existing is not None:
                 if existing.is_deleted:
-                    existing.is_deleted = False
-                    existing.deleted_at = None
-                    existing.is_active = True
-                    existing.save()
+                    _revive_warehouse(existing)
                 wh, wh_new = existing, False
             else:
                 wh = Warehouse.objects.create(organisation=org, name=name.strip(), is_active=True)
                 wh_new = True
-            warehouse_cache[key] = (wh, wh_new)
+            warehouse_cache[key] = wh
             return wh, wh_new
 
         for idx, row in enumerate(rows, start=2):
@@ -639,12 +686,12 @@ class ImportProductsView(APIView):
                 "description": row.get("description", ""),
                 "category": category,
             }
-            # Look up including soft-deleted rows. The (organisation, sku) unique
-            # constraint is enforced at the DB level regardless of is_deleted, so a
-            # previously "deleted" product still occupies that SKU. Reviving it on
-            # re-import avoids a duplicate-key IntegrityError (products deleted then
-            # re-imported).
-            existing = Product.all_objects.filter(organisation=org, sku=sku).first()
+            # A live product wins; otherwise a deleted one with this SKU is
+            # revived, keeping its history, rather than starting a second record
+            # (see _find_live_first). The (organisation, sku) unique constraint
+            # only covers live rows, so this is a policy choice, not a way round
+            # a duplicate-key error.
+            existing = _find_live_first(Product, organisation=org, sku=sku)
             if existing is not None:
                 for _k, _v in defaults.items():
                     setattr(existing, _k, _v)
@@ -699,6 +746,11 @@ class ImportProductsView(APIView):
             "created": created,
             "updated": updated,
             "errors": errors,
+            # Always present, so the UI can rely on the same response shape
+            # everywhere. This importer updates rather than skips, so it is
+            # always empty: only the create-only importers (purchase orders,
+            # budgets) ever report intended skips.
+            "skipped": [],
             "total_rows": len(rows),
         }
         if has_warehouse_col:
@@ -870,6 +922,7 @@ class ImportCustomersView(APIView):
             "updated": updated,
             "balances_set": balances_set,
             "errors": errors,
+            "skipped": [],
             "total_rows": len(rows),
         })
 
@@ -927,32 +980,77 @@ class ImportSuppliersView(APIView):
             if payment_terms is None:
                 payment_terms = 30
 
+            name = row["name"]
             code = (row.get("code") or "").strip()
-            if not code:
-                # Same auto-code scheme as SupplierSerializer.create() for the UI —
-                # keeps import-created and manually-created suppliers consistent.
-                name = row.get("name", "")
-                prefix = (name[:3].upper().replace(" ", "") or "SUP").ljust(3, "X")[:3]
-                code = f"{prefix}-{_uuid.uuid4().hex[:6].upper()}"
 
-            obj, was_created = Supplier.objects.update_or_create(
-                organisation=org,
-                code=code,
-                defaults={
-                    "name": row["name"],
-                    "contact_person": row.get("contact_person", ""),
-                    "email": row.get("email", ""),
-                    "phone": row.get("phone", ""),
-                    "address": row.get("address", ""),
-                    "tax_id": row.get("tax_id", ""),
-                    "payment_terms_days": payment_terms,
-                    "notes": row.get("notes", ""),
-                },
-            )
-            if was_created:
-                created += 1
+            # Find the supplier this row is about BEFORE deciding on a code.
+            # A blank `code` column used to mint a fresh random code and then
+            # match on it, so update_or_create() never found the supplier the
+            # previous run had created: every re-import silently duplicated
+            # every coded-blank supplier, with no warning at all. Match on the
+            # name instead, which is the only thing such a row actually
+            # identifies, and keep the code the supplier already has.
+            #
+            # Soft-deleted rows are included (same as the warehouse and product
+            # lookups in ImportProductsView) so a deleted supplier is revived
+            # on re-import instead of becoming a second copy. A LIVE row always
+            # wins over a deleted one though: only live rows are covered by the
+            # (organisation, code) unique constraint, and `name` is not unique
+            # at all, so reviving a deleted twin while a live one exists would
+            # reintroduce the very duplicate this fix removes.
+            if code:
+                existing = (
+                    Supplier.objects.filter(organisation=org, code=code).first()
+                    or Supplier.all_objects.filter(organisation=org, code=code).first()
+                )
             else:
+                live_matches = list(Supplier.objects.filter(organisation=org, name__iexact=name)[:2])
+                if len(live_matches) > 1:
+                    # `name` is not unique, so a row with no code cannot say which
+                    # of several same-named suppliers it means. Guessing would
+                    # overwrite the wrong one's contact details or balance.
+                    errors.append({"row": row_num, "field": "code",
+                                   "message": f"More than one supplier is called '{name}'. Add that supplier's code to this row so the right one is updated."})
+                    continue
+                existing = live_matches[0] if live_matches else Supplier.all_objects.filter(organisation=org, name__iexact=name).first()
+                # A deleted supplier's code may have been taken since by a live
+                # supplier with another name. Reviving it with that code would
+                # break the (organisation, code) constraint, so it gets a fresh code.
+                if existing is not None and existing.code and not (
+                    existing.is_deleted
+                    and Supplier.objects.filter(organisation=org, code=existing.code).exists()
+                ):
+                    code = existing.code
+                else:
+                    # Same auto-code scheme as SupplierSerializer.create() for the UI,
+                    # so import-created and manually-created suppliers stay consistent.
+                    prefix = (name[:3].upper().replace(" ", "") or "SUP").ljust(3, "X")[:3]
+                    code = f"{prefix}-{_uuid.uuid4().hex[:6].upper()}"
+
+            defaults = {
+                "name": name,
+                "contact_person": row.get("contact_person", ""),
+                "email": row.get("email", ""),
+                "phone": row.get("phone", ""),
+                "address": row.get("address", ""),
+                "tax_id": row.get("tax_id", ""),
+                "payment_terms_days": payment_terms,
+                "notes": row.get("notes", ""),
+            }
+            if existing is not None:
+                obj = existing
+                obj.code = code
+                for _k, _v in defaults.items():
+                    setattr(obj, _k, _v)
+                if obj.is_deleted:
+                    obj.is_deleted = False
+                    obj.deleted_at = None
+                    obj.is_active = True
+                obj.save()
                 updated += 1
+            else:
+                obj = Supplier.objects.create(organisation=org, code=code, **defaults)
+                created += 1
 
             # Same treatment as the customer import above, mirrored for payables:
             # a supplier balance normally runs the other way (we owe them), so the
@@ -978,6 +1076,7 @@ class ImportSuppliersView(APIView):
             "updated": updated,
             "balances_set": balances_set,
             "errors": errors,
+            "skipped": [],
             "total_rows": len(rows),
         })
 
@@ -1055,6 +1154,7 @@ class ImportAccountsView(APIView):
             "created": created,
             "updated": updated,
             "errors": errors,
+            "skipped": [],
             "total_rows": len(rows),
         })
 
@@ -1242,6 +1342,7 @@ class ImportEmployeesView(APIView):
             "created": created,
             "updated": updated,
             "errors": errors,
+            "skipped": [],
             "total_rows": len(rows),
         })
 
@@ -1259,7 +1360,13 @@ class ImportPurchaseOrdersView(APIView):
     left untouched: unlike the other importers this is create-only, since a
     PO already has its own edit screen and its own receive/convert workflow —
     silently rewriting an in-progress PO's lines out from under a partial
-    receipt would corrupt quantity_received bookkeeping.
+    receipt would corrupt quantity_received bookkeeping. Rows skipped for that
+    reason are reported under "skipped", not "errors": they are the intended
+    outcome of re-running a file, so they must not read as failures.
+
+    Suppliers and product SKUs must already exist (import those first). A
+    warehouse that does not exist yet is created by name, the same way
+    ImportProductsView does it, and counted in "warehouses_created".
     """
 
     permission_classes = [IsAuthenticated, IsVerified, IsManagerOrSuperuser]
@@ -1298,8 +1405,9 @@ class ImportPurchaseOrdersView(APIView):
         from apps.purchases.models import PurchaseOrder, PurchaseOrderItem
 
         errors = []
+        skipped = []
         supplier_cache: dict[str, "Supplier | None"] = {}
-        warehouse_cache: dict[str, "Warehouse | None"] = {}
+        warehouse_cache: dict = {}
         product_cache: dict[str, "Product | None"] = {}
 
         def _get_supplier(name):
@@ -1308,11 +1416,38 @@ class ImportPurchaseOrdersView(APIView):
                 supplier_cache[key] = Supplier.objects.filter(organisation=org, name__iexact=name.strip()).first()
             return supplier_cache[key]
 
-        def _get_warehouse(name):
+        def _get_or_create_warehouse(name):
+            """
+            Resolve a warehouse by name, creating it when it does not exist.
+            Returns (warehouse, created_just_now); a cache hit reports False so
+            several POs sharing one new warehouse only count it once.
+
+            A warehouse is only a stock location, so an import can safely
+            invent one. ImportProductsView already does exactly this. Erroring
+            instead made the purchase-order template unusable on its own: a
+            brand new organisation has no warehouses at all, so every row of
+            the sample file failed on "Warehouse 'Main Warehouse' not found".
+            Suppliers and product SKUs are still hard errors, because those
+            carry real business data an importer must not make up.
+
+            Called from pass 2 inside the transaction, so a file that fails
+            validation still writes nothing at all. A live warehouse wins;
+            otherwise a soft-deleted one is revived rather than duplicated,
+            same as the product importer.
+            """
             key = name.strip().lower()
-            if key not in warehouse_cache:
-                warehouse_cache[key] = Warehouse.objects.filter(organisation=org, name__iexact=name.strip()).first()
-            return warehouse_cache[key]
+            if key in warehouse_cache:
+                return warehouse_cache[key], False
+            existing = _find_live_first(Warehouse, organisation=org, name__iexact=name.strip())
+            if existing is not None:
+                if existing.is_deleted:
+                    _revive_warehouse(existing)
+                wh, wh_new = existing, False
+            else:
+                wh = Warehouse.objects.create(organisation=org, name=name.strip(), is_active=True)
+                wh_new = True
+            warehouse_cache[key] = wh
+            return wh, wh_new
 
         def _get_product(sku):
             key = sku.strip().lower()
@@ -1336,8 +1471,10 @@ class ImportPurchaseOrdersView(APIView):
 
             po_number = row["po_number"].strip()
             if po_number in already_existing:
-                errors.append({"row": row_num, "field": "po_number",
-                               "message": f"Purchase order '{po_number}' already exists — import is create-only, skipping this row."})
+                # Intended behaviour, not a failure: reported under "skipped"
+                # so re-running the same file does not fill the screen with red.
+                skipped.append({"row": row_num, "field": "po_number",
+                                "message": f"Purchase order '{po_number}' already exists, so this row was skipped. Importing only ever creates new purchase orders; edit an existing one on its own screen."})
                 continue
 
             supplier = _get_supplier(row["supplier_name"])
@@ -1346,10 +1483,15 @@ class ImportPurchaseOrdersView(APIView):
                                "message": f"Supplier '{row['supplier_name']}' not found. Import suppliers first."})
                 continue
 
-            warehouse = _get_warehouse(row["warehouse_name"])
-            if warehouse is None:
+            # The warehouse is resolved (and created if new) in pass 2, inside
+            # the transaction, so a file that fails validation writes nothing.
+            warehouse_name = row["warehouse_name"].strip()
+            if len(warehouse_name) > 200:
+                # Warehouse.name is 200 characters. Catching it here gives a row
+                # error; letting the insert fail would roll the whole batch back
+                # behind a generic 500.
                 errors.append({"row": row_num, "field": "warehouse_name",
-                               "message": f"Warehouse '{row['warehouse_name']}' not found. Add it first under Inventory → Warehouses."})
+                               "message": "Warehouse name is longer than 200 characters."})
                 continue
 
             product = _get_product(row["product_sku"])
@@ -1406,7 +1548,7 @@ class ImportPurchaseOrdersView(APIView):
                 line_total = after_discount + tax_amount
 
             group = po_groups.setdefault(po_number, {
-                "supplier": supplier, "warehouse": warehouse,
+                "supplier": supplier, "warehouse_name": warehouse_name,
                 "order_date": order_date, "expected_date": expected_date,
                 "delivery_amount": delivery_amount,
                 "notes": row.get("notes", ""),
@@ -1423,16 +1565,25 @@ class ImportPurchaseOrdersView(APIView):
                 "tax_rate": tax_rate, "tax_amount": tax_amount, "line_total": line_total,
             })
 
-        if not po_groups:
+        # All-or-nothing, as promised above. Without the `errors` check a PO with
+        # one good line and one bad line was written with only the good line, a
+        # warehouse could be created for a file that was then rejected in part,
+        # and re-importing the corrected file skipped that PO as "already exists".
+        if errors or not po_groups:
             return Response({
-                "created": 0, "purchase_orders_created": 0, "errors": errors, "total_rows": len(rows),
+                "created": 0, "purchase_orders_created": 0, "warehouses_created": 0,
+                "errors": errors, "skipped": skipped, "total_rows": len(rows),
             })
 
-        # Pass 2: everything validated — write it.
+        # Pass 2: everything validated, write it.
         created_pos = 0
         created_lines = 0
+        warehouses_created = 0
         with transaction.atomic():
             for po_number, group in po_groups.items():
+                warehouse, wh_is_new = _get_or_create_warehouse(group["warehouse_name"])
+                if wh_is_new:
+                    warehouses_created += 1
                 subtotal = sum((l["quantity_ordered"] * l["unit_cost"] - l["discount_amount"]) for l in group["lines"])
                 tax_total = sum(l["tax_amount"] for l in group["lines"])
                 total_amount = subtotal + tax_total + group["delivery_amount"]
@@ -1441,7 +1592,7 @@ class ImportPurchaseOrdersView(APIView):
                     organisation=org,
                     po_number=po_number,
                     supplier=group["supplier"],
-                    warehouse=group["warehouse"],
+                    warehouse=warehouse,
                     status=PurchaseOrder.Status.SENT,
                     order_date=group["order_date"],
                     expected_date=group["expected_date"],
@@ -1461,7 +1612,9 @@ class ImportPurchaseOrdersView(APIView):
             "created": created_pos,
             "purchase_orders_created": created_pos,
             "lines_created": created_lines,
+            "warehouses_created": warehouses_created,
             "errors": errors,
+            "skipped": skipped,
             "total_rows": len(rows),
         })
 
@@ -1473,7 +1626,8 @@ class ImportBudgetsView(APIView):
     One CSV row per BUDGET LINE — see BUDGET_REQUIRED's comment above for the
     grouping rule. Existing budgets (matched by budget_name + fiscal_year)
     are left untouched: create-only, same reasoning as
-    ImportPurchaseOrdersView above.
+    ImportPurchaseOrdersView above, and rows skipped for that reason are
+    likewise reported under "skipped" rather than "errors".
     """
 
     permission_classes = [IsAuthenticated, IsVerified, IsManagerOrSuperuser]
@@ -1512,6 +1666,7 @@ class ImportBudgetsView(APIView):
         from apps.budgets.views import BudgetViewSet as _BudgetViewSet
 
         errors = []
+        skipped = []
         account_cache: dict[str, "Account | None"] = {}
 
         def _get_account(code):
@@ -1538,8 +1693,9 @@ class ImportBudgetsView(APIView):
                 continue
             key = (budget_name, fiscal_year)
             if key in already_existing:
-                errors.append({"row": row_num, "field": "budget_name",
-                               "message": f"Budget '{budget_name}' ({fiscal_year}) already exists — import is create-only, skipping this row."})
+                # Intended behaviour, not a failure: see the PO importer above.
+                skipped.append({"row": row_num, "field": "budget_name",
+                                "message": f"Budget '{budget_name}' ({fiscal_year}) already exists, so this row was skipped. Importing only ever creates new budgets; edit an existing one on its own screen."})
                 continue
 
             category_type = (row.get("category_type") or "").strip().lower()
@@ -1597,12 +1753,15 @@ class ImportBudgetsView(APIView):
                 "account": account,
             })
 
-        if not budget_groups:
+        # All-or-nothing, same as purchase orders: a budget with one good line and
+        # one bad line must not be written with only the good line.
+        if errors or not budget_groups:
             return Response({
-                "created": 0, "budgets_created": 0, "errors": errors, "total_rows": len(rows),
+                "created": 0, "budgets_created": 0,
+                "errors": errors, "skipped": skipped, "total_rows": len(rows),
             })
 
-        # Pass 2: everything validated — write it.
+        # Pass 2: everything validated, write it.
         created_budgets = 0
         created_lines = 0
         with transaction.atomic():
@@ -1622,6 +1781,7 @@ class ImportBudgetsView(APIView):
             "budgets_created": created_budgets,
             "lines_created": created_lines,
             "errors": errors,
+            "skipped": skipped,
             "total_rows": len(rows),
         })
 
@@ -1641,9 +1801,14 @@ TEMPLATES = {
 }
 
 SAMPLE_ROWS = {
+    # Column order must match PRODUCT_ALL above. Every row must carry exactly
+    # one value per column: these rows were short by one for months after
+    # wholesale_price was added, which shifted every later value one column
+    # left and shipped a template that errored the moment it was re-uploaded.
+    # _validate_sample_rows() below now catches that.
     "products": [
-        ["SKU001", "Hennessy VS 750ml", "5500.00", "3200.00", "physical", "Cognac", "Hennessy", "bottle", "10", "", "", "Main Warehouse", "24"],
-        ["SKU002", "Delivery Service", "2000.00", "0.00", "service", "Logistics", "", "hour", "0", "", "Delivery service charge", "", ""],
+        ["SKU001", "Hennessy VS 750ml", "5500.00", "3200.00", "5000.00", "physical", "Cognac", "Hennessy", "bottle", "10", "", "", "Main Warehouse", "24"],
+        ["SKU002", "Delivery Service", "2000.00", "0.00", "0.00", "service", "Logistics", "", "hour", "0", "", "Delivery service charge", "", ""],
     ],
     # Column order must match CUSTOMER_ALL = CUSTOMER_REQUIRED + CUSTOMER_OPTIONAL above.
     # Row 1 shows a customer with no opening balance, row 2 one who already owes
@@ -1693,10 +1858,37 @@ SAMPLE_ROWS = {
 }
 
 
+def _validate_sample_rows():
+    """
+    Return a list of problems with SAMPLE_ROWS, empty when all is well.
+
+    A sample row must carry exactly one value per template column. A row that
+    is short or long is a bug, not something to pad: the values after the gap
+    land in the wrong column, so the template we hand people cannot be
+    re-uploaded. That is exactly how the products template shipped broken for
+    months. test_import_template_samples.py asserts this list stays empty, so
+    the next time a column is added the test fails instead of the reviewer.
+    """
+    problems = []
+    for entity, columns in TEMPLATES.items():
+        for i, row in enumerate(SAMPLE_ROWS.get(entity, []), start=1):
+            if len(row) != len(columns):
+                problems.append(
+                    f"SAMPLE_ROWS['{entity}'] row {i} has {len(row)} values but "
+                    f"the {entity} template has {len(columns)} columns "
+                    f"({', '.join(columns)})."
+                )
+    return problems
+
+
 class ImportTemplateView(APIView):
     permission_classes = [IsAuthenticated, IsVerified]
 
     def get(self, request, entity):
+        import logging as _log
+
+        from django.conf import settings
+        from django.core.exceptions import ImproperlyConfigured
         from django.http import HttpResponse
 
         if entity not in TEMPLATES:
@@ -1704,6 +1896,20 @@ class ImportTemplateView(APIView):
 
         columns = TEMPLATES[entity]
         sample_rows = SAMPLE_ROWS.get(entity, [])
+
+        # A mismatched sample row is a developer mistake. Shout about it while
+        # developing or testing; in production still serve a usable file rather
+        # than 500 on a template download, but log it loudly so it is visible.
+        bad_rows = [r for r in sample_rows if len(r) != len(columns)]
+        if bad_rows:
+            msg = (
+                f"SAMPLE_ROWS['{entity}'] has {len(bad_rows)} row(s) whose width "
+                f"does not match the {len(columns)} template columns. Fix the "
+                "sample rows in apps/core/import_views.py."
+            )
+            if settings.DEBUG or "testing" in (settings.SETTINGS_MODULE or ""):
+                raise ImproperlyConfigured(msg)
+            _log.getLogger(__name__).error(msg)
 
         output = io.StringIO()
         writer = csv.writer(output)
