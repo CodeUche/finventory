@@ -80,6 +80,9 @@ export default function AppLayout() {
   const [queuedCount, setQueuedCount] = useState(0)
   const { pathname } = useLocation()
 
+  // Phone drawer: close it once a link has been followed, so the new page is visible.
+  useEffect(() => { setSidebarOpen(false) }, [pathname])
+
   // ── Post-login / org-switch sync flush ─────────────────────────────────────
   // THE fix for the sync-drop bug: queued offline mutations used to sync only
   // on a literal 'online' browser event. After an offline grace session ended

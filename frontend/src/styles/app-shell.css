@@ -171,6 +171,8 @@ html.light body .app-shell.app-shell{
   .sh-aside{top:var(--sh-top-h) !important}
 }
 @media(max-width:640px){
+  /* search results use the full phone width instead of the narrow search box */
+  .sh-search > .absolute{position:fixed;left:10px;right:10px;top:calc(var(--sh-top-h) + 4px);width:auto}
   .sh-currency{display:none}
   .sh-search{min-width:0}
   .brand-logo-word{display:none}
