@@ -93,6 +93,7 @@ class OrganisationViewSet(viewsets.ModelViewSet):
     # refused, and admin is an explicitly granted, high-trust role.
     ADMIN_ONLY_FIELDS = frozenset({
         "bank_account_number", "bank_name", "bank_account_name", "bank_sort_code",
+        "charges_vat",
     })
     # `is_active` stays owner-only: no UI anywhere sends it for an organisation
     # (every frontend `is_active` write targets email config, Paystack config or a
@@ -124,7 +125,7 @@ class OrganisationViewSet(viewsets.ModelViewSet):
         if touched:
             self._require_role(
                 org, "admin",
-                "Only an owner or admin can change the organisation's bank details.",
+                "Only an owner or admin can change this organisation setting.",
             )
 
         before = {f: getattr(org, f, None) for f in self.AUDITED_FIELDS.intersection(touched)}
