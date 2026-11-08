@@ -273,6 +273,27 @@ def _parse_csv(file_obj):
     return headers_lower, rows
 
 
+def _find_live_first(model, **lookup):
+    """
+    Return the live record matching `lookup`, else a soft-deleted one, else None.
+
+    The unique constraints on Warehouse (organisation, name), Product
+    (organisation, sku) and Supplier (organisation, code) only cover live rows
+    (condition is_deleted=False), so a live record and a deleted record can
+    share one identity. The live record must always win: reviving a deleted
+    twin while a live one exists would put two live rows on one identity and
+    break the constraint.
+
+    Falling back to a deleted record is a deliberate policy, not a technical
+    need: re-importing an identity revives what was deleted, with its history,
+    instead of starting a second record beside it.
+    """
+    return (
+        model.objects.filter(**lookup).first()
+        or model.all_objects.filter(**lookup).first()
+    )
+
+
 def _money(val, field, errors, row_num):
     """Parse a money string; append to errors on failure."""
     try:
@@ -573,10 +594,9 @@ class ImportProductsView(APIView):
             key = name.strip().lower()
             if key in warehouse_cache:
                 return warehouse_cache[key], False
-            # Include soft-deleted rows (see the product lookup below) so a
-            # previously deleted warehouse is revived rather than hitting the
-            # (organisation, name) unique constraint on re-import.
-            existing = Warehouse.all_objects.filter(organisation=org, name__iexact=name).first()
+            # A live warehouse wins; otherwise a deleted one of that name is
+            # revived rather than duplicated (see _find_live_first).
+            existing = _find_live_first(Warehouse, organisation=org, name__iexact=name)
             if existing is not None:
                 if existing.is_deleted:
                     existing.is_deleted = False
@@ -649,12 +669,12 @@ class ImportProductsView(APIView):
                 "description": row.get("description", ""),
                 "category": category,
             }
-            # Look up including soft-deleted rows. The (organisation, sku) unique
-            # constraint is enforced at the DB level regardless of is_deleted, so a
-            # previously "deleted" product still occupies that SKU. Reviving it on
-            # re-import avoids a duplicate-key IntegrityError (products deleted then
-            # re-imported).
-            existing = Product.all_objects.filter(organisation=org, sku=sku).first()
+            # A live product wins; otherwise a deleted one with this SKU is
+            # revived, keeping its history, rather than starting a second record
+            # (see _find_live_first). The (organisation, sku) unique constraint
+            # only covers live rows, so this is a policy choice, not a way round
+            # a duplicate-key error.
+            existing = _find_live_first(Product, organisation=org, sku=sku)
             if existing is not None:
                 for _k, _v in defaults.items():
                     setattr(existing, _k, _v)
@@ -1383,13 +1403,14 @@ class ImportPurchaseOrdersView(APIView):
             carry real business data an importer must not make up.
 
             Called from pass 2 inside the transaction, so a file that fails
-            validation still writes nothing at all. Soft-deleted rows are
-            revived rather than duplicated, same as the product importer.
+            validation still writes nothing at all. A live warehouse wins;
+            otherwise a soft-deleted one is revived rather than duplicated,
+            same as the product importer.
             """
             key = name.strip().lower()
             if key in warehouse_cache:
                 return warehouse_cache[key], False
-            existing = Warehouse.all_objects.filter(organisation=org, name__iexact=name.strip()).first()
+            existing = _find_live_first(Warehouse, organisation=org, name__iexact=name.strip())
             if existing is not None:
                 if existing.is_deleted:
                     existing.is_deleted = False
