@@ -12,4 +12,4 @@ Editing this file before a release is the difference between a user seeing
 
 ---
 
-The Download button on the dark download page is now easier to see.
+Importing from a spreadsheet is more reliable. The sample files on the Import page now fill in the right columns, and they download properly in the web version too. Importing the same supplier list twice no longer makes duplicates, and purchase orders create a missing warehouse for you. Budgets and orders that already exist are now shown as skipped instead of as errors.
