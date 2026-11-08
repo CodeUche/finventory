@@ -22,7 +22,7 @@ setup('authenticate the today browser-test user', async ({ page }) => {
 
   // The sidebar only fills in once memberships + plan modules land; snapshotting
   // earlier persists a half-hydrated session with no navigation.
-  await expect(page.getByText('ACCOUNTING & FINANCE', { exact: true }))
+  await expect(page.getByText('Accounting & Finance', { exact: true }))
     .toBeVisible({ timeout: 60_000 })
 
   await expect

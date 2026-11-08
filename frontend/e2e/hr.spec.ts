@@ -13,7 +13,7 @@ test.describe.configure({ mode: 'serial' })
 /** Sidebar groups start collapsed unless they hold the active route. */
 async function openHrGroup(page: Page) {
   const sidebar = page.locator('aside, nav').first()
-  await expect(sidebar.getByText('ACCOUNTING & FINANCE', { exact: true }))
+  await expect(sidebar.getByText('Accounting & Finance', { exact: true }))
     .toBeVisible({ timeout: 45_000 })
   await sidebar.getByText('HR', { exact: true }).click()
   return sidebar

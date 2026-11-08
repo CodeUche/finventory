@@ -47,7 +47,7 @@ async function login(page: Page) {
   }
   await expect(page).toHaveURL(/\/dashboard/, { timeout: 45_000 })
   // The sidebar hides module-gated items until membership + plan modules load.
-  await expect(page.getByText('ACCOUNTING & FINANCE', { exact: true }))
+  await expect(page.getByText('Accounting & Finance', { exact: true }))
     .toBeVisible({ timeout: 45_000 })
 }
 
@@ -58,10 +58,10 @@ test('sidebar shows the restructured groups (Cashflow is its own group)', async 
   await login(page)
 
   // Cashflow is now a top-level group holding Income & Expense.
-  await expect(page.getByText('CASHFLOW', { exact: true })).toBeVisible()
+  await expect(page.getByText('Cashflow', { exact: true })).toBeVisible()
 
   // Billing & Plans expanded into three entries.
-  await expect(page.getByText('BILLING & PLANS', { exact: true })).toBeVisible()
+  await expect(page.getByText('Billing & Plans', { exact: true })).toBeVisible()
 
   await assertNoCrash(page, errors)
 })

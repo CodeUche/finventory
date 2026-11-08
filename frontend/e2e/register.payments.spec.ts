@@ -25,8 +25,8 @@ const basket = (page: Page) => page.locator('aside').first()
 test('the register opens full screen with no app sidebar', async ({ page }) => {
   await goRegister(page)
   // The sidebar's nav groups must not be reachable — a cashier stays put.
-  await expect(page.getByText('ACCOUNTING & FINANCE', { exact: true })).toHaveCount(0)
-  await expect(page.getByText('GENERAL REPORTS', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('Accounting & Finance', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('General Reports', { exact: true })).toHaveCount(0)
   await expect(page.getByText('Register', { exact: true }).first()).toBeVisible()
 })
 

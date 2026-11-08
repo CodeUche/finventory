@@ -1,14 +1,17 @@
-import { Menu, Search, X, Package, Receipt, Users, Sun, Moon, LogOut, RefreshCw } from 'lucide-react'
+import { Menu, Search, X, Package, Receipt, Users, Sun, Moon, RefreshCw, ChevronDown } from 'lucide-react'
+import { format } from 'date-fns'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { useAuthStore } from '@/store/authStore'
-import { orgApi, inventoryApi, salesApi, customerApi, authApi, bypassNextGets } from '@/services/api'
+import { orgApi, inventoryApi, salesApi, customerApi, bypassNextGets } from '@/services/api'
 import { setActiveCurrency, formatCurrency, SUPPORTED_CURRENCIES } from '@/lib/utils'
 import NotificationBell from '@/components/NotificationBell'
 import MessagesBell from '@/components/MessagesBell'
 import { SyncStatusBadge } from '@/components/SyncStatusBadge'
 import { getStoredTheme, setTheme, type Theme } from '@/hooks/useTheme'
+import BrandLogo from '@/components/BrandLogo'
+import '@/styles/app-shell.css'
 
 const CURRENCIES = SUPPORTED_CURRENCIES
 
@@ -25,7 +28,7 @@ interface TopBarProps {
 }
 
 export default function TopBar({ onMenuClick }: TopBarProps) {
-  const { organisation, updateOrganisation, tokens, logout } = useAuthStore()
+  const { organisation, updateOrganisation, user } = useAuthStore()
   const navigate = useNavigate()
   const [currentTheme, setCurrentTheme] = useState<Theme>(getStoredTheme)
 
@@ -33,15 +36,6 @@ export default function TopBar({ onMenuClick }: TopBarProps) {
     const next: Theme = currentTheme === 'dark' ? 'light' : 'dark'
     setTheme(next)
     setCurrentTheme(next)
-  }
-
-  const handleLogout = async () => {
-    try {
-      if (tokens?.refresh) await authApi.logout(tokens.refresh)
-    } finally {
-      logout()
-      navigate('/login')
-    }
   }
 
   const [query, setQuery] = useState('')
@@ -232,35 +226,38 @@ export default function TopBar({ onMenuClick }: TopBarProps) {
     )
   }
 
+  const initials = `${user?.first_name?.[0] ?? ''}${user?.last_name?.[0] ?? ''}`.toUpperCase() || (user?.email?.[0]?.toUpperCase() ?? '?')
+
   return (
     /* relative z-40: the TopBar must sit ABOVE page content so its dropdowns
        (notifications, search) fully cover page elements and their click-away
        overlays actually receive outside clicks. Modals (z-50) still win. */
-    <header className="relative z-40 h-16 flex items-center gap-4 px-4 lg:px-6 border-b border-surface-700 bg-surface-900/50 backdrop-blur-sm shrink-0">
-      <button onClick={onMenuClick} aria-label="Open menu" className="btn-ghost lg:hidden p-2">
-        <Menu size={20} />
-      </button>
+    <header className="sh-top">
+      <div className="sh-top-logo">
+        <button onClick={onMenuClick} aria-label="Open menu" className="sh-icon-btn sh-menu">
+          <Menu size={22} />
+        </button>
+        <BrandLogo />
+      </div>
 
       {/* Search bar */}
-      <div className="flex-1 max-w-md relative">
-        <div className="relative">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
-          <input
-            ref={inputRef}
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onFocus={() => { if (results.length > 0) setShowDrop(true) }}
-            onKeyDown={handleKeyDown}
-            placeholder="Search products, invoices, customers..."
-            className="w-full bg-surface-800 border border-surface-700 rounded-xl pl-9 pr-8 py-2 text-sm text-slate-300 placeholder:text-slate-500 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500/30 transition-all"
-          />
-          {query && (
-            <button onClick={clearSearch} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors">
-              <X size={14} />
-            </button>
-          )}
-        </div>
+      <div className="sh-search">
+        <Search size={19} className="sh-search-ico" />
+        <input
+          ref={inputRef}
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onFocus={() => { if (results.length > 0) setShowDrop(true) }}
+          onKeyDown={handleKeyDown}
+          placeholder="Search products, invoices, customers..."
+          aria-label="Search products, invoices, customers"
+        />
+        {query && (
+          <button onClick={clearSearch} className="sh-search-clear" aria-label="Clear search">
+            <X size={15} />
+          </button>
+        )}
 
         {/* Search dropdown */}
         {showDrop && (
@@ -309,28 +306,30 @@ export default function TopBar({ onMenuClick }: TopBarProps) {
         )}
       </div>
 
-      <div className="flex items-center gap-3 ml-auto">
+      <div className="sh-date">{format(new Date(), 'EEEE, MMMM do yyyy')}.</div>
+
+      <div className="sh-actions">
         {/* Global refresh — works on every page: bypasses the GET cache, then
             fires audity:data-changed, which every module's useDataRefresh
             listens for and re-runs its own load(). */}
         <button
           onClick={handleGlobalRefresh}
           disabled={refreshing}
-          className="btn-ghost p-2 text-slate-400 hover:text-white transition-colors disabled:opacity-60"
+          className="sh-icon-btn sh-refresh"
           aria-label="Refresh data"
           title="Refresh this page's data"
         >
-          <RefreshCw size={17} className={refreshing ? 'animate-spin' : ''} />
+          <RefreshCw size={20} className={refreshing ? 'animate-spin' : ''} />
         </button>
 
         {/* Theme toggle */}
         <button
           onClick={toggleTheme}
-          className="btn-ghost p-2"
+          className="sh-icon-btn"
           aria-label="Toggle theme"
           title={currentTheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
         >
-          {currentTheme === 'dark' ? <Sun size={17} /> : <Moon size={17} />}
+          {currentTheme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
         </button>
 
         {/* Offline sync queue status (hidden when the queue is empty) */}
@@ -342,35 +341,36 @@ export default function TopBar({ onMenuClick }: TopBarProps) {
         {/* Real-time notifications bell */}
         <NotificationBell />
 
-        {/* Sign out shortcut */}
-        <button
-          onClick={handleLogout}
-          className="btn-ghost p-2 text-slate-400 hover:text-red-400 transition-colors"
-          aria-label="Sign out"
-          title="Sign out"
-        >
-          <LogOut size={17} />
-        </button>
-
         {/* Currency selector */}
         {organisation && (
-          <div className="hidden sm:flex items-center gap-2 px-2 py-1.5 bg-surface-800 border border-surface-700 rounded-xl">
-            <span className="text-xs text-slate-400">Currency</span>
+          <label className="sh-currency">
+            <span>Currency</span>
             <select
               value={organisation.currency}
               onChange={(e) => handleCurrencyChange(e.target.value)}
-              className="bg-transparent text-xs font-mono font-bold text-brand-400 border-none outline-none cursor-pointer"
+              aria-label="Currency"
             >
               {CURRENCIES.map((c) => (
-                <option key={c} value={c} className="bg-surface-800 text-white">{c}</option>
+                <option key={c} value={c}>{c}</option>
               ))}
               {/* Keep current currency selectable even if not in list */}
               {!CURRENCIES.includes(organisation.currency) && (
-                <option value={organisation.currency} className="bg-surface-800 text-white">{organisation.currency}</option>
+                <option value={organisation.currency}>{organisation.currency}</option>
               )}
             </select>
-          </div>
+            <ChevronDown size={16} aria-hidden="true" />
+          </label>
         )}
+
+        {/* Profile — opens Settings (sign out lives at the foot of the sidebar) */}
+        <button
+          onClick={() => navigate('/settings')}
+          className="sh-avatar"
+          aria-label="Open profile settings"
+          title={user ? `${user.first_name} ${user.last_name}` : 'Profile'}
+        >
+          {initials}
+        </button>
       </div>
     </header>
   )

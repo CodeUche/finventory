@@ -26,7 +26,7 @@ setup('authenticate once', async ({ page }) => {
   // just after, and the sidebar hides every module-gated item until they do.
   // Saving too early persists a half-hydrated session where the whole nav is
   // missing. Wait for a module-gated group before snapshotting.
-  await expect(page.getByText('ACCOUNTING & FINANCE', { exact: true }))
+  await expect(page.getByText('Accounting & Finance', { exact: true }))
     .toBeVisible({ timeout: 60_000 })
 
   await page.context().storageState({ path: STORAGE_STATE })

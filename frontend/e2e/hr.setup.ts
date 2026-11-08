@@ -27,7 +27,7 @@ setup('authenticate the HR operator', async ({ page }) => {
   // Landing on /dashboard is not enough: membership + plan modules load just
   // after, and every module-gated nav item stays hidden until they do. Saving
   // too early persists a half-hydrated session with no navigation.
-  await expect(page.getByText('ACCOUNTING & FINANCE', { exact: true }))
+  await expect(page.getByText('Accounting & Finance', { exact: true }))
     .toBeVisible({ timeout: 60_000 })
   await page.context().storageState({ path: OWNER_STATE })
 })

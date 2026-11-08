@@ -20,7 +20,7 @@ setup('authenticate payments user', async ({ page }) => {
 
   // The sidebar only fills in once memberships + plan modules land; snapshotting
   // earlier persists a half-hydrated session with no navigation.
-  await expect(page.getByText('SALES & POS', { exact: true }))
+  await expect(page.getByText('Sales & POS', { exact: true }))
     .toBeVisible({ timeout: 60_000 })
 
   // memberRole is fetched separately from the module list and owner-only

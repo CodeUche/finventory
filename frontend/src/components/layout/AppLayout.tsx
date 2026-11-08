@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import Sidebar from './Sidebar'
 import TopBar from './TopBar'
-import AppBackdrop from '@/components/AppBackdrop'
 import TermsGateModal from '@/components/TermsGateModal'
 import Breadcrumb from '@/components/Breadcrumb'
 import { useInactivityTimeout } from '@/hooks/useInactivityTimeout'
@@ -287,9 +286,11 @@ export default function AppLayout() {
   }
 
   return (
-    <div className="app-shell relative flex h-screen overflow-hidden">
-      {/* Decorative "Compass" backdrop (behind everything) */}
-      <AppBackdrop />
+    <div className="app-shell relative flex flex-col h-screen overflow-hidden">
+      {/* Top bar spans the full width; the sidebar and page sit beneath it. */}
+      <TopBar onMenuClick={() => setSidebarOpen(true)} />
+
+      <div className="relative z-10 flex flex-1 min-h-0">
 
       {/* Mobile overlay */}
       {sidebarOpen && (
@@ -304,7 +305,6 @@ export default function AppLayout() {
 
       {/* Main content */}
       <div className="relative z-10 flex flex-col flex-1 min-w-0 overflow-hidden">
-        <TopBar onMenuClick={() => setSidebarOpen(true)} />
         {/* Support access banner — superuser viewing an org they aren't a member of.
             Derived LIVE (not only from the transient supportAccess flag): after a
             refresh the flag is gone but the persisted org context can still be a
@@ -440,6 +440,7 @@ export default function AppLayout() {
             </div>
           )}
         </main>
+      </div>
       </div>
 
       {/* Subscription paywall overlay */}
