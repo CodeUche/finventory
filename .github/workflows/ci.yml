@@ -382,7 +382,8 @@ jobs:
 # never write data into what they are looking at.
   e2e-smoke:
     name: E2E — Playwright Smoke
-    runs-on: ubuntu-latest
+    # Pinned: Playwright does not support chromium on ubuntu-26.04 (ubuntu-latest).
+    runs-on: ubuntu-24.04
     # Backend deploys are manual (see the Deploy — Backend note above), so this
     # tests whatever is currently live on AWS rather than gating a deploy.
     needs: [backend-test, frontend-build]
