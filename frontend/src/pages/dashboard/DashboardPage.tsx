@@ -260,7 +260,7 @@ export default function DashboardPage() {
         reportApi.topCustomers({ date_from: dateFrom, date_to: dateTo, limit: 10 }),
         inventoryApi.stock(),
         salesApi.invoices({ status: 'overdue', page_size: 5 }),
-        salesApi.invoices({ page_size: 6 }),
+        salesApi.invoices({ page_size: 6, ordering: '-issue_date' }),
       ])
 
       if (pnlRes.status === 'fulfilled')

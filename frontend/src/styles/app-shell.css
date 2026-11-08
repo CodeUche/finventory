@@ -38,6 +38,10 @@ html.light body .app-shell.app-shell{
   font-family:'Roboto',system-ui,sans-serif;
 }
 
+/* Full-screen overlays must cover the whole window: a page's `space-y-*` wrapper
+   otherwise adds a top margin that leaves the top bar's top strip undimmed. */
+.app-shell .fixed.inset-0{margin:0 !important}
+
 /* ---------------------------------------------------------------- top bar */
 .sh-top{
   position:relative;z-index:40;height:var(--sh-top-h);flex:none;display:flex;align-items:center;gap:20px;
@@ -163,10 +167,11 @@ html.light body .app-shell.app-shell{
   .sh-top{gap:10px;padding:0 12px}
   .sh-top-logo{width:auto;padding-left:0}
   .sh-top .sh-menu{display:inline-flex}
-  .sh-date,.sh-currency{display:none}
+  .sh-date{display:none}
   .sh-aside{top:var(--sh-top-h) !important}
 }
 @media(max-width:640px){
+  .sh-currency{display:none}
   .sh-search{min-width:0}
   .brand-logo-word{display:none}
   .sh-top{gap:6px;padding:0 10px}

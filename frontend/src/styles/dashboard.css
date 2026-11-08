@@ -112,9 +112,9 @@ html.light .ad{
 .ad-bubble.g{background:var(--ad-bubble-g);color:var(--ad-bubble-g-tx)}
 .ad-bubble.b{background:var(--ad-bubble-b);color:var(--ad-bubble-b-tx)}
 .ad-bubble.r{background:var(--ad-bubble-r);color:var(--ad-bubble-r-tx)}
-.ad-kpi-body{min-width:0;display:flex;flex-direction:column;gap:6px}
+.ad-kpi-body{min-width:0;display:flex;flex-direction:column;justify-content:center;gap:6px;min-height:84px;padding-right:22px}
 .ad-kpi-value{font-size:clamp(18px,1.7vw,24px);font-weight:700;line-height:1.1;color:var(--ad-title);white-space:nowrap}
-.ad-kpi-value.long{font-size:clamp(15px,1.25vw,18px)}
+.ad-kpi-value.long{font-size:clamp(14px,1.2vw,17px)}
 .ad-kpi-label{font-size:14px;color:var(--ad-ink)}
 .ad-kpi-sub{font-size:14px;color:var(--ad-ink);opacity:.9}
 .ad-kpi-sub.up{color:var(--ad-good)} .ad-kpi-sub.down{color:var(--ad-bad)}
@@ -205,6 +205,12 @@ html.light .ad{
 .ad-qa .b.plain{background:var(--ad-row-icon);color:var(--ad-ink);border:1px solid var(--ad-card-bd)}
 
 /* ---- responsive ---- */
+@media(max-width:1400px){
+  .ad .ad-kpi{gap:10px;padding:18px 14px}
+  .ad-bubble{width:44px;height:44px}
+  .ad-kpi-body{padding-right:0}
+  .ad .ad-kpi .go{top:10px;right:12px}
+}
 @media(max-width:1180px){
   .ad-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
   .ad-ratios{grid-template-columns:repeat(3,minmax(0,1fr))}
