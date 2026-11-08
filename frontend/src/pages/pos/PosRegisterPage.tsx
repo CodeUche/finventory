@@ -11,7 +11,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  AlertTriangle, Banknote, CreditCard, Landmark, Loader2, LogOut, Minus, Plus,
+  AlertTriangle, ArrowLeft, Banknote, CreditCard, Landmark, Loader2, LogOut, Minus, Plus,
   Printer, Search, ShoppingCart, Trash2, Wallet, X,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -24,6 +24,7 @@ import { useTaxRates } from '@/hooks/useTaxRates'
 import { productTaxRate, saleTotals, type SaleLineInput } from '@/lib/saleMath'
 import { useAuthStore } from '@/store/authStore'
 import { registerHeldKey } from '@/lib/localUserData'
+import { confirmDialog } from '@/lib/dialog'
 import type { Product } from '@/types'
 
 interface ModOption { id: string; name: string; price_delta: string; is_default: boolean; is_active: boolean }
@@ -339,6 +340,26 @@ export default function PosRegisterPage() {
     } finally { payingRef.current = false; setBusy(false) }
   }
 
+  /**
+   * Leave the register. Goes back to the page the cashier came from, or to the
+   * dashboard when there is nothing to go back to (a direct link or a fresh
+   * tab). If a sale is half rung up, ask first so nothing is lost by a stray
+   * tap. Held baskets are saved, so they are not affected.
+   */
+  const leaveRegister = async () => {
+    if (lines.length > 0) {
+      const n = lines.reduce((sum, l) => sum + l.quantity, 0)
+      const leave = await confirmDialog(
+        `This sale has ${n} item${n === 1 ? '' : 's'} that ${n === 1 ? 'has' : 'have'} not been paid for. ` +
+        'Leaving will clear them. Use "Hold" first if you want to keep this basket.',
+        { title: 'Leave the register?', confirmText: 'Leave', cancelText: 'Stay', danger: true },
+      )
+      if (!leave) { refocus(); return }
+    }
+    if ((window.history.state?.idx ?? 0) > 0) navigate(-1)
+    else navigate('/dashboard')
+  }
+
   const tiles = query.trim() ? results : catalogue
   const enabledTenders = TENDERS.filter((t) => (organisation?.enabled_payment_types ?? TENDERS.map((x) => x.settingsKey)).includes(t.settingsKey))
 
@@ -346,6 +367,15 @@ export default function PosRegisterPage() {
     // Full screen, no sidebar — the register owns the device.
     <div className="fixed inset-0 z-40 flex flex-col bg-surface-950">
       <header className="flex items-center gap-3 border-b border-surface-700 bg-surface-900 px-4 py-2.5">
+        <button
+          onClick={leaveRegister}
+          className="btn-ghost -ml-2 px-2.5 py-1.5 text-sm"
+          aria-label="Back"
+          title="Back"
+        >
+          <ArrowLeft size={17} />
+          <span>Back</span>
+        </button>
         <ShoppingCart size={17} className="text-brand-400" />
         <span className="font-semibold text-white">Register</span>
         <span className="text-xs text-slate-500">{organisation?.name}</span>
@@ -362,10 +392,11 @@ export default function PosRegisterPage() {
           <Wallet size={13} />
         </button>
         <button
-          onClick={() => navigate('/dashboard')}
-          className="btn-ghost px-2.5 py-1 text-[11px]" title="Leave the register"
+          onClick={leaveRegister}
+          className="btn-ghost px-2.5 py-1 text-[11px]" title="Leave the register" aria-label="Leave the register"
         >
           <LogOut size={13} />
+          <span className="hidden sm:inline">Exit</span>
         </button>
       </header>
 
