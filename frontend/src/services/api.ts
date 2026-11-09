@@ -8,13 +8,20 @@
  *   - Redirects to /login on refresh failure
  */
 
-import axios, { AxiosError, type AxiosAdapter, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios'
+import axios, { AxiosError, type AxiosAdapter, type AxiosRequestConfig, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios'
 import { fetch as tauriHttpFetch } from '@tauri-apps/plugin-http'
 import toast from 'react-hot-toast'
 import { useAuthStore } from '@/store/authStore'
 import { offlineCache } from '@/lib/offlineCache'
 import { syncEngine, isActionEndpoint, buildListUrl, _extractEntityType, _extractRecordId } from '@/lib/syncEngine'
 import { localStore } from '@/lib/localStore'
+
+declare module 'axios' {
+  interface AxiosRequestConfig {
+    /** The caller shows failures itself: skip the global error toast. */
+    silentErrors?: boolean
+  }
+}
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '/api/v1'
 
@@ -993,6 +1000,10 @@ api.interceptors.response.use(
     // Show toast for API errors (deduplicate using toast ID so poll loops don't spam)
     // Skip: 401 (handled by refresh logic), 403 (handled at component level),
     // auth endpoints (LoginPage/StaffLoginPage handle their own error toasts).
+    // A caller that shows the failure itself asks the global handler to stay quiet,
+    // so the same message is not toasted twice.
+    if (original?.silentErrors) return Promise.reject(error)
+
     const errData = (error.response?.data as any)?.error
     const status = error.response?.status
     const isAuthUrl = original.url?.includes('/auth/login/') ||
@@ -1673,7 +1684,8 @@ export const payrollApi = {
   deleteEmployee: (id: string) => api.delete(`/payroll/employees/${id}/`),
   runs: (params?: object) => api.get('/payroll/runs/', { params }),
   runPayroll: (data: object) => api.post('/payroll/runs/', data),
-  approvePayroll: (id: string) => api.post(`/payroll/runs/${id}/approve/`),
+  // silentErrors: the page shows the refusal itself, so the global error toast stays quiet.
+  approvePayroll: (id: string, config?: AxiosRequestConfig) => api.post(`/payroll/runs/${id}/approve/`, undefined, config),
   markPaid: (id: string, data: object) => api.post(`/payroll/runs/${id}/mark_paid/`, data),
   initiateTransfers: (id: string) => api.post(`/payroll/runs/${id}/initiate_transfers/`),
   eligibleApprovers: () => api.get('/payroll/runs/eligible_approvers/'),

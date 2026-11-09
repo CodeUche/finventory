@@ -10,6 +10,7 @@ import {
 import toast from 'react-hot-toast'
 import { openExternal } from '@/lib/openExternal'
 import { payrollApi, bypassNextGets } from '@/services/api'
+import { offlineCache } from '@/lib/offlineCache'
 import { hrApi } from '@/services/hrApi'
 import { formatCurrency, formatDate, stripCommas, normalizeAmountStr } from '@/lib/utils'
 import AmountInput from '@/components/AmountInput'
@@ -217,8 +218,8 @@ const STATUTORY_ITEMS = (pensionProvider: string, run: PayrollRun) => {
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function PayrollPage() {
-  const { user, organisation } = useAuthStore()
-  const isOwnerOrAdmin = user?.is_superuser || ['owner', 'admin'].includes((user as any)?.role ?? '')
+  const { user, organisation, memberRole } = useAuthStore()
+  const isOwnerOrAdmin = user?.is_superuser === true || memberRole === 'owner' || memberRole === 'admin'
 
   const now = new Date()
   const [pageTab, setPageTab] = useState<PageTab>('runs')
@@ -239,6 +240,7 @@ export default function PayrollPage() {
   const [selectedApproverId, setSelectedApproverId] = useState<string>('')
   const [loadingApprovers, setLoadingApprovers] = useState(false)
   const [markPayId, setMarkPayId] = useState<string | null>(null)
+  const [markingPaid, setMarkingPaid] = useState(false)
   const [paymentDate, setPaymentDate] = useState(now.toISOString().split('T')[0])
   const [initiatingTransfer, setInitiatingTransfer] = useState(false)
   const [retrying, setRetrying] = useState(false)
@@ -360,6 +362,13 @@ export default function PayrollPage() {
     finally { setLoadingBonuses(false) }
   }, [selectedYear, selectedMonth])
 
+  /** Reload the runs list straight from the server (skips the GET cache) after a change. */
+  const reloadRunsFresh = useCallback(async () => {
+    bypassNextGets(8000)
+    await offlineCache.invalidatePrefix('/payroll/')
+    await loadRuns()
+  }, [loadRuns])
+
   useEffect(() => { loadRuns() }, [loadRuns])
   useDataRefresh(loadRuns)
 
@@ -457,7 +466,7 @@ export default function PayrollPage() {
       await payrollApi.submitForApproval(approverPickerId, selectedApproverId ? { approver_id: selectedApproverId } : {})
       const approver = approvers.find((a) => a.id === selectedApproverId)
       toast.success(approver ? `Submitted to ${approver.name} for approval` : 'Submitted for approval')
-      loadRuns()
+      await reloadRunsFresh()
     } catch { toast.error('Failed to submit for approval') }
     finally { setSubmittingId(null) }
   }
@@ -466,23 +475,28 @@ export default function PayrollPage() {
     if (!(await confirmDialog('Approve and finalise this payroll run?'))) return
     setApprovingId(id)
     try {
-      await payrollApi.approvePayroll(id)
+      await payrollApi.approvePayroll(id, { silentErrors: true })
       toast.success('Payroll approved — GL journal posted')
-      loadRuns()
+      await reloadRunsFresh()
     } catch (err: any) {
-      const msg = err?.response?.data?.error ?? 'Failed to approve'
-      toast.error(typeof msg === 'string' ? msg : 'Failed to approve')
+      // The global API handler is told to stay quiet for this call, so the
+      // reason (e.g. the creator may not approve their own run) shows once.
+      const data = err?.response?.data
+      const msg = data?.error ?? data?.message ?? data?.detail ?? 'Failed to approve'
+      toast.error(typeof msg === 'string' ? msg : 'Failed to approve', { id: 'payroll-approve-error' })
     } finally { setApprovingId(null) }
   }
 
   const handleMarkPaid = async () => {
-    if (!markPayId) return
+    if (!markPayId || markingPaid) return
+    setMarkingPaid(true)
     try {
       await payrollApi.markPaid(markPayId, { payment_date: paymentDate })
       toast.success('Payroll marked as paid')
       setMarkPayId(null); setTransferResults(null)
-      loadRuns()
+      await reloadRunsFresh()
     } catch { toast.error('Failed to mark as paid') }
+    finally { setMarkingPaid(false) }
   }
 
   const handleInitiateTransfers = async () => {

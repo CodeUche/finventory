@@ -3741,7 +3741,8 @@ export default function SettingsPage() {
             </button>
           </div>
 
-          {/* VAT registration */}
+          {/* VAT registration - owners/admins only */}
+          {isOwner && (
           <div className="rounded-xl bg-slate-800 border border-slate-700 px-5 py-4 flex items-start justify-between gap-4">
             <div>
               <p className="text-sm font-medium text-white">This business charges VAT</p>
@@ -3766,6 +3767,7 @@ export default function SettingsPage() {
               <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${organisation?.charges_vat !== false ? 'translate-x-5' : 'translate-x-0'}`} />
             </button>
           </div>
+          )}
 
           {/* Fixed-Asset Policy */}
           <div className="rounded-xl bg-slate-800 border border-slate-700 px-5 py-4 space-y-4">

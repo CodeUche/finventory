@@ -232,6 +232,9 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
     // and differs. Fail-open while the org type is still loading.
     const orgBusinessType = (organisation as { business_type?: string } | null)?.business_type
     if (businessType && orgBusinessType && orgBusinessType !== businessType) return false
+    // Owner-only items (Billing & Plans, Connectors, Tickets...) have no module,
+    // so this test must run before the "no module" early return below.
+    if (ownerOnly && !isOwnerOrAdmin && !user?.is_superuser) return false
     if (!mod) return true                             // no module restriction (dashboard, settings)
     if (user?.is_superuser) return true              // superusers always see everything
     // Plan-level gate: if the active plan restricts modules, only show allowed ones

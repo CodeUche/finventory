@@ -124,6 +124,14 @@ export default function AIChatModal({ open, onClose }: Props) {
     setTimeout(() => inputRef.current?.focus(), 100)
   }, [open])
 
+  // Escape closes the assistant
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open, onClose])
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])

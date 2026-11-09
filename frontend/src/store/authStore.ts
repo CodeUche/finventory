@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import type { User, AuthTokens, Organisation, AccessLevel, ModuleKey } from '@/types'
 import type { OfflineVerifierBlob } from '@/lib/offlineVerifier'
+import { claimCacheForUser } from '@/lib/cacheOwner'
 
 export const REMEMBER_FLAG_KEY = 'audity-remember-me'
 // Purge any legacy plaintext password that may have been stored by older builds
@@ -159,6 +160,7 @@ export const useAuthStore = create<AuthState>()(
       // exactly once, so ProtectedRoute never sees the transient state where
       // isAuthenticated=true but organisation=null that caused /onboarding redirects.
       initSession: (user, tokens, org, orgs) => {
+        claimCacheForUser(user?.id)
         const media = readMediaCache(org?.id)
         set({
           user, tokens, isAuthenticated: true,
@@ -181,6 +183,7 @@ export const useAuthStore = create<AuthState>()(
       // fields; the sidebar then fills in from its online fetch on reconnect.)
       // All API writes are queued; reads come from offlineCache.
       startOfflineSession: (blob) => {
+        claimCacheForUser(blob.user_id)
         const firstOrg = blob.organisations[0] ?? null
         const media    = readMediaCache(firstOrg?.id ?? null)
         const isSuper  = blob.is_superuser === true
@@ -227,6 +230,7 @@ export const useAuthStore = create<AuthState>()(
       },
 
       setAuth: (user, tokens) => {
+        claimCacheForUser(user?.id)
         // No org context here — media loads in initSession/setOrganisation,
         // which know WHICH org's cached media is safe to show.
         set({

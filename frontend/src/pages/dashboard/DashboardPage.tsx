@@ -219,13 +219,27 @@ function HealthRatioStrip({
  * access" toast per refused request. ₦0.00 reads as lost data, not as "no
  * permission".
  */
+/** True when at least one module is granted at view level or above. */
+export function hasAnyModulePermission(perms: Record<string, string | undefined> | null | undefined): boolean {
+  return Object.values(perms ?? {}).some((l) => l === 'view' || l === 'write' || l === 'edit')
+}
+
 export default function DashboardPage() {
   const reports = useModuleAccess('reports')
   const sales = useModuleAccess('sales')
   const inventory = useModuleAccess('inventory')
-  const { user, organisation } = useAuthStore()
+  const { user, organisation, memberRole, modulePermissions } = useAuthStore()
 
-  if (!reports.canView && !sales.canView && !inventory.canView) {
+  // The welcome notice is only for a member who has no module permission at all.
+  // Owners, admins and superusers never see it; a member with any other module
+  // (customers, payroll...) still gets the dashboard, with the widgets they lack
+  // access to left empty.
+  const unrestricted = user?.is_superuser === true || memberRole === 'owner' || memberRole === 'admin'
+  const membershipKnown = memberRole !== null || user?.is_superuser === true
+  const hasAnyModule = unrestricted || hasAnyModulePermission(modulePermissions)
+
+  if (!membershipKnown) return <div className="ad" />
+  if (!hasAnyModule) {
     return (
       <div className="ad">
         <section className="ad-card" style={{ maxWidth: 560, margin: '40px auto', textAlign: 'center' }}>
@@ -373,9 +387,11 @@ function DashboardContent({ canReports, canSales, canInventory }: { canReports: 
   }, [dateFrom, dateTo, _refreshTick, canReports, canSales, canInventory])
 
   // Fetch FIRS compliance stats once on mount (non-blocking)
+  // Only members who can see sales ask for it; others would get a refused request.
   useEffect(() => {
+    if (!canSales) return
     einvoicingApi.stats().then(({ data }) => setFirsStats(data)).catch(() => null)
-  }, [])
+  }, [canSales])
 
   const totalOrders = salesData.reduce((s, d) => s + (d.invoice_count ?? 0), 0)
 

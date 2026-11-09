@@ -1132,12 +1132,15 @@ export default function SalesPage() {
           <div className="fixed inset-0 z-40 bg-black/50" onClick={closeDetail} />
           <div className="fixed right-0 top-0 bottom-0 z-50 w-full max-w-md bg-surface-900 border-l border-surface-700 shadow-2xl flex flex-col overflow-hidden">
             {/* Drawer header */}
-            <div className="flex items-center justify-between px-6 py-5 border-b border-surface-700">
-              <div>
-                <p className="text-xs text-slate-500 uppercase tracking-wider">Invoice</p>
-                <h2 className="font-bold text-white text-lg">{inv?.invoice_number}</h2>
+            <div className="px-6 py-4 border-b border-surface-700">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-xs text-slate-500 uppercase tracking-wider">Invoice</p>
+                  <h2 className="font-bold text-white text-lg truncate" title={inv?.invoice_number}>{inv?.invoice_number}</h2>
+                </div>
+                <button onClick={closeDetail} className="btn-ghost p-2 shrink-0" aria-label="Close"><X size={18} /></button>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2 mt-3">
                 {(isOwnerOrAdmin || canEditSales) && inv?.status !== 'voided' && inv && (
                   <button
                     onClick={() => navigate(`/sales/invoices/${inv.id}/edit`)}
@@ -1172,7 +1175,6 @@ export default function SalesPage() {
                   {exporting ? <Loader2 size={14} className="animate-spin" /> : <FileDown size={14} />}
                   Export PDF
                 </button>
-                <button onClick={closeDetail} className="btn-ghost p-2"><X size={18} /></button>
               </div>
             </div>
 
