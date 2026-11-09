@@ -2345,6 +2345,12 @@ class AccountingService:
         """
         DR Net Salaries Payable / CR Bank when a payroll run is paid.
 
+        Pays the FULL total_net, including any leave-encashment portion: both
+        the ordinary payroll journal and post_leave_encashment_settlement now
+        credit Net Salaries Payable at approval (neither touches Bank), so the
+        whole amount owed is cleared together here, once, when the run is
+        actually paid.
+
         Runs approved BEFORE Net Salaries Payable existed credited Bank at
         approval, so there is nothing to clear: those are detected by their
         journal (no line on the payable account) and skipped, which is what
@@ -2356,9 +2362,16 @@ class AccountingService:
         original = JournalEntry.objects.filter(
             organisation=organisation, source_type='payroll', source_ref=str(payroll_run.id),
         ).first()
-        if original is None or not original.lines.filter(account=payable).exists():
+        encashment_entry = JournalEntry.objects.filter(
+            organisation=organisation, source_type='leave_encashment', source_ref=str(payroll_run.id),
+        ).first()
+        routed_through_payable = (
+            (original is not None and original.lines.filter(account=payable).exists())
+            or (encashment_entry is not None and encashment_entry.lines.filter(account=payable).exists())
+        )
+        if original is None or not routed_through_payable:
             return None
-        net = Decimal(str(payroll_run.total_net or 0)) - Decimal(str(getattr(payroll_run, 'total_encashment', 0) or 0))
+        net = Decimal(str(payroll_run.total_net or 0))
         if net <= zero:
             return None
         pay_date = payroll_run.payment_date
@@ -2381,16 +2394,18 @@ class AccountingService:
         Accrued Leave liability, as its own entry separate from the ordinary
         payroll journal's gross-expense entry:
 
-        DR Accrued Leave (2850)   = payroll_run.total_encashment
-        CR Bank                   = payroll_run.total_encashment
+        DR Accrued Leave (2850)         = payroll_run.total_encashment
+        CR Net Salaries Payable         = payroll_run.total_encashment
 
-        This is a liability settlement (cash paid out against a liability
+        This is a liability settlement (relieving the Accrued Leave liability
         already recognised by post_leave_accrual_true_up), not payroll
         expense — post_payroll_journal has already carved this amount out of
-        both its Salaries & Wages Expense debit and its Bank/Net-Pay credit,
-        so this entry supplies the missing Bank credit and relieves 2850 by
-        the same amount, keeping the combined cash movement across both
-        entries equal to total_net.
+        its Salaries & Wages Expense debit and its Net Salaries Payable
+        credit, so this entry supplies the missing payable credit, relieving
+        2850 by the same amount. It credits the payable, not Bank: no cash
+        moves until the run is actually paid (post_payroll_payment_journal),
+        the same reason the ordinary net-pay credit moved off Bank — an
+        approval is a decision, not a payment.
 
         Also decrements PayrollSettings.leave_accrual_last_posted_amount by
         the settled amount, keeping post_leave_accrual_true_up's baseline in
@@ -2411,14 +2426,14 @@ class AccountingService:
         from apps.payroll.models import PayrollSettings
         from apps.payroll.services import get_settings as get_payroll_settings
 
-        bank_acct = AccountMappingService.resolve(organisation, 'bank_account')
+        net_pay_acct = AccountingService.net_salaries_payable_account(organisation)
         accrued_leave_acct = AccountingService._get_or_create_account(
             organisation, '2850', 'Accrued Leave', AccountType.LIABILITY
         )
 
         lines = [
             (accrued_leave_acct, amount, zero),   # DR Accrued Leave — relieve liability
-            (bank_acct, zero, amount),            # CR Bank — cash paid out
+            (net_pay_acct, zero, amount),          # CR Net Salaries Payable — now owed, not yet paid
         ]
 
         entry = AccountingService.post_journal_entry(
