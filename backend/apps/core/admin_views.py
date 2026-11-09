@@ -86,6 +86,8 @@ class AuditLogView(APIView):
                          request=request,
                          is_owner_action=bool(org and org.owner_id == request.user.id))
 
+            from apps.core.export_safety import csv_safe_row
+
             def rows():
                 header = ['timestamp', 'user', 'action', 'model', 'object_id',
                           'object', 'ip_address', 'owner_action']
@@ -95,11 +97,11 @@ class AuditLogView(APIView):
                 yield buf.getvalue()
                 for e in qs.iterator(chunk_size=500):
                     buf.seek(0); buf.truncate(0)
-                    w.writerow([
+                    w.writerow(csv_safe_row([
                         e.created_at.isoformat(), e.user_email, e.action,
                         e.model_name, e.object_id, e.object_repr,
                         e.ip_address or '', 'yes' if e.is_owner_action else 'no',
-                    ])
+                    ]))
                     yield buf.getvalue()
 
             from django.utils import timezone as _tz

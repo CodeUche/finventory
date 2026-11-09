@@ -585,9 +585,11 @@ export default function ReportsPage() {
 
   // ── P&L table rows ────────────────────────────────────────────────────────────
   const pnlRows: (string | number)[][] = pnl ? [
-    ['Gross Sales',        formatCurrency(pnl.revenue.gross_sales)],
-    ['Tax Collected',      formatCurrency(pnl.revenue.tax_collected)],
-    ['Discounts',          formatCurrency(pnl.revenue.discounts)],
+    ['Sales (excl. VAT)',  formatCurrency(pnl.revenue.sales_excl_vat ?? pnl.revenue.gross_sales)],
+    ['Less: Returns',      formatCurrency(pnl.revenue.returns ?? '0')],
+    ['Net Sales',          formatCurrency(pnl.revenue.gross_sales)],
+    ['VAT Collected (owed, not income)', formatCurrency(pnl.revenue.tax_collected)],
+    ['Discounts Given',    formatCurrency(pnl.revenue.discounts)],
     ['Cost of Goods Sold', formatCurrency(pnl.cost_of_goods_sold)],
     ['Gross Profit',       formatCurrency(pnl.gross_profit)],
     ['Gross Margin %',     `${parseFloat(pnl.gross_margin_pct).toFixed(2)}%`],
@@ -654,7 +656,7 @@ export default function ReportsPage() {
           {/* KPI cards */}
           {pnl ? (
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              {kpi('Gross Sales',   formatCurrency(pnl.revenue.gross_sales))}
+              {kpi('Net Sales',     formatCurrency(pnl.revenue.gross_sales))}
               {kpi('COGS',          formatCurrency(pnl.cost_of_goods_sold), undefined, false)}
               {kpi('Gross Profit',  formatCurrency(pnl.gross_profit),
                 `${parseFloat(pnl.gross_margin_pct).toFixed(1)}% margin`, parseFloat(pnl.gross_profit) >= 0)}
@@ -941,7 +943,7 @@ export default function ReportsPage() {
           {/* KPI strip */}
           {pnl && (
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {kpi('Gross Sales',   formatCurrency(pnl.revenue.gross_sales))}
+              {kpi('Net Sales',     formatCurrency(pnl.revenue.gross_sales))}
               {kpi('COGS',          formatCurrency(pnl.cost_of_goods_sold), undefined, false)}
               {kpi('Gross Profit',  formatCurrency(pnl.gross_profit),
                 `${parseFloat(pnl.gross_margin_pct).toFixed(1)}% margin`, parseFloat(pnl.gross_profit) >= 0)}
@@ -1002,10 +1004,10 @@ export default function ReportsPage() {
           {/* Revenue vs Costs progress bars (existing, kept for detail) */}
           {pnl && (
             <div className="card p-5">
-              <h3 className="text-sm font-semibold text-slate-300 mb-4">Revenue vs Costs — % of Gross Sales</h3>
+              <h3 className="text-sm font-semibold text-slate-300 mb-4">Revenue vs Costs — % of Net Sales</h3>
               <div className="space-y-3">
                 {[
-                  { label: 'Gross Sales',        value: parseFloat(pnl.revenue.gross_sales),    color: 'bg-brand-500' },
+                  { label: 'Net Sales',          value: parseFloat(pnl.revenue.gross_sales),    color: 'bg-brand-500' },
                   { label: 'Tax Collected',       value: parseFloat(pnl.revenue.tax_collected),  color: 'bg-blue-500' },
                   { label: 'Discounts',           value: parseFloat(pnl.revenue.discounts),      color: 'bg-yellow-500' },
                   { label: 'COGS',                value: parseFloat(pnl.cost_of_goods_sold),     color: 'bg-red-500' },

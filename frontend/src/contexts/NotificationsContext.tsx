@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useRef, useState, useCallback } f
 import toast from 'react-hot-toast'
 import { billApi, customerApi, inventoryApi, orgApi, payrollApi, purchaseApi, salesApi } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
+import { useModuleAccess } from '@/hooks/useModuleAccess'
 
 export interface StockAlert {
   id: string
@@ -147,6 +148,15 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
   const organisationId = useAuthStore((s) => s.organisation?.id)
   const memberRole = useAuthStore((s) => s.memberRole)
+  // Background alert checks only ask for what this member may see. Asking for
+  // the rest produced a red "no access" pop-up per refused request on every
+  // refresh, for team members who simply have fewer modules.
+  const canInventory = useModuleAccess('inventory').canView
+  const canSales = useModuleAccess('sales').canView
+  const canBills = useModuleAccess('bills').canView
+  const canPayroll = useModuleAccess('payroll').canView
+  const canCustomers = useModuleAccess('customers').canView
+  const canPurchases = useModuleAccess('purchases').canView
   const [alerts, setAlerts] = useState<StockAlert[]>([])
   const [overdueAlerts, setOverdueAlerts] = useState<OverdueAlert[]>([])
   const [expiryAlerts, setExpiryAlerts] = useState<ExpiryAlert[]>([])
@@ -167,17 +177,18 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
   const poll = useCallback(async () => {
     if (!isAuthenticated || !organisationId) return
     try {
+      const gate = (ok: boolean, call: () => Promise<any>) => (ok ? call() : Promise.reject(new Error('no access')))
       const [stockData, overdueData, batchData, billDueData, payrollData, customerDueData, etaData, customerOutstandingData] = await Promise.allSettled([
-        inventoryApi.lowStock({ page_size: 20 }),
-        salesApi.invoices({ status: 'overdue', page_size: 10 }),
-        inventoryApi.batches({ page_size: 30 }),
-        billApi.list({ due_date_from: today, due_date_to: in7Days, status: 'approved', page_size: 10 }),
-        payrollApi.runs({ page_size: 5 }),
+        gate(canInventory, () => inventoryApi.lowStock({ page_size: 20 })),
+        gate(canSales, () => salesApi.invoices({ status: 'overdue', page_size: 10 })),
+        gate(canInventory, () => inventoryApi.batches({ page_size: 30 })),
+        gate(canBills, () => billApi.list({ due_date_from: today, due_date_to: in7Days, status: 'approved', page_size: 10 })),
+        gate(canPayroll, () => payrollApi.runs({ page_size: 5 })),
         // Invoices on credit / partially paid due within the next 7 days
-        salesApi.invoices({ due_date_from: today, due_date_to: in7Days, page_size: 10 }),
-        purchaseApi.etaAlerts(),
+        gate(canSales, () => salesApi.invoices({ due_date_from: today, due_date_to: in7Days, page_size: 10 })),
+        gate(canPurchases, () => purchaseApi.etaAlerts()),
         // Customers with any outstanding balance yet to pay (account-level, not tied to a single invoice's due date)
-        customerApi.list({ has_outstanding: true, ordering: '-outstanding_balance', page_size: 15 }),
+        gate(canCustomers, () => customerApi.list({ has_outstanding: true, ordering: '-outstanding_balance', page_size: 15 })),
       ])
 
       if (stockData.status === 'fulfilled') {
@@ -364,7 +375,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     } catch {
       // Silently ignore poll failures
     }
-  }, [isAuthenticated])
+  }, [isAuthenticated, canInventory, canSales, canBills, canPayroll, canCustomers, canPurchases])
 
   // Clear all stale alerts immediately when the org or auth state changes so
   // a previous user's notifications are never visible under a different context.

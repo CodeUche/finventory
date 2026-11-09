@@ -18,6 +18,7 @@ import logging
 import re
 
 from apps.core.exceptions import TenantViolationError
+from apps.core.export_safety import csv_safe_row, neutralise_workbook
 
 logger = logging.getLogger(__name__)
 
@@ -209,7 +210,7 @@ class ExportMixin:
                         for part in field.split('__'):
                             val = getattr(val, part, '') if val is not None else ''
                         row.append(val if val is not None else '')
-                writer.writerow(row)
+                writer.writerow(csv_safe_row(row))
             return response
 
         # XLSX
@@ -245,6 +246,7 @@ class ExportMixin:
             ws.column_dimensions[col[0].column_letter].width = min(max_len + 4, 40)
 
         buf = io.BytesIO()
+        neutralise_workbook(wb)
         wb.save(buf)
         buf.seek(0)
         response = HttpResponse(buf.read(), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')

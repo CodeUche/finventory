@@ -17,7 +17,13 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.permissions import IsManagerOrSuperuser, IsStaff
+from apps.core.permissions import IsManagerOrSuperuser, IsStaff, requires_module
+
+# The owner's per-person "Reports" tick. Without it these views checked only
+# role, so a team member refused /customers/ and /sales/invoices/ could read
+# the same customers (names, emails, phones, balances) and sales through the
+# report endpoints instead. See requires_module in apps/core/permissions.py.
+_ModAccess_reports = requires_module("reports")
 
 from .exporters import _org_display_name, _write_report_sheet, dispatch_export, flatten_for_export
 from .period_utils import period_label, resolve_period
@@ -32,7 +38,7 @@ class BaseDateRangeView(APIView):
     provides a helper for optionally returning an export file instead of JSON.
     """
 
-    permission_classes = [IsAuthenticated, IsStaff]
+    permission_classes = [IsAuthenticated, IsStaff, _ModAccess_reports]
 
     def get_organisation(self):
         """
@@ -203,9 +209,11 @@ class ProfitAndLossView(BaseDateRangeView):
         def _rows(d):
             rev = d.get("revenue", {})
             return [
-                ["Gross Sales", rev.get("gross_sales", 0)],
-                ["Tax Collected", rev.get("tax_collected", 0)],
-                ["Discounts", rev.get("discounts", 0)],
+                ["Sales (excl. VAT)", rev.get("sales_excl_vat", 0)],
+                ["Less: Sales Returns", rev.get("returns", 0)],
+                ["Net Sales", rev.get("gross_sales", 0)],
+                ["VAT Collected (owed, not income)", rev.get("tax_collected", 0)],
+                ["Discounts Given", rev.get("discounts", 0)],
                 ["Cost of Goods Sold", d.get("cost_of_goods_sold", 0)],
                 ["Gross Profit", d.get("gross_profit", 0)],
                 ["Gross Margin %", d.get("gross_margin_pct", 0)],
@@ -843,7 +851,7 @@ class ReportBulkExportView(BaseDateRangeView):
     IsStaff that plain report viewing uses.
     """
 
-    permission_classes = [IsAuthenticated, IsManagerOrSuperuser]
+    permission_classes = [IsAuthenticated, IsManagerOrSuperuser, _ModAccess_reports]
 
     def post(self, request):
         keys = request.data.get("keys")
@@ -929,6 +937,8 @@ class ReportBulkExportView(BaseDateRangeView):
                 title=s["label"], subtitle=subtitle, org_name=org_name, totals=s["totals"],
             )
         buf = io.BytesIO()
+        from apps.core.export_safety import neutralise_workbook
+        neutralise_workbook(wb)
         wb.save(buf)
         return buf.getvalue()
 
@@ -955,6 +965,8 @@ class ReportBulkExportView(BaseDateRangeView):
                     title=s["label"], subtitle=subtitle, org_name=org_name, totals=s["totals"],
                 )
                 sheet_buf = io.BytesIO()
+                from apps.core.export_safety import neutralise_workbook
+                neutralise_workbook(wb)
                 wb.save(sheet_buf)
                 arcname = _unique_sheet_name(s["key"], used_names, ext=".xlsx")
                 zf.writestr(arcname, sheet_buf.getvalue())

@@ -15,6 +15,9 @@ from decimal import Decimal
 from django.db import transaction
 from django.db.models import Sum
 
+from apps.core.utils import round_money
+from apps.sales.services import SaleService
+
 from .models import Storefront, StorefrontOrder, StorefrontOrderItem
 
 logger = logging.getLogger(__name__)
@@ -54,7 +57,7 @@ class StorefrontService:
         products = (
             Product.objects
             .filter(organisation=shop.organisation, is_active=True, is_published=True)
-            .select_related("category")
+            .select_related("category", "organisation", "tax_class")
             .order_by("name")
         )
         stock = {
@@ -136,12 +139,19 @@ class StorefrontService:
         subtotal = ZERO
         for product_id, quantity in wanted.items():
             product = products[product_id]
-            price = Decimal(str(product.selling_price or 0))
-            line_total = (price * quantity).quantize(Decimal("0.01"))
+            net_price = Decimal(str(product.selling_price or 0))
+            rate = SaleService.default_tax_rate(product)
+            line_net = round_money(Decimal(str(quantity)) * net_price)
+            # What the customer pays, VAT included, worked out by the SAME
+            # function the invoice uses, so the shop and the invoice cannot
+            # disagree (NTA 2025 values the price paid as including the VAT).
+            vat, line_total = SaleService.apply_tax(product, line_net, rate)
             StorefrontOrderItem.objects.create(
                 organisation=shop.organisation, order=order, product=product,
                 product_name=product.name, quantity=quantity,
-                unit_price=price, line_total=line_total,
+                unit_price=round_money(line_total / Decimal(str(quantity)), 4) if quantity else line_total,
+                line_total=line_total,
+                net_unit_price=net_price, tax_rate=rate, vat_amount=vat,
             )
             subtotal += line_total
 
@@ -194,14 +204,32 @@ class StorefrontService:
 
     @staticmethod
     def _lines(order: StorefrontOrder) -> list[dict]:
-        return [
-            {
-                "product_id": str(item.product_id),
-                "quantity": item.quantity,
-                "unit_price": item.unit_price,
-            }
-            for item in order.items.all() if item.product_id
-        ]
+        """Invoice lines that reproduce exactly what the customer was shown.
+
+        New orders copy the price and VAT rate recorded at order time. Orders
+        placed before VAT-inclusive display stored the pre-VAT price as what
+        the customer saw, so the invoice used to add VAT on top of it; for
+        those, the VAT is taken out of the total they were shown instead.
+        """
+        lines = []
+        for item in order.items.all():
+            if not item.product_id:
+                continue
+            if item.tax_rate is not None:
+                lines.append({
+                    "product_id": str(item.product_id), "quantity": item.quantity,
+                    "unit_price": item.net_unit_price, "tax_rate": item.tax_rate,
+                })
+                continue
+            rate = SaleService.default_tax_rate(item.product)
+            shown = Decimal(str(item.unit_price))
+            exclusive = item.product.tax_type != "inclusive"
+            net = round_money(shown / (Decimal("1") + rate / Decimal("100")), 4) if (rate > 0 and exclusive) else shown
+            lines.append({
+                "product_id": str(item.product_id), "quantity": item.quantity,
+                "unit_price": net, "tax_rate": rate,
+            })
+        return lines
 
     @staticmethod
     def _to_invoice(order: StorefrontOrder, user=None):
@@ -223,6 +251,10 @@ class StorefrontService:
             payment_method="credit",
             notes=f"Storefront order {order.reference}",
             sold_by="Storefront",
+            # The delivery charge the customer agreed to at checkout. It was
+            # left off, so the merchant's invoice silently dropped it: an order
+            # shown as 3,000 + 500 delivery was invoiced with no delivery.
+            shipping_amount=max(order.total - order.subtotal, ZERO),
         )
 
     @staticmethod
@@ -238,28 +270,58 @@ class StorefrontService:
         )
 
     @staticmethod
-    def _customer_for(order: StorefrontOrder):
-        """Reuse a customer on the phone number, otherwise create one.
+    def normalise_phone(raw: str) -> str:
+        """Digits only, in Nigerian international form (234...), so "0803 111
+        2222", "+234 803 111 2222" and "2348031112222" compare equal. Anything
+        that is not a recognisable Nigerian mobile keeps its digits unchanged."""
+        import re
+        digits = re.sub(r"\D", "", raw or "")
+        if digits.startswith("234") and len(digits) == 13:
+            return digits
+        if digits.startswith("0") and len(digits) == 11:
+            return "234" + digits[1:]
+        if len(digits) == 10 and digits[0] in "789":
+            return "234" + digits
+        return digits
 
-        Matching on phone keeps a repeat buyer as one customer rather than a
-        new record per order, which is what makes a statement meaningful.
+    @staticmethod
+    def normalise_name(raw: str) -> str:
+        import re
+        return re.sub(r"[^a-z0-9]+", " ", (raw or "").lower()).strip()
+
+    @staticmethod
+    def _customer_for(order: StorefrontOrder):
+        """Reuse a customer only when the phone number AND the name match.
+
+        Matching on phone alone let an anonymous buyer type someone else's
+        number and have the order, as money owed, booked to that person's
+        account. A duplicate customer is a small nuisance; debt on the wrong
+        person is not. When the phone belongs to a different name a new
+        customer is created and the merchant is told who else uses the number.
         """
         from apps.customers.models import Customer
 
-        phone = (order.customer_phone or "").strip()
+        phone = StorefrontService.normalise_phone(order.customer_phone)
+        name = StorefrontService.normalise_name(order.customer_name)
+        also_used_by = ""
         if phone:
-            existing = Customer.objects.filter(
-                organisation=order.organisation, phone=phone,
-            ).first()
-            if existing:
-                return existing
+            for existing in Customer.objects.filter(
+                organisation=order.organisation, phone__contains=phone[-4:],
+            ):
+                if StorefrontService.normalise_phone(existing.phone) != phone:
+                    continue
+                if StorefrontService.normalise_name(existing.name) == name:
+                    return existing
+                also_used_by = also_used_by or existing.name
         return Customer.objects.create(
             organisation=order.organisation,
             code=f"WEB-{order.reference}",
             name=order.customer_name or "Storefront customer",
-            phone=phone,
+            phone=(order.customer_phone or "").strip(),
             email=order.customer_email or "",
             address=order.delivery_address or "",
+            notes=(f"Phone number also used by existing customer \"{also_used_by}\" - "
+                   f"not linked automatically." if also_used_by else ""),
         )
 
     @staticmethod

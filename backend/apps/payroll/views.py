@@ -794,12 +794,14 @@ class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                     {'error': 'This payroll must be submitted for approval first.'},
                     status=400,
                 )
-        # Segregation of duties: the person who submitted cannot approve
-        if run.submitted_by and run.submitted_by == request.user:
-            return Response(
-                {'error': 'You cannot approve a payroll run you submitted. A different owner or admin must approve.'},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+        # Segregation of duties, one rule everywhere (apps/core/approvals.py):
+        # the submitter may approve only when nobody else can.
+        from apps.core.approvals import check_approval
+        try:
+            check_approval(run.organisation, run.submitted_by, request.user, "payroll run",
+                           object_id=run.id, model_name="PayrollRun", request=request)
+        except ValueError as e:
+            return Response({'error': str(e)}, status=status.HTTP_403_FORBIDDEN)
         run.status = PayrollRun.APPROVED
         run.approved_by = request.user
         run.save()
@@ -830,7 +832,20 @@ class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             run.status = PayrollRun.PAID
             run.payment_date = request.data.get('payment_date', timezone.now().date())
             run.save()
-            run.payslips.filter(status=PayslipLine.CALCULATED).update(status=PayslipLine.PAID)
+            # A payslip whose Paystack transfer is known to have failed did not
+            # actually reach the employee — marking it PAID anyway would hide
+            # that it still needs a manual payment or a retried transfer. It
+            # stays CALCULATED (visible via transfer_status='failed') while the
+            # rest of the run, which did get paid, moves on.
+            run.payslips.filter(status=PayslipLine.CALCULATED).exclude(
+                transfer_status=PayslipLine.TRANSFER_FAILED
+            ).update(status=PayslipLine.PAID)
+        # Money has now gone out: clear Net Salaries Payable against Bank.
+        from apps.accounting.services import AccountingService, safe_post_gl
+        safe_post_gl(
+            AccountingService.post_payroll_payment_journal, run.organisation, run, request.user,
+            model_instance=run,
+        )
         return Response(PayrollRunSerializer(run).data)
 
     @action(detail=True, methods=['post'])
@@ -1704,6 +1719,8 @@ class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
         # ── Serialize and respond ────────────────────────────────────────────────
         buf = io.BytesIO()
+        from apps.core.export_safety import neutralise_workbook
+        neutralise_workbook(wb)
         wb.save(buf)
         buf.seek(0)
 
@@ -2678,7 +2695,17 @@ class EmployeeBenefitViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 
 class AdvanceRequestViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     serializer_class = AdvanceRequestSerializer
-    permission_classes = [IsAuthenticated, IsStaff, _PlanPayroll]
+    # _HRAccess: every advance names an employee and their accrued pay. Without
+    # the tick check, a staff member refused the staff list could still read
+    # pay figures through eligibility, raise an advance for anyone, and —
+    # with approve open at staff level — disburse it themselves.
+    permission_classes = [IsAuthenticated, IsStaff, _PlanPayroll, _HRAccess]
+
+    def get_permissions(self):
+        """Disbursing pay is a manager decision, same as EmployeeLoanViewSet."""
+        if self.action in ('approve', 'reject'):
+            return [IsAuthenticated(), IsManager(), _PlanPayroll(), _HRAccess()]
+        return super().get_permissions()
 
     def get_queryset(self):
         org = self._get_organisation()
@@ -2727,6 +2754,12 @@ class AdvanceRequestViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         advance = self.get_object()
         if advance.status != AdvanceRequest.PENDING:
             return Response({'error': 'Only pending advances can be approved.'}, status=400)
+        if advance.employee.user_id and advance.employee.user_id == request.user.id:
+            # The approval step is a second pair of eyes — see _is_own_loan.
+            return Response(
+                {'error': 'You cannot approve your own advance. Ask another manager.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         can_fund, reason = EWAService.can_employer_fund(advance.organisation, advance.amount)
         if not can_fund:

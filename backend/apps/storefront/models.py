@@ -150,8 +150,18 @@ class StorefrontOrderItem(TenantAwareModel):
     )
     product_name = models.CharField(max_length=255)
     quantity = models.DecimalField(max_digits=12, decimal_places=2, default=1)
+    # unit_price / line_total are what the customer sees and pays: VAT included.
     unit_price = MoneyField(default=0)
     line_total = MoneyField(default=0)
+    # The product's own price and VAT rate as they stood at order time, and the
+    # VAT inside line_total. The invoice copies these instead of recalculating
+    # from the live product, so a price or tax change between ordering and
+    # acceptance cannot make the invoice differ from what the customer agreed.
+    # tax_rate is NULL on orders placed before VAT-inclusive display (the other
+    # two read 0 there): that is how _lines recognises them.
+    net_unit_price = MoneyField(null=True, blank=True)
+    tax_rate = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    vat_amount = MoneyField(default=0)
 
     class Meta(TenantAwareModel.Meta):
         ordering = ["created_at"]

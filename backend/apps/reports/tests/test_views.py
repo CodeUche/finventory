@@ -25,7 +25,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from apps.authentication.models import User
-from apps.tenancy.models import Organisation, Membership
+from apps.tenancy.models import Organisation, Membership, ModulePermission
 
 
 # ─── Fixtures ────────────────────────────────────────────────────────────────
@@ -57,12 +57,17 @@ def _make_accountant(org, suffix=""):
         last_name="User",
         is_verified=True,
     )
-    Membership.objects.create(
+    membership = Membership.objects.create(
         user=user,
         organisation=org,
         role="accountant",
         is_active=True,
     )
+    # Below admin, access follows the owner's per-person ticks, not the role:
+    # an accountant reaches reports because they were granted Reports. Without
+    # the tick the server now refuses, as the browser already did — see
+    # ReportsModuleAccessTests in apps/core/test_module_access.py.
+    ModulePermission.objects.create(membership=membership, module="reports", access_level="view")
     return user
 
 

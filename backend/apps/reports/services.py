@@ -34,6 +34,12 @@ def _date_filter(qs, field: str, date_from: Optional[date], date_to: Optional[da
     return qs
 
 
+# Every invoice the ledger has posted a sale for. "returned" is included: a fully
+# returned invoice keeps its sale in its own month and its return in the month
+# of the return, exactly as the ledger does.
+POSTED_SALE_STATUSES = ["paid", "confirmed", "partially_paid", "credit", "overdue", "returned"]
+
+
 class ReportService:
 
     # ─── Sales Reports ────────────────────────────────────────────────────────
@@ -98,9 +104,12 @@ class ReportService:
             qs.values("product__id", "product__name", "product__sku")
             .annotate(
                 total_quantity=Sum("quantity"),
-                total_revenue=Sum("line_total"),
+                # line_total carries the line's VAT (added on top, or inside an
+                # inclusive price); tax_amount is that VAT either way. VAT is
+                # owed to the tax authority, so it is neither revenue nor margin.
+                total_revenue=Sum("line_total") - Sum("tax_amount"),
                 total_cogs=Sum("cost_of_goods"),
-                gross_profit=Sum("line_total") - Sum("cost_of_goods"),
+                gross_profit=Sum("line_total") - Sum("tax_amount") - Sum("cost_of_goods"),
             )
             .order_by("-total_revenue")[:limit]
         )
@@ -118,40 +127,63 @@ class ReportService:
         ]
 
     @staticmethod
+    def _net_sales_by_customer(organisation, date_from, date_to) -> dict:
+        """{customer id (None = walk-in): net sales} - VAT-exclusive, after returns.
+
+        The same basis as the Profit & Loss: invoices by issue date, less returns
+        by return date, so every customer's figure plus the walk-in row adds up
+        to the P&L's net sales exactly. "Billed" amounts (incl. VAT) belong to
+        collecting money; this is for judging which customers matter.
+        """
+        from apps.sales.models import Invoice, SaleReturnItem
+
+        inv = Invoice.objects.filter(organisation=organisation, status__in=POSTED_SALE_STATUSES)
+        inv = _date_filter(inv, "issue_date", date_from, date_to)
+        out = {}
+        for r in inv.values("customer_id").annotate(t=Sum("total_amount"), v=Sum("tax_amount")):
+            out[r["customer_id"]] = (r["t"] or Decimal("0")) - (r["v"] or Decimal("0"))
+        ret = SaleReturnItem.objects.filter(
+            organisation=organisation, sale_return__invoice__status__in=POSTED_SALE_STATUSES,
+        )
+        ret = _date_filter(ret, "sale_return__return_date", date_from, date_to)
+        for r in ret.values("sale_return__invoice__customer_id").annotate(t=Sum("refund_amount"), v=Sum("tax_refund")):
+            key = r["sale_return__invoice__customer_id"]
+            out[key] = out.get(key, Decimal("0")) - ((r["t"] or Decimal("0")) - (r["v"] or Decimal("0")))
+        return out
+
+    @staticmethod
     def top_customers(
         organisation,
         date_from: Optional[date],
         date_to: Optional[date],
         limit: int = 10,
     ) -> list[dict]:
-        """Top N customers by revenue."""
+        """Top N customers, ranked by net sales (excl. VAT, after returns).
+
+        `revenue` is what they were billed (incl. VAT); `net_sales` is what the
+        business earned from them, on the Profit & Loss basis.
+        """
         from apps.sales.models import Invoice
 
+        net = ReportService._net_sales_by_customer(organisation, date_from, date_to)
         qs = Invoice.objects.filter(
-            organisation=organisation,
-            status__in=["paid", "confirmed", "partially_paid", "credit", "overdue"],
-            customer__isnull=False,
+            organisation=organisation, status__in=POSTED_SALE_STATUSES, customer__isnull=False,
         )
         qs = _date_filter(qs, "issue_date", date_from, date_to)
-
-        qs = (
-            qs.values("customer__id", "customer__name", "customer__code")
-            .annotate(
-                total_revenue=Sum("total_amount"),
-                invoice_count=Count("id"),
-            )
-            .order_by("-total_revenue")[:limit]
-        )
-        return [
+        rows = [
             {
                 "customer_id": r["customer__id"],
                 "customer_name": r["customer__name"],
                 "customer_code": r["customer__code"],
                 "revenue": r["total_revenue"],
+                "net_sales": net.get(r["customer__id"], Decimal("0")),
                 "invoice_count": r["invoice_count"],
             }
-            for r in qs
+            for r in qs.values("customer__id", "customer__name", "customer__code")
+            .annotate(total_revenue=Sum("total_amount"), invoice_count=Count("id"))
         ]
+        rows.sort(key=lambda r: r["net_sales"], reverse=True)
+        return rows[:limit]
 
     # ─── P&L Report ──────────────────────────────────────────────────────────
 
@@ -166,13 +198,32 @@ class ReportService:
 
         Revenue − COGS = Gross Profit
         Gross Profit − Operating Expenses = Net Profit
-        """
-        from apps.expenses.models import Expense
-        from apps.sales.models import Invoice, SaleItem
 
+        Revenue is VAT-exclusive and net of sales returns, and COGS is net of
+        the cost of restocked returns — the same figures the ledger posts.
+        It used to be SUM(invoice.total_amount), so output VAT (a liability
+        owed to the tax authority) was reported as income, and returns were
+        never deducted from either revenue or COGS.
+
+        ``revenue.gross_sales`` is that net revenue, because every consumer
+        (dashboard KPIs, ratios, the waterfall) already treats it as "Revenue"
+        and needs Revenue − COGS = Gross Profit to hold. The breakdown sits
+        beside it: ``sales_excl_vat`` (invoiced, before returns) − ``returns``.
+        """
+        from django.db.models import DecimalField, ExpressionWrapper
+
+        from apps.expenses.models import Expense
+        from apps.sales.models import Invoice, SaleItem, SaleReturnItem
+
+        # Every invoice the ledger has posted a sale for. "returned" counts too:
+        # a fully returned invoice keeps its sale in the month it was made and
+        # its return in the month of the return, as the ledger does. Leaving it
+        # out dropped the sale AND the return, so a September sale returned in
+        # October silently vanished from a re-run September P&L.
+        posted_statuses = ["paid", "confirmed", "partially_paid", "credit", "overdue", "returned"]
         rev_qs = Invoice.objects.filter(
             organisation=organisation,
-            status__in=["paid", "confirmed", "partially_paid", "credit", "overdue"],
+            status__in=posted_statuses,
         )
         rev_qs = _date_filter(rev_qs, "issue_date", date_from, date_to)
         revenue_data = rev_qs.aggregate(
@@ -183,7 +234,7 @@ class ReportService:
 
         cogs_qs = SaleItem.objects.filter(
             organisation=organisation,
-            invoice__status__in=["paid", "confirmed", "partially_paid", "credit", "overdue"],
+            invoice__status__in=posted_statuses,
         )
         cogs_qs = _date_filter(cogs_qs, "invoice__issue_date", date_from, date_to)
         cogs_data = cogs_qs.aggregate(total_cogs=Sum("cost_of_goods"))
@@ -196,11 +247,32 @@ class ReportService:
         inc_qs = _date_filter(inc_qs, "expense_date", date_from, date_to)
         income_data = inc_qs.aggregate(total_misc_income=Sum("amount"))
 
-        total_revenue = revenue_data["total_revenue"] or Decimal("0")
-        total_cogs = cogs_data["total_cogs"] or Decimal("0")
+        # Returns are recognised on their own date, as the ledger posts them.
+        ret_qs = SaleReturnItem.objects.filter(
+            organisation=organisation,
+            sale_return__invoice__status__in=posted_statuses,
+        )
+        ret_qs = _date_filter(ret_qs, "sale_return__return_date", date_from, date_to)
+        returns_data = ret_qs.aggregate(
+            refunded=Sum("refund_amount"), tax_refunded=Sum("tax_refund"),
+        )
+        # Cost comes back only when the goods do, at the line's own unit cost.
+        returned_cost = ret_qs.filter(
+            sale_return__restocked=True, original_item__quantity__gt=0,
+        ).aggregate(
+            total=Sum(ExpressionWrapper(
+                F("original_item__cost_of_goods") * F("quantity_returned") / F("original_item__quantity"),
+                output_field=DecimalField(max_digits=20, decimal_places=4),
+            ))
+        )["total"] or Decimal("0")
+
+        tax_collected = revenue_data["total_tax_collected"] or Decimal("0")
+        sales_excl_vat = (revenue_data["total_revenue"] or Decimal("0")) - tax_collected
+        returns = (returns_data["refunded"] or Decimal("0")) - (returns_data["tax_refunded"] or Decimal("0"))
+        total_revenue = sales_excl_vat - returns
+        total_cogs = (cogs_data["total_cogs"] or Decimal("0")) - returned_cost.quantize(Decimal("0.01"))
         total_expenses = expense_data["total_expenses"] or Decimal("0")
         misc_income = income_data["total_misc_income"] or Decimal("0")
-        tax_collected = revenue_data["total_tax_collected"] or Decimal("0")
 
         total_income = total_revenue + misc_income
         gross_profit = total_income - total_cogs
@@ -211,6 +283,8 @@ class ReportService:
             "period_end": date_to,
             "revenue": {
                 "gross_sales": total_revenue,
+                "sales_excl_vat": sales_excl_vat,
+                "returns": returns,
                 "tax_collected": tax_collected,
                 "discounts": revenue_data["total_discounts"] or Decimal("0"),
             },
@@ -242,37 +316,32 @@ class ReportService:
         """All customers with revenue totals for the period (NULL customer = walk-in)."""
         from apps.sales.models import Invoice
 
-        qs = Invoice.objects.filter(
-            organisation=organisation,
-            status__in=["paid", "confirmed", "partially_paid", "credit", "overdue"],
-        )
+        net = ReportService._net_sales_by_customer(organisation, date_from, date_to)
+        qs = Invoice.objects.filter(organisation=organisation, status__in=POSTED_SALE_STATUSES)
         qs = _date_filter(qs, "issue_date", date_from, date_to)
-        qs = (
-            qs.values(
-                "customer__id", "customer__name",
-                "customer__code", "customer__email",
-            )
-            .annotate(
-                total_revenue=Sum("total_amount"),
-                invoice_count=Count("id"),
-                total_paid=Sum("amount_paid"),
-                total_outstanding=Sum("amount_due"),
-            )
-            .order_by("-total_revenue")
+        qs = qs.values("customer__id", "customer__name", "customer__code", "customer__email").annotate(
+            total_revenue=Sum("total_amount"),
+            invoice_count=Count("id"),
+            total_paid=Sum("amount_paid"),
+            total_outstanding=Sum("amount_due"),
         )
-        return [
+        rows = [
             {
                 "customer_id": str(r["customer__id"]) if r["customer__id"] else None,
                 "customer_name": r["customer__name"] or "Walk-in",
                 "customer_code": r["customer__code"],
                 "customer_email": r["customer__email"],
                 "invoice_count": r["invoice_count"],
+                # Billed incl. VAT, shown beside paid / outstanding (also billed amounts).
                 "revenue": r["total_revenue"],
+                "net_sales": net.get(r["customer__id"], Decimal("0")),
                 "amount_paid": r["total_paid"],
                 "amount_outstanding": r["total_outstanding"],
             }
             for r in qs
         ]
+        rows.sort(key=lambda r: r["net_sales"], reverse=True)
+        return rows
 
     @staticmethod
     def customer_invoices(
@@ -320,9 +389,12 @@ class ReportService:
             qs.values("product__id", "product__name", "product__sku")
             .annotate(
                 total_quantity=Sum("quantity"),
-                total_revenue=Sum("line_total"),
+                # line_total carries the line's VAT (added on top, or inside an
+                # inclusive price); tax_amount is that VAT either way. VAT is
+                # owed to the tax authority, so it is neither revenue nor margin.
+                total_revenue=Sum("line_total") - Sum("tax_amount"),
                 total_cogs=Sum("cost_of_goods"),
-                gross_profit=Sum("line_total") - Sum("cost_of_goods"),
+                gross_profit=Sum("line_total") - Sum("tax_amount") - Sum("cost_of_goods"),
             )
             .order_by("-total_revenue")
         )
@@ -910,12 +982,16 @@ class ReportService:
 
         customers = Customer.objects.filter(organisation=organisation)
 
+        # Only invoices that were really sold: it used to count drafts, proformas
+        # and voided invoices in "total_sales".
         sales_map = dict(
-            Invoice.objects.filter(organisation=organisation, customer__in=customers)
+            Invoice.objects.filter(organisation=organisation, customer__in=customers,
+                                   status__in=POSTED_SALE_STATUSES)
             .values("customer_id")
             .annotate(total=Sum("total_amount"))
             .values_list("customer_id", "total")
         )
+        net_map = ReportService._net_sales_by_customer(organisation, None, None)
         payments_map = dict(
             SalePayment.objects.filter(
                 organisation=organisation, invoice__customer__in=customers
@@ -935,7 +1011,8 @@ class ReportService:
                 "phone": c.phone,
                 "outstanding_balance": c.outstanding_balance,
                 "credit_limit": c.credit_limit,
-                "total_sales": sales_map.get(c.id) or Decimal("0"),
+                "total_sales": sales_map.get(c.id) or Decimal("0"),   # billed, incl. VAT
+                "net_sales": net_map.get(c.id) or Decimal("0"),       # excl. VAT, after returns
                 "total_payments": payments_map.get(c.id) or Decimal("0"),
             }
             for c in customers

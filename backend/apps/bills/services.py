@@ -1,6 +1,7 @@
 import logging
 from decimal import Decimal
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 from apps.expenses.models import ExpenseCategory
 from .models import Bill, BillItem, BillPayment
@@ -127,8 +128,26 @@ class BillService:
     @staticmethod
     @transaction.atomic
     def record_payment(bill, amount, payment_date, method, reference, notes, user, wht_rate_id=None):
+        # Re-read with a row lock so two concurrent payments cannot both pass the
+        # balance check, and refuse anything above what is owed — mirrors
+        # SaleService.record_payment. Without this a paid bill accepted further
+        # payments: amount_paid exceeded the total and the excess was posted to
+        # the ledger as cash out against a liability that no longer existed.
+        bill = Bill.objects.select_for_update().get(pk=bill.pk)
         if bill.status == Bill.VOIDED:
             raise ValueError("Cannot pay a voided bill")
+        if bill.status == Bill.PAID:
+            raise ValueError("This bill has already been fully paid.")
+        # Approval exists to stop paying for goods that were not ordered or
+        # received, or at the wrong price. A draft was never posted to AP at
+        # all, so paying it left the supplier with a debit balance and the cost
+        # out of profit and loss.
+        if bill.status not in (Bill.APPROVED, Bill.PARTIALLY_PAID, Bill.OVERDUE):
+            raise ValueError("Approve this bill before paying it.")
+        if amount > bill.amount_due:
+            raise ValueError(
+                f"Payment of {amount} exceeds the outstanding balance of {bill.amount_due}."
+            )
         payment = BillPayment.objects.create(
             organisation=bill.organisation,
             bill=bill,
@@ -175,11 +194,29 @@ class BillService:
     @staticmethod
     @transaction.atomic
     def approve_bill(bill, approver):
-        if bill.created_by and bill.created_by == approver:
-            raise ValueError("You cannot approve a bill you created.")
+        from apps.core.approvals import check_approval
+        check_approval(bill.organisation, bill.created_by, approver, "bill",
+                       object_id=bill.id, model_name="Bill")
         bill.status = Bill.APPROVED
         bill.approved_by = approver
         bill.save()
+
+        # A bill raised from a purchase order already reached the ledger when
+        # the goods were received (po_receipt) or the PO was converted to a bill
+        # (po_convert_to_bill). Posting again on approval, under a different
+        # key the duplicate check cannot see, booked the same supplier invoice
+        # twice: AP doubled, the cost went to General Expense as well as
+        # Inventory, and input VAT was claimed twice. Approval is then a status
+        # change only.
+        if bill.source_purchase_order_id:
+            from apps.accounting.models import JournalEntry
+            po_id = str(bill.source_purchase_order_id)
+            already_posted = JournalEntry.objects.filter(
+                organisation=bill.organisation,
+                source_type__in=("po_receipt", "po_convert_to_bill"),
+            ).filter(Q(source_ref=po_id) | Q(source_ref__startswith=f"{po_id}:")).exists()
+            if already_posted:
+                return bill
 
         # Auto-post journal entry (non-blocking)
         from apps.accounting.services import AccountingService, safe_post_gl

@@ -136,6 +136,8 @@ class TestBillPayments:
 
     def test_partial_payment(self, auth_client, bill):
         """Partial payment should set status=partially_paid."""
+        bill.status = Bill.APPROVED   # a bill is payable only once approved
+        bill.save()
         partial = str(bill.total_amount / 2)
         response = auth_client.post(f"/api/v1/bills/{bill.id}/pay/", {
             "amount": partial,
@@ -148,6 +150,8 @@ class TestBillPayments:
 
     def test_full_payment_marks_paid(self, auth_client, bill):
         """Paying the full amount_due should transition to paid."""
+        bill.status = Bill.APPROVED   # a bill is payable only once approved
+        bill.save()
         response = auth_client.post(f"/api/v1/bills/{bill.id}/pay/", {
             "amount": str(bill.total_amount),
             "payment_date": str(date.today()),
@@ -156,6 +160,15 @@ class TestBillPayments:
         assert response.status_code in (200, 201)
         bill.refresh_from_db()
         assert bill.status == Bill.PAID
+
+    def test_draft_bill_cannot_be_paid(self, auth_client, bill):
+        """A bill nobody has approved is not payable."""
+        response = auth_client.post(f"/api/v1/bills/{bill.id}/pay/", {
+            "amount": "1000",
+            "payment_date": str(date.today()),
+            "method": BillPayment.CASH,
+        }, format="json")
+        assert response.status_code in (400, 422)
 
     def test_payment_amount_must_be_positive(self, auth_client, bill):
         """Zero or negative payment amount should return 400."""

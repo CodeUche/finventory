@@ -226,3 +226,34 @@ class SupplierImportWithBalancesTests(_PartyImportBase):
         header = res.content.decode("utf-8").splitlines()[0]
         for col in ("opening_balance", "opening_balance_date", "opening_balance_side"):
             self.assertIn(col, header)
+
+
+class ImportFileEncodingTests(_PartyImportBase):
+    """
+    Excel's plain "CSV (Comma delimited)" on Windows writes Windows-1252, and
+    the importer only read UTF-8: a customer called "Café" failed the whole
+    file with "'utf-8' codec can't decode byte 0xe9 in position 77".
+    """
+
+    URL = "/api/v1/import/customers/"
+
+    def _post_bytes(self, content):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        upload = SimpleUploadedFile("customers.csv", content, content_type="text/csv")
+        return self.client.post(self.URL, {"file": upload}, format="multipart")
+
+    def test_windows_1252_csv_from_excel_imports(self):
+        res = self._post_bytes("code,name\nC100,Café Lagos\n".encode("cp1252"))
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertEqual(Customer.objects.get(organisation=self.org, code="C100").name, "Café Lagos")
+
+    def test_utf8_with_bom_still_imports(self):
+        res = self._post_bytes("\ufeffcode,name\nC101,Ọ̀ṣun Stores\n".encode("utf-8"))
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertEqual(Customer.objects.get(organisation=self.org, code="C101").name, "Ọ̀ṣun Stores")
+
+    def test_a_non_csv_file_gets_a_plain_message(self):
+        res = self._post_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + bytes(range(256)))
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("CSV UTF-8", str(res.data))
+        self.assertNotIn("codec", str(res.data))

@@ -1102,8 +1102,9 @@ class LeaveEncashmentSettlementGLTests(TestCase):
     Worked example from the review: March — 10 days accrue at a daily rate of
     10,000 (gross salary 260,000 / 26) — true-up posts DR Expense 100,000 /
     CR 2850 100,000, so the BS liability is 100,000. June — 5 of those days
-    are encashed for 50,000. After the fix, that 50,000 must post as a
-    liability settlement (DR 2850 / CR Bank), leaving the BS liability at
+    are encashed for 50,000. That 50,000 must post as a liability settlement
+    (DR 2850 / CR Net Salaries Payable — not Bank: approval is a decision,
+    not a payment, no cash has moved yet), leaving the BS liability at
     exactly 50,000 for the 5 still-unencashed days, with Salaries & Wages
     Expense not double-hit for the encashed portion.
     """
@@ -1213,8 +1214,9 @@ class LeaveEncashmentSettlementGLTests(TestCase):
         )
 
         # The dedicated settlement entry itself must be a clean, self-balancing
-        # DR 2850 / CR Bank for exactly 50,000 — separate from the payroll
-        # journal's own gross-expense entry.
+        # DR 2850 / CR Net Salaries Payable for exactly 50,000 — separate from
+        # the payroll journal's own gross-expense entry, and crediting the
+        # payable, not Bank: no cash has moved at approval.
         from apps.accounting.models import JournalEntry
         settlement = JournalEntry.objects.get(
             organisation=self.org, source_type='leave_encashment', source_ref=str(run.id),
@@ -1225,7 +1227,53 @@ class LeaveEncashmentSettlementGLTests(TestCase):
         credit_line = next(l for l in settlement_lines if l.credit > 0)
         self.assertEqual(debit_line.account.code, "2850")
         self.assertEqual(debit_line.debit, Decimal("50000.00"))
+        self.assertEqual(credit_line.account.code, self.AccountingService.net_salaries_payable_account(self.org).code)
         self.assertEqual(credit_line.credit, Decimal("50000.00"))
+
+        # And Bank must be completely untouched by approval — the whole point
+        # of the fix: cash only moves when the run is actually paid.
+        from apps.accounting.services import AccountMappingService
+        bank_acct = AccountMappingService.resolve(self.org, 'bank_account')
+        self.assertEqual(self._balance_of(bank_acct), Decimal("0"))
+
+    def test_paying_the_run_clears_the_full_net_pay_including_encashment(self):
+        """Approval owes the FULL total_net via Net Salaries Payable (ordinary
+        net pay + the encashment portion, both now routed through the
+        payable, neither through Bank). Paying the run must clear that whole
+        liability in one go and credit Bank for the whole amount — not the
+        old total_net-minus-encashment, which would leave the encashment
+        portion owed forever with no Bank movement to ever settle it."""
+        balance = LeaveService.get_or_create_balance(self.emp, self.leave_type, 2026)
+        balance.accrued_days = Decimal("10")
+        balance.save(update_fields=["accrued_days"])
+        self.AccountingService.post_leave_accrual_true_up(self.org, date(2026, 3, 1))
+        LeaveEncashmentService.request_encashment(
+            self.emp, self.leave_type, Decimal("5"), reason="Encash 5 days"
+        )
+        run = _run(self.org, self.user, year=2026, month=6)
+        PayrollService.run_payroll(run)
+        run.refresh_from_db()
+        self.AccountingService.post_payroll_journal(self.org, run, user=self.user)
+
+        payable = self.AccountingService.net_salaries_payable_account(self.org)
+        self.assertEqual(self._balance_of(payable, 'credit'), Decimal(str(run.total_net)))
+
+        from apps.accounting.services import AccountMappingService
+        bank_acct = AccountMappingService.resolve(self.org, 'bank_account')
+        run.payment_date = date(2026, 6, 28)
+        run.save(update_fields=['payment_date'])
+        entry = self.AccountingService.post_payroll_payment_journal(self.org, run, user=self.user)
+        self.assertIsNotNone(entry)
+
+        self.assertEqual(self._balance_of(payable, 'credit'), Decimal("0"))  # fully cleared
+        self.assertEqual(self._balance_of(bank_acct), -Decimal(str(run.total_net)))  # cash out
+
+        # Idempotent: calling it again returns the same already-posted entry
+        # (post_journal_entry's own source_type/source_ref dedup), not a
+        # second one — Bank must not move twice.
+        again = self.AccountingService.post_payroll_payment_journal(self.org, run, user=self.user)
+        self.assertEqual(again.id, entry.id)
+        self.assertEqual(self._balance_of(bank_acct), -Decimal(str(run.total_net)))
 
     def test_true_up_does_not_double_relieve_days_already_settled_by_encashment(self):
         """

@@ -585,3 +585,65 @@ class ConvertToBillTests(TestCase):
         bill = Bill.objects.get(organisation=self.org, source_purchase_order=po)
         data = BillSerializer(bill).data
         self.assertEqual(data["source_po_number"], po.po_number)
+
+
+class PODeliveryChargeTests(TestCase):
+    """The PO's delivery charge was left off the bill and the ledger when goods
+    were received (but included when a PO was converted to a bill first). It is
+    part of the cost of what was bought: it belongs on the bill and in the
+    stock's cost."""
+
+    def setUp(self):
+        from apps.accounting.tests import _auth_client, _make_org, _make_user, _upgrade_to_business
+        from apps.inventory.models import Product, Warehouse
+        from apps.suppliers.models import Supplier
+        from apps.purchases.models import PurchaseOrder, PurchaseOrderItem
+        from datetime import date
+
+        self.user = _make_user("po_delivery@example.com")
+        self.org = _make_org(self.user, "PO Delivery Org")
+        _upgrade_to_business(self.org)
+        self.wh = Warehouse.objects.create(organisation=self.org, name="Main", is_default=True)
+        supplier = Supplier.objects.create(organisation=self.org, name="Freight Supplier")
+        self.product = Product.objects.create(organisation=self.org, sku="PD1", name="Goods",
+                                              cost_price=Decimal("1100"), selling_price=Decimal("1500"))
+        self.po = PurchaseOrder.objects.create(
+            organisation=self.org, supplier=supplier, warehouse=self.wh,
+            po_number=PurchaseOrder.generate_number(self.org), order_date=date.today(),
+            subtotal=Decimal("22000"), tax_amount=Decimal("1650"), delivery_amount=Decimal("500"),
+            total_amount=Decimal("24150"), created_by=self.user,
+        )
+        self.item = PurchaseOrderItem.objects.create(
+            organisation=self.org, purchase_order=self.po, product=self.product,
+            quantity_ordered=Decimal("20"), unit_cost=Decimal("1100"), line_total=Decimal("22000"),
+            tax_rate=Decimal("7.5"),
+        )
+
+    def _receive(self, qty):
+        from apps.purchases.services import PurchaseService
+        return PurchaseService.receive_purchase_order(
+            self.po, [{"item_id": str(self.item.id), "quantity_received": str(qty)}], self.user)
+
+    def test_the_bill_carries_the_delivery_charge_across_partial_receipts(self):
+        from apps.bills.models import Bill
+        self._receive(8)
+        self._receive(12)
+        bill = Bill.objects.get(organisation=self.org, source_purchase_order=self.po)
+        self.assertEqual(bill.total_amount, Decimal("24150"))   # 22,000 + 500 delivery + 1,650 VAT
+        self.assertEqual(bill.subtotal, Decimal("22500"))
+
+    def test_the_ledger_holds_inventory_at_landed_cost(self):
+        from apps.accounting.models import Account
+        from apps.accounting.services import AccountingService
+        self._receive(8)
+        self._receive(12)
+        inventory = Account.objects.get(organisation=self.org, code="1200")
+        ap = Account.objects.get(organisation=self.org, code="2001")
+        self.assertEqual(AccountingService._ledger_balance(inventory), Decimal("22500"))
+        self.assertEqual(AccountingService._ledger_balance(ap), Decimal("24150"))
+
+    def test_stock_is_costed_with_its_share_of_delivery(self):
+        from apps.inventory.models import StockItem
+        self._receive(20)
+        stock = StockItem.objects.get(organisation=self.org, product=self.product, warehouse=self.wh)
+        self.assertEqual(stock.average_cost.quantize(Decimal("0.01")), Decimal("1125.00"))  # 1,100 + 500/20

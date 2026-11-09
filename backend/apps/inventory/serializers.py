@@ -147,6 +147,9 @@ class ProductSerializer(serializers.ModelSerializer):
             "reorder_level", "max_stock_level", "reorder_quantity", "quantity_in_pack",
             "barcode", "barcode_symbology",
             "is_active", "is_taxable", "tax_class", "tax_type", "costing_method",
+            # Storefront visibility. Was missing, so no screen could set it and
+            # every shop stayed empty: only published products are listed.
+            "is_published",
             "inventory_account", "inventory_account_code", "inventory_account_name",
             "sales_account", "sales_account_code", "sales_account_name",
             "cogs_account", "cogs_account_code", "cogs_account_name",
@@ -302,7 +305,7 @@ class ProductListSerializer(ProductSerializer):
             "brand", "unit_of_measure", "product_type",
             "alcohol_percentage", "volume_ml",
             "cost_price", "owner_cost_price", "selling_price",
-            "reorder_level", "is_active", "is_taxable", "tax_class",
+            "reorder_level", "is_active", "is_taxable", "tax_class", "tax_type",
             "total_stock",
         ]
         read_only_fields = ["id", "total_stock"]

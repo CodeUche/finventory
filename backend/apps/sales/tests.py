@@ -487,6 +487,35 @@ class TaxInclusiveExclusiveTests(TestCase):
         # Customer is charged exactly what was quoted — not 1150 + more tax.
         self.assertAlmostEqual(float(item.line_total), 1150.0, places=2)
 
+    def test_inclusive_invoice_total_is_the_price_not_price_plus_vat_again(self):
+        """
+        Regression: the line was right but the invoice total was
+        subtotal − discount + tax, which adds an inclusive line's VAT a second
+        time. A 1,150 shelf price billed 1,300; paying 1,150 left 150 "owed",
+        and the journal credited 1,150 to revenue with a phantom receivable.
+        """
+        from apps.accounting.models import JournalEntry
+        p = Product.objects.create(
+            organisation=self.org, sku="TT-INCL-TOT", name="Inclusive Total",
+            product_type="service", cost_price=0, selling_price=1150,
+            is_taxable=True, tax_class=self.vat, tax_type="inclusive",
+        )
+        res = self.client.post("/api/v1/sales/invoices/", {
+            "warehouse_id": str(self.warehouse.id), "payment_method": "cash",
+            "items": [{"product_id": str(p.id), "quantity": 1}],
+            "amount_paid": "1150.00",
+        }, format="json")
+        self.assertEqual(res.status_code, 201, res.data)
+        invoice = Invoice.objects.get(id=res.data["id"])
+        self.assertEqual(invoice.total_amount, Decimal("1150"))
+        self.assertEqual(invoice.tax_amount, Decimal("150"))
+        self.assertEqual(invoice.amount_due, Decimal("0"))
+        self.assertEqual(invoice.status, Invoice.Status.PAID)
+
+        entry = JournalEntry.objects.get(organisation=self.org, source_type="sale", source_ref=str(invoice.id))
+        revenue = sum(l.credit for l in entry.lines.all() if l.account.account_type == "revenue")
+        self.assertEqual(revenue, Decimal("1000"))
+
     def test_inclusive_and_exclusive_agree_on_the_customer_facing_total_but_split_differently(self):
         """Same price, same rate — inclusive and exclusive must charge the
         customer differently (that's the whole point), not just relabel the

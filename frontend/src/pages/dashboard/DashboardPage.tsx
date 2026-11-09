@@ -26,6 +26,9 @@ import {
   format, subDays, subMonths, subYears, startOfYear, differenceInDays,
 } from 'date-fns'
 import AIChatModal from '@/components/AIChatModal'
+import ReportsAccessNotice from '@/components/ReportsAccessNotice'
+import { useModuleAccess } from '@/hooks/useModuleAccess'
+import { useAuthStore } from '@/store/authStore'
 import { DesignerIcon } from '@/assets/designer-icons'
 import '@/styles/dashboard.css'
 
@@ -146,9 +149,14 @@ function HealthRatioStrip({
   const gm = parseFloat(pnl.gross_margin_pct ?? 0)
   const nm = parseFloat(pnl.net_margin_pct ?? 0)
 
-  // Customer concentration: top-3 revenue as % of total
-  const top3Revenue = topCustomers.slice(0, 3).reduce((s: number, c: any) => s + parseFloat(c.revenue ?? 0), 0)
+  // Customer concentration: top-3 net sales as % of total net sales. Both sides
+  // are on the Profit & Loss basis (excl. VAT, after returns); the top customers
+  // used to be billed amounts (incl. VAT, before returns) over P&L revenue, which
+  // overstated the share and could push it past 100%. With 5 or fewer named
+  // customers the share only says "how much is not walk-in", so no verdict.
+  const top3Revenue = topCustomers.slice(0, 3).reduce((s: number, c: any) => s + parseFloat(c.net_sales ?? c.revenue ?? 0), 0)
   const concentration = revenue > 0 ? Math.round((top3Revenue / revenue) * 100) : null
+  const fewCustomers = topCustomers.length <= 5
 
   const ratios: {
     label: string; value: string; note: string
@@ -183,9 +191,9 @@ function HealthRatioStrip({
     {
       label: 'Customer Concentration',
       value: concentration != null ? `Top 3 = ${concentration}%` : '—',
-      note: 'Revenue from top 3 customers',
-      // > 50 % in top 3 = concentration risk
-      status: concentration == null ? 'neutral' : concentration <= 40 ? 'good' : concentration <= 60 ? 'warn' : 'bad',
+      note: fewCustomers ? `Net sales; only ${topCustomers.length} named customers, too few to judge` : 'Net sales from top 3 customers',
+      // > 50 % in top 3 = concentration risk (house thresholds, not a published benchmark)
+      status: concentration == null || fewCustomers ? 'neutral' : concentration <= 40 ? 'good' : concentration <= 60 ? 'warn' : 'bad',
     },
   ]
 
@@ -204,7 +212,40 @@ function HealthRatioStrip({
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
+/**
+ * What a team member without module access sees. The dashboard used to load
+ * every widget regardless: a member with no access got ₦0.00 for revenue and
+ * profit, "No invoices yet", quick actions they could not use, and a red "no
+ * access" toast per refused request. ₦0.00 reads as lost data, not as "no
+ * permission".
+ */
 export default function DashboardPage() {
+  const reports = useModuleAccess('reports')
+  const sales = useModuleAccess('sales')
+  const inventory = useModuleAccess('inventory')
+  const { user, organisation } = useAuthStore()
+
+  if (!reports.canView && !sales.canView && !inventory.canView) {
+    return (
+      <div className="ad">
+        <section className="ad-card" style={{ maxWidth: 560, margin: '40px auto', textAlign: 'center' }}>
+          <h1 style={{ fontSize: 22, fontWeight: 700, color: 'var(--ad-title)' }}>
+            Welcome{user?.first_name ? `, ${user.first_name}` : ''}
+          </h1>
+          <p style={{ marginTop: 10, color: 'var(--ad-ink)' }}>
+            You have joined {organisation?.name ?? 'this business'}, but you don&apos;t have access to any areas yet.
+          </p>
+          <p style={{ marginTop: 8, fontSize: 14, color: 'var(--ad-muted)' }}>
+            Ask the business owner to give you access in Settings &gt; Team.
+          </p>
+        </section>
+      </div>
+    )
+  }
+  return <DashboardContent canReports={reports.canView} canSales={sales.canView} canInventory={inventory.canView} />
+}
+
+function DashboardContent({ canReports, canSales, canInventory }: { canReports: boolean; canSales: boolean; canInventory: boolean }) {
   const navigate = useNavigate()
 
   const [period, setPeriod] = useState<PeriodKey>('ytd')
@@ -247,20 +288,24 @@ export default function DashboardPage() {
 
     const { priorFrom, priorTo } = getPriorDateRange(dateFrom, dateTo)
 
+    // A request the member may not make is never sent (so no "no access" toast
+    // and no zero figure pretending to be data); its widget stays empty.
+    const gate = (ok: boolean, call: () => Promise<any>) => (ok ? call() : Promise.reject(new Error('no access')))
+
     const fetchAll = async () => {
       const [
         pnlRes, salesRes, priorSalesRes,
         arRes, apRes, custRes, stockRes, overdueRes, recentRes,
       ] = await Promise.allSettled([
-        reportApi.pnl({ date_from: dateFrom, date_to: dateTo }),
-        reportApi.sales({ date_from: dateFrom, date_to: dateTo, group_by: 'day' }),
-        reportApi.sales({ date_from: priorFrom, date_to: priorTo, group_by: 'day' }),
-        reportApi.arAging(),
-        reportApi.apAging(),
-        reportApi.topCustomers({ date_from: dateFrom, date_to: dateTo, limit: 10 }),
-        inventoryApi.stock(),
-        salesApi.invoices({ status: 'overdue', page_size: 5 }),
-        salesApi.invoices({ page_size: 6, ordering: '-issue_date' }),
+        gate(canReports, () => reportApi.pnl({ date_from: dateFrom, date_to: dateTo })),
+        gate(canReports, () => reportApi.sales({ date_from: dateFrom, date_to: dateTo, group_by: 'day' })),
+        gate(canReports, () => reportApi.sales({ date_from: priorFrom, date_to: priorTo, group_by: 'day' })),
+        gate(canReports, () => reportApi.arAging()),
+        gate(canReports, () => reportApi.apAging()),
+        gate(canReports, () => reportApi.topCustomers({ date_from: dateFrom, date_to: dateTo, limit: 10 })),
+        gate(canInventory, () => inventoryApi.stock()),
+        gate(canSales, () => salesApi.invoices({ status: 'overdue', page_size: 5 })),
+        gate(canSales, () => salesApi.invoices({ page_size: 6, ordering: '-issue_date' })),
       ])
 
       if (pnlRes.status === 'fulfilled')
@@ -313,6 +358,7 @@ export default function DashboardPage() {
 
     // Refresh low stock every 60 s without re-fetching everything
     const interval = setInterval(async () => {
+      if (!canInventory) return
       try {
         const res  = await inventoryApi.stock()
         const d    = res.data
@@ -324,7 +370,7 @@ export default function DashboardPage() {
     }, 60_000)
 
     return () => clearInterval(interval)
-  }, [dateFrom, dateTo, _refreshTick])
+  }, [dateFrom, dateTo, _refreshTick, canReports, canSales, canInventory])
 
   // Fetch FIRS compliance stats once on mount (non-blocking)
   useEffect(() => {
@@ -346,6 +392,7 @@ export default function DashboardPage() {
 
   return (
     <div className="ad">
+      <ReportsAccessNotice />
 
       {/* ── Header ──────────────────────────────────────────────────────────── */}
       <div className="ad-head">

@@ -3,6 +3,7 @@ from datetime import date
 from decimal import Decimal
 from django.db import transaction
 from django.db.models import F, Q, Sum
+from apps.core.utils import round_money
 from .models import Account, AccountType, JournalEntry, JournalLine, FixedAsset, DepreciationEntry, FinancialPeriod, AccountMapping
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,7 @@ COA_SEED = [
     ('2700', 'Accrued Liabilities', AccountType.LIABILITY),
     ('2750', 'ITF Payable', AccountType.LIABILITY),
     ('2850', 'Accrued Leave', AccountType.LIABILITY),
+    ('2210', 'Net Salaries Payable', AccountType.LIABILITY),
     ('2910', 'Employee Benefits Payable', AccountType.LIABILITY),
     ('1450', 'Employee Salary Advances', AccountType.ASSET),
     ('3001', 'Owner Equity', AccountType.EQUITY),
@@ -954,7 +956,13 @@ class AccountingService:
             bal = AccountingService._ledger_balance(acct, as_of=as_of)
             row = {'code': acct.code, 'name': acct.name, 'balance': bal}
             if acct.account_type == AccountType.ASSET:
-                if bal != 0:
+                if acct.code == '1100' and bal < 0:
+                    # Customers have paid more than they owe: that is money owed
+                    # back to them (IFRS for SMEs: advance received is a
+                    # liability), not a negative receivable. Presentation only;
+                    # totals still balance.
+                    liabilities_data.append({'code': acct.code, 'name': 'Customer credit balances', 'balance': -bal})
+                elif bal != 0:
                     assets_data.append(row)
             elif acct.account_type == AccountType.LIABILITY:
                 if bal != 0:
@@ -1217,7 +1225,13 @@ class AccountingService:
                 active_days = days_in_month - pd.day + 1
                 if 0 < active_days < days_in_month:
                     monthly = monthly * Decimal(active_days) / Decimal(days_in_month)
-        return monthly
+        # To the kobo. Reducing balance (and any straight line that does not
+        # divide evenly) produced charges like 16,666.6667 that were posted as
+        # is, so the ledger carried fractions of a kobo (302,379.327 on staging)
+        # and drifted from the register. The caller's clamp to the remaining
+        # depreciable base still makes the final period land exactly.
+        from decimal import ROUND_HALF_UP
+        return monthly.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
     @staticmethod
     def run_depreciation_catch_up(organisation, up_to_year, up_to_month, created_by=None, draft=False):
@@ -1531,6 +1545,67 @@ class AccountingService:
         return grant
 
     @staticmethod
+    def assert_period_open(organisation, entry_date, user, ref='', source=''):
+        """
+        Refuse posting into a locked period unless `user` holds an active
+        posting grant for it (which is then audit-logged). Shared by automatic
+        posting (post_journal_entry) and the manual journal Post/Approve
+        actions, which used to flip a draft to posted without checking.
+        """
+        from .exceptions import PeriodLockedError
+
+        if not entry_date:
+            return
+        locked_period = FinancialPeriod.objects.filter(
+            organisation=organisation,
+            year=entry_date.year,
+            month=entry_date.month,
+            is_locked=True,
+        ).first()
+        if not locked_period:
+            return
+        if AccountingService._has_active_grant(locked_period, user):
+            # Posted into a locked period under an administrator grant — record it.
+            try:
+                from apps.core.models import AuditLog
+                AuditLog.log(
+                    action=AuditLog.UPDATE, user=user, organisation=organisation,
+                    model_name='FinancialPeriod', object_id=str(locked_period.id),
+                    object_repr=str(locked_period),
+                    changes={'event': 'locked_period_post_via_grant', 'ref': ref, 'source': source},
+                )
+            except Exception:
+                pass
+            return
+        raise PeriodLockedError(f"Period {locked_period} is locked. Unlock it before posting.")
+
+    @staticmethod
+    def validate_manual_lines(amounts):
+        """
+        Rules for a hand-entered journal, given (debit, credit) per line.
+
+        The old check let debits and credits differ by up to 0.01 and said
+        nothing about signs, so a journal 1 kobo out, one with negative
+        amounts, one with a debit and a credit on the same line, and an
+        all-zero one were all accepted and posted; the first left the trial
+        balance out by 0.01.
+        """
+        cent = Decimal('0.01')
+        total_debit = total_credit = Decimal('0')
+        for debit, credit in amounts:
+            debit, credit = Decimal(str(debit or 0)), Decimal(str(credit or 0))
+            if debit < 0 or credit < 0:
+                raise ValueError('Amounts cannot be negative. Put the amount in the other column instead.')
+            if debit > 0 and credit > 0:
+                raise ValueError('A line can carry a debit or a credit, not both.')
+            total_debit += debit
+            total_credit += credit
+        if total_debit.quantize(cent) != total_credit.quantize(cent):
+            raise ValueError(f'Journal entry not balanced: debits={total_debit}, credits={total_credit}')
+        if total_debit == 0:
+            raise ValueError('Journal entry has no amounts.')
+
+    @staticmethod
     def post_journal_entry(
         organisation,
         description: str,
@@ -1553,34 +1628,9 @@ class AccountingService:
 
         Raises PeriodLockedError if the entry_date falls in a locked period.
         """
-        from .exceptions import PeriodLockedError
-
-        # Period lock check — honour a time-boxed posting grant for the acting user.
-        if entry_date:
-            locked_period = FinancialPeriod.objects.filter(
-                organisation=organisation,
-                year=entry_date.year,
-                month=entry_date.month,
-                is_locked=True,
-            ).first()
-            if locked_period:
-                if AccountingService._has_active_grant(locked_period, created_by):
-                    # Posted into a locked period under an administrator grant — record it.
-                    try:
-                        from apps.core.models import AuditLog
-                        AuditLog.log(
-                            action=AuditLog.UPDATE, user=created_by, organisation=organisation,
-                            model_name='FinancialPeriod', object_id=str(locked_period.id),
-                            object_repr=str(locked_period),
-                            changes={'event': 'locked_period_post_via_grant', 'ref': ref,
-                                     'source': f'{source_type}/{source_ref}'},
-                        )
-                    except Exception:
-                        pass
-                else:
-                    raise PeriodLockedError(
-                        f"Period {locked_period} is locked. Unlock it before posting."
-                    )
+        AccountingService.assert_period_open(
+            organisation, entry_date, created_by, ref=ref, source=f'{source_type}/{source_ref}',
+        )
 
         # Idempotency: return existing entry if same source already posted
         if source_type and source_ref:
@@ -1592,16 +1642,23 @@ class AccountingService:
             if existing:
                 return existing
 
-        # Filter out zero lines
-        non_zero_lines = [(acct, d, c) for (acct, d, c) in lines if d > 0 or c > 0]
+        # Filter out zero lines, rounding each amount to 2dp first so what gets
+        # balance-checked is exactly what gets posted (upstream float arithmetic
+        # can carry noise past 2dp, e.g. 100.004999999999).
+        non_zero_lines = [
+            (acct, round_money(Decimal(str(d))), round_money(Decimal(str(c))))
+            for (acct, d, c) in lines if d > 0 or c > 0
+        ]
         if not non_zero_lines:
             logger.warning("post_journal_entry: all lines are zero, skipping. ref=%s", ref)
             return None
 
-        # E2: validate debits == credits before committing (raise, don't silently post)
-        total_debits  = sum(Decimal(str(d)) for _, d, _ in non_zero_lines)
-        total_credits = sum(Decimal(str(c)) for _, _, c in non_zero_lines)
-        if abs(total_debits - total_credits) > Decimal('0.01'):
+        # E2: validate debits == credits before committing (raise, don't silently post).
+        # Exact equality, not a tolerance band: a 1-kobo-out entry is a real bug in
+        # the caller, not rounding noise, once each line is already rounded above.
+        total_debits  = sum(d for _, d, _ in non_zero_lines)
+        total_credits = sum(c for _, _, c in non_zero_lines)
+        if total_debits != total_credits:
             raise ValueError(
                 f"Journal entry imbalanced: debits={total_debits}, credits={total_credits} "
                 f"(ref={ref}, source={source_type}/{source_ref})"
@@ -1623,8 +1680,8 @@ class AccountingService:
                 JournalLine.objects.create(
                     journal_entry=entry,
                     account=account,
-                    debit=Decimal(str(debit)),
-                    credit=Decimal(str(credit)),
+                    debit=debit,
+                    credit=credit,
                 )
 
         # Emit audit log
@@ -1917,8 +1974,16 @@ class AccountingService:
         )
 
     @staticmethod
-    def post_credit_payment_journal(organisation, customer, amount: Decimal, user=None, description="", date=None, invoice=None, method="cash"):
-        """DR Cash/Bank → CR Accounts Receivable when a credit customer pays."""
+    def post_credit_payment_journal(organisation, customer, amount: Decimal, user=None, description="", date=None, invoice=None, method="cash", source_ref=None):
+        """DR Cash/Bank → CR Accounts Receivable when a credit customer pays.
+
+        `source_ref` must identify THIS payment. post_journal_entry skips any
+        entry whose source_type+source_ref already exists, so a key shared by
+        several payments (the customer, or an invoice paid in instalments)
+        posts the first one and silently drops every later one — the invoice
+        reads "paid" while Cash and AR never move. Callers pass the payment
+        record's id; without one, each call gets a fresh key.
+        """
         from django.utils import timezone
         zero = Decimal('0')
         amt = Decimal(str(amount))
@@ -1932,7 +1997,9 @@ class AccountingService:
             (ar_acct, zero, amt),     # CR Accounts Receivable
         ]
         ref_date = date or timezone.now().date()
-        source_ref = f"CRPAY-{customer.id}" if not invoice else f"CRPAY-{invoice.id}"
+        if not source_ref:
+            import uuid
+            source_ref = f"CRPAY-{uuid.uuid4().hex}"
         return AccountingService.post_journal_entry(
             organisation,
             description or f"Credit payment – {customer.name}",
@@ -2105,7 +2172,9 @@ class AccountingService:
         CR Employee Loans Receivable       = loan installments recovered
         CR Other Income                    = penalties withheld
         CR Salaries & Wages Expense        = attendance deductions (cost not incurred)
-        CR Bank / Net Pay                  = total_net LESS leave encashment (see below)
+        CR Net Salaries Payable            = total_net LESS leave encashment (see below)
+                                             (Bank is credited when the run is PAID, by
+                                             post_payroll_payment_journal)
 
         Leave encashment (total_encashment) is carved OUT of both the Salaries
         & Wages Expense debit and the Bank/Net-Pay credit here, and posted
@@ -2155,7 +2224,12 @@ class AccountingService:
         salary_acct  = AccountMappingService.resolve(organisation, 'salary_expense_account')
         paye_acct    = AccountMappingService.resolve(organisation, 'paye_account')
         pension_acct = AccountMappingService.resolve(organisation, 'pension_account')
-        bank_acct    = AccountMappingService.resolve(organisation, 'bank_account')
+        # Approval is a decision, not a payment: no money has moved. Net pay is
+        # owed to employees until the run is paid, so it is a liability. It used
+        # to credit Bank here, which put the ledger's Bank ahead of the real
+        # bank statement from approval until the transfer (and hid failed or
+        # skipped transfers, which must stay as money still owed).
+        net_pay_acct = AccountingService.net_salaries_payable_account(organisation)
 
         # Employer-cost accounts (fall back gracefully if not mapped)
         try:
@@ -2179,7 +2253,7 @@ class AccountingService:
             # -- Credit side -------------------------------------------------
             (paye_acct,    zero, paye),            # CR PAYE Payable
             (pension_acct, zero, total_pension),   # CR Pension Payable (employee + employer)
-            (bank_acct,    zero, net),             # CR Bank / Net Pay
+            (net_pay_acct, zero, net),             # CR Net Salaries Payable
         ]
         if nhf > zero:
             lines.append((nhf_acct, zero, nhf))      # CR NHF Payable
@@ -2242,22 +2316,96 @@ class AccountingService:
         return entry
 
     @staticmethod
+    def net_salaries_payable_account(organisation):
+        """Net pay owed to employees. Found by name: 2400 is WHT Payable in the
+        standard chart, so the code alone would mix the two liabilities.
+
+        New orgs get it seeded at 2210 (COA_SEED), its own dedicated code — not
+        shared with POS Tips Payable, which also used to land on 2900 whenever
+        neither had been created yet (see _tips_payable_account). An org that
+        already has a 'Net Salaries Payable' account under the old scheme (2900
+        or one of the fallback codes) keeps using that same account: the name
+        lookup above finds it first, so nothing here renumbers posted data.
+        """
+        name = 'Net Salaries Payable'
+        existing = Account.objects.filter(
+            organisation=organisation, name=name, account_type=AccountType.LIABILITY,
+        ).first()
+        if existing:
+            return existing
+        for code in ('2210', '2900', '2905', '2915', '2920', '2925'):
+            if not Account.objects.filter(organisation=organisation, code=code).exists():
+                return AccountingService._get_or_create_account(
+                    organisation, code, name, AccountType.LIABILITY
+                )
+        raise ValueError('No free account code is left for Net Salaries Payable.')
+
+    @staticmethod
+    def post_payroll_payment_journal(organisation, payroll_run, user=None):
+        """
+        DR Net Salaries Payable / CR Bank when a payroll run is paid.
+
+        Pays the FULL total_net, including any leave-encashment portion: both
+        the ordinary payroll journal and post_leave_encashment_settlement now
+        credit Net Salaries Payable at approval (neither touches Bank), so the
+        whole amount owed is cleared together here, once, when the run is
+        actually paid.
+
+        Runs approved BEFORE Net Salaries Payable existed credited Bank at
+        approval, so there is nothing to clear: those are detected by their
+        journal (no line on the payable account) and skipped, which is what
+        stops Bank being credited twice.
+        """
+        from datetime import date as _date
+        zero = Decimal('0')
+        payable = AccountingService.net_salaries_payable_account(organisation)
+        original = JournalEntry.objects.filter(
+            organisation=organisation, source_type='payroll', source_ref=str(payroll_run.id),
+        ).first()
+        encashment_entry = JournalEntry.objects.filter(
+            organisation=organisation, source_type='leave_encashment', source_ref=str(payroll_run.id),
+        ).first()
+        routed_through_payable = (
+            (original is not None and original.lines.filter(account=payable).exists())
+            or (encashment_entry is not None and encashment_entry.lines.filter(account=payable).exists())
+        )
+        if original is None or not routed_through_payable:
+            return None
+        net = Decimal(str(payroll_run.total_net or 0))
+        if net <= zero:
+            return None
+        pay_date = payroll_run.payment_date
+        if isinstance(pay_date, str):
+            pay_date = _date.fromisoformat(pay_date)
+        return AccountingService.post_journal_entry(
+            organisation,
+            f"Payroll paid {payroll_run.period_year}-{payroll_run.period_month:02d}",
+            pay_date or _date.today(),
+            [(payable, net, zero),
+             (AccountMappingService.resolve(organisation, 'bank_account'), zero, net)],
+            user, ref=f"PAYPAID-{payroll_run.id}",
+            source_type='payroll_payment', source_ref=str(payroll_run.id),
+        )
+
+    @staticmethod
     def post_leave_encashment_settlement(organisation, payroll_run, user=None):
         """
         Settle the leave-encashment portion of a payroll run against the
         Accrued Leave liability, as its own entry separate from the ordinary
         payroll journal's gross-expense entry:
 
-        DR Accrued Leave (2850)   = payroll_run.total_encashment
-        CR Bank                   = payroll_run.total_encashment
+        DR Accrued Leave (2850)         = payroll_run.total_encashment
+        CR Net Salaries Payable         = payroll_run.total_encashment
 
-        This is a liability settlement (cash paid out against a liability
+        This is a liability settlement (relieving the Accrued Leave liability
         already recognised by post_leave_accrual_true_up), not payroll
         expense — post_payroll_journal has already carved this amount out of
-        both its Salaries & Wages Expense debit and its Bank/Net-Pay credit,
-        so this entry supplies the missing Bank credit and relieves 2850 by
-        the same amount, keeping the combined cash movement across both
-        entries equal to total_net.
+        its Salaries & Wages Expense debit and its Net Salaries Payable
+        credit, so this entry supplies the missing payable credit, relieving
+        2850 by the same amount. It credits the payable, not Bank: no cash
+        moves until the run is actually paid (post_payroll_payment_journal),
+        the same reason the ordinary net-pay credit moved off Bank — an
+        approval is a decision, not a payment.
 
         Also decrements PayrollSettings.leave_accrual_last_posted_amount by
         the settled amount, keeping post_leave_accrual_true_up's baseline in
@@ -2278,14 +2426,14 @@ class AccountingService:
         from apps.payroll.models import PayrollSettings
         from apps.payroll.services import get_settings as get_payroll_settings
 
-        bank_acct = AccountMappingService.resolve(organisation, 'bank_account')
+        net_pay_acct = AccountingService.net_salaries_payable_account(organisation)
         accrued_leave_acct = AccountingService._get_or_create_account(
             organisation, '2850', 'Accrued Leave', AccountType.LIABILITY
         )
 
         lines = [
             (accrued_leave_acct, amount, zero),   # DR Accrued Leave — relieve liability
-            (bank_acct, zero, amount),            # CR Bank — cash paid out
+            (net_pay_acct, zero, amount),          # CR Net Salaries Payable — now owed, not yet paid
         ]
 
         entry = AccountingService.post_journal_entry(

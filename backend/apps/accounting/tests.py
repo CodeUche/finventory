@@ -198,6 +198,117 @@ class JournalEntryTests(TestCase):
         self.assertIn(res.status_code, [403, 404])
 
 
+class PostJournalEntryBalanceTests(TestCase):
+    """AccountingService.post_journal_entry is the automatic posting path used by
+    every service (sales, bills, payroll, ...), not the hand-entered-journal UI.
+
+    It used to accept a 1-kobo-out entry (`abs(debits - credits) > 0.01` lets an
+    exact 0.01 difference through), so a caller with a rounding bug could silently
+    throw the trial balance out by a kobo per call. Each line is now rounded to
+    2dp first (so upstream float noise like 100.004999999999 can't produce a false
+    imbalance), then debits must equal credits exactly.
+    """
+
+    def setUp(self):
+        self.user = _make_user("pjeb_owner@example.com")
+        self.org = _make_org(self.user, "PJEB Org")
+        _upgrade_to_business(self.org)
+
+    def _acct(self, code):
+        return Account.objects.get(organisation=self.org, code=code)
+
+    def test_one_kobo_out_is_rejected(self):
+        bank, rev = self._acct('1002'), self._acct('4001')
+        with self.assertRaises(ValueError):
+            AccountingService.post_journal_entry(
+                self.org, "1 kobo out", timezone.now().date(),
+                [(bank, Decimal('100.00'), Decimal('0')), (rev, Decimal('0'), Decimal('99.99'))],
+                self.user, ref='T-KOBO',
+            )
+        self.assertFalse(JournalEntry.objects.filter(organisation=self.org, description='1 kobo out').exists())
+
+    def test_balanced_entry_still_posts(self):
+        bank, rev = self._acct('1002'), self._acct('4001')
+        entry = AccountingService.post_journal_entry(
+            self.org, "Balanced", timezone.now().date(),
+            [(bank, Decimal('100.00'), Decimal('0')), (rev, Decimal('0'), Decimal('100.00'))],
+            self.user, ref='T-OK',
+        )
+        self.assertEqual(entry.status, 'posted')
+        self.assertEqual(entry.lines.count(), 2)
+
+    def test_float_noise_past_2dp_rounds_before_the_balance_check(self):
+        # Simulates upstream float division (e.g. splitting a total three ways)
+        # producing a debit side that is 0.000...1 off before rounding — this must
+        # NOT raise, because round_money brings both sides to the same 2dp value.
+        bank, rev = self._acct('1002'), self._acct('4001')
+        entry = AccountingService.post_journal_entry(
+            self.org, "Float noise", timezone.now().date(),
+            [(bank, Decimal('100.004999999999'), Decimal('0')), (rev, Decimal('0'), Decimal('100.00'))],
+            self.user, ref='T-NOISE',
+        )
+        self.assertEqual(entry.status, 'posted')
+        self.assertEqual(entry.lines.get(debit__gt=0).debit, Decimal('100.00'))
+
+
+class NetSalariesPayableVsTipsPayableTests(TestCase):
+    """Both Net Salaries Payable and POS Tips Payable used to free-scan the same
+    2900+ liability code range and grab whichever was free first — so whichever
+    feature ran first for an org claimed 2900, and the other feature's money then
+    silently posted into that account under the wrong name. Net Salaries Payable
+    now gets its own dedicated code (2210, seeded by COA_SEED); both lookups also
+    match by name first, so even a legacy org with one of them already sitting
+    at 2900 under the old scheme can't have the other's money posted into it.
+    """
+
+    def setUp(self):
+        self.user = _make_user("nsp_tips@example.com")
+        self.org = _make_org(self.user, "NSP Tips Org")
+        _upgrade_to_business(self.org)
+
+    def test_new_org_gets_net_salaries_payable_at_2210_not_2900(self):
+        acct = AccountingService.net_salaries_payable_account(self.org)
+        self.assertEqual(acct.code, '2210')
+        self.assertEqual(acct.name, 'Net Salaries Payable')
+
+    def test_net_salaries_then_tips_do_not_collide(self):
+        from apps.pos.services import POSOrderService
+        nsp = AccountingService.net_salaries_payable_account(self.org)
+        tips = POSOrderService._tips_payable_account(self.org)
+        self.assertNotEqual(nsp.id, tips.id)
+        self.assertEqual(nsp.code, '2210')
+        self.assertEqual(tips.code, '2900')
+
+    def test_tips_then_net_salaries_do_not_collide(self):
+        from apps.pos.services import POSOrderService
+        tips = POSOrderService._tips_payable_account(self.org)
+        nsp = AccountingService.net_salaries_payable_account(self.org)
+        self.assertNotEqual(nsp.id, tips.id)
+        self.assertEqual(tips.code, '2900')
+        self.assertEqual(nsp.code, '2210')
+
+    def test_legacy_net_salaries_payable_at_2900_is_not_mistaken_for_tips(self):
+        """An org from before this fix may have Net Salaries Payable sitting at
+        2900 (the old scheme's first free-scan slot) and nothing at 2210 (COA_SEED
+        didn't seed it yet when that org was created). A repeat lookup of either
+        account must resolve by name, not by whatever is sitting at that code."""
+        # Simulate that pre-fix org: COA_SEED gave this org 2210 at creation
+        # (it's a new test org), but a legacy org never had that row.
+        Account.objects.filter(organisation=self.org, code='2210').delete()
+        Account.objects.create(
+            organisation=self.org, code='2900', name='Net Salaries Payable',
+            account_type=AccountType.LIABILITY, is_system=True,
+        )
+        from apps.pos.services import POSOrderService
+        tips = POSOrderService._tips_payable_account(self.org)
+        self.assertEqual(tips.name, 'Tips Payable')
+        self.assertNotEqual(tips.code, '2900')
+
+        nsp = AccountingService.net_salaries_payable_account(self.org)
+        self.assertEqual(nsp.code, '2900')
+        self.assertEqual(nsp.name, 'Net Salaries Payable')
+
+
 class FinancialReportTests(TestCase):
     def setUp(self):
         self.user = _make_user("report_owner@example.com")
@@ -2676,7 +2787,9 @@ class NegativeCustomerBalancePaymentTests(TestCase):
         self.cust.refresh_from_db()
         self.assertEqual(self.cust.outstanding_balance, Decimal("-600"))
 
-    def test_overpayment_against_a_debit_balance_still_clamps_at_zero(self):
+    def test_overpayment_against_a_debit_balance_leaves_the_customer_in_credit(self):
+        """No clamp: the ledger takes the full 500 (DR Cash, CR AR), so the
+        customer record must show -300 or the AR control can never reconcile."""
         self.cust.outstanding_balance = Decimal("200")
         self.cust.save(update_fields=["outstanding_balance"])
         from apps.credits.services import CreditService
@@ -2684,7 +2797,40 @@ class NegativeCustomerBalancePaymentTests(TestCase):
             self.org, self.cust, Decimal("500"), recorded_by=self.user,
         )
         self.cust.refresh_from_db()
+        self.assertEqual(self.cust.outstanding_balance, Decimal("-300"))
+
+    def test_returning_a_credit_sale_posts_no_cash_receipt(self):
+        """A return on a credit sale used to call record_payment, which also
+        posted DR Cash / CR AR: cash that never arrived and AR credited twice."""
+        from apps.inventory.models import Product, Warehouse
+        from apps.inventory.services import InventoryService
+        from apps.sales.services import SaleService
+
+        self.cust.outstanding_balance = Decimal("0")   # this class starts the customer in credit
+        self.cust.save(update_fields=["outstanding_balance"])
+        wh = Warehouse.objects.create(organisation=self.org, name="Main", is_default=True)
+        product = Product.objects.create(
+            organisation=self.org, sku="RET1", name="Item", cost_price=Decimal("100"), selling_price=Decimal("1000"),
+        )
+        InventoryService.record_movement(
+            organisation=self.org, product=product, warehouse=wh, quantity=Decimal("5"),
+            movement_type="purchase_in", unit_cost=Decimal("100"), reference="SEED", created_by=self.user,
+        )
+        invoice = SaleService.create_sale(
+            organisation=self.org, created_by=self.user, customer=self.cust, warehouse=wh,
+            items=[{"product_id": str(product.id), "quantity": 1}], payment_method="credit",
+        )
+        SaleService.process_return(
+            organisation=self.org, invoice=invoice,
+            items=[{"sale_item_id": str(invoice.items.first().id), "quantity_returned": "1"}],
+            reason="defective", notes="", processed_by=self.user,
+        )
+        self.cust.refresh_from_db()
         self.assertEqual(self.cust.outstanding_balance, Decimal("0"))
+        ar = Account.objects.get(organisation=self.org, code="1100")
+        self.assertEqual(AccountingService._ledger_balance(ar), Decimal("0"))
+        cash = Account.objects.get(organisation=self.org, code="1001")
+        self.assertEqual(AccountingService._ledger_balance(cash), Decimal("0"))
 
 
 class FixedAssetAcquisitionTests(TestCase):
@@ -3066,6 +3212,21 @@ class DepreciationMethodTests(TestCase):
         AccountingService.run_depreciation(self.org, 2026, 7, created_by=self.user)
         entry = asset.depreciation_entries.get(period_year=2026, period_month=7)
         self.assertAlmostEqual(float(entry.depreciation_amount), 25000.0, places=2)
+
+    def test_charges_are_posted_to_the_kobo(self):
+        """Reducing balance gave 16,666.6667-style charges that reached the ledger
+        unrounded, so the GL carried fractions of a kobo and drifted from the register."""
+        asset = self._make_asset(
+            depreciation_method="reducing_balance", reducing_balance_rate=Decimal("20"),
+            purchase_cost=Decimal("1000000"), asset_code="D-KOBO",
+        )
+        for month in (7, 8, 9):
+            AccountingService.run_depreciation(self.org, 2026, month, created_by=self.user)
+        amounts = [e.depreciation_amount for e in asset.depreciation_entries.order_by("period_month")]
+        # 1,000,000 x 20%/12 = 16,666.67; then on 983,333.33 -> 16,388.89; then on 966,944.44 -> 16,115.74.
+        self.assertEqual(amounts, [Decimal("16666.67"), Decimal("16388.89"), Decimal("16115.74")])
+        for a in amounts:
+            self.assertEqual(a, a.quantize(Decimal("0.01")))
 
     def test_pro_rata_first_period(self):
         # Purchased 16 July → 16 days of a 31-day month. SL monthly = 1,200,000/60 = 20,000.
@@ -4485,6 +4646,35 @@ class PartyGLAccountOverrideTests(TestCase):
         accts = {l.account_id for l in entry.lines.all()}
         self.assertIn(self.dedicated_ar.id, accts)
 
+    def test_every_credit_payment_posts_not_just_the_first(self):
+        """
+        Regression: the journal was keyed on the customer, so the idempotency
+        check posted a customer's first payment and silently skipped every later
+        one — invoices read "paid" while Cash and AR never moved. Covers a second
+        invoice for the same customer and an invoice paid in two instalments.
+        """
+        from django.db.models import Sum
+        from apps.sales.services import SaleService
+
+        def sale():
+            return SaleService.create_sale(
+                organisation=self.org, created_by=self.user, customer=self.customer, warehouse=self.wh,
+                items=[{"product_id": str(self.product.id), "quantity": 1, "unit_price": "65000"}],
+                payment_method="credit",
+            )
+
+        first, second = sale(), sale()
+        SaleService.record_payment(first, Decimal("65000"), "cash", self.user)
+        SaleService.record_payment(second, Decimal("15000"), "bank_transfer", self.user)
+        SaleService.record_payment(second, Decimal("50000"), "cash", self.user)
+
+        entries = JournalEntry.objects.filter(organisation=self.org, source_type="credit_payment")
+        self.assertEqual(entries.count(), 3)
+        ar_credited = JournalLine.objects.filter(
+            journal_entry__in=entries, account=self.dedicated_ar,
+        ).aggregate(total=Sum("credit"))["total"]
+        self.assertEqual(ar_credited, Decimal("130000"))
+
     def test_po_receipt_auto_bill_uses_supplier_override(self):
         from apps.purchases.models import PurchaseOrder, PurchaseOrderItem
         from apps.purchases.services import PurchaseService
@@ -4505,6 +4695,38 @@ class PartyGLAccountOverrideTests(TestCase):
         accts = self._je_accounts(source_type="po_receipt", source_ref=str(po.id))
         self.assertIn(self.dedicated_ap.id, accts)
         self.assertNotIn(self.default_ap.id, accts)
+
+    def test_every_partial_po_receipt_posts_to_the_ledger(self):
+        """
+        Regression: receipts were keyed on the PO, so the idempotency check
+        posted the first partial receipt and dropped every later one — the bill
+        reached the full value while Inventory and AP stayed at the first batch.
+        """
+        from django.db.models import Sum
+        from apps.purchases.models import PurchaseOrder, PurchaseOrderItem
+        from apps.purchases.services import PurchaseService
+        po = PurchaseOrder.objects.create(
+            organisation=self.org, supplier=self.supplier, warehouse=self.wh,
+            po_number=PurchaseOrder.generate_number(self.org),
+            order_date=timezone.now().date(),
+            subtotal=Decimal("250000"), tax_amount=Decimal("0"), total_amount=Decimal("250000"),
+            created_by=self.user,
+        )
+        po_item = PurchaseOrderItem.objects.create(
+            organisation=self.org, purchase_order=po, product=self.product,
+            quantity_ordered=Decimal("5"), unit_cost=Decimal("50000"), line_total=Decimal("250000"),
+        )
+        for qty in ("2", "1", "2"):
+            po = PurchaseService.receive_purchase_order(
+                po, [{"item_id": str(po_item.id), "quantity_received": qty}], self.user,
+            )
+
+        entries = JournalEntry.objects.filter(organisation=self.org, source_type="po_receipt")
+        self.assertEqual(entries.count(), 3)
+        ap_credited = JournalLine.objects.filter(
+            journal_entry__in=entries, account=self.dedicated_ap,
+        ).aggregate(total=Sum("credit"))["total"]
+        self.assertEqual(ap_credited, Decimal("250000"))
 
     def test_bill_payment_journal_uses_supplier_override(self):
         from apps.bills.models import Bill, BillPayment
@@ -4870,3 +5092,125 @@ class ItemClassGLDefaultTests(TestCase):
         }, format="json")
         self.assertEqual(res.status_code, 200, msg=str(res.data))
         self.assertEqual(res.data["cogs_account_code"], "5910")
+
+
+class ManualJournalRulesTests(TestCase):
+    """
+    Hand-entered journals: a 0.01 imbalance, negative amounts, a debit and a
+    credit on one line, and an all-zero entry were all accepted and posted,
+    and Post / Approve-and-post skipped the period lock entirely. On staging
+    the first left the trial balance out by 0.01.
+    """
+
+    def setUp(self):
+        self.user = _make_user("manual_je@example.com")
+        self.org = _make_org(self.user, "Manual JE Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+        postable = Account.objects.filter(organisation=self.org, allow_posting=True).order_by("code")
+        self.a, self.b = postable[0], postable[1]
+
+    def _create(self, dr_a, cr_a, dr_b, cr_b, date="2026-01-15"):
+        return self.client.post("/api/v1/accounting/journal/", {
+            "description": "Manual", "entry_date": date,
+            "lines": [
+                {"account": str(self.a.id), "debit": dr_a, "credit": cr_a},
+                {"account": str(self.b.id), "debit": dr_b, "credit": cr_b},
+            ],
+        }, format="json")
+
+    def test_a_one_kobo_imbalance_is_refused(self):
+        self.assertEqual(self._create("100.00", "0", "0", "99.99").status_code, 400)
+
+    def test_negative_amounts_are_refused(self):
+        self.assertEqual(self._create("-50", "0", "0", "-50").status_code, 400)
+
+    def test_a_line_cannot_carry_both_a_debit_and_a_credit(self):
+        self.assertEqual(self._create("50", "50", "10", "10").status_code, 400)
+
+    def test_an_all_zero_journal_is_refused(self):
+        self.assertEqual(self._create("0", "0", "0", "0").status_code, 400)
+
+    def test_a_valid_journal_still_posts(self):
+        res = self._create("250.00", "0", "0", "250.00")
+        self.assertEqual(res.status_code, 201, res.data)
+        res = self.client.post(f"/api/v1/accounting/journal/{res.data['id']}/post_entry/")
+        self.assertEqual(res.status_code, 200, res.data)
+
+    def test_an_old_invalid_draft_cannot_be_posted(self):
+        entry = JournalEntry.objects.create(
+            organisation=self.org, description="Legacy draft", entry_date="2026-01-15",
+            status=JournalEntry.DRAFT, created_by=self.user,
+        )
+        JournalLine.objects.create(journal_entry=entry, account=self.a, debit=Decimal("100"), credit=0)
+        JournalLine.objects.create(journal_entry=entry, account=self.b, debit=0, credit=Decimal("99.99"))
+        res = self.client.post(f"/api/v1/accounting/journal/{entry.id}/post_entry/")
+        self.assertEqual(res.status_code, 400)
+        entry.refresh_from_db()
+        self.assertEqual(entry.status, JournalEntry.DRAFT)
+
+    def test_posting_into_a_locked_period_is_refused(self):
+        FinancialPeriod.objects.create(organisation=self.org, year=2026, month=1, is_locked=True)
+        res = self._create("250.00", "0", "0", "250.00")
+        self.assertEqual(res.status_code, 201, res.data)
+        for path in ("post_entry/", "approve/"):
+            payload = {"post": True} if path == "approve/" else {}
+            res2 = self.client.post(f"/api/v1/accounting/journal/{res.data['id']}/{path}", payload, format="json")
+            self.assertEqual(res2.status_code, 400, (path, res2.data))
+        self.assertEqual(JournalEntry.objects.get(id=res.data["id"]).status, JournalEntry.DRAFT)
+
+    def test_an_entry_can_only_be_reversed_once_at_a_time(self):
+        """Reversing twice made two drafts; posting both reversed the original twice."""
+        res = self._create("250.00", "0", "0", "250.00")
+        entry_id = res.data["id"]
+        self.client.post(f"/api/v1/accounting/journal/{entry_id}/post_entry/")
+        first = self.client.post(f"/api/v1/accounting/journal/{entry_id}/reverse/")
+        self.assertEqual(first.status_code, 201, first.data)
+        second = self.client.post(f"/api/v1/accounting/journal/{entry_id}/reverse/")
+        self.assertEqual(second.status_code, 400, second.data)
+        # Deleting the unposted reversal draft frees the entry to be reversed again.
+        JournalEntry.objects.get(id=first.data["id"]).delete()
+        third = self.client.post(f"/api/v1/accounting/journal/{entry_id}/reverse/")
+        self.assertEqual(third.status_code, 201, third.data)
+
+
+class JournalApprovalRuleTests(TestCase):
+    """Journals allowed self-approval outright and could be approved without
+    being submitted. Same rule as bills and payroll: approve your own only when
+    nobody else can."""
+
+    def setUp(self):
+        from apps.payroll.test_track_a import _make_user as mk_user
+        self.mk_user = mk_user
+        self.user = _make_user("jr_owner@example.com")
+        self.org = _make_org(self.user, "Journal Rule Org")
+        _upgrade_to_business(self.org)
+        self.client = _auth_client(self.user, self.org)
+        a, b = list(Account.objects.filter(organisation=self.org, allow_posting=True).order_by("code")[:2])
+        res = self.client.post("/api/v1/accounting/journal/", {
+            "description": "Rule", "entry_date": "2026-01-15",
+            "lines": [{"account": str(a.id), "debit": "100", "credit": "0"},
+                      {"account": str(b.id), "debit": "0", "credit": "100"}],
+        }, format="json")
+        self.entry_id = res.data["id"]
+
+    def _approve(self):
+        return self.client.post(f"/api/v1/accounting/journal/{self.entry_id}/approve/", {}, format="json")
+
+    def test_cannot_approve_without_submitting(self):
+        self.assertEqual(self._approve().status_code, 400)
+
+    def test_sole_owner_may_approve_their_own_and_it_is_marked(self):
+        self.client.post(f"/api/v1/accounting/journal/{self.entry_id}/submit_for_approval/")
+        res = self._approve()
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertIn("Self-approved (sole approver)", res.data["approval_note"])
+
+    def test_with_a_second_approver_you_cannot_approve_your_own(self):
+        from apps.tenancy.models import Membership
+        Membership.objects.create(user=self.mk_user("jr_admin@example.com"), organisation=self.org,
+                                  role="admin", is_active=True)
+        self.client.post(f"/api/v1/accounting/journal/{self.entry_id}/submit_for_approval/")
+        res = self._approve()
+        self.assertEqual(res.status_code, 403, res.data)
+        self.assertIn("Ask", res.data["error"])

@@ -16,6 +16,7 @@ import logging
 from decimal import Decimal
 
 from django.db import transaction
+from django.db.models import Sum
 from django.utils import timezone
 
 from apps.core.utils import round_money
@@ -128,6 +129,7 @@ class SaleService:
         subtotal = Decimal("0")
         total_discount = Decimal("0")
         total_tax = Decimal("0")
+        lines_total = Decimal("0")
 
         for item_data in items:
             line = SaleService._process_line_item(
@@ -141,8 +143,14 @@ class SaleService:
             subtotal += line["subtotal"]
             total_discount += line["discount_amount"]
             total_tax += line["tax_amount"]
+            lines_total += line["line_total"]
 
-        total = subtotal - total_discount + total_tax + shipping
+        # Sum the lines, not subtotal − discount + tax: a VAT-inclusive line's
+        # tax is already inside its price (line_total == after-discount), so
+        # adding total_tax on top charged that VAT twice — a 1,075 shelf price
+        # billed 1,150 and posted 1,075 as revenue with a phantom 75 owed.
+        # For exclusive lines line_total is after-discount + tax: same figure.
+        total = lines_total + shipping
 
         # Clamp credit to total (can't apply more credit than the invoice total)
         credit_to_apply = min(credit_to_apply, total)
@@ -212,6 +220,11 @@ class SaleService:
                     method=payment_method,
                     reference="",
                     received_by=created_by,
+                    # Counter and Register sales are paid here, at the moment of
+                    # sale. Without the till link (record_payment already set it)
+                    # the till saw none of its own takings: the Z-report showed
+                    # zero sales and the whole drawer was posted as an "overage".
+                    till_session=SaleService._open_till_for(organisation, created_by),
                 )
                 invoice.amount_paid = paid
                 invoice.amount_due = effective_due - paid
@@ -250,6 +263,27 @@ class SaleService:
             )
 
         return invoice
+
+    @staticmethod
+    def default_tax_rate(product) -> Decimal:
+        """The VAT rate a product carries by default: its tax class's, when taxable
+        and the business charges VAT at all."""
+        if not product.organisation.charges_vat:
+            return Decimal("0")
+        if product.is_taxable and product.tax_class:
+            return Decimal(str(product.tax_class.rate))
+        return Decimal("0")
+
+    @staticmethod
+    def apply_tax(product, after_discount: Decimal, tax_rate: Decimal):
+        """(tax_amount, line_total) for one line. Exclusive adds the tax on top;
+        inclusive backs it out of a price that already contains it. Shared with
+        the restaurant order screen's totals so a split bill adds up to the
+        invoice it becomes."""
+        if product.tax_type == Product.TaxType.INCLUSIVE and tax_rate > 0:
+            return round_money(after_discount * tax_rate / (Decimal("100") + tax_rate)), after_discount
+        tax_amount = round_money(after_discount * tax_rate / Decimal("100"))
+        return tax_amount, after_discount + tax_amount
 
     @staticmethod
     def _process_line_item(organisation, invoice, warehouse, item_data, created_by, skip_stock: bool = False) -> dict:
@@ -305,14 +339,11 @@ class SaleService:
             if override_class:
                 tax_rate = override_class.rate
                 resolved_override = True
-        if not resolved_override and product.is_taxable and product.tax_class:
-            tax_rate = product.tax_class.rate
-        if product.tax_type == Product.TaxType.INCLUSIVE and tax_rate > 0:
-            tax_amount = round_money(after_discount * tax_rate / (Decimal("100") + tax_rate))
-            line_total = after_discount
-        else:
-            tax_amount = round_money(after_discount * tax_rate / Decimal("100"))
-            line_total = after_discount + tax_amount
+        if not resolved_override:
+            tax_rate = SaleService.default_tax_rate(product)
+        if not organisation.charges_vat:
+            tax_rate = Decimal("0")   # not registered for VAT: nothing to add, whatever the line says
+        tax_amount, line_total = SaleService.apply_tax(product, after_discount, tax_rate)
 
         # Specific Unit costing sells FROM a chosen lot, so the batch has to be
         # resolved before the movement. batch_id was already accepted by the
@@ -465,6 +496,7 @@ class SaleService:
         subtotal = Decimal("0")
         total_discount = Decimal("0")
         total_tax = Decimal("0")
+        lines_total = Decimal("0")
 
         for item_data in items:
             line = SaleService._process_line_item(
@@ -478,6 +510,7 @@ class SaleService:
             subtotal += line["subtotal"]
             total_discount += line["discount_amount"]
             total_tax += line["tax_amount"]
+            lines_total += line["line_total"]
 
         # None means "leave it alone" (the caller didn't touch shipping) —
         # distinct from an explicit 0, which clears it. Only the edit-invoice
@@ -486,7 +519,8 @@ class SaleService:
         shipping = Decimal(str(shipping_amount)) if shipping_amount is not None else Decimal(str(invoice.shipping_amount or 0))
         if shipping < 0:
             raise ValueError("Shipping amount cannot be negative.")
-        total = subtotal - total_discount + total_tax + shipping
+        # Sum the lines — see create_sale: VAT-inclusive lines already hold their tax.
+        total = lines_total + shipping
 
         # Recalculate financials; preserve existing payments
         invoice.subtotal = subtotal
@@ -982,6 +1016,23 @@ class SaleService:
         logger.info("Invoice %s deleted by %s for org %s", invoice.invoice_number, actor, invoice.organisation.id)
 
     @staticmethod
+    def _refund_payout(invoice, total_refund, refund_method):
+        """(amount paid out, tender) for a return. Never more than what the
+        customer actually paid on this invoice and has not already had back."""
+        original = invoice.payment_method
+        if refund_method not in ("cash", "bank", "account"):
+            refund_method = "account" if original == Invoice.PaymentMethod.CREDIT else (
+                "cash" if original == Invoice.PaymentMethod.CASH else "bank")
+        if refund_method == "account" and not invoice.customer_id and original != Invoice.PaymentMethod.CREDIT:
+            # A walk-in has no account to credit: pay back the way they paid.
+            refund_method = "cash" if original == Invoice.PaymentMethod.CASH else "bank"
+        if refund_method == "account":
+            return Decimal("0"), None
+        refunded = -(invoice.payments.filter(amount__lt=0).aggregate(t=Sum("amount"))["t"] or Decimal("0"))
+        paid_net = max(Decimal(str(invoice.amount_paid or 0)) - Decimal(str(refunded)), Decimal("0"))
+        return min(Decimal(str(total_refund)), paid_net), ("cash" if refund_method == "cash" else "bank_transfer")
+
+    @staticmethod
     @transaction.atomic
     def process_return(
         organisation,
@@ -992,12 +1043,17 @@ class SaleService:
         processed_by,
         restocked: bool = True,
         return_date=None,
+        refund_method: str = None,
     ) -> SaleReturn:
         """
         Process a sales return / credit note.
 
         Args:
             items: List of {sale_item_id, quantity_returned}
+            refund_method: "cash" (paid out of the till), "bank" (transfer back),
+                or "account" (off what the customer owes). Defaults to how the
+                invoice was originally paid. A cash/bank refund pays out at most
+                what was actually paid; any rest reduces what is owed.
         """
         from django.utils import timezone as tz
 
@@ -1087,15 +1143,31 @@ class SaleService:
         if total_sold > 0 and total_returned >= total_sold:
             Invoice.objects.filter(pk=invoice.pk).update(status=Invoice.Status.RETURNED)
 
+        # How the customer is made whole. Every return used to credit Accounts
+        # Receivable, even for a walk-in cash sale: an AR credit with no customer
+        # behind it, Cash in the ledger above the drawer, and the till reading a
+        # shortage equal to the refund.
+        payout, payout_tender = SaleService._refund_payout(invoice, total_refund, refund_method)
+        ar_part = total_refund - payout
+        if payout > 0:
+            from apps.sales.models import SalePayment
+            SalePayment.objects.create(
+                organisation=organisation, invoice=invoice, amount=-payout, method=payout_tender,
+                reference=sale_return.return_number, notes=f"Refund for {sale_return.return_number}",
+                received_by=processed_by,
+                till_session=SaleService._open_till_for(organisation, processed_by) if payout_tender == "cash" else None,
+            )
+
         # Update AR if credit sale
-        if invoice.customer and invoice.payment_method == Invoice.PaymentMethod.CREDIT:
+        if ar_part > 0 and invoice.customer and invoice.payment_method == Invoice.PaymentMethod.CREDIT:
             from apps.credits.services import CreditService
             CreditService.record_payment(
                 organisation=organisation,
                 customer=invoice.customer,
-                amount=total_refund,
+                amount=ar_part,
                 recorded_by=processed_by,
                 description=f"Sales return – {sale_return.return_number}",
+                post_gl=False,   # the return's own journal below credits AR
             )
 
         # Post reversing GL journal: DR Revenue (net), DR VAT Payable, CR AR/Cash
@@ -1110,8 +1182,11 @@ class SaleService:
             lines = [
                 (revenue_acct, net_refund,       zero),           # DR Revenue (reversal)
                 (vat_acct,     total_tax_refund,  zero),          # DR VAT Payable (reversal)
-                (ar_acct,      zero,              total_refund),  # CR AR / customer
             ]
+            if ar_part > zero:
+                lines.append((ar_acct, zero, ar_part))            # CR AR / customer
+            if payout > zero:                                     # CR Cash / Bank actually paid out
+                lines.append((AccountingService.tender_asset_account(organisation, payout_tender), zero, payout))
             # Reverse COGS/Inventory for the restocked portion, so the GL Inventory
             # balance stays in step with the physical stock InventoryService already restored
             if total_cogs_refund > zero:
@@ -1130,7 +1205,14 @@ class SaleService:
                 source_ref=str(sale_return.id),
             )
         except Exception as exc:
+            # Previously swallowed: the return record, restocked stock and any
+            # refund payout would commit while the GL silently never recorded
+            # the credit note, with nothing to tell the user. process_return
+            # runs inside @transaction.atomic, so letting this propagate rolls
+            # the whole return back together — it either all commits or none
+            # of it does, and the caller sees why.
             logger.error("Credit note GL journal failed for %s: %s", sale_return.return_number, exc)
+            raise
 
         logger.info(
             "Return %s processed for invoice %s — refund %s (VAT %s)",

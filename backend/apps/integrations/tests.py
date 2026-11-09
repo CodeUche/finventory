@@ -405,8 +405,19 @@ class EntitlementGatingTests(TestCase):
         self.assertIn("purchase", response.json()["error"].lower())
         self.assertEqual(WebhookSubscription.objects.filter(organisation=self.org).count(), 0)
 
-    def test_creating_webhook_without_integration_product_is_allowed(self):
-        """A webhook not tied to a specific paid product (integration_product omitted) is not gated."""
+    def test_creating_webhook_without_integration_product_needs_the_add_on(self):
+        """Leaving the product out used to skip the paid check: webhooks were
+        free for everyone. Without the add-on (or Enterprise) it is refused."""
+        response = self.client.post(
+            "/api/v1/integrations/webhooks/",
+            {"target_url": "https://example.com/hook", "event_types": ["invoice.created"]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403, response.content)
+        self.assertIn("add-on", response.json()["error"])
+
+    def test_creating_webhook_without_integration_product_is_allowed_with_the_add_on(self):
+        _grant_entitlement(self.org, _make_integration_product("webhooks"))
         response = self.client.post(
             "/api/v1/integrations/webhooks/",
             {
@@ -448,6 +459,7 @@ class WebhookCreationTimeSSRFValidationTests(TestCase):
         self.user = _make_user("owner@example.com")
         self.org = _make_org(self.user)
         self.client = _auth_client(self.user, self.org)
+        _grant_entitlement(self.org, _make_integration_product("webhooks"))  # these tests are about URL safety
 
     @staticmethod
     def _scoped_resolver(hostname_to_intercept, fake_result):
@@ -850,3 +862,43 @@ class ZapierHooksSubscribeEntitlementTests(TestCase):
         )
         self.assertEqual(response.status_code, 500, response.content)
         self.assertEqual(WebhookSubscription.objects.filter(organisation=self.org).count(), 0)
+
+
+class WebhookPauseWithoutAddOnTests(TestCase):
+    """An existing product-less webhook keeps its setup but stops sending once
+    the add-on is missing and the grace period is over; it resumes on purchase."""
+
+    def setUp(self):
+        from apps.integrations.services import deliver_event_to_subscription
+        from apps.subscriptions.services import SubscriptionService
+        from apps.subscriptions.models import Plan
+        self.deliver = deliver_event_to_subscription
+        self.user = _make_user("pause_owner@example.com")
+        self.org = _make_org(self.user)
+        SubscriptionService.upgrade_plan(self.org, Plan.objects.get(slug="business"))
+        self.sub = WebhookSubscription.objects.create(
+            organisation=self.org, target_url="https://example.com/hook", event_types=["invoice.created"],
+        )
+        self.event = DomainEvent.objects.create(organisation=self.org, event_type="invoice.created", payload={})
+
+    def test_pauses_without_the_add_on_and_keeps_the_event_pending(self):
+        delivery = self.deliver(self.sub, self.event)
+        self.assertEqual(delivery.status, WebhookDelivery.Status.PENDING)
+        self.assertIn("Paused", delivery.last_error)
+        self.assertEqual(delivery.attempt_count, 0)
+
+    def test_grace_period_keeps_existing_webhooks_sending(self):
+        from datetime import timedelta
+        from django.test import override_settings
+        from django.utils import timezone
+        until = (timezone.now().date() + timedelta(days=30)).isoformat()
+        # Reaching the send step (where this stand-in raises) proves the gate let it through.
+        with override_settings(WEBHOOK_LEGACY_GRACE_UNTIL=until),                 patch("apps.integrations.services._validate_target", side_effect=ValueError("stop here")):
+            with self.assertRaisesMessage(ValueError, "stop here"):
+                self.deliver(self.sub, self.event)
+
+    def test_resumes_once_the_add_on_is_bought(self):
+        _grant_entitlement(self.org, _make_integration_product("webhooks"))
+        with patch("apps.integrations.services._validate_target", side_effect=ValueError("stop here")):
+            with self.assertRaisesMessage(ValueError, "stop here"):
+                self.deliver(self.sub, self.event)

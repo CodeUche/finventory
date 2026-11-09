@@ -186,6 +186,9 @@ class Organisation(SoftDeleteModel):
     # strict mode is satisfied out of the box and keeps the books correct from day one.
     # (Existing orgs keep whatever value they already have.)
     strict_gl_mode = models.BooleanField(default=True)
+    # Whether this business is registered to charge VAT. When off, no sale,
+    # quote or shop order adds VAT (SaleService.default_tax_rate returns 0).
+    charges_vat = models.BooleanField(default=True)
     # Fixed-asset policy. Items costing below the threshold are expensed, not
     # capitalised (default ₦100,000). Revaluation (IAS 16) is opt-in — SME default is
     # the cost model — and needs practitioner sign-off before enabling.

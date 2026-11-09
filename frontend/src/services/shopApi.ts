@@ -49,7 +49,8 @@ export interface ShopProduct {
   description: string
   category_name: string
   unit_of_measure: string
-  selling_price: string
+  selling_price: string  // what the customer pays, VAT included
+  vat_included: string
   image: string
   in_stock: boolean
 }
@@ -59,6 +60,7 @@ export interface ShopOrderItem {
   quantity: string
   unit_price: string
   line_total: string
+  vat_amount?: string
 }
 
 export interface ShopOrder {

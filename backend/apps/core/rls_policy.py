@@ -61,10 +61,13 @@ def _run(schema_editor, tables, sql_for, label):
 
     from django.db import transaction
 
+    failures = []
     for table in tables:
         # One transaction per table. Each table's three statements (ALTER,
         # DROP POLICY, CREATE POLICY) must land together or not at all, and a
-        # failure on one table must not touch the others.
+        # failure on one table must not touch the others — so a failure here
+        # is collected, not raised immediately, letting every other table
+        # still get its best-effort attempt.
         #
         # Raw SAVEPOINT cannot be used here: these migrations run with
         # atomic = False, so there is no enclosing transaction to save a point
@@ -76,6 +79,15 @@ def _run(schema_editor, tables, sql_for, label):
                     cursor.execute(sql_for(table))
         except Exception as exc:
             logger.warning("%s: could not apply RLS to %s: %s", label, table, exc)
+            failures.append((table, exc))
+
+    # A table silently left without RLS is a tenant-isolation hole, not a
+    # warning — raise once every table has had its best-effort attempt, so a
+    # failed migration is a failed migration (the app owner's deploy gate
+    # catches it) rather than a line in a log nobody reads.
+    if failures:
+        detail = "; ".join(f"{table}: {exc}" for table, exc in failures)
+        raise RuntimeError(f"{label}: RLS failed on {len(failures)} table(s): {detail}")
 
 
 def apply_rls(tables, label):

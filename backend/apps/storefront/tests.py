@@ -315,6 +315,26 @@ class AcceptOrderTests(StorefrontTestBase):
             Customer.objects.filter(organisation=self.org, phone="08030000000").count(), 1,
         )
 
+    def _accept(self, **overrides):
+        ref = self._place(**overrides).data["reference"]
+        order = StorefrontOrder.objects.get(reference=ref)
+        self.client.post(f"/api/v1/storefront/orders/{order.id}/accept/")
+        order.refresh_from_db()
+        return order
+
+    def test_the_same_person_in_a_different_phone_format_is_still_one_customer(self):
+        first = self._accept()
+        second = self._accept(customer_phone="+234 803 000 0000", customer_name="ada  BUYER")
+        self.assertEqual(first.invoice.customer_id, second.invoice.customer_id)
+
+    def test_someone_else_using_a_customers_phone_is_not_booked_to_that_customer(self):
+        """Phone-only matching put an anonymous buyer's order, as money owed,
+        on an existing customer's account."""
+        owner_of_number = self._accept()
+        stranger = self._accept(customer_name="Someone Else")
+        self.assertNotEqual(owner_of_number.invoice.customer_id, stranger.invoice.customer_id)
+        self.assertIn("Ada Buyer", stranger.invoice.customer.notes)
+
     def test_another_merchant_cannot_see_or_accept_the_order(self):
         order = self._order()
         other_user = _user("nosy@example.com")
@@ -398,6 +418,18 @@ class MerchantSettingsTests(StorefrontTestBase):
         )
         self.assertEqual(res.status_code, 400)
 
+    def test_a_merchant_can_publish_a_product_through_the_api(self):
+        """Nothing could set is_published (it was not on ProductSerializer),
+        so every shop stayed empty however the merchant configured it."""
+        product = Product.objects.create(
+            organisation=self.org, sku="PUB", name="To Publish",
+            cost_price=Decimal("1"), selling_price=Decimal("2"),
+        )
+        res = self.client.patch(f"/api/v1/inventory/products/{product.id}/", {"is_published": True}, format="json")
+        self.assertEqual(res.status_code, 200, res.data)
+        product.refresh_from_db()
+        self.assertTrue(product.is_published)
+
     def test_products_are_unpublished_by_default(self):
         """Enabling a shop must not dump the whole catalogue onto the internet."""
         product = Product.objects.create(
@@ -457,6 +489,17 @@ class DeliveryChargeTests(StorefrontTestBase):
         res = self._deliver()
         self.assertEqual(Decimal(str(res.data["total"])), Decimal("18400"))
 
+    def test_the_invoice_carries_the_delivery_charge_the_customer_agreed_to(self):
+        """Accepting a delivery order raised an invoice with no delivery on it."""
+        self.shop.fixed_delivery_charge = Decimal("1500")
+        self.shop.save(update_fields=["fixed_delivery_charge"])
+        res = self._deliver()
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        order = StorefrontOrder.objects.get(reference=res.data["reference"])
+        self.client.post(f"/api/v1/storefront/orders/{order.id}/accept/")
+        order.refresh_from_db()
+        self.assertEqual(order.invoice.shipping_amount, Decimal("1500"))
+
     def test_charge_never_applies_to_pickup(self):
         self.shop.fixed_delivery_charge = Decimal("1500")
         self.shop.save(update_fields=["fixed_delivery_charge"])
@@ -491,3 +534,115 @@ class DeliveryChargeTests(StorefrontTestBase):
         self.shop.refresh_from_db()
         self.assertEqual(self.shop.fixed_delivery_charge, Decimal("2000"))
         self.assertEqual(self.shop.free_delivery_threshold, Decimal("25000"))
+
+
+class VatInclusivePricingTests(StorefrontTestBase):
+    """The shop shows the price the customer pays, VAT included, and the invoice
+    raised from the order matches it to the kobo."""
+
+    def setUp(self):
+        super().setUp()
+        from apps.tax.models import TaxClass
+        self.vat = TaxClass.objects.create(organisation=self.org, name="VAT", rate=Decimal("7.5"))
+
+    def _taxable(self, sku, price, tax_type="exclusive"):
+        product = self._product(sku, sku, cost="100", price=price, stock=50)
+        product.is_taxable = True
+        product.tax_class = self.vat
+        product.tax_type = tax_type
+        product.save()
+        return product
+
+    def _order_for(self, product, qty, **overrides):
+        res = self._place(items=[{"product": str(product.id), "quantity": str(qty)}], **overrides)
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        return StorefrontOrder.objects.get(reference=res.data["reference"])
+
+    def test_catalogue_price_includes_vat(self):
+        product = self._taxable("VATP", "1999")
+        data = self.public.get(f"/api/v1/shop/{self.shop.slug}/products/").data
+        rows = data["results"] if isinstance(data, dict) else data
+        row = next(r for r in rows if r["id"] == str(product.id))
+        self.assertEqual(Decimal(row["selling_price"]), Decimal("2148.93"))
+        self.assertEqual(Decimal(row["vat_included"]), Decimal("149.93"))
+
+    def test_order_total_is_what_the_customer_was_shown_and_the_invoice_matches(self):
+        product = self._taxable("VATP", "1999")
+        order = self._order_for(product, 3)
+        self.assertEqual(order.total, Decimal("6446.78"))
+        self.client.post(f"/api/v1/storefront/orders/{order.id}/accept/")
+        order.refresh_from_db()
+        self.assertEqual(Decimal(str(order.invoice.total_amount)), Decimal("6446.78"))
+
+    def test_inclusive_product_is_not_taxed_twice(self):
+        product = self._taxable("INCL", "1075", tax_type="inclusive")
+        order = self._order_for(product, 2)
+        self.assertEqual(order.total, Decimal("2150.00"))
+        self.client.post(f"/api/v1/storefront/orders/{order.id}/accept/")
+        order.refresh_from_db()
+        self.assertEqual(Decimal(str(order.invoice.total_amount)), Decimal("2150.00"))
+
+    def test_delivery_is_added_after_the_vat_inclusive_subtotal(self):
+        product = self._taxable("VATP", "2790.70")   # 3,000.00 with VAT
+        self.shop.fixed_delivery_charge = Decimal("500")
+        self.shop.save(update_fields=["fixed_delivery_charge"])
+        order = self._order_for(product, 1, fulfilment="delivery", delivery_address="12 Allen Ave")
+        self.assertEqual(order.subtotal, Decimal("3000.00"))
+        self.assertEqual(order.total, Decimal("3500.00"))
+        self.client.post(f"/api/v1/storefront/orders/{order.id}/accept/")
+        order.refresh_from_db()
+        self.assertEqual(Decimal(str(order.invoice.total_amount)), Decimal("3500.00"))
+
+    def test_free_delivery_threshold_is_judged_on_the_price_paid(self):
+        product = self._taxable("VATP", "2790.70")   # 3,000.00 with VAT
+        self.shop.fixed_delivery_charge = Decimal("500")
+        self.shop.free_delivery_threshold = Decimal("3000")
+        self.shop.save(update_fields=["fixed_delivery_charge", "free_delivery_threshold"])
+        order = self._order_for(product, 1, fulfilment="delivery", delivery_address="12 Allen Ave")
+        self.assertEqual(order.total, Decimal("3000.00"))
+
+    def test_an_order_placed_before_this_change_is_invoiced_at_the_total_shown(self):
+        """Old orders stored the pre-VAT price as what the customer saw, and the
+        invoice then added VAT on top. They are now invoiced at what was shown."""
+        product = self._taxable("OLDP", "1000")
+        order = self._order_for(product, 1)
+        order.items.update(
+            unit_price=Decimal("1075.00"), line_total=Decimal("1075.00"),
+            net_unit_price=Decimal("0"), tax_rate=None, vat_amount=Decimal("0"),
+        )
+        order.subtotal = order.total = Decimal("1075.00")
+        order.save(update_fields=["subtotal", "total"])
+        self.client.post(f"/api/v1/storefront/orders/{order.id}/accept/")
+        order.refresh_from_db()
+        self.assertEqual(Decimal(str(order.invoice.total_amount)), Decimal("1075.00"))
+
+
+class BusinessDoesNotChargeVatTests(VatInclusivePricingTests):
+    """With the "charges VAT" switch off, nothing adds VAT: shop price, order and invoice."""
+
+    def setUp(self):
+        super().setUp()
+        self.org.charges_vat = False
+        self.org.save(update_fields=["charges_vat"])
+
+    def test_shop_price_and_invoice_carry_no_vat(self):
+        product = self._taxable("NOVAT", "1999")
+        data = self.public.get(f"/api/v1/shop/{self.shop.slug}/products/").data
+        rows = data["results"] if isinstance(data, dict) else data
+        row = next(r for r in rows if r["id"] == str(product.id))
+        self.assertEqual(Decimal(row["selling_price"]), Decimal("1999.00"))
+        self.assertEqual(Decimal(row["vat_included"]), Decimal("0"))
+        order = self._order_for(product, 3)
+        self.assertEqual(order.total, Decimal("5997.00"))
+        self.client.post(f"/api/v1/storefront/orders/{order.id}/accept/")
+        order.refresh_from_db()
+        self.assertEqual(Decimal(str(order.invoice.total_amount)), Decimal("5997.00"))
+        self.assertEqual(Decimal(str(order.invoice.tax_amount)), Decimal("0"))
+
+    # The parent's VAT-charging expectations do not apply to a non-VAT business.
+    test_catalogue_price_includes_vat = None
+    test_order_total_is_what_the_customer_was_shown_and_the_invoice_matches = None
+    test_inclusive_product_is_not_taxed_twice = None
+    test_delivery_is_added_after_the_vat_inclusive_subtotal = None
+    test_free_delivery_threshold_is_judged_on_the_price_paid = None
+    test_an_order_placed_before_this_change_is_invoiced_at_the_total_shown = None

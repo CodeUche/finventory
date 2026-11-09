@@ -24,9 +24,25 @@ class PublicProductSerializer(serializers.Serializer):
     description = serializers.CharField(read_only=True)
     category_name = serializers.CharField(source="category.name", read_only=True, default="")
     unit_of_measure = serializers.CharField(read_only=True)
-    selling_price = serializers.DecimalField(max_digits=15, decimal_places=2, read_only=True)
+    # The price the customer pays: VAT included (FCCPA s.115 / NTA 2025).
+    selling_price = serializers.SerializerMethodField()
+    vat_included = serializers.SerializerMethodField()
     image = serializers.SerializerMethodField()
     in_stock = serializers.SerializerMethodField()
+
+    def get_selling_price(self, obj) -> str:
+        from apps.sales.services import SaleService
+        from apps.core.utils import round_money
+        net = Decimal(str(obj.selling_price or 0))
+        _vat, gross = SaleService.apply_tax(obj, net, SaleService.default_tax_rate(obj))
+        return str(round_money(gross))
+
+    def get_vat_included(self, obj) -> str:
+        from apps.sales.services import SaleService
+        from apps.core.utils import round_money
+        net = Decimal(str(obj.selling_price or 0))
+        vat, _gross = SaleService.apply_tax(obj, net, SaleService.default_tax_rate(obj))
+        return str(round_money(vat))
 
     def get_image(self, obj) -> str:
         try:
@@ -64,7 +80,7 @@ class PublicStorefrontSerializer(serializers.ModelSerializer):
 class PublicOrderItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = StorefrontOrderItem
-        fields = ["product_name", "quantity", "unit_price", "line_total"]
+        fields = ["product_name", "quantity", "unit_price", "line_total", "vat_amount"]
         read_only_fields = fields
 
 

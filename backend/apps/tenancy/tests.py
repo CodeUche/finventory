@@ -255,6 +255,51 @@ class OrganisationMutationPermissionTests(TestCase):
         self.assertEqual(entry.changes["bank_account_number"]["from"], "0000000000")
         self.assertEqual(entry.changes["bank_account_number"]["to"], "5555555555")
 
+    # ---- charges_vat ----------------------------------------------------
+    # `charges_vat` switches VAT off for every future sale/quote/POS/shop order
+    # org-wide — the same blast radius as the bank fields, so it is gated and
+    # audited the same way.
+
+    def test_charges_vat_patch_refused_for_every_role_below_admin(self):
+        for role in self.ROLES_DENIED_BANK:
+            with self.subTest(role=role):
+                client = self._client_with_role(role)
+                res = client.patch(self.url, {"charges_vat": False}, format="json")
+                self.assertEqual(
+                    res.status_code, 403,
+                    f"role={role} must not change charges_vat (got {res.status_code})",
+                )
+                self.org.refresh_from_db()
+                self.assertTrue(self.org.charges_vat)
+
+    def test_charges_vat_patch_allowed_for_owner(self):
+        client = _auth_client(self.owner, self.org)
+        res = client.patch(self.url, {"charges_vat": False}, format="json")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.org.refresh_from_db()
+        self.assertFalse(self.org.charges_vat)
+
+    def test_charges_vat_patch_allowed_for_admin(self):
+        client = self._client_with_role("admin")
+        res = client.patch(self.url, {"charges_vat": False}, format="json")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        self.org.refresh_from_db()
+        self.assertFalse(self.org.charges_vat)
+
+    def test_charges_vat_change_is_individually_audited(self):
+        from apps.core.models import AuditLog
+
+        client = _auth_client(self.owner, self.org)
+        client.patch(self.url, {"charges_vat": False}, format="json")
+
+        entry = AuditLog.objects.filter(
+            organisation_id=self.org.id, model_name="tenancy/organisations"
+        ).order_by("-created_at").first()
+        self.assertIsNotNone(entry, "charges_vat change must write an audit entry")
+        self.assertIn("charges_vat", entry.changes)
+        self.assertEqual(entry.changes["charges_vat"]["from"], True)
+        self.assertEqual(entry.changes["charges_vat"]["to"], False)
+
     # ---- is_active / destroy ------------------------------------------
 
     def test_is_active_patch_refused_for_every_role_below_owner(self):

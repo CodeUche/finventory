@@ -93,6 +93,7 @@ class OrganisationViewSet(viewsets.ModelViewSet):
     # refused, and admin is an explicitly granted, high-trust role.
     ADMIN_ONLY_FIELDS = frozenset({
         "bank_account_number", "bank_name", "bank_account_name", "bank_sort_code",
+        "charges_vat",
     })
     # `is_active` stays owner-only: no UI anywhere sends it for an organisation
     # (every frontend `is_active` write targets email config, Paystack config or a
@@ -124,7 +125,7 @@ class OrganisationViewSet(viewsets.ModelViewSet):
         if touched:
             self._require_role(
                 org, "admin",
-                "Only an owner or admin can change the organisation's bank details.",
+                "Only an owner or admin can change this organisation setting.",
             )
 
         before = {f: getattr(org, f, None) for f in self.AUDITED_FIELDS.intersection(touched)}
@@ -1273,6 +1274,41 @@ class MembershipViewSet(viewsets.ModelViewSet):
                 )
 
         return super().partial_update(request, *args, **kwargs)
+
+    _REPORTS_ROLES = ("manager", "accountant", "staff", "viewer")
+
+    def _without_reports(self):
+        """Active members who cannot open Reports (no 'view' or better on it)."""
+        members = (self.get_queryset().filter(is_active=True, role__in=self._REPORTS_ROLES)
+                   .select_related("user"))
+        has = set(ModulePermission.objects.filter(
+            membership__in=members, module="reports", access_level__in=("view", "write", "edit"),
+        ).values_list("membership_id", flat=True))
+        return [m for m in members if m.id not in has]
+
+    @action(detail=False, methods=["get"], url_path="reports_access_gap")
+    def reports_access_gap(self, request):
+        """GET /tenancy/memberships/reports_access_gap/ — who cannot open Reports.
+
+        Reports became a per-person tick. Nobody is granted it automatically;
+        this lets the owner see who lost it and give it back in one tap.
+        """
+        return Response({"members": [
+            {"id": str(m.id), "name": m.user.get_full_name() or m.user.email, "role": m.role}
+            for m in self._without_reports()
+        ]})
+
+    @action(detail=False, methods=["post"], url_path="grant_reports")
+    def grant_reports(self, request):
+        """POST /tenancy/memberships/grant_reports/ {"membership_ids": [...]} — view-only Reports."""
+        wanted = {str(i) for i in (request.data.get("membership_ids") or [])}
+        granted = 0
+        for m in self._without_reports():
+            if str(m.id) in wanted:
+                ModulePermission.objects.update_or_create(
+                    membership=m, module="reports", defaults={"access_level": "view"})
+                granted += 1
+        return Response({"granted": granted})
 
     @action(detail=True, methods=["post"], url_path="set_permissions")
     def set_permissions(self, request, pk=None):

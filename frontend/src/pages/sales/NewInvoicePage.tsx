@@ -4,6 +4,7 @@ import { ArrowLeft, FileText, Plus, Trash2, User, UserCheck, Warehouse, X } from
 import toast from 'react-hot-toast'
 import { customerApi, inventoryApi, locationApi, salesApi, taxApi } from '@/services/api'
 import { formatCurrency, normalizeAmountStr, stripCommas } from '@/lib/utils'
+import { saleLine, saleTotals, type SaleLineInput } from '@/lib/saleMath'
 import AmountInput from '@/components/AmountInput'
 import EditableTotal from '@/components/EditableTotal'
 import DateInput from '@/components/DateInput'
@@ -27,12 +28,15 @@ interface InvoiceLine {
   // Non-empty means the user typed a rate directly instead of picking a
   // TaxClass — takes priority over tax_class when computing/submitting.
   manual_tax_rate: string
+  // Product.tax_type === 'inclusive': the price already contains the VAT.
+  product_inclusive: boolean
 }
 
 const BLANK_LINE: InvoiceLine = {
   product: '', product_name: '', quantity: '1', unit_price: '', discount_percent: '0',
   is_taxable: false, tax_class: null,
   product_is_taxable: false, product_tax_class: null, manual_tax_rate: '',
+  product_inclusive: false,
 }
 
 const today = new Date().toISOString().split('T')[0]
@@ -104,6 +108,7 @@ export default function NewInvoicePage() {
             ...l, product: p.id, product_name: p.name, unit_price: normalizeAmountStr(p.selling_price),
             is_taxable: p.is_taxable, tax_class: p.tax_class,
             product_is_taxable: p.is_taxable, product_tax_class: p.tax_class, manual_tax_rate: '',
+            product_inclusive: p.tax_type === 'inclusive',
           }
         : l
     ))
@@ -191,30 +196,36 @@ export default function NewInvoicePage() {
   }, [openProductDrop])
 
   // ── Totals ──────────────────────────────────────────────────────────────
-  const subtotal = lines.reduce((sum, l) => sum + (parseFloat(stripCommas(l.unit_price)) || 0) * (parseFloat(l.quantity) || 0), 0)
-  const discountTotal = lines.reduce((sum, l) => {
-    const lineTotal = (parseFloat(stripCommas(l.unit_price)) || 0) * (parseFloat(l.quantity) || 0)
-    return sum + (lineTotal * (parseFloat(l.discount_percent) || 0)) / 100
-  }, 0)
-  // Line-items-only total (post-discount, pre-VAT) — this is what EditableTotal's
-  // "edit total" back-solves unit prices against, since it has no notion of tax.
-  const lineItemsTotal = subtotal - discountTotal
-  const lineVat = (l: InvoiceLine) => {
+  // Line by line through lib/saleMath, which rounds exactly as the server does,
+  // so the "Create Invoice · ₦…" figure is the total the invoice is saved with.
+  const lineRate = (l: InvoiceLine) => {
     // The "Apply VAT" checkbox is the master switch — unticked always means
     // zero, regardless of what class/rate is still sitting in the fields.
     if (!l.is_taxable) return 0
-    let rate = 0
-    if (l.manual_tax_rate !== '') rate = parseFloat(l.manual_tax_rate) || 0
-    else if (l.tax_class) rate = taxRates[l.tax_class] ?? 0
-    else return 0
-    const lineTotal = (parseFloat(stripCommas(l.unit_price)) || 0) * (parseFloat(l.quantity) || 0)
-    const afterDiscount = lineTotal - (lineTotal * (parseFloat(l.discount_percent) || 0)) / 100
-    return (afterDiscount * rate) / 100
+    if (l.manual_tax_rate !== '') return parseFloat(l.manual_tax_rate) || 0
+    return l.tax_class ? taxRates[l.tax_class] ?? 0 : 0
   }
-  const taxTotal = lines.reduce((sum, l) => sum + lineVat(l), 0)
+  const toSaleLine = (l: InvoiceLine): SaleLineInput => ({
+    unitPrice: parseFloat(stripCommas(l.unit_price)) || 0,
+    quantity: parseFloat(l.quantity) || 0,
+    discountPercent: parseFloat(l.discount_percent) || 0,
+    taxRate: lineRate(l),
+    inclusive: l.product_inclusive,
+  })
+  const amounts = lines.map((l) => saleLine(toSaleLine(l)))
+  const subtotal = amounts.reduce((sum, a) => sum + a.subtotal, 0)
+  const discountTotal = amounts.reduce((sum, a) => sum + a.discount, 0)
+  // Line-items-only total (post-discount, pre-VAT) — this is what EditableTotal's
+  // "edit total" back-solves unit prices against, since it has no notion of tax.
+  const lineItemsTotal = subtotal - discountTotal
+  const lineVat = (l: InvoiceLine) => saleLine(toSaleLine(l)).tax
+  // VAT added on top vs VAT already inside a VAT-inclusive price: only the
+  // first is added to the grand total.
+  const taxTotal = amounts.reduce((sum, a, i) => sum + (lines[i].product_inclusive ? 0 : a.tax), 0)
+  const taxIncluded = amounts.reduce((sum, a, i) => sum + (lines[i].product_inclusive ? a.tax : 0), 0)
   const [shippingAmount, setShippingAmount] = useState('')
   const shippingNum = parseFloat(stripCommas(shippingAmount)) || 0
-  const grandTotal = lineItemsTotal + taxTotal + shippingNum
+  const grandTotal = saleTotals(lines.map(toSaleLine), shippingNum).total
 
   // ── Fulfillment ─────────────────────────────────────────────────────────
   // Invoices bill the customer now; stock/GL posting is deferred until the
@@ -228,6 +239,10 @@ export default function NewInvoicePage() {
   const [amountPaid, setAmountPaid] = useState('')
   const [notes, setNotes] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  // Synchronous guard: `submitting` only disables the button after React
+  // re-renders, so two clicks landing before that both posted — on staging a
+  // click + immediate second click created two paid invoices.
+  const submittingRef = useRef(false)
 
   const tenderedNum = parseFloat(stripCommas(amountPaid)) || 0
   const actualPaid = recordPaymentNow ? Math.min(tenderedNum, grandTotal) : 0
@@ -273,6 +288,8 @@ export default function NewInvoicePage() {
     if (lines.some((l) => !l.product || !l.unit_price)) { toast.error('Fill in all line items'); return }
     const zeroPriceItem = lines.find((l) => (parseFloat(stripCommas(l.unit_price)) || 0) <= 0)
     if (zeroPriceItem) { toast.error('Every line item needs a price greater than zero'); return }
+    if (submittingRef.current) return
+    submittingRef.current = true
     setSubmitting(true)
     try {
       await salesApi.create(buildPayload())
@@ -293,6 +310,7 @@ export default function NewInvoicePage() {
       } else if (!err?.response) msg = 'Network error — check your connection'
       toast.error(msg)
     } finally {
+      submittingRef.current = false
       setSubmitting(false)
     }
   }
@@ -605,6 +623,12 @@ export default function NewInvoicePage() {
                 <div className="flex justify-between text-blue-400">
                   <span>VAT</span>
                   <span>+ {formatCurrency(taxTotal)}</span>
+                </div>
+              )}
+              {taxIncluded > 0 && (
+                <div className="flex justify-between text-slate-500 text-xs">
+                  <span>VAT included in prices</span>
+                  <span>{formatCurrency(taxIncluded)}</span>
                 </div>
               )}
               <div className="flex justify-between items-center text-slate-400">

@@ -5,10 +5,9 @@ language: "en-US"
 
 # Review tone — clear and direct, not overly verbose.
 tone_instructions: >
-  Be concise. Focus on correctness, security, and Django/React best practices.
-  Highlight issues with tenant isolation, permission checks, and JWT handling.
-  Flag any hardcoded secrets, missing authentication, or SQL injection risks.
-  Skip style nits already covered by flake8/black/isort/ESLint.
+  Be concise. Focus on correctness and security: tenant isolation, permission
+  checks, JWT handling, hardcoded secrets, missing auth, SQL injection.
+  Skip style nits covered by flake8/black/isort/ESLint.
 
 reviews:
   # Auto-review every PR.

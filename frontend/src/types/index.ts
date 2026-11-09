@@ -69,6 +69,7 @@ export interface Organisation {
   /** Which tender types POS checkout / invoice collection currently offer.
    *  Free-form strings (matches TillTenderCount.method), all four enabled by default. */
   enabled_payment_types?: string[]
+  charges_vat?: boolean
 }
 
 export interface ProductImage {
@@ -482,7 +483,8 @@ export interface SaleReturn {
 export interface PnL {
   period_start: string
   period_end: string
-  revenue: { gross_sales: string; tax_collected: string; discounts: string }
+  /** gross_sales is net revenue: excl. VAT, after returns (sales_excl_vat − returns). */
+  revenue: { gross_sales: string; sales_excl_vat?: string; returns?: string; tax_collected: string; discounts: string }
   cost_of_goods_sold: string
   gross_profit: string
   gross_margin_pct: string
@@ -498,7 +500,10 @@ export interface SalesByCustomerRow {
   customer_code: string | null
   customer_email: string | null
   invoice_count: number
+  /** Billed, incl. VAT (compare with amount_paid / amount_outstanding). */
   revenue: string
+  /** Excl. VAT, after returns: the Profit & Loss basis. */
+  net_sales?: string
   amount_paid: string
   amount_outstanding: string
 }

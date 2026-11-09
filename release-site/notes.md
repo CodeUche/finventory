@@ -12,4 +12,4 @@ Editing this file before a release is the difference between a user seeing
 
 ---
 
-The dashboard, the top bar and the menu have a new look. The dashboard now shows Key Reports, recent invoices, stock alerts and quick actions in one place, newest invoices first. On a phone, the menu closes after you pick a page, and pop-up windows now dim the whole screen.
+The dashboard, the top bar and the menu have a new look, and on a phone the menu now closes after you pick a page. Shop prices show VAT clearly, and a new switch lets a business that does not charge VAT turn it off. Returns ask how to refund (cash, bank, or off what the customer owes). Payroll is recorded as owed until you pay it, and bills can only be paid once approved. Many fixes make sales, tills, reports and balances add up correctly.

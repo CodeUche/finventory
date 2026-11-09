@@ -89,7 +89,9 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
     throttle_classes = [FinancialWriteThrottle, ExemptibleUserRateThrottle]
     filterset_class = InvoiceFilter
     search_fields = ["invoice_number", "customer__name"]
-    ordering_fields = ["issue_date", "total_amount", "status"]
+    # created_at breaks ties within a day: issue_date alone left same-day
+    # invoices in arbitrary order under "Newest first".
+    ordering_fields = ["issue_date", "created_at", "total_amount", "status"]
 
     def get_queryset(self):
         org = self._get_organisation()
@@ -491,6 +493,7 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
                     processed_by=request.user,
                     restocked=d.get("restocked", True),
                     return_date=d.get("return_date"),
+                    refund_method=d.get("refund_method"),
                 )
             return Response(SaleReturnSerializer(sale_return).data, status=201)
         except ValueError as e:

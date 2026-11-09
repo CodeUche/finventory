@@ -1141,3 +1141,128 @@ class BankExportTests(TestCase):
             cost,
             Decimal(str(self.run.total_net)) + Decimal(str(self.run.total_paye)),
         )
+
+
+class PayrollNetPayLiabilityTests(TestCase):
+    """Approval credited Bank for net pay before any money moved, so the
+    ledger's Bank led the bank statement and failed transfers vanished. Net pay
+    is now owed (a liability) from approval until the run is paid."""
+
+    def setUp(self):
+        from apps.accounting.tests import _make_user as mk, _make_org as mo, _upgrade_to_business
+        from apps.payroll.test_track_a import _employee, _run
+        self.user = mk("netpay@example.com")
+        self.org = mo(self.user, "Net Pay Org")
+        _upgrade_to_business(self.org)
+        _employee(self.org)
+        self.run = _run(self.org, self.user, year=2026, month=6)
+        PayrollService.run_payroll(self.run)
+        self.run.refresh_from_db()
+        self.net = Decimal(str(self.run.total_net))
+
+    def _payable_code(self):
+        from apps.accounting.models import Account
+        return Account.objects.get(organisation=self.org, name="Net Salaries Payable").code
+
+    def _bal(self, code, normal="debit"):
+        from apps.accounting.models import Account
+        from apps.accounting.services import AccountingService
+        acct = Account.objects.get(organisation=self.org, code=code)
+        value = AccountingService._ledger_balance(acct)
+        return value
+
+    def test_approval_owes_net_pay_and_leaves_bank_alone(self):
+        from apps.accounting.services import AccountingService
+        AccountingService.post_payroll_journal(self.org, self.run, user=self.user)
+        self.assertEqual(self._bal(self._payable_code()), self.net)  # owed to employees
+        self.assertEqual(self._bal("2400"), Decimal("0"))  # WHT Payable stays untouched
+        self.assertEqual(self._bal("1002"), Decimal("0"))  # no money has moved
+
+    def test_mark_paid_surfaces_a_gl_posting_failure_to_the_caller(self):
+        """mark_paid posts the GL journal through safe_post_gl, deliberately
+        outside the record-commit transaction: a run must be payable even if
+        GL posting needs a retry, rather than blocking real money moving to
+        employees on a chart-of-accounts problem. The failure must still be
+        visible to whoever is watching, not silent — gl_post_status/
+        gl_post_error on the run, both already returned by the API."""
+        from unittest.mock import patch
+        from apps.accounting.tests import _auth_client
+
+        self.run.status = PayrollRun.APPROVED
+        self.run.save(update_fields=["status"])
+        client = _auth_client(self.user, self.org)
+
+        with patch(
+            "apps.accounting.services.AccountingService.post_payroll_payment_journal",
+            side_effect=Exception("GL account not configured"),
+        ):
+            res = client.post(f"/api/v1/payroll/runs/{self.run.id}/mark_paid/")
+
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data["gl_post_status"], "failed")
+        self.assertIn("GL account not configured", res.data["gl_post_error"])
+        self.run.refresh_from_db()
+        self.assertEqual(self.run.status, PayrollRun.PAID)  # paying staff is not blocked on GL
+
+    def test_mark_paid_does_not_clear_a_payslip_whose_transfer_failed(self):
+        """A payslip whose Paystack transfer is known to have failed never
+        reached the employee. mark_paid used to mark every CALCULATED payslip
+        PAID regardless, hiding that this one still needs a manual payment."""
+        from apps.accounting.tests import _auth_client
+
+        slip = self.run.payslips.first()
+        slip.transfer_status = PayslipLine.TRANSFER_FAILED
+        slip.transfer_error = "Insufficient funds in Paystack balance"
+        slip.save(update_fields=["transfer_status", "transfer_error"])
+
+        self.run.status = PayrollRun.APPROVED
+        self.run.save(update_fields=["status"])
+        client = _auth_client(self.user, self.org)
+        res = client.post(f"/api/v1/payroll/runs/{self.run.id}/mark_paid/")
+
+        self.assertEqual(res.status_code, 200)
+        slip.refresh_from_db()
+        self.assertEqual(slip.status, PayslipLine.CALCULATED)  # not silently marked paid
+        self.run.refresh_from_db()
+        self.assertEqual(self.run.status, PayrollRun.PAID)  # the rest of the run still completes
+
+    def test_mark_paid_clears_payslips_with_no_transfer_attempt(self):
+        """Most orgs pay manually (cash/bank transfer outside Paystack) and
+        never call initiate_transfers, so transfer_status stays at its default
+        'pending'. mark_paid must still clear those — only a confirmed FAILED
+        transfer should be held back."""
+        from apps.accounting.tests import _auth_client
+
+        slip = self.run.payslips.first()
+        self.assertEqual(slip.transfer_status, PayslipLine.TRANSFER_PENDING)
+
+        self.run.status = PayrollRun.APPROVED
+        self.run.save(update_fields=["status"])
+        client = _auth_client(self.user, self.org)
+        res = client.post(f"/api/v1/payroll/runs/{self.run.id}/mark_paid/")
+
+        self.assertEqual(res.status_code, 200)
+        slip.refresh_from_db()
+        self.assertEqual(slip.status, PayslipLine.PAID)
+
+    def test_paying_the_run_clears_the_liability_against_bank(self):
+        from apps.accounting.services import AccountingService
+        AccountingService.post_payroll_journal(self.org, self.run, user=self.user)
+        AccountingService.post_payroll_payment_journal(self.org, self.run, user=self.user)
+        AccountingService.post_payroll_payment_journal(self.org, self.run, user=self.user)  # replay: no second entry
+        self.assertEqual(self._bal(self._payable_code()), Decimal("0"))
+        self.assertEqual(self._bal("1002"), -self.net)
+
+    def test_a_run_approved_under_the_old_rule_is_not_credited_to_bank_twice(self):
+        """Old runs credited Bank at approval; there is no payable to clear."""
+        from apps.accounting.models import JournalEntry, JournalLine
+        from apps.accounting.services import AccountingService, AccountMappingService
+        bank = AccountMappingService.resolve(self.org, "bank_account")
+        salary = AccountMappingService.resolve(self.org, "salary_expense_account")
+        AccountingService.post_journal_entry(
+            self.org, "old-style payroll", self.run.created_at.date(),
+            [(salary, self.net, Decimal("0")), (bank, Decimal("0"), self.net)], self.user,
+            ref=f"PAY-{self.run.id}", source_type="payroll", source_ref=str(self.run.id),
+        )
+        self.assertIsNone(AccountingService.post_payroll_payment_journal(self.org, self.run, user=self.user))
+        self.assertEqual(self._bal("1002"), -self.net)   # credited once, at approval
