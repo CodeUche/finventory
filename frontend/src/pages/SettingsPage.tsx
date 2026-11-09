@@ -1186,7 +1186,7 @@ export default function SettingsPage() {
     setSavingPerms(memberId)
     try {
       const perms = draftPerms[memberId]
-      const permissions = ALL_MODULES.map(({ key }) => ({ module: key, access_level: perms[key] ?? 'edit' }))
+      const permissions = ALL_MODULES.map(({ key }) => ({ module: key, access_level: perms[key] ?? 'none' }))
       const { data } = await teamApi.setPermissions(memberId, permissions)
       toast.success('Permissions saved')
       setTeamMembers((prev) => prev.map((m) => m.id === memberId ? data : m))
@@ -2245,7 +2245,7 @@ export default function SettingsPage() {
                       <p className="text-xs text-slate-400 font-medium uppercase tracking-wider">Module Permissions</p>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         {ALL_MODULES.map(({ key, label }) => {
-                          const current = draftPerms[m.id]?.[key] ?? 'edit'
+                          const current = draftPerms[m.id]?.[key] ?? 'none'
                           return (
                             <div key={key} className="flex items-center justify-between gap-2 py-1.5 px-3 rounded-lg bg-surface-800">
                               <span className="text-sm text-slate-300">{label}</span>
