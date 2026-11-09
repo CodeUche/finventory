@@ -566,7 +566,7 @@ export default function SettingsPage() {
         const drafts: Record<string, Record<ModuleKey, AccessLevel>> = {}
         members.forEach((m) => {
           const map: Record<ModuleKey, AccessLevel> = {} as Record<ModuleKey, AccessLevel>
-          ALL_MODULES.forEach(({ key }) => { map[key] = 'edit' })
+          ALL_MODULES.forEach(({ key }) => { map[key] = 'none' })
           m.module_permissions.forEach((p) => { map[p.module] = p.access_level })
           drafts[m.id] = map
         })
