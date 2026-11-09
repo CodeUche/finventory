@@ -31,6 +31,7 @@ COA_SEED = [
     ('2700', 'Accrued Liabilities', AccountType.LIABILITY),
     ('2750', 'ITF Payable', AccountType.LIABILITY),
     ('2850', 'Accrued Leave', AccountType.LIABILITY),
+    ('2210', 'Net Salaries Payable', AccountType.LIABILITY),
     ('2910', 'Employee Benefits Payable', AccountType.LIABILITY),
     ('1450', 'Employee Salary Advances', AccountType.ASSET),
     ('3001', 'Owner Equity', AccountType.EQUITY),
@@ -2317,14 +2318,22 @@ class AccountingService:
     @staticmethod
     def net_salaries_payable_account(organisation):
         """Net pay owed to employees. Found by name: 2400 is WHT Payable in the
-        standard chart, so the code alone would mix the two liabilities."""
+        standard chart, so the code alone would mix the two liabilities.
+
+        New orgs get it seeded at 2210 (COA_SEED), its own dedicated code — not
+        shared with POS Tips Payable, which also used to land on 2900 whenever
+        neither had been created yet (see _tips_payable_account). An org that
+        already has a 'Net Salaries Payable' account under the old scheme (2900
+        or one of the fallback codes) keeps using that same account: the name
+        lookup above finds it first, so nothing here renumbers posted data.
+        """
         name = 'Net Salaries Payable'
         existing = Account.objects.filter(
             organisation=organisation, name=name, account_type=AccountType.LIABILITY,
         ).first()
         if existing:
             return existing
-        for code in ('2900', '2905', '2915', '2920', '2925'):
+        for code in ('2210', '2900', '2905', '2915', '2920', '2925'):
             if not Account.objects.filter(organisation=organisation, code=code).exists():
                 return AccountingService._get_or_create_account(
                     organisation, code, name, AccountType.LIABILITY

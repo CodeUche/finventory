@@ -251,6 +251,64 @@ class PostJournalEntryBalanceTests(TestCase):
         self.assertEqual(entry.lines.get(debit__gt=0).debit, Decimal('100.00'))
 
 
+class NetSalariesPayableVsTipsPayableTests(TestCase):
+    """Both Net Salaries Payable and POS Tips Payable used to free-scan the same
+    2900+ liability code range and grab whichever was free first — so whichever
+    feature ran first for an org claimed 2900, and the other feature's money then
+    silently posted into that account under the wrong name. Net Salaries Payable
+    now gets its own dedicated code (2210, seeded by COA_SEED); both lookups also
+    match by name first, so even a legacy org with one of them already sitting
+    at 2900 under the old scheme can't have the other's money posted into it.
+    """
+
+    def setUp(self):
+        self.user = _make_user("nsp_tips@example.com")
+        self.org = _make_org(self.user, "NSP Tips Org")
+        _upgrade_to_business(self.org)
+
+    def test_new_org_gets_net_salaries_payable_at_2210_not_2900(self):
+        acct = AccountingService.net_salaries_payable_account(self.org)
+        self.assertEqual(acct.code, '2210')
+        self.assertEqual(acct.name, 'Net Salaries Payable')
+
+    def test_net_salaries_then_tips_do_not_collide(self):
+        from apps.pos.services import POSOrderService
+        nsp = AccountingService.net_salaries_payable_account(self.org)
+        tips = POSOrderService._tips_payable_account(self.org)
+        self.assertNotEqual(nsp.id, tips.id)
+        self.assertEqual(nsp.code, '2210')
+        self.assertEqual(tips.code, '2900')
+
+    def test_tips_then_net_salaries_do_not_collide(self):
+        from apps.pos.services import POSOrderService
+        tips = POSOrderService._tips_payable_account(self.org)
+        nsp = AccountingService.net_salaries_payable_account(self.org)
+        self.assertNotEqual(nsp.id, tips.id)
+        self.assertEqual(tips.code, '2900')
+        self.assertEqual(nsp.code, '2210')
+
+    def test_legacy_net_salaries_payable_at_2900_is_not_mistaken_for_tips(self):
+        """An org from before this fix may have Net Salaries Payable sitting at
+        2900 (the old scheme's first free-scan slot) and nothing at 2210 (COA_SEED
+        didn't seed it yet when that org was created). A repeat lookup of either
+        account must resolve by name, not by whatever is sitting at that code."""
+        # Simulate that pre-fix org: COA_SEED gave this org 2210 at creation
+        # (it's a new test org), but a legacy org never had that row.
+        Account.objects.filter(organisation=self.org, code='2210').delete()
+        Account.objects.create(
+            organisation=self.org, code='2900', name='Net Salaries Payable',
+            account_type=AccountType.LIABILITY, is_system=True,
+        )
+        from apps.pos.services import POSOrderService
+        tips = POSOrderService._tips_payable_account(self.org)
+        self.assertEqual(tips.name, 'Tips Payable')
+        self.assertNotEqual(tips.code, '2900')
+
+        nsp = AccountingService.net_salaries_payable_account(self.org)
+        self.assertEqual(nsp.code, '2900')
+        self.assertEqual(nsp.name, 'Net Salaries Payable')
+
+
 class FinancialReportTests(TestCase):
     def setUp(self):
         self.user = _make_user("report_owner@example.com")

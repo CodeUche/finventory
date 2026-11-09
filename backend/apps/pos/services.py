@@ -275,12 +275,27 @@ class POSOrderService:
 
     @staticmethod
     def _tips_payable_account(organisation):
-        """Get or create the Tips Payable (2900) liability account."""
+        """Get or create the Tips Payable liability account.
+
+        Found by name first, not just code 2900: Net Salaries Payable used to
+        free-scan the same 2900+ range, so whichever of the two ran first for an
+        org claimed 2900 and the other's money then posted into it by mistake.
+        Net Salaries Payable now prefers its own code (2210), but an org that
+        already has an old-scheme Net Salaries Payable account sitting at 2900
+        must not have tips posted into it — hence the name check here, not just
+        "whatever's at 2900".
+        """
         from apps.accounting.models import Account, AccountType, normal_balance_for_type
-        acct = Account.objects.filter(organisation=organisation, code="2900").first()
-        if acct:
-            return acct
-        return Account.objects.create(
-            organisation=organisation, code="2900", name="Tips Payable",
-            account_type=AccountType.LIABILITY, account_group="Liability",
-            normal_balance=normal_balance_for_type(AccountType.LIABILITY), is_system=True)
+        name = "Tips Payable"
+        existing = Account.objects.filter(
+            organisation=organisation, name=name, account_type=AccountType.LIABILITY,
+        ).first()
+        if existing:
+            return existing
+        for code in ("2900", "2905", "2915", "2920", "2925", "2930"):
+            if not Account.objects.filter(organisation=organisation, code=code).exists():
+                return Account.objects.create(
+                    organisation=organisation, code=code, name=name,
+                    account_type=AccountType.LIABILITY, account_group="Liability",
+                    normal_balance=normal_balance_for_type(AccountType.LIABILITY), is_system=True)
+        raise ValueError('No free account code is left for Tips Payable.')
