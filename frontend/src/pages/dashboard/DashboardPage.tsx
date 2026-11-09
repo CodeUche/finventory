@@ -239,7 +239,10 @@ export default function DashboardPage() {
   const hasAnyModule = unrestricted || hasAnyModulePermission(modulePermissions)
 
   if (!membershipKnown) return <div className="ad" />
-  if (!hasAnyModule) {
+  // No figures to show (no reports, sales or inventory access): a short welcome,
+  // not a dashboard of zeros. Members with other modules are pointed to the menu.
+  const noFigures = !unrestricted && !reports.canView && !sales.canView && !inventory.canView
+  if (!hasAnyModule || noFigures) {
     return (
       <div className="ad">
         <section className="ad-card" style={{ maxWidth: 560, margin: '40px auto', textAlign: 'center' }}>
@@ -247,11 +250,15 @@ export default function DashboardPage() {
             Welcome{user?.first_name ? `, ${user.first_name}` : ''}
           </h1>
           <p style={{ marginTop: 10, color: 'var(--ad-ink)' }}>
-            You have joined {organisation?.name ?? 'this business'}, but you don&apos;t have access to any areas yet.
+            {hasAnyModule
+              ? `You have joined ${organisation?.name ?? 'this business'}. Use the menu on the left to open the areas you can work in.`
+              : `You have joined ${organisation?.name ?? 'this business'}, but you don't have access to any areas yet.`}
           </p>
-          <p style={{ marginTop: 8, fontSize: 14, color: 'var(--ad-muted)' }}>
-            Ask the business owner to give you access in Settings &gt; Team.
-          </p>
+          {!hasAnyModule && (
+            <p style={{ marginTop: 8, fontSize: 14, color: 'var(--ad-muted)' }}>
+              Ask the business owner to give you access in Settings &gt; Team.
+            </p>
+          )}
         </section>
       </div>
     )
