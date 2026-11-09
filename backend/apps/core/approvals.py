@@ -48,9 +48,12 @@ def check_approval(organisation, creator, approver, what, *, object_id="", model
             f"Ask {names} to approve it."
         )
 
-    try:
-        from apps.core.models import AuditLog
+    # A self-approval with no audit trail is exactly the unaccountable approval
+    # this whole module exists to prevent — if AuditLog.log fails, the approval
+    # must fail too, not succeed silently unaudited.
+    from apps.core.models import AuditLog
 
+    try:
         AuditLog.log(
             action=AuditLog.UPDATE, user=approver, organisation=organisation,
             model_name=model_name or what.title(), object_id=str(object_id),
@@ -58,6 +61,8 @@ def check_approval(organisation, creator, approver, what, *, object_id="", model
             changes={"approval": {"old": None, "new": SELF_APPROVED_NOTE}},
             request=request,
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        raise ValueError(
+            f"Could not record this self-approval in the audit trail, so it was not approved. Try again. ({exc})"
+        ) from exc
     return True
