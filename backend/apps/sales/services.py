@@ -1205,7 +1205,14 @@ class SaleService:
                 source_ref=str(sale_return.id),
             )
         except Exception as exc:
+            # Previously swallowed: the return record, restocked stock and any
+            # refund payout would commit while the GL silently never recorded
+            # the credit note, with nothing to tell the user. process_return
+            # runs inside @transaction.atomic, so letting this propagate rolls
+            # the whole return back together — it either all commits or none
+            # of it does, and the caller sees why.
             logger.error("Credit note GL journal failed for %s: %s", sale_return.return_number, exc)
+            raise
 
         logger.info(
             "Return %s processed for invoice %s — refund %s (VAT %s)",
