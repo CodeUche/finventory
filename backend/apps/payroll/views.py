@@ -832,7 +832,14 @@ class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             run.status = PayrollRun.PAID
             run.payment_date = request.data.get('payment_date', timezone.now().date())
             run.save()
-            run.payslips.filter(status=PayslipLine.CALCULATED).update(status=PayslipLine.PAID)
+            # A payslip whose Paystack transfer is known to have failed did not
+            # actually reach the employee — marking it PAID anyway would hide
+            # that it still needs a manual payment or a retried transfer. It
+            # stays CALCULATED (visible via transfer_status='failed') while the
+            # rest of the run, which did get paid, moves on.
+            run.payslips.filter(status=PayslipLine.CALCULATED).exclude(
+                transfer_status=PayslipLine.TRANSFER_FAILED
+            ).update(status=PayslipLine.PAID)
         # Money has now gone out: clear Net Salaries Payable against Bank.
         from apps.accounting.services import AccountingService, safe_post_gl
         safe_post_gl(
