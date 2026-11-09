@@ -33,6 +33,7 @@ from decimal import Decimal
 
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 CENT = Decimal("0.01")
@@ -155,7 +156,7 @@ class Command(BaseCommand):
 
         batch = uuid.uuid4().hex[:12]
         system_user = self._system_user()
-        results = {"posted": 0, "already_done": 0, "skipped": 0}
+        results = {"posted": 0, "already_done": 0, "skipped": 0, "mismatch": 0}
         with transaction.atomic():
             with organisation_context(org.id):
                 before = self._balances(org)
@@ -201,8 +202,49 @@ class Command(BaseCommand):
             out[label] = str((_d(row["d"]) - _d(row["c"])).quantize(CENT))
         return out
 
+    def _live_credit_payment_amount(self, org, txn):
+        """Re-derive what BUG-001 would compute for this payment right now, the
+        same way find_ledger_damage._missed_credit_payments does: the lesser of
+        what the customer actually paid and what they owed just before this
+        payment. Replaying only this customer's history, not the whole org."""
+        from apps.credits.models import CreditTransaction
+        owed_before = Decimal("0")
+        for t in (CreditTransaction.objects.filter(organisation=org, customer_id=txn.customer_id)
+                  .order_by("created_at", "id").only("id", "balance_after")):
+            if t.id == txn.id:
+                break
+            owed_before = _d(t.balance_after)
+        recorded = _d(txn.amount)
+        return min(recorded, max(owed_before, Decimal("0")))
+
+    def _live_po_receipt_amount(self, bill):
+        """Re-derive what BUG-004 would compute for this bill right now: the
+        live bill total minus what is actually posted to the ledger."""
+        from apps.accounting.models import JournalEntry
+        receipts = (JournalEntry.objects.filter(organisation=bill.organisation, source_type="po_receipt")
+                    .filter(Q(source_ref=str(bill.source_purchase_order_id))
+                            | Q(source_ref__startswith=f"{bill.source_purchase_order_id}:"))
+                    .prefetch_related("lines"))
+        posted = sum((sum((_d(l.credit) for l in e.lines.all()), Decimal("0")) for e in receipts), Decimal("0"))
+        approvals = (JournalEntry.objects.filter(organisation=bill.organisation, source_type="bill_approved",
+                                                  source_ref=str(bill.id)).prefetch_related("lines"))
+        posted += sum((sum((_d(l.credit) for l in e.lines.all()), Decimal("0")) for e in approvals), Decimal("0"))
+        total = _d(bill.total_amount)
+        missing = total - posted
+        vat = (_d(bill.tax_amount) * missing / total).quantize(CENT) if total else Decimal("0")
+        return missing, vat
+
     def _post(self, org, c, user, batch):
-        """Post one approved correction. Returns 'posted', 'already_done' or 'skipped'."""
+        """Post one approved correction. Returns 'posted', 'already_done',
+        'skipped' or 'mismatch'.
+
+        The plan file was written at `plan` time and the owner may approve it
+        hours or days later — long enough for the underlying record to move
+        (another payment landed, the bill was edited) or for the file to have
+        been hand-edited. Every amount is recomputed from the live record
+        right before posting and compared to what the plan says; a mismatch
+        is refused, not posted with stale or tampered numbers.
+        """
         from datetime import date
 
         from apps.accounting.models import FinancialPeriod, JournalEntry
@@ -223,6 +265,13 @@ class Command(BaseCommand):
             txn = CreditTransaction.objects.select_related("customer").filter(organisation=org, id=c["record"]).first()
             if txn is None:
                 return "skipped"
+            live_amount = self._live_credit_payment_amount(org, txn)
+            if abs(live_amount - amount) > CENT:
+                self.stderr.write(
+                    f"MISMATCH {ref}: plan says {amount}, live record now says {live_amount} "
+                    f"(payment {c['record']}, customer {c['customer']}). Refusing to post; re-run `plan`."
+                )
+                return "mismatch"
             asset = AccountingService.tender_asset_account(org, c.get("method", "cash"))
             ar = AccountingService._resolve_party_account(
                 org, txn.customer, "receivable_account", "accounts_receivable", "1100")
@@ -230,10 +279,18 @@ class Command(BaseCommand):
             desc = f"Correction: payment from {c['customer']}{note}"
         elif c["kind"] == "po_receipt":
             from apps.bills.models import Bill
-            bill = Bill.objects.select_related("supplier").filter(organisation=org, id=c["record"]).first()
+            bill = Bill.objects.select_related("supplier", "source_purchase_order").filter(
+                organisation=org, id=c["record"]).first()
             if bill is None:
                 return "skipped"
             vat = _d(c.get("vat"))
+            live_amount, live_vat = self._live_po_receipt_amount(bill)
+            if abs(live_amount - amount) > CENT or abs(live_vat - vat) > CENT:
+                self.stderr.write(
+                    f"MISMATCH {ref}: plan says amount={amount} vat={vat}, live record now says "
+                    f"amount={live_amount} vat={live_vat} (bill {c['bill']}). Refusing to post; re-run `plan`."
+                )
+                return "mismatch"
             inv = AccountMappingService.resolve(org, "inventory_account")
             ap = AccountingService._resolve_party_account(
                 org, bill.supplier, "payable_account", "accounts_payable", "2001")

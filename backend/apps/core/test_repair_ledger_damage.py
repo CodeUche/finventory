@@ -138,6 +138,80 @@ class RepairLedgerDamageTests(TestCase):
         entry = self._repairs().get(source_ref=f"BUG-001:{big.id}")
         self.assertEqual(sum(l.debit for l in entry.lines.all()), Decimal("100"))
 
+    def test_a_plan_approved_after_the_live_record_changed_is_refused_not_posted(self):
+        """The owner can approve a plan hours or days after it was generated.
+        If the payment's live amount no longer matches what the plan says —
+        edited, or the file was hand-tampered — the correction must be
+        refused, not posted with the stale/wrong number."""
+        from apps.credits.models import CreditTransaction
+        plan = self._plan()
+        self.assertEqual(Decimal(plan["corrections"][0]["amount"]), Decimal("300"))
+        # The live payment is edited down after the plan was written.
+        CreditTransaction.objects.filter(pk=self.txn.pk).update(amount=Decimal("250"))
+        out = self._apply()
+        self.assertIn("'mismatch': 1", out)
+        self.assertEqual(self._repairs().count(), 0)
+
+
+class PoReceiptMismatchTests(TestCase):
+    def setUp(self):
+        from datetime import date
+        from apps.purchases.models import PurchaseOrder
+        from apps.suppliers.models import Supplier
+        from apps.inventory.models import Warehouse
+
+        self.user = _make_user("po-mismatch@example.com")
+        self.org = _make_org(self.user, "PO Mismatch Org")
+        _upgrade_to_business(self.org)
+        self.supplier = Supplier.objects.create(organisation=self.org, name="Kobo")
+        self.warehouse = Warehouse.objects.create(organisation=self.org, name="Main", is_default=True)
+        self.po = PurchaseOrder.objects.create(
+            organisation=self.org, po_number="PO-MM", supplier=self.supplier, warehouse=self.warehouse,
+            status="received", order_date=date(2026, 6, 1), subtotal=Decimal("500"),
+            tax_amount=Decimal("0"), total_amount=Decimal("500"), created_by=self.user)
+        from apps.bills.models import Bill
+        self.bill = Bill.objects.create(
+            organisation=self.org, supplier=self.supplier, status=Bill.APPROVED, issue_date=date(2026, 6, 1),
+            due_date=date(2026, 7, 1), subtotal=Decimal("500"), tax_amount=Decimal("0"),
+            total_amount=Decimal("500"), created_by=self.user, source_purchase_order=self.po)
+        self.plan_path = tempfile.NamedTemporaryFile(suffix=".json", delete=False).name
+
+    def _plan(self, approve=True):
+        call_command("repair_ledger_damage", "plan", "--org", str(self.org.id), "--out", self.plan_path,
+                     stdout=io.StringIO())
+        with open(self.plan_path, encoding="utf-8") as fh:
+            plan = json.load(fh)
+        for c in plan["corrections"]:
+            c["approved"] = approve
+        with open(self.plan_path, "w", encoding="utf-8") as fh:
+            json.dump(plan, fh)
+        return plan
+
+    def _apply(self, commit=True):
+        args = ["repair_ledger_damage", "apply", "--plan", self.plan_path,
+                "--approved-by", self.user.email] + (["--commit"] if commit else [])
+        out = io.StringIO()
+        call_command(*args, stdout=out)
+        return out.getvalue()
+
+    def test_bill_edited_after_the_plan_is_refused_not_posted(self):
+        from apps.bills.models import Bill
+        plan = self._plan()
+        self.assertEqual(Decimal(plan["corrections"][0]["amount"]), Decimal("500"))
+        # The bill's total is edited after the plan was written (e.g. a correction
+        # or a second partial delivery that changes what is actually owed).
+        Bill.objects.filter(pk=self.bill.pk).update(total_amount=Decimal("350"))
+        out = self._apply()
+        self.assertIn("'mismatch': 1", out)
+        self.assertEqual(JournalEntry.objects.filter(organisation=self.org, source_type="data_repair").count(), 0)
+
+    def test_unchanged_bill_posts_normally(self):
+        self._plan()
+        out = self._apply()
+        self.assertIn("'posted': 1", out)
+        entry = JournalEntry.objects.filter(organisation=self.org, source_type="data_repair").get()
+        self.assertEqual(sum(l.credit for l in entry.lines.all()), Decimal("500"))
+
 
 class BillAlreadyPostedTests(TestCase):
     def test_a_bill_whose_approval_already_booked_the_payable_is_not_flagged(self):
