@@ -1266,3 +1266,76 @@ class PayrollNetPayLiabilityTests(TestCase):
         )
         self.assertIsNone(AccountingService.post_payroll_payment_journal(self.org, self.run, user=self.user))
         self.assertEqual(self._bal("1002"), -self.net)   # credited once, at approval
+
+
+class PayrollApprovalSegregationTests(TestCase):
+    """approve() lets an owner/admin approve a PROCESSING run directly, without
+    submitting it first (the submitted_for_approval branch). That path used to
+    pass run.submitted_by -- still None, since nothing was submitted -- as the
+    creator to check_approval, which treats creator=None as "not a self-
+    approval" and returns immediately. An owner could therefore create and
+    approve their own run with no segregation-of-duties check at all, even
+    with other owners/admins available, and with no audit trail marking it as
+    a self-approval. The creator is now always run.processed_by (who actually
+    ran the payroll, set at creation, never None), checked the same way
+    whether or not the run was ever submitted."""
+
+    def setUp(self):
+        from apps.accounting.tests import _make_user, _make_org, _upgrade_to_business, _auth_client
+        from apps.tenancy.models import Membership
+
+        self.owner = _make_user("seg_owner@example.com")
+        self.org = _make_org(self.owner, "Segregation Org")
+        _upgrade_to_business(self.org)
+        from apps.payroll.test_track_a import _employee
+        _employee(self.org)
+        self._make_user = _make_user
+        self._auth_client = _auth_client
+        self._Membership = Membership
+
+    def _unsubmitted_run(self, created_by):
+        from apps.payroll.test_track_a import _run
+        run = _run(self.org, created_by, year=2026, month=6)
+        PayrollService.run_payroll(run)
+        run.refresh_from_db()
+        return run
+
+    def test_owner_cannot_approve_their_own_unsubmitted_run_when_another_owner_exists(self):
+        second = self._make_user("seg_second@example.com")
+        self._Membership.objects.create(
+            user=second, organisation=self.org, role=self._Membership.Role.OWNER, is_active=True,
+        )
+        run = self._unsubmitted_run(self.owner)
+        client = self._auth_client(self.owner, self.org)
+        res = client.post(f"/api/v1/payroll/runs/{run.id}/approve/")
+        self.assertEqual(res.status_code, 403, msg=str(res.data))
+        run.refresh_from_db()
+        self.assertEqual(run.status, PayrollRun.PROCESSING)
+
+    def test_sole_owner_can_approve_their_own_unsubmitted_run_and_it_is_audited(self):
+        from apps.core.models import AuditLog
+        from apps.core.approvals import SELF_APPROVED_NOTE
+
+        run = self._unsubmitted_run(self.owner)
+        client = self._auth_client(self.owner, self.org)
+        res = client.post(f"/api/v1/payroll/runs/{run.id}/approve/")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        run.refresh_from_db()
+        self.assertEqual(run.status, PayrollRun.APPROVED)
+        entry = AuditLog.objects.filter(
+            organisation_id=self.org.id, model_name="PayrollRun", object_id=str(run.id),
+        ).order_by("-created_at").first()
+        self.assertIsNotNone(entry, "an unsubmitted run approved by its sole-owner creator must still be audited")
+        self.assertEqual(entry.object_repr, SELF_APPROVED_NOTE)
+
+    def test_a_different_admin_can_still_approve_an_unsubmitted_run_normally(self):
+        admin = self._make_user("seg_admin@example.com")
+        self._Membership.objects.create(
+            user=admin, organisation=self.org, role=self._Membership.Role.ADMIN, is_active=True,
+        )
+        run = self._unsubmitted_run(self.owner)
+        client = self._auth_client(admin, self.org)
+        res = client.post(f"/api/v1/payroll/runs/{run.id}/approve/")
+        self.assertEqual(res.status_code, 200, msg=str(res.data))
+        run.refresh_from_db()
+        self.assertEqual(run.status, PayrollRun.APPROVED)

@@ -795,10 +795,16 @@ class PayrollRunViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                     status=400,
                 )
         # Segregation of duties, one rule everywhere (apps/core/approvals.py):
-        # the submitter may approve only when nobody else can.
+        # the creator may approve only when nobody else can. Keyed on
+        # processed_by (who actually ran the payroll, always set), not
+        # submitted_by (only set if the run went through the submit step) --
+        # an owner/admin can approve a run they created without ever
+        # submitting it (see the submitted_for_approval branch above), and
+        # that path must not silently skip this check just because
+        # submitted_by is still None.
         from apps.core.approvals import check_approval
         try:
-            check_approval(run.organisation, run.submitted_by, request.user, "payroll run",
+            check_approval(run.organisation, run.processed_by, request.user, "payroll run",
                            object_id=run.id, model_name="PayrollRun", request=request)
         except ValueError as e:
             return Response({'error': str(e)}, status=status.HTTP_403_FORBIDDEN)
