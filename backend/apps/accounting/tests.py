@@ -198,6 +198,59 @@ class JournalEntryTests(TestCase):
         self.assertIn(res.status_code, [403, 404])
 
 
+class PostJournalEntryBalanceTests(TestCase):
+    """AccountingService.post_journal_entry is the automatic posting path used by
+    every service (sales, bills, payroll, ...), not the hand-entered-journal UI.
+
+    It used to accept a 1-kobo-out entry (`abs(debits - credits) > 0.01` lets an
+    exact 0.01 difference through), so a caller with a rounding bug could silently
+    throw the trial balance out by a kobo per call. Each line is now rounded to
+    2dp first (so upstream float noise like 100.004999999999 can't produce a false
+    imbalance), then debits must equal credits exactly.
+    """
+
+    def setUp(self):
+        self.user = _make_user("pjeb_owner@example.com")
+        self.org = _make_org(self.user, "PJEB Org")
+        _upgrade_to_business(self.org)
+
+    def _acct(self, code):
+        return Account.objects.get(organisation=self.org, code=code)
+
+    def test_one_kobo_out_is_rejected(self):
+        bank, rev = self._acct('1002'), self._acct('4001')
+        with self.assertRaises(ValueError):
+            AccountingService.post_journal_entry(
+                self.org, "1 kobo out", timezone.now().date(),
+                [(bank, Decimal('100.00'), Decimal('0')), (rev, Decimal('0'), Decimal('99.99'))],
+                self.user, ref='T-KOBO',
+            )
+        self.assertFalse(JournalEntry.objects.filter(organisation=self.org, description='1 kobo out').exists())
+
+    def test_balanced_entry_still_posts(self):
+        bank, rev = self._acct('1002'), self._acct('4001')
+        entry = AccountingService.post_journal_entry(
+            self.org, "Balanced", timezone.now().date(),
+            [(bank, Decimal('100.00'), Decimal('0')), (rev, Decimal('0'), Decimal('100.00'))],
+            self.user, ref='T-OK',
+        )
+        self.assertEqual(entry.status, 'posted')
+        self.assertEqual(entry.lines.count(), 2)
+
+    def test_float_noise_past_2dp_rounds_before_the_balance_check(self):
+        # Simulates upstream float division (e.g. splitting a total three ways)
+        # producing a debit side that is 0.000...1 off before rounding — this must
+        # NOT raise, because round_money brings both sides to the same 2dp value.
+        bank, rev = self._acct('1002'), self._acct('4001')
+        entry = AccountingService.post_journal_entry(
+            self.org, "Float noise", timezone.now().date(),
+            [(bank, Decimal('100.004999999999'), Decimal('0')), (rev, Decimal('0'), Decimal('100.00'))],
+            self.user, ref='T-NOISE',
+        )
+        self.assertEqual(entry.status, 'posted')
+        self.assertEqual(entry.lines.get(debit__gt=0).debit, Decimal('100.00'))
+
+
 class FinancialReportTests(TestCase):
     def setUp(self):
         self.user = _make_user("report_owner@example.com")

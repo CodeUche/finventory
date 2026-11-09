@@ -3,6 +3,7 @@ from datetime import date
 from decimal import Decimal
 from django.db import transaction
 from django.db.models import F, Q, Sum
+from apps.core.utils import round_money
 from .models import Account, AccountType, JournalEntry, JournalLine, FixedAsset, DepreciationEntry, FinancialPeriod, AccountMapping
 
 logger = logging.getLogger(__name__)
@@ -1640,16 +1641,23 @@ class AccountingService:
             if existing:
                 return existing
 
-        # Filter out zero lines
-        non_zero_lines = [(acct, d, c) for (acct, d, c) in lines if d > 0 or c > 0]
+        # Filter out zero lines, rounding each amount to 2dp first so what gets
+        # balance-checked is exactly what gets posted (upstream float arithmetic
+        # can carry noise past 2dp, e.g. 100.004999999999).
+        non_zero_lines = [
+            (acct, round_money(Decimal(str(d))), round_money(Decimal(str(c))))
+            for (acct, d, c) in lines if d > 0 or c > 0
+        ]
         if not non_zero_lines:
             logger.warning("post_journal_entry: all lines are zero, skipping. ref=%s", ref)
             return None
 
-        # E2: validate debits == credits before committing (raise, don't silently post)
-        total_debits  = sum(Decimal(str(d)) for _, d, _ in non_zero_lines)
-        total_credits = sum(Decimal(str(c)) for _, _, c in non_zero_lines)
-        if abs(total_debits - total_credits) > Decimal('0.01'):
+        # E2: validate debits == credits before committing (raise, don't silently post).
+        # Exact equality, not a tolerance band: a 1-kobo-out entry is a real bug in
+        # the caller, not rounding noise, once each line is already rounded above.
+        total_debits  = sum(d for _, d, _ in non_zero_lines)
+        total_credits = sum(c for _, _, c in non_zero_lines)
+        if total_debits != total_credits:
             raise ValueError(
                 f"Journal entry imbalanced: debits={total_debits}, credits={total_credits} "
                 f"(ref={ref}, source={source_type}/{source_ref})"
@@ -1671,8 +1679,8 @@ class AccountingService:
                 JournalLine.objects.create(
                     journal_entry=entry,
                     account=account,
-                    debit=Decimal(str(debit)),
-                    credit=Decimal(str(credit)),
+                    debit=debit,
+                    credit=credit,
                 )
 
         # Emit audit log
