@@ -321,7 +321,7 @@ export default function BillsPage() {
   const summaryTiles = [
     { label: 'Total Payable', value: totalPayable, color: 'text-white', filter: '', hint: '' },
     { label: 'Overdue', value: overdue, color: 'text-red-400', filter: 'overdue', hint: 'Click to filter' },
-    { label: 'Due This Week', value: dueThisWeek, color: 'text-orange-400', filter: 'approved', hint: 'Click to filter' },
+    { label: 'Due This Week', value: dueThisWeek, color: 'text-red-400', filter: 'approved', hint: 'Click to filter' },
     { label: 'Paid This Month', value: paidThisMonth, color: 'text-emerald-400', filter: 'paid', hint: 'Click to filter' },
   ]
   const { page, setPage, pageSize, setPageSize, totalPages, paged, total } = usePagination(bills)
@@ -332,7 +332,7 @@ export default function BillsPage() {
       <div className="flex flex-col sm:flex-row sm:items-center gap-4">
         <div>
           <h1 className="text-2xl font-bold text-white">Bills (Accounts Payable)</h1>
-          <p className="text-slate-400 text-sm">{total} total bills</p>
+          <p className="text-slate-400 text-sm">({total}) Total Bills</p>
         </div>
         <div className="flex items-center gap-2 sm:ml-auto">
           <button onClick={() => { bypassNextGets(); load() }} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
@@ -353,20 +353,22 @@ export default function BillsPage() {
           <button
             key={t.label}
             onClick={() => t.filter ? setStatusFilter(statusFilter === t.filter ? '' : t.filter) : undefined}
-            className={`card p-5 text-left transition-all ${t.filter ? 'cursor-pointer hover:border-brand-500/40' : 'cursor-default'} ${statusFilter === t.filter && t.filter ? 'ring-2 ring-brand-500' : ''}`}
+            data-clickable={t.filter ? 'true' : 'false'}
+            data-active={statusFilter === t.filter && t.filter ? 'true' : 'false'}
+            className="ds-proc-tile"
           >
-            <p className="text-xs text-slate-400">{t.label}</p>
-            <p className={`text-xl font-bold mt-1 ${t.color}`}>{formatCurrency(t.value)}</p>
-            {t.hint && <p className="text-xs text-slate-600 mt-0.5">{t.hint}</p>}
+            <p className="ds-proc-tile-label">{t.label}</p>
+            <p className={`ds-proc-tile-value ${t.color}`}>{formatCurrency(t.value)}</p>
+            {t.hint && <p className="ds-proc-tile-hint">{t.hint}</p>}
           </button>
         ))}
       </div>
 
       {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-3">
-        <div className="relative flex-1 max-w-xs">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-          <input className="input pl-9" placeholder="Search supplier…" value={search} onChange={(e) => setSearch(e.target.value)} />
+        <div className="ds-proc-search relative flex-1 max-w-xs">
+          <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
+          <input className="input pl-9" aria-label="Search bills" placeholder="Search bill number or supplier…" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
         <SortSelect
           value={sortBy}
@@ -417,9 +419,11 @@ export default function BillsPage() {
                 ))
               ) : total === 0 ? (
                 <tr>
-                  <td colSpan={10} className="px-4 py-12 text-center">
-                    <Receipt size={32} className="mx-auto mb-2 text-slate-600" />
-                    <p className="text-slate-500">No bills found</p>
+                  <td colSpan={10} className="p-4">
+                    <div className="ds-empty">
+                      <Receipt size={32} aria-hidden="true" />
+                      <p>No Bills Found</p>
+                    </div>
                   </td>
                 </tr>
               ) : paged.map((b) => (
@@ -461,7 +465,7 @@ export default function BillsPage() {
                         <button onClick={() => { setPayBillId(b.id); setPayForm({ ...BLANK_PAY, amount: normalizeAmountStr(b.amount_due) }) }} className="text-xs px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 transition-colors">Pay</button>
                       )}
                       {b.status !== 'voided' && b.status !== 'paid' && (
-                        <button onClick={() => handleVoid(b.id)} className="p-1 text-slate-500 hover:text-red-400 transition-colors"><Trash2 size={13} /></button>
+                        <button onClick={() => handleVoid(b.id)} className="p-1 text-red-400 hover:opacity-80 transition-opacity" title="Void bill" aria-label="Void bill"><Trash2 size={13} /></button>
                       )}
                     </div>
                   </td>
@@ -475,13 +479,13 @@ export default function BillsPage() {
       </div>
 
       {/* AP Aging */}
-      <div className="card p-6">
-        <h3 className="text-white font-semibold mb-4">AP Aging Analysis</h3>
+      <div className="ds-proc-panel">
+        <h3>AP Aging Analysis</h3>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {(['0-30', '31-60', '61-90', '90+'] as const).map((bucket, i) => (
-            <div key={bucket} className={`p-4 rounded-xl border ${i === 0 ? 'border-emerald-500/30 bg-emerald-500/5' : i === 1 ? 'border-yellow-500/30 bg-yellow-500/5' : i === 2 ? 'border-orange-500/30 bg-orange-500/5' : 'border-red-500/30 bg-red-500/5'}`}>
-              <p className="text-xs text-slate-400">{bucket} days</p>
-              <p className={`text-lg font-bold mt-1 ${i === 0 ? 'text-emerald-400' : i === 1 ? 'text-yellow-400' : i === 2 ? 'text-orange-400' : 'text-red-400'}`}>
+            <div key={bucket} className="ds-proc-tile">
+              <p className="ds-proc-tile-label">{bucket} days</p>
+              <p className={`ds-proc-tile-value ${i === 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                 {formatCurrency(aging[bucket])}
               </p>
             </div>

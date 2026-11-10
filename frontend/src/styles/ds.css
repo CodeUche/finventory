@@ -214,7 +214,7 @@ html.light .ds{--ds-modal-bg:#FCFCF6}
 .ds-proc-panel{padding:16px;border:1.5px solid var(--ds-tile-bd);border-radius:8px;background:color-mix(in srgb,var(--ds-card) 60%,transparent)}
 .ds-proc-panel > h3{font-size:18px;font-weight:400;color:var(--ds-th-tx);margin:0 0 12px}
 .ds-proc-search{position:relative}
-.ds-proc-search input{border-radius:999px;padding-left:40px}
+.ds .ds-proc-search input.input{border-radius:999px;padding-left:40px}
 .ds-proc-folder{
   display:flex;align-items:flex-start;gap:12px;padding:16px;cursor:pointer;text-align:left;width:100%;
   background:var(--ds-card);border:1.5px solid var(--ds-card-bd);border-radius:10px;box-shadow:var(--ds-shadow);transition:.16s;
