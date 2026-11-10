@@ -172,7 +172,7 @@ html.light .ds{
 .ds-filters > .ds-filters-end{margin-left:auto}
 
 /* ---- table shell, empty row, status text, info box, modal panel ---- */
-.ds-table{padding:0;overflow:hidden}
+.ds .ds-table{padding:0;overflow:hidden}
 .ds-empty-cell{padding:44px 16px;text-align:center;font-size:18px;color:var(--ds-link)}
 .ds-status{font-weight:600;text-transform:capitalize}
 .ds-info{

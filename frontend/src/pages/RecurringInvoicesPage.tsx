@@ -198,7 +198,7 @@ export default function RecurringInvoicesPage() {
                       aria-label={`${r.template_name} active`}
                       className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${r.is_active ? 'bg-brand-500' : 'bg-surface-600'}`}
                     >
-                      <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${r.is_active ? 'translate-x-4.5' : 'translate-x-0.5'}`} />
+                      <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${r.is_active ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
                     </button>
                   </td>
                   <td className="px-4 py-3.5">
