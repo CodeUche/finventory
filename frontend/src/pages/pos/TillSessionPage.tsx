@@ -110,7 +110,7 @@ export default function TillSessionPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+      <div className="ds-head !mb-0">
         <div>
           <h1 className="text-2xl font-bold text-white">Till</h1>
           <p className="text-slate-400 text-sm">
@@ -122,7 +122,7 @@ export default function TillSessionPage() {
         <button
           onClick={() => { bypassNextGets(); load() }}
           disabled={loading}
-          className="sm:ml-auto btn-ghost p-2 text-slate-400 hover:text-white"
+          className="btn-ghost p-2 text-slate-400 hover:text-white"
           title="Refresh"
         >
           <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
@@ -159,7 +159,7 @@ export default function TillSessionPage() {
       ) : (
         /* ── Close the shift ──────────────────────────────────────────── */
         <>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="ds-stats !mb-0">
             {[
               { k: 'Opening float', v: current.opening_float, s: 'Set at open' },
               { k: 'Sales this shift', v: current.sales_total, s: `${current.transaction_count ?? 0} transactions` },
@@ -169,10 +169,10 @@ export default function TillSessionPage() {
                   Number(current.by_tender?.cash?.expected ?? 0),
                 ), s: 'Card and transfer' },
             ].map(({ k, v, s }) => (
-              <div key={k} className="card p-4">
-                <p className="text-[10px] uppercase tracking-widest text-slate-500">{k}</p>
-                <p className="text-xl font-bold text-white font-mono mt-1">{formatCurrency(v ?? 0)}</p>
-                <p className="text-[11px] text-slate-500 mt-0.5">{s}</p>
+              <div key={k} className="ds-stat is-tile">
+                <span className="ds-stat-label">{k}</span>
+                <span className="ds-stat-value">{formatCurrency(v ?? 0)}</span>
+                <span className="ds-stat-sub">{s}</span>
               </div>
             ))}
           </div>

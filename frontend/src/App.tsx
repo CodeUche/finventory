@@ -352,7 +352,7 @@ export default function App() {
 
         {/* Sales */}
         <Route path="sales"     element={<ModuleRoute module="sales"><DsPage><SalesPage /></DsPage></ModuleRoute>} />
-        <Route path="sales/returns" element={<ModuleRoute module="sales"><SalesReturnsPage /></ModuleRoute>} />
+        <Route path="sales/returns" element={<ModuleRoute module="sales"><DsPage><SalesReturnsPage /></DsPage></ModuleRoute>} />
         <Route path="sales/new" element={<WriteModuleRoute module="sales"><DsPage><NewSalePage /></DsPage></WriteModuleRoute>} />
         <Route path="sales/invoices/new" element={<WriteModuleRoute module="sales"><DsPage><NewInvoicePage /></DsPage></WriteModuleRoute>} />
         <Route path="sales/invoices/:id/edit" element={<WriteModuleRoute module="sales"><EditInvoicePage /></WriteModuleRoute>} />
