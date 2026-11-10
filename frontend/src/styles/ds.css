@@ -199,6 +199,37 @@ html.light .ds{--ds-modal-bg:#FCFCF6}
 .ds-hub-tile:focus-visible{outline:2px solid var(--ds-link);outline-offset:3px}
 .ds-hub-ico{color:var(--ds-link)}
 
+/* ---- procurement batch: blue summary tiles, pill search, folder cards (new names, nothing above is changed) ---- */
+.ds-proc-tile{
+  display:block;text-align:left;padding:16px 18px;border-radius:8px;
+  background:var(--ds-tile);border:1.5px solid transparent;color:var(--ds-th-tx);
+}
+.ds-proc-tile[data-clickable="true"]{cursor:pointer}
+.ds-proc-tile[data-clickable="true"]:hover{border-color:var(--ds-tile-bd)}
+.ds-proc-tile[data-active="true"]{border-color:var(--ds-link);box-shadow:0 0 0 2px color-mix(in srgb,var(--ds-link) 30%,transparent)}
+.ds-proc-tile:focus-visible{outline:2px solid var(--ds-link);outline-offset:2px}
+.ds-proc-tile .ds-proc-tile-label{font-size:16px;color:var(--ds-th-tx)}
+.ds-proc-tile .ds-proc-tile-value{font-size:20px;font-weight:700;margin-top:4px}
+.ds-proc-tile .ds-proc-tile-hint{font-size:12px;color:var(--ds-th-tx);margin-top:2px}
+.ds-proc-panel{padding:16px;border:1.5px solid var(--ds-tile-bd);border-radius:8px;background:color-mix(in srgb,var(--ds-card) 60%,transparent)}
+.ds-proc-panel > h3{font-size:18px;font-weight:400;color:var(--ds-th-tx);margin:0 0 12px}
+.ds-proc-search{position:relative}
+.ds-proc-search input{border-radius:999px;padding-left:40px}
+.ds-proc-folder{
+  display:flex;align-items:flex-start;gap:12px;padding:16px;cursor:pointer;text-align:left;width:100%;
+  background:var(--ds-card);border:1.5px solid var(--ds-card-bd);border-radius:10px;box-shadow:var(--ds-shadow);transition:.16s;
+}
+.ds-proc-folder:hover, .ds-proc-folder:focus-within{border-color:var(--ds-link);transform:translateY(-1px)}
+.ds-proc-folder-ico{width:40px;height:40px;border-radius:999px;display:flex;align-items:center;justify-content:center;flex-shrink:0;background:var(--ds-tile);color:var(--ds-link)}
+.ds-proc-section-title{font-size:16px;font-weight:700;color:var(--ds-title);margin:0 0 12px}
+.ds-proc-crumb{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:14px;color:var(--ds-ink)}
+.ds-proc-crumb button{color:var(--ds-link)}
+.ds-proc-crumb button:hover{text-decoration:underline}
+.ds-proc-crumb button:focus-visible{outline:2px solid var(--ds-link);outline-offset:2px;border-radius:4px}
+@media(max-width:640px){
+  .ds-proc-tile .ds-proc-tile-value{font-size:17px}
+}
+
 @media(max-width:640px){
   .ds h1{font-size:20px}
   .ds-hub{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
