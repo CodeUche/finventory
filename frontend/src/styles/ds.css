@@ -56,6 +56,9 @@ html.light .ds{
 .ds .text-red-400, .ds .text-red-500{color:var(--ds-bad)}
 .ds .text-amber-400, .ds .text-yellow-400{color:var(--ds-warn)}
 
+.ds .text-amber-200\/90, .ds .text-amber-300{color:var(--ds-warn)}
+.ds .text-green-300{color:var(--ds-good)}
+
 /* ---- surfaces ---- */
 .ds .card, .ds .card-sm, .ds .stat-card{
   background:var(--ds-card);border:1.5px solid var(--ds-card-bd);border-radius:12px;box-shadow:var(--ds-shadow);

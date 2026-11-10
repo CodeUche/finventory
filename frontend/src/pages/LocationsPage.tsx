@@ -279,7 +279,7 @@ export default function LocationsPage() {
       {/* Modal */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-surface-800 rounded-2xl border border-surface-700 w-full max-w-md p-6 space-y-4">
+          <div className="card ds-modal w-full max-w-md p-6 space-y-4">
             <h2 className="text-lg font-bold text-white">
               {editing ? 'Edit Location' : 'New Location'}
             </h2>
