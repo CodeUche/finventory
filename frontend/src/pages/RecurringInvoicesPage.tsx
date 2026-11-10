@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
-import { Plus, X, RefreshCw, Loader2, Trash2, Play } from 'lucide-react'
+import { Plus, X, Loader2, Trash2, Play } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { recurringApi, customerApi, inventoryApi } from '@/services/api'
 import { formatDate, normalizeAmountStr, stripCommas } from '@/lib/utils'
@@ -136,18 +136,18 @@ export default function RecurringInvoicesPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+      <div className="ds-head !mb-0">
         <div>
           <h1 className="text-2xl font-bold text-white">Recurring Invoices</h1>
           <p className="text-slate-400 text-sm">{items.length} templates</p>
         </div>
-        <button className="btn-primary sm:ml-auto" onClick={() => setShowModal(true)}>
+        <button className="btn-primary" onClick={() => setShowModal(true)}>
           <Plus size={16} /> New Recurring Invoice
         </button>
       </div>
 
       {/* Table */}
-      <div className="card p-0 overflow-hidden">
+      <div className="card ds-table">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -168,9 +168,8 @@ export default function RecurringInvoicesPage() {
                 ))
               ) : items.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-12 text-center">
-                    <RefreshCw size={32} className="mx-auto mb-2 text-slate-600" />
-                    <p className="text-slate-500">No recurring invoices yet</p>
+                  <td colSpan={7} className="ds-empty-cell">
+                    No Recurring Invoices Yet
                   </td>
                 </tr>
               ) : items.map((r) => (
@@ -194,6 +193,9 @@ export default function RecurringInvoicesPage() {
                   <td className="px-4 py-3.5">
                     <button
                       onClick={() => handleToggle(r)}
+                      role="switch"
+                      aria-checked={r.is_active}
+                      aria-label={`${r.template_name} active`}
                       className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${r.is_active ? 'bg-brand-500' : 'bg-surface-600'}`}
                     >
                       <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${r.is_active ? 'translate-x-4.5' : 'translate-x-0.5'}`} />
@@ -225,7 +227,7 @@ export default function RecurringInvoicesPage() {
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setShowModal(false)} />
-          <div className="relative card w-full max-w-2xl p-6 space-y-5 overflow-y-auto max-h-[90vh]">
+          <div className="relative card ds-modal w-full max-w-2xl p-6 space-y-5 overflow-y-auto max-h-[90vh]">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-bold text-white">New Recurring Invoice</h2>
               <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-white"><X size={20} /></button>

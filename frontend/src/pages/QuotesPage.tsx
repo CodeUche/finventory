@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
-import { Plus, X, ClipboardList, Loader2, FileText, ChevronDown, ChevronUp, Trash2, FileDown, Mail, MessageCircle, CheckCircle, ExternalLink, RefreshCw } from 'lucide-react'
+import { Plus, X, Loader2, FileText, ChevronDown, ChevronUp, Trash2, FileDown, Mail, MessageCircle, CheckCircle, ExternalLink, RefreshCw } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { quoteApi, customerApi, inventoryApi, salesApi, urlToDataUrl, bypassNextGets } from '@/services/api'
 import { formatCurrency, formatDate, normalizeAmountStr, stripCommas } from '@/lib/utils'
@@ -263,13 +263,14 @@ async function buildQuotePDF(
 
 type StatusFilter = 'all' | 'draft' | 'sent' | 'accepted' | 'rejected' | 'expired' | 'converted'
 
-const STATUS_BADGE: Record<string, string> = {
-  draft: 'badge-slate',
-  sent: 'badge-blue',
-  accepted: 'badge-green',
-  rejected: 'badge-red',
-  expired: 'badge-slate',
-  converted: 'badge-orange',
+// Status shows as coloured text (matches the design); colours come from the .ds theme.
+const STATUS_TEXT: Record<string, string> = {
+  draft: 'text-slate-400',
+  sent: 'text-brand-400',
+  accepted: 'text-green-400',
+  rejected: 'text-red-400',
+  expired: 'text-red-400',
+  converted: 'text-amber-400',
 }
 
 interface QuoteLineForm {
@@ -572,7 +573,7 @@ export default function QuotesPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+      <div className="ds-head !mb-0">
         <div>
           <h1 className="text-2xl font-bold text-white">Quotations</h1>
           <p className="text-slate-400 text-sm">{quotes.length} total quotations</p>
@@ -612,53 +613,48 @@ export default function QuotesPage() {
         </div>
       )}
 
-      {/* Summary cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* Summary tiles */}
+      <div className="ds-stats !mb-0">
         {[
-          { label: 'Total Quotations', value: quotes.length, color: 'text-white', bg: 'bg-brand-500/15' },
-          { label: 'Accepted', value: accepted, color: 'text-emerald-400', bg: 'bg-emerald-500/15' },
-          { label: 'Expired', value: expired, color: 'text-red-400', bg: 'bg-red-500/15' },
-          { label: 'Conversion Rate', value: `${convRate}%`, color: 'text-blue-400', bg: 'bg-blue-500/15' },
+          { label: 'Accepted', value: accepted, tone: 'good' },
+          { label: 'Expired', value: expired, tone: 'bad' },
+          { label: 'Conversion Rate', value: `${convRate}%`, tone: 'link' },
+          { label: 'Total Quotations', value: quotes.length, tone: 'neutral' },
         ].map((c) => (
-          <div key={c.label} className="card p-5 flex items-center gap-4">
-            <div className={`w-10 h-10 rounded-xl ${c.bg} flex items-center justify-center`}>
-              <ClipboardList size={18} className={c.color} />
-            </div>
-            <div>
-              <p className="text-xs text-slate-400">{c.label}</p>
-              <p className={`text-xl font-bold ${c.color}`}>{c.value}</p>
-            </div>
+          <div key={c.label} className="ds-stat" data-tone={c.tone}>
+            <span className="ds-stat-label">{c.label}</span>
+            <span className="ds-stat-value">{c.value}</span>
           </div>
         ))}
       </div>
 
+      <div className="ds-filters !mb-0">
+        <YearFilter selectedYear={archiveYear} onChange={handleYearChange} />
+        <MonthFilter selectedMonth={archiveMonth} onChange={handleMonthChange} />
+      </div>
+
       {/* Status filter tabs */}
-      <div className="flex gap-1 p-1 bg-surface-800 rounded-xl w-fit flex-wrap">
+      <div className="ds-tabs !mb-0" role="tablist" aria-label="Quotation status">
         {(['all', 'draft', 'sent', 'accepted', 'rejected', 'expired', 'converted'] as StatusFilter[]).map((s) => (
           <button
             key={s}
+            role="tab"
+            aria-selected={statusFilter === s}
             onClick={() => setStatusFilter(s)}
-            className={statusFilter === s
-              ? 'px-3 py-1.5 rounded-lg text-sm font-semibold bg-brand-500 text-white'
-              : 'px-3 py-1.5 rounded-lg text-sm text-slate-400 hover:text-white transition-colors capitalize'}
+            className="ds-tab"
           >
             {s === 'all' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1)}
           </button>
         ))}
       </div>
 
-      <div className="flex items-center gap-3">
-        <YearFilter selectedYear={archiveYear} onChange={handleYearChange} />
-        <MonthFilter selectedMonth={archiveMonth} onChange={handleMonthChange} />
-      </div>
-
       {/* Table */}
-      <div className="card p-0 overflow-hidden">
+      <div className="card ds-table">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-surface-700">
-                {['', 'Quotation #', 'Customer', 'Issue Date', 'Valid Until', 'Amount', 'Status', 'Actions'].map((h) => (
+                {['', 'Quotation', 'Customer', 'Issue Date', 'Valid Until', 'Amount', 'Status', 'Actions'].map((h) => (
                   <th key={h} className="px-4 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
                 ))}
               </tr>
@@ -676,9 +672,8 @@ export default function QuotesPage() {
                 ))
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-12 text-center">
-                    <ClipboardList size={32} className="mx-auto mb-2 text-slate-600" />
-                    <p className="text-slate-500">No quotations found</p>
+                  <td colSpan={8} className="ds-empty-cell">
+                    No Quotations Found
                   </td>
                 </tr>
               ) : pagedQuotes.map((q) => {
@@ -697,7 +692,7 @@ export default function QuotesPage() {
                     <td className="px-4 py-3.5 text-slate-400">{formatDate(q.valid_until)}</td>
                     <td className="px-4 py-3.5 font-semibold text-white">{formatCurrency(q.total_amount)}</td>
                     <td className="px-4 py-3.5">
-                      <span className={STATUS_BADGE[q.status] ?? 'badge-slate'}>{q.status}</span>
+                      <span className={`ds-status ${STATUS_TEXT[q.status] ?? 'text-slate-400'}`}>{q.status}</span>
                     </td>
                     <td className="px-4 py-3.5">
                       <div className="flex items-center gap-1.5">
@@ -832,7 +827,7 @@ export default function QuotesPage() {
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setShowModal(false)} />
-          <div className="relative card w-full max-w-2xl p-6 space-y-5 overflow-y-auto max-h-[90vh]">
+          <div className="relative card ds-modal w-full max-w-2xl p-6 space-y-5 overflow-y-auto max-h-[90vh]">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-bold text-white">New Quotation</h2>
               <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-white"><X size={20} /></button>

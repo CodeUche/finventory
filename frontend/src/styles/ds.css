@@ -117,6 +117,56 @@ html.light .ds{
   background:var(--ds-card);border:1.5px solid var(--ds-card-bd);border-radius:12px;color:var(--ds-link);font-size:18px;
 }
 
+/* ---- stat tiles: a row of outlined "Label  value" chips ---- */
+.ds-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin-bottom:24px}
+.ds-stat{
+  display:flex;flex-direction:column;gap:4px;padding:14px 18px;min-width:0;
+  background:var(--ds-card);border:1.5px solid var(--ds-card-bd);border-radius:12px;box-shadow:var(--ds-shadow);
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+}
+.ds-stat-label{font-size:14px;font-weight:500;color:var(--ds-muted)}
+.ds-stat-value{font-size:24px;font-weight:700;line-height:1.2;color:var(--ds-title);overflow-wrap:anywhere}
+.ds-stat[data-tone="good"] .ds-stat-label, .ds-stat[data-tone="good"] .ds-stat-value{color:var(--ds-good)}
+.ds-stat[data-tone="bad"] .ds-stat-label, .ds-stat[data-tone="bad"] .ds-stat-value{color:var(--ds-bad)}
+.ds-stat[data-tone="link"] .ds-stat-label, .ds-stat[data-tone="link"] .ds-stat-value{color:var(--ds-link)}
+.ds-stat[data-tone="warn"] .ds-stat-label, .ds-stat[data-tone="warn"] .ds-stat-value{color:var(--ds-warn)}
+
+.ds-stat.is-tile{background:var(--ds-tile);border-color:var(--ds-tile-bd);gap:2px}
+.ds-stat.is-tile .ds-stat-label{color:var(--ds-tile-tx)}
+.ds-stat.is-tile .ds-stat-value{font-size:20px}
+.ds-stat-sub{font-size:13px;color:var(--ds-tile-tx)}
+
+/* ---- tab bar: filled active tab, link-coloured others, underline rule ---- */
+.ds-tabs{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;margin-bottom:20px;padding-bottom:8px;border-bottom:1.5px solid var(--ds-row-bd)}
+.ds-tab{
+  padding:8px 18px;border-radius:10px;border:0;background:transparent;cursor:pointer;
+  font-size:16px;font-weight:600;color:var(--ds-link);transition:background .12s;
+}
+.ds-tab:hover{background:color-mix(in srgb,var(--ds-link) 10%,transparent)}
+.ds-tab:focus-visible{outline:2px solid var(--ds-link);outline-offset:2px}
+.ds-tab[aria-selected="true"], .ds-tab.is-active{background:var(--ds-btn);color:var(--ds-btn-tx)}
+.ds-tab + .ds-tab::before{content:none}
+
+/* ---- filter row ---- */
+.ds-filters{display:flex;flex-wrap:wrap;align-items:center;gap:10px 12px;margin-bottom:20px}
+.ds-filters > .ds-filters-end{margin-left:auto}
+
+/* ---- table shell, empty row, status text, info box, modal panel ---- */
+.ds-table{padding:0;overflow:hidden}
+.ds-empty-cell{padding:44px 16px;text-align:center;font-size:18px;color:var(--ds-link)}
+.ds-status{font-weight:600;text-transform:capitalize}
+.ds-info{
+  display:flex;gap:10px;align-items:flex-start;padding:12px 16px;margin-bottom:20px;border-radius:10px;font-size:14px;
+  background:var(--ds-tile);border:1.5px solid var(--ds-tile-bd);color:var(--ds-ink);
+}
+.ds .ds-modal{
+  background:var(--ds-modal-bg);border:1.5px solid var(--ds-link);border-radius:16px;
+  backdrop-filter:none;-webkit-backdrop-filter:none;box-shadow:0 20px 60px rgba(0,0,0,.35);
+}
+.ds .ds-modal h2{font-size:20px;font-weight:700}
+.ds{--ds-modal-bg:#1B1A2E}
+html.light .ds{--ds-modal-bg:#FCFCF6}
+
 /* ---- hub pages: big tiles ---- */
 .ds-hub{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:20px}
 .ds-hub-tile{
@@ -132,5 +182,9 @@ html.light .ds{
 @media(max-width:640px){
   .ds h1{font-size:20px}
   .ds-hub{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+  .ds-stats{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+  .ds-stat{padding:10px 12px}.ds-stat-value{font-size:20px}
+  .ds-tab{padding:6px 12px;font-size:14px}
+  .ds-filters > .ds-filters-end{margin-left:0}
   .ds-hub-tile{min-height:120px;font-size:16px}
 }
