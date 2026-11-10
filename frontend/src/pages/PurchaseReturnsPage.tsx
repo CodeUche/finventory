@@ -175,16 +175,16 @@ export default function PurchaseReturnsPage() {
           <h1 className="text-2xl font-bold text-white flex items-center gap-2">
             <RotateCcw size={22} className="text-brand-400" /> Purchase Returns
           </h1>
-          <p className="text-slate-400 text-sm">Debit notes issued against purchase orders</p>
+          <p className="text-slate-400 text-sm">({total}) Purchase Returns</p>
         </div>
       </div>
 
-      <div className="card p-4 flex flex-wrap items-center gap-3">
-        <div className="relative flex-1 min-w-[220px]">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="ds-proc-search relative flex-1 min-w-[220px] max-w-xl">
+          <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
           <input
             className="input pl-9"
-            placeholder="Search return #, supplier or PO #…"
+            aria-label="Search purchase returns" placeholder="Search PO number, return number or supplier"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -205,7 +205,7 @@ export default function PurchaseReturnsPage() {
         {loading ? (
           <div className="p-10 flex justify-center"><Loader2 className="animate-spin text-slate-500" size={24} /></div>
         ) : paged.length === 0 ? (
-          <div className="p-10 text-center text-slate-500 text-sm">No purchase returns found</div>
+          <div className="ds-empty"><RotateCcw size={28} aria-hidden="true" /><p>No Purchase Returns Yet</p></div>
         ) : (
           <table className="w-full text-sm">
             <thead>
@@ -238,6 +238,7 @@ export default function PurchaseReturnsPage() {
                       disabled={exporting}
                       className="text-slate-400 hover:text-brand-400 transition-colors disabled:opacity-50"
                       title="Download Debit Note PDF"
+                      aria-label="Download debit note PDF"
                     >
                       <FileDown size={16} />
                     </button>
@@ -247,9 +248,8 @@ export default function PurchaseReturnsPage() {
             </tbody>
           </table>
         )}
+        <Pagination page={page} totalPages={totalPages} pageSize={pageSize} total={total} onPage={setPage} onPageSize={setPageSize} />
       </div>
-
-      <Pagination page={page} totalPages={totalPages} pageSize={pageSize} total={total} onPage={setPage} onPageSize={setPageSize} />
 
       {selected && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setSelected(null)}>
