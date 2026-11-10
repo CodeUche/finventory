@@ -143,7 +143,7 @@ export default function StorefrontAdminPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+      <div className="ds-head !mb-0">
         <div>
           <h1 className="text-2xl font-bold text-white">Storefront</h1>
           <p className="text-sm text-slate-400">
@@ -154,14 +154,14 @@ export default function StorefrontAdminPage() {
         </div>
         <button
           onClick={() => { bypassNextGets(); load() }}
-          className="btn-ghost p-2 text-slate-400 hover:text-white sm:ml-auto" title="Refresh"
+          className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh"
         >
           <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
         </button>
       </div>
 
       {shop && (
-        <div className="card space-y-4 p-6">
+        <div className="card ds-form space-y-4 p-6">
           <div className="flex items-center gap-2 border-b border-surface-700 pb-3">
             <Store size={16} className="text-brand-400" />
             <h2 className="text-base font-semibold text-white">Your shop page</h2>
@@ -251,13 +251,13 @@ export default function StorefrontAdminPage() {
             </div>
           </div>
 
-          <div className="flex flex-wrap gap-4 pt-1">
+          <div className="ds-checks pt-1">
             {([
               ['is_published', 'Published', 'Customers can reach the page'],
               ['accepts_orders', 'Taking orders', 'Turn off to browse only'],
               ['hide_out_of_stock', 'Hide sold-out items', 'Rather than showing them greyed out'],
             ] as const).map(([key, label, hint]) => (
-              <label key={key} className="flex items-start gap-2 text-sm text-slate-300">
+              <label key={key} className="text-sm">
                 <input
                   type="checkbox" className="mt-0.5 h-4 w-4 accent-brand-500"
                   checked={Boolean(shop[key])} disabled={saving}
@@ -271,7 +271,7 @@ export default function StorefrontAdminPage() {
       )}
 
       {/* ── Orders ──────────────────────────────────────────────────────── */}
-      <div className="card overflow-hidden p-0">
+      <div className="card ds-table">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -286,10 +286,7 @@ export default function StorefrontAdminPage() {
             <tbody>
               {orders.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-5 py-12 text-center">
-                    <Store size={28} className="mx-auto mb-2 text-slate-600" />
-                    <p className="text-slate-500">No orders yet</p>
-                  </td>
+                  <td colSpan={7} className="ds-empty-cell">No Orders Yet</td>
                 </tr>
               ) : orders.map((o) => (
                 <tr key={o.id} className="table-row">

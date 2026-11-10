@@ -136,6 +136,23 @@ html.light .ds{
 .ds-stat.is-tile .ds-stat-value{font-size:20px}
 .ds-stat-sub{font-size:13px;color:var(--ds-tile-tx)}
 
+.ds-stat.has-icon{flex-direction:row;align-items:center;gap:14px}
+.ds-stat-ico{display:flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:999px;flex:none;background:var(--ds-pill-gry-bg);color:var(--ds-pill-gry-tx)}
+.ds-stat-ico[data-tone="good"]{background:var(--ds-pill-green-bg);color:var(--ds-pill-green-tx)}
+.ds-stat-ico[data-tone="bad"]{background:var(--ds-pill-red-bg);color:var(--ds-pill-red-tx)}
+.ds-stat-body{display:flex;flex-direction:column;gap:2px;min-width:0}
+.ds-stat-body .ds-stat-value{font-size:20px}
+.ds-stat-body[data-tone="good"] .ds-stat-value{color:var(--ds-good)}
+.ds-stat-body[data-tone="bad"] .ds-stat-value{color:var(--ds-bad)}
+.ds-stat-body .ds-stat-label{color:var(--ds-ink)}
+
+/* ---- form card: link-coloured labels, tick options in a row ---- */
+.ds .ds-form .label{color:var(--ds-link);font-size:15px;font-weight:500}
+.ds-checks{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px 20px}
+.ds-checks label{display:flex;align-items:flex-start;gap:10px;color:var(--ds-ink)}
+.ds-checks input[type="checkbox"]{width:20px;height:20px;margin-top:2px;flex:none;accent-color:var(--ds-link)}
+.ds-checks input[type="checkbox"]:focus-visible{outline:2px solid var(--ds-link);outline-offset:2px}
+
 /* ---- tab bar: filled active tab, link-coloured others, underline rule ---- */
 .ds-tabs{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;margin-bottom:20px;padding-bottom:8px;border-bottom:1.5px solid var(--ds-row-bd)}
 .ds-tab{

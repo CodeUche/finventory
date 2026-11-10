@@ -7,7 +7,7 @@
  */
 
 import { useEffect, useState } from 'react'
-import { Banknote, Check, X, Loader2, RefreshCw, ExternalLink } from 'lucide-react'
+import { Check, X, Loader2, RefreshCw, ExternalLink } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { paymentGatewayApi, bypassNextGets } from '@/services/api'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
@@ -92,7 +92,7 @@ export default function TransferConfirmationsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+      <div className="ds-head !mb-0">
         <div>
           <h1 className="text-2xl font-bold text-white">Transfers to confirm</h1>
           <p className="text-slate-400 text-sm">
@@ -101,10 +101,10 @@ export default function TransferConfirmationsPage() {
               : `${awaitingCount} transfer${awaitingCount === 1 ? '' : 's'} waiting to be checked`}
           </p>
         </div>
-        <div className="sm:ml-auto flex gap-2">
+        <div className="flex gap-2">
           <button
             onClick={() => setFilter(filter === 'awaiting' ? 'all' : 'awaiting')}
-            className="btn-ghost text-sm"
+            className="btn-primary text-sm"
           >
             {filter === 'awaiting' ? 'Show all' : 'Show only waiting'}
           </button>
@@ -119,13 +119,13 @@ export default function TransferConfirmationsPage() {
         </div>
       </div>
 
-      <div className="rounded-xl border border-amber-500/25 bg-amber-500/5 p-4 text-sm text-slate-300">
-        These are transfers into your own bank account, so Audity cannot see them arrive.
-        Check your bank first — confirming here records the payment and posts it to your accounts.
-        To skip this step entirely, use a one-time account number at checkout instead.
+      <div className="ds-info !mb-0">
+        These transfers go to your own bank account, so Audity can&rsquo;t verify when the money arrives.
+        Check your bank account first, then confirm here to record the payment in your accounts.
+        To skip manual confirmation, use a one-time account number at checkout instead.
       </div>
 
-      <div className="card p-0 overflow-hidden">
+      <div className="card ds-table">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -150,11 +150,8 @@ export default function TransferConfirmationsPage() {
                 ))
               ) : shown.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-5 py-12 text-center">
-                    <Banknote size={30} className="mx-auto mb-2 text-slate-600" />
-                    <p className="text-slate-500">
-                      {filter === 'awaiting' ? 'No transfers waiting' : 'No transfers yet'}
-                    </p>
+                  <td colSpan={7} className="ds-empty-cell">
+                    {filter === 'awaiting' ? 'No Transfers Waiting' : 'No Transfers Yet'}
                   </td>
                 </tr>
               ) : shown.map((c) => (

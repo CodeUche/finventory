@@ -237,45 +237,37 @@ export default function CreditsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+      <div className="ds-head !mb-0">
         <div>
           <h1 className="text-2xl font-bold text-white">Payment Information</h1>
           <p className="text-slate-400 text-sm">{transactions.length} transactions</p>
         </div>
-        <button className="btn-primary sm:ml-auto" onClick={openPayModal}>
+        <button className="btn-primary" onClick={openPayModal}>
           <Plus size={16} /> Record Payment
         </button>
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="card p-5 flex items-center gap-4">
-          <div className="w-11 h-11 rounded-xl bg-red-500/15 flex items-center justify-center">
-            <TrendingDown size={22} className="text-red-400" />
-          </div>
-          <div>
-            <p className="text-xs text-slate-400">Total Outstanding</p>
-            <p className="text-xl font-bold text-red-400">{formatCurrency(totalOutstanding)}</p>
+      <div className="ds-stats !mb-0">
+        <div className="ds-stat has-icon">
+          <span className="ds-stat-ico" data-tone="bad"><TrendingDown size={22} /></span>
+          <div className="ds-stat-body" data-tone="bad">
+            <span className="ds-stat-value">{formatCurrency(totalOutstanding)}</span>
+            <span className="ds-stat-label">Total Outstanding</span>
           </div>
         </div>
-        <div className="card p-5 flex items-center gap-4">
-          <div className="w-11 h-11 rounded-xl bg-emerald-500/15 flex items-center justify-center">
-            <TrendingUp size={22} className="text-emerald-400" />
-          </div>
-          <div>
-            <p className="text-xs text-slate-400">Total Payments</p>
-            <p className="text-xl font-bold text-emerald-400">{formatCurrency(totalPaid)}</p>
+        <div className="ds-stat has-icon">
+          <span className="ds-stat-ico" data-tone="good"><TrendingUp size={22} /></span>
+          <div className="ds-stat-body" data-tone="good">
+            <span className="ds-stat-value">{formatCurrency(totalPaid)}</span>
+            <span className="ds-stat-label">Total Payments</span>
           </div>
         </div>
-        <div className="card p-5 flex items-center gap-4">
-          <div className="w-11 h-11 rounded-xl bg-brand-500/15 flex items-center justify-center">
-            <CreditCard size={22} className="text-brand-400" />
-          </div>
-          <div>
-            <p className="text-xs text-slate-400">Net Balance</p>
-            <p className={`text-xl font-bold ${totalOutstanding - totalPaid > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
-              {formatCurrency(Math.abs(totalOutstanding - totalPaid))}
-            </p>
+        <div className="ds-stat has-icon">
+          <span className="ds-stat-ico"><CreditCard size={22} /></span>
+          <div className="ds-stat-body" data-tone={totalOutstanding - totalPaid > 0 ? 'bad' : 'good'}>
+            <span className="ds-stat-value">{formatCurrency(Math.abs(totalOutstanding - totalPaid))}</span>
+            <span className="ds-stat-label">Net Balance</span>
           </div>
         </div>
       </div>
@@ -300,8 +292,8 @@ export default function CreditsPage() {
       )}
 
       {/* Filters */}
-      <div className="flex flex-col sm:flex-row gap-3">
-        <div className="relative flex-1 max-w-sm">
+      <div className="ds-filters !mb-0">
+        <div className="relative flex-1 min-w-[220px] max-w-sm">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
           <input className="input pl-9" placeholder="Search customer…" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
@@ -314,12 +306,12 @@ export default function CreditsPage() {
       </div>
 
       {/* Table */}
-      <div className="card p-0 overflow-hidden">
+      <div className="card ds-table">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-surface-700">
-                {['Date', 'Payment #', 'Mode', 'Customer', 'Type', 'Amount', 'Balance After', 'Due Date', 'Description'].map((h) => (
+                {['Date', 'Payment', 'Mode', 'Customer', 'Type', 'Amount', 'Balance After', 'Due Date', 'Description'].map((h) => (
                   <th key={h} className="px-5 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
                 ))}
               </tr>
@@ -334,10 +326,7 @@ export default function CreditsPage() {
                   </tr>
                 ))
               ) : transactions.length === 0 ? (
-                <tr><td colSpan={9} className="px-5 py-12 text-center">
-                  <CreditCard size={32} className="mx-auto mb-2 text-slate-600" />
-                  <p className="text-slate-500">No credit transactions</p>
-                </td></tr>
+                <tr><td colSpan={9} className="ds-empty-cell">No Credit Transactions</td></tr>
               ) : (
                 customerGroups.map((g) => {
                   const custOpen = expandedCustomers[g.customer] ?? false
@@ -421,7 +410,7 @@ export default function CreditsPage() {
       {showPayModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setShowPayModal(false)} />
-          <div className="relative card w-full max-w-lg p-6 space-y-5 max-h-[90vh] overflow-y-auto">
+          <div className="relative card ds-modal w-full max-w-lg p-6 space-y-5 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between">
               <div><h2 className="text-lg font-bold text-white">Record Payment</h2><p className="text-xs text-slate-500 mt-0.5">Fields marked <span className="text-brand-400">*</span> are required — everything else is optional.</p></div>
               <button onClick={() => setShowPayModal(false)} className="text-slate-400 hover:text-white"><X size={20} /></button>
