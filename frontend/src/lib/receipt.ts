@@ -550,13 +550,18 @@ export async function printReceipt(d: ReceiptData): Promise<void> {
   const cleanup = () => { if (frame.parentNode) frame.parentNode.removeChild(frame) }
 
   frame.onload = () => {
+    let cleaned = false
+    const cleanupOnce = () => { if (!cleaned) { cleaned = true; cleanup() } }
     try {
+      // Tear the frame down only once printing has finished. On the desktop (WebView2) the
+      // print dialog stays open after print() returns, and removing the frame under it
+      // (the old fixed 1.5 s timer) can crash the renderer. A long timer is the fallback
+      // for shells that never raise `afterprint`.
+      frame.contentWindow?.addEventListener('afterprint', () => window.setTimeout(cleanupOnce, 500))
       frame.contentWindow?.focus()
       frame.contentWindow?.print()
     } finally {
-      // Give the print dialog time to take its snapshot before we tear the
-      // frame down — removing it immediately prints a blank page on WebKit.
-      window.setTimeout(cleanup, 1500)
+      window.setTimeout(cleanupOnce, 120_000)
     }
   }
 
