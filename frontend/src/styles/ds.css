@@ -239,3 +239,10 @@ html.light .ds{--ds-modal-bg:#FCFCF6}
   .ds-filters > .ds-filters-end{margin-left:0}
   .ds-hub-tile{min-height:120px;font-size:16px}
 }
+
+/* ---- search dropdowns must float above the cards that follow them ----
+   .card uses backdrop-filter, which makes every card its own stacking layer, so a
+   dropdown's z-index stayed trapped inside its own card and later cards painted
+   over it. Lift the card that holds focus, and give floating lists a solid fill. */
+.ds .card:focus-within{position:relative;z-index:30}
+.ds .absolute.bg-surface-800{background-color:var(--ds-modal-bg)}

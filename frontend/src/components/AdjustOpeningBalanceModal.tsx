@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { X, Loader2 } from 'lucide-react'
 import DateInput from '@/components/DateInput'
 import AmountInput from '@/components/AmountInput'
@@ -23,6 +23,11 @@ interface Props {
 const today = new Date().toISOString().split('T')[0]
 
 export default function AdjustOpeningBalanceModal({ partyName, partyLabel, currentBalance, naturalSide, onClose, onSave }: Props) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
   const [mode, setMode] = useState<Mode>('increase')
   const [amountStr, setAmountStr] = useState('')
   const [asOfDate, setAsOfDate] = useState(today)
