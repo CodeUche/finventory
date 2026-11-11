@@ -12,6 +12,7 @@ const ROUTE_LABELS: Record<string, string> = {
   '/inventory/batches':           'Batches & Lots',
   '/sales':                       'Invoices',
   '/sales/new':                   'New Sale',
+  '/pos/till':                    'Till',
   '/quotes':                      'Quotes',
   '/recurring':                   'Recurring Invoices',
   '/purchases':                   'Purchase Orders',

@@ -56,6 +56,12 @@ const STATUS_BADGE: Record<Order['status'], string> = {
   completed: 'badge-green', cancelled: 'badge-red',
 }
 
+// The API sends decimals like "500.0000"; show money with 2 decimals. String-only, no float maths.
+function twoDecimals(v: string): string {
+  const [i, d = ''] = v.split('.')
+  return formatAmountInput(`${i}.${(d + '00').slice(0, 2)}`)
+}
+
 export default function StorefrontAdminPage() {
   const [shop, setShop] = useState<Shop | null>(null)
   const [orders, setOrders] = useState<Order[]>([])
@@ -70,8 +76,8 @@ export default function StorefrontAdminPage() {
   const [deliveryThreshold, setDeliveryThreshold] = useState('')
   useEffect(() => {
     if (!shop) return
-    setDeliveryCharge(formatAmountInput(shop.fixed_delivery_charge || '0'))
-    setDeliveryThreshold(shop.free_delivery_threshold != null ? formatAmountInput(shop.free_delivery_threshold) : '')
+    setDeliveryCharge(twoDecimals(shop.fixed_delivery_charge || '0'))
+    setDeliveryThreshold(shop.free_delivery_threshold != null ? twoDecimals(shop.free_delivery_threshold) : '')
   }, [shop?.id, shop?.fixed_delivery_charge, shop?.free_delivery_threshold])
 
   const load = async () => {

@@ -171,7 +171,7 @@ export default function TillSessionPage() {
             {[
               { k: 'Opening float', v: current.opening_float, s: 'Set at open' },
               ...(canSeeExpected ? [
-                { k: 'Sales this shift', v: current.sales_total, s: `${current.transaction_count ?? 0} transactions` },
+                { k: 'Sales this shift', v: current.sales_total, s: `${current.transaction_count ?? 0} ${(current.transaction_count ?? 0) === 1 ? 'transaction' : 'transactions'}` },
                 { k: 'Cash expected', v: current.expected_cash, s: 'Float plus cash taken' },
                 { k: 'Non-cash', v: String(
                     Number(current.sales_total ?? 0) -
