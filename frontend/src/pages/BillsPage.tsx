@@ -366,7 +366,7 @@ export default function BillsPage() {
 
       {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-3">
-        <div className="ds-proc-search relative flex-1 max-w-xs">
+        <div className="ds-proc-search relative flex-1 min-w-[240px] max-w-xs">
           <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
           <input className="input pl-9" aria-label="Search bills" placeholder="Search bill number or supplier…" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
