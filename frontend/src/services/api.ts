@@ -62,18 +62,44 @@ const FAILURE_WINDOW_MS = 60_000
 let _recentFailures = 0
 let _lastFailureAt = 0
 
-/** Returns true only when this call actually flipped the app into offline mode. */
-function _signalOffline(): boolean {
-  if (_effectivelyOffline) return false    // already signalled
-  const now = Date.now()
-  // Two failures an hour apart are two unrelated blips, not a dead connection,
-  // so the count only accumulates inside a short window.
-  _recentFailures = now - _lastFailureAt > FAILURE_WINDOW_MS ? 1 : _recentFailures + 1
-  _lastFailureAt = now
-  if (navigator.onLine && _recentFailures < OFFLINE_CONFIRM_FAILURES) return false
+// ── Connectivity state, readable by the UI ────────────────────────────────────
+// The app's own request-failure signal is the source of truth for "offline". Window
+// online/offline events are not reliable in every shell (WebView2 in the desktop app may
+// never raise them), so anything that shows connectivity should subscribe here as well.
+const _connListeners = new Set<(offline: boolean) => void>()
+export function isAppOffline(): boolean { return _effectivelyOffline }
+export function subscribeConnectivity(cb: (offline: boolean) => void): () => void {
+  _connListeners.add(cb)
+  return () => { _connListeners.delete(cb) }
+}
+function _notifyConnectivity() { _connListeners.forEach((cb) => cb(_effectivelyOffline)) }
+
+/** One quick reachability check of the API. Any answer at all (even an error status) counts as reachable. */
+async function _pingApi(timeoutMs: number): Promise<boolean> {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs)
+  try {
+    const base = (import.meta.env.VITE_API_BASE_URL ?? '/api/v1').replace(/\/+$/, '')
+    // Tauri IPC fetch in the desktop app; native fetch in a browser (where the plugin always throws).
+    const isTauriRuntime = typeof window !== 'undefined' &&
+      ('__TAURI_INTERNALS__' in window || '__TAURI__' in window)
+    const ping = isTauriRuntime ? tauriHttpFetch : fetch
+    await ping(`${base}/auth/ping/`, { method: 'GET', signal: ctrl.signal } as RequestInit)
+    return true
+  } catch {
+    return false
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+function _flipOffline() {
   _effectivelyOffline = true
   _recentFailures = 0
-  if (navigator.onLine) window.dispatchEvent(new Event('offline'))  // synthetic
+  // Always raise the window event (useNetworkStatus ignores a duplicate of a real one), so the
+  // amber banner follows the app's own signal even where the shell never raises it.
+  window.dispatchEvent(new Event('offline'))
+  _notifyConnectivity()
   _startProbe()  // begin polling so we know when connectivity is restored
   // Announce the transition here rather than at a call site: several paths flip
   // the app offline (a GET falling back to cache returns early, a mutation goes
@@ -88,6 +114,38 @@ function _signalOffline(): boolean {
       duration: 6000,
     })
   }
+}
+
+let _confirming = false
+/** Two failures in a row: check the API really is unreachable before telling the user it is. */
+async function _confirmThenFlip() {
+  if (_confirming) return
+  _confirming = true
+  try {
+    const reachable = await _pingApi(4000)
+    if (reachable) { _recentFailures = 0; _lastFailureAt = 0; return }   // healthy: slow calls, not an outage
+    if (!_effectivelyOffline) _flipOffline()
+  } finally {
+    _confirming = false
+  }
+}
+
+/** Returns true only when this call actually flipped the app into offline mode right now. */
+function _signalOffline(): boolean {
+  if (_effectivelyOffline) return false    // already signalled
+  const now = Date.now()
+  // Two failures an hour apart are two unrelated blips, not a dead connection,
+  // so the count only accumulates inside a short window.
+  _recentFailures = now - _lastFailureAt > FAILURE_WINDOW_MS ? 1 : _recentFailures + 1
+  _lastFailureAt = now
+  if (navigator.onLine && _recentFailures < OFFLINE_CONFIRM_FAILURES) return false
+  if (navigator.onLine) {
+    // The browser still says online, so confirm with a real check first: two slow or failed
+    // calls while the API is healthy must not raise a false "Connection lost".
+    void _confirmThenFlip()
+    return false
+  }
+  _flipOffline()
   return true
 }
 
@@ -99,6 +157,7 @@ function _signalOnline() {
   if (!_effectivelyOffline) return         // wasn't offline
   _effectivelyOffline = false
   window.dispatchEvent(new Event('online'))  // triggers flush in useNetworkStatus
+  _notifyConnectivity()
   _stopProbe()
 }
 
@@ -113,19 +172,7 @@ function _startProbe() {
   if (_probeTimer) return  // already running
   const runProbe = async () => {
     if (!_effectivelyOffline) { _stopProbe(); return }
-    try {
-      const base = (import.meta.env.VITE_API_BASE_URL ?? '/api/v1').replace(/\/+$/, '')
-      // Use the Tauri IPC fetch in the desktop app; native fetch in a browser
-      // (where tauriHttpFetch would always throw and the probe could never
-      // recover from a transient offline blip).
-      const isTauriRuntime = typeof window !== 'undefined' &&
-        ('__TAURI_INTERNALS__' in window || '__TAURI__' in window)
-      const ping = isTauriRuntime ? tauriHttpFetch : fetch
-      await ping(`${base}/auth/ping/`, { method: 'GET' } as RequestInit)
-      _signalOnline()
-    } catch {
-      // Still offline — keep probing
-    }
+    if (await _pingApi(8000)) _signalOnline()  // otherwise still offline — keep probing
   }
   runProbe()  // fire immediately so recovery doesn't wait a full 15 s
   _probeTimer = setInterval(runProbe, 15_000)
@@ -711,6 +758,9 @@ api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
   // even if connectivity has returned; only /auth/* (the re-login) goes out.
   const isOfflineGraceSession = useAuthStore.getState().isOfflineSession
   const treatAsOffline = !navigator.onLine || _effectivelyOffline || (isOfflineGraceSession && !isAuthUrl)
+  // Requests answered from the saved copy never reach the error handler below, so without this the
+  // app would not announce the outage when the OS already reports no network.
+  if (!navigator.onLine && !_effectivelyOffline) _signalOffline()
   if (treatAsOffline && isMutation && !isRetry && !isAuthUrl && !isAccountLevel) {
     config.adapter = _buildOfflineMutationAdapter(config)
     return config

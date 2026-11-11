@@ -5,20 +5,22 @@
  * designed are simply not wrapped, so they keep their current look.
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { hasMutationInFlight } from '@/services/api'
+import { hasMutationInFlight, isAppOffline, subscribeConnectivity } from '@/services/api'
 import '@/styles/ds.css'
 
-// Listens to the same window events the app uses for connectivity (the browser's own, plus the
-// ones services/api.ts dispatches when the network is unreachable but the browser still says online).
+// Follows the app's own connectivity state (services/api.ts, set by failed requests), plus the
+// window online/offline events.
 // It does not toast or sync, so it is safe next to useNetworkStatus.
 function useIsOffline() {
-  const [offline, setOffline] = useState(() => typeof navigator !== 'undefined' && !navigator.onLine)
+  const [offline, setOffline] = useState(() => isAppOffline() || (typeof navigator !== 'undefined' && !navigator.onLine))
   useEffect(() => {
     const off = () => setOffline(true)
     const on = () => setOffline(false)
     window.addEventListener('offline', off)
     window.addEventListener('online', on)
-    return () => { window.removeEventListener('offline', off); window.removeEventListener('online', on) }
+    // The app's own request-failure signal: works where the shell never raises window events.
+    const unsubscribe = subscribeConnectivity((isOff) => (isOff ? off() : on()))
+    return () => { window.removeEventListener('offline', off); window.removeEventListener('online', on); unsubscribe() }
   }, [])
   return offline
 }

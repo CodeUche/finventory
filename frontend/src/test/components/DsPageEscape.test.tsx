@@ -3,7 +3,11 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import { useState } from 'react'
 
 const inFlight = vi.hoisted(() => ({ value: false }))
-vi.mock('@/services/api', () => ({ hasMutationInFlight: () => inFlight.value }))
+vi.mock('@/services/api', () => ({
+  hasMutationInFlight: () => inFlight.value,
+  isAppOffline: () => false,
+  subscribeConnectivity: () => () => undefined,
+}))
 
 import DsPage from '@/components/DsPage'
 
