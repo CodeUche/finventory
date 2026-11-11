@@ -406,7 +406,8 @@ export default function BillsPage() {
             <thead>
               <tr className="border-b border-surface-700">
                 {['Bill #', 'Supplier', 'Ref', 'Issue Date', 'Due Date', 'Total', 'Paid', 'Due', 'Status', 'Actions'].map((h) => (
-                  <th key={h} className="px-4 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
+                  // Ref and Issue Date drop out on narrower screens so Status and Actions stay in view.
+                  <th key={h} className={`${h === 'Ref' || h === 'Issue Date' ? 'hidden xl:table-cell ' : ''}px-4 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider`}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -439,7 +440,7 @@ export default function BillsPage() {
                       </p>
                     )}
                   </td>
-                  <td className="px-4 py-3.5 text-slate-400">
+                  <td className="hidden xl:table-cell px-4 py-3.5 text-slate-400">
                     {b.reference || '—'}
                     {b.source_po_number && (
                       <p className="text-[10px] text-brand-400 mt-0.5" title="Auto-created from this Purchase Order — a reliable link, unlike Reference which is free text">
@@ -447,7 +448,7 @@ export default function BillsPage() {
                       </p>
                     )}
                   </td>
-                  <td className="px-4 py-3.5 text-slate-400">{formatDate(b.issue_date)}</td>
+                  <td className="hidden xl:table-cell px-4 py-3.5 text-slate-400">{formatDate(b.issue_date)}</td>
                   <td className="px-4 py-3.5 text-slate-400">{formatDate(b.due_date)}</td>
                   <td className="px-4 py-3.5 text-white font-semibold">{formatCurrency(b.total_amount)}</td>
                   <td className="px-4 py-3.5 text-emerald-400">{formatCurrency(b.amount_paid)}</td>
