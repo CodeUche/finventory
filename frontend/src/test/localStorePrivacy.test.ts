@@ -338,26 +338,79 @@ describe('unsent offline changes (sync queue)', () => {
 })
 
 describe('per-user leftovers in localStorage', () => {
-  it('logout removes the profile picture but keeps logo and stamp', async () => {
+  const MEDIA = `audity-media:${ORG}`
+  const media = () => JSON.parse(localStorage.getItem(MEDIA) ?? '{}')
+
+  it('the same user keeps their picture across logout and sign-in; logo and stamp stay', async () => {
     signIn('owner')
-    localStorage.setItem(`audity-media:${ORG}`, JSON.stringify({ logoDataUrl: 'L', stampDataUrl: 'S', avatarDataUrl: 'A' }))
+    useAuthStore.getState().setLogoDataUrl('L')
+    useAuthStore.getState().setStampDataUrl('S')
+    useAuthStore.getState().setAvatarDataUrl('A')
+    expect(media().avatarOwnerId).toBe('owner')
+
+    useAuthStore.getState().logout()
+    await settle()
+    expect(media().avatarDataUrl).toBe('A') // not deleted on a plain logout
+
+    signIn('owner')
+    expect(useAuthStore.getState().avatarDataUrl).toBe('A')
+    expect(useAuthStore.getState().logoDataUrl).toBe('L')
+    expect(useAuthStore.getState().stampDataUrl).toBe('S')
+  })
+
+  it('a different user never sees it, and it is deleted when they sign in', async () => {
+    signIn('owner')
+    useAuthStore.getState().setLogoDataUrl('L')
+    useAuthStore.getState().setAvatarDataUrl('A')
+    useAuthStore.getState().logout()
+    await settle()
+
+    signIn('staff')
+    expect(useAuthStore.getState().avatarDataUrl).toBeNull()
+    expect(useAuthStore.getState().logoDataUrl).toBe('L') // business-wide
+    expect(media()).toEqual({ logoDataUrl: 'L' })
+    // and the owner does not get it back later
+    signIn('owner')
+    expect(useAuthStore.getState().avatarDataUrl).toBeNull()
+  })
+
+  it('an old untagged picture goes to the previous owner if known, and is never shown to another user', async () => {
+    await claimCacheForUser('owner')
+    localStorage.setItem(MEDIA, JSON.stringify({ logoDataUrl: 'L', avatarDataUrl: 'OLD' }))
+    signIn('owner') // same user: picture adopted as theirs
+    expect(useAuthStore.getState().avatarDataUrl).toBe('OLD')
+    useAuthStore.getState().logout()
+    await settle()
+    signIn('staff')
+    expect(useAuthStore.getState().avatarDataUrl).toBeNull()
+    expect(media().avatarDataUrl).toBeUndefined()
+  })
+
+  it('an old untagged picture with an unknown owner is not shown, and dropped on the next user change', async () => {
+    localStorage.setItem(MEDIA, JSON.stringify({ avatarDataUrl: 'OLD' }))
+    setOnline(false)
+    signIn('someone') // offline + unknown owner: no wipe, but the picture stays hidden
+    expect(useAuthStore.getState().avatarDataUrl).toBeNull()
+    useAuthStore.getState().logout()
+    await settle()
+    setOnline(true)
+    signIn('other')
+    expect(media().avatarDataUrl).toBeUndefined()
+  })
+
+  it('logout removes the old retired queue key', async () => {
+    signIn('owner')
     localStorage.setItem('finventory_offline_queue', '[]')
     useAuthStore.getState().logout()
-    const media = JSON.parse(localStorage.getItem(`audity-media:${ORG}`)!)
-    expect(media).toEqual({ logoDataUrl: 'L', stampDataUrl: 'S' })
     expect(localStorage.getItem('finventory_offline_queue')).toBeNull()
   })
 
-  it('a different user does not get the previous user\'s held baskets or picture; the same user keeps theirs', async () => {
+  it('a different user does not get the previous users held baskets; the same user keeps theirs', async () => {
     await claimCacheForUser('owner')
     localStorage.setItem(heldBasketsKey(ORG, 'owner'), '[{"id":"b1"}]')
-    localStorage.setItem(`audity-media:${ORG}`, JSON.stringify({ logoDataUrl: 'L', avatarDataUrl: 'A' }))
-
     await claimCacheForUser('owner') // same user again
     expect(localStorage.getItem(heldBasketsKey(ORG, 'owner'))).not.toBeNull()
-
     await claimCacheForUser('staff')
     expect(localStorage.getItem(heldBasketsKey(ORG, 'owner'))).toBeNull()
-    expect(JSON.parse(localStorage.getItem(`audity-media:${ORG}`)!)).toEqual({ logoDataUrl: 'L' })
   })
 })

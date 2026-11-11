@@ -4,7 +4,7 @@ import type { User, AuthTokens, Organisation, AccessLevel, ModuleKey } from '@/t
 import type { OfflineVerifierBlob } from '@/lib/offlineVerifier'
 import { claimCacheForUser } from '@/lib/cacheOwner'
 import { startWipe, reportWipeFailure } from '@/lib/localDataGuard'
-import { clearSavedAvatars, clearLegacyQueue } from '@/lib/localUserData'
+import { clearLegacyQueue } from '@/lib/localUserData'
 
 export const REMEMBER_FLAG_KEY = 'audity-remember-me'
 // Purge any legacy plaintext password that may have been stored by older builds
@@ -19,9 +19,21 @@ localStorage.removeItem('audity-saved-creds')
 const LEGACY_MEDIA_KEY = 'audity-media'
 const mediaKey = (orgId: string) => `audity-media:${orgId}`
 
-type MediaCache = { logoDataUrl?: string | null; stampDataUrl?: string | null; avatarDataUrl?: string | null }
+// avatarOwnerId tags the profile picture with the user it belongs to. It is
+// shown only to that user (logo and stamp are business-wide).
+type MediaCache = { logoDataUrl?: string | null; stampDataUrl?: string | null; avatarDataUrl?: string | null; avatarOwnerId?: string | null }
 
-function readMediaCache(orgId: string | null | undefined): MediaCache {
+/** Saved media for an org, with the profile picture shown only to its owner. */
+function readMediaCache(orgId: string | null | undefined, userId: string | null | undefined): MediaCache {
+  const raw = readRawMediaCache(orgId)
+  if (raw.avatarDataUrl && (!userId || raw.avatarOwnerId !== userId)) {
+    const { avatarDataUrl: _hidden, avatarOwnerId: _owner, ...rest } = raw
+    return rest
+  }
+  return raw
+}
+
+function readRawMediaCache(orgId: string | null | undefined): MediaCache {
   if (!orgId) return {}
   try {
     const scoped = localStorage.getItem(mediaKey(orgId))
@@ -38,10 +50,10 @@ function readMediaCache(orgId: string | null | undefined): MediaCache {
     return {}
   } catch { return {} }
 }
-function writeMediaCache(orgId: string | null | undefined, patch: Partial<{ logoDataUrl: string | null; stampDataUrl: string | null; avatarDataUrl: string | null }>) {
+function writeMediaCache(orgId: string | null | undefined, patch: Partial<{ logoDataUrl: string | null; stampDataUrl: string | null; avatarDataUrl: string | null; avatarOwnerId: string | null }>) {
   if (!orgId) return
   try {
-    const cur = readMediaCache(orgId)
+    const cur = readRawMediaCache(orgId)
     const next: Record<string, string | null> = { ...cur }
     for (const [k, v] of Object.entries(patch)) {
       if (v == null) delete next[k]; else next[k] = v
@@ -163,7 +175,7 @@ export const useAuthStore = create<AuthState>()(
       // isAuthenticated=true but organisation=null that caused /onboarding redirects.
       initSession: (user, tokens, org, orgs) => {
         claimCacheForUser(user?.id)
-        const media = readMediaCache(org?.id)
+        const media = readMediaCache(org?.id, user?.id)
         set({
           user, tokens, isAuthenticated: true,
           // A real-token login always ends any offline grace session — without
@@ -187,7 +199,7 @@ export const useAuthStore = create<AuthState>()(
       startOfflineSession: (blob) => {
         claimCacheForUser(blob.user_id)
         const firstOrg = blob.organisations[0] ?? null
-        const media    = readMediaCache(firstOrg?.id ?? null)
+        const media    = readMediaCache(firstOrg?.id ?? null, blob.user_id)
         const isSuper  = blob.is_superuser === true
 
         // Map the active org's module_permissions list → { module: level }.
@@ -243,7 +255,7 @@ export const useAuthStore = create<AuthState>()(
 
       setOrganisation: (org) => {
         // Load the media cached for THIS org (never another org's).
-        const media = readMediaCache(org?.id)
+        const media = readMediaCache(org?.id, get().user?.id)
         set({
           organisation: org,
           logoDataUrl: media.logoDataUrl ?? null,
@@ -266,7 +278,7 @@ export const useAuthStore = create<AuthState>()(
 
       setLogoDataUrl: (url) => { set({ logoDataUrl: url }); writeMediaCache(get().organisation?.id, { logoDataUrl: url }) },
       setStampDataUrl: (url) => { set({ stampDataUrl: url }); writeMediaCache(get().organisation?.id, { stampDataUrl: url }) },
-      setAvatarDataUrl: (url) => { set({ avatarDataUrl: url }); writeMediaCache(get().organisation?.id, { avatarDataUrl: url }) },
+      setAvatarDataUrl: (url) => { set({ avatarDataUrl: url }); writeMediaCache(get().organisation?.id, { avatarDataUrl: url, avatarOwnerId: url ? (get().user?.id ?? null) : null }) },
 
       updateUser: (partial) =>
         set((s) => ({ user: s.user ? { ...s.user, ...partial } : s.user })),
@@ -320,7 +332,8 @@ export const useAuthStore = create<AuthState>()(
         // The sync queue is NOT wiped: unsent offline changes are real work.
         // Each item is tagged with the user who made it; only that user can see
         // or send it, and a flush stops if the user or business changes.
-        clearSavedAvatars()
+        // The profile picture is NOT removed here: it is tagged with its owner,
+        // shown only to that user, and deleted when a different user signs in.
         clearLegacyQueue()
         startWipe().then((ok) => { if (!ok) reportWipeFailure() }).catch(() => {})
         // Clear PostHog identity so the next user starts a fresh session

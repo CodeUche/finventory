@@ -7,7 +7,7 @@
  * When the signed-in user is not the one who filled the cache, we wipe it.
  */
 import { startWipe, bumpGeneration, isWipePending, reportWipeFailure } from '@/lib/localDataGuard'
-import { clearSavedAvatars, clearHeldBasketsExcept } from '@/lib/localUserData'
+import { tagUntaggedAvatars, clearAvatarsExcept, clearHeldBasketsExcept } from '@/lib/localUserData'
 
 const KEY = 'audity:cache-owner-user-id'
 
@@ -70,10 +70,12 @@ export function claimCacheForUser(userId: string | undefined | null): Promise<vo
   }
   const work: Array<Promise<unknown>> = []
   if (previous !== userId) bumpGeneration()
+  // A picture saved before owners were recorded is the previous owner's, if we know them.
+  if (previous) tagUntaggedAvatars(previous)
   if (clear) {
     work.push(startWipe().then((ok) => { if (!ok) reportWipeFailure() }))
     // Other people's per-user leftovers go too (profile picture, held baskets).
-    clearSavedAvatars()
+    clearAvatarsExcept(userId)
     clearHeldBasketsExcept(userId)
   } else if (isWipePending()) {
     // An earlier wipe failed or was cut short: finish it before anything is read.

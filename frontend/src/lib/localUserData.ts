@@ -1,6 +1,8 @@
 /**
  * Per-user data kept in localStorage that another person in the same business
  * must not see: the profile picture inside the saved media, and held baskets.
+ * The picture is tagged with its owner: kept for that user across sign-outs,
+ * never shown to anyone else, deleted when a different user signs in.
  *
  * Held baskets are keyed by organisation AND user, so the same person signing
  * back in gets their own baskets back and nobody else ever sees them. When a
@@ -27,20 +29,46 @@ function allKeys(): string[] {
   return keys
 }
 
-/** Remove the profile picture from every saved media entry. Logo and stamp are business assets and stay. */
-export function clearSavedAvatars(): void {
-  for (const k of allKeys()) {
-    if (k !== MEDIA_PREFIX && !k.startsWith(`${MEDIA_PREFIX}:`)) continue
+function mediaKeys(): string[] {
+  return allKeys().filter((k) => k === MEDIA_PREFIX || k.startsWith(`${MEDIA_PREFIX}:`))
+}
+
+/** Read, change and save every saved media entry. Unreadable entries are left alone. */
+function editMedia(change: (obj: Record<string, unknown>) => boolean): void {
+  for (const k of mediaKeys()) {
     try {
       const raw = localStorage.getItem(k)
       if (!raw) continue
       const obj = JSON.parse(raw) as Record<string, unknown>
-      if (obj && typeof obj === 'object' && 'avatarDataUrl' in obj) {
-        delete obj.avatarDataUrl
-        localStorage.setItem(k, JSON.stringify(obj))
-      }
+      if (obj && typeof obj === 'object' && change(obj)) localStorage.setItem(k, JSON.stringify(obj))
     } catch { /* unreadable entry: leave it */ }
   }
+}
+
+/**
+ * Give profile pictures saved before owners were recorded to `ownerId`
+ * (the previous cache owner). Call with an owner only when it is known.
+ */
+export function tagUntaggedAvatars(ownerId: string): void {
+  editMedia((obj) => {
+    if (!obj.avatarDataUrl || obj.avatarOwnerId) return false
+    obj.avatarOwnerId = ownerId
+    return true
+  })
+}
+
+/**
+ * Delete every profile picture that does not belong to `keepUserId` (including
+ * pictures with no owner). Logo and stamp are business assets and stay.
+ */
+export function clearAvatarsExcept(keepUserId: string | null | undefined): void {
+  editMedia((obj) => {
+    if (!('avatarDataUrl' in obj) && !('avatarOwnerId' in obj)) return false
+    if (keepUserId && obj.avatarOwnerId === keepUserId) return false
+    delete obj.avatarDataUrl
+    delete obj.avatarOwnerId
+    return true
+  })
 }
 
 /**
