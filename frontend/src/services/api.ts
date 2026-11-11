@@ -670,6 +670,16 @@ async function _writeThroughCache(url: string, method: string, responseData: unk
 }
 
 // ─── Request interceptor ──────────────────────────────────────────────────────
+/**
+ * Wording for a save's success message. When the app was offline the write was only stored on
+ * this device (queued), so say that instead of claiming it is done on the server.
+ */
+export function savedMessage(res: { statusText?: string } | undefined, done: string): string {
+  return /\(offline\)/.test(res?.statusText ?? '')
+    ? `${done.replace(/ (created|updated|deleted)$/i, '')} saved on this device. It will be sent when you are back online.`
+    : done
+}
+
 // ── Saves in flight ───────────────────────────────────────────────────────────
 // Counts writes (post/put/patch/delete) that have been sent and not yet answered, so the
 // shell can refuse to close a pop-up with Escape while a save is running.

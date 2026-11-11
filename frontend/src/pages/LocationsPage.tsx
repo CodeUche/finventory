@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { useIsMounted } from '@/hooks/useIsMounted'
 import { MapPin, Plus, Pencil, Trash2, Phone, Building2, CheckCircle, XCircle, BarChart3, TrendingUp, ChevronDown, ChevronUp, Loader2 } from 'lucide-react'
-import { locationApi } from '@/services/api'
+import { locationApi, savedMessage } from '@/services/api'
 import { formatCurrency } from '@/lib/utils'
 import toast from 'react-hot-toast'
 
@@ -86,11 +86,11 @@ export default function LocationsPage() {
     setSaving(true)
     try {
       if (editing) {
-        await locationApi.update(editing.id, form)
-        toast.success('Location updated')
+        const res = await locationApi.update(editing.id, form)
+        toast.success(savedMessage(res, 'Location updated'))
       } else {
-        await locationApi.create(form)
-        toast.success('Location created')
+        const res = await locationApi.create(form)
+        toast.success(savedMessage(res, 'Location created'))
       }
       setShowModal(false)
       load()
@@ -105,8 +105,8 @@ export default function LocationsPage() {
   const handleDelete = async (id: string) => {
     setDeleting(id)
     try {
-      await locationApi.delete(id)
-      toast.success('Location deleted')
+      const res = await locationApi.delete(id)
+      toast.success(savedMessage(res, 'Location deleted'))
       load()
     } catch {
       toast.error('Failed to delete location')

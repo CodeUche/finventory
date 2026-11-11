@@ -3,7 +3,7 @@ import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, X, Loader2, Trash2, Play } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { recurringApi, customerApi, inventoryApi } from '@/services/api'
+import { recurringApi, customerApi, inventoryApi, savedMessage } from '@/services/api'
 import { formatDate, normalizeAmountStr, stripCommas } from '@/lib/utils'
 import AmountInput from '@/components/AmountInput'
 import type { RecurringInvoice, Customer, Warehouse, Product } from '@/types'
@@ -72,7 +72,7 @@ export default function RecurringInvoicesPage() {
     if (!form.warehouse) { toast.error('Location is required'); return }
     setSaving(true)
     try {
-      await recurringApi.create({
+      const res = await recurringApi.create({
         ...form,
         customer: form.customer === '__custom__' ? null : (form.customer || null),
         custom_customer_name: form.customer === '__custom__' ? form.custom_customer_name.trim() : '',
@@ -84,7 +84,7 @@ export default function RecurringInvoicesPage() {
           unit_price: parseFloat(stripCommas(l.unit_price)) || 0,
         })),
       })
-      toast.success('Recurring invoice created')
+      toast.success(savedMessage(res, 'Recurring invoice created'))
       setShowModal(false)
       setForm(BLANK)
       setLines([{ ...BLANK_LINE }])
