@@ -98,8 +98,9 @@ function buildWarmPlan(): WarmTask[] {
     one('inventory', () => inventoryApi.categories()),
     paged('customers', (p) => customerApi.list(p)),
     one('quotes', () => quoteApi.list()),
-    one('sales', () => creditApi.list()),
-    one('sales', () => locationApi.list()),
+    // Background warm: a member who may not read these must not see an error toast.
+    one('sales', () => creditApi.list(undefined, { silentErrors: true })),
+    one('sales', () => locationApi.list(undefined, { silentErrors: true })),
     // ── The rest — bookkeeping and administration ──
     one('recurring', () => recurringApi.list()),
     one('sales', () => invoiceFolderApi.list()),

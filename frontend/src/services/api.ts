@@ -1411,7 +1411,7 @@ export const expenseApi = {
 }
 
 export const creditApi = {
-  list: (params?: object) => api.get('/credits/', { params }),
+  list: (params?: object, config?: AxiosRequestConfig) => api.get('/credits/', { params, ...config }),
   recordPayment: (data: object) => api.post('/credits/record_payment/', data),
   agingReport: () => api.get('/credits/aging_report/'),
 }
@@ -1581,7 +1581,7 @@ export const invoiceFolderApi = {
 }
 
 export const locationApi = {
-  list: (params?: object) => api.get('/sales/locations/', { params }),
+  list: (params?: object, config?: AxiosRequestConfig) => api.get('/sales/locations/', { params, ...config }),
   create: (data: object) => api.post('/sales/locations/', data),
   update: (id: string, data: object) => api.patch(`/sales/locations/${id}/`, data),
   delete: (id: string) => api.delete(`/sales/locations/${id}/`),
