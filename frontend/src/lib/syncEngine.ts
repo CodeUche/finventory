@@ -33,6 +33,11 @@ export interface SyncItem {
   /** Human-readable error from last failed attempt */
   lastError?: string
   orgId: string
+  /**
+   * The user who made this change. Only this user can see or send it. Items
+   * queued before this field existed have none and are adopted on next sign-in.
+   */
+  userId?: string
 }
 
 type ChangeListener = (items: SyncItem[]) => void
@@ -52,13 +57,36 @@ async function getDB(): Promise<IDBPDatabase> {
   return _db
 }
 
-async function _load(): Promise<SyncItem[]> {
+/** Every item on disk, whoever owns it. Internal housekeeping only. */
+async function _loadRaw(): Promise<SyncItem[]> {
   try {
     const db = await getDB()
     return (await db.getAll(STORE)) as SyncItem[]
   } catch {
     return []
   }
+}
+
+/** Id of the user signed in right now, or undefined when nobody is. */
+async function _currentUserId(): Promise<string | undefined> {
+  try {
+    const { useAuthStore } = await import('@/store/authStore')
+    return useAuthStore.getState().user?.id
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Items the signed-in user may see or send: their own, plus not-yet-adopted
+ * old ones. Another user's unsent work stays on disk for them but is invisible
+ * here. With nobody signed in nothing is shown to anyone, so all is returned.
+ */
+async function _load(): Promise<SyncItem[]> {
+  const all = await _loadRaw()
+  const me = await _currentUserId()
+  if (!me) return all
+  return all.filter((i) => !i.userId || i.userId === me)
 }
 
 async function _save(item: SyncItem): Promise<void> {
@@ -127,6 +155,7 @@ export const syncEngine = {
   async enqueue(item: Omit<SyncItem, 'id' | 'timestamp' | 'label' | 'status' | 'retries' | 'orgId'> & { orgId?: string }): Promise<SyncItem> {
     const { useAuthStore } = await import('@/store/authStore')
     const orgId = item.orgId ?? useAuthStore.getState().organisation?.id ?? 'unknown'
+    const userId = useAuthStore.getState().user?.id
     const clean = (item.url ?? '').split('?')[0]
     const label = `${item.method.toUpperCase()} ${clean}`
     const newItem: SyncItem = {
@@ -137,6 +166,7 @@ export const syncEngine = {
       status: 'pending',
       retries: 0,
       orgId,
+      userId,
     }
     await _save(newItem)
     await _notify()
@@ -282,12 +312,23 @@ export const syncEngine = {
    * Call this once when the app boots.
    */
   async recoverStuck(): Promise<void> {
-    const all = await _load()
+    const all = await _loadRaw()
     const stuck = all.filter((i) => i.status === 'syncing')
     for (const item of stuck) {
       await _save({ ...item, status: 'pending' })
     }
     if (stuck.length > 0) await _notify()
+  },
+
+  /**
+   * Give items that have no owner (queued before owners were recorded) to
+   * `userId`. Called when a user signs in, before anything can send them.
+   */
+  async adoptUnownedItems(userId: string): Promise<void> {
+    const all = await _loadRaw()
+    for (const item of all) {
+      if (!item.userId) await _save({ ...item, userId })
+    }
   },
 
   /** How many items are pending (not yet synced). */
