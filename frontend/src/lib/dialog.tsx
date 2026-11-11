@@ -107,6 +107,20 @@ export function DialogHost() {
 
   useEffect(() => { setValue(current?.defaultValue ?? '') }, [current?.id])
 
+  // Escape closes the dialog as Cancel (a prompt's own input already handles it itself).
+  useEffect(() => {
+    if (!current) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return
+      const t = e.target as HTMLElement | null
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return
+      current.resolve(current.kind === 'prompt' ? null : false)
+      clear()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [current, clear])
+
   if (!current) return null
 
   const finish = (result: boolean | string | null) => { current.resolve(result); clear() }

@@ -623,6 +623,21 @@ async function _writeThroughCache(url: string, method: string, responseData: unk
 }
 
 // ─── Request interceptor ──────────────────────────────────────────────────────
+// ── Saves in flight ───────────────────────────────────────────────────────────
+// Counts writes (post/put/patch/delete) that have been sent and not yet answered, so the
+// shell can refuse to close a pop-up with Escape while a save is running.
+let _mutationsInFlight = 0
+export function hasMutationInFlight(): boolean { return _mutationsInFlight > 0 }
+for (const m of ['post', 'put', 'patch', 'delete'] as const) {
+  const original = api[m].bind(api) as (...args: unknown[]) => Promise<unknown>
+  ;(api as unknown as Record<string, unknown>)[m] = (...args: unknown[]) => {
+    _mutationsInFlight++
+    const p = original(...args)
+    p.then(() => { _mutationsInFlight-- }, () => { _mutationsInFlight-- })
+    return p
+  }
+}
+
 api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
   // Session generation at the moment this request STARTED. The response side
   // drops its writes to the saved copies if it changed (user signed out/changed).

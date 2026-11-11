@@ -361,7 +361,7 @@ export default function App() {
         <Route path="recurring" element={<ModuleRoute module="recurring"><DsPage><RecurringInvoicesPage /></DsPage></ModuleRoute>} />
 
         {/* Procurement */}
-        <Route path="purchases"      element={<ModuleRoute module="purchases"><PurchasesPage /></ModuleRoute>} />
+        <Route path="purchases"      element={<ModuleRoute module="purchases"><DsPage><PurchasesPage /></DsPage></ModuleRoute>} />
         <Route path="purchases/returns" element={<ModuleRoute module="purchases"><DsPage><PurchaseReturnsPage /></DsPage></ModuleRoute>} />
         <Route path="bills"          element={<ModuleRoute module="bills"><DsPage><BillsPage /></DsPage></ModuleRoute>} />
         <Route path="bills/folders"  element={<ModuleRoute module="bills"><DsPage><BillFoldersPage /></DsPage></ModuleRoute>} />
