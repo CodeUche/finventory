@@ -147,6 +147,10 @@ function makeDeferred(): Deferred {
   let resolve!: (v: AxiosResponse) => void
   let reject!: (e: unknown) => void
   const promise = new Promise<AxiosResponse>((res, rej) => { resolve = res; reject = rej })
+  // Nobody may be waiting on this promise (only the first caller owns the real request),
+  // and a failed GET would then surface as an uncaught error in the console. Joiners still
+  // receive the rejection: this only marks it as seen.
+  promise.catch(() => undefined)
   return { resolve, reject, promise }
 }
 const _inflightGets = new Map<string, Deferred>()
@@ -1234,7 +1238,7 @@ export const authApi = {
 }
 
 export const orgApi = {
-  list: () => api.get('/tenancy/organisations/'),
+  list: (config?: AxiosRequestConfig) => api.get('/tenancy/organisations/', config),
   create: (data: object) => api.post('/tenancy/organisations/', data),
   update: (id: string, data: FormData | object) => api.patch(`/tenancy/organisations/${id}/`, data),
   getEmailConfig: (id: string) => api.get(`/tenancy/organisations/${id}/email_config/`),
@@ -1276,7 +1280,7 @@ export const orgApi = {
 }
 
 export const teamApi = {
-  members: () => api.get('/tenancy/memberships/'),
+  members: (config?: AxiosRequestConfig) => api.get('/tenancy/memberships/', config),
   updateMember: (id: string, data: object) => api.patch(`/tenancy/memberships/${id}/`, data),
   deleteMember: (id: string) => api.delete(`/tenancy/memberships/${id}/`),
   setPermissions: (id: string, permissions: { module: string; access_level: string }[]) =>
@@ -1287,10 +1291,10 @@ export const teamApi = {
 }
 
 export const inventoryApi = {
-  products: (params?: object) =>
+  products: (params?: object, config?: AxiosRequestConfig) =>
     // slim=1 → backend sends the lightweight list payload (this build hydrates
     // the edit form from the detail endpoint, so the slim list is safe for it).
-    api.get('/inventory/products/', { params: { slim: '1', ...(params ?? {}) } }),
+    api.get('/inventory/products/', { params: { slim: '1', ...(params ?? {}) }, ...config }),
   /**
    * For sale/POS product pickers only: same as products(), but drops
    * Variable Product templates — a template carries no stock or price of its
@@ -1321,12 +1325,12 @@ export const inventoryApi = {
   updateProduct: (id: string, data: object) => api.patch(`/inventory/products/${id}/`, data),
   deleteProduct: (id: string) => api.delete(`/inventory/products/${id}/`),
   bulkDeleteProducts: (ids?: string[]) => api.delete('/inventory/products/bulk-delete/', { data: { ids: ids ?? [] } }),
-  stock: (params?: object) => api.get('/inventory/stock/', { params }),
+  stock: (params?: object, config?: AxiosRequestConfig) => api.get('/inventory/stock/', { params, ...config }),
   lowStock: (params?: object) => api.get('/inventory/products/low-stock/', { params }),
   valuation: () => api.get('/inventory/products/valuation/'),
   movements: (params?: object) => api.get('/inventory/movements/', { params }),
-  categories: () => api.get('/inventory/categories/'),
-  warehouses: () => api.get('/inventory/warehouses/'),
+  categories: (config?: AxiosRequestConfig) => api.get('/inventory/categories/', config),
+  warehouses: (config?: AxiosRequestConfig) => api.get('/inventory/warehouses/', config),
   createWarehouse: (data: object) => api.post('/inventory/warehouses/', data),
   updateWarehouse: (id: string, data: object) => api.patch(`/inventory/warehouses/${id}/`, data),
   deleteWarehouse: (id: string) => api.delete(`/inventory/warehouses/${id}/`),
@@ -1336,7 +1340,7 @@ export const inventoryApi = {
     api.post(`/inventory/products/${productId}/set-opening-balance/`, data),
   transferStock: (data: object) => api.post('/inventory/movements/transfer/', data),
   deleteStockItem: (id: string) => api.delete(`/inventory/stock/${id}/`),
-  batches: (params?: object) => api.get('/inventory/batches/', { params }),
+  batches: (params?: object, config?: AxiosRequestConfig) => api.get('/inventory/batches/', { params, ...config }),
   createBatch: (data: object) => api.post('/inventory/batches/', data),
   deleteBatch: (id: string) => api.delete(`/inventory/batches/${id}/`),
   /** Raw-binary upload (same Tauri-FormData workaround as uploadLogo) — the first image for a product becomes its cover automatically. */
@@ -1354,7 +1358,7 @@ export const inventoryApi = {
 }
 
 export const salesApi = {
-  invoices: (params?: object) => api.get('/sales/invoices/', { params }),
+  invoices: (params?: object, config?: AxiosRequestConfig) => api.get('/sales/invoices/', { params, ...config }),
   invoice: (id: string) => api.get(`/sales/invoices/${id}/`),
   create: (data: object) => api.post('/sales/invoices/', data),
   updateInvoice: (id: string, data: object) => api.patch(`/sales/invoices/${id}/`, data),
@@ -1385,7 +1389,7 @@ export const salesApi = {
 }
 
 export const customerApi = {
-  list: (params?: object) => api.get('/customers/', { params }),
+  list: (params?: object, config?: AxiosRequestConfig) => api.get('/customers/', { params, ...config }),
   get: (id: string) => api.get(`/customers/${id}/`),
   create: (data: object) => api.post('/customers/', data),
   update: (id: string, data: object) => api.patch(`/customers/${id}/`, data),
@@ -1396,14 +1400,14 @@ export const customerApi = {
 }
 
 export const expenseApi = {
-  list: (params?: object) => api.get('/expenses/', { params }),
+  list: (params?: object, config?: AxiosRequestConfig) => api.get('/expenses/', { params, ...config }),
   create: (data: object) => api.post('/expenses/', data),
   update: (id: string, data: object) => api.patch(`/expenses/${id}/`, data),
   delete: (id: string) => api.delete(`/expenses/${id}/`),
-  categories: () => api.get('/expenses/categories/'),
+  categories: (config?: AxiosRequestConfig) => api.get('/expenses/categories/', config),
   updateCategory: (id: string, data: object) => api.patch(`/expenses/categories/${id}/`, data),
   // Folders / groups
-  groups: (params?: object) => api.get('/expenses/groups/', { params }),
+  groups: (params?: object, config?: AxiosRequestConfig) => api.get('/expenses/groups/', { params, ...config }),
   createGroup: (data: object) => api.post('/expenses/groups/', data),
   updateGroup: (id: string, data: object) => api.patch(`/expenses/groups/${id}/`, data),
   deleteGroup: (id: string) => api.delete(`/expenses/groups/${id}/`),
@@ -1417,7 +1421,7 @@ export const creditApi = {
 }
 
 export const purchaseApi = {
-  list: (params?: object) => api.get('/purchases/orders/', { params }),
+  list: (params?: object, config?: AxiosRequestConfig) => api.get('/purchases/orders/', { params, ...config }),
   create: (data: object) => api.post('/purchases/orders/', data),
   patch: (id: string, data: object) => api.patch(`/purchases/orders/${id}/`, data),
   uploadReceipt: (id: string, file: File) => _multipartPatch(`/purchases/orders/${id}/`, file, 'receipt'),
@@ -1435,7 +1439,7 @@ export const purchaseReturnApi = {
 }
 
 export const supplierApi = {
-  list: (params?: object) => api.get('/suppliers/', { params }),
+  list: (params?: object, config?: AxiosRequestConfig) => api.get('/suppliers/', { params, ...config }),
   create: (data: object) => api.post('/suppliers/', data),
   update: (id: string, data: object) => api.patch(`/suppliers/${id}/`, data),
   delete: (id: string) => api.delete(`/suppliers/${id}/`),
@@ -1495,12 +1499,12 @@ export const reportApi = {
 
 export const taxApi = {
   // VAT Classes
-  classes: () => api.get('/tax/classes/'),
+  classes: (config?: AxiosRequestConfig) => api.get('/tax/classes/', config),
   createClass: (data: object) => api.post('/tax/classes/', data),
   updateClass: (id: string, data: object) => api.patch(`/tax/classes/${id}/`, data),
   deleteClass: (id: string) => api.delete(`/tax/classes/${id}/`),
   // Tax Configs (income/corporate)
-  configs: () => api.get('/tax/configs/'),
+  configs: (config?: AxiosRequestConfig) => api.get('/tax/configs/', config),
   createConfig: (data: object) => api.post('/tax/configs/', data),
   updateConfig: (id: string, data: object) => api.patch(`/tax/configs/${id}/`, data),
   deleteConfig: (id: string) => api.delete(`/tax/configs/${id}/`),
@@ -1514,12 +1518,12 @@ export const taxApi = {
   whtCertificatePdf: (id: string) =>
     api.get(`/tax/wht-transactions/${id}/certificate_pdf/`, { responseType: 'blob' }),
   // VAT transactions
-  vatTransactions: (params?: object) => api.get('/tax/vat-transactions/', { params }),
+  vatTransactions: (params?: object, config?: AxiosRequestConfig) => api.get('/tax/vat-transactions/', { params, ...config }),
   createVatTransaction: (data: object) => api.post('/tax/vat-transactions/', data),
   syncVatFromPeriod: (data: { period_start: string; period_end: string }) =>
     api.post('/tax/vat-transactions/sync_from_period/', data),
   // Tax obligations (compliance calendar)
-  obligations: (params?: object) => api.get('/tax/obligations/', { params }),
+  obligations: (params?: object, config?: AxiosRequestConfig) => api.get('/tax/obligations/', { params, ...config }),
   createObligation: (data: object) => api.post('/tax/obligations/', data),
   updateObligation: (id: string, data: object) => api.patch(`/tax/obligations/${id}/`, data),
   deleteObligation: (id: string) => api.delete(`/tax/obligations/${id}/`),
@@ -1548,7 +1552,7 @@ export const taxApi = {
 }
 
 export const quoteApi = {
-  list: (params?: object) => api.get('/quotes/', { params }),
+  list: (params?: object, config?: AxiosRequestConfig) => api.get('/quotes/', { params, ...config }),
   create: (data: object) => api.post('/quotes/', data),
   update: (id: string, data: object) => api.patch(`/quotes/${id}/`, data),
   send: (id: string) => api.post(`/quotes/${id}/send/`),
@@ -1559,13 +1563,13 @@ export const quoteApi = {
 }
 
 export const billApi = {
-  list: (params?: object) => api.get('/bills/', { params }),
+  list: (params?: object, config?: AxiosRequestConfig) => api.get('/bills/', { params, ...config }),
   create: (data: object) => api.post('/bills/', data),
   update: (id: string, data: object) => api.put(`/bills/${id}/`, data),
   approve: (id: string) => api.post(`/bills/${id}/approve/`),
   pay: (id: string, data: object) => api.post(`/bills/${id}/pay/`, data),
   void: (id: string) => api.post(`/bills/${id}/void/`),
-  folders: (params?: object) => api.get('/bills/folders/', { params }),
+  folders: (params?: object, config?: AxiosRequestConfig) => api.get('/bills/folders/', { params, ...config }),
   createFolder: (data: object) => api.post('/bills/folders/', data),
   updateFolder: (id: string, data: object) => api.patch(`/bills/folders/${id}/`, data),
   deleteFolder: (id: string) => api.delete(`/bills/folders/${id}/`),
@@ -1573,7 +1577,7 @@ export const billApi = {
 }
 
 export const invoiceFolderApi = {
-  list: (params?: object) => api.get('/sales/folders/', { params }),
+  list: (params?: object, config?: AxiosRequestConfig) => api.get('/sales/folders/', { params, ...config }),
   create: (data: object) => api.post('/sales/folders/', data),
   update: (id: string, data: object) => api.patch(`/sales/folders/${id}/`, data),
   delete: (id: string) => api.delete(`/sales/folders/${id}/`),
@@ -1631,7 +1635,7 @@ export const accountingApi = {
   // Default a large page size: every caller needs the WHOLE chart (tree rendering,
   // journal-line pickers, type counts). Without it DRF's 25-row default silently
   // truncated the list at the 3xxx accounts, hiding all revenue/expense/COGS.
-  accounts: (params?: object) => api.get('/accounting/accounts/', { params: { page_size: 1000, ...params } }),
+  accounts: (params?: object, config?: AxiosRequestConfig) => api.get('/accounting/accounts/', { params: { page_size: 1000, ...params }, ...config }),
   accountsSummary: (params?: object) => api.get('/accounting/accounts/summary/', { params }),
   createAccount: (data: object) => api.post('/accounting/accounts/', data),
   updateAccount: (id: string, data: object) => api.patch(`/accounting/accounts/${id}/`, data),
@@ -1652,7 +1656,7 @@ export const accountingApi = {
   setAccountOpeningBalance: (id: string, data: object) => api.post(`/accounting/accounts/${id}/set_opening_balance/`, data),
   setSubledgerOpeningBalances: (data: object) => api.post('/accounting/accounts/subledger_opening_balances/', data),
   beginningBalancesSummary: () => api.get('/accounting/beginning-balances/summary/'),
-  journal: (params?: object) => api.get('/accounting/journal/', { params }),
+  journal: (params?: object, config?: AxiosRequestConfig) => api.get('/accounting/journal/', { params, ...config }),
   createJournalEntry: (data: object) => api.post('/accounting/journal/', data),
   updateJournalEntry: (id: string, data: object) => api.patch(`/accounting/journal/${id}/`, data),
   deleteJournalEntry: (id: string) => api.delete(`/accounting/journal/${id}/`),
@@ -1663,7 +1667,7 @@ export const accountingApi = {
   approveJournalEntry: (id: string, data?: object) => api.post(`/accounting/journal/${id}/approve/`, data ?? {}),
   rejectJournalEntry: (id: string, data?: object) => api.post(`/accounting/journal/${id}/reject/`, data ?? {}),
   signJournalEntry: (id: string, data: FormData | object) => api.post(`/accounting/journal/${id}/sign/`, data),
-  assets: () => api.get('/accounting/assets/'),
+  assets: (config?: AxiosRequestConfig) => api.get('/accounting/assets/', config),
   createAsset: (data: object) => api.post('/accounting/assets/', data),
   updateAsset: (id: string, data: object) => api.patch(`/accounting/assets/${id}/`, data),
   runDepreciation: (data: object) => api.post('/accounting/assets/run_depreciation/', data),
@@ -1731,11 +1735,11 @@ export const accountingApi = {
 }
 
 export const payrollApi = {
-  employees: (params?: object) => api.get('/payroll/employees/', { params }),
+  employees: (params?: object, config?: AxiosRequestConfig) => api.get('/payroll/employees/', { params, ...config }),
   createEmployee: (data: object) => api.post('/payroll/employees/', data),
   updateEmployee: (id: string, data: object) => api.patch(`/payroll/employees/${id}/`, data),
   deleteEmployee: (id: string) => api.delete(`/payroll/employees/${id}/`),
-  runs: (params?: object) => api.get('/payroll/runs/', { params }),
+  runs: (params?: object, config?: AxiosRequestConfig) => api.get('/payroll/runs/', { params, ...config }),
   runPayroll: (data: object) => api.post('/payroll/runs/', data),
   // silentErrors: the page shows the refusal itself, so the global error toast stays quiet.
   approvePayroll: (id: string, config?: AxiosRequestConfig) => api.post(`/payroll/runs/${id}/approve/`, undefined, config),
@@ -1891,7 +1895,7 @@ export const essApi = {
 }
 
 export const budgetApi = {
-  list: () => api.get('/budgets/'),
+  list: (config?: AxiosRequestConfig) => api.get('/budgets/', config),
   create: (data: object) => api.post('/budgets/', data),
   update: (id: string, data: object) => api.patch(`/budgets/${id}/`, data),
   variance: (id: string) => api.get(`/budgets/${id}/variance/`),
@@ -1905,7 +1909,7 @@ export const budgetApi = {
   /** Flat, cross-budget list of every line + its variance data, for the
    * Budget Monitoring page. params: { budget_type?, status? } — status
    * defaults server-side to 'active'; pass 'all' to include every status. */
-  monitoring: (params?: object) => api.get('/budgets/monitoring/', { params }),
+  monitoring: (params?: object, config?: AxiosRequestConfig) => api.get('/budgets/monitoring/', { params, ...config }),
 }
 
 /** Individual BudgetLine access (Phase 7) — PATCH support for editing an
@@ -1937,7 +1941,7 @@ export const budgetAllocationApi = {
 }
 
 export const recurringApi = {
-  list: () => api.get('/sales/recurring/'),
+  list: (config?: AxiosRequestConfig) => api.get('/sales/recurring/', config),
   create: (data: object) => api.post('/sales/recurring/', data),
   update: (id: string, data: object) => api.patch(`/sales/recurring/${id}/`, data),
   delete: (id: string) => api.delete(`/sales/recurring/${id}/`),
@@ -1980,7 +1984,7 @@ export const storefrontApi = {
 export const tillApi = {
   sessions: (params?: object) => api.get('/pos/till-sessions/', { params }),
   /** The signed-in cashier's open till + live expected figures (never the count). */
-  current: () => api.get('/pos/till-sessions/current/'),
+  current: () => api.get('/pos/till-sessions/current/', { headers: { 'X-Bypass-Cache': '1' } }),
   open: (data: object) => api.post('/pos/till-sessions/open/', data),
   close: (id: string, data: object) => api.post(`/pos/till-sessions/${id}/close/`, data),
   zReport: (id: string) => api.get(`/pos/till-sessions/${id}/z_report/`),
@@ -2024,18 +2028,18 @@ export const paymentGatewayApi = {
 }
 
 export const exciseApi = {
-  list: () => api.get('/tax/excise/'),
+  list: (config?: AxiosRequestConfig) => api.get('/tax/excise/', config),
   create: (data: object) => api.post('/tax/excise/', data),
   update: (id: string, data: object) => api.patch(`/tax/excise/${id}/`, data),
   delete: (id: string) => api.delete(`/tax/excise/${id}/`),
 }
 
 export const whtApi = {
-  rates: () => api.get('/tax/wht-rates/'),
+  rates: (config?: AxiosRequestConfig) => api.get('/tax/wht-rates/', config),
   createRate: (data: object) => api.post('/tax/wht-rates/', data),
   updateRate: (id: string, data: object) => api.patch(`/tax/wht-rates/${id}/`, data),
   deleteRate: (id: string) => api.delete(`/tax/wht-rates/${id}/`),
-  transactions: (params?: object) => api.get('/tax/wht-transactions/', { params }),
+  transactions: (params?: object, config?: AxiosRequestConfig) => api.get('/tax/wht-transactions/', { params, ...config }),
   createTransaction: (data: object) => api.post('/tax/wht-transactions/', data),
   deleteTransaction: (id: string) => api.delete(`/tax/wht-transactions/${id}/`),
 }
