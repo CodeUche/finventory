@@ -2,7 +2,8 @@ import { Fragment, useEffect, useState } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { CreditCard, Search, Plus, X, Loader2, TrendingDown, TrendingUp, AlertCircle, ChevronDown, ChevronRight, Users } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { creditApi, accountingApi, inventoryApi } from '@/services/api'
+import { creditApi, accountingApi, inventoryApi, bypassNextGets } from '@/services/api'
+import { offlineCache } from '@/lib/offlineCache'
 import { orgApi } from '@/services/api'
 import { formatCurrency, formatDate, stripCommas } from '@/lib/utils'
 import AmountInput from '@/components/AmountInput'
@@ -187,6 +188,10 @@ export default function CreditsPage() {
       toast.success('Payment recorded')
       setShowPayModal(false)
       resetPayForm()
+      // record_payment is an action endpoint, so the request layer does not clear the saved
+      // credits list; clear it here or the counters keep showing the pre-payment list.
+      bypassNextGets(8000)
+      await offlineCache.invalidatePrefix('/credits/')
       load()
     } catch (err: any) {
       const apiErr = err?.response?.data?.error
