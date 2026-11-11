@@ -137,6 +137,21 @@ export async function loadVerifier(email: string): Promise<OfflineVerifierBlob |
   }
 }
 
+/**
+ * Id of the user the stored verifier belongs to, or null if none / unreadable.
+ * Used only to decide who owns old unsent changes that carry no owner.
+ */
+export async function peekVerifierUserId(): Promise<string | null> {
+  const enc = localStorage.getItem(ENCRYPTED_BLOB_KEY)
+  if (!enc) return null
+  try {
+    const blob: OfflineVerifierBlob = JSON.parse(await decryptBlob(enc))
+    return typeof blob.user_id === 'string' ? blob.user_id : null
+  } catch {
+    return null
+  }
+}
+
 /** True if any verifier blob exists (email-agnostic, synchronous). */
 export function hasVerifierStored(): boolean {
   return !!localStorage.getItem(ENCRYPTED_BLOB_KEY)

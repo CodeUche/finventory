@@ -3,6 +3,8 @@ import { persist, createJSONStorage } from 'zustand/middleware'
 import type { User, AuthTokens, Organisation, AccessLevel, ModuleKey } from '@/types'
 import type { OfflineVerifierBlob } from '@/lib/offlineVerifier'
 import { claimCacheForUser } from '@/lib/cacheOwner'
+import { startWipe } from '@/lib/localDataGuard'
+import { clearSavedAvatars, clearLegacyQueue } from '@/lib/localUserData'
 
 export const REMEMBER_FLAG_KEY = 'audity-remember-me'
 // Purge any legacy plaintext password that may have been stored by older builds
@@ -311,11 +313,21 @@ export const useAuthStore = create<AuthState>()(
         // Drop the in-memory resume secrets (wrap key + decrypted refresh token)
         import('@/lib/offlineResume').then(({ clearResumeMemory }) => clearResumeMemory()).catch(() => {})
         // Wipe the saved copies of business data (response cache AND the local
-        // entity store) so the next person on this device sees none of it.
+        // entity store) so the next person on this device sees none of it. The
+        // wipe is marked as owed right now and only unmarked once both deletes
+        // really worked; if one fails it is retried at the next start-up or
+        // sign-in, and until then nothing saved can be read.
         // The sync queue is NOT wiped: unsent offline changes are real work.
-        // Each item is tagged with the user who made it, and only that user
-        // can see or send it, so another user signing in can never replay it.
-        import('@/lib/cacheOwner').then(({ clearLocalReadData }) => clearLocalReadData()).catch(() => {})
+        // Each item is tagged with the user who made it; only that user can see
+        // or send it, and a flush stops if the user or business changes.
+        clearSavedAvatars()
+        clearLegacyQueue()
+        startWipe().then((ok) => {
+          if (ok) return
+          import('@/lib/dialog').then(({ alertDialog }) =>
+            alertDialog('We could not clear saved data on this device. Close the app and sign in again to finish.'),
+          ).catch(() => {})
+        }).catch(() => {})
         // Clear PostHog identity so the next user starts a fresh session
         import('@/lib/analytics').then(({ resetAnalytics }) => resetAnalytics()).catch(() => {})
         set({ ...CLEARED_SESSION_STATE })

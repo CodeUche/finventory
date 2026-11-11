@@ -13,6 +13,7 @@
 
 import { openDB, type IDBPDatabase } from 'idb'
 import { useAuthStore } from '@/store/authStore'
+import { canReadSavedData, canWriteSavedData, deleteDatabaseByName } from '@/lib/localDataGuard'
 
 const DB_NAME = 'audity-offline-cache'
 const DB_VERSION = 1
@@ -49,8 +50,10 @@ function makeKey(url: string): string {
 
 export const offlineCache = {
   /** Write a successful GET response into the cache. */
-  async set(url: string, data: unknown): Promise<void> {
+  async set(url: string, data: unknown, startedAt?: number): Promise<void> {
     try {
+      // Never write while a wipe is owed, or when the user changed since this work began.
+      if (!canWriteSavedData(startedAt)) return
       const db = await getDB()
       const key = makeKey(url)
       await db.put(STORE, { key, data, cachedAt: Date.now(), url } satisfies CacheEntry)
@@ -62,6 +65,7 @@ export const offlineCache = {
   /** Read a cached response. Returns null if not found. */
   async get(url: string): Promise<CacheEntry | null> {
     try {
+      if (!(await canReadSavedData())) return null
       const db = await getDB()
       const entry = await db.get(STORE, makeKey(url)) as CacheEntry | undefined
       return entry ?? null
@@ -76,6 +80,7 @@ export const offlineCache = {
    */
   async oldestCachedAt(): Promise<number | null> {
     try {
+      if (!(await canReadSavedData())) return null
       const db = await getDB()
       const orgPrefix = `${currentOrgId()}||`
       const all = (await db.getAll(STORE)) as CacheEntry[]
@@ -102,11 +107,15 @@ export const offlineCache = {
   },
 
   /** Wipe the entire cache (used on logout). */
-  async clearAll(): Promise<void> {
+  async clearAll(): Promise<boolean> {
     try {
       const db = await getDB()
       await db.clear(STORE)
-    } catch { /* non-fatal */ }
+      return true
+    } catch { /* fall back to deleting the whole database */ }
+    try { _db?.close() } catch { /* already closed */ }
+    _db = null
+    return deleteDatabaseByName(DB_NAME)
   },
 
   /**

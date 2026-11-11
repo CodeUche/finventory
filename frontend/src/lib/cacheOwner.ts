@@ -6,6 +6,9 @@
  * the first person's name, avatar and role-based menu from cached responses.
  * When the signed-in user is not the one who filled the cache, we wipe it.
  */
+import { startWipe, bumpGeneration, isWipePending } from '@/lib/localDataGuard'
+import { clearSavedAvatars, clearHeldBasketsExcept } from '@/lib/localUserData'
+
 const KEY = 'audity:cache-owner-user-id'
 
 /** Pure decision, exported for tests. */
@@ -18,26 +21,42 @@ export function shouldClearCache(previous: string | null, current: string, onlin
 }
 
 /**
- * Wipe everything the app keeps on disk as a READ copy of business data:
- * the response cache AND the local entity store (customers, invoices, payroll,
- * ...). Waits for both deletes. Never throws, even if IndexedDB is unavailable.
+ * Wipe the saved copies of business data: the response cache AND the local
+ * entity store. Marks the wipe as owed first, resolves true only when both
+ * deletes really succeeded, and never throws. See localDataGuard.
  *
- * Deliberately NOT touched: the sync queue (a user's unsent offline work; it is
- * tagged with its owner and hidden from everyone else, see syncEngine) and the
- * offline sign-in verifier.
+ * Deliberately NOT touched: the sync queue (a user's unsent offline work; each
+ * item is tagged with its owner and hidden from everyone else, see syncEngine)
+ * and the offline sign-in verifier.
  */
-export async function clearLocalReadData(): Promise<void> {
-  const wipes: Array<Promise<unknown>> = [
-    import('@/lib/offlineCache').then(({ offlineCache }) => offlineCache.clearAll()),
-    import('@/lib/localStore').then(({ localStore }) => localStore.clearAll()),
-  ]
-  await Promise.allSettled(wipes)
+export function clearLocalReadData(): Promise<boolean> {
+  return startWipe()
+}
+
+/**
+ * Old unsent changes with no owner go to the previous user. If that is unknown
+ * we ask the offline verifier who it belongs to. If that is unknown too, they
+ * stay hidden from everyone: it is better to strand them than to hand one
+ * person's unsent work to another.
+ */
+async function adoptOwnerlessQueueItems(previous: string | null): Promise<void> {
+  try {
+    let owner = previous
+    if (!owner) {
+      const { peekVerifierUserId } = await import('@/lib/offlineVerifier')
+      owner = await peekVerifierUserId()
+    }
+    if (!owner) return
+    const { syncEngine } = await import('@/lib/syncEngine')
+    await syncEngine.adoptUnownedItems(owner)
+  } catch { /* adoption failed: the items stay hidden */ }
 }
 
 /**
  * Call whenever a user is signed in. Clears the saved copies of business data
- * if the user changed. Returns a promise that settles when the wipe is done;
- * callers may ignore it.
+ * if the user changed. The wipe is marked as owed BEFORE this returns, so any
+ * read that follows already waits for it. The returned promise settles when
+ * everything is done; callers may ignore it.
  */
 export function claimCacheForUser(userId: string | undefined | null): Promise<void> {
   if (!userId) return Promise.resolve()
@@ -50,15 +69,16 @@ export function claimCacheForUser(userId: string | undefined | null): Promise<vo
     try { localStorage.setItem(KEY, userId) } catch { /* ignore */ }
   }
   const work: Array<Promise<unknown>> = []
-  if (previous !== userId) {
-    // Unsent offline changes made before owners were recorded belong to the
-    // previous user if we know them, otherwise to whoever is signing in now.
-    work.push(
-      import('@/lib/syncEngine')
-        .then(({ syncEngine }) => syncEngine.adoptUnownedItems(previous ?? userId))
-        .catch(() => {}),
-    )
+  if (previous !== userId) bumpGeneration()
+  if (clear) {
+    work.push(startWipe())
+    // Other people's per-user leftovers go too (profile picture, held baskets).
+    clearSavedAvatars()
+    clearHeldBasketsExcept(userId)
+  } else if (isWipePending()) {
+    // An earlier wipe failed or was cut short: finish it before anything is read.
+    work.push(startWipe())
   }
-  if (clear) work.push(clearLocalReadData())
+  work.push(adoptOwnerlessQueueItems(previous))
   return Promise.all(work).then(() => {})
 }

@@ -9,6 +9,7 @@
  */
 
 import { openDB, type IDBPDatabase } from 'idb'
+import { canReadSavedData, canWriteSavedData, deleteDatabaseByName } from '@/lib/localDataGuard'
 
 const DB_NAME = 'audity-local-store'
 const DB_VERSION = 1
@@ -45,8 +46,9 @@ function makeKey(orgId: string, entityType: string, recordId: string): string {
 
 export const localStore = {
   /** Insert or overwrite a single record. */
-  async upsert(orgId: string, entityType: string, recordId: string, data: Record<string, unknown>): Promise<void> {
+  async upsert(orgId: string, entityType: string, recordId: string, data: Record<string, unknown>, startedAt?: number): Promise<void> {
     try {
+      if (!canWriteSavedData(startedAt)) return
       const db = await getDB()
       const record: EntityRecord = {
         ...data,
@@ -61,8 +63,9 @@ export const localStore = {
   },
 
   /** Bulk upsert — used when seeding cache from a successful list response. */
-  async upsertMany(orgId: string, entityType: string, records: Array<Record<string, unknown>>, idField = 'id'): Promise<void> {
+  async upsertMany(orgId: string, entityType: string, records: Array<Record<string, unknown>>, idField = 'id', startedAt?: number): Promise<void> {
     try {
+      if (!canWriteSavedData(startedAt)) return
       const db = await getDB()
       const tx = db.transaction(STORE, 'readwrite')
       for (const r of records) {
@@ -83,8 +86,9 @@ export const localStore = {
   },
 
   /** Mark a record as deleted (optimistic delete). */
-  async remove(orgId: string, entityType: string, recordId: string): Promise<void> {
+  async remove(orgId: string, entityType: string, recordId: string, startedAt?: number): Promise<void> {
     try {
+      if (!canWriteSavedData(startedAt)) return
       const db = await getDB()
       const key = makeKey(orgId, entityType, recordId)
       const existing = await db.get(STORE, key) as EntityRecord | undefined
@@ -103,6 +107,7 @@ export const localStore = {
   /** Get all non-deleted records for an entity type within an org. */
   async getAll(orgId: string, entityType: string): Promise<EntityRecord[]> {
     try {
+      if (!(await canReadSavedData())) return []
       const db = await getDB()
       const results = await db.getAllFromIndex(STORE, 'byOrgEntity', [orgId, entityType]) as EntityRecord[]
       return results.filter((r) => !r._isDeleted)
@@ -114,6 +119,7 @@ export const localStore = {
   /** Get a single record. Returns null if not found or deleted. */
   async getOne(orgId: string, entityType: string, recordId: string): Promise<EntityRecord | null> {
     try {
+      if (!(await canReadSavedData())) return null
       const db = await getDB()
       const record = await db.get(STORE, makeKey(orgId, entityType, recordId)) as EntityRecord | undefined
       if (!record || record._isDeleted) return null
@@ -127,8 +133,9 @@ export const localStore = {
    * Replace all occurrences of a temp ID with the real server-assigned ID.
    * Called after a POST syncs successfully.
    */
-  async replaceTempId(orgId: string, entityType: string, tempId: string, realId: string): Promise<void> {
+  async replaceTempId(orgId: string, entityType: string, tempId: string, realId: string, startedAt?: number): Promise<void> {
     try {
+      if (!canWriteSavedData(startedAt)) return
       const db = await getDB()
       const tempKey = makeKey(orgId, entityType, tempId)
       const existing = await db.get(STORE, tempKey) as EntityRecord | undefined
@@ -161,10 +168,14 @@ export const localStore = {
   },
 
   /** Wipe everything (used on full logout). */
-  async clearAll(): Promise<void> {
+  async clearAll(): Promise<boolean> {
     try {
       const db = await getDB()
       await db.clear(STORE)
-    } catch { /* non-fatal */ }
+      return true
+    } catch { /* fall back to deleting the whole database */ }
+    try { _db?.close() } catch { /* already closed */ }
+    _db = null
+    return deleteDatabaseByName(DB_NAME)
   },
 }

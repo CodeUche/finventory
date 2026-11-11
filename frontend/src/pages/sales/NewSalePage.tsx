@@ -12,6 +12,7 @@ import AmountInput from '@/components/AmountInput'
 import EditableTotal from '@/components/EditableTotal'
 import { useNotifications } from '@/contexts/NotificationsContext'
 import { useAuthStore } from '@/store/authStore'
+import { heldBasketsKey } from '@/lib/localUserData'
 import { FieldTooltip } from '@/components/FieldTooltip'
 import type { Customer, Product, Warehouse as WarehouseType } from '@/types'
 
@@ -178,7 +179,7 @@ export default function NewSalePage() {
   // ── Held baskets ──────────────────────────────────────────────────────────
   // A customer forgets their wallet; the queue behind them shouldn't wait.
   // Kept on the device so a held basket survives a refresh and works offline.
-  const HELD_KEY = `audity-held-baskets-${organisation?.id ?? 'none'}`
+  const HELD_KEY = heldBasketsKey(organisation?.id, user?.id)
   interface HeldBasket { id: string; label: string; at: string; cart: CartItem[] }
   const [held, setHeld] = useState<HeldBasket[]>(() => {
     try { return JSON.parse(localStorage.getItem(HELD_KEY) || '[]') } catch { return [] }

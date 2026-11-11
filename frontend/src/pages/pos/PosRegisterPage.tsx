@@ -23,6 +23,7 @@ import { formatCurrency, formatDate } from '@/lib/utils'
 import { useTaxRates } from '@/hooks/useTaxRates'
 import { productTaxRate, saleTotals, type SaleLineInput } from '@/lib/saleMath'
 import { useAuthStore } from '@/store/authStore'
+import { registerHeldKey } from '@/lib/localUserData'
 import type { Product } from '@/types'
 
 interface ModOption { id: string; name: string; price_delta: string; is_default: boolean; is_active: boolean }
@@ -250,7 +251,7 @@ export default function PosRegisterPage() {
   }
 
   // ── Held baskets ────────────────────────────────────────────────────────
-  const HELD_KEY = `audity-register-held-${organisation?.id ?? 'none'}`
+  const HELD_KEY = registerHeldKey(organisation?.id, user?.id)
   const [held, setHeld] = useState<HeldBasket[]>(() => {
     try { return JSON.parse(localStorage.getItem(HELD_KEY) || '[]') } catch { return [] }
   })
