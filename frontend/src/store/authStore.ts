@@ -310,11 +310,12 @@ export const useAuthStore = create<AuthState>()(
         }).catch(() => {})
         // Drop the in-memory resume secrets (wrap key + decrypted refresh token)
         import('@/lib/offlineResume').then(({ clearResumeMemory }) => clearResumeMemory()).catch(() => {})
-        // Clear offline cache so the next user doesn't see stale org data.
-        // The sync queue is NOT wiped — queued sales are real business data.
-        // flush() is org-scoped, so another user logging in can never replay
-        // this org's queue into their own tenant.
-        import('@/lib/offlineCache').then(({ offlineCache }) => offlineCache.clearAll()).catch(() => {})
+        // Wipe the saved copies of business data (response cache AND the local
+        // entity store) so the next person on this device sees none of it.
+        // The sync queue is NOT wiped: unsent offline changes are real work.
+        // Each item is tagged with the user who made it, and only that user
+        // can see or send it, so another user signing in can never replay it.
+        import('@/lib/cacheOwner').then(({ clearLocalReadData }) => clearLocalReadData()).catch(() => {})
         // Clear PostHog identity so the next user starts a fresh session
         import('@/lib/analytics').then(({ resetAnalytics }) => resetAnalytics()).catch(() => {})
         set({ ...CLEARED_SESSION_STATE })
