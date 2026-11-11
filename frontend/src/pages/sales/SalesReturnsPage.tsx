@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
+import { useIsMounted } from '@/hooks/useIsMounted'
 import { Search, X, Loader2, RotateCcw, FileDown } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { salesApi } from '@/services/api'
@@ -26,6 +27,7 @@ function hexToRgb(hex?: string): [number, number, number] {
 }
 
 export default function SalesReturnsPage() {
+  const mounted = useIsMounted()
   const { organisation } = useAuthStore()
   const [returns, setReturns] = useState<SaleReturn[]>([])
   const [loading, setLoading] = useState(true)
@@ -58,7 +60,7 @@ export default function SalesReturnsPage() {
       if (seq !== requestSeq.current) return // a newer request has since started
       setReturns(data.results ?? data)
     } catch {
-      if (seq === requestSeq.current) toast.error('Failed to load sales returns')
+      if (seq === requestSeq.current) { if (mounted.current) toast.error('Failed to load sales returns') }
     } finally {
       if (seq === requestSeq.current) setLoading(false)
     }

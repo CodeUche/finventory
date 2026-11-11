@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useState } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
+import { useIsMounted } from '@/hooks/useIsMounted'
 import { CreditCard, Search, Plus, X, Loader2, TrendingDown, TrendingUp, AlertCircle, ChevronDown, ChevronRight, Users } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { creditApi, accountingApi, inventoryApi, bypassNextGets } from '@/services/api'
@@ -50,6 +51,7 @@ const EMPTY_PAY_FORM = {
 }
 
 export default function CreditsPage() {
+  const mounted = useIsMounted()
   const [transactions, setTransactions] = useState<CreditTransaction[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -93,7 +95,7 @@ export default function CreditsPage() {
       const { data } = await creditApi.list(params)
       setTransactions(data.results ?? data)
     } catch {
-      toast.error('Failed to load credit transactions')
+      { if (mounted.current) toast.error('Failed to load credit transactions') }
     } finally {
       setLoading(false)
     }

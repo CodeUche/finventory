@@ -11,6 +11,7 @@ import { Check, X, Loader2, RefreshCw, ExternalLink } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { paymentGatewayApi, bypassNextGets } from '@/services/api'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
+import { useIsMounted } from '@/hooks/useIsMounted'
 import { confirmDialog, promptDialog } from '@/lib/dialog'
 import { formatCurrency, formatDate } from '@/lib/utils'
 
@@ -37,6 +38,7 @@ const STATUS_BADGE: Record<Claim['status'], string> = {
 }
 
 export default function TransferConfirmationsPage() {
+  const mounted = useIsMounted()
   const [claims, setClaims] = useState<Claim[]>([])
   const [loading, setLoading] = useState(true)
   const [busyId, setBusyId] = useState<string | null>(null)
@@ -47,7 +49,7 @@ export default function TransferConfirmationsPage() {
     try {
       const { data } = await paymentGatewayApi.transferClaims({ page_size: 200 })
       setClaims(data.results ?? data)
-    } catch { toast.error('Could not load transfers') }
+    } catch { { if (mounted.current) toast.error('Could not load transfers') } }
     finally { setLoading(false) }
   }
 

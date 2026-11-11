@@ -246,3 +246,8 @@ html.light .ds{--ds-modal-bg:#FCFCF6}
    over it. Lift the card that holds focus, and give floating lists a solid fill. */
 .ds .card:focus-within{position:relative;z-index:30}
 .ds .absolute.bg-surface-800{background-color:var(--ds-modal-bg)}
+
+.ds .ds-offline-note{
+  margin-bottom:16px;padding:10px 14px;border-radius:8px;font-size:13px;
+  border:1.5px solid var(--ds-warn);color:var(--ds-warn);background:color-mix(in srgb,var(--ds-warn) 10%,transparent);
+}

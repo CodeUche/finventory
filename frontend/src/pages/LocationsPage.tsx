@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
+import { useIsMounted } from '@/hooks/useIsMounted'
 import { MapPin, Plus, Pencil, Trash2, Phone, Building2, CheckCircle, XCircle, BarChart3, TrendingUp, ChevronDown, ChevronUp, Loader2 } from 'lucide-react'
 import { locationApi } from '@/services/api'
 import { formatCurrency } from '@/lib/utils'
@@ -27,6 +28,7 @@ interface SalesRow {
 }
 
 export default function LocationsPage() {
+  const mounted = useIsMounted()
   const [locations, setLocations] = useState<Location[]>([])
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
@@ -47,19 +49,21 @@ export default function LocationsPage() {
       const { data } = await locationApi.salesAnalytics(period)
       setSalesRows(data.results ?? [])
     } catch {
-      toast.error('Failed to load sales data')
+      { if (mounted.current) toast.error('Failed to load sales data') }
     } finally {
       setLoadingSales(false)
     }
   }, [])
 
   useEffect(() => { loadSales(salesPeriod) }, [salesPeriod, loadSales])
+  // Reload the sales figures too when the connection returns or data changes.
+  useDataRefresh(() => { loadSales(salesPeriod) })
 
   const load = () => {
     setLoading(true)
     locationApi.list().then(({ data }) => {
       setLocations(data.results ?? data)
-    }).catch(() => toast.error('Failed to load locations')).finally(() => setLoading(false))
+    }).catch(() => { if (mounted.current) toast.error('Failed to load locations') }).finally(() => setLoading(false))
   }
 
   useEffect(() => { load() }, [])

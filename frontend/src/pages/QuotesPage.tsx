@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
+import { useIsMounted } from '@/hooks/useIsMounted'
 import { Plus, X, Loader2, FileText, ChevronDown, ChevronUp, Trash2, FileDown, Mail, MessageCircle, CheckCircle, ExternalLink, RefreshCw } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { quoteApi, customerApi, inventoryApi, salesApi, urlToDataUrl, bypassNextGets } from '@/services/api'
@@ -301,6 +302,7 @@ const BLANK_FORM: QuoteForm = {
 }
 
 export default function QuotesPage() {
+  const mounted = useIsMounted()
   const { organisation, logoDataUrl, stampDataUrl } = useAuthStore()
   const [quotes, setQuotes] = useState<Quote[]>([])
   const [customers, setCustomers] = useState<Customer[]>([])
@@ -349,7 +351,7 @@ export default function QuotesPage() {
       setQuotes(qRes.data.results ?? qRes.data)
       setCustomers(cRes.data.results ?? cRes.data)
       setWarehouses(wRes.data.results ?? wRes.data)
-    } catch { toast.error('Failed to load quotations') }
+    } catch { { if (mounted.current) toast.error('Failed to load quotations') } }
     finally { setLoading(false) }
   }
 

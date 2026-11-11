@@ -14,6 +14,7 @@ import {
 import toast from 'react-hot-toast'
 import { settlementApi, bypassNextGets } from '@/services/api'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
+import { useIsMounted } from '@/hooks/useIsMounted'
 import { confirmDialog } from '@/lib/dialog'
 import { formatCurrency, formatDate } from '@/lib/utils'
 
@@ -51,6 +52,7 @@ const BADGE: Record<Line['status'], string> = {
 }
 
 export default function SettlementPage() {
+  const mounted = useIsMounted()
   const [lines, setLines] = useState<Line[]>([])
   const [summary, setSummary] = useState<{ needs_review: number; needs_review_total: string; matched: number } | null>(null)
   const [loading, setLoading] = useState(true)
@@ -70,7 +72,7 @@ export default function SettlementPage() {
       ])
       setLines(l.data.results ?? l.data)
       setSummary(s.data)
-    } catch { toast.error('Could not load settlements') }
+    } catch { { if (mounted.current) toast.error('Could not load settlements') } }
     finally { setLoading(false) }
   }
 
@@ -101,7 +103,7 @@ export default function SettlementPage() {
     try {
       const { data } = await settlementApi.candidates()
       setCandidates(data.results)
-    } catch { toast.error('Could not load card sales') }
+    } catch { { if (mounted.current) toast.error('Could not load card sales') } }
   }
 
   const assign = async (paymentId: string) => {
