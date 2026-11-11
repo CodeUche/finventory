@@ -3,7 +3,7 @@ import { persist, createJSONStorage } from 'zustand/middleware'
 import type { User, AuthTokens, Organisation, AccessLevel, ModuleKey } from '@/types'
 import type { OfflineVerifierBlob } from '@/lib/offlineVerifier'
 import { claimCacheForUser } from '@/lib/cacheOwner'
-import { startWipe, reportWipeFailure } from '@/lib/localDataGuard'
+import { startWipe, reportWipeFailure, setSessionProbe } from '@/lib/localDataGuard'
 import { clearLegacyQueue } from '@/lib/localUserData'
 
 export const REMEMBER_FLAG_KEY = 'audity-remember-me'
@@ -280,8 +280,14 @@ export const useAuthStore = create<AuthState>()(
       setStampDataUrl: (url) => { set({ stampDataUrl: url }); writeMediaCache(get().organisation?.id, { stampDataUrl: url }) },
       setAvatarDataUrl: (url) => { set({ avatarDataUrl: url }); writeMediaCache(get().organisation?.id, { avatarDataUrl: url, avatarOwnerId: url ? (get().user?.id ?? null) : null }) },
 
+      // A profile answer for a DIFFERENT user (for example a stale or cached one)
+      // must never replace who is signed in.
       updateUser: (partial) =>
-        set((s) => ({ user: s.user ? { ...s.user, ...partial } : s.user })),
+        set((s) => {
+          const incomingId = (partial as { id?: string }).id
+          if (incomingId && s.user?.id && incomingId !== s.user.id) return s
+          return { user: s.user ? { ...s.user, ...partial } : s.user }
+        }),
 
       updateOrganisation: (partial) =>
         set((s) => ({
@@ -385,3 +391,10 @@ export const useAuthStore = create<AuthState>()(
     },
   ),
 )
+
+// Tell the saved-data guard who is signed in, so nothing is ever saved or read
+// for nobody, or under a business that is not selected.
+setSessionProbe(() => {
+  const s = useAuthStore.getState()
+  return { signedIn: s.isAuthenticated && !!s.user, userId: s.user?.id ?? null, orgId: s.organisation?.id ?? null }
+})

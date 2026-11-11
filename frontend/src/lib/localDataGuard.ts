@@ -37,6 +37,34 @@ export function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<
   })
 }
 
+/**
+ * Who is signed in right now. The auth store registers the real answer; until
+ * it does (unit tests of single files) everything is allowed.
+ */
+export interface SessionInfo { signedIn: boolean; userId: string | null; orgId: string | null }
+let probe: () => SessionInfo = () => ({ signedIn: true, userId: null, orgId: null })
+export function setSessionProbe(fn: () => SessionInfo): void { probe = fn }
+export function getSessionInfo(): SessionInfo { return probe() }
+
+/** Org values that mean "no business is selected": nothing may be saved under them. */
+const NO_ORG = new Set(['', 'anonymous', 'unknown', 'none'])
+
+/**
+ * Identity and sign-in endpoints (who the user is, tokens) must never be saved
+ * or served from the saved copies: a cached answer could show the wrong person.
+ */
+export function isIdentityUrl(url: string): boolean {
+  return url.includes('/auth/')
+}
+
+/**
+ * Saved data is scoped to the business AND the user. Another user can never
+ * read an entry, even if a wipe failed or never ran.
+ */
+export function savedScope(orgId: string): string {
+  return `${orgId}~${probe().userId ?? 'nouser'}`
+}
+
 let generation = 0
 let pendingInMemory = false
 let inProgress: Promise<boolean> | null = null
@@ -74,7 +102,7 @@ export async function waitForWipe(): Promise<void> {
  */
 export async function canReadSavedData(): Promise<boolean> {
   await waitForWipe()
-  return !isWipePending()
+  return !isWipePending() && probe().signedIn
 }
 
 /**
@@ -82,8 +110,12 @@ export async function canReadSavedData(): Promise<boolean> {
  * owed, or the user changed since `startedAt` (a number from getGeneration()
  * taken when the work began).
  */
-export function canWriteSavedData(startedAt?: number): boolean {
+export function canWriteSavedData(startedAt?: number, orgId?: string): boolean {
   if (isWipePending()) return false
+  // The single choke point: nothing is ever saved when nobody is signed in or
+  // no business is selected, whatever started the write and whenever it lands.
+  if (!probe().signedIn) return false
+  if (orgId !== undefined && NO_ORG.has(orgId)) return false
   return startedAt === undefined || startedAt === generation
 }
 

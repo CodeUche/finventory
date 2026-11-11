@@ -13,7 +13,7 @@
 
 import { openDB, type IDBPDatabase } from 'idb'
 import { useAuthStore } from '@/store/authStore'
-import { canReadSavedData, canWriteSavedData, deleteDatabaseByName, wipeTimeouts, withTimeout } from '@/lib/localDataGuard'
+import { canReadSavedData, canWriteSavedData, deleteDatabaseByName, wipeTimeouts, withTimeout, getSessionInfo, isIdentityUrl } from '@/lib/localDataGuard'
 
 const DB_NAME = 'audity-offline-cache'
 const DB_VERSION = 1
@@ -44,8 +44,13 @@ function currentOrgId(): string {
   return useAuthStore.getState().organisation?.id ?? 'anonymous'
 }
 
+// Entries are scoped to business AND user, so one user can never read another's.
+function scopePrefix(): string {
+  return `${currentOrgId()}|${getSessionInfo().userId ?? 'nouser'}||`
+}
+
 function makeKey(url: string): string {
-  return `${currentOrgId()}||${url}`
+  return `${scopePrefix()}${url}`
 }
 
 export const offlineCache = {
@@ -53,7 +58,8 @@ export const offlineCache = {
   async set(url: string, data: unknown, startedAt?: number): Promise<void> {
     try {
       // Never write while a wipe is owed, or when the user changed since this work began.
-      if (!canWriteSavedData(startedAt)) return
+      if (isIdentityUrl(url)) return
+      if (!canWriteSavedData(startedAt, currentOrgId())) return
       const db = await getDB()
       const key = makeKey(url)
       await db.put(STORE, { key, data, cachedAt: Date.now(), url } satisfies CacheEntry)
@@ -65,6 +71,7 @@ export const offlineCache = {
   /** Read a cached response. Returns null if not found. */
   async get(url: string): Promise<CacheEntry | null> {
     try {
+      if (isIdentityUrl(url)) return null
       if (!(await canReadSavedData())) return null
       const db = await getDB()
       const entry = await db.get(STORE, makeKey(url)) as CacheEntry | undefined
@@ -82,7 +89,7 @@ export const offlineCache = {
     try {
       if (!(await canReadSavedData())) return null
       const db = await getDB()
-      const orgPrefix = `${currentOrgId()}||`
+      const orgPrefix = scopePrefix()
       const all = (await db.getAll(STORE)) as CacheEntry[]
       const orgEntries = all.filter((e) => e.key.startsWith(orgPrefix))
       if (orgEntries.length === 0) return null
@@ -96,7 +103,7 @@ export const offlineCache = {
   async clearOrg(): Promise<void> {
     try {
       const db = await getDB()
-      const orgPrefix = `${currentOrgId()}||`
+      const orgPrefix = scopePrefix()
       const all = (await db.getAll(STORE)) as CacheEntry[]
       const tx = db.transaction(STORE, 'readwrite')
       for (const entry of all) {
@@ -125,7 +132,7 @@ export const offlineCache = {
   async invalidatePrefix(urlPrefix: string): Promise<void> {
     try {
       const db = await getDB()
-      const orgPrefix = `${currentOrgId()}||`
+      const orgPrefix = scopePrefix()
       const all = (await db.getAll(STORE)) as CacheEntry[]
       const tx = db.transaction(STORE, 'readwrite')
       for (const entry of all) {

@@ -148,17 +148,25 @@ export async function warmOfflineCache(orgId: string): Promise<void> {
   const s = useAuthStore.getState()
   // Real-token sessions only: an offline grace session can't reach the
   // network, and warming through the cache adapter would be a no-op anyway.
-  if (!s.tokens?.access || s.isOfflineSession) return
+  if (!s.isAuthenticated || !s.tokens?.access || s.isOfflineSession) return
 
   _warming = true
   const signal: WarmSignal = { aborted: false }
   const onOffline = () => { signal.aborted = true }
   window.addEventListener('offline', onOffline)
+  // Stop the moment the person who started this warm is no longer signed in to
+  // this business (sign-out, or a different user). Checked before every step.
+  const startUser = s.user?.id
+  const stillSameSession = () => {
+    const st = useAuthStore.getState()
+    return st.isAuthenticated && st.user?.id === startUser && st.organisation?.id === orgId
+  }
+  const unsubscribe = useAuthStore.subscribe(() => { if (!stillSameSession()) signal.aborted = true })
 
   try {
     const queue = buildWarmPlan().filter((t) => canWarmModule(t.module))
     const worker = async () => {
-      while (queue.length > 0 && !signal.aborted && navigator.onLine) {
+      while (queue.length > 0 && !signal.aborted && navigator.onLine && stillSameSession()) {
         const task = queue.shift()!
         try {
           await task.run(signal)
@@ -169,6 +177,7 @@ export async function warmOfflineCache(orgId: string): Promise<void> {
     if (!signal.aborted) _warmedOrgs.add(orgId)
   } finally {
     window.removeEventListener('offline', onOffline)
+    unsubscribe()
     _warming = false
   }
 }

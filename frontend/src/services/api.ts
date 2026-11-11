@@ -344,6 +344,16 @@ export const api = axios.create({
   adapter: buildTauriAdapter(),
 })
 
+// A signed-out app must not keep sending the last user's token or business.
+// Login pages put them in api.defaults; nothing removed them at sign-out, so
+// background loaders still running after sign-out kept fetching with them.
+useAuthStore.subscribe((state, prev) => {
+  if (prev.isAuthenticated && !state.isAuthenticated) {
+    delete api.defaults.headers.common.Authorization
+    delete api.defaults.headers.common['X-Organisation-ID']
+  }
+})
+
 // ─── Storage helpers ──────────────────────────────────────────────────────────
 // Read directly from Zustand in-memory state — always reflects the latest
 // setAuth() call instantly, with no localStorage serialisation/timing gap.

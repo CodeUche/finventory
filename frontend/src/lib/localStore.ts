@@ -9,7 +9,7 @@
  */
 
 import { openDB, type IDBPDatabase } from 'idb'
-import { canReadSavedData, canWriteSavedData, deleteDatabaseByName, wipeTimeouts, withTimeout } from '@/lib/localDataGuard'
+import { canReadSavedData, canWriteSavedData, deleteDatabaseByName, wipeTimeouts, withTimeout, savedScope } from '@/lib/localDataGuard'
 
 const DB_NAME = 'audity-local-store'
 const DB_VERSION = 1
@@ -48,7 +48,8 @@ export const localStore = {
   /** Insert or overwrite a single record. */
   async upsert(orgId: string, entityType: string, recordId: string, data: Record<string, unknown>, startedAt?: number): Promise<void> {
     try {
-      if (!canWriteSavedData(startedAt)) return
+      if (!canWriteSavedData(startedAt, orgId)) return
+      orgId = savedScope(orgId)
       const db = await getDB()
       const record: EntityRecord = {
         ...data,
@@ -65,7 +66,8 @@ export const localStore = {
   /** Bulk upsert — used when seeding cache from a successful list response. */
   async upsertMany(orgId: string, entityType: string, records: Array<Record<string, unknown>>, idField = 'id', startedAt?: number): Promise<void> {
     try {
-      if (!canWriteSavedData(startedAt)) return
+      if (!canWriteSavedData(startedAt, orgId)) return
+      orgId = savedScope(orgId)
       const db = await getDB()
       const tx = db.transaction(STORE, 'readwrite')
       for (const r of records) {
@@ -88,7 +90,8 @@ export const localStore = {
   /** Mark a record as deleted (optimistic delete). */
   async remove(orgId: string, entityType: string, recordId: string, startedAt?: number): Promise<void> {
     try {
-      if (!canWriteSavedData(startedAt)) return
+      if (!canWriteSavedData(startedAt, orgId)) return
+      orgId = savedScope(orgId)
       const db = await getDB()
       const key = makeKey(orgId, entityType, recordId)
       const existing = await db.get(STORE, key) as EntityRecord | undefined
@@ -108,6 +111,7 @@ export const localStore = {
   async getAll(orgId: string, entityType: string): Promise<EntityRecord[]> {
     try {
       if (!(await canReadSavedData())) return []
+      orgId = savedScope(orgId)
       const db = await getDB()
       const results = await db.getAllFromIndex(STORE, 'byOrgEntity', [orgId, entityType]) as EntityRecord[]
       return results.filter((r) => !r._isDeleted)
@@ -120,6 +124,7 @@ export const localStore = {
   async getOne(orgId: string, entityType: string, recordId: string): Promise<EntityRecord | null> {
     try {
       if (!(await canReadSavedData())) return null
+      orgId = savedScope(orgId)
       const db = await getDB()
       const record = await db.get(STORE, makeKey(orgId, entityType, recordId)) as EntityRecord | undefined
       if (!record || record._isDeleted) return null
@@ -135,7 +140,8 @@ export const localStore = {
    */
   async replaceTempId(orgId: string, entityType: string, tempId: string, realId: string, startedAt?: number): Promise<void> {
     try {
-      if (!canWriteSavedData(startedAt)) return
+      if (!canWriteSavedData(startedAt, orgId)) return
+      orgId = savedScope(orgId)
       const db = await getDB()
       const tempKey = makeKey(orgId, entityType, tempId)
       const existing = await db.get(STORE, tempKey) as EntityRecord | undefined
