@@ -77,6 +77,8 @@ function signIn(id: string) {
 }
 
 async function seedOwnerData() {
+  // Saved data is only ever written for a signed-in user.
+  if (!useAuthStore.getState().isAuthenticated) signIn('owner')
   await localStore.upsert(ORG, 'customers', 'c1', { id: 'c1', name: 'Big Customer' })
   await localStore.upsert(ORG, 'invoices', 'i1', { id: 'i1', total: '4500.00' })
   await offlineCache.set('/customers/', { results: [{ id: 'c1' }] })
@@ -152,10 +154,11 @@ describe('entity store is wiped', () => {
   })
 
   it('is kept when the owner is unknown and the device is offline', async () => {
-    await seedOwnerData()
     setOnline(false)
+    await seedOwnerData() // offline sign-in with no known owner: no wipe, owner stays unset
+    useAuthStore.getState().clearSession()
     await claimCacheForUser('someone')
-    expect(await entityCount()).toBe(2)
+    expect(onDisk('audity-local-store')).toBe(2) // kept on disk
     // owner left unset so the next online sign-in decides
     expect(localStorage.getItem('audity:cache-owner-user-id')).toBeNull()
   })
@@ -248,6 +251,7 @@ describe('races and stale writes', () => {
     await claimCacheForUser('owner')
     const startedAt = getGeneration() // the owner's request begins
     await claimCacheForUser('staff') // user changes; wipe finishes
+    signIn('staff')
     await localStore.upsert(ORG, 'customers', 'late', { id: 'late', name: 'Owner late reply' }, startedAt)
     await localStore.upsertMany(ORG, 'customers', [{ id: 'late2' }], 'id', startedAt)
     await offlineCache.set('/customers/', { results: [] }, startedAt)

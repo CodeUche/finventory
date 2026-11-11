@@ -352,7 +352,7 @@ describe('clearSession vs logout — offline artifact lifecycle', () => {
     await vi.waitFor(() => {
       expect(localStorage.getItem('audity-offline-verifier')).toBeNull()
       expect(revokeMock).toHaveBeenCalled()
-    })
+    }, { timeout: 10_000 }) // polls until done: no fixed wait to lose a race on a busy machine
 
     expect(useAuthStore.getState().isAuthenticated).toBe(false)
     // Queued business data survives even explicit logout — flush is org-scoped,

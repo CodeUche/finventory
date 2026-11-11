@@ -34,13 +34,20 @@ import { localStore } from '@/lib/localStore'
 import { offlineCache } from '@/lib/offlineCache'
 import { clearLocalReadData } from '@/lib/cacheOwner'
 import { isWipePending, retryPendingWipe, wipeTimeouts } from '@/lib/localDataGuard'
+import { useAuthStore } from '@/store/authStore'
 
 const PENDING = 'audity:wipe-pending'
 const ORG = 'org-1'
 const size = (n: string) => stores.get(n)?.size ?? 0
+const org = { id: ORG, name: 'O', slug: 'o', account_type: 'business', currency: 'NGN', country: 'NG' }
+const signIn = () => useAuthStore.getState().initSession(
+  { id: 'u1', email: 'u1@example.com', first_name: 'A', last_name: 'B', phone: '', is_verified: true } as any,
+  { access: 'a.b.c', refresh: 'r' } as any, org as any, [org] as any,
+)
 
 beforeEach(async () => {
   knobs.hangClear = false
+  signIn()
   vi.stubGlobal('indexedDB', {
     deleteDatabase: () => { const r: any = {}; setTimeout(() => r.onblocked?.(), 0); return r }, // never finishes
   })
