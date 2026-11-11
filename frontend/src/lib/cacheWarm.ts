@@ -81,6 +81,10 @@ async function fetchAllPages(
   }
 }
 
+// Every background load is quiet: a member who may not read something must see neither
+// an error toast nor an uncaught error because of a warm-up they never asked for.
+const SILENT = { silentErrors: true } as const
+
 // ── Warm plan (priority order: the selling path first) ───────────────────────
 function buildWarmPlan(): WarmTask[] {
   const one = (module: ModuleKey | null, call: () => Promise<unknown>): WarmTask =>
@@ -90,43 +94,43 @@ function buildWarmPlan(): WarmTask[] {
 
   return [
     // ── Selling path — what a trader needs at the stall ──
-    paged('sales', (p) => salesApi.invoices(p)),
-    paged('inventory', (p) => inventoryApi.products(p)),
-    one('inventory', () => inventoryApi.stock()),
-    one('inventory', () => inventoryApi.warehouses()),
-    one('inventory', () => inventoryApi.batches()),
-    one('inventory', () => inventoryApi.categories()),
-    paged('customers', (p) => customerApi.list(p)),
-    one('quotes', () => quoteApi.list()),
+    paged('sales', (p) => salesApi.invoices(p, SILENT)),
+    paged('inventory', (p) => inventoryApi.products(p, SILENT)),
+    one('inventory', () => inventoryApi.stock(undefined, SILENT)),
+    one('inventory', () => inventoryApi.warehouses(SILENT)),
+    one('inventory', () => inventoryApi.batches(undefined, SILENT)),
+    one('inventory', () => inventoryApi.categories(SILENT)),
+    paged('customers', (p) => customerApi.list(p, SILENT)),
+    one('quotes', () => quoteApi.list(undefined, SILENT)),
     // Background warm: a member who may not read these must not see an error toast.
-    one('sales', () => creditApi.list(undefined, { silentErrors: true })),
-    one('sales', () => locationApi.list(undefined, { silentErrors: true })),
+    one('sales', () => creditApi.list(undefined, SILENT)),
+    one('sales', () => locationApi.list(undefined, SILENT)),
     // ── The rest — bookkeeping and administration ──
-    one('recurring', () => recurringApi.list()),
-    one('sales', () => invoiceFolderApi.list()),
-    one('purchases', () => purchaseApi.list()),
-    one('bills', () => billApi.list()),
-    one('bills', () => billApi.folders()),
-    one('suppliers', () => supplierApi.list()),
-    one('expenses', () => expenseApi.list()),
-    one('expenses', () => expenseApi.categories()),
-    one('expenses', () => expenseApi.groups()),
-    one('budget', () => budgetApi.list()),
-    one('budget', () => budgetApi.monitoring()),
-    one('accounting', () => accountingApi.accounts()),
-    one('accounting', () => accountingApi.journal()),
-    one('accounting', () => accountingApi.assets()),
-    one('payroll', () => payrollApi.employees()),
-    one('payroll', () => payrollApi.runs()),
-    one('tax', () => taxApi.classes()),
-    one('tax', () => taxApi.configs()),
-    one('tax', () => taxApi.obligations()),
-    one('tax', () => taxApi.vatTransactions()),
-    one('tax', () => whtApi.rates()),
-    one('tax', () => whtApi.transactions()),
-    one('tax', () => exciseApi.list()),
-    one('team', () => teamApi.members()),
-    one(null, () => orgApi.list()),
+    one('recurring', () => recurringApi.list(SILENT)),
+    one('sales', () => invoiceFolderApi.list(undefined, SILENT)),
+    one('purchases', () => purchaseApi.list(undefined, SILENT)),
+    one('bills', () => billApi.list(undefined, SILENT)),
+    one('bills', () => billApi.folders(undefined, SILENT)),
+    one('suppliers', () => supplierApi.list(undefined, SILENT)),
+    one('expenses', () => expenseApi.list(undefined, SILENT)),
+    one('expenses', () => expenseApi.categories(SILENT)),
+    one('expenses', () => expenseApi.groups(undefined, SILENT)),
+    one('budget', () => budgetApi.list(SILENT)),
+    one('budget', () => budgetApi.monitoring(undefined, SILENT)),
+    one('accounting', () => accountingApi.accounts(undefined, SILENT)),
+    one('accounting', () => accountingApi.journal(undefined, SILENT)),
+    one('accounting', () => accountingApi.assets(SILENT)),
+    one('payroll', () => payrollApi.employees(undefined, SILENT)),
+    one('payroll', () => payrollApi.runs(undefined, SILENT)),
+    one('tax', () => taxApi.classes(SILENT)),
+    one('tax', () => taxApi.configs(SILENT)),
+    one('tax', () => taxApi.obligations(undefined, SILENT)),
+    one('tax', () => taxApi.vatTransactions(undefined, SILENT)),
+    one('tax', () => whtApi.rates(SILENT)),
+    one('tax', () => whtApi.transactions(undefined, SILENT)),
+    one('tax', () => exciseApi.list(SILENT)),
+    one('team', () => teamApi.members(SILENT)),
+    one(null, () => orgApi.list(SILENT)),
   ]
 }
 
