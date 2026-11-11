@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import { useIsMounted } from '@/hooks/useIsMounted'
 import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { useSearchParams, useNavigate } from 'react-router-dom'
@@ -47,6 +48,7 @@ const STATUS_COLOR: Record<string, string> = {
 }
 
 export default function BillFoldersPage() {
+  const mounted = useIsMounted()
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
   const currentFolderId = searchParams.get('folder') ?? null
@@ -76,7 +78,7 @@ export default function BillFoldersPage() {
         setBills([])
       }
     } catch {
-      toast.error('Failed to load folder contents')
+      { if (mounted.current) toast.error('Failed to load folder contents') }
     } finally {
       setLoading(false)
     }

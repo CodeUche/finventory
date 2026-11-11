@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
+import { useIsMounted } from '@/hooks/useIsMounted'
 import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Link, useSearchParams } from 'react-router-dom'
@@ -66,6 +67,7 @@ const BLANK = {
 const PO_EDITABLE_STATUSES = ['draft', 'sent', 'closed', 'canceled']
 
 export default function PurchasesPage() {
+  const mounted = useIsMounted()
   const [searchParams] = useSearchParams()
   const [orders, setOrders] = useState<PurchaseOrder[]>([])
   const [loading, setLoading] = useState(true)
@@ -142,7 +144,7 @@ export default function PurchasesPage() {
       const { data } = await purchaseApi.list({ ...params, page_size: 5000 })
       setOrders(data.results ?? data)
     } catch {
-      toast.error('Failed to load purchase orders')
+      { if (mounted.current) toast.error('Failed to load purchase orders') }
     } finally {
       setLoading(false)
     }

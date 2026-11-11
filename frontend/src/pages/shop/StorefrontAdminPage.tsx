@@ -6,6 +6,7 @@
  * here and never touches the ledger.
  */
 
+import { useIsMounted } from '@/hooks/useIsMounted'
 import { useEffect, useState } from 'react'
 import {
   AlertTriangle, Check, Copy, ExternalLink, Loader2, RefreshCw, Store, X,
@@ -64,6 +65,7 @@ function twoDecimals(v: string): string {
 }
 
 export default function StorefrontAdminPage() {
+  const mounted = useIsMounted()
   const [shop, setShop] = useState<Shop | null>(null)
   const [orders, setOrders] = useState<Order[]>([])
   const [loading, setLoading] = useState(true)
@@ -90,7 +92,7 @@ export default function StorefrontAdminPage() {
       ])
       setShop(s.data)
       setOrders(o.data.results ?? o.data)
-    } catch { toast.error('Could not load your storefront') }
+    } catch { { if (mounted.current) toast.error('Could not load your storefront') } }
     finally { setLoading(false) }
   }
 

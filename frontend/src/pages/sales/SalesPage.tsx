@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useIsMounted } from '@/hooks/useIsMounted'
 import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, Receipt, Search, X, Loader2, CheckCircle, Ban, FileDown, Mail, MessageCircle, RotateCcw, Truck, Pencil, Trash2, CalendarClock, RefreshCw, PackageCheck, AlertTriangle, FileText, Landmark, Printer } from 'lucide-react'
@@ -493,6 +494,7 @@ async function buildDeliveryNotePDF(
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function SalesPage() {
+  const mounted = useIsMounted()
   const navigate = useNavigate()
   const { organisation, memberRole, user, logoDataUrl, stampDataUrl } = useAuthStore()
   const receiptDefaults = useReceiptDefaults()
@@ -584,7 +586,7 @@ export default function SalesPage() {
     try {
       const { data } = await salesApi.invoices({ search, status: status || undefined, ordering: sortBy, page_size: 5000, ...activeDateParams })
       setInvoices(data.results ?? data)
-    } catch { toast.error('Failed to load invoices') }
+    } catch { { if (mounted.current) toast.error('Failed to load invoices') } }
     finally { setLoading(false) }
   }
 

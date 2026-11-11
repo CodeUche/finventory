@@ -95,6 +95,7 @@ async function _pingApi(timeoutMs: number): Promise<boolean> {
 
 function _flipOffline() {
   _effectivelyOffline = true
+  toast.dismiss('net-status')   // a lingering "Back online" would contradict "Connection lost"
   _recentFailures = 0
   // Always raise the window event (useNetworkStatus ignores a duplicate of a real one), so the
   // amber banner follows the app's own signal even where the shell never raises it.
@@ -156,6 +157,7 @@ function _signalOnline() {
   _lastFailureAt = 0
   if (!_effectivelyOffline) return         // wasn't offline
   _effectivelyOffline = false
+  toast.dismiss('offline-network-err')   // the outage message no longer applies
   window.dispatchEvent(new Event('online'))  // triggers flush in useNetworkStatus
   _notifyConnectivity()
   _stopProbe()

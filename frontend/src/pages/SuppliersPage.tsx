@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useIsMounted } from '@/hooks/useIsMounted'
 import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, Search, Truck, X, Pencil, Loader2, Trash2, FileText, Download, Scale } from 'lucide-react'
@@ -47,6 +48,7 @@ const BLANK = {
 const toPayload = (f: typeof BLANK) => ({ ...f, payable_account: f.payable_account || null })
 
 export default function SuppliersPage() {
+  const mounted = useIsMounted()
   const { organisation } = useAuthStore()
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [loading, setLoading] = useState(true)
@@ -81,7 +83,7 @@ export default function SuppliersPage() {
       const { data } = await supplierApi.list({ search: search || undefined, page_size: 5000 })
       setSuppliers(data.results ?? data)
     } catch {
-      toast.error('Failed to load suppliers')
+      { if (mounted.current) toast.error('Failed to load suppliers') }
     } finally {
       setLoading(false)
     }

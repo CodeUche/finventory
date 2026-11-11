@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useIsMounted } from '@/hooks/useIsMounted'
 import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, X, Receipt, Loader2, Search, Trash2, Edit2, Folder, RefreshCw } from 'lucide-react'
@@ -71,6 +72,7 @@ function agingBucket(dueDate: string): '0-30' | '31-60' | '61-90' | '90+' {
 }
 
 export default function BillsPage() {
+  const mounted = useIsMounted()
   const [searchParams, setSearchParams] = useSearchParams()
 
   const [bills, setBills] = useState<Bill[]>([])
@@ -126,7 +128,7 @@ export default function BillsPage() {
       setSuppliers(sRes.data.results ?? sRes.data)
       setTaxClasses(tRes.data.results ?? tRes.data)
       setBillFolders(fRes.data.results ?? fRes.data)
-    } catch { toast.error('Failed to load bills') }
+    } catch { { if (mounted.current) toast.error('Failed to load bills') } }
     finally { setLoading(false) }
   }
 

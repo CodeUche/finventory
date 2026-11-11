@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useIsMounted } from '@/hooks/useIsMounted'
 import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, X, Loader2, Trash2, Play } from 'lucide-react'
@@ -38,6 +39,7 @@ const FREQ_BADGE: Record<string, string> = {
 }
 
 export default function RecurringInvoicesPage() {
+  const mounted = useIsMounted()
   const [items, setItems] = useState<RecurringInvoice[]>([])
   const [customers, setCustomers] = useState<Customer[]>([])
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
@@ -60,7 +62,7 @@ export default function RecurringInvoicesPage() {
       setCustomers(cRes.data.results ?? cRes.data)
       setWarehouses(wRes.data.results ?? wRes.data)
       setProducts(pRes.data.results ?? pRes.data)
-    } catch { toast.error('Failed to load recurring invoices') }
+    } catch { { if (mounted.current) toast.error('Failed to load recurring invoices') } }
     finally { setLoading(false) }
   }
 

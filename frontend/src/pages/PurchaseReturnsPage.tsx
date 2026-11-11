@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useIsMounted } from '@/hooks/useIsMounted'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Search, X, Loader2, RotateCcw, FileDown } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -24,6 +25,7 @@ function hexToRgb(hex?: string): [number, number, number] {
 }
 
 export default function PurchaseReturnsPage() {
+  const mounted = useIsMounted()
   const { organisation } = useAuthStore()
   const [returns, setReturns] = useState<PurchaseReturn[]>([])
   const [loading, setLoading] = useState(true)
@@ -51,7 +53,7 @@ export default function PurchaseReturnsPage() {
       if (seq !== requestSeq.current) return
       setReturns(data.results ?? data)
     } catch {
-      if (seq === requestSeq.current) toast.error('Failed to load purchase returns')
+      if (seq === requestSeq.current) { if (mounted.current) toast.error('Failed to load purchase returns') }
     } finally {
       if (seq === requestSeq.current) setLoading(false)
     }
