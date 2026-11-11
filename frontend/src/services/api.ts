@@ -15,6 +15,7 @@ import { useAuthStore } from '@/store/authStore'
 import { offlineCache } from '@/lib/offlineCache'
 import { syncEngine, isActionEndpoint, buildListUrl, _extractEntityType, _extractRecordId } from '@/lib/syncEngine'
 import { localStore } from '@/lib/localStore'
+import { getGeneration } from '@/lib/localDataGuard'
 
 declare module 'axios' {
   interface AxiosRequestConfig {
@@ -411,6 +412,11 @@ async function _mergeLocalStore(orgId: string, url: string, cacheData: unknown):
  * Called from both the request interceptor and the error interceptor.
  */
 function _buildOfflineMutationAdapter(config: InternalAxiosRequestConfig): AxiosAdapter {
+  // Who made this change and under which session generation. Captured now, at
+  // request time, so a user change before the adapter runs cannot make the
+  // queued change look like the NEXT user's, or write into their saved copies.
+  const gen = (config as InternalAxiosRequestConfig & { _gen?: number })._gen ?? getGeneration()
+  const madeBy = useAuthStore.getState().user?.id
   // Same reason as the cache fallback in the error interceptor: the optimistic
   // response below is fabricated locally but still passes through the success
   // interceptor, which would otherwise read it as a live network response and
@@ -439,19 +445,19 @@ function _buildOfflineMutationAdapter(config: InternalAxiosRequestConfig): Axios
     if (entityType) {
       if (isDelete) {
         const recordId = _extractRecordId(url)
-        if (recordId) await localStore.remove(orgId, entityType, recordId)
+        if (recordId) await localStore.remove(orgId, entityType, recordId, gen)
       } else if (isPost && tempId && responseData) {
-        await localStore.upsert(orgId, entityType, tempId, responseData as Record<string, unknown>)
+        await localStore.upsert(orgId, entityType, tempId, responseData as Record<string, unknown>, gen)
       } else if (!isPost && !isDelete && responseData) {
         const recordId = _extractRecordId(url)
-        if (recordId) await localStore.upsert(orgId, entityType, recordId, responseData as Record<string, unknown>)
+        if (recordId) await localStore.upsert(orgId, entityType, recordId, responseData as Record<string, unknown>, gen)
       }
       // Patch the offlineCache list so the fresh-cache gate serves updated data
-      await _patchCacheList(orgId, url, method, responseData, tempId)
+      await _patchCacheList(orgId, url, method, responseData, tempId, gen)
     }
 
     // Enqueue for sync — don't await, fire and forget
-    syncEngine.enqueue({ method: config.method!, url, data: config.data, tempId })
+    syncEngine.enqueue({ method: config.method!, url, data: config.data, tempId, userId: madeBy })
       .catch(() => {/* non-fatal */})
 
     toast('Saved offline — will sync when back online', { icon: '📋', id: 'offline-save', duration: 3000 })
@@ -477,6 +483,7 @@ async function _patchCacheList(
   method: string,
   responseData: unknown,
   tempId?: string,
+  gen?: number,
 ): Promise<void> {
   try {
     const listUrl = buildListUrl(url)
@@ -513,7 +520,7 @@ async function _patchCacheList(
       }
     }
 
-    await offlineCache.set(listUrl, newData)
+    await offlineCache.set(listUrl, newData, gen)
     // Also invalidate the org-prefixed key so fresh-cache reads pick up the new data
     void orgId  // used implicitly via offlineCache.set which calls currentOrgId() internally
   } catch { /* non-fatal */ }
@@ -523,7 +530,7 @@ async function _patchCacheList(
  * Write-through after a successful ONLINE mutation.
  * Patches the cached list so offline reads stay current.
  */
-async function _writeThroughCache(url: string, method: string, responseData: unknown, requestData: unknown): Promise<void> {
+async function _writeThroughCache(url: string, method: string, responseData: unknown, requestData: unknown, gen?: number): Promise<void> {
   const orgId = getStoredOrgId() ?? 'anonymous'
   const recordId = _extractRecordId(url) ?? ''
 
@@ -531,15 +538,15 @@ async function _writeThroughCache(url: string, method: string, responseData: unk
   const entityType = _extractEntityType(url)
   if (entityType && !isActionEndpoint(url)) {
     if (method === 'delete') {
-      await localStore.remove(orgId, entityType, recordId)
+      await localStore.remove(orgId, entityType, recordId, gen)
     } else if (responseData && typeof responseData === 'object') {
       const dataId = (responseData as { id?: string })?.id ?? recordId
-      if (dataId) await localStore.upsert(orgId, entityType, dataId, responseData as Record<string, unknown>)
+      if (dataId) await localStore.upsert(orgId, entityType, dataId, responseData as Record<string, unknown>, gen)
     } else if (method === 'post' && requestData && typeof requestData === 'object') {
       // Some endpoints return minimal data — use request body as fallback
       const d = requestData as Record<string, unknown>
       const dataId = (responseData as { id?: string })?.id
-      if (dataId) await localStore.upsert(orgId, entityType, dataId, { ...d, id: dataId })
+      if (dataId) await localStore.upsert(orgId, entityType, dataId, { ...d, id: dataId }, gen)
     }
   }
 
@@ -578,6 +585,9 @@ async function _writeThroughCache(url: string, method: string, responseData: unk
 
 // ─── Request interceptor ──────────────────────────────────────────────────────
 api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
+  // Session generation at the moment this request STARTED. The response side
+  // drops its writes to the saved copies if it changed (user signed out/changed).
+  ;(config as InternalAxiosRequestConfig & { _gen?: number })._gen = getGeneration()
   await _tauriReady  // no-op (resolved immediately) — kept for symmetry
 
   const auth = getStoredAuth()
@@ -739,7 +749,7 @@ const processQueue = (error: AxiosError | null, token: string | null = null) => 
   failedQueue = []
 }
 
-type ExtConfig = InternalAxiosRequestConfig & { _fromCache?: boolean; _dedupeKey?: string; _retry?: boolean }
+type ExtConfig = InternalAxiosRequestConfig & { _fromCache?: boolean; _dedupeKey?: string; _retry?: boolean; _gen?: number }
 
 api.interceptors.response.use(
   async (res) => {
@@ -759,7 +769,7 @@ api.interceptors.response.use(
       if (method === 'get' && url && res.data !== undefined) {
         const params = cfg.params
         const cacheUrl = url + (params ? '?' + new URLSearchParams(params as Record<string, string>).toString() : '')
-        offlineCache.set(cacheUrl, res.data)
+        offlineCache.set(cacheUrl, res.data, cfg._gen)
         // Resolve any in-flight deduplication waiters
         if (cfg._dedupeKey) {
           _inflightGets.get(cfg._dedupeKey)?.resolve(res)
@@ -773,7 +783,7 @@ api.interceptors.response.use(
             ? res.data
             : (res.data as { results?: unknown[] })?.results ?? []
           if (records.length > 0) {
-            localStore.upsertMany(orgId, entityType, records as Array<Record<string, unknown>>)
+            localStore.upsertMany(orgId, entityType, records as Array<Record<string, unknown>>, 'id', cfg._gen)
           }
         }
       }
@@ -796,7 +806,7 @@ api.interceptors.response.use(
       const isOnlineMutation = ['post', 'put', 'patch', 'delete'].includes(method)
       const isRetry = (cfg.headers as Record<string, string>)?.['X-Offline-Retry'] === '1'
       if (isOnlineMutation && !isRetry && !isActionEndpoint(url)) {
-        await _writeThroughCache(url, method, res.data, cfg.data).catch(() => {/* non-fatal */})
+        await _writeThroughCache(url, method, res.data, cfg.data, cfg._gen).catch(() => {/* non-fatal */})
       }
 
       _signalOnline()

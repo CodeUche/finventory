@@ -11,6 +11,7 @@
  */
 
 import { openDB, type IDBPDatabase } from 'idb'
+import { getGeneration } from '@/lib/localDataGuard'
 
 const DB_NAME = 'audity-sync-queue'
 const DB_VERSION = 1
@@ -78,15 +79,16 @@ async function _currentUserId(): Promise<string | undefined> {
 }
 
 /**
- * Items the signed-in user may see or send: their own, plus not-yet-adopted
- * old ones. Another user's unsent work stays on disk for them but is invisible
- * here. With nobody signed in nothing is shown to anyone, so all is returned.
+ * Items the signed-in user may see or send: ONLY their own. Items with no owner
+ * (queued before owners were recorded and not yet claimed) and other users'
+ * items stay on disk but are invisible here. With nobody signed in the answer
+ * is an empty list. Housekeeping that must see everything uses _loadRaw().
  */
 async function _load(): Promise<SyncItem[]> {
-  const all = await _loadRaw()
   const me = await _currentUserId()
-  if (!me) return all
-  return all.filter((i) => !i.userId || i.userId === me)
+  if (!me) return []
+  const all = await _loadRaw()
+  return all.filter((i) => i.userId === me)
 }
 
 async function _save(item: SyncItem): Promise<void> {
@@ -152,10 +154,11 @@ export const syncEngine = {
   },
 
   /** Enqueue a mutation for later sync. */
-  async enqueue(item: Omit<SyncItem, 'id' | 'timestamp' | 'label' | 'status' | 'retries' | 'orgId'> & { orgId?: string }): Promise<SyncItem> {
+  async enqueue(item: Omit<SyncItem, 'id' | 'timestamp' | 'label' | 'status' | 'retries' | 'orgId'> & { orgId?: string; userId?: string }): Promise<SyncItem> {
     const { useAuthStore } = await import('@/store/authStore')
     const orgId = item.orgId ?? useAuthStore.getState().organisation?.id ?? 'unknown'
-    const userId = useAuthStore.getState().user?.id
+    // The caller may pass who made the change (captured when the request began).
+    const userId = item.userId ?? useAuthStore.getState().user?.id
     const clean = (item.url ?? '').split('?')[0]
     const label = `${item.method.toUpperCase()} ${clean}`
     const newItem: SyncItem = {
@@ -209,6 +212,14 @@ export const syncEngine = {
       const { localStore } = await import('@/lib/localStore')
       const { useAuthStore } = await import('@/store/authStore')
       const orgId = useAuthStore.getState().organisation?.id ?? 'unknown'
+      const startUser = useAuthStore.getState().user?.id
+      const startGen = getGeneration()
+      // True while the same person is signed in to the same business and no
+      // wipe / user change has happened since this flush began.
+      const sameSession = () => {
+        const st = useAuthStore.getState()
+        return st.user?.id === startUser && (st.organisation?.id ?? 'unknown') === orgId && getGeneration() === startGen
+      }
 
       // Process pending items in order — current org only (legacy items queued
       // before orgId stamping existed carry 'unknown' and are included).
@@ -225,10 +236,18 @@ export const syncEngine = {
         const fresh = (await _load()).find((i) => i.id === staleItem.id)
         if (!fresh || fresh.status !== 'pending') continue // dismissed mid-flush
         const item = fresh
+        if (!sameSession()) break
 
         // Mark as syncing
         await _save({ ...item, status: 'syncing' })
         await _notify()
+
+        // Last look just before sending: the awaits above can span a sign-out.
+        if (!sameSession()) {
+          await _save({ ...item, status: 'pending' })
+          await _notify()
+          break
+        }
 
         try {
           const resp = await api({
@@ -244,7 +263,7 @@ export const syncEngine = {
             const entityType = _extractEntityType(item.url)
             if (entityType) {
               // Update localStore: replace temp with real
-              await localStore.replaceTempId(orgId, entityType, item.tempId, realId)
+              await localStore.replaceTempId(orgId, entityType, item.tempId, realId, startGen)
             }
             // Rewrite any subsequent queue items referencing the temp ID
             await _rewriteTempId(item.tempId, realId)
@@ -257,7 +276,7 @@ export const syncEngine = {
               ? (resp.data?.id ? String(resp.data.id) : item.tempId)
               : _extractRecordId(item.url)
             if (entityType && recordId) {
-              await localStore.upsert(orgId, entityType, recordId, resp.data as Record<string, unknown>)
+              await localStore.upsert(orgId, entityType, recordId, resp.data as Record<string, unknown>, startGen)
             }
           }
 
