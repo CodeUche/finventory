@@ -14,6 +14,7 @@ import toast from 'react-hot-toast'
 import { storefrontApi, bypassNextGets } from '@/services/api'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { confirmDialog } from '@/lib/dialog'
+import { publicWebOrigin } from '@/lib/publicOrigin'
 import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
 
 interface Shop {
@@ -135,7 +136,8 @@ export default function StorefrontAdminPage() {
     finally { setBusyId(null) }
   }
 
-  const publicUrl = shop ? `${window.location.origin}/s/${shop.slug}` : ''
+  const origin = publicWebOrigin()
+  const publicUrl = shop && origin ? `${origin}/s/${shop.slug}` : ''
   const copyLink = () => {
     navigator.clipboard?.writeText(publicUrl)
     setCopied(true); window.setTimeout(() => setCopied(false), 1800)
@@ -176,15 +178,22 @@ export default function StorefrontAdminPage() {
             </span>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-surface-600 bg-surface-800 p-3">
-            <span className="font-mono text-sm text-white">{publicUrl}</span>
-            <button onClick={copyLink} className="btn-ghost ml-auto text-xs">
-              {copied ? <Check size={12} /> : <Copy size={12} />} {copied ? 'Copied' : 'Copy'}
-            </button>
-            <a href={`/s/${shop.slug}`} target="_blank" rel="noreferrer" className="btn-ghost text-xs">
-              <ExternalLink size={12} /> Open
-            </a>
-          </div>
+          {publicUrl ? (
+            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-surface-600 bg-surface-800 p-3">
+              <span className="font-mono text-sm text-white">{publicUrl}</span>
+              <button onClick={copyLink} className="btn-ghost ml-auto text-xs">
+                {copied ? <Check size={12} /> : <Copy size={12} />} {copied ? 'Copied' : 'Copy'}
+              </button>
+              <a href={publicUrl} target="_blank" rel="noreferrer" className="btn-ghost text-xs">
+                <ExternalLink size={12} /> Open
+              </a>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-surface-600 bg-surface-800 p-3 text-sm text-slate-400">
+              Your shop page address is <span className="font-mono text-white">/s/{shop.slug}</span>. To copy a link
+              you can share, sign in to Audity in your web browser.
+            </div>
+          )}
 
           {!shop.is_published && (
             <div className="flex gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200/90">
