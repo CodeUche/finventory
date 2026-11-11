@@ -13,6 +13,7 @@ import {
 import toast from 'react-hot-toast'
 import { tillApi, bypassNextGets } from '@/services/api'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
+import { useAuthStore } from '@/store/authStore'
 import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
 
 interface TenderRow { method: string; expected: string; counted: string; variance: string; transaction_count: number }
@@ -49,7 +50,14 @@ const TENDER_LABEL: Record<string, string> = {
 }
 const tenderLabel = (m: string) => TENDER_LABEL[m] ?? m
 
+// Roles that may see the expected cash while closing. Everyone else (cashiers,
+// staff, and anyone whose role is still loading) does a blind count.
+const EXPECTED_CASH_ROLES = ['owner', 'admin', 'manager', 'accountant']
+
 export default function TillSessionPage() {
+  const { user, memberRole } = useAuthStore()
+  const canSeeExpected = user?.is_superuser === true
+    || (memberRole !== null && EXPECTED_CASH_ROLES.includes(memberRole))
   const [current, setCurrent] = useState<Current | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -162,12 +170,14 @@ export default function TillSessionPage() {
           <div className="ds-stats !mb-0">
             {[
               { k: 'Opening float', v: current.opening_float, s: 'Set at open' },
-              { k: 'Sales this shift', v: current.sales_total, s: `${current.transaction_count ?? 0} transactions` },
-              { k: 'Cash expected', v: current.expected_cash, s: 'Float plus cash taken' },
-              { k: 'Non-cash', v: String(
-                  Number(current.sales_total ?? 0) -
-                  Number(current.by_tender?.cash?.expected ?? 0),
-                ), s: 'Card and transfer' },
+              ...(canSeeExpected ? [
+                { k: 'Sales this shift', v: current.sales_total, s: `${current.transaction_count ?? 0} transactions` },
+                { k: 'Cash expected', v: current.expected_cash, s: 'Float plus cash taken' },
+                { k: 'Non-cash', v: String(
+                    Number(current.sales_total ?? 0) -
+                    Number(current.by_tender?.cash?.expected ?? 0),
+                  ), s: 'Card and transfer' },
+              ] : []),
             ].map(({ k, v, s }) => (
               <div key={k} className="ds-stat is-tile">
                 <span className="ds-stat-label">{k}</span>
@@ -183,8 +193,9 @@ export default function TillSessionPage() {
               <h2 className="text-base font-semibold text-white">Count the drawer</h2>
             </div>
             <p className="text-sm text-slate-400">
-              Enter what you have physically counted. The difference against what the
-              system expected is worked out when you close, and is posted to your accounts.
+              {canSeeExpected
+                ? 'Enter what you have physically counted. The difference against what the system expected is worked out when you close, and is posted to your accounts.'
+                : 'Count the drawer and enter what you have physically counted. The expected amount is not shown until you submit; any difference is worked out when you close.'}
             </p>
 
             <div className="space-y-2">
