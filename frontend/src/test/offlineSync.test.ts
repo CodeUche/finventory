@@ -128,6 +128,10 @@ function startGraceSession() {
   useAuthStore.getState().startOfflineSession(blob)
 }
 
+// Items on disk regardless of who is signed in (the engine itself shows nobody's
+// work when signed out). For "did it survive" checks only.
+const rawQueueSize = () => idbStores.get('audity-sync-queue')?.size ?? 0
+
 async function enqueueOfflineWork() {
   // What a trader does at the stall: 3 sales, a price edit, a customer cleanup.
   await syncEngine.enqueue({ method: 'post', url: '/sales/invoices/', data: { total: 4500 }, tempId: 'tmp_sale_1' })
@@ -163,7 +167,7 @@ describe('offline field cycle: queue → restart → offline unlock → re-login
     await syncEngine.recoverStuck()
 
     // Queue and verifier both survived the restart
-    expect(await syncEngine.pendingCount()).toBe(5)
+    expect(rawQueueSize()).toBe(5)
     expect(localStorage.getItem('audity-offline-verifier')).toBe('encrypted-blob-sentinel')
 
     // ── Offline unlock (grace session, no tokens) ──
@@ -222,7 +226,7 @@ describe('temp-ID rewrite', () => {
 
     expect(apiCallable).toHaveBeenCalledTimes(2)
     expect(apiCallable.mock.calls[1][0].url).toBe(`/sales/invoices/${REAL_ID}/pay/`)
-    expect(localStoreMock.replaceTempId).toHaveBeenCalledWith(ORG_A, 'invoices', 'tmp_abc', REAL_ID)
+    expect(localStoreMock.replaceTempId).toHaveBeenCalledWith(ORG_A, 'invoices', 'tmp_abc', REAL_ID, expect.any(Number))
   })
 })
 
@@ -335,7 +339,7 @@ describe('clearSession vs logout — offline artifact lifecycle', () => {
     expect(useAuthStore.getState().tokens).toBeNull()
     expect(localStorage.getItem('audity-offline-verifier')).toBe('blob')
     expect(localStorage.getItem('audity-offline-key')).toBe('wrapper-key')
-    expect(await syncEngine.pendingCount()).toBe(1)
+    expect(rawQueueSize()).toBe(1)
   })
 
   it('logout (explicit) wipes the verifier and revokes server-side, but keeps the queue', async () => {
@@ -353,7 +357,7 @@ describe('clearSession vs logout — offline artifact lifecycle', () => {
     expect(useAuthStore.getState().isAuthenticated).toBe(false)
     // Queued business data survives even explicit logout — flush is org-scoped,
     // so it can only ever sync back into the same organisation.
-    expect(await syncEngine.pendingCount()).toBe(1)
+    expect(rawQueueSize()).toBe(1)
   })
 })
 
