@@ -7,6 +7,7 @@ import { creditApi, accountingApi, inventoryApi, bypassNextGets } from '@/servic
 import { offlineCache } from '@/lib/offlineCache'
 import { orgApi } from '@/services/api'
 import { formatCurrency, formatDate, stripCommas } from '@/lib/utils'
+import { sumUnits, fromUnits } from '@/lib/money'
 import AmountInput from '@/components/AmountInput'
 import type { Account, CreditPaymentMode, CreditTransaction, Customer, Invoice, Warehouse } from '@/types'
 import DateInput from '@/components/DateInput'
@@ -92,8 +93,18 @@ export default function CreditsPage() {
       const params: Record<string, unknown> = {}
       if (search) params.search = search
       if (typeFilter) params.transaction_type = typeFilter
-      const { data } = await creditApi.list(params)
-      setTransactions(data.results ?? data)
+      // The header totals add up every row, so fetch every page (25 per page by default,
+      // so ask for the largest page and follow `next` for anything beyond it).
+      const rows: CreditTransaction[] = []
+      let page = 1
+      for (;;) {
+        const { data } = await creditApi.list({ ...params, page_size: 5000, ...(page > 1 ? { page } : {}) })
+        if (Array.isArray(data)) { rows.push(...data); break }
+        rows.push(...(data.results ?? []))
+        if (!data.next || page >= 50) break
+        page += 1
+      }
+      setTransactions(rows)
     } catch {
       { if (mounted.current) toast.error('Failed to load credit transactions') }
     } finally {
@@ -228,26 +239,27 @@ export default function CreditsPage() {
         if (!byInvoice.has(k)) byInvoice.set(k, [])
         byInvoice.get(k)!.push(t)
       }
-      const owed = txns.filter((t) => t.transaction_type === 'debit').reduce((a, t) => a + parseFloat(t.amount), 0)
-      const paid = txns.filter((t) => t.transaction_type === 'credit').reduce((a, t) => a + parseFloat(t.amount), 0)
+      const owed = sumUnits(txns.filter((t) => t.transaction_type === 'debit').map((t) => t.amount))
+      const paid = sumUnits(txns.filter((t) => t.transaction_type === 'credit').map((t) => t.amount))
       return { customer, txns, owed, paid, invoices: Array.from(byInvoice.entries()) }
     })
   })()
 
-  const totalOutstanding = transactions
-    .filter((t) => t.transaction_type === 'debit')
-    .reduce((s, t) => s + parseFloat(t.amount), 0)
-
-  const totalPaid = transactions
-    .filter((t) => t.transaction_type === 'credit')
-    .reduce((s, t) => s + parseFloat(t.amount), 0)
+  // Exact sums on the decimal strings (no floating point).
+  const totalOutstanding = sumUnits(transactions.filter((t) => t.transaction_type === 'debit').map((t) => t.amount))
+  const totalPaid = sumUnits(transactions.filter((t) => t.transaction_type === 'credit').map((t) => t.amount))
+  const netUnits = totalOutstanding - totalPaid
+  const abs = (n: bigint) => (n < BigInt(0) ? -n : n)
+  // Until the first load finishes, show a dash rather than zeros that look like real figures.
+  const firstLoad = loading && transactions.length === 0
+  const money = (n: bigint) => (firstLoad ? '—' : formatCurrency(fromUnits(n)))
 
   return (
     <div className="space-y-6">
       <div className="ds-head !mb-0">
         <div>
           <h1 className="text-2xl font-bold text-white">Payment Information</h1>
-          <p className="text-slate-400 text-sm">{transactions.length} transactions</p>
+          <p className="text-slate-400 text-sm">{firstLoad ? 'Loading…' : `${transactions.length} ${transactions.length === 1 ? 'transaction' : 'transactions'}`}</p>
         </div>
         <button className="btn-primary" onClick={openPayModal}>
           <Plus size={16} /> Record Payment
@@ -259,21 +271,21 @@ export default function CreditsPage() {
         <div className="ds-stat has-icon">
           <span className="ds-stat-ico" data-tone="bad"><TrendingDown size={22} /></span>
           <div className="ds-stat-body" data-tone="bad">
-            <span className="ds-stat-value">{formatCurrency(totalOutstanding)}</span>
+            <span className="ds-stat-value">{money(totalOutstanding)}</span>
             <span className="ds-stat-label">Total Outstanding</span>
           </div>
         </div>
         <div className="ds-stat has-icon">
           <span className="ds-stat-ico" data-tone="good"><TrendingUp size={22} /></span>
           <div className="ds-stat-body" data-tone="good">
-            <span className="ds-stat-value">{formatCurrency(totalPaid)}</span>
+            <span className="ds-stat-value">{money(totalPaid)}</span>
             <span className="ds-stat-label">Total Payments</span>
           </div>
         </div>
         <div className="ds-stat has-icon">
           <span className="ds-stat-ico"><CreditCard size={22} /></span>
-          <div className="ds-stat-body" data-tone={totalOutstanding - totalPaid > 0 ? 'bad' : 'good'}>
-            <span className="ds-stat-value">{formatCurrency(Math.abs(totalOutstanding - totalPaid))}</span>
+          <div className="ds-stat-body" data-tone={netUnits > BigInt(0) ? 'bad' : 'good'}>
+            <span className="ds-stat-value">{money(abs(netUnits))}</span>
             <span className="ds-stat-label">Net Balance</span>
           </div>
         </div>
@@ -354,13 +366,13 @@ export default function CreditsPage() {
                         </td>
                         <td className="px-5 py-3.5" colSpan={2}>
                           <span className="text-xs text-slate-500">Owed </span>
-                          <span className="font-semibold text-red-400">{formatCurrency(g.owed)}</span>
+                          <span className="font-semibold text-red-400">{formatCurrency(fromUnits(g.owed))}</span>
                           <span className="text-xs text-slate-500 ml-3">Paid </span>
-                          <span className="font-semibold text-emerald-400">{formatCurrency(g.paid)}</span>
+                          <span className="font-semibold text-emerald-400">{formatCurrency(fromUnits(g.paid))}</span>
                         </td>
                         <td className="px-5 py-3.5" colSpan={3}>
                           <span className="text-xs text-slate-500">Net </span>
-                          <span className={`font-semibold ${g.owed - g.paid > 0 ? 'text-red-400' : 'text-emerald-400'}`}>{formatCurrency(Math.abs(g.owed - g.paid))}</span>
+                          <span className={`font-semibold ${g.owed - g.paid > BigInt(0) ? 'text-red-400' : 'text-emerald-400'}`}>{formatCurrency(fromUnits(abs(g.owed - g.paid)))}</span>
                         </td>
                       </tr>
                       {custOpen && g.invoices.map(([invKey, txns]) => {
