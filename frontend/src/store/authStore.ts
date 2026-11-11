@@ -3,7 +3,7 @@ import { persist, createJSONStorage } from 'zustand/middleware'
 import type { User, AuthTokens, Organisation, AccessLevel, ModuleKey } from '@/types'
 import type { OfflineVerifierBlob } from '@/lib/offlineVerifier'
 import { claimCacheForUser } from '@/lib/cacheOwner'
-import { startWipe } from '@/lib/localDataGuard'
+import { startWipe, reportWipeFailure } from '@/lib/localDataGuard'
 import { clearSavedAvatars, clearLegacyQueue } from '@/lib/localUserData'
 
 export const REMEMBER_FLAG_KEY = 'audity-remember-me'
@@ -322,12 +322,7 @@ export const useAuthStore = create<AuthState>()(
         // or send it, and a flush stops if the user or business changes.
         clearSavedAvatars()
         clearLegacyQueue()
-        startWipe().then((ok) => {
-          if (ok) return
-          import('@/lib/dialog').then(({ alertDialog }) =>
-            alertDialog('We could not clear saved data on this device. Close the app and sign in again to finish.'),
-          ).catch(() => {})
-        }).catch(() => {})
+        startWipe().then((ok) => { if (!ok) reportWipeFailure() }).catch(() => {})
         // Clear PostHog identity so the next user starts a fresh session
         import('@/lib/analytics').then(({ resetAnalytics }) => resetAnalytics()).catch(() => {})
         set({ ...CLEARED_SESSION_STATE })

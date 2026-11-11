@@ -587,7 +587,9 @@ async function _writeThroughCache(url: string, method: string, responseData: unk
 api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
   // Session generation at the moment this request STARTED. The response side
   // drops its writes to the saved copies if it changed (user signed out/changed).
-  ;(config as InternalAxiosRequestConfig & { _gen?: number })._gen = getGeneration()
+  // A retry after a token refresh re-enters here: keep the ORIGINAL request's number.
+  const genCfg = config as InternalAxiosRequestConfig & { _gen?: number }
+  genCfg._gen = genCfg._gen ?? getGeneration()
   await _tauriReady  // no-op (resolved immediately) — kept for symmetry
 
   const auth = getStoredAuth()

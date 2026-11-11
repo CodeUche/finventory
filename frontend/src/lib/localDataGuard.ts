@@ -19,6 +19,24 @@
 
 const PENDING_KEY = 'audity:wipe-pending'
 
+/**
+ * Time limits (ms). Every wait in here is bounded so a database that hangs
+ * (held open by another tab, a stalled open) can never freeze the app.
+ * Mutable only so tests can shorten them.
+ */
+export const wipeTimeouts = { read: 3000, step: 3000 }
+
+/** Resolve with `fallback` if `p` has not settled within `ms`. Never rejects. */
+export function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return new Promise<T>((resolve) => {
+    const timer = setTimeout(() => resolve(fallback), ms)
+    p.then(
+      (v) => { clearTimeout(timer); resolve(v) },
+      () => { clearTimeout(timer); resolve(fallback) },
+    )
+  })
+}
+
 let generation = 0
 let pendingInMemory = false
 let inProgress: Promise<boolean> | null = null
@@ -41,9 +59,13 @@ function setPending(on: boolean): void {
   } catch { /* storage unavailable: the in-memory mark still protects this run */ }
 }
 
-/** Resolves once any running wipe has finished. Never rejects. */
+/**
+ * Resolves once any running wipe has finished, or after a short limit. Never
+ * rejects. On a timeout the owed mark is still set, so readers see "nothing"
+ * rather than waiting for a stuck database.
+ */
 export async function waitForWipe(): Promise<void> {
-  if (inProgress) await inProgress.catch(() => false)
+  if (inProgress) await withTimeout(inProgress, wipeTimeouts.read, false)
 }
 
 /**
@@ -75,7 +97,7 @@ export function deleteDatabaseByName(name: string): Promise<boolean> {
     try {
       if (typeof indexedDB === 'undefined') { resolve(true); return }
       const req = indexedDB.deleteDatabase(name)
-      const timer = setTimeout(() => resolve(false), 3000)
+      const timer = setTimeout(() => resolve(false), wipeTimeouts.step)
       req.onsuccess = () => { clearTimeout(timer); resolve(true) }
       req.onerror = () => { clearTimeout(timer); resolve(false) }
       req.onblocked = () => { /* wait: it finishes when the other tab lets go, or the timer gives up */ }
@@ -84,9 +106,12 @@ export function deleteDatabaseByName(name: string): Promise<boolean> {
 }
 
 async function doWipe(): Promise<boolean> {
+  // Each store already bounds its own clear and fallback; this outer limit is
+  // the last guard so a hung step counts as a failure (the wipe stays owed).
+  const outer = wipeTimeouts.step * 3
   const results = await Promise.all([
-    import('@/lib/offlineCache').then(({ offlineCache }) => offlineCache.clearAll()).catch(() => false),
-    import('@/lib/localStore').then(({ localStore }) => localStore.clearAll()).catch(() => false),
+    withTimeout(import('@/lib/offlineCache').then(({ offlineCache }) => offlineCache.clearAll()), outer, false),
+    withTimeout(import('@/lib/localStore').then(({ localStore }) => localStore.clearAll()), outer, false),
   ])
   return results.every((r) => r === true)
 }
@@ -100,13 +125,13 @@ async function doWipe(): Promise<boolean> {
 export function startWipe(): Promise<boolean> {
   bumpGeneration()
   setPending(true)
-  const previous = inProgress ?? Promise.resolve(true)
-  const run: Promise<boolean> = previous
-    .then(() => doWipe())
+  // Not queued behind an earlier wipe: that one may be stuck, and clearing
+  // twice is harmless. Only the newest run may remove the owed mark (below).
+  const run: Promise<boolean> = doWipe()
     .catch(() => false)
     .then((ok) => {
       // Only the newest wipe may clear the owed mark; an older one finishing
-      // while a newer one is queued must not let readers back in early.
+      // while a newer one is running must not let readers back in early.
       if (ok && inProgress === run) setPending(false)
       return ok
     })
@@ -118,4 +143,14 @@ export function startWipe(): Promise<boolean> {
 /** If a wipe is still owed (from an earlier failure or a killed app), do it now. */
 export function retryPendingWipe(): Promise<boolean> {
   return isWipePending() ? startWipe() : Promise.resolve(true)
+}
+
+/**
+ * Tell the user, in plain words, that saved data could not be cleared. Used
+ * when a wipe fails on sign-out or when a different user signs in.
+ */
+export function reportWipeFailure(): void {
+  import('@/lib/dialog').then(({ alertDialog }) =>
+    alertDialog('We could not clear saved data on this device. Close the app and sign in again to finish.'),
+  ).catch(() => {})
 }

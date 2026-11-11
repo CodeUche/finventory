@@ -9,7 +9,7 @@
  */
 
 import { openDB, type IDBPDatabase } from 'idb'
-import { canReadSavedData, canWriteSavedData, deleteDatabaseByName } from '@/lib/localDataGuard'
+import { canReadSavedData, canWriteSavedData, deleteDatabaseByName, wipeTimeouts, withTimeout } from '@/lib/localDataGuard'
 
 const DB_NAME = 'audity-local-store'
 const DB_VERSION = 1
@@ -170,9 +170,9 @@ export const localStore = {
   /** Wipe everything (used on full logout). */
   async clearAll(): Promise<boolean> {
     try {
-      const db = await getDB()
-      await db.clear(STORE)
-      return true
+      // Bounded: a stalled open or a clear held up by another tab counts as failed.
+      const done = await withTimeout((async () => { const db = await getDB(); await db.clear(STORE); return true })(), wipeTimeouts.step, false)
+      if (done) return true
     } catch { /* fall back to deleting the whole database */ }
     try { _db?.close() } catch { /* already closed */ }
     _db = null

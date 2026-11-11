@@ -6,7 +6,7 @@
  * the first person's name, avatar and role-based menu from cached responses.
  * When the signed-in user is not the one who filled the cache, we wipe it.
  */
-import { startWipe, bumpGeneration, isWipePending } from '@/lib/localDataGuard'
+import { startWipe, bumpGeneration, isWipePending, reportWipeFailure } from '@/lib/localDataGuard'
 import { clearSavedAvatars, clearHeldBasketsExcept } from '@/lib/localUserData'
 
 const KEY = 'audity:cache-owner-user-id'
@@ -71,7 +71,7 @@ export function claimCacheForUser(userId: string | undefined | null): Promise<vo
   const work: Array<Promise<unknown>> = []
   if (previous !== userId) bumpGeneration()
   if (clear) {
-    work.push(startWipe())
+    work.push(startWipe().then((ok) => { if (!ok) reportWipeFailure() }))
     // Other people's per-user leftovers go too (profile picture, held baskets).
     clearSavedAvatars()
     clearHeldBasketsExcept(userId)

@@ -13,7 +13,7 @@
 
 import { openDB, type IDBPDatabase } from 'idb'
 import { useAuthStore } from '@/store/authStore'
-import { canReadSavedData, canWriteSavedData, deleteDatabaseByName } from '@/lib/localDataGuard'
+import { canReadSavedData, canWriteSavedData, deleteDatabaseByName, wipeTimeouts, withTimeout } from '@/lib/localDataGuard'
 
 const DB_NAME = 'audity-offline-cache'
 const DB_VERSION = 1
@@ -109,9 +109,9 @@ export const offlineCache = {
   /** Wipe the entire cache (used on logout). */
   async clearAll(): Promise<boolean> {
     try {
-      const db = await getDB()
-      await db.clear(STORE)
-      return true
+      // Bounded: a stalled open or a clear held up by another tab counts as failed.
+      const done = await withTimeout((async () => { const db = await getDB(); await db.clear(STORE); return true })(), wipeTimeouts.step, false)
+      if (done) return true
     } catch { /* fall back to deleting the whole database */ }
     try { _db?.close() } catch { /* already closed */ }
     _db = null

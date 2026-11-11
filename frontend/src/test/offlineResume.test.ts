@@ -24,7 +24,7 @@ vi.mock('@/services/api', () => ({
 }))
 vi.mock('@/lib/analytics', () => ({ resetAnalytics: vi.fn(), identifyUser: vi.fn() }))
 // offlineCache is dynamically imported by logout(); stub it so no IDB is needed
-vi.mock('@/lib/offlineCache', () => ({ offlineCache: { clearAll: vi.fn(async () => {}) } }))
+vi.mock('@/lib/offlineCache', () => ({ offlineCache: { clearAll: vi.fn(async () => true) } }))
 
 import {
   stashRefreshAtLogin, unlockRefreshOffline, trySilentResume,
