@@ -857,6 +857,14 @@ api.interceptors.response.use(
 
       _signalOnline()
     }
+    // A GET answered from the saved copy (offline) is marked _fromCache, so the block above
+    // skipped it and its in-flight entry was never settled. Every later GET for the same
+    // URL then joined that dead entry and waited forever (endless spinner, no recovery after
+    // reconnecting). Settle it here for every outcome.
+    if (cfg._dedupeKey) {
+      _inflightGets.get(cfg._dedupeKey)?.resolve(res)
+      _inflightGets.delete(cfg._dedupeKey)
+    }
     return res
   },
   async (error: AxiosError) => {
