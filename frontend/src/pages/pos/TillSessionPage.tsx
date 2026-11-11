@@ -13,6 +13,7 @@ import {
 import toast from 'react-hot-toast'
 import { tillApi, bypassNextGets } from '@/services/api'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
+import { useIsMounted } from '@/hooks/useIsMounted'
 import { useAuthStore } from '@/store/authStore'
 import { formatCurrency, formatDate, formatAmountInput, stripCommas } from '@/lib/utils'
 
@@ -59,7 +60,10 @@ export default function TillSessionPage() {
   const canSeeExpected = user?.is_superuser === true
     || (memberRole !== null && EXPECTED_CASH_ROLES.includes(memberRole))
   const [current, setCurrent] = useState<Current | null>(null)
+  const mounted = useIsMounted()
   const [loading, setLoading] = useState(true)
+  // True when the till's state could not be read (offline with no saved copy). Never shown as "no till".
+  const [unknown, setUnknown] = useState(false)
   const [busy, setBusy] = useState(false)
 
   const [openingFloat, setOpeningFloat] = useState('')
@@ -71,9 +75,16 @@ export default function TillSessionPage() {
     setLoading(true)
     try {
       const { data } = await tillApi.current()
+      // While offline with nothing saved, the request layer hands back an empty placeholder
+      // (no `open` field). That is "we do not know", not "no till is open".
+      if (typeof data?.open !== 'boolean') { setUnknown(true); setCurrent(null); return }
+      setUnknown(false)
       setCurrent(data)
       if (!data.open) setCounted({})
-    } catch { toast.error('Could not load the till') }
+    } catch {
+      setUnknown(true)
+      if (mounted.current && navigator.onLine) toast.error('Could not load the till')
+    }
     finally { setLoading(false) }
   }
 
@@ -122,9 +133,11 @@ export default function TillSessionPage() {
         <div>
           <h1 className="text-2xl font-bold text-white">Till</h1>
           <p className="text-slate-400 text-sm">
-            {current?.open
-              ? `Open since ${formatDate(current.opened_at ?? '')}`
-              : 'No till open — start a shift to take cash'}
+            {unknown
+              ? 'Till status unavailable'
+              : current?.open
+                ? `Open since ${formatDate(current.opened_at ?? '')}`
+                : 'No till open — start a shift to take cash'}
           </p>
         </div>
         <button
@@ -140,6 +153,15 @@ export default function TillSessionPage() {
       {loading ? (
         <div className="card p-10 flex justify-center">
           <Loader2 size={20} className="animate-spin text-slate-500" />
+        </div>
+      ) : unknown ? (
+        <div className="card p-6 max-w-md space-y-2" role="status">
+          <h2 className="text-base font-semibold text-white">Cannot check the till right now</h2>
+          <p className="text-sm text-slate-400">
+            You appear to be offline and there is no saved copy of the till. Reconnect to see
+            whether a till is open, then open or close it. This page refreshes by itself when the
+            connection returns.
+          </p>
         </div>
       ) : !current?.open ? (
         /* ── Open a shift ─────────────────────────────────────────────── */
