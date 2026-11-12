@@ -111,6 +111,7 @@ export async function waitForWipe(): Promise<void> {
 const MIGRATED_KEY = 'audity:saved-scope-v2'
 const OWNER_KEY = 'audity:cache-owner-user-id'
 let legacyMigration: Promise<boolean> | null = null
+let legacyJob: { cancelled: boolean } | null = null
 
 /**
  * Entries saved by older builds are keyed by business only, so they cannot be
@@ -125,16 +126,26 @@ export function migrateLegacySavedData(): Promise<boolean> {
   if (done) return Promise.resolve(true)
   let owner: string | null = null
   try { owner = localStorage.getItem(OWNER_KEY) } catch { /* unknown owner: delete */ }
-  const run = Promise.all([
-    import('@/lib/offlineCache').then(({ offlineCache }) => offlineCache.migrateLegacy(owner)).catch(() => false),
-    import('@/lib/localStore').then(({ localStore }) => localStore.migrateLegacy(owner)).catch(() => false),
+  // A wipe that is owed means the owner marker cannot be trusted (it can be set
+  // while the wipe never happened). Delete the old entries instead of re-keying.
+  if (isWipePending()) owner = null
+  const job = { cancelled: false }
+  // Keeps re-keying only while nothing has cancelled this run (a wipe, a timeout).
+  const stillValid = () => !job.cancelled && !isWipePending()
+  const limit = wipeTimeouts.step * 3
+  const run: Promise<boolean> = Promise.all([
+    withTimeout(import('@/lib/offlineCache').then(({ offlineCache }) => offlineCache.migrateLegacy(owner, stillValid)), limit, false),
+    withTimeout(import('@/lib/localStore').then(({ localStore }) => localStore.migrateLegacy(owner, stillValid)), limit, false),
   ]).then((r) => {
     const ok = r.every((x) => x === true)
+    // A timeout means "not finished": stop re-keying, and try again next start.
+    if (!ok) job.cancelled = true
     if (ok) { try { localStorage.setItem(MIGRATED_KEY, '1') } catch { /* retried next start */ } }
     return ok
   })
   legacyMigration = run
-  void run.then(() => { if (legacyMigration === run) legacyMigration = null })
+  legacyJob = job
+  void run.then(() => { if (legacyMigration === run) { legacyMigration = null; legacyJob = null } })
   return run
 }
 
@@ -201,7 +212,12 @@ export function startWipe(): Promise<boolean> {
   setPending(true)
   // Not queued behind an earlier wipe: that one may be stuck, and clearing
   // twice is harmless. Only the newest run may remove the owed mark (below).
-  const run: Promise<boolean> = doWipe()
+  // A running legacy-entry migration is cancelled (it then only deletes) and
+  // waited for briefly, so it cannot write re-keyed entries back after the wipe.
+  if (legacyJob) legacyJob.cancelled = true
+  const migrating = legacyMigration
+  const run: Promise<boolean> = (migrating ? withTimeout(migrating, wipeTimeouts.step, false) : Promise.resolve(false))
+    .then(() => doWipe())
     .catch(() => false)
     .then((ok) => {
       // Only the newest wipe may clear the owed mark; an older one finishing

@@ -178,14 +178,14 @@ export const localStore = {
    * "~"). With a known owner they are re-keyed to that owner, otherwise
    * deleted. The "anonymous" and "unknown" businesses are always deleted.
    */
-  async migrateLegacy(owner: string | null): Promise<boolean> {
+  async migrateLegacy(owner: string | null, stillValid: () => boolean = () => true): Promise<boolean> {
     try {
       const db = await getDB()
       const all = (await db.getAll(STORE)) as EntityRecord[]
       for (const r of all) {
         if (String(r._orgId).includes('~')) continue // already user-scoped
         await db.delete(STORE, r._key)
-        if (!owner || r._orgId === 'anonymous' || r._orgId === 'unknown') continue
+        if (!owner || !stillValid() || r._orgId === 'anonymous' || r._orgId === 'unknown') continue
         const scope = `${r._orgId}~${owner}`
         await db.put(STORE, { ...r, _orgId: scope, _key: makeKey(scope, r._entityType, r._recordId) })
       }

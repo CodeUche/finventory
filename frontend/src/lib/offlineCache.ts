@@ -120,7 +120,7 @@ export const offlineCache = {
    * Identity URLs and the "anonymous" business are always deleted. Returns
    * true when finished.
    */
-  async migrateLegacy(owner: string | null): Promise<boolean> {
+  async migrateLegacy(owner: string | null, stillValid: () => boolean = () => true): Promise<boolean> {
     try {
       const db = await getDB()
       const all = (await db.getAll(STORE)) as CacheEntry[]
@@ -130,7 +130,7 @@ export const offlineCache = {
         if (head.includes('|')) continue // already user-scoped
         await db.delete(STORE, e.key)
         const url = cut < 0 ? e.url : e.key.slice(cut + 2)
-        if (!owner || head === 'anonymous' || isIdentityUrl(url)) continue
+        if (!owner || !stillValid() || head === 'anonymous' || isIdentityUrl(url)) continue
         await db.put(STORE, { ...e, key: `${head}|${owner}||${url}` })
       }
       return true

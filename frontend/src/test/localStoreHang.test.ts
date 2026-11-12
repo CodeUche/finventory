@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 const { stores, knobs } = vi.hoisted(() => ({
   stores: new Map<string, Map<string, any>>(),
-  knobs: { hangClear: false },
+  knobs: { hangClear: false, hangGetAll: false, getAllDelayMs: 0 },
 }))
 
 vi.mock('idb', () => ({
@@ -17,7 +17,12 @@ vi.mock('idb', () => ({
     const keyOf = (v: any) => v._key ?? v.id ?? v.key
     return {
       close: () => {},
-      getAll: async () => [...store.values()],
+      getAll: async () => {
+        if (knobs.hangGetAll) return new Promise<any[]>(() => {})
+        const snapshot = [...store.values()] // read first, answer late (like a slow disk)
+        if (knobs.getAllDelayMs) await new Promise((r) => setTimeout(r, knobs.getAllDelayMs))
+        return snapshot
+      },
       getAllFromIndex: async (_s: string, _i: string, [o, t]: [string, string]) =>
         [...store.values()].filter((v) => v._orgId === o && v._entityType === t),
       get: async (_s: string, k: string) => store.get(k),
@@ -33,6 +38,7 @@ vi.mock('@/lib/dialog', () => ({ alertDialog: vi.fn(async () => {}) }))
 import { localStore } from '@/lib/localStore'
 import { offlineCache } from '@/lib/offlineCache'
 import { clearLocalReadData } from '@/lib/cacheOwner'
+import { migrateLegacySavedData } from '@/lib/localDataGuard'
 import { isWipePending, retryPendingWipe, wipeTimeouts } from '@/lib/localDataGuard'
 import { useAuthStore } from '@/store/authStore'
 
@@ -47,6 +53,8 @@ const signIn = () => useAuthStore.getState().initSession(
 
 beforeEach(async () => {
   knobs.hangClear = false
+  knobs.hangGetAll = false
+  knobs.getAllDelayMs = 0
   signIn()
   vi.stubGlobal('indexedDB', {
     deleteDatabase: () => { const r: any = {}; setTimeout(() => r.onblocked?.(), 0); return r }, // never finishes
@@ -88,5 +96,56 @@ describe('a database that hangs', () => {
     expect(await retryPendingWipe()).toBe(true)
     expect(localStorage.getItem(PENDING)).toBeNull()
     expect(size('audity-local-store')).toBe(0)
+  })
+})
+
+describe('one-time cleanup of old entries is bounded and safe', () => {
+  const OWNER = 'audity:cache-owner-user-id'
+  const DONE = 'audity:saved-scope-v2'
+  const seedLegacy = () => {
+    for (const [db, key, v] of [
+      ['audity-offline-cache', 'org-1||/payroll/runs/', { key: 'org-1||/payroll/runs/', url: '/payroll/runs/', data: {}, cachedAt: 1 }],
+      ['audity-local-store', 'org-1:runs:r1', { _key: 'org-1:runs:r1', _orgId: 'org-1', _entityType: 'runs', _recordId: 'r1', _isDeleted: false, id: 'r1' }],
+    ] as Array<[string, string, Record<string, unknown>]>) {
+      if (!stores.has(db)) stores.set(db, new Map())
+      stores.get(db)!.set(key, v)
+    }
+  }
+  const keys = (db: string) => [...(stores.get(db)?.keys() ?? [])]
+
+  it('a timeout means "not finished": no done mark, and reads stop paying the wait', async () => {
+    await offlineCache.get('/x/') // opens the databases
+    seedLegacy()
+    localStorage.setItem(OWNER, 'u1')
+    knobs.hangGetAll = true
+    expect(await migrateLegacySavedData()).toBe(false)
+    expect(localStorage.getItem(DONE)).toBeNull() // retried next start
+    knobs.hangGetAll = false
+    const t = Date.now()
+    await localStore.getAll(ORG, 'runs')
+    expect(Date.now() - t).toBeLessThan(wipeTimeouts.read) // nobody is waiting on the dead migration
+  })
+
+  it('with a wipe owed, old entries are deleted instead of re-keyed', async () => {
+    await offlineCache.get('/x/')
+    seedLegacy()
+    localStorage.setItem(OWNER, 'u1') // the marker can be set while a wipe never happened
+    localStorage.setItem('audity:wipe-pending', '1')
+    expect(await migrateLegacySavedData()).toBe(true)
+    expect(keys('audity-offline-cache')).toEqual([])
+    expect(keys('audity-local-store')).toEqual([])
+  })
+
+  it('a wipe during the migration leaves nothing behind', async () => {
+    await offlineCache.get('/x/')
+    seedLegacy()
+    localStorage.setItem(OWNER, 'u1')
+    knobs.getAllDelayMs = 60
+    const migration = migrateLegacySavedData() // slow: still reading when the wipe starts
+    const wipe = clearLocalReadData()
+    await Promise.all([migration, wipe])
+    await new Promise((r) => setTimeout(r, 200))
+    expect(keys('audity-offline-cache')).toEqual([])
+    expect(keys('audity-local-store')).toEqual([])
   })
 })

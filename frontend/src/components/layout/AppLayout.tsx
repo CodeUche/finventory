@@ -277,6 +277,7 @@ export default function AppLayout() {
       }
       setPlanLoaded(true)
     }).catch((err) => {
+      if (!stillSignedInAs(askedBy)) return // a stale error must not reset the next user's plan
       // Network error: keep existing plan state so plan-gated features stay accessible offline
       if (err?.response) { setPlanModules(null); setPlanTaxEngine(null); setPlanName(null) }
       setPlanLoaded(true)
