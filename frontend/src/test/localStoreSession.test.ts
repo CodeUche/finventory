@@ -163,3 +163,78 @@ describe('another user can never read saved data, even if no wipe happened', () 
     expect(useAuthStore.getState().user?.first_name).toBe('Ada')
   })
 })
+
+describe('warm-up after sign-out and sign-in in the same run', () => {
+  it('runs again, because sign-out wiped the saved copy', async () => {
+    signIn('owner')
+    await sleep(30)
+    useAuthStore.setState({ memberRole: 'owner', planModules: null })
+    await warmOfflineCache(ORG)
+    const first = apiCalls.n
+    expect(first).toBeGreaterThan(0)
+    await warmOfflineCache(ORG) // already done for this user and business: skipped
+    expect(apiCalls.n).toBe(first)
+
+    useAuthStore.getState().logout()
+    await sleep(30)
+    signIn('owner')
+    await sleep(30)
+    useAuthStore.setState({ memberRole: 'owner', planModules: null })
+    await warmOfflineCache(ORG)
+    expect(apiCalls.n).toBeGreaterThan(first)
+  })
+})
+
+describe('slow answers for a person who is no longer signed in', () => {
+  it('stillSignedInAs is true only for the current user', async () => {
+    const { stillSignedInAs } = await import('@/lib/localDataGuard')
+    signIn('owner')
+    expect(stillSignedInAs('owner')).toBe(true)
+    expect(stillSignedInAs('staff')).toBe(false)
+    expect(stillSignedInAs(undefined)).toBe(false)
+    useAuthStore.getState().logout()
+    expect(stillSignedInAs('owner')).toBe(false)
+  })
+})
+
+describe('one-time cleanup of entries saved before they were user-scoped', () => {
+  const put = (db: string, key: string, value: Record<string, unknown>) => {
+    if (!stores.has(db)) stores.set(db, new Map())
+    stores.get(db)!.set(key, value)
+  }
+  const seedLegacy = () => {
+    put('audity-offline-cache', 'org-1||/payroll/runs/', { key: 'org-1||/payroll/runs/', url: '/payroll/runs/', data: { results: [] }, cachedAt: 1 })
+    put('audity-offline-cache', 'anonymous||/tenancy/organisations/', { key: 'anonymous||/tenancy/organisations/', url: '/tenancy/organisations/', data: {}, cachedAt: 1 })
+    put('audity-offline-cache', 'org-1||/auth/profile/', { key: 'org-1||/auth/profile/', url: '/auth/profile/', data: { id: 'x' }, cachedAt: 1 })
+    put('audity-local-store', 'org-1:runs:r1', { _key: 'org-1:runs:r1', _orgId: 'org-1', _entityType: 'runs', _recordId: 'r1', _isDeleted: false, id: 'r1' })
+    put('audity-local-store', 'anonymous:accounts:a1', { _key: 'anonymous:accounts:a1', _orgId: 'anonymous', _entityType: 'accounts', _recordId: 'a1', _isDeleted: false, id: 'a1' })
+  }
+  const keys = (db: string) => [...(stores.get(db)?.keys() ?? [])].sort()
+
+  it('with a known owner, entries are re-keyed to that owner and unsafe ones deleted', async () => {
+    const { migrateLegacySavedData } = await import('@/lib/localDataGuard')
+    seedLegacy()
+    localStorage.setItem('audity:cache-owner-user-id', 'owner')
+    expect(await migrateLegacySavedData()).toBe(true)
+    expect(keys('audity-offline-cache')).toEqual(['org-1|owner||/payroll/runs/'])
+    expect(keys('audity-local-store')).toEqual(['org-1~owner:runs:r1'])
+    expect(stores.get('audity-local-store')!.get('org-1~owner:runs:r1')._orgId).toBe('org-1~owner')
+    expect(localStorage.getItem('audity:saved-scope-v2')).toBe('1')
+  })
+
+  it('with an unknown owner, everything old is deleted', async () => {
+    const { migrateLegacySavedData } = await import('@/lib/localDataGuard')
+    seedLegacy()
+    expect(await migrateLegacySavedData()).toBe(true)
+    expect(keys('audity-offline-cache')).toEqual([])
+    expect(keys('audity-local-store')).toEqual([])
+  })
+
+  it('runs only once', async () => {
+    const { migrateLegacySavedData } = await import('@/lib/localDataGuard')
+    localStorage.setItem('audity:saved-scope-v2', '1')
+    seedLegacy()
+    await migrateLegacySavedData()
+    expect(keys('audity-offline-cache').length).toBe(3)
+  })
+})
