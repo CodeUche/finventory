@@ -19,6 +19,7 @@ import SubscriptionPaywall from '@/components/SubscriptionPaywall'
 import SupportChat from '@/components/SupportChat'
 import CommandPalette from '@/components/CommandPalette'
 import { FEATURES } from '@/lib/featureFlags'
+import { stillSignedInAs } from '@/lib/localDataGuard'
 
 export default function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -162,7 +163,10 @@ export default function AppLayout() {
   useEffect(() => {
     if (!user) return  // not authenticated yet
     if (!online && organisation) return  // offline + already have org — skip, use persisted state
+    const askedBy = user.id
     orgApi.list().then(({ data }) => {
+      // The person who asked may have signed out or been replaced while this was in flight.
+      if (!stillSignedInAs(askedBy)) return
       const orgs: any[] = data.results ?? data
       if (!orgs.length) {
         // No orgs returned (pure platform-admin superuser with no active orgs).
@@ -187,7 +191,7 @@ export default function AppLayout() {
         ? { ...fresh, onboarding_completed: true }
         : fresh
       setOrganisation(merged)
-      api.defaults.headers.common['X-Organisation-ID'] = fresh.id
+      if (useAuthStore.getState().isAuthenticated) api.defaults.headers.common['X-Organisation-ID'] = fresh.id
       setOrgListLoaded(true)
     }).catch(() => {
       // Non-fatal — use persisted org if available.
@@ -212,7 +216,9 @@ export default function AppLayout() {
       window.dispatchEvent(new CustomEvent('audity:data-changed'))
       return
     }
+    const askedBy = user?.id
     orgApi.myMembership(organisation.id).then(({ data }) => {
+      if (!stillSignedInAs(askedBy)) return
       // Guard: offline empty fallback returns { results: [] } — ignore it so we
       // don't overwrite a valid role or crash on undefined.module_permissions.
       if (!data?.role) return
@@ -229,6 +235,7 @@ export default function AppLayout() {
       //      get their initial data (second fetch is served from fresh cache, so cheap).
       window.dispatchEvent(new CustomEvent('audity:data-changed'))
     }).catch((err) => {
+      if (!stillSignedInAs(askedBy)) return
       // Only lock down to viewer on a real auth/permission error (HTTP response present)
       // AND only if no role has been loaded yet. Preserving an existing role (e.g. 'owner')
       // prevents a transient API error from stripping a user's access mid-session.
@@ -249,7 +256,9 @@ export default function AppLayout() {
   useEffect(() => {
     if (!organisation?.id) return
     if (user?.is_superuser) { setPlanLoaded(true); return }
+    const askedBy = user?.id
     subscriptionApi.current().then(({ data }) => {
+      if (!stillSignedInAs(askedBy)) return
       const modules: string[] | null = data?.plan?.features?.modules ?? null
       setPlanModules(modules)
       setPlanTaxEngine(data?.plan?.features?.tax_engine ?? null)

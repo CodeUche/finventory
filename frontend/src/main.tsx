@@ -9,7 +9,7 @@ import { DialogHost } from '@/lib/dialog'
 import { useAuthStore } from './store/authStore'
 import { initAnalytics } from './lib/analytics'
 import { checkForUpdates } from './lib/updater'
-import { retryPendingWipe } from './lib/localDataGuard'
+import { retryPendingWipe, migrateLegacySavedData } from './lib/localDataGuard'
 import './index.css'
 
 // Apply stored theme before first render to avoid flash
@@ -127,6 +127,8 @@ if ('serviceWorker' in navigator) {
 // If an earlier sign-out could not finish clearing saved data (blocked, or the
 // app was closed mid-wipe), finish it now. Until it succeeds nothing saved is readable.
 void retryPendingWipe()
+// Older builds saved data without an owner; re-key it to the recorded owner or delete it (once).
+void migrateLegacySavedData()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

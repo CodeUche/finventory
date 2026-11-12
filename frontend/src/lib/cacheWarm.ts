@@ -135,6 +135,15 @@ let _warming = false
 // Orgs fully warmed this app session — aborted warms are NOT recorded, so a
 // reconnect re-triggers and resumes (fresh-cache gate skips completed URLs).
 const _warmedOrgs = new Set<string>()
+const warmKey = (userId: string | undefined, orgId: string) => `${userId ?? 'nouser'}|${orgId}`
+
+// Sign-out wipes the saved copies, so a finished warm no longer counts: forget
+// everything when the user signs out or a different user signs in.
+useAuthStore.subscribe((state, prev) => {
+  if ((prev.user?.id ?? null) !== (state.user?.id ?? null) || (prev.isAuthenticated && !state.isAuthenticated)) {
+    _warmedOrgs.clear()
+  }
+})
 
 /** Test hook — resets module state between test cases. */
 export function __resetWarmStateForTests(): void {
@@ -143,9 +152,10 @@ export function __resetWarmStateForTests(): void {
 }
 
 export async function warmOfflineCache(orgId: string): Promise<void> {
-  if (_warming || _warmedOrgs.has(orgId)) return
-  if (!navigator.onLine) return
   const s = useAuthStore.getState()
+  const doneKey = warmKey(s.user?.id, orgId)
+  if (_warming || _warmedOrgs.has(doneKey)) return
+  if (!navigator.onLine) return
   // Real-token sessions only: an offline grace session can't reach the
   // network, and warming through the cache adapter would be a no-op anyway.
   if (!s.isAuthenticated || !s.tokens?.access || s.isOfflineSession) return
@@ -174,7 +184,7 @@ export async function warmOfflineCache(orgId: string): Promise<void> {
       }
     }
     await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()))
-    if (!signal.aborted) _warmedOrgs.add(orgId)
+    if (!signal.aborted) _warmedOrgs.add(doneKey)
   } finally {
     window.removeEventListener('offline', onOffline)
     unsubscribe()

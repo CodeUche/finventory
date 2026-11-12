@@ -46,6 +46,16 @@ let probe: () => SessionInfo = () => ({ signedIn: true, userId: null, orgId: nul
 export function setSessionProbe(fn: () => SessionInfo): void { probe = fn }
 export function getSessionInfo(): SessionInfo { return probe() }
 
+/**
+ * True while the person who asked is still the signed-in user. Slow answers
+ * (membership, plan, organisation list) must check this before applying
+ * themselves to the app state.
+ */
+export function stillSignedInAs(userId: string | null | undefined): boolean {
+  const s = probe()
+  return !!userId && s.signedIn && s.userId === userId
+}
+
 /** Org values that mean "no business is selected": nothing may be saved under them. */
 const NO_ORG = new Set(['', 'anonymous', 'unknown', 'none'])
 
@@ -94,6 +104,38 @@ function setPending(on: boolean): void {
  */
 export async function waitForWipe(): Promise<void> {
   if (inProgress) await withTimeout(inProgress, wipeTimeouts.read, false)
+  if (legacyMigration) await withTimeout(legacyMigration, wipeTimeouts.read, false)
+}
+
+// ── One-time cleanup of saved entries written before entries were user-scoped ──
+const MIGRATED_KEY = 'audity:saved-scope-v2'
+const OWNER_KEY = 'audity:cache-owner-user-id'
+let legacyMigration: Promise<boolean> | null = null
+
+/**
+ * Entries saved by older builds are keyed by business only, so they cannot be
+ * tied to a user. If the recorded cache owner is known they are re-keyed to
+ * that owner (an upgrading offline user keeps their data); otherwise they are
+ * deleted. They are never given to anyone but the recorded owner. Runs once.
+ * Readers wait for it (briefly) so nothing reads half-converted data.
+ */
+export function migrateLegacySavedData(): Promise<boolean> {
+  let done = false
+  try { done = localStorage.getItem(MIGRATED_KEY) === '1' } catch { /* storage unavailable */ }
+  if (done) return Promise.resolve(true)
+  let owner: string | null = null
+  try { owner = localStorage.getItem(OWNER_KEY) } catch { /* unknown owner: delete */ }
+  const run = Promise.all([
+    import('@/lib/offlineCache').then(({ offlineCache }) => offlineCache.migrateLegacy(owner)).catch(() => false),
+    import('@/lib/localStore').then(({ localStore }) => localStore.migrateLegacy(owner)).catch(() => false),
+  ]).then((r) => {
+    const ok = r.every((x) => x === true)
+    if (ok) { try { localStorage.setItem(MIGRATED_KEY, '1') } catch { /* retried next start */ } }
+    return ok
+  })
+  legacyMigration = run
+  void run.then(() => { if (legacyMigration === run) legacyMigration = null })
+  return run
 }
 
 /**

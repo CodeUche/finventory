@@ -45,23 +45,24 @@ function currentOrgId(): string {
 }
 
 // Entries are scoped to business AND user, so one user can never read another's.
-function scopePrefix(): string {
-  return `${currentOrgId()}|${getSessionInfo().userId ?? 'nouser'}||`
+function scopePrefix(orgId?: string): string {
+  return `${orgId ?? currentOrgId()}|${getSessionInfo().userId ?? 'nouser'}||`
 }
 
-function makeKey(url: string): string {
-  return `${scopePrefix()}${url}`
+function makeKey(url: string, orgId?: string): string {
+  return `${scopePrefix(orgId)}${url}`
 }
 
 export const offlineCache = {
   /** Write a successful GET response into the cache. */
-  async set(url: string, data: unknown, startedAt?: number): Promise<void> {
+  async set(url: string, data: unknown, startedAt?: number, orgId?: string): Promise<void> {
     try {
       // Never write while a wipe is owed, or when the user changed since this work began.
       if (isIdentityUrl(url)) return
-      if (!canWriteSavedData(startedAt, currentOrgId())) return
+      // `orgId` is the business the request was made for (captured when it started).
+      if (!canWriteSavedData(startedAt, orgId ?? currentOrgId())) return
       const db = await getDB()
-      const key = makeKey(url)
+      const key = makeKey(url, orgId)
       await db.put(STORE, { key, data, cachedAt: Date.now(), url } satisfies CacheEntry)
     } catch {
       // Non-fatal — cache write failures should never surface to the user
@@ -69,12 +70,12 @@ export const offlineCache = {
   },
 
   /** Read a cached response. Returns null if not found. */
-  async get(url: string): Promise<CacheEntry | null> {
+  async get(url: string, orgId?: string): Promise<CacheEntry | null> {
     try {
       if (isIdentityUrl(url)) return null
       if (!(await canReadSavedData())) return null
       const db = await getDB()
-      const entry = await db.get(STORE, makeKey(url)) as CacheEntry | undefined
+      const entry = await db.get(STORE, makeKey(url, orgId)) as CacheEntry | undefined
       return entry ?? null
     } catch {
       return null
@@ -111,6 +112,31 @@ export const offlineCache = {
       }
       await tx.done
     } catch { /* non-fatal */ }
+  },
+
+  /**
+   * Convert entries saved before they were scoped to a user (key `org||url`).
+   * With a known owner they are re-keyed to that owner, otherwise deleted.
+   * Identity URLs and the "anonymous" business are always deleted. Returns
+   * true when finished.
+   */
+  async migrateLegacy(owner: string | null): Promise<boolean> {
+    try {
+      const db = await getDB()
+      const all = (await db.getAll(STORE)) as CacheEntry[]
+      for (const e of all) {
+        const cut = e.key.indexOf('||')
+        const head = cut < 0 ? e.key : e.key.slice(0, cut)
+        if (head.includes('|')) continue // already user-scoped
+        await db.delete(STORE, e.key)
+        const url = cut < 0 ? e.url : e.key.slice(cut + 2)
+        if (!owner || head === 'anonymous' || isIdentityUrl(url)) continue
+        await db.put(STORE, { ...e, key: `${head}|${owner}||${url}` })
+      }
+      return true
+    } catch {
+      return false
+    }
   },
 
   /** Wipe the entire cache (used on logout). */

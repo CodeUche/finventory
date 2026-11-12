@@ -151,6 +151,26 @@ function makeDeferred(): Deferred {
 }
 const _inflightGets = new Map<string, Deferred>()
 
+/**
+ * Key for sharing an in-flight GET. Includes WHO asked and for which business,
+ * so a second person asking for the same URL never receives the first
+ * person's answer.
+ */
+function inflightKey(cacheUrl: string): string {
+  const st = useAuthStore.getState()
+  return `${st.user?.id ?? 'nouser'}|${st.organisation?.id ?? 'noorg'}|${cacheUrl}`
+}
+
+/** Drop every shared in-flight request (sign-out, user change). Waiters get an error. */
+function dropAllInflight(): void {
+  const pending = [..._inflightGets.values()]
+  _inflightGets.clear()
+  for (const d of pending) {
+    d.promise.catch(() => {}) // nobody waiting is fine
+    d.reject(new AxiosError('Session ended', 'ERR_CANCELED'))
+  }
+}
+
 // ── Cache-bypass flags ────────────────────────────────────────────────────────
 // _pendingCacheBypass: URLs whose list cache was just invalidated by a mutation
 //   but the async invalidation hasn't completed yet.  Set synchronously before
@@ -352,6 +372,10 @@ useAuthStore.subscribe((state, prev) => {
     delete api.defaults.headers.common.Authorization
     delete api.defaults.headers.common['X-Organisation-ID']
   }
+  // Sign-out or a different user: nobody may join the previous user's requests.
+  if ((prev.user?.id ?? null) !== (state.user?.id ?? null) || (prev.isAuthenticated && !state.isAuthenticated)) {
+    dropAllInflight()
+  }
 })
 
 // ─── Storage helpers ──────────────────────────────────────────────────────────
@@ -427,6 +451,7 @@ function _buildOfflineMutationAdapter(config: InternalAxiosRequestConfig): Axios
   // queued change look like the NEXT user's, or write into their saved copies.
   const gen = (config as InternalAxiosRequestConfig & { _gen?: number })._gen ?? getGeneration()
   const madeBy = useAuthStore.getState().user?.id
+  const orgAtStart = (config as InternalAxiosRequestConfig & { _org?: string })._org ?? getStoredOrgId() ?? 'anonymous'
   // Same reason as the cache fallback in the error interceptor: the optimistic
   // response below is fabricated locally but still passes through the success
   // interceptor, which would otherwise read it as a live network response and
@@ -438,7 +463,7 @@ function _buildOfflineMutationAdapter(config: InternalAxiosRequestConfig): Axios
     const url = config.url ?? ''
     const isPost = method === 'post'
     const isDelete = method === 'delete'
-    const orgId = getStoredOrgId() ?? 'anonymous'
+    const orgId = orgAtStart
 
     let rawData: Record<string, unknown> = {}
     try {
@@ -498,7 +523,7 @@ async function _patchCacheList(
   try {
     const listUrl = buildListUrl(url)
     if (listUrl === url) return  // this IS the list URL — nothing to patch
-    const entry = await offlineCache.get(listUrl)
+    const entry = await offlineCache.get(listUrl, orgId)
     if (!entry) return
 
     const isPost = method === 'post'
@@ -530,7 +555,7 @@ async function _patchCacheList(
       }
     }
 
-    await offlineCache.set(listUrl, newData, gen)
+    await offlineCache.set(listUrl, newData, gen, orgId)
     // Also invalidate the org-prefixed key so fresh-cache reads pick up the new data
     void orgId  // used implicitly via offlineCache.set which calls currentOrgId() internally
   } catch { /* non-fatal */ }
@@ -540,8 +565,8 @@ async function _patchCacheList(
  * Write-through after a successful ONLINE mutation.
  * Patches the cached list so offline reads stay current.
  */
-async function _writeThroughCache(url: string, method: string, responseData: unknown, requestData: unknown, gen?: number): Promise<void> {
-  const orgId = getStoredOrgId() ?? 'anonymous'
+async function _writeThroughCache(url: string, method: string, responseData: unknown, requestData: unknown, gen?: number, org?: string): Promise<void> {
+  const orgId = org ?? getStoredOrgId() ?? 'anonymous'
   const recordId = _extractRecordId(url) ?? ''
 
   // Update localStore
@@ -600,6 +625,10 @@ api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
   // A retry after a token refresh re-enters here: keep the ORIGINAL request's number.
   const genCfg = config as InternalAxiosRequestConfig & { _gen?: number }
   genCfg._gen = genCfg._gen ?? getGeneration()
+  // The business this request is made for, fixed now: a late answer is filed
+  // under it even if the user switched business in the meantime.
+  const orgCfg = config as InternalAxiosRequestConfig & { _org?: string }
+  orgCfg._org = orgCfg._org ?? (getStoredOrgId() ?? 'anonymous')
   await _tauriReady  // no-op (resolved immediately) — kept for symmetry
 
   const auth = getStoredAuth()
@@ -696,7 +725,8 @@ api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
     }
 
     // 2. In-flight deduplication: join an existing request instead of firing a new one
-    const inflight = _inflightGets.get(cacheUrl)
+    const dedupeKey = inflightKey(cacheUrl)
+    const inflight = _inflightGets.get(dedupeKey)
     if (inflight) {
       (config as ExtConfig)._fromCache = true   // skip re-caching the shared response
       config.adapter = () => inflight.promise
@@ -705,8 +735,8 @@ api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
 
     // Register a deferred for this URL so subsequent identical requests can join it
     const deferred = makeDeferred()
-    _inflightGets.set(cacheUrl, deferred)
-    ;(config as ExtConfig)._dedupeKey = cacheUrl
+    _inflightGets.set(dedupeKey, deferred)
+    ;(config as ExtConfig)._dedupeKey = dedupeKey
   }
 
   // ── Offline cache: serve cached GET responses when network is unavailable ──
@@ -761,7 +791,7 @@ const processQueue = (error: AxiosError | null, token: string | null = null) => 
   failedQueue = []
 }
 
-type ExtConfig = InternalAxiosRequestConfig & { _fromCache?: boolean; _dedupeKey?: string; _retry?: boolean; _gen?: number }
+type ExtConfig = InternalAxiosRequestConfig & { _fromCache?: boolean; _dedupeKey?: string; _retry?: boolean; _gen?: number; _org?: string }
 
 api.interceptors.response.use(
   async (res) => {
@@ -781,14 +811,14 @@ api.interceptors.response.use(
       if (method === 'get' && url && res.data !== undefined) {
         const params = cfg.params
         const cacheUrl = url + (params ? '?' + new URLSearchParams(params as Record<string, string>).toString() : '')
-        offlineCache.set(cacheUrl, res.data, cfg._gen)
+        offlineCache.set(cacheUrl, res.data, cfg._gen, cfg._org)
         // Resolve any in-flight deduplication waiters
         if (cfg._dedupeKey) {
           _inflightGets.get(cfg._dedupeKey)?.resolve(res)
           _inflightGets.delete(cfg._dedupeKey)
         }
         // Also seed localStore from list responses for richer offline reads
-        const orgId = getStoredOrgId() ?? 'anonymous'
+        const orgId = cfg._org ?? getStoredOrgId() ?? 'anonymous'
         const entityType = _extractEntityType(url)
         if (entityType && res.data) {
           const records: unknown[] = Array.isArray(res.data)
@@ -818,7 +848,7 @@ api.interceptors.response.use(
       const isOnlineMutation = ['post', 'put', 'patch', 'delete'].includes(method)
       const isRetry = (cfg.headers as Record<string, string>)?.['X-Offline-Retry'] === '1'
       if (isOnlineMutation && !isRetry && !isActionEndpoint(url)) {
-        await _writeThroughCache(url, method, res.data, cfg.data, cfg._gen).catch(() => {/* non-fatal */})
+        await _writeThroughCache(url, method, res.data, cfg.data, cfg._gen, cfg._org).catch(() => {/* non-fatal */})
       }
 
       _signalOnline()
@@ -968,7 +998,8 @@ api.interceptors.response.use(
         // Re-wrap the stored offline-resume copy: BLACKLIST_AFTER_ROTATION
         // means the previously wrapped refresh token just died server-side.
         import('@/lib/offlineResume').then(({ onTokensRotated }) => onTokensRotated(newAuth.refresh)).catch(() => {})
-        api.defaults.headers.common.Authorization = `Bearer ${data.access}`
+        // A refresh that lands after sign-out must not put the token back.
+        if (useAuthStore.getState().isAuthenticated) api.defaults.headers.common.Authorization = `Bearer ${data.access}`
         processQueue(null, data.access)
         original.headers.Authorization = `Bearer ${data.access}`
         return api(original)
