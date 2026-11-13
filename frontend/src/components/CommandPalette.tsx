@@ -10,6 +10,8 @@ interface Cmd { name: string; href: string; group: string; icon: React.ElementTy
  * keyboard-driven launcher — essential once the accountant-first nav gets deep.
  * Route guards still enforce access, so this stays a thin convenience layer.
  */
+import { canLeave } from '@/lib/leaveGuard'
+
 export default function CommandPalette() {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -56,7 +58,7 @@ export default function CommandPalette() {
 
   if (!open) return null
 
-  const go = (href: string) => { setOpen(false); navigate(href) }
+  const go = (href: string) => { setOpen(false); void canLeave().then((ok) => { if (ok) navigate(href) }) }
 
   const onListKey = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') { e.preventDefault(); setActive((a) => Math.min(a + 1, results.length - 1)) }

@@ -3277,7 +3277,7 @@ export default function SettingsPage() {
           {/* ── Right: full A4 preview ──────────────────────── */}
           <div className="sticky top-4">
             <p className="text-xs text-slate-500 uppercase tracking-wider font-medium mb-3">Live Preview</p>
-            <div className="rounded-xl overflow-hidden shadow-2xl border border-surface-700 bg-white" style={{ fontFamily: 'Arial, sans-serif' }}>
+            <div className="ds-paper rounded-xl overflow-hidden shadow-2xl border border-surface-700 bg-white" style={{ fontFamily: 'Arial, sans-serif' }}>
               {/* CLASSIC */}
               {company.invoice_template === 'classic' && (
                 <div style={{ fontSize: 11, color: '#1e293b' }}>

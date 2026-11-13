@@ -95,17 +95,19 @@ html.light .ds{
 .ds .input:focus{border-color:var(--ds-link);box-shadow:0 0 0 3px color-mix(in srgb,var(--ds-link) 22%,transparent)}
 .ds .label{color:var(--ds-ink);font-weight:500}
 
-/* ---- tables: periwinkle header band, off-white rows ---- */
-.ds table{border-collapse:separate;border-spacing:0;width:100%}
-.ds thead tr{background:var(--ds-th-bg);border:0}
-.ds thead th, .ds th{
+/* ---- tables: periwinkle header band, off-white rows ----
+   Anything inside an element with class ds-paper (a print or invoice preview that has its own
+   white paper and inline colours) is left alone by these table rules. */
+.ds table:not(.ds-paper *){border-collapse:separate;border-spacing:0;width:100%}
+.ds thead tr:not(.ds-paper *){background:var(--ds-th-bg);border:0}
+.ds thead th:not(.ds-paper *), .ds th:not(.ds-paper *){
   background:var(--ds-th-bg);color:var(--ds-th-tx) !important;font-weight:700;font-size:13px;text-transform:uppercase;letter-spacing:.02em;
   border-bottom:1px solid var(--ds-row-bd);
 }
-.ds tbody tr, .ds .table-row{background:var(--ds-row);border-bottom:1px solid var(--ds-row-bd);transition:background .12s}
-.ds tbody tr:hover, .ds .table-row:hover{background:var(--ds-row-hover)}
-.ds tbody td{color:var(--ds-ink);border-bottom:1px solid var(--ds-row-bd)}
-.ds tbody td.font-mono, .ds td .font-mono{font-family:'Roboto',system-ui,sans-serif}
+.ds tbody tr:not(.ds-paper *), .ds .table-row:not(.ds-paper *){background:var(--ds-row);border-bottom:1px solid var(--ds-row-bd);transition:background .12s}
+.ds tbody tr:hover:not(.ds-paper *), .ds .table-row:hover:not(.ds-paper *){background:var(--ds-row-hover)}
+.ds tbody td:not(.ds-paper *){color:var(--ds-ink);border-bottom:1px solid var(--ds-row-bd)}
+.ds tbody td.font-mono:not(.ds-paper *), .ds td .font-mono:not(.ds-paper *){font-family:'Roboto',system-ui,sans-serif}
 
 /* ---- badges become pills ---- */
 .ds .badge, .ds [class*="badge-"]{border-radius:999px;font-weight:500;padding:3px 12px;font-size:13px;border-width:1px}

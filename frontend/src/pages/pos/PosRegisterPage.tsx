@@ -25,6 +25,7 @@ import { productTaxRate, saleTotals, saleTaxIncluded, type SaleLineInput } from 
 import { useAuthStore } from '@/store/authStore'
 import { registerHeldKey } from '@/lib/localUserData'
 import { confirmDialog } from '@/lib/dialog'
+import { setLeaveGuard } from '@/lib/leaveGuard'
 import type { Product } from '@/types'
 
 interface ModOption { id: string; name: string; price_delta: string; is_default: boolean; is_active: boolean }
@@ -374,6 +375,13 @@ export default function PosRegisterPage() {
   okToLeaveRef.current = okToLeave
   const hasItemsRef = useRef(false)
   hasItemsRef.current = lines.length > 0
+  // The command palette (Ctrl+K) asks the same question; a refresh or tab close gets the browser's own prompt.
+  useEffect(() => {
+    setLeaveGuard(() => (hasItemsRef.current ? okToLeaveRef.current() : Promise.resolve(true)))
+    const beforeUnload = (e: BeforeUnloadEvent) => { if (hasItemsRef.current) { e.preventDefault(); e.returnValue = '' } }
+    window.addEventListener('beforeunload', beforeUnload)
+    return () => { setLeaveGuard(null); window.removeEventListener('beforeunload', beforeUnload) }
+  }, [])
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
       if (!hasItemsRef.current || e.defaultPrevented || e.button !== 0) return
