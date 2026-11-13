@@ -27,10 +27,11 @@ import DateInput from '@/components/DateInput'
 import autoTable from 'jspdf-autotable'
 import jsPDF from 'jspdf'
 import { saveBlobFile } from '@/lib/saveBlobFile'
+import { CHART_SERIES, DS_CHART } from '@/lib/chartTheme'
 
 // Chart style constants — dark mode defaults (index.css overrides for light mode)
 const axisTickStyle = { fill: '#94a3b8', fontSize: 11 }
-const CHART_COLORS = ['#f97316', '#3b82f6', '#10b981', '#a855f7', '#f59e0b', '#06b6d4', '#ec4899', '#84cc16']
+const CHART_COLORS = [...CHART_SERIES]
 const trunc = (s: string, n = 16) => s?.length > n ? s.slice(0, n) + '…' : (s ?? '—')
 
 type ReportTab = 'availability' | 'usage' | 'transfers' | 'stock_card' | 'valuation'
@@ -921,7 +922,7 @@ export default function StockReportsPage() {
                         key={i}
                         fill={
                           entry.status === 'out_of_stock' ? '#ef4444'
-                          : entry.status === 'low'        ? '#f59e0b'
+                          : entry.status === 'low'        ? DS_CHART.warn
                           : entry.status === 'overstocked' ? '#3b82f6'
                           : '#10b981'
                         }
@@ -1090,7 +1091,7 @@ export default function StockReportsPage() {
                     formatter={(v: number) => [`${v.toLocaleString()} units`, 'Used']}
                     cursor={{ fill: isLight ? 'rgba(28,47,92,0.08)' : 'rgba(255,255,255,0.07)' }}
                   />
-                  <Bar dataKey="units" name="Units Used" fill="#f97316" radius={[0, 4, 4, 0]} />
+                  <Bar dataKey="units" name="Units Used" fill={DS_CHART.primary} radius={[0, 4, 4, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>

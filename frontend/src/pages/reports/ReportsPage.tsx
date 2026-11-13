@@ -46,6 +46,7 @@ import PeriodSelector, { type PeriodValue } from '@/components/PeriodSelector'
 import ExportBar from '@/components/ExportBar'
 import ReportTable from '@/components/ReportTable'
 import SalesByCustomerDrilldownModal from '@/components/SalesByCustomerDrilldownModal'
+import { CHART_SERIES, AGING_SERIES, DS_CHART } from '@/lib/chartTheme'
 import type { PnL, SalesSummaryPoint, ARAgingReport, VATSummary } from '@/types'
 
 // ─── Tab definitions ──────────────────────────────────────────────────────────
@@ -65,10 +66,10 @@ type TabId = (typeof TABS)[number]['id']
 // ─── Shared chart palette & tooltip style ────────────────────────────────────
 
 /** Standard palette; index-0 is always the theme-aware brand accent. */
-const STATIC_COLORS = ['#3b82f6', '#10b981', '#a855f7', '#f59e0b', '#ef4444', '#06b6d4']
+const STATIC_COLORS = [...CHART_SERIES.slice(0, 6)]
 
 /** Aging bucket colours: healthy → critical */
-const AGING_COLORS = ['#10b981', '#f59e0b', '#f97316', '#ef4444', '#991b1b']
+const AGING_COLORS = [...AGING_SERIES]
 
 // Chart styles — defined as module-level defaults (dark mode).
 // Light mode tooltip override lives in index.css via the recharts-tooltip-wrapper rule.
@@ -519,7 +520,7 @@ export default function ReportsPage() {
       { name: 'Revenue',      start: 0,       value: revenue, fill: '#10b981', label: formatCurrency(String(revenue)) },
       { name: '– COGS',       start: gp,       value: cogs,   fill: '#ef4444', label: `(${formatCurrency(String(cogs))})` },
       { name: 'Gross Profit', start: 0,       value: gp,      fill: '#3b82f6', label: formatCurrency(String(gp)) },
-      { name: '– Op Expenses',start: net,     value: opex,    fill: '#f97316', label: `(${formatCurrency(String(opex))})` },
+      { name: '– Op Expenses',start: net,     value: opex,    fill: DS_CHART.warn, label: `(${formatCurrency(String(opex))})` },
       { name: 'Net Profit',   start: 0,       value: net,     fill: net >= 0 ? '#10b981' : '#ef4444', label: formatCurrency(String(net)) },
     ]
   }, [pnl])

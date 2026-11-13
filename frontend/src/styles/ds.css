@@ -20,10 +20,10 @@
   --ds-tile:rgba(125,140,255,.18); --ds-tile-bd:rgba(164,153,255,.55); --ds-tile-tx:#C8D3FF;
   --ds-btn:#E6E0FF; --ds-btn-tx:#110099; --ds-btn-sh:0 8px 22px rgba(164,153,255,.28);
   --ds-outline:#A499FF; --ds-outline-tx:#C8C1FF;
-  --ds-good:#4ADE80; --ds-bad:#FF8A8A; --ds-warn:#FBBF24;
+  --ds-good:#4ADE80; --ds-bad:#FF8A8A; --ds-warn:#FECB01;
   --ds-pill-green-bg:rgba(34,197,94,.18);  --ds-pill-green-tx:#86EFAC;
   --ds-pill-red-bg:rgba(239,68,68,.20);    --ds-pill-red-tx:#FF9B9B;
-  --ds-pill-yel-bg:rgba(250,204,21,.20);   --ds-pill-yel-tx:#FDE68A;
+  --ds-pill-yel-bg:rgba(254,203,1,.20);   --ds-pill-yel-tx:#FFEA99;
   --ds-pill-gry-bg:rgba(255,255,255,.10);  --ds-pill-gry-tx:#C8C5E0;
   --ds-pill-blue-bg:rgba(37,99,235,.25);   --ds-pill-blue-tx:#9DB8FF;
   --ds-shadow:inset 0 1px 0 rgba(255,255,255,.08);
@@ -39,7 +39,7 @@ html.light .ds{
   --ds-tile:#D2DEFA; --ds-tile-bd:#8E87E6; --ds-tile-tx:#1558EA;
   --ds-btn:#021233; --ds-btn-tx:#FFFFFF; --ds-btn-sh:0 8px 20px rgba(2,18,51,.30);
   --ds-outline:#110099; --ds-outline-tx:#110099;
-  --ds-good:#0A6B0A; --ds-bad:#B3001B; --ds-warn:#8A5A00;
+  --ds-good:#0A6B0A; --ds-bad:#B3001B; --ds-warn:#665100;
   --ds-pill-green-bg:#D5F7D2; --ds-pill-green-tx:#0A5A0A;
   --ds-pill-red-bg:#FFCCCC;   --ds-pill-red-tx:#990000;
   --ds-pill-yel-bg:#FFE98A;   --ds-pill-yel-tx:#4D3B00;

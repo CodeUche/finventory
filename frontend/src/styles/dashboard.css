@@ -15,7 +15,7 @@
   --ad-tile-lav:rgba(164,153,255,.18);  --ad-tile-lav-tx:#C8C1FF;
   --ad-tile-grn:rgba(34,197,94,.15);    --ad-tile-grn-tx:#86EFAC;
   --ad-tile-red:rgba(239,68,68,.17);    --ad-tile-red-tx:#FF9B9B;
-  --ad-good:#4ADE80; --ad-warn:#FBBF24; --ad-bad:#FF8A8A; --ad-neutral:#C8C5E0;
+  --ad-good:#4ADE80; --ad-warn:#FECB01; --ad-bad:#FF8A8A; --ad-neutral:#C8C5E0;
   --ad-btn:#E6E0FF; --ad-btn-tx:#110099; --ad-btn-sh:0 8px 22px rgba(164,153,255,.28);
   --ad-outline-bd:rgba(222,216,255,.6);
   --ad-bubble-a:rgba(164,153,255,.28); --ad-bubble-a-tx:#C8C1FF;
@@ -24,7 +24,7 @@
   --ad-bubble-r:rgba(239,68,68,.24);   --ad-bubble-r-tx:#FF9B9B;
   --ad-pill-green-bg:rgba(34,197,94,.18);  --ad-pill-green-tx:#86EFAC;
   --ad-pill-red-bg:rgba(239,68,68,.20);    --ad-pill-red-tx:#FF9B9B;
-  --ad-pill-yel-bg:rgba(250,204,21,.20);   --ad-pill-yel-tx:#FDE68A;
+  --ad-pill-yel-bg:rgba(254,203,1,.20);   --ad-pill-yel-tx:#FFEA99;
   --ad-pill-gry-bg:rgba(255,255,255,.10);  --ad-pill-gry-tx:#C8C5E0;
   --ad-shadow:inset 0 1px 0 rgba(255,255,255,.08);
   font-family:'Roboto',system-ui,sans-serif;color:var(--ad-ink);
@@ -40,7 +40,7 @@ html.light .ad{
   --ad-tile-lav:#E3DEFF;   --ad-tile-lav-tx:#110099;
   --ad-tile-grn:#E6FFE6;   --ad-tile-grn-tx:#1C1B1F;
   --ad-tile-red:#FFE3E5;   --ad-tile-red-tx:#1C1B1F;
-  --ad-good:#0A6B0A; --ad-warn:#8A5A00; --ad-bad:#B3001B; --ad-neutral:#55545C;
+  --ad-good:#0A6B0A; --ad-warn:#665100; --ad-bad:#B3001B; --ad-neutral:#55545C;
   --ad-btn:#021233; --ad-btn-tx:#FFFFFF; --ad-btn-sh:0 8px 20px rgba(2,18,51,.32);
   --ad-outline-bd:#77767F;
   --ad-bubble-a:#C9C4F7; --ad-bubble-a-tx:#110099;

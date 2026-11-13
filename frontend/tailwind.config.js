@@ -5,26 +5,23 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Brand = Audity gold. Drives all accent/highlight usages (active nav,
-        // links, icon tiles, focus rings). Primary buttons are navy — see
-        // .btn-primary in index.css. (Was orange.)
-        // Brand accent is theme-aware via CSS vars (see index.css):
-        //   dark  → gold  (#D4A017 family)
-        //   light → navy  (#081F44 family)
-        // The numbered shades used across the app (300/400/500/600) read the
-        // vars so every brand utility — incl. /opacity variants — flips per theme.
+        // Brand = the designer's primary blue, with the accent lavender on dark.
+        // (Design System > Primitive colors.) The numbered shades 300-600 read CSS
+        // vars (see index.css) so every brand utility, including /opacity
+        // variants, flips per theme: dark uses the light accent tones for
+        // readability, light uses the primary / tertiary blues.
         brand: {
-          50:  '#FBF6E6',
-          100: '#F8ECC4',
-          200: '#F2DD97',
+          50:  '#F6F8FE',
+          100: '#ECF2FD',
+          200: '#D0DEFB',
           300: 'rgb(var(--brand-300) / <alpha-value>)',
           400: 'rgb(var(--brand-400) / <alpha-value>)',
           500: 'rgb(var(--brand-500) / <alpha-value>)',
           600: 'rgb(var(--brand-600) / <alpha-value>)',
-          700: '#9A7416',
-          800: '#7E5E12',
-          900: '#5F470E',
-          950: '#3A2B08',
+          700: '#0D358C',
+          800: '#09235D',
+          900: '#04122F',
+          950: '#030B1C',
         },
         // Surfaces = Audity navy (deep midnight in dark mode). Was slate.
         surface: {
@@ -40,16 +37,24 @@ export default {
           900: '#0B1730',
           950: '#060C1C',
         },
+        // No gold in the kit. Any leftover `gold-*` utility renders the designer's accent lavender.
         gold: {
-          400: '#E8B65A',
-          500: '#D4A017',
-          600: '#B8891F',
-          700: '#9A7416',
+          300: '#D2CCFF', 400: '#A499FF', 500: '#7766FF', 600: '#4933FF', 700: '#1600CC',
         },
-        // Kill orange app-wide: any leftover `*-orange-*` utility now renders gold.
+        // The kit has no orange. Caution tones that used orange now use the kit's warning yellow.
         orange: {
-          50:  '#FBF6E6', 100: '#F8ECC4', 200: '#F2DD97', 300: '#EFD06F', 400: '#E8B65A',
-          500: '#D4A017', 600: '#B8891F', 700: '#9A7416', 800: '#7E5E12', 900: '#5F470E', 950: '#3A2B08',
+          50: '#FFFDF5', 100: '#FFF9E1', 200: '#FFF5CC', 300: '#FFEA99', 400: '#FED634',
+          500: '#FECB01', 600: '#CBA301', 700: '#987A01', 800: '#665100', 900: '#332900', 950: '#332900',
+        },
+        // The designer's warning colour is a clear yellow (#FECB01). amber / yellow
+        // utilities (kept for real warnings) use that ramp, not Tailwind's orange-ish amber.
+        amber: {
+          50: '#FFFDF5', 100: '#FFF9E1', 200: '#FFF5CC', 300: '#FFEA99', 400: '#FED634',
+          500: '#FECB01', 600: '#CBA301', 700: '#987A01', 800: '#665100', 900: '#332900', 950: '#332900',
+        },
+        yellow: {
+          50: '#FFFDF5', 100: '#FFF9E1', 200: '#FFF5CC', 300: '#FFEA99', 400: '#FED634',
+          500: '#FECB01', 600: '#CBA301', 700: '#987A01', 800: '#665100', 900: '#332900', 950: '#332900',
         },
       },
       fontFamily: {
@@ -57,7 +62,7 @@ export default {
         mono: ['Roboto Mono', 'ui-monospace', 'monospace'],
       },
       boxShadow: {
-        // Theme-aware brand glow (gold in dark, navy in light) via --brand-500.
+        // Theme-aware brand glow via --brand-500.
         'glow-orange': '0 0 22px rgb(var(--brand-500) / 0.30)',
         'glow-gold':   '0 0 22px rgb(var(--brand-500) / 0.30)',
         'glow-navy':   '0 10px 30px rgba(8, 31, 68, 0.35)',

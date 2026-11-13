@@ -122,7 +122,7 @@ export default function RegisterPage() {
   const update = (field: string) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm((f) => ({ ...f, [field]: e.target.value }))
 
-  const strengthColor = pwStrength <= 1 ? '#ef4444' : pwStrength <= 3 ? '#E8B65A' : '#34C98A'
+  const strengthColor = pwStrength <= 1 ? '#ef4444' : pwStrength <= 3 ? '#FECB01' : '#34C98A'
 
   // ── Check-your-email screen ──────────────────────────────────────────────────
   if (registered) {

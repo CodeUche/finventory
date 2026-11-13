@@ -9,6 +9,7 @@ import toast from 'react-hot-toast'
 import { hrApi } from '@/services/hrApi'
 import { formatCurrency } from '@/lib/utils'
 import YearFilter from '@/components/YearFilter'
+import { CHART_SERIES, DS_CHART } from '@/lib/chartTheme'
 
 const CURRENT_YEAR = new Date().getFullYear()
 
@@ -43,7 +44,7 @@ interface ExpiringDocument {
   expiry_date: string
 }
 
-const COLORS = ['#6366f1', '#22d3ee', '#f59e0b', '#ef4444', '#10b981', '#a855f7']
+const COLORS = [...CHART_SERIES.slice(0, 5), DS_CHART.bad]
 
 const tooltipStyle = {
   backgroundColor: '#161b26', border: '1px solid rgba(255,255,255,0.1)',
