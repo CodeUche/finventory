@@ -335,6 +335,25 @@ _READ_METHODS = ("GET", "HEAD", "OPTIONS")
 _CREATE_METHODS = ("POST",)
 
 
+def _effective_module_level(user, org, module_key: str) -> str:
+    """The person's access level for one module: "none", "view", "write" or "edit".
+
+    Owners and admins are unrestricted by design (the ticks exist to narrow
+    everyone else), so they get "edit". Matches useModuleAccess.ts. Everyone
+    else with no record gets "none".
+    """
+    if has_minimum_role(user, org, "admin"):
+        return "edit"
+
+    from apps.tenancy.models import ModulePermission
+
+    membership = user.memberships.filter(organisation=org, is_active=True).first()
+    if not membership:
+        return "none"
+    perm = ModulePermission.objects.filter(membership=membership, module=module_key).first()
+    return perm.access_level if perm else "none"
+
+
 def requires_module(module_key: str):
     """
     Permission class factory: gate a viewset on the owner's per-person ticks.
@@ -365,23 +384,7 @@ def requires_module(module_key: str):
             if not org:
                 return False
 
-            # Owners and admins are unrestricted by design — the ticks exist to
-            # narrow everyone else. Matches useModuleAccess.ts.
-            if has_minimum_role(user, org, "admin"):
-                return True
-
-            from apps.tenancy.models import ModulePermission
-
-            membership = user.memberships.filter(
-                organisation=org, is_active=True,
-            ).first()
-            if not membership:
-                return False
-
-            perm = ModulePermission.objects.filter(
-                membership=membership, module=module_key,
-            ).first()
-            level = perm.access_level if perm else "none"
+            level = _effective_module_level(user, org, module_key)
 
             if level == "none":
                 return False
@@ -395,3 +398,53 @@ def requires_module(module_key: str):
     _ModuleAccess.__name__ = f"RequiresModule_{module_key}"
     _ModuleAccess.__qualname__ = _ModuleAccess.__name__
     return _ModuleAccess
+
+
+# ─── Per-report access (registry reports) ────────────────────────────────────
+#
+# A report shows the same data as a normal screen, so it must need the same
+# keys as that screen: the owner's tick for the module the data belongs to,
+# the role that screen asks for, and the plan the company bought. Holding only
+# the "Reports" tick must not let a member read salaries or the ledger.
+
+# Modules whose normal screens also demand a role above staff.
+_REPORT_MODULE_MIN_ROLE = {"accounting": "accountant", "tax": "accountant"}
+# Modules whose normal screens are behind a plan gate (plan_requires).
+_REPORT_MODULE_PLAN = ("accounting", "payroll", "bills", "purchases", "suppliers")
+_plan_gate_cache: dict = {}
+
+
+def user_can_run_report(request, report_def) -> bool:
+    """True when this requester may run the given registry report.
+
+    Superusers, owners and admins see everything (unchanged from before).
+    Everyone else needs a tick above "none" for the report's module (and any
+    extra modules), the minimum role that module's screens require, and the
+    plan module where one applies.
+    """
+    user = request.user
+    if not user or not user.is_authenticated:
+        return False
+    if user.is_superuser:
+        return True
+    org = _get_or_resolve_org(request)
+    if not org:
+        return False
+
+    if has_minimum_role(user, org, "admin"):
+        return True
+
+    modules = (report_def.module,) + tuple(report_def.also_modules or ())
+    for module_key in modules:
+        if _effective_module_level(user, org, module_key) == "none":
+            return False
+        min_role = _REPORT_MODULE_MIN_ROLE.get(module_key)
+        if min_role and not has_minimum_role(user, org, min_role):
+            return False
+        if module_key in _REPORT_MODULE_PLAN:
+            gate = _plan_gate_cache.get(module_key)
+            if gate is None:
+                gate = _plan_gate_cache[module_key] = plan_requires(module_key)()
+            if not gate.has_permission(request, None):
+                return False
+    return True

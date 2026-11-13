@@ -17,7 +17,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.permissions import IsManagerOrSuperuser, IsStaff, requires_module
+from apps.core.permissions import IsManagerOrSuperuser, IsStaff, requires_module, user_can_run_report
 
 # The owner's per-person "Reports" tick. Without it these views checked only
 # role, so a team member refused /customers/ and /sales/invoices/ could read
@@ -764,12 +764,22 @@ class ProductDetailsView(BaseDateRangeView):
 
 from . import registry as report_registry  # noqa: E402
 
+_NO_REPORT_ACCESS = (
+    "You do not have access to this report. Ask an owner or admin to grant "
+    "the matching area in Team settings."
+)
+
 
 class ReportCatalogView(BaseDateRangeView):
     """GET /reports/catalog/ — list registry-backed reports for the reports menu."""
 
     def get(self, request):
-        return Response({"reports": report_registry.catalog()})
+        # Only list reports this person may actually run (see user_can_run_report).
+        allowed = [
+            item for item in report_registry.catalog()
+            if user_can_run_report(request, report_registry.get(item["key"]))
+        ]
+        return Response({"reports": allowed})
 
 
 class ReportDispatchView(BaseDateRangeView):
@@ -783,6 +793,8 @@ class ReportDispatchView(BaseDateRangeView):
         rd = report_registry.get(key)
         if rd is None:
             return Response({"error": f"Unknown report: {key}"}, status=404)
+        if not user_can_run_report(request, rd):
+            return Response({"error": _NO_REPORT_ACCESS}, status=403)
         org = self.get_organisation()
         if org is None:
             return Response({"error": "Organisation not found"}, status=400)
@@ -881,6 +893,9 @@ class ReportBulkExportView(BaseDateRangeView):
             rd = report_registry.get(key)
             if rd is None:
                 skipped.append({"key": key, "reason": "Unknown report"})
+                continue
+            if not user_can_run_report(request, rd):
+                skipped.append({"key": key, "reason": "No access"})
                 continue
             try:
                 data = rd.resolver(org, date_from, date_to)
