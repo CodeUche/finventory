@@ -448,7 +448,7 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
         except ValueError as e:
             return Response({"error": str(e)}, status=422)
 
-    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsStaff, _ModAccess_sales])
     def pay_split(self, request, pk=None):
         """POST /api/v1/sales/invoices/{id}/pay_split/ — record multiple tenders
         (split payment: e.g. part cash + part transfer) in one call."""
@@ -464,7 +464,7 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
             "invoice": InvoiceSerializer(invoice).data,
         }, status=201)
 
-    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsStaff, _ModAccess_sales])
     def void(self, request, pk=None):
         """POST /api/v1/sales/invoices/{id}/void/"""
         invoice = self.get_object()
@@ -474,7 +474,7 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
         except ValueError as e:
             return Response({"error": str(e)}, status=422)
 
-    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsStaff])
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsStaff, _ModAccess_sales])
     def process_return(self, request, pk=None):
         """POST /api/v1/sales/invoices/{id}/process_return/ — Create a sales return."""
         invoice = self.get_object()
@@ -505,7 +505,7 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
             )
 
 
-    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsStaff])
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsStaff, _ModAccess_sales])
     def confirm_proforma(self, request, pk=None):
         """POST /api/v1/sales/invoices/{id}/confirm_proforma/ — convert proforma to confirmed invoice."""
         try:
@@ -562,7 +562,7 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
                 {"error": f"Could not confirm this proforma: {type(e).__name__}: {e}"}, status=422
             )
 
-    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsStaff])
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsStaff, _ModAccess_sales])
     def fulfill(self, request, pk=None):
         """POST /api/v1/sales/invoices/{id}/fulfill/ — deduct stock + post GL for a deferred invoice."""
         invoice = self.get_object()
@@ -599,7 +599,7 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
                 {"error": f"Could not delete this invoice: {type(e).__name__}: {e}"}, status=422
             )
 
-    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsStaff])
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsStaff, _ModAccess_sales])
     def send_email(self, request, pk=None):
         """POST /api/v1/sales/invoices/{id}/send_email/ — send invoice to customer by email."""
         invoice = self.get_object()
@@ -751,7 +751,7 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
             return Response({"error": "Failed to send email. Please check your SMTP settings."}, status=422)
 
 
-    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsStaff])
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsStaff, _ModAccess_sales])
     def extend_due_date(self, request, pk=None):
         """POST /api/v1/sales/invoices/{id}/extend_due_date/
         Body: { new_due_date: "YYYY-MM-DD", reason: "optional note" }

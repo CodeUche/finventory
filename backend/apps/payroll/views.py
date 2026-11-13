@@ -414,7 +414,7 @@ class EmployeeLoanViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         own loans.
         """
         if self.action in ('create', 'approve', 'reject'):
-            return [IsAuthenticated(), IsManager(), _PlanPayroll()]
+            return [IsAuthenticated(), IsManager(), _PlanPayroll(), _HRAccess()]
         return super().get_permissions()
 
     def partial_update(self, request, *args, **kwargs):
