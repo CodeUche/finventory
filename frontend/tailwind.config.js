@@ -53,8 +53,8 @@ export default {
         },
       },
       fontFamily: {
-        sans: ['Inter', 'system-ui', 'sans-serif'],
-        mono: ['JetBrains Mono', 'monospace'],
+        sans: ['Roboto', 'system-ui', 'sans-serif'],
+        mono: ['Roboto Mono', 'ui-monospace', 'monospace'],
       },
       boxShadow: {
         // Theme-aware brand glow (gold in dark, navy in light) via --brand-500.

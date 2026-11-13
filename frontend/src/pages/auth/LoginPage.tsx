@@ -292,7 +292,7 @@ export default function LoginPage() {
                 pattern="[0-9a-fA-F]*"
                 maxLength={10}
                 className="au-input"
-                style={{ textAlign: 'center', fontSize: 24, letterSpacing: '.3em', fontFamily: 'JetBrains Mono, monospace' }}
+                style={{ textAlign: 'center', fontSize: 24, letterSpacing: '.3em', fontFamily: ''Roboto Mono', monospace' }}
                 placeholder="000000"
                 value={mfaCode}
                 onChange={(e) => setMfaCode(e.target.value.replace(/\s/g, ''))}

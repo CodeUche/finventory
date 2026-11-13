@@ -10,6 +10,7 @@ import { useAuthStore } from './store/authStore'
 import { initAnalytics } from './lib/analytics'
 import { checkForUpdates } from './lib/updater'
 import { retryPendingWipe, migrateLegacySavedData } from './lib/localDataGuard'
+import './styles/fonts.css'
 import './index.css'
 import './styles/ds.css'
 
