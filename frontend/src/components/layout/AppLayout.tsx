@@ -80,6 +80,7 @@ export default function AppLayout() {
   // "back online — sign in to sync" banner during an offline grace session.
   const [queuedCount, setQueuedCount] = useState(0)
   const { pathname } = useLocation()
+  const isRegister = pathname === '/pos/register'
 
   // Phone drawer: close it once a link has been followed, so the new page is visible.
   useEffect(() => { setSidebarOpen(false) }, [pathname])
@@ -424,10 +425,13 @@ export default function AppLayout() {
           </div>
         )}
         {/* Breadcrumb trail */}
-        <div className="px-4 lg:px-6 pt-3 pb-0">
-          <Breadcrumb />
-        </div>
-        <main className="flex-1 overflow-y-auto p-4 lg:p-6 animate-fade-in">
+        {!isRegister && (
+          <div className="px-4 lg:px-6 pt-3 pb-0">
+            <Breadcrumb />
+          </div>
+        )}
+        {/* The till fills the whole content area and scrolls inside itself. */}
+        <main className={isRegister ? 'flex flex-1 min-h-0 flex-col overflow-hidden animate-fade-in' : 'flex-1 overflow-y-auto p-4 lg:p-6 animate-fade-in'}>
           {/* Gate: hold child pages until org context is resolved so their
               initial fetches never fire with a null X-Organisation-ID header.
               This prevents the "Failed to load xyz" flash for superusers who

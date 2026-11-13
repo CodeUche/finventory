@@ -346,30 +346,57 @@ export default function PosRegisterPage() {
    * tab). If a sale is half rung up, ask first so nothing is lost by a stray
    * tap. Held baskets are saved, so they are not affected.
    */
+  // Asks before walking away from a half-rung sale. True means "go ahead".
+  const okToLeave = async () => {
+    if (lines.length === 0) return true
+    const n = lines.reduce((sum, l) => sum + l.quantity, 0)
+    const leave = await confirmDialog(
+      `This sale has ${n} item${n === 1 ? '' : 's'} that ${n === 1 ? 'has' : 'have'} not been paid for. ` +
+      'Leaving will clear them. Use "Hold" first if you want to keep this basket.',
+      { title: 'Leave the register?', confirmText: 'Leave', cancelText: 'Stay', danger: true },
+    )
+    if (!leave) refocus()
+    return leave
+  }
+
   const leaveRegister = async () => {
-    if (lines.length > 0) {
-      const n = lines.reduce((sum, l) => sum + l.quantity, 0)
-      const leave = await confirmDialog(
-        `This sale has ${n} item${n === 1 ? '' : 's'} that ${n === 1 ? 'has' : 'have'} not been paid for. ` +
-        'Leaving will clear them. Use "Hold" first if you want to keep this basket.',
-        { title: 'Leave the register?', confirmText: 'Leave', cancelText: 'Stay', danger: true },
-      )
-      if (!leave) { refocus(); return }
-    }
+    if (!(await okToLeave())) return
     if ((window.history.state?.idx ?? 0) > 0) navigate(-1)
     else navigate('/dashboard')
   }
+
+  // The register now sits beside the side menu. A click on any menu or top-bar link while a sale
+  // is half rung asks first (this app uses a plain router, so a route blocker is not available).
+  const okToLeaveRef = useRef(okToLeave)
+  okToLeaveRef.current = okToLeave
+  const hasItemsRef = useRef(false)
+  hasItemsRef.current = lines.length > 0
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      if (!hasItemsRef.current || e.defaultPrevented || e.button !== 0) return
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+      const a = (e.target as Element | null)?.closest?.('a[href]') as HTMLAnchorElement | null
+      if (!a || (a.target && a.target !== '_self')) return
+      const url = new URL(a.href, window.location.href)
+      if (url.origin !== window.location.origin || url.pathname === window.location.pathname) return
+      e.preventDefault()
+      e.stopPropagation()
+      void okToLeaveRef.current().then((ok) => { if (ok) navigate(url.pathname + url.search + url.hash) })
+    }
+    document.addEventListener('click', onClick, true)
+    return () => document.removeEventListener('click', onClick, true)
+  }, [navigate])
 
   const tiles = query.trim() ? results : catalogue
   const enabledTenders = TENDERS.filter((t) => (organisation?.enabled_payment_types ?? TENDERS.map((x) => x.settingsKey)).includes(t.settingsKey))
 
   return (
-    // Full screen, no sidebar — the register owns the device.
-    <div className="fixed inset-0 z-40 flex flex-col bg-surface-950">
+    // Fills the content area beside the side menu (collapsible, so the till can stay wide).
+    <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex items-center gap-3 border-b border-surface-700 bg-surface-900 px-4 py-2.5">
         <button
           onClick={leaveRegister}
-          className="btn-ghost -ml-2 px-2.5 py-1.5 text-sm"
+          className="btn-secondary px-3 py-1.5 text-sm"
           aria-label="Back"
           title="Back"
         >
@@ -393,7 +420,7 @@ export default function PosRegisterPage() {
         </button>
         <button
           onClick={leaveRegister}
-          className="btn-ghost px-2.5 py-1 text-[11px]" title="Leave the register" aria-label="Leave the register"
+          className="btn-secondary px-2.5 py-1 text-[11px]" title="Leave the register" aria-label="Leave the register"
         >
           <LogOut size={13} />
           <span className="hidden sm:inline">Exit</span>
@@ -530,7 +557,7 @@ export default function PosRegisterPage() {
               {enabledTenders.map((t) => (
                 <button
                   key={t.key} onClick={() => takePayment(t.key)} disabled={busy || lines.length === 0}
-                  className="flex flex-col items-center gap-1 rounded-xl bg-brand-500 py-3 text-xs font-semibold text-white disabled:opacity-40"
+                  className="btn-primary flex-col gap-1 py-3 text-xs font-semibold"
                 >
                   <t.icon size={15} />{t.label}
                 </button>

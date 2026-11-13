@@ -317,18 +317,6 @@ export default function App() {
         }
       />
 
-      {/* Register — deliberately outside AppLayout. A till is a locked-down
-          surface: hiding the sidebar with an overlay still leaves every nav
-          link in the DOM, reachable by keyboard and screen reader. */}
-      <Route
-        path="/pos/register"
-        element={
-          <ProtectedRoute>
-            <PosRegisterPage />
-          </ProtectedRoute>
-        }
-      />
-
       {/* Protected */}
       <Route
         path="/"
@@ -372,6 +360,9 @@ export default function App() {
         <Route path="credits"   element={<ModuleRoute module="customers"><DsPage><CreditsPage /></DsPage></ModuleRoute>} />
 
         {/* Accounting */}
+        {/* Register — inside the app layout so the side menu is there. The menu is the normal
+            sidebar, so it only lists what this person may open. Selling needs write access. */}
+        <Route path="pos/register" element={<WriteModuleRoute module="sales"><PosRegisterPage /></WriteModuleRoute>} />
         <Route path="pos/restaurant"  element={<ModuleRoute module="sales"><DsPage><RestaurantPOSPage /></DsPage></ModuleRoute>} />
         <Route path="pos/tables"      element={<ModuleRoute module="sales"><TablesPage /></ModuleRoute>} />
         <Route path="pos/kitchen"     element={<ModuleRoute module="sales"><KitchenPage /></ModuleRoute>} />

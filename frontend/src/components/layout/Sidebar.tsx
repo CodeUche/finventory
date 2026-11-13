@@ -290,7 +290,12 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
 
   // ─── Mini (collapsed) sidebar — desktop only, persisted ────────────────────
   const [mini, setMini] = useState<boolean>(() => {
-    try { return localStorage.getItem('audity-sidebar-mini') === '1' } catch { return false }
+    try {
+      const saved = localStorage.getItem('audity-sidebar-mini')
+      if (saved !== null) return saved === '1'
+    } catch { /* storage blocked: fall through to the width rule */ }
+    // Nothing saved yet on this device: start collapsed on tablet widths, open on wide screens.
+    return typeof window !== 'undefined' && window.innerWidth < 1280
   })
   const toggleMini = () => setMini((v) => {
     const next = !v
