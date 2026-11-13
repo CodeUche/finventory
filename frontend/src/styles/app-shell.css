@@ -193,3 +193,10 @@ html.light body .app-shell.app-shell{
   .sh-icon-btn{width:36px;height:36px}
   .sh-avatar{width:36px;height:36px;margin-left:4px;font-size:14px;border-width:2px}
 }
+
+/* ---- toasts sit below the top bar ----
+   The message area (react-hot-toast) lives outside .app-shell, so it cannot read
+   --sh-top-h; it reads --toast-top instead. Set whenever the top bar exists
+   (every signed-in page, including the register); auth pages keep the 16px
+   fallback. The top bar is 72px high at every width, plus a 12px gap. */
+body:has(.sh-top){--toast-top:84px}

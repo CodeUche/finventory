@@ -208,13 +208,15 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
               items.length === 1
                 ? `⚠️ Low stock: ${items[0].product_name} (${items[0].quantity_available} left)`
                 : `⚠️ ${items.length} products are low on stock`,
-              { duration: 6000 },
+              // A fixed id means the same message can never stack twice (e.g. React dev double-run).
+              { id: 'low-stock-summary', duration: 6000 },
             )
           }
         } else {
           const newItems = items.filter((i) => !prevIdsRef.current.has(i.id))
           newItems.forEach((item) => {
             toast(`⚠️ Low stock: ${item.product_name} (${item.quantity_available} left)`, {
+              id: `low-stock-${item.id}`,
               duration: 5000,
             })
           })

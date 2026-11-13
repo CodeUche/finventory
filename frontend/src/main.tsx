@@ -139,6 +139,10 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <DialogHost />
         <Toaster
           position="top-right"
+          // Sits just under the top bar when one is on screen (the offset is set
+          // in app-shell.css); on login/auth pages there is no bar, so 16px.
+          // 9999 keeps pop-ups from covering messages.
+          containerStyle={{ top: 'var(--toast-top, 16px)', zIndex: 9999 }}
           toastOptions={{
             style: {
               background: '#13244B',
