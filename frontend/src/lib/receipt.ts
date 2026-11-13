@@ -655,7 +655,7 @@ const BODIES: Record<ReceiptTemplate, (d: ReceiptData) => string> = {
 const RECEIPT_CSS = `
   * { box-sizing: border-box; }
   body {
-    width: 80mm; margin: 0; padding: 4mm 3mm;
+    box-sizing: border-box; width: 80mm; margin: 0; padding: 4mm 3mm;
     font-family: "Consolas", "Courier New", monospace;
     font-size: 11px; line-height: 1.35; color: #000; background: #fff;
   }

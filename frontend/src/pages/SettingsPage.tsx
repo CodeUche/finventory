@@ -9,7 +9,7 @@ import ImportPage from '@/pages/ImportPage'
 import type { FirsConfig, FirsStats, FirsSubmission, SandboxProgress, GoLiveChecklist } from '@/types'
 import type { AxiosError } from 'axios'
 import { useAuthStore } from '@/store/authStore'
-import { RECEIPT_TEMPLATES } from '@/lib/receipt'
+import { RECEIPT_TEMPLATES, type ReceiptTemplate } from '@/lib/receipt'
 import ReceiptPreview from '@/components/ReceiptPreview'
 import { useReceiptDefaults } from '@/hooks/useReceiptDefaults'
 import { FEATURES } from '@/lib/featureFlags'
@@ -289,8 +289,8 @@ export default function SettingsPage() {
   // Business details for the receipt previews (real name, address and logo).
   const rd = useReceiptDefaults()
   const receiptBusiness = useMemo(
-    () => ({ merchant: rd.merchant, address: rd.address, phone: rd.phone, tin: rd.tin, rcNumber: rd.rcNumber, footerNote: rd.footerNote, logoDataUrl: logoPreview ?? rd.logoDataUrl }),
-    [rd.merchant, rd.address, rd.phone, rd.tin, rd.rcNumber, rd.footerNote, rd.logoDataUrl, logoPreview],
+    () => ({ merchant: rd.merchant, address: rd.address, phone: rd.phone, tin: rd.tin, rcNumber: rd.rcNumber, footerNote: company.receipt_footer_note || undefined, logoDataUrl: logoRemoved ? null : (logoPreview ?? rd.logoDataUrl) }),
+    [rd.merchant, rd.address, rd.phone, rd.tin, rd.rcNumber, company.receipt_footer_note, rd.logoDataUrl, logoPreview, logoRemoved],
   )
 
   // ─── Load existing org/user images as data URLs on mount / URL change ─────────
@@ -2973,7 +2973,15 @@ export default function SettingsPage() {
                 Your logo, address and TIN come from your Profile &mdash; you never re-type them here.
               </p>
             </div>
-            <div className="grid grid-cols-2 xl:grid-cols-3 gap-4">
+            <div className="flex flex-col xl:flex-row gap-5 items-start">
+            {/* What will print, at a readable size. Follows the pick, the closing message and the logo at once. */}
+            <div className="w-full xl:w-[330px] shrink-0 xl:sticky xl:top-4">
+              <p className="text-xs font-medium text-slate-300 mb-2">Selected receipt &middot; {RECEIPT_TEMPLATES.find((t) => t.value === (company.receipt_template || 'compact'))?.label}</p>
+              <div className="max-w-[330px]">
+                <ReceiptPreview template={(company.receipt_template || 'compact') as ReceiptTemplate} business={receiptBusiness} />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 2xl:grid-cols-3 gap-4 flex-1 min-w-0">
               {RECEIPT_TEMPLATES.map((tmpl) => (
                 <button
                   key={tmpl.value}
@@ -3002,6 +3010,7 @@ export default function SettingsPage() {
                   </div>
                 </button>
               ))}
+            </div>
             </div>
 
             {(company.receipt_template === 'branded' || company.receipt_template === 'sales_receipt') && (

@@ -39,14 +39,19 @@ interface Props {
   template: ReceiptTemplate
   /** Business name, address, phone, TIN, logo — the real profile. */
   business: Partial<ReceiptData> & Pick<ReceiptData, 'merchant'>
-  /** Width of the card the preview sits in, in pixels. */
-  width?: number
 }
 
-export default function ReceiptPreview({ template, business, width = 190 }: Props) {
+/**
+ * Draws the real receipt page, shrunk to whatever width its card gives it.
+ * The width is measured (ResizeObserver) rather than guessed, and the height
+ * follows the receipt's own length, so a short receipt is not padded out.
+ */
+export default function ReceiptPreview({ template, business }: Props) {
   const [mono, setMono] = useState<string | null>(null)
-  const [height, setHeight] = useState(520)
+  const [height, setHeight] = useState(400)
+  const [boxWidth, setBoxWidth] = useState(PAPER_PX)
   const frame = useRef<HTMLIFrameElement>(null)
+  const box = useRef<HTMLDivElement>(null)
 
   // Same black-and-white conversion the printer path uses.
   useEffect(() => {
@@ -58,17 +63,34 @@ export default function ReceiptPreview({ template, business, width = 190 }: Prop
     return () => { cancelled = true }
   }, [business.logoDataUrl])
 
+  useEffect(() => {
+    const el = box.current
+    if (!el) return
+    const read = () => setBoxWidth(el.clientWidth || PAPER_PX)
+    read()
+    if (typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(read)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
   const html = useMemo(
     () => buildReceiptHtml({ ...SAMPLE_SALE, ...business, logoDataUrl: mono, template }),
     [business, mono, template],
   )
 
-  const scale = width / PAPER_PX
+  const measure = () => {
+    const h = frame.current?.contentDocument?.documentElement?.scrollHeight
+    if (h) setHeight(h)
+  }
+
+  const scale = boxWidth / PAPER_PX
 
   return (
     <div
-      className="bg-white mx-auto overflow-hidden rounded-sm shadow-sm"
-      style={{ width, height: Math.round(height * scale) }}
+      ref={box}
+      className="bg-white w-full overflow-hidden rounded-sm shadow-sm"
+      style={{ height: Math.ceil(height * scale) }}
     >
       {/* No scripts are allowed in here; same-origin only so we can measure the page. */}
       <iframe
@@ -78,13 +100,10 @@ export default function ReceiptPreview({ template, business, width = 190 }: Prop
         sandbox="allow-same-origin"
         tabIndex={-1}
         aria-hidden="true"
-        onLoad={() => {
-          const h = frame.current?.contentDocument?.documentElement?.scrollHeight
-          if (h) setHeight(h)
-        }}
+        onLoad={measure}
         style={{
           width: PAPER_PX, height, border: 0, background: '#fff', pointerEvents: 'none',
-          transform: `scale(${scale})`, transformOrigin: 'top left',
+          transform: `scale(${scale})`, transformOrigin: 'top left', display: 'block',
         }}
       />
     </div>
