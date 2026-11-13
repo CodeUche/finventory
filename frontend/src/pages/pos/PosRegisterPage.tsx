@@ -21,7 +21,7 @@ import type { ReceiptData } from '@/lib/receipt'
 import { useReceiptDefaults } from '@/hooks/useReceiptDefaults'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { useTaxRates } from '@/hooks/useTaxRates'
-import { productTaxRate, saleTotals, type SaleLineInput } from '@/lib/saleMath'
+import { productTaxRate, saleTotals, saleTaxIncluded, type SaleLineInput } from '@/lib/saleMath'
 import { useAuthStore } from '@/store/authStore'
 import { registerHeldKey } from '@/lib/localUserData'
 import { confirmDialog } from '@/lib/dialog'
@@ -221,13 +221,13 @@ export default function PosRegisterPage() {
 
   // VAT is charged server-side from each product's tax class, so it has to be
   // in what the cashier collects — see lib/saleMath.
-  const totals = useMemo(
-    () => saleTotals(lines.map((l): SaleLineInput => ({
+  const totals = useMemo(() => {
+    const inputs = lines.map((l): SaleLineInput => ({
       unitPrice: l.unit_price, quantity: l.quantity,
       taxRate: productTaxRate(l.product, taxRates), inclusive: l.product.tax_type === 'inclusive',
-    }))),
-    [lines, taxRates],
-  )
+    }))
+    return { ...saleTotals(inputs), taxIncluded: saleTaxIncluded(inputs) }
+  }, [lines, taxRates])
   const total = totals.total
   const change = Math.max(0, (parseFloat(tendered) || 0) - total)
 
@@ -325,6 +325,7 @@ export default function PosRegisterPage() {
         // The saved invoice's own figures — what the customer was charged.
         subtotal: data?.subtotal ?? totals.subtotal,
         tax: data?.tax_amount ?? totals.tax,
+        taxIncluded: totals.taxIncluded,
         total: data?.total_amount ?? total,
         payments: [{ method, amount: data?.amount_paid ?? total }],
         amountTendered: method === 'cash' && tendered ? tendered : undefined,

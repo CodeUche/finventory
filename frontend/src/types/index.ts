@@ -280,6 +280,11 @@ export interface SaleItem {
   quantity_returned: string
   unit_price: string
   line_total: string
+  /** Same fields the API sends on every sale line; used to rebuild a faithful re-print. */
+  discount_percent?: string
+  discount_amount?: string
+  tax_rate?: string
+  tax_amount?: string
   modifiers?: SaleItemModifier[]
 }
 

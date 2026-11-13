@@ -4,7 +4,7 @@ import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, Receipt, Search, X, Loader2, CheckCircle, Ban, FileDown, Mail, MessageCircle, RotateCcw, Truck, Pencil, Trash2, CalendarClock, RefreshCw, PackageCheck, AlertTriangle, FileText, Landmark, Printer } from 'lucide-react'
 import CollectPaymentModal from '@/components/CollectPaymentModal'
-import { printReceipt, formatReceiptTime } from '@/lib/receipt'
+import { printReceipt, formatReceiptTime, invoiceItemsToReceipt } from '@/lib/receipt'
 import { useReceiptDefaults } from '@/hooks/useReceiptDefaults'
 import SortSelect from '@/components/SortSelect'
 import YearFilter, { yearToDateParams } from '@/components/YearFilter'
@@ -516,6 +516,8 @@ export default function SalesPage() {
   const printInvoiceReceipt = () => {
     const inv = detail ?? selected
     if (!inv) return
+    // Same lines, line discounts and VAT-included split the original receipt had.
+    const receiptItems = invoiceItemsToReceipt(inv.items ?? [])
     printReceipt({
       ...receiptDefaults,
       invoiceNumber: inv.invoice_number,
@@ -525,15 +527,10 @@ export default function SalesPage() {
       // An invoice is raised at a desk, not served at a till.
       cashierLabel: 'Raised by',
       customer: inv.customer_name || undefined,
-      lines: (inv.items ?? []).map((it) => ({
-        name: it.product_name,
-        qty: it.quantity,
-        unit_price: it.unit_price,
-        line_total: it.line_total,
-        modifiers: it.modifiers?.map((m) => m.name),
-      })),
+      lines: receiptItems.lines,
       subtotal: inv.subtotal,
       tax: inv.tax_amount,
+      taxIncluded: receiptItems.taxIncluded,
       discount: inv.discount_amount,
       total: inv.total_amount,
       payments: (inv.payments ?? []).map((p) => ({ method: p.method, amount: p.amount })),

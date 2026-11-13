@@ -362,7 +362,9 @@ export default function NewSalePage() {
           // The saved invoice's own figures — what the customer was charged.
           subtotal: created.subtotal ?? subtotal,
           discount: created.discount_amount ?? discountTotal,
-          tax: created.tax_amount ?? taxTotal,
+          tax: created.tax_amount ?? (taxTotal + taxIncluded),
+          // VAT already inside VAT-inclusive prices: shown as information, not added.
+          taxIncluded,
           total: created.total_amount ?? grandTotal,
           payments: paymentMethod === 'credit' ? [] : [{ method: paymentMethod, amount: created.amount_paid ?? grandTotal }],
           amountTendered: tenderedNum || undefined,
