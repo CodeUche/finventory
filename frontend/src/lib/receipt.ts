@@ -75,6 +75,8 @@ export interface ReceiptData {
   tax?: number | string
   /** Total discount on the sale (line discounts plus any whole-sale discount). */
   discount?: number | string
+  /** VAT already inside the prices (VAT-inclusive items). `tax` still holds all VAT; this part is shown as information, not added. */
+  taxIncluded?: number | string
   /** Discount taken off the whole sale rather than a line. Only set when real. */
   transactionDiscount?: number | string
   total: number | string
@@ -141,6 +143,42 @@ const lineDiscountKobo = (d: ReceiptData) => d.lines.reduce((a, l) => a + kobo(l
 /** Total discount to show: the sale's own figure, else the sum of its line discounts. */
 const discountTotalKobo = (d: ReceiptData) =>
   kobo(d.discount) || (lineDiscountKobo(d) + kobo(d.transactionDiscount))
+
+/** VAT that is added on top of the prices — the only VAT that belongs in the arithmetic. */
+const vatAddedKobo = (d: ReceiptData) => Math.max(0, kobo(d.tax) - kobo(d.taxIncluded))
+/** VAT that is already inside the prices. Shown for information, never added. */
+const vatIncludedKobo = (d: ReceiptData) => Math.max(0, kobo(d.taxIncluded))
+
+/**
+ * Turn a saved invoice's lines into receipt lines, the way the original sale
+ * printed them: Price column = qty x unit price (before discount), plus the
+ * line discount, and the VAT that sits inside VAT-inclusive prices.
+ * A line is VAT-inclusive when it carries VAT yet its saved total is just
+ * price less discount (nothing was added on top).
+ */
+export function invoiceItemsToReceipt(items: {
+  product_name: string; quantity: string | number; unit_price: string | number
+  line_total: string | number; discount_amount?: string | number; tax_amount?: string | number
+  modifiers?: { name: string }[]
+}[]): { lines: ReceiptLine[]; taxIncluded: number } {
+  let incK = 0
+  const lines = items.map((it) => {
+    const grossK = Math.round(Number(it.unit_price || 0) * 100 * Number(it.quantity || 0))
+    const discK = kobo(it.discount_amount)
+    const taxK = kobo(it.tax_amount)
+    if (taxK > 0 && kobo(it.line_total) === grossK - discK) incK += taxK
+    return {
+      name: it.product_name,
+      qty: it.quantity,
+      unit_price: it.unit_price,
+      line_total: it.line_total,
+      gross_total: (grossK / 100).toFixed(2),
+      discount: discK > 0 ? (discK / 100).toFixed(2) : undefined,
+      modifiers: it.modifiers?.map((m) => m.name),
+    }
+  })
+  return { lines, taxIncluded: incK / 100 }
+}
 
 const TENDER_LABEL: Record<string, string> = {
   cash: 'Cash',
@@ -309,8 +347,9 @@ const totalsBlock = (d: ReceiptData, totalLabel = 'TOTAL') => `
   <table>
     <tr><td>Subtotal</td><td class="amt">${money(d.subtotal)}</td></tr>
     ${Number(d.discount || 0) ? `<tr><td>Discount</td><td class="amt">-${money(d.discount!)}</td></tr>` : ''}
-    ${Number(d.tax || 0) ? `<tr><td>VAT</td><td class="amt">${money(d.tax!)}</td></tr>` : ''}
+    ${vatAddedKobo(d) ? `<tr><td>VAT</td><td class="amt">${money(vatAddedKobo(d) / 100)}</td></tr>` : ''}
     <tr class="tot"><td>${totalLabel}</td><td class="amt">${money(d.total)}</td></tr>
+    ${vatIncludedRow(d)}
   </table>`
 
 const paymentsBlock = (d: ReceiptData) => {
@@ -333,6 +372,10 @@ const savedBlock = (d: ReceiptData) => {
   const k = discountTotalKobo(d)
   return k > 0 ? `<div class="c b lg saved">YOU SAVED ${money(k / 100)}</div>` : ''
 }
+
+/** Informational row: VAT already inside the prices, so it is not part of the sum above it. */
+const vatIncludedRow = (d: ReceiptData) =>
+  vatIncludedKobo(d) ? `<tr class="inc"><td>VAT included in total</td><td class="amt">${money(vatIncludedKobo(d) / 100)}</td></tr>` : ''
 
 const paidByCard = (d: ReceiptData) =>
   (d.payments ?? []).some((p) => p.method === 'pos' || p.method === 'card')
@@ -419,10 +462,10 @@ function tplBranded(d: ReceiptData): string {
   <table>
     <tr><td>Subtotal</td><td class="amt">${money(d.subtotal)}</td></tr>
     ${Number(d.discount || 0) ? `<tr><td>Discount</td><td class="amt">-${money(d.discount!)}</td></tr>` : ''}
-    ${Number(d.tax || 0) ? `<tr><td>VAT</td><td class="amt">${money(d.tax!)}</td></tr>` : ''}
+    ${vatAddedKobo(d) ? `<tr><td>VAT</td><td class="amt">${money(vatAddedKobo(d) / 100)}</td></tr>` : ''}
   </table>
   <div class="thick"></div>
-  <table><tr class="tot"><td>TOTAL</td><td class="amt">${money(d.total)}</td></tr></table>
+  <table><tr class="tot"><td>TOTAL</td><td class="amt">${money(d.total)}</td></tr>${vatIncludedRow(d)}</table>
   <div class="thick"></div>
   ${paymentsBlock(d)}
   ${firsBlock(d)}
@@ -477,10 +520,10 @@ function tplSalesReceipt(d: ReceiptData): string {
   <table class="roomy">
     <tr class="b"><td>Sub Total:</td><td class="amt">${money(d.subtotal)}</td></tr>
     ${discountRows}
-    ${Number(d.tax || 0) ? `<tr><td>VAT:</td><td class="amt">${money(d.tax!)}</td></tr>` : ''}
+    ${vatAddedKobo(d) ? `<tr><td>VAT:</td><td class="amt">${money(vatAddedKobo(d) / 100)}</td></tr>` : ''}
   </table>
   <div class="rule"></div>
-  <table><tr class="tot"><td>Total:</td><td class="amt">${money(d.total)}</td></tr></table>
+  <table><tr class="tot"><td>Total:</td><td class="amt">${money(d.total)}</td></tr>${vatIncludedRow(d)}</table>
   ${pay || tendered ? `<table class="roomy">${pay}${tendered}</table>` : ''}
   ${d.customer ? `<div class="rule"></div><div class="small">Customer: ${escape(d.customer)}</div>` : ''}
   ${firsBlock(d)}
@@ -541,8 +584,9 @@ function tplShopBarcode(d: ReceiptData): string {
   <div class="rule"></div>
   <div class="lead"><span>Subtotal</span><span class="fill"></span><span class="amt">${money(d.subtotal)}</span></div>
   ${Number(d.discount || 0) ? `<div class="lead"><span>Discount</span><span class="fill"></span><span class="amt">-${money(d.discount!)}</span></div>` : ''}
-  ${Number(d.tax || 0) ? `<div class="lead"><span>VAT</span><span class="fill"></span><span class="amt">${money(d.tax!)}</span></div>` : ''}
+  ${vatAddedKobo(d) ? `<div class="lead"><span>VAT</span><span class="fill"></span><span class="amt">${money(vatAddedKobo(d) / 100)}</span></div>` : ''}
   <div class="lead b tl"><span>Total</span><span class="fill"></span><span class="amt">${money(d.total)}</span></div>
+  ${vatIncludedKobo(d) ? `<div class="small ind">VAT included in total: ${money(vatIncludedKobo(d) / 100)}</div>` : ''}
   ${paymentsBlock(d)}
   ${firsBlock(d)}
   ${savedBlock(d)}
@@ -601,15 +645,14 @@ const BODIES: Record<ReceiptTemplate, (d: ReceiptData) => string> = {
   stay_folio: tplStayFolio,
 }
 
-/** Build the 80mm receipt markup. Exported so it can be unit-tested. */
-export function buildReceiptHtml(d: ReceiptData): string {
-  const body = (BODIES[d.template as ReceiptTemplate] ?? tplCompact)(d)
-
-  return `<!doctype html>
-<html><head><meta charset="utf-8"><title>${escape(d.invoiceNumber)}</title>
-<style>
-  /* 80mm roll. Margins are the printer's business, not ours. */
-  @page { size: 80mm auto; margin: 0; }
+/**
+ * The receipt's look, as ordinary CSS rules. They are NOT shipped as a <style>
+ * block: the desktop app's content-security policy blocks <style> elements, and
+ * a receipt printed from there came out in the browser's default serif font with
+ * an uncapped logo. Instead `inlineStyles` copies every rule onto the elements as
+ * style="" attributes, which that policy allows.
+ */
+const RECEIPT_CSS = `
   * { box-sizing: border-box; }
   body {
     width: 80mm; margin: 0; padding: 4mm 3mm;
@@ -641,6 +684,7 @@ export function buildReceiptHtml(d: ReceiptData): string {
   .hdr th.w4 { width: 36%; }
   .dsc td { font-size: 8.5px; }
   .tot td { font-size: 13px; font-weight: 700; padding-top: 3px; }
+  .inc td { font-size: 9.5px; font-style: italic; }
   .roomy td { padding: 1.5px 0; }
   .roomy tr.b td { font-weight: 700; }
   .small { font-size: 9.5px; }
@@ -664,8 +708,49 @@ export function buildReceiptHtml(d: ReceiptData): string {
   img.qr { width: 26mm; height: 26mm; margin: 4px auto 0; display: block; }
   svg.bc { display: block; width: 78%; height: 34px; margin: 8px auto 2px; }
   svg.bc.full { width: 100%; height: 40px; }
-</style></head>
-<body>${body}</body></html>`
+`
+
+type Decls = Map<string, string>
+
+/** Copy each rule in RECEIPT_CSS onto the elements it matches, as style attributes. */
+function inlineStyles(bodyHtml: string): { body: string; bodyStyle: string } {
+  const doc = new DOMParser().parseFromString('<!doctype html><body>' + bodyHtml + '</body>', 'text/html')
+  const rules = [...RECEIPT_CSS.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+  const byEl = new Map<Element, Decls>()
+  const put = (el: Element, decl: string) => {
+    const m = byEl.get(el) ?? new Map<string, string>()
+    for (const part of decl.split(';')) {
+      const i = part.indexOf(':')
+      if (i < 0) continue
+      m.set(part.slice(0, i).trim(), part.slice(i + 1).trim())
+    }
+    byEl.set(el, m)
+  }
+  const bodyDecls: Decls = new Map()
+  for (const [, selText, decl] of rules) {
+    for (const sel of selText.split(',').map((x) => x.trim()).filter(Boolean)) {
+      if (sel === 'body') { put(doc.body, decl); continue }
+      doc.body.querySelectorAll(sel).forEach((el) => put(el, decl))
+    }
+  }
+  const out = (m: Decls) => [...m].map(([k, v]) => `${k}: ${v}`).join('; ')
+  const bodyStyle = out(byEl.get(doc.body) ?? bodyDecls)
+  byEl.delete(doc.body)
+  byEl.forEach((m, el) => el.setAttribute('style', out(m)))
+  return { body: doc.body.innerHTML, bodyStyle }
+}
+
+/** Build the 80mm receipt markup. Exported so it can be unit-tested. */
+export function buildReceiptHtml(d: ReceiptData): string {
+  const { body, bodyStyle } = inlineStyles((BODIES[d.template as ReceiptTemplate] ?? tplCompact)(d))
+
+  // Only the page size lives in a <style> block. Where a policy blocks it the
+  // receipt still lays out correctly: the body is 80mm wide on its own, and the
+  // printer driver then sets the paper.
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><title>${escape(d.invoiceNumber)}</title>
+<style>@page { size: 80mm auto; margin: 0; }</style></head>
+<body style="${bodyStyle.replace(/"/g, '&quot;')}">${body}</body></html>`
 }
 
 /**

@@ -89,3 +89,10 @@ export function productTaxRate(
   if (!product.is_taxable || !product.tax_class) return 0
   return ratesByClass[product.tax_class] ?? 0
 }
+
+/** The part of the VAT that is already inside the prices (VAT-inclusive lines). */
+export function saleTaxIncluded(lines: SaleLineInput[]): number {
+  return roundMoney(
+    lines.reduce((a, l) => a + (l.inclusive && (l.taxRate ?? 0) > 0 ? saleLine(l).tax : 0), 0),
+  )
+}
