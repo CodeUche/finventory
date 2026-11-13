@@ -134,6 +134,45 @@ class POSModuleTests(TestCase):
         self.assertTrue(JournalEntry.objects.filter(
             organisation=self.org, source_type="pos_service_tip").exists())
 
+    def test_card_paid_service_charge_and_tip_debit_bank_not_cash(self):
+        """M4: the service charge and tip used to debit Cash unconditionally,
+        even when the diner paid entirely by card -- overstating the till and
+        understating the bank/card account by the tip+service charge. The
+        tendered amount here covers the full bill (2000 food + 150 + 100),
+        all on one card tender, the real-world register flow."""
+        from apps.accounting.services import AccountMappingService
+        order = POSOrder.objects.get(id=self._create_order(qty=2).data["id"])  # 2 x 1000 = 2000
+        order.service_charge = Decimal("150"); order.tip_amount = Decimal("100")
+        order.save(update_fields=["service_charge", "tip_amount"])
+        res = self.client.post(f"/api/v1/pos/orders/{order.id}/finalize/", {
+            "tenders": [{"amount": "2250", "method": "card"}]}, format="json")
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+
+        extras = JournalEntry.objects.get(organisation=self.org, source_type="pos_service_tip")
+        cash = AccountMappingService.resolve(self.org, "cash_account")
+        bank = AccountMappingService.resolve(self.org, "bank_account")
+        self.assertFalse(extras.lines.filter(account=cash).exists(), "no cash changed hands")
+        self.assertTrue(extras.lines.filter(account=bank, debit=Decimal("250.00")).exists())
+
+    def test_split_cash_and_card_attributes_tip_to_whichever_tender_covered_it(self):
+        """Food (2000) is paid in cash; the tip (100) rides on top as a separate
+        card tap -- a common real flow. The food bill consumes the cash tender
+        in full, so the tip must land on bank (the card tender), not cash."""
+        from apps.accounting.services import AccountMappingService
+        order = POSOrder.objects.get(id=self._create_order(qty=2).data["id"])  # 2000
+        order.tip_amount = Decimal("100")
+        order.save(update_fields=["tip_amount"])
+        res = self.client.post(f"/api/v1/pos/orders/{order.id}/finalize/", {
+            "tenders": [{"amount": "2000", "method": "cash"}, {"amount": "100", "method": "card"}]
+        }, format="json")
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+
+        extras = JournalEntry.objects.get(organisation=self.org, source_type="pos_service_tip")
+        cash = AccountMappingService.resolve(self.org, "cash_account")
+        bank = AccountMappingService.resolve(self.org, "bank_account")
+        self.assertFalse(extras.lines.filter(account=cash).exists())
+        self.assertTrue(extras.lines.filter(account=bank, debit=Decimal("100.00")).exists())
+
     def test_pickup_order_without_table_finalizes(self):
         """The POS module works for non-hospitality sectors: a pickup/counter order
         with no table finalises into a paid sale + GL just the same."""
