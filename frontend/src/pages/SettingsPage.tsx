@@ -1316,11 +1316,11 @@ export default function SettingsPage() {
           {/* Avatar */}
           <div className="flex items-center gap-5">
             <div className="relative group">
-              <div className="w-20 h-20 rounded-2xl bg-brand-500 flex items-center justify-center overflow-hidden">
+              <div className="w-20 h-20 rounded-2xl flex items-center justify-center overflow-hidden" style={{ background: 'var(--sh-avatar-bg)', color: 'var(--sh-avatar-tx)' }}>
                 {avatarPreview ? (
                   <img src={avatarPreview} alt="avatar" className="w-full h-full object-cover" />
                 ) : (
-                  <span className="text-2xl font-bold text-white">
+                  <span className="text-2xl font-bold" style={{ color: 'var(--sh-avatar-tx)' }}>
                     {user?.first_name?.[0]}{user?.last_name?.[0]}
                   </span>
                 )}
