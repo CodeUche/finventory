@@ -10,7 +10,7 @@ from rest_framework.response import Response
 
 from apps.core.mixins import TenantFilterMixin
 from apps.core.permissions import IsManager, IsManagerOrSuperuser, IsStaff
-from apps.core.permissions import requires_module
+from apps.core.permissions import RegisterSellingRead, requires_module
 # The owner's per-person ticks, enforced server-side (H-2). Mirrors
 # useModuleAccess.ts: owners and admins bypass; for everyone else no
 # record means no access, and only what was granted is granted.
@@ -59,7 +59,9 @@ class CategoryViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 class WarehouseViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     queryset = Warehouse.objects.filter(is_active=True)
     serializer_class = WarehouseSerializer
-    permission_classes = [IsAuthenticated, IsManager, _ModAccess_inventory]
+    # The register (sales write) may only READ this list, to pick the default
+    # warehouse it sells from. Everything else still needs manager + inventory.
+    permission_classes = [IsAuthenticated, (IsManager & _ModAccess_inventory) | RegisterSellingRead]
 
     def create(self, request, *args, **kwargs):
         from django.db import IntegrityError, transaction
@@ -95,7 +97,9 @@ class ProductViewSet(FriendlyUniqueErrorMixin, TenantFilterMixin, viewsets.Model
 
     queryset = Product.objects.select_related("category", "tax_class")
     serializer_class = ProductSerializer
-    permission_classes = [IsAuthenticated, IsStaff, _ModAccess_inventory]
+    # The register (sales write) may only READ the list / one product, so a
+    # cashier can sell without a separate inventory permission.
+    permission_classes = [IsAuthenticated, (IsStaff & _ModAccess_inventory) | RegisterSellingRead]
     filterset_class = ProductFilter
     search_fields = ["name", "sku", "barcode", "brand"]
     ordering_fields = ["name", "selling_price", "created_at"]
