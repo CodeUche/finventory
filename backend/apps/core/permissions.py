@@ -395,3 +395,40 @@ def requires_module(module_key: str):
     _ModuleAccess.__name__ = f"RequiresModule_{module_key}"
     _ModuleAccess.__qualname__ = _ModuleAccess.__name__
     return _ModuleAccess
+
+
+class RegisterSellingRead(BasePermission):
+    """
+    Read-only door for the till: a team member who may RING SALES (sales
+    module at "write" or "edit") can load the product list and the warehouse
+    list the register needs, without the owner ticking Inventory as well.
+
+    Deliberately narrow, so it can be OR-ed next to a viewset's normal rule:
+      - only list and detail reads (no stock, movements, low-stock, import,
+        export or any other extra action),
+      - only for someone who is at least `staff` in the organisation,
+      - never any create / change / delete.
+    Cost prices stay hidden: the product serializer already strips them for
+    anyone who is not an owner or admin. Which organisation's rows come back
+    is still decided by the tenant filter on the viewset, not by this class.
+    """
+
+    def has_permission(self, request, view):
+        user = request.user
+        if not user or not user.is_authenticated:
+            return False
+        if request.method not in _READ_METHODS:
+            return False
+        if getattr(view, "action", None) not in ("list", "retrieve"):
+            return False
+        org = _get_or_resolve_org(request)
+        if not org or not has_minimum_role(user, org, "staff"):
+            return False
+
+        from apps.tenancy.models import ModulePermission
+
+        membership = user.memberships.filter(organisation=org, is_active=True).first()
+        if not membership:
+            return False
+        perm = ModulePermission.objects.filter(membership=membership, module="sales").first()
+        return bool(perm and perm.access_level in ("write", "edit"))
