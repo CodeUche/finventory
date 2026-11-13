@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import { confirmDialog, promptDialog } from '@/lib/dialog'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { User, Building2, Shield, Loader2, Camera, CreditCard, CheckCircle, Mail, Lock, Unlock, LandmarkIcon, UsersRound, UserPlus, X, ChevronDown, ChevronUp, ChevronRight, Bot, Layout, Copy, Trash2, ShieldCheck, Key, Clock, XCircle, Send, Globe, AlertTriangle, Wifi, WifiOff, RefreshCw, Activity, FileText, GitBranch, Upload, GraduationCap, Bell } from 'lucide-react'
@@ -9,6 +9,9 @@ import ImportPage from '@/pages/ImportPage'
 import type { FirsConfig, FirsStats, FirsSubmission, SandboxProgress, GoLiveChecklist } from '@/types'
 import type { AxiosError } from 'axios'
 import { useAuthStore } from '@/store/authStore'
+import { RECEIPT_TEMPLATES } from '@/lib/receipt'
+import ReceiptPreview from '@/components/ReceiptPreview'
+import { useReceiptDefaults } from '@/hooks/useReceiptDefaults'
 import { FEATURES } from '@/lib/featureFlags'
 import {
   getTimeoutPreference,
@@ -283,6 +286,12 @@ export default function SettingsPage() {
   const [stampRemoved, setStampRemoved] = useState(false)
   const stampRef = useRef<HTMLInputElement>(null)
   const [savingCompany, setSavingCompany] = useState(false)
+  // Business details for the receipt previews (real name, address and logo).
+  const rd = useReceiptDefaults()
+  const receiptBusiness = useMemo(
+    () => ({ merchant: rd.merchant, address: rd.address, phone: rd.phone, tin: rd.tin, rcNumber: rd.rcNumber, footerNote: rd.footerNote, logoDataUrl: logoPreview ?? rd.logoDataUrl }),
+    [rd.merchant, rd.address, rd.phone, rd.tin, rd.rcNumber, rd.footerNote, rd.logoDataUrl, logoPreview],
+  )
 
   // ─── Load existing org/user images as data URLs on mount / URL change ─────────
   useEffect(() => {
@@ -2964,139 +2973,8 @@ export default function SettingsPage() {
                 Your logo, address and TIN come from your Profile &mdash; you never re-type them here.
               </p>
             </div>
-            <div className="grid grid-cols-3 gap-4">
-              {([
-                {
-                  value: 'compact',
-                  label: 'Compact',
-                  desc: 'Least paper per sale.',
-                  preview: (
-                    <svg viewBox="0 0 60 104" className="w-full" xmlns="http://www.w3.org/2000/svg">
-                      <rect x="16" y="7" width="28" height="5" rx="1" fill="#111"/>
-                      <rect x="20" y="15" width="20" height="2" rx="1" fill="#999"/>
-                      <rect x="8" y="23" width="44" height="1" fill="#bbb"/>
-                      <rect x="8" y="30" width="26" height="3" rx="1" fill="#555"/><rect x="42" y="30" width="10" height="3" rx="1" fill="#111"/>
-                      <rect x="8" y="38" width="22" height="3" rx="1" fill="#555"/><rect x="42" y="38" width="10" height="3" rx="1" fill="#111"/>
-                      <rect x="8" y="46" width="44" height="1" fill="#bbb"/>
-                      <rect x="8" y="52" width="16" height="3" rx="1" fill="#999"/><rect x="40" y="52" width="12" height="3" rx="1" fill="#555"/>
-                      <rect x="8" y="60" width="14" height="4" rx="1" fill="#111"/><rect x="36" y="60" width="16" height="4" rx="1" fill="#111"/>
-                      <rect x="8" y="72" width="44" height="1" fill="#bbb"/>
-                      <rect x="16" y="78" width="28" height="2" rx="1" fill="#999"/>
-                      <rect x="20" y="85" width="20" height="2" rx="1" fill="#999"/>
-                    </svg>
-                  ),
-                },
-                {
-                  value: 'detailed',
-                  label: 'Detailed',
-                  desc: 'Columns, VAT, FIRS, signature.',
-                  preview: (
-                    <svg viewBox="0 0 60 104" className="w-full" xmlns="http://www.w3.org/2000/svg">
-                      <rect x="25" y="5" width="10" height="10" rx="1" fill="#111"/>
-                      <rect x="18" y="18" width="24" height="4" rx="1" fill="#111"/>
-                      <rect x="8" y="26" width="44" height="1" fill="#333"/>
-                      <rect x="8" y="31" width="12" height="2" rx="1" fill="#999"/><rect x="26" y="31" width="6" height="2" rx="1" fill="#999"/>
-                      <rect x="36" y="31" width="7" height="2" rx="1" fill="#999"/><rect x="46" y="31" width="6" height="2" rx="1" fill="#999"/>
-                      <rect x="8" y="37" width="14" height="3" rx="1" fill="#555"/><rect x="27" y="37" width="4" height="3" rx="1" fill="#555"/>
-                      <rect x="35" y="37" width="8" height="3" rx="1" fill="#555"/><rect x="45" y="37" width="7" height="3" rx="1" fill="#111"/>
-                      <rect x="8" y="44" width="16" height="3" rx="1" fill="#555"/><rect x="27" y="44" width="4" height="3" rx="1" fill="#555"/>
-                      <rect x="35" y="44" width="8" height="3" rx="1" fill="#555"/><rect x="45" y="44" width="7" height="3" rx="1" fill="#111"/>
-                      <rect x="8" y="52" width="44" height="1" fill="#333"/>
-                      <rect x="8" y="58" width="14" height="4" rx="1" fill="#111"/><rect x="36" y="58" width="16" height="4" rx="1" fill="#111"/>
-                      <rect x="8" y="72" width="16" height="2" rx="1" fill="#999"/>
-                      <rect x="8" y="80" width="44" height="1" fill="#333"/>
-                      <rect x="18" y="88" width="24" height="2" rx="1" fill="#999"/>
-                    </svg>
-                  ),
-                },
-                {
-                  value: 'branded',
-                  label: 'Branded',
-                  desc: 'Logo leads, your closing message.',
-                  preview: (
-                    <svg viewBox="0 0 60 104" className="w-full" xmlns="http://www.w3.org/2000/svg">
-                      <rect x="21" y="5" width="18" height="18" rx="2" fill="#111"/>
-                      <rect x="16" y="27" width="28" height="5" rx="1" fill="#111"/>
-                      <rect x="20" y="35" width="20" height="2" rx="1" fill="#999"/>
-                      <rect x="8" y="42" width="44" height="2" fill="#111"/>
-                      <rect x="8" y="49" width="24" height="3" rx="1" fill="#555"/><rect x="42" y="49" width="10" height="3" rx="1" fill="#111"/>
-                      <rect x="8" y="56" width="20" height="3" rx="1" fill="#555"/><rect x="42" y="56" width="10" height="3" rx="1" fill="#111"/>
-                      <rect x="8" y="64" width="44" height="2" fill="#111"/>
-                      <rect x="8" y="70" width="14" height="4" rx="1" fill="#111"/><rect x="36" y="70" width="16" height="4" rx="1" fill="#111"/>
-                      <rect x="8" y="79" width="44" height="2" fill="#111"/>
-                      <rect x="14" y="86" width="32" height="2" rx="1" fill="#777"/>
-                      <rect x="19" y="92" width="22" height="2" rx="1" fill="#999"/>
-                    </svg>
-                  ),
-                },
-                {
-                  value: 'classic_cash',
-                  label: 'Classic cash',
-                  desc: 'The corner-shop slip.',
-                  preview: (
-                    <svg viewBox="0 0 60 104" className="w-full" xmlns="http://www.w3.org/2000/svg">
-                      <rect x="26" y="5" width="8" height="8" rx="1" fill="#111"/>
-                      <rect x="14" y="17" width="32" height="5" rx="1" fill="#111"/>
-                      <g fill="#bbb"><rect x="8" y="27" width="4" height="1"/><rect x="15" y="27" width="4" height="1"/><rect x="22" y="27" width="4" height="1"/><rect x="29" y="27" width="4" height="1"/><rect x="36" y="27" width="4" height="1"/><rect x="43" y="27" width="4" height="1"/><rect x="50" y="27" width="2" height="1"/></g>
-                      <rect x="8" y="33" width="12" height="3" rx="1" fill="#999"/><rect x="38" y="33" width="14" height="3" rx="1" fill="#555"/>
-                      <rect x="8" y="40" width="14" height="3" rx="1" fill="#999"/><rect x="38" y="40" width="14" height="3" rx="1" fill="#555"/>
-                      <g fill="#bbb"><rect x="8" y="48" width="4" height="1"/><rect x="15" y="48" width="4" height="1"/><rect x="22" y="48" width="4" height="1"/><rect x="29" y="48" width="4" height="1"/><rect x="36" y="48" width="4" height="1"/><rect x="43" y="48" width="4" height="1"/><rect x="50" y="48" width="2" height="1"/></g>
-                      <rect x="8" y="54" width="22" height="3" rx="1" fill="#555"/><rect x="42" y="54" width="10" height="3" rx="1" fill="#111"/>
-                      <rect x="8" y="62" width="14" height="4" rx="1" fill="#111"/><rect x="36" y="62" width="16" height="4" rx="1" fill="#111"/>
-                      <g fill="#bbb"><rect x="8" y="72" width="4" height="1"/><rect x="15" y="72" width="4" height="1"/><rect x="22" y="72" width="4" height="1"/><rect x="29" y="72" width="4" height="1"/><rect x="36" y="72" width="4" height="1"/><rect x="43" y="72" width="4" height="1"/><rect x="50" y="72" width="2" height="1"/></g>
-                      <rect x="13" y="79" width="34" height="3" rx="1" fill="#111"/>
-                      <rect x="19" y="87" width="22" height="2" rx="1" fill="#999"/>
-                    </svg>
-                  ),
-                },
-                {
-                  value: 'shop_barcode',
-                  label: 'Shop & barcode',
-                  desc: 'Scannable slip for returns.',
-                  preview: (
-                    <svg viewBox="0 0 60 104" className="w-full" xmlns="http://www.w3.org/2000/svg">
-                      <rect x="14" y="6" width="32" height="5" rx="1" fill="#111"/>
-                      <rect x="8" y="17" width="44" height="1" fill="#bbb"/>
-                      <rect x="8" y="23" width="18" height="3" rx="1" fill="#555"/><rect x="42" y="23" width="10" height="3" rx="1" fill="#111"/>
-                      <rect x="10" y="29" width="12" height="2" rx="1" fill="#bbb"/>
-                      <rect x="8" y="35" width="16" height="3" rx="1" fill="#555"/><rect x="42" y="35" width="10" height="3" rx="1" fill="#111"/>
-                      <rect x="10" y="41" width="12" height="2" rx="1" fill="#bbb"/>
-                      <rect x="8" y="48" width="44" height="1" fill="#bbb"/>
-                      <rect x="8" y="54" width="14" height="4" rx="1" fill="#111"/><rect x="36" y="54" width="16" height="4" rx="1" fill="#111"/>
-                      <g fill="#111">
-                        <rect x="10" y="66" width="1.5" height="20"/><rect x="13" y="66" width="1" height="20"/>
-                        <rect x="15.5" y="66" width="2" height="20"/><rect x="19" y="66" width="1" height="20"/>
-                        <rect x="21.5" y="66" width="1.5" height="20"/><rect x="25" y="66" width="2" height="20"/>
-                        <rect x="28.5" y="66" width="1" height="20"/><rect x="31" y="66" width="1.5" height="20"/>
-                        <rect x="34" y="66" width="2" height="20"/><rect x="37.5" y="66" width="1" height="20"/>
-                        <rect x="40" y="66" width="1.5" height="20"/><rect x="43" y="66" width="1" height="20"/>
-                        <rect x="45.5" y="66" width="2" height="20"/><rect x="49" y="66" width="1" height="20"/>
-                      </g>
-                      <rect x="18" y="91" width="24" height="2" rx="1" fill="#999"/>
-                    </svg>
-                  ),
-                },
-                {
-                  value: 'stay_folio',
-                  label: 'Stay folio',
-                  desc: 'Dated charges for a running tab.',
-                  preview: (
-                    <svg viewBox="0 0 60 104" className="w-full" xmlns="http://www.w3.org/2000/svg">
-                      <rect x="25" y="5" width="10" height="10" rx="1" fill="#111"/>
-                      <rect x="16" y="18" width="28" height="4" rx="1" fill="#111"/>
-                      <rect x="8" y="27" width="44" height="1" fill="#bbb"/>
-                      <rect x="8" y="33" width="9" height="2" rx="1" fill="#999"/><rect x="22" y="33" width="8" height="2" rx="1" fill="#999"/><rect x="44" y="33" width="8" height="2" rx="1" fill="#999"/>
-                      <rect x="8" y="39" width="9" height="3" rx="1" fill="#555"/><rect x="22" y="39" width="8" height="3" rx="1" fill="#555"/><rect x="44" y="39" width="8" height="3" rx="1" fill="#111"/>
-                      <rect x="8" y="46" width="9" height="3" rx="1" fill="#555"/><rect x="22" y="46" width="8" height="3" rx="1" fill="#555"/><rect x="44" y="46" width="8" height="3" rx="1" fill="#111"/>
-                      <rect x="8" y="53" width="9" height="3" rx="1" fill="#555"/><rect x="22" y="53" width="8" height="3" rx="1" fill="#555"/><rect x="44" y="53" width="8" height="3" rx="1" fill="#111"/>
-                      <g fill="#111"><rect x="8" y="62" width="2" height="2"/><rect x="13" y="62" width="2" height="2"/><rect x="18" y="62" width="2" height="2"/><rect x="23" y="62" width="2" height="2"/><rect x="28" y="62" width="2" height="2"/><rect x="33" y="62" width="2" height="2"/><rect x="38" y="62" width="2" height="2"/><rect x="43" y="62" width="2" height="2"/><rect x="48" y="62" width="2" height="2"/></g>
-                      <rect x="8" y="70" width="14" height="4" rx="1" fill="#111"/><rect x="36" y="70" width="16" height="4" rx="1" fill="#111"/>
-                      <g fill="#111"><rect x="8" y="80" width="2" height="2"/><rect x="13" y="80" width="2" height="2"/><rect x="18" y="80" width="2" height="2"/><rect x="23" y="80" width="2" height="2"/><rect x="28" y="80" width="2" height="2"/><rect x="33" y="80" width="2" height="2"/><rect x="38" y="80" width="2" height="2"/><rect x="43" y="80" width="2" height="2"/><rect x="48" y="80" width="2" height="2"/></g>
-                      <rect x="18" y="89" width="24" height="2" rx="1" fill="#999"/>
-                    </svg>
-                  ),
-                },
-              ] as { value: string; label: string; desc: string; preview: React.ReactNode }[]).map((tmpl) => (
+            <div className="grid grid-cols-2 xl:grid-cols-3 gap-4">
+              {RECEIPT_TEMPLATES.map((tmpl) => (
                 <button
                   key={tmpl.value}
                   onClick={() => {
@@ -3110,9 +2988,8 @@ export default function SettingsPage() {
                   }`}
                 >
                   <div className={`p-3 ${company.receipt_template === tmpl.value ? 'bg-brand-500/5' : 'bg-surface-900/60'}`}>
-                    <div className="bg-white rounded-md overflow-hidden shadow-sm mx-auto" style={{ maxWidth: '86px' }}>
-                      {tmpl.preview}
-                    </div>
+                    {/* Live preview: the real receipt, with your logo and business name, in black and white. */}
+                    <ReceiptPreview template={tmpl.value} business={receiptBusiness} />
                   </div>
                   <div className="px-3 py-2.5">
                     <div className="flex items-center justify-between gap-2">
@@ -3121,13 +2998,13 @@ export default function SettingsPage() {
                         <span className="shrink-0 text-[10px] font-medium text-brand-400 bg-brand-500/15 px-1.5 py-0.5 rounded-full">Active</span>
                       )}
                     </div>
-                    <p className="text-xs text-slate-400 mt-0.5 leading-relaxed">{tmpl.desc}</p>
+                    <p className="text-xs text-slate-400 mt-0.5 leading-relaxed">{tmpl.blurb}</p>
                   </div>
                 </button>
               ))}
             </div>
 
-            {company.receipt_template === 'branded' && (
+            {(company.receipt_template === 'branded' || company.receipt_template === 'sales_receipt') && (
               <div className="pt-1">
                 <label className="label">Closing message</label>
                 <input
@@ -3139,7 +3016,7 @@ export default function SettingsPage() {
                   onBlur={saveReceiptFooter}
                 />
                 <p className="text-xs text-slate-500 mt-1">
-                  Printed above the sign-off on the Branded receipt. Saved when you click away.
+                  Printed above the sign-off on the Branded receipt, and in place of THANK YOU on the Sales receipt. Saved when you click away.
                 </p>
               </div>
             )}
