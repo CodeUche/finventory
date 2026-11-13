@@ -4,7 +4,7 @@ import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { Plus, Receipt, Search, X, Loader2, CheckCircle, Ban, FileDown, Mail, MessageCircle, RotateCcw, Truck, Pencil, Trash2, CalendarClock, RefreshCw, PackageCheck, AlertTriangle, FileText, Landmark, Printer } from 'lucide-react'
 import CollectPaymentModal from '@/components/CollectPaymentModal'
-import { printReceipt } from '@/lib/receipt'
+import { printReceipt, formatReceiptTime } from '@/lib/receipt'
 import { useReceiptDefaults } from '@/hooks/useReceiptDefaults'
 import SortSelect from '@/components/SortSelect'
 import YearFilter, { yearToDateParams } from '@/components/YearFilter'
@@ -520,6 +520,7 @@ export default function SalesPage() {
       ...receiptDefaults,
       invoiceNumber: inv.invoice_number,
       date: formatDate(inv.issue_date),
+      time: formatReceiptTime(inv.created_at),
       cashier: inv.sold_by || undefined,
       // An invoice is raised at a desk, not served at a till.
       cashierLabel: 'Raised by',

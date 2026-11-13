@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { AlertTriangle, ArrowLeft, Loader2, Minus, Plus, Search, ShoppingCart, Trash2, User, UserCheck, Warehouse, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { customerApi, inventoryApi, locationApi, salesApi, tillApi } from '@/services/api'
-import { printReceipt } from '@/lib/receipt'
+import { printReceipt, formatReceiptTime } from '@/lib/receipt'
 import { useReceiptDefaults } from '@/hooks/useReceiptDefaults'
 import { formatCurrency, formatDate, stripCommas } from '@/lib/utils'
 import { useTaxRates } from '@/hooks/useTaxRates'
@@ -346,6 +346,7 @@ export default function NewSalePage() {
           ...receiptDefaults,
           invoiceNumber: created.invoice_number ?? '',
           date: formatDate(created.issue_date ?? new Date().toISOString()),
+          time: formatReceiptTime(created.created_at ?? new Date().toISOString()),
           cashier: currentUserName,
           customer: selectedCustomer?.name,
           lines: cart.map((c, i) => ({
@@ -353,6 +354,10 @@ export default function NewSalePage() {
             qty: c.quantity,
             unit_price: c.unit_price,
             line_total: amounts[i].lineTotal,
+            // This screen really does take a per-line discount percent, so the
+            // sales-receipt layout can print it. Price there is before discount.
+            gross_total: amounts[i].subtotal,
+            discount: amounts[i].discount > 0 ? amounts[i].discount : undefined,
           })),
           // The saved invoice's own figures — what the customer was charged.
           subtotal: created.subtotal ?? subtotal,

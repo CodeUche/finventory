@@ -16,7 +16,7 @@ import {
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { inventoryApi, salesApi, tillApi } from '@/services/api'
-import { printReceipt } from '@/lib/receipt'
+import { printReceipt, formatReceiptTime } from '@/lib/receipt'
 import type { ReceiptData } from '@/lib/receipt'
 import { useReceiptDefaults } from '@/hooks/useReceiptDefaults'
 import { formatCurrency, formatDate } from '@/lib/utils'
@@ -314,6 +314,8 @@ export default function PosRegisterPage() {
         ...receiptDefaults,
         invoiceNumber: data?.invoice_number ?? '',
         date: formatDate(data?.issue_date ?? new Date().toISOString()),
+        // The sale is being rung up now, so now is the time of sale.
+        time: formatReceiptTime(new Date().toISOString()),
         cashier: cashierName,
         lines: lines.map((l) => ({
           name: l.product.name, qty: l.quantity,

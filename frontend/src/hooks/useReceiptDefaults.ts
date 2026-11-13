@@ -1,4 +1,6 @@
+import { useEffect } from 'react'
 import { useAuthStore } from '@/store/authStore'
+import { urlToDataUrl } from '@/services/api'
 import type { ReceiptData, ReceiptTemplate } from '@/lib/receipt'
 
 /**
@@ -21,6 +23,19 @@ export type ReceiptDefaults =
 export function useReceiptDefaults(): ReceiptDefaults {
   const organisation = useAuthStore((s) => s.organisation)
   const logoDataUrl = useAuthStore((s) => s.logoDataUrl)
+  const setLogoDataUrl = useAuthStore((s) => s.setLogoDataUrl)
+  const logoUrl = organisation?.logo
+
+  // A cashier who has never opened Settings has the logo's web address but no
+  // local copy. Fetch it once here and keep it, so the print iframe never has to
+  // download it (a cross-origin download would taint the canvas and the logo
+  // would silently vanish from the receipt).
+  useEffect(() => {
+    if (logoDataUrl || !logoUrl) return
+    let cancelled = false
+    void urlToDataUrl(logoUrl).then((d) => { if (d && !cancelled) setLogoDataUrl(d) })
+    return () => { cancelled = true }
+  }, [logoDataUrl, logoUrl, setLogoDataUrl])
 
   return {
     merchant: organisation?.invoice_company_name || organisation?.name || 'Receipt',
@@ -34,6 +49,6 @@ export function useReceiptDefaults(): ReceiptDefaults {
     // never waits on a network fetch. The remote URL is the fallback for a
     // cashier who has never opened Settings; toMonoDataUrl gives up quietly if
     // it cannot be read.
-    logoDataUrl: logoDataUrl ?? organisation?.logo ?? null,
+    logoDataUrl: logoDataUrl ?? logoUrl ?? null,
   }
 }
