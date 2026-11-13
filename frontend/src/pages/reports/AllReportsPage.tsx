@@ -76,6 +76,7 @@ export default function AllReportsPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [catalog, setCatalog] = useState<CatalogEntry[]>([])
   const [catalogLoading, setCatalogLoading] = useState(true)
+  const [catalogFailed, setCatalogFailed] = useState(false)
   const [selected, setSelected] = useState<string | null>(searchParams.get('report'))
   const [payload, setPayload] = useState<ReportPayload | null>(null)
   const [meta, setMeta] = useState<{ label: string; period_label: string } | null>(null)
@@ -90,10 +91,12 @@ export default function AllReportsPage() {
 
   const loadCatalog = useCallback(async () => {
     setCatalogLoading(true)
+    setCatalogFailed(false)
     try {
       const { data } = await reportApi.catalog()
       setCatalog(data.reports ?? [])
     } catch {
+      setCatalogFailed(true)
       toast.error('Failed to load the report catalog')
     } finally {
       setCatalogLoading(false)
@@ -121,12 +124,19 @@ export default function AllReportsPage() {
     }
   }, [period])
 
+  const selectedEntry = catalog.find((r) => r.key === selected) ?? null
+  // The API only lists reports this person may run. A deep link to a report
+  // that is not listed is one they lack permission for: show a plain note and
+  // never call the report (no 403 toast).
+  const blocked = !!selected && !catalogLoading && !catalogFailed && !selectedEntry
+  const canRun = !!selected && !catalogLoading && !blocked
+
   // Re-run whenever the selected report or the period changes.
   useEffect(() => {
-    if (selected) runReport(selected)
-  }, [selected, runReport])
+    if (canRun && selected) runReport(selected)
+  }, [canRun, selected, runReport])
 
-  useDataRefresh(() => { if (selected) runReport(selected) })
+  useDataRefresh(() => { if (canRun && selected) runReport(selected) })
 
   const selectReport = (key: string) => {
     setSelected(key)
@@ -159,8 +169,6 @@ export default function AllReportsPage() {
       .map((c) => ({ ...c, reports: catalog.filter((r) => r.category === c.name && match(r)) }))
       .filter((c) => c.reports.length > 0)
   }, [catalog, query])
-
-  const selectedEntry = catalog.find((r) => r.key === selected) ?? null
 
   // A payload renders as a plain table whenever it's already row-shaped: a
   // bare array (trial-balance), or a dict whose `rows`/`items`/`groups` key
@@ -278,6 +286,11 @@ export default function AllReportsPage() {
               <p className="text-slate-500 text-sm mt-1 max-w-sm">
                 Pick any report from the list. Set the period first — it applies to whichever report you open.
               </p>
+            </div>
+          ) : blocked ? (
+            <div className="flex flex-col items-center justify-center text-center py-24 px-6" data-testid="report-no-access">
+              <BarChart3 size={34} className="text-slate-600 mb-3" />
+              <p className="text-slate-300 font-medium">Some reports need extra permission. Ask an owner or admin.</p>
             </div>
           ) : (
             <>
