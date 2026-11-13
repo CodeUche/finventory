@@ -1,9 +1,13 @@
 /* ============================================================================
-   Audity design kit (.ds) — the designer's page look for list/form screens.
-   Wrap a page in <DsPage> (or give its root class "ds") and its existing
-   buttons, inputs, tables, cards, badges and headings take the new design.
-   Reads the shell's --sh-* tokens, so it follows html.light / dark.
-   Not-yet-designed pages are never wrapped and keep their current look.
+   Audity design kit (.ds) — the designer's look for buttons and modules.
+   The <body> carries class "ds" (index.html), so EVERY screen gets this look:
+   buttons, inputs, tables, cards, badges, pop-ups and headings. <DsPage> and
+   a nested .ds still work (they redefine the same tokens).
+   Follows html.light / dark.
+   TO SWAP IN THE DESIGNER'S EXACT DESIGNS LATER: edit the tokens at the top of
+   this file and the rules in the sections below. The last section
+   ("GLOBAL COVERAGE") only maps the app's old one-off button/card/pop-up
+   class strings onto the same tokens, so it needs no page edits.
    ========================================================================== */
 
 .ds{
@@ -70,11 +74,11 @@ html.light .ds{
 /* ---- buttons ---- */
 .ds .btn-primary{
   background:var(--ds-btn);color:var(--ds-btn-tx);border:1.5px solid transparent;border-radius:8px;
-  font-weight:500;padding:10px 20px;box-shadow:var(--ds-btn-sh);
+  font-weight:500;box-shadow:var(--ds-btn-sh);
 }
 .ds .btn-primary:hover{background:var(--ds-btn);filter:brightness(1.1)}
 .ds .btn-secondary{
-  background:transparent;color:var(--ds-outline-tx);border:1.5px solid var(--ds-outline);border-radius:8px;font-weight:500;padding:10px 20px;
+  background:transparent;color:var(--ds-outline-tx);border:1.5px solid var(--ds-outline);border-radius:8px;font-weight:500;
 }
 .ds .btn-secondary:hover{background:color-mix(in srgb,var(--ds-outline) 10%,transparent)}
 .ds .btn-ghost{color:var(--ds-link);border-radius:8px}
@@ -251,3 +255,71 @@ html.light .ds{--ds-modal-bg:#FCFCF6}
   margin-bottom:16px;padding:10px 14px;border-radius:8px;font-size:13px;
   border:1.5px solid var(--ds-warn);color:var(--ds-warn);background:color-mix(in srgb,var(--ds-warn) 10%,transparent);
 }
+
+/* ============================================================================
+   GLOBAL COVERAGE — maps the app's old one-off class strings onto the kit.
+   Nothing here is page specific. When the designer's exact screens arrive,
+   edit the tokens and rules above; these lines keep every other screen in step.
+   ========================================================================== */
+
+/* ---- every button: disabled, focus ring ---- */
+.ds .btn-primary:disabled, .ds .btn-secondary:disabled, .ds .btn-ghost:disabled, .ds .btn-danger:disabled{
+  opacity:.5;cursor:not-allowed;box-shadow:none;filter:none;
+}
+.ds :is(button,a,[role="button"],[role="tab"],summary,[tabindex="0"]):focus-visible{
+  outline:2px solid var(--ds-link);outline-offset:2px;
+}
+.ds .btn-primary:focus-visible, .ds .btn-secondary:focus-visible, .ds .btn-ghost:focus-visible, .ds .btn-danger:focus-visible{
+  outline:2px solid var(--ds-link);outline-offset:2px;
+}
+.ds .btn-danger:hover{background:color-mix(in srgb,var(--ds-danger) 12%,transparent)}
+.ds .btn-primary, .ds .btn-secondary, .ds .btn-danger{min-height:40px;justify-content:center}
+
+/* ---- old filled buttons (gold / navy / green / amber / red written inline) -> primary ---- */
+.ds :is(button,a,[role="button"]):is(.bg-brand-400,.bg-brand-500,.bg-brand-600,.bg-gold-500,.bg-emerald-500,.bg-emerald-600,.bg-green-500,.bg-green-600,.bg-amber-500,.bg-amber-600,.bg-blue-500,.bg-blue-600):not(.btn-primary):not(.btn-ghost):not(.ds-tab){
+  background:var(--ds-btn);color:var(--ds-btn-tx);border:1.5px solid transparent;border-radius:8px;font-weight:500;box-shadow:var(--ds-btn-sh);
+}
+.ds :is(button,a,[role="button"]):is(.bg-brand-400,.bg-brand-500,.bg-brand-600,.bg-gold-500,.bg-emerald-500,.bg-emerald-600,.bg-green-500,.bg-green-600,.bg-amber-500,.bg-amber-600,.bg-blue-500,.bg-blue-600):not(.btn-primary):not(.btn-ghost):not(.ds-tab):hover:not(:disabled){
+  background:var(--ds-btn);filter:brightness(1.1);
+}
+/* labels and icons inside those buttons follow the button text colour */
+.ds :is(button,a,[role="button"]):is(.bg-brand-400,.bg-brand-500,.bg-brand-600,.bg-gold-500,.bg-emerald-500,.bg-emerald-600,.bg-green-500,.bg-green-600,.bg-amber-500,.bg-amber-600,.bg-blue-500,.bg-blue-600) :is(.text-white,.text-always-white,.text-surface-950,.text-slate-100,.text-slate-200){color:inherit !important}
+
+/* ---- old solid red buttons and red tint buttons -> danger (outlined) ---- */
+.ds :is(button,a,[role="button"]):is(.bg-red-500,.bg-red-600,.bg-red-500\/10,.bg-red-500\/15,.bg-red-500\/20):not(.btn-primary){
+  background:transparent;color:var(--ds-danger);border:1.5px solid var(--ds-danger);border-radius:8px;font-weight:500;box-shadow:none;
+}
+.ds :is(button,a,[role="button"]):is(.bg-red-500,.bg-red-600,.bg-red-500\/10,.bg-red-500\/15,.bg-red-500\/20):not(.btn-primary):hover:not(:disabled){
+  background:color-mix(in srgb,var(--ds-danger) 12%,transparent);filter:none;
+}
+.ds :is(button,a,[role="button"]):is(.bg-red-500,.bg-red-600) :is(.text-white,.text-always-white){color:inherit !important}
+
+/* ---- old tinted / grey buttons -> secondary (outlined) ---- */
+.ds :is(button,a,[role="button"]):is(.bg-surface-700,.bg-surface-600,.bg-brand-500\/10,.bg-brand-500\/15,.bg-brand-500\/20,.bg-brand-500\/25):not(.btn-primary):not(.btn-ghost):not(.ds-tab):not(.sidebar-item):not(.sidebar-item-active):not([role="tab"]){
+  background:transparent;color:var(--ds-outline-tx);border:1.5px solid var(--ds-outline);border-radius:8px;font-weight:500;
+}
+.ds :is(button,a,[role="button"]):is(.bg-surface-700,.bg-surface-600,.bg-brand-500\/10,.bg-brand-500\/15,.bg-brand-500\/20,.bg-brand-500\/25):not(.btn-primary):not(.btn-ghost):not(.ds-tab):not(.sidebar-item):not(.sidebar-item-active):not([role="tab"]):hover:not(:disabled){
+  background:color-mix(in srgb,var(--ds-outline) 12%,transparent);
+}
+
+/* ---- icon buttons and text buttons that only change colour on hover ---- */
+.ds :is(button,a):is([class*="hover:bg-surface-"],[class*="hover:bg-brand-"]):not(.btn-primary):not(.btn-secondary):not(.sidebar-item):not(.sidebar-item-active):hover:not(:disabled){
+  background:color-mix(in srgb,var(--ds-link) 12%,transparent);
+}
+.ds button[class*="hover:text-white"]:hover, .ds button[class*="hover:text-slate-200"]:hover{color:var(--ds-link)}
+
+/* ---- pop-ups: solid panel with the kit border, so the page behind never shows through ---- */
+.ds .fixed.inset-0 :is(.card, .card-sm, .bg-surface-800, .bg-surface-900):not(.absolute){
+  background:var(--ds-modal-bg);border:1.5px solid var(--ds-link);border-radius:16px;
+  backdrop-filter:none;-webkit-backdrop-filter:none;
+}
+.ds .fixed.inset-0 :is(.card, .card-sm, .bg-surface-800, .bg-surface-900) :is(.card, .card-sm, .bg-surface-800, .bg-surface-900){
+  background:var(--ds-card);border:1.5px solid var(--ds-card-bd);border-radius:12px;
+}
+.ds [role="dialog"] h2{font-size:20px;font-weight:700}
+
+/* ---- tab strips written as underlined buttons: keep the kit colours ---- */
+.ds .border-brand-500, .ds .border-brand-400{border-color:var(--ds-link)}
+.ds .bg-brand-500\/15:not(button):not(a), .ds .bg-brand-500\/10:not(button):not(a){background-color:color-mix(in srgb,var(--ds-link) 14%,transparent)}
+.ds .border-brand-500\/30{border-color:color-mix(in srgb,var(--ds-link) 40%,transparent)}
+.ds .focus\:border-brand-500:focus{border-color:var(--ds-link)}

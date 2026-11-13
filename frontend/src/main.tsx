@@ -11,6 +11,7 @@ import { initAnalytics } from './lib/analytics'
 import { checkForUpdates } from './lib/updater'
 import { retryPendingWipe, migrateLegacySavedData } from './lib/localDataGuard'
 import './index.css'
+import './styles/ds.css'
 
 // Apply stored theme before first render to avoid flash
 initTheme()
