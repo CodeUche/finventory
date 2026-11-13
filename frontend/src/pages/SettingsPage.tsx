@@ -2973,15 +2973,15 @@ export default function SettingsPage() {
                 Your logo, address and TIN come from your Profile &mdash; you never re-type them here.
               </p>
             </div>
-            <div className="flex flex-col xl:flex-row gap-5 items-start">
+            <div className="flex flex-col min-[1800px]:flex-row min-[1800px]:items-start gap-5">
             {/* What will print, at a readable size. Follows the pick, the closing message and the logo at once. */}
-            <div className="w-full xl:w-[330px] shrink-0 xl:sticky xl:top-4">
+            <div className="w-full max-w-[330px] mx-auto min-[1800px]:mx-0 min-[1800px]:shrink-0 min-[1800px]:sticky min-[1800px]:top-4">
               <p className="text-xs font-medium text-slate-300 mb-2">Selected receipt &middot; {RECEIPT_TEMPLATES.find((t) => t.value === (company.receipt_template || 'compact'))?.label}</p>
-              <div className="max-w-[330px]">
+              <div>
                 <ReceiptPreview template={(company.receipt_template || 'compact') as ReceiptTemplate} business={receiptBusiness} />
               </div>
             </div>
-            <div className="grid grid-cols-2 2xl:grid-cols-3 gap-4 flex-1 min-w-0">
+            <div className="grid grid-cols-2 min-[2200px]:grid-cols-3 gap-3 min-w-0 flex-1">
               {RECEIPT_TEMPLATES.map((tmpl) => (
                 <button
                   key={tmpl.value}
@@ -2989,7 +2989,7 @@ export default function SettingsPage() {
                     setCompany((c: typeof company) => ({ ...c, receipt_template: tmpl.value }))
                     saveReceiptTemplate(tmpl.value)
                   }}
-                  className={`text-left rounded-xl border-2 transition-all overflow-hidden ${
+                  className={`flex flex-col justify-start text-left rounded-xl border-2 transition-all overflow-hidden ${
                     company.receipt_template === tmpl.value
                       ? 'border-brand-500'
                       : 'border-surface-700 hover:border-surface-500'

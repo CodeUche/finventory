@@ -75,14 +75,25 @@ export default function ReceiptPreview({ template, business }: Props) {
   }, [])
 
   const html = useMemo(
-    () => buildReceiptHtml({ ...SAMPLE_SALE, ...business, logoDataUrl: mono, template }),
+    // The preview page never scrolls: overflow is hidden so a scrollbar can never
+    // eat 15px of width and cut the right edge off the receipt.
+    () => buildReceiptHtml({ ...SAMPLE_SALE, ...business, logoDataUrl: mono, template })
+      .replace('<html>', '<html style="overflow: hidden">')
+      .replace('<body style="', '<body style="overflow: hidden; '),
     [business, mono, template],
   )
 
   const measure = () => {
-    const h = frame.current?.contentDocument?.documentElement?.scrollHeight
-    if (h) setHeight(h)
+    const h = frame.current?.contentDocument?.body?.scrollHeight
+    if (h) setHeight((prev) => (Math.abs(prev - h) > 1 ? h : prev))
   }
+
+  // Re-measure after the logo and fonts have settled, not only on the first load.
+  useEffect(() => {
+    const t1 = window.setTimeout(measure, 60)
+    const t2 = window.setTimeout(measure, 400)
+    return () => { window.clearTimeout(t1); window.clearTimeout(t2) }
+  }, [html])
 
   const scale = boxWidth / PAPER_PX
 
@@ -98,6 +109,7 @@ export default function ReceiptPreview({ template, business }: Props) {
         title={`${template} receipt preview`}
         srcDoc={html}
         sandbox="allow-same-origin"
+        scrolling="no"
         tabIndex={-1}
         aria-hidden="true"
         onLoad={measure}
