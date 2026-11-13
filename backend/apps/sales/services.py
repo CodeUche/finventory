@@ -1158,8 +1158,14 @@ class SaleService:
                 till_session=SaleService._open_till_for(organisation, processed_by) if payout_tender == "cash" else None,
             )
 
-        # Update AR if credit sale
-        if ar_part > 0 and invoice.customer and invoice.payment_method == Invoice.PaymentMethod.CREDIT:
+        # Update the customer's own balance whenever money is kept "on account"
+        # rather than paid out -- not just for an originally-credit sale. A cash
+        # or bank-paid invoice refunded to account leaves the customer in credit
+        # (CreditService.record_payment already supports going negative, M5): the
+        # GL's AR line and the customer's CreditTransaction ledger must move
+        # together, or the customer's own balance never reflects money the
+        # business now owes them back, even though the books show it.
+        if ar_part > 0 and invoice.customer:
             from apps.credits.services import CreditService
             CreditService.record_payment(
                 organisation=organisation,
