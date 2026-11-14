@@ -26,7 +26,7 @@ export const DS_CHART = {
  */
 export const CHART_SERIES = [
   DS_CHART.primary, DS_CHART.accent, DS_CHART.secondary, DS_CHART.sky,
-  DS_CHART.tertiary, DS_CHART.lilac, DS_CHART.neutral, '#1558EA',
+  DS_CHART.tertiary, DS_CHART.lilac, DS_CHART.neutral, '#4933FF', '#565DDC', '#2C35D3',
 ] as const
 
 /** Ageing buckets, healthy to critical. */

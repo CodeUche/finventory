@@ -66,7 +66,7 @@ type TabId = (typeof TABS)[number]['id']
 // ─── Shared chart palette & tooltip style ────────────────────────────────────
 
 /** Standard palette; index-0 is always the theme-aware brand accent. */
-const STATIC_COLORS = [...CHART_SERIES.slice(0, 6)]
+const STATIC_COLORS = [...CHART_SERIES]
 
 /** Aging bucket colours: healthy → critical */
 const AGING_COLORS = [...AGING_SERIES]
@@ -178,7 +178,7 @@ export default function ReportsPage() {
   const { organisation } = useAuthStore()
   const accent           = useThemeAccent()
   /** Full palette with brand accent at position 0 */
-  const colors           = [accent, ...STATIC_COLORS]
+  const colors           = STATIC_COLORS
 
   const [searchParams, setSearchParams] = useSearchParams()
 
@@ -517,10 +517,10 @@ export default function ReportsPage() {
     const net     = parseFloat(pnl.net_profit)
 
     return [
-      { name: 'Revenue',      start: 0,       value: revenue, fill: DS_CHART.good, label: formatCurrency(String(revenue)) },
-      { name: '– COGS',       start: gp,       value: cogs,   fill: DS_CHART.bad, label: `(${formatCurrency(String(cogs))})` },
-      { name: 'Gross Profit', start: 0,       value: gp,      fill: DS_CHART.primary, label: formatCurrency(String(gp)) },
-      { name: '– Op Expenses',start: net,     value: opex,    fill: DS_CHART.warn, label: `(${formatCurrency(String(opex))})` },
+      { name: 'Revenue',      start: 0,       value: revenue, fill: DS_CHART.primary, label: formatCurrency(String(revenue)) },
+      { name: '– COGS',       start: gp,       value: cogs,   fill: DS_CHART.secondary, label: `(${formatCurrency(String(cogs))})` },
+      { name: 'Gross Profit', start: 0,       value: gp,      fill: DS_CHART.sky, label: formatCurrency(String(gp)) },
+      { name: '– Op Expenses',start: net,     value: opex,    fill: DS_CHART.tertiary, label: `(${formatCurrency(String(opex))})` },
       { name: 'Net Profit',   start: 0,       value: net,     fill: net >= 0 ? DS_CHART.good : DS_CHART.bad, label: formatCurrency(String(net)) },
     ]
   }, [pnl])
@@ -707,7 +707,7 @@ export default function ReportsPage() {
                       itemStyle={tooltipItemStyle} formatter={(v: number) => formatCurrency(String(v))} />
                     <Legend wrapperStyle={{ fontSize: 11, paddingTop: 12, color: '#94a3b8' }} />
                     <Bar dataKey="Revenue" stackId="a" fill={accent}  radius={[0, 0, 0, 0]} />
-                    <Bar dataKey="COGS"    stackId="b" fill={DS_CHART.bad} radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="COGS"    stackId="b" fill={DS_CHART.secondary} radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               )}
@@ -790,7 +790,7 @@ export default function ReportsPage() {
           {/* AR Aging summary mini + VAT Summary */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <AgingCard title="Accounts Receivable Aging" aging={arAging} loading={loading}
-              iconColor="text-amber-400" />
+              iconColor="text-brand-400" />
             <div className="card p-5">
               <div className="flex items-center justify-between gap-2 mb-4">
                 <div className="flex items-center gap-2">
@@ -980,7 +980,7 @@ export default function ReportsPage() {
                     }
                   />
                   {/* Invisible stacking base — gives bars their floating appearance */}
-                  <Bar dataKey="start" stackId="w" fill="transparent" legendType="none" />
+                  <Bar dataKey="start" stackId="w" fill="transparent" legendType="none" tooltipType="none" />
                   {/* Coloured segment — each entry has its own fill via Cell */}
                   <Bar dataKey="value" stackId="w" radius={[4, 4, 0, 0]} minPointSize={3}>
                     {waterfallData.map((entry, i) => (
@@ -1008,11 +1008,11 @@ export default function ReportsPage() {
               <h3 className="text-sm font-semibold text-slate-300 mb-4">Revenue vs Costs — % of Net Sales</h3>
               <div className="space-y-3">
                 {[
-                  { label: 'Net Sales',          value: parseFloat(pnl.revenue.gross_sales),    color: 'bg-brand-500' },
-                  { label: 'Tax Collected',       value: parseFloat(pnl.revenue.tax_collected),  color: 'bg-blue-500' },
-                  { label: 'Discounts',           value: parseFloat(pnl.revenue.discounts),      color: 'bg-yellow-500' },
-                  { label: 'COGS',                value: parseFloat(pnl.cost_of_goods_sold),     color: 'bg-red-500' },
-                  { label: 'Operating Expenses',  value: parseFloat(pnl.operating_expenses),     color: 'bg-orange-500' },
+                  { label: 'Net Sales',          value: parseFloat(pnl.revenue.gross_sales),    color: 'bg-[#4479EE]' },
+                  { label: 'Tax Collected',       value: parseFloat(pnl.revenue.tax_collected),  color: 'bg-[#739BF2]' },
+                  { label: 'Discounts',           value: parseFloat(pnl.revenue.discounts),      color: 'bg-[#ABAEED]' },
+                  { label: 'COGS',                value: parseFloat(pnl.cost_of_goods_sold),     color: 'bg-[#8086E5]' },
+                  { label: 'Operating Expenses',  value: parseFloat(pnl.operating_expenses),     color: 'bg-[#7766FF]' },
                   { label: 'Net Profit',          value: parseFloat(pnl.net_profit), color: parseFloat(pnl.net_profit) >= 0 ? 'bg-emerald-500' : 'bg-red-600' },
                 ].map(({ label, value, color }) => {
                   const gross = parseFloat(pnl.revenue.gross_sales) || 1
@@ -1339,7 +1339,7 @@ export default function ReportsPage() {
             {/* DSO / DPO derived metrics shown as badges */}
             {arAging && pnl && (
               <div className="flex items-center gap-2">
-                <span className="text-xs px-2 py-1 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400">
+                <span className="text-xs px-2 py-1 rounded-lg bg-brand-500/10 border border-brand-500/20 text-brand-400">
                   AR Outstanding: {formatCurrency(arAging.total_outstanding)}
                 </span>
                 {apAging && (
