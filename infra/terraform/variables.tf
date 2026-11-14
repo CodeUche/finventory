@@ -307,3 +307,9 @@ variable "throttle_exempt_emails" {
   type        = string
   default     = "ci.smoke@audity.africa"
 }
+
+variable "webhook_legacy_grace_until" {
+  description = "ISO date (YYYY-MM-DD). Webhooks created before the Custom Webhooks entitlement gate (0.3.56) keep delivering until this date, then pause unless the org holds the entitlement. Set 30 days from the 0.3.56 backend deploy. Empty pauses them immediately."
+  type        = string
+  default     = "2026-12-12"
+}

@@ -138,6 +138,9 @@ locals {
     # real domain + HTTPS listener replaces the raw ALB DNS name (Phase 8).
     { name = "ALLOWED_HOSTS", value = "${aws_lb.main.dns_name},*" },
     { name = "TIME_ZONE", value = "Africa/Lagos" },
+    # Webhook subscriptions made before the 0.3.56 entitlement gate keep delivering
+    # until this date. Empty = pause them at once. See variables.tf.
+    { name = "WEBHOOK_LEGACY_GRACE_UNTIL", value = var.webhook_legacy_grace_until },
     { name = "CORS_ALLOWED_ORIGINS", value = local.cors_origins },
     { name = "CSRF_TRUSTED_ORIGINS", value = local.cors_origins },
     { name = "USE_S3", value = "True" },
