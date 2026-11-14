@@ -746,9 +746,9 @@ export default function PayrollPage() {
                 <p className="text-xs text-slate-400">Total Net Pay</p>
                 <p className="text-xl font-bold text-emerald-400 mt-1">{formatCurrency(latestRun.total_net)}</p>
               </div>
-              <div className="card p-4 border border-amber-500/20 bg-amber-500/5">
-                <p className="text-xs text-amber-400 flex items-center gap-1"><TrendingUp size={11} /> Cash Outflow</p>
-                <p className="text-xl font-bold text-amber-300 mt-1">{formatCurrency(totalCashOutflow)}</p>
+              <div className="card p-4">
+                <p className="text-xs text-slate-400 flex items-center gap-1"><TrendingUp size={11} /> Cash Outflow</p>
+                <p className="text-xl font-bold text-white mt-1">{formatCurrency(totalCashOutflow)}</p>
                 <p className="text-[10px] text-slate-500 mt-0.5">Net + Employer costs</p>
               </div>
             </div>

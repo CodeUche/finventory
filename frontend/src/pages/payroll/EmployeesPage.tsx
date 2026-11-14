@@ -460,7 +460,7 @@ export default function EmployeesPage() {
   const loanPreview = calcLoanPreview(loanForm)
 
   const PENALTY_STATUS_COLOR: Record<string, string> = {
-    pending: 'badge-orange', applied: 'badge-green', waived: 'badge-slate',
+    pending: 'badge-yellow', applied: 'badge-green', waived: 'badge-slate',
   }
   const LOAN_STATUS_COLOR: Record<string, string> = {
     pending: 'badge-amber', active: 'badge-blue', settled: 'badge-green',

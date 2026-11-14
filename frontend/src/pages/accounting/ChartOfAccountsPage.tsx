@@ -15,7 +15,7 @@ const TYPE_BADGE: Record<string, string> = {
   liability: 'badge-red',
   equity: 'badge-blue',
   revenue: 'badge-orange',
-  expense: 'badge-yellow',
+  expense: 'badge-slate',
   cogs: 'badge-slate',
 }
 
@@ -320,14 +320,14 @@ export default function ChartOfAccountsPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-white">Chart of Accounts</h1>
+      <div className="flex flex-col xl:flex-row xl:items-center gap-4">
+        <div className="shrink-0">
+          <h1 className="text-2xl font-bold text-white whitespace-nowrap">Chart of Accounts</h1>
           <p className="text-slate-400 text-sm">
             {typeFilter === 'all' ? `${totalCount} accounts` : `${filteredAccounts.length} ${typeLabel(typeFilter)} accounts`}
           </p>
         </div>
-        <div className="sm:ml-auto flex gap-2 flex-wrap">
+        <div className="xl:ml-auto flex gap-2 flex-wrap items-center">
           <button onClick={() => { bypassNextGets(); load() }} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
           </button>

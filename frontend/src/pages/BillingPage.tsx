@@ -729,7 +729,7 @@ const PARTNER_TIERS = [
 
 const PARTNER_COLOR: Record<string, { border: string; badge: string; icon: string }> = {
   'partner-starter': { border: 'border-slate-600/50', badge: '', icon: 'text-slate-400' },
-  'partner-pro':     { border: 'border-amber-500/50 ring-1 ring-amber-500/20', badge: 'bg-amber-500 text-[#332900]', icon: 'text-amber-400' },
+  'partner-pro':     { border: 'border-brand-500/50 ring-1 ring-brand-500/20', badge: 'bg-[#1558EA] text-always-white', icon: 'text-brand-400' },
   'partner-agency':  { border: 'border-purple-500/40 ring-1 ring-purple-500/20', badge: 'bg-[#110099] text-always-white', icon: 'text-purple-400' },
 }
 

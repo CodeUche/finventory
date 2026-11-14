@@ -36,10 +36,10 @@ const SUB_BADGE: Record<string, string> = {
   none: 'badge-slate', past_due: 'badge-red',
 }
 const TICKET_STATUS_BADGE: Record<string, string> = {
-  open: 'badge-blue', in_progress: 'badge-orange', resolved: 'badge-green', closed: 'badge-slate',
+  open: 'badge-blue', in_progress: 'badge-yellow', resolved: 'badge-green', closed: 'badge-slate',
 }
 const TICKET_PRIORITY_BADGE: Record<string, string> = {
-  low: 'badge-slate', normal: 'badge-blue', high: 'badge-orange', urgent: 'badge-red',
+  low: 'badge-slate', normal: 'badge-blue', high: 'badge-yellow', urgent: 'badge-red',
 }
 const TICKET_STATUSES: { value: string; label: string }[] = [
   { value: 'open', label: 'Open' }, { value: 'in_progress', label: 'In Progress' },

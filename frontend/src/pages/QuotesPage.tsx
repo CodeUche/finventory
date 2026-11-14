@@ -735,7 +735,7 @@ export default function QuotesPage() {
                               <span className="text-slate-400">Qty: {item.quantity}</span>
                               <span className="text-slate-400">@ {formatCurrency(item.unit_price)}</span>
                               {parseFloat(item.discount_percent) > 0 && (
-                                <span className="badge-yellow">{item.discount_percent}% off</span>
+                                <span className="badge-blue">{item.discount_percent}% off</span>
                               )}
                               <span className="text-white font-semibold">{formatCurrency(item.line_total)}</span>
                             </div>

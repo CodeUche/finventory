@@ -43,7 +43,7 @@ const STATUS_COLOR: Record<string, string> = {
   received: 'badge-slate',
   draft: 'badge-slate',
   overdue: 'badge-red',
-  partially_paid: 'badge-orange',
+  partially_paid: 'badge-yellow',
   voided: 'badge-red',
 }
 

@@ -515,7 +515,7 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
       </div>
 
       {/* Filters */}
-      <div className="flex flex-col sm:flex-row gap-3">
+      <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
         <div className="relative flex-1 max-w-sm">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
           <input
@@ -594,7 +594,7 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
                         <p className="text-xs text-slate-500">{c.code}</p>
                       </td>
                       <td className="px-5 py-3.5">
-                        <span className={getStatusColor(c.customer_type === 'retail' ? 'confirmed' : c.customer_type === 'wholesale' ? 'partially_paid' : 'credit')}>
+                        <span className={getStatusColor(c.customer_type === 'retail' ? 'confirmed' : c.customer_type === 'wholesale' ? 'credit' : 'returned')}>
                           {c.customer_type}
                         </span>
                       </td>

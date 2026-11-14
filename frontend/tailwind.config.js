@@ -41,10 +41,13 @@ export default {
         gold: {
           300: '#D2CCFF', 400: '#A499FF', 500: '#7766FF', 600: '#4933FF', 700: '#1600CC',
         },
-        // The kit has no orange. Caution tones that used orange now use the kit's warning yellow.
+        // The kit has no orange. Old `orange-*` emphasis colours now use the brand accent
+        // (blue / lavender). Real warnings use amber / yellow below.
         orange: {
-          50: '#FFFDF5', 100: '#FFF9E1', 200: '#FFF5CC', 300: '#FFEA99', 400: '#FED634',
-          500: '#FECB01', 600: '#CBA301', 700: '#987A01', 800: '#665100', 900: '#332900', 950: '#332900',
+          50: '#F6F8FE', 100: '#ECF2FD', 200: '#D0DEFB',
+          300: 'rgb(var(--brand-300) / <alpha-value>)', 400: 'rgb(var(--brand-400) / <alpha-value>)',
+          500: 'rgb(var(--brand-500) / <alpha-value>)', 600: 'rgb(var(--brand-600) / <alpha-value>)',
+          700: '#0D358C', 800: '#09235D', 900: '#04122F', 950: '#030B1C',
         },
         // The designer's warning colour is a clear yellow (#FECB01). amber / yellow
         // utilities (kept for real warnings) use that ramp, not Tailwind's orange-ish amber.
