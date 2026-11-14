@@ -2269,7 +2269,7 @@ class AccountingService:
         input_vat_acct = AccountMappingService.resolve(organisation, 'vat_input_account') if vat > 0 else None
 
         # Split the net cost between capitalised lines (→ 1500) and expenses.
-        items = list(bill.items.all())
+        items = list(bill.items.select_related('product').all())
         capital_items = [it for it in items if getattr(it, 'capitalise', False)]
         all_lines_total = sum((Decimal(str(it.line_total or 0)) for it in items), zero)
         capital_lines_total = sum((Decimal(str(it.line_total or 0)) for it in capital_items), zero)
@@ -2279,24 +2279,66 @@ class AccountingService:
         if fa_acct and capital_lines_total > 0 and all_lines_total > 0:
             capital_net = (net_cost * capital_lines_total / all_lines_total).quantize(Decimal('0.01'))
             capital_net = min(capital_net, net_cost)
-        expense_net = net_cost - capital_net
+
+        # Stocked lines: a manual bill line linked to a stock-tracked (physical)
+        # product is goods bought for resale. It goes to Inventory (the product's
+        # own account, its item-class default, else the mapped inventory account),
+        # NOT to expense, and the stock is received below. A bill raised from a
+        # purchase order never does this: the PO's own receipt already booked and
+        # received the goods. Capitalised lines stay capitalised.
+        stock_items = []
+        if not bill.source_purchase_order_id:
+            stock_items = [
+                it for it in items
+                if it.product_id and it.product.product_type == 'physical'
+                and not getattr(it, 'capitalise', False)
+            ]
+        stock_buckets = {}          # inventory account id -> [account, net]
+        stock_net = zero
+        stock_item_net = {}         # item id -> net share (for the stock cost)
+        warehouse = None
+        if stock_items and all_lines_total > 0:
+            warehouse = AccountingService.default_receiving_warehouse(organisation)
+            class_defaults = AccountMappingService.get_item_class_defaults(organisation)
+            mapped_inventory = AccountMappingService.resolve(organisation, 'inventory_account')
+            for it in stock_items:
+                share = (net_cost * Decimal(str(it.line_total or 0)) / all_lines_total).quantize(Decimal('0.01'))
+                share = min(share, net_cost - capital_net - stock_net)
+                if share <= 0:
+                    continue
+                row = class_defaults.get(it.product.product_type)
+                inv_acct = it.product.inventory_account or (getattr(row, 'inventory_account', None) if row else None) \
+                    or mapped_inventory
+                slot = stock_buckets.setdefault(inv_acct.id, [inv_acct, zero])
+                slot[1] += share
+                stock_net += share
+                stock_item_net[it.id] = share
+        expense_net = net_cost - capital_net - stock_net
 
         lines = []
         if expense_net > 0:
             lines.append((expense_acct, expense_net, zero))   # DR Expense (VAT-exclusive)
+        for inv_acct, amt in stock_buckets.values():
+            lines.append((inv_acct, amt, zero))                # DR Inventory (stocked lines)
         if capital_net > 0:
             lines.append((fa_acct, capital_net, zero))         # DR Fixed Assets (capitalised)
         if vat > 0:
             lines.append((input_vat_acct, vat, zero))          # DR Input VAT Receivable
         lines.append((ap_acct, zero, total))                   # CR Accounts Payable (gross)
 
-        entry = AccountingService.post_journal_entry(
-            organisation, f"Bill approved {bill.bill_number}", bill.issue_date,
-            lines, user,
-            ref=bill.bill_number,
-            source_type='bill_approved',
-            source_ref=str(bill.id),
-        )
+        # Journal and stock receipt succeed or fail together.
+        with transaction.atomic():
+            entry = AccountingService.post_journal_entry(
+                organisation, f"Bill approved {bill.bill_number}", bill.issue_date,
+                lines, user,
+                ref=bill.bill_number,
+                source_type='bill_approved',
+                source_ref=str(bill.id),
+            )
+            for it in stock_items:
+                if it.id in stock_item_net:
+                    AccountingService._receive_bill_line_stock(
+                        organisation, bill, it, stock_item_net[it.id], warehouse, user)
 
         # Register the FixedAsset(s) for capitalised lines (idempotent; no separate JE).
         if capital_net > 0 and all_lines_total > 0:
@@ -2311,6 +2353,40 @@ class AccountingService:
                 )
 
         return entry
+
+    @staticmethod
+    def default_receiving_warehouse(organisation):
+        """Where stock bought on a manual bill is received: the organisation's default
+        warehouse, else its oldest active warehouse. Raises a plain error when there is none."""
+        from apps.inventory.models import Warehouse
+        qs = Warehouse.objects.filter(organisation=organisation)
+        wh = qs.filter(is_default=True).first() or qs.filter(is_active=True).order_by('created_at').first() \
+            or qs.order_by('created_at').first()
+        if wh is None:
+            raise ValueError("This bill buys stock but there is no warehouse to receive it into. "
+                             "Add a warehouse first, then retry from GL Health.")
+        return wh
+
+    @staticmethod
+    def _receive_bill_line_stock(organisation, bill, item, net_share, warehouse, user):
+        """Receive a stocked bill line into the warehouse once (idempotent per bill line)."""
+        from apps.inventory.models import StockMovement
+        from apps.inventory.services import InventoryService
+        reference = f"BILL-{bill.bill_number}"[:100]
+        note = f"Bill line {item.id}"
+        if StockMovement.objects.filter(
+                organisation=organisation, product=item.product, movement_type='purchase_in',
+                reference=reference, notes=note).exists():
+            return None
+        qty = Decimal(str(item.quantity))
+        if qty <= 0:
+            return None
+        return InventoryService.record_movement(
+            organisation=organisation, product=item.product, warehouse=warehouse,
+            quantity=qty, movement_type='purchase_in',
+            unit_cost=(net_share / qty).quantize(Decimal('0.0001')),
+            reference=reference, notes=note, created_by=user,
+        )
 
     @staticmethod
     def post_bill_payment_journal(organisation, bill, payment, user=None):

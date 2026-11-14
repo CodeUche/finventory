@@ -841,3 +841,133 @@ class CloseYearFollowsFiscalYearTests(TestCase):
         res = AccountingService.close_year(self.org, 2026, created_by=self.user)
         self.assertEqual(res["net_profit"], D("300"))
         self.assertEqual(bal(self.org, "3100"), D("700"))
+
+
+class StockedBillLineTests(TestCase):
+    """B1: a manual bill line for a stocked product goes to Inventory and receives the stock."""
+
+    def setUp(self):
+        from apps.inventory.models import Product, Warehouse
+        from apps.suppliers.models import Supplier
+        self.user, self.org = _setup("sb_owner@example.com", "SB Org")
+        self.supplier = Supplier.objects.create(organisation=self.org, name="Wholesaler")
+        self.wh = Warehouse.objects.create(organisation=self.org, name="Main", is_default=True)
+        self.widget = Product.objects.create(
+            organisation=self.org, sku="W-1", name="Widget", product_type="physical",
+            selling_price=D("150"), cost_price=D("100"))
+        self.consult = Product.objects.create(
+            organisation=self.org, sku="S-1", name="Delivery service", product_type="service",
+            selling_price=D("50"), cost_price=D("0"))
+
+    def _bill(self, items, tax="75", status="approved"):
+        from apps.bills.services import BillService
+        return BillService.create_bill(
+            {"supplier": self.supplier, "folder": None, "issue_date": timezone.now().date(),
+             "due_date": timezone.now().date(), "reference": "", "tax_amount": D(tax),
+             "notes": "", "status": status},
+            items, self.org, self.user)
+
+    def _stock(self, product=None):
+        from apps.inventory.models import StockItem
+        si = StockItem.objects.filter(organisation=self.org, product=product or self.widget).first()
+        return si.quantity_on_hand if si else ZERO
+
+    def test_trader_scenario_buy_10_sell_10_profit_500(self):
+        from apps.customers.models import Customer
+        from apps.sales.services import SaleService
+        bill = self._bill([{"description": "Widgets", "quantity": D("10"), "unit_cost": D("100"),
+                            "product_id": self.widget.id}])
+        bill.refresh_from_db()
+        self.assertEqual(bill.gl_post_status, "posted")
+        self.assertEqual(bal(self.org, "1200"), D("1000"))        # DR Inventory
+        self.assertEqual(bal(self.org, "1400"), D("75"))          # DR Input VAT
+        self.assertEqual(bal(self.org, "2001"), D("1075"))        # CR AP
+        self.assertEqual(bal(self.org, "6700"), ZERO)             # no Other Expenses charge
+        self.assertEqual(self._stock(), D("10"))
+
+        cust = Customer.objects.create(organisation=self.org, name="Buyer", email="b@example.com")
+        SaleService.create_sale(
+            organisation=self.org, customer=cust, warehouse=self.wh,
+            items=[{"product_id": self.widget.id, "quantity": 10, "unit_price": D("150")}],
+            payment_method="cash", created_by=self.user)
+        self.assertEqual(bal(self.org, "5001"), D("1000"))        # COGS once
+        self.assertEqual(bal(self.org, "1200"), ZERO)             # Inventory back to 0
+        self.assertEqual(self._stock(), ZERO)
+        # Revenue 1,500 (no VAT on this sale) less COGS 1,000 = profit 500.
+        self.assertEqual(bal(self.org, "4001") - bal(self.org, "5001") - bal(self.org, "6700"), D("500"))
+        self.assertEqual(JournalEntry.objects.filter(organisation=self.org, source_type="sale_cogs").count(), 1)
+
+    def test_service_and_unlinked_lines_stay_expensed_and_mixed_bill_splits_by_line(self):
+        self._bill([
+            {"description": "Widgets", "quantity": D("10"), "unit_cost": D("100"), "product_id": self.widget.id},
+            {"description": "Delivery", "quantity": D("1"), "unit_cost": D("200"), "product_id": self.consult.id},
+            {"description": "Tea", "quantity": D("1"), "unit_cost": D("300")},
+        ], tax="0")
+        self.assertEqual(bal(self.org, "1200"), D("1000"))
+        self.assertEqual(bal(self.org, "6700"), D("500"))
+        self.assertEqual(bal(self.org, "2001"), D("1500"))
+        self.assertEqual(self._stock(), D("10"))
+        self.assertEqual(self._stock(self.consult), ZERO)
+
+    def test_product_own_inventory_account_is_used(self):
+        stock_acct = Account.objects.create(organisation=self.org, code="1220", name="Widget stock",
+                                            account_type=AccountType.ASSET)
+        self.widget.inventory_account = stock_acct
+        self.widget.save()
+        self._bill([{"description": "Widgets", "quantity": D("4"), "unit_cost": D("100"),
+                     "product_id": self.widget.id}], tax="0")
+        self.assertEqual(AccountingService._ledger_balance(stock_acct), D("400"))
+        self.assertEqual(bal(self.org, "1200"), ZERO)
+
+    def test_bill_from_a_purchase_order_never_receives_stock_again(self):
+        from apps.bills.models import Bill, BillItem
+        from apps.purchases.models import PurchaseOrder
+        po = PurchaseOrder.objects.create(
+            organisation=self.org, supplier=self.supplier, warehouse=self.wh, po_number="PO-SB-1",
+            order_date=timezone.now().date(), status=PurchaseOrder.Status.SENT, created_by=self.user)
+        bill = Bill.objects.create(
+            organisation=self.org, supplier=self.supplier, bill_number="B-PO-SB", status=Bill.APPROVED,
+            issue_date=timezone.now().date(), due_date=timezone.now().date(), subtotal=D("1000"),
+            total_amount=D("1000"), amount_due=D("1000"), source_purchase_order=po, created_by=self.user)
+        BillItem.objects.create(organisation=self.org, bill=bill, description="x", quantity=D("10"),
+                                unit_cost=D("100"), line_total=D("1000"), product=self.widget)
+        AccountingService.post_bill_approved_journal(self.org, bill, self.user)
+        self.assertEqual(self._stock(), ZERO)
+        self.assertEqual(bal(self.org, "1200"), ZERO)
+
+    def test_no_warehouse_flags_the_bill_and_retry_receives_the_stock_once(self):
+        from apps.inventory.models import Warehouse
+        Warehouse.objects.filter(organisation=self.org).delete()
+        bill = self._bill([{"description": "Widgets", "quantity": D("10"), "unit_cost": D("100"),
+                            "product_id": self.widget.id}])
+        bill.refresh_from_db()
+        self.assertEqual(bill.gl_post_status, "failed")
+        self.assertIn("warehouse", bill.gl_post_error)
+        self.assertEqual(bal(self.org, "1200"), ZERO)             # nothing half-posted
+        Warehouse.objects.create(organisation=self.org, name="Main", is_default=True)
+        ok, err = AccountingService.retry_gl_post(self.org, "bill", str(bill.id), self.user)
+        self.assertTrue(ok, err)
+        self.assertEqual(self._stock(), D("10"))
+        self.assertEqual(bal(self.org, "1200"), D("1000"))
+        AccountingService.retry_gl_post(self.org, "bill", str(bill.id), self.user)
+        self.assertEqual(self._stock(), D("10"))
+        self.assertEqual(bal(self.org, "1200"), D("1000"))
+
+    def test_api_accepts_a_product_and_refuses_a_product_of_another_organisation(self):
+        from apps.accounting.tests import _auth_client
+        from apps.inventory.models import Product
+        other_user, other = _setup("sb2_owner@example.com", "SB Org 2")
+        foreign = Product.objects.create(organisation=other, sku="F-1", name="Theirs", product_type="physical",
+                                         selling_price=D("5"), cost_price=D("3"))
+        client = _auth_client(self.user, self.org)
+        today = str(timezone.now().date())
+        payload = {"supplier": str(self.supplier.id), "issue_date": today, "due_date": today,
+                   "tax_amount": "0", "status": "draft",
+                   "items": [{"description": "W", "quantity": "2", "unit_cost": "100",
+                              "product_id": str(self.widget.id)}]}
+        res = client.post("/api/v1/bills/", payload, format="json")
+        self.assertEqual(res.status_code, 201, res.content[:300])
+        self.assertEqual(str(res.data["items"][0]["product"]), str(self.widget.id))
+        payload["items"][0]["product_id"] = str(foreign.id)
+        res = client.post("/api/v1/bills/", payload, format="json")
+        self.assertEqual(res.status_code, 400, res.content[:300])

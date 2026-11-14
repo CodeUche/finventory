@@ -11,6 +11,17 @@ logger = logging.getLogger(__name__)
 
 class BillService:
     @staticmethod
+    def _checked_product_id(organisation, product_id):
+        """A bill line may only point at a product of the SAME organisation."""
+        if not product_id:
+            return None
+        from apps.inventory.models import Product
+        if not Product.objects.filter(id=product_id, organisation=organisation).exists():
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({'items': 'One of the products on this bill was not found.'})
+        return product_id
+
+    @staticmethod
     @transaction.atomic
     def create_bill(validated_data, items_data, organisation, user):
         from apps.accounting.services import AccountingService
@@ -43,6 +54,7 @@ class BillService:
                 line_total=line,
                 expense_category_id=cat_id,
                 account_id=item.get('account_id'),
+                product_id=BillService._checked_product_id(organisation, item.get('product_id')),
                 capitalise=item.get('capitalise', False),
                 asset_category=item.get('asset_category', '') or '',
                 useful_life_years=item.get('useful_life_years'),
@@ -104,6 +116,7 @@ class BillService:
                 line_total=line,
                 expense_category_id=cat_id,
                 account_id=item.get('account_id'),
+                product_id=BillService._checked_product_id(organisation, item.get('product_id')),
                 capitalise=item.get('capitalise', False),
                 asset_category=item.get('asset_category', '') or '',
                 useful_life_years=item.get('useful_life_years'),

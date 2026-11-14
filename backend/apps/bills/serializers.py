@@ -38,14 +38,15 @@ class BillItemSerializer(serializers.ModelSerializer):
     expense_category_name = serializers.CharField(source='expense_category.name', read_only=True)
     expense_category_id = serializers.UUIDField(write_only=True, required=False, allow_null=True)
     account_id = serializers.UUIDField(write_only=True, required=False, allow_null=True)
+    product_name = serializers.CharField(source='product.name', read_only=True, default=None)
 
     class Meta:
         model = BillItem
         fields = ['id', 'description', 'quantity', 'unit_cost', 'line_total',
                   'expense_category', 'expense_category_name', 'expense_category_id',
-                  'account', 'account_id',
+                  'account', 'account_id', 'product', 'product_name',
                   'capitalise', 'asset_category', 'useful_life_years']
-        read_only_fields = ['id', 'line_total', 'expense_category']
+        read_only_fields = ['id', 'line_total', 'expense_category', 'product']
 
 
 class BillPaymentSerializer(serializers.ModelSerializer):
@@ -97,6 +98,9 @@ class BillItemInputSerializer(serializers.Serializer):
     expense_category_id = serializers.UUIDField(required=False, allow_null=True)
     category_label = serializers.CharField(required=False, allow_blank=True, allow_null=True, max_length=200)
     account_id = serializers.UUIDField(required=False, allow_null=True)
+    # Catalogue product. A stock-tracked product's line is booked to Inventory and the
+    # quantity is received into stock; leave empty (or use a service) to expense it.
+    product_id = serializers.UUIDField(required=False, allow_null=True)
     # Capitalisation: flag a line to be booked as a fixed asset (DR 1500) instead of
     # an expense, and create a FixedAsset register record on approval.
     capitalise = serializers.BooleanField(required=False, default=False)
