@@ -468,17 +468,17 @@ export default function BillingPage() {
                 className={`card relative flex flex-col gap-4 ${isPopular ? 'border-brand-500/50 ring-1 ring-brand-500/30' : ''} ${isCurrent ? 'border-green-500/40' : ''}`}
               >
                 {isPopular && !isAnnual && (
-                  <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-brand-500 text-white text-xs font-semibold px-3 py-0.5 rounded-full">
+                  <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-[#1558EA] text-always-white text-xs font-semibold px-3 py-0.5 rounded-full">
                     Most Popular
                   </span>
                 )}
                 {isAnnual && (
-                  <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-green-500 text-white text-xs font-semibold px-3 py-0.5 rounded-full flex items-center gap-1">
+                  <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-[#0A6B0A] text-always-white text-xs font-semibold px-3 py-0.5 rounded-full flex items-center gap-1">
                     <CheckCircle size={10} /> 1 Month Free
                   </span>
                 )}
                 {isCurrent && (
-                  <span className="absolute -top-3 right-4 bg-green-500 text-white text-xs font-semibold px-3 py-0.5 rounded-full flex items-center gap-1">
+                  <span className="absolute -top-3 right-4 bg-[#0A6B0A] text-always-white text-xs font-semibold px-3 py-0.5 rounded-full flex items-center gap-1">
                     <CheckCircle size={10} /> Current
                   </span>
                 )}
@@ -587,10 +587,10 @@ export default function BillingPage() {
                   disabled={isCurrent || subscribing === plan.id || (isFree && subscribing === 'free') || applyingCredit}
                   className={`w-full flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50 ${
                     isCurrent
-                      ? 'bg-green-500/10 text-green-400 cursor-default'
+                      ? 'bg-green-500/10 text-green-400 cursor-default disabled:!opacity-100'
                       : isFree
                       ? 'bg-surface-700/40 text-slate-400 hover:bg-surface-600/60 hover:text-white'
-                      : 'bg-amber-500 hover:bg-amber-400 text-white'
+                      : 'bg-amber-500 hover:bg-amber-400 text-[#332900]'
                   }`}
                 >
                   {(subscribing === plan.id || (isFree && subscribing === 'free') || applyingCredit) ? (
@@ -729,8 +729,8 @@ const PARTNER_TIERS = [
 
 const PARTNER_COLOR: Record<string, { border: string; badge: string; icon: string }> = {
   'partner-starter': { border: 'border-slate-600/50', badge: '', icon: 'text-slate-400' },
-  'partner-pro':     { border: 'border-amber-500/50 ring-1 ring-amber-500/20', badge: 'bg-amber-500 text-white', icon: 'text-amber-400' },
-  'partner-agency':  { border: 'border-purple-500/40 ring-1 ring-purple-500/20', badge: 'bg-purple-500 text-white', icon: 'text-purple-400' },
+  'partner-pro':     { border: 'border-amber-500/50 ring-1 ring-amber-500/20', badge: 'bg-amber-500 text-[#332900]', icon: 'text-amber-400' },
+  'partner-agency':  { border: 'border-purple-500/40 ring-1 ring-purple-500/20', badge: 'bg-[#110099] text-always-white', icon: 'text-purple-400' },
 }
 
 function PartnerChannelSection({
@@ -817,7 +817,7 @@ function PartnerChannelSection({
                     </span>
                   )}
                   {isCurrent && (
-                    <span className="absolute -top-3 right-4 bg-green-500 text-white text-xs font-semibold px-3 py-0.5 rounded-full flex items-center gap-1">
+                    <span className="absolute -top-3 right-4 bg-[#0A6B0A] text-always-white text-xs font-semibold px-3 py-0.5 rounded-full flex items-center gap-1">
                       <CheckCircle size={10} /> Current
                     </span>
                   )}
@@ -875,7 +875,7 @@ function PartnerChannelSection({
                     disabled={isCurrent || !!isSubscribing || !plan}
                     className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold transition-colors ${
                       isCurrent
-                        ? 'bg-green-500/10 text-green-400 cursor-default'
+                        ? 'bg-green-500/10 text-green-400 cursor-default disabled:!opacity-100'
                         : tier.slug === 'partner-pro'
                         ? 'bg-amber-500 hover:bg-amber-400 text-white disabled:opacity-50'
                         : 'bg-purple-500 hover:bg-purple-400 text-white disabled:opacity-50'

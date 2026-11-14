@@ -121,7 +121,7 @@ export default function MessagesBell() {
       >
         <MessageSquare size={18} />
         {unreadCount > 0 && (
-          <span className="absolute top-1 right-1 min-w-[16px] h-4 px-0.5 bg-red-500 rounded-full text-[10px] font-bold text-always-white flex items-center justify-center leading-none">
+          <span className="absolute top-1 right-1 min-w-[16px] h-4 px-0.5 bg-[#CC0003] rounded-full text-[10px] font-bold text-always-white flex items-center justify-center leading-none">
             {unreadCount > 99 ? '99+' : unreadCount}
           </span>
         )}

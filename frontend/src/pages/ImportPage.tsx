@@ -343,7 +343,7 @@ export default function ImportPage() {
             </p>
             <p className="text-xs text-slate-300 font-mono leading-relaxed">{selected.columns}</p>
             {entity === 'products' && (
-              <p className="text-xs text-indigo-400/80 mt-1.5">
+              <p className="text-xs text-indigo-300 mt-1.5">
                 <Sparkles size={11} className="inline mr-1" />
                 Your CSV can use any column names — AI will match "Retail Price" → selling_price, "Product Name" → name, etc.
               </p>
