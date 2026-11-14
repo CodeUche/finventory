@@ -46,6 +46,12 @@ def _get_max_team_members(org) -> int:
     return _DEFAULT_MAX_TEAM_MEMBERS
 
 
+def _audit_value(v):
+    """Audit changes are stored as JSON: Decimals become strings."""
+    from decimal import Decimal
+    return str(v) if isinstance(v, Decimal) else v
+
+
 class EmailConfigSerializer(drf_serializers.ModelSerializer):
     """Serializer for per-org SMTP configuration. Password is write-only."""
     smtp_password = drf_serializers.CharField(write_only=True, required=False, allow_blank=True)
@@ -134,7 +140,7 @@ class OrganisationViewSet(viewsets.ModelViewSet):
         if before and 200 <= response.status_code < 300:
             org.refresh_from_db()
             changes = {
-                f: {"from": old, "to": getattr(org, f, None)}
+                f: {"from": _audit_value(old), "to": _audit_value(getattr(org, f, None))}
                 for f, old in before.items()
                 if old != getattr(org, f, None)
             }
