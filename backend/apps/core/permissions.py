@@ -158,6 +158,35 @@ class IsVerified(BasePermission):
         return bool(request.user and request.user.is_authenticated and request.user.is_verified)
 
 
+def plan_denial(org, module_key: str):
+    """Why the organisation's plan does not allow `module_key`, or None if it does.
+
+    Shared by plan_requires (the viewset gate) and user_can_run_report, so the two
+    can never disagree. Rules:
+    - no subscription: allowed (prevents lockout during onboarding)
+    - inactive/expired subscription: denied
+    - plan has no modules list: unrestricted (legacy/development plans)
+    - otherwise the module must be in the plan's modules list
+    """
+    sub = getattr(org, "subscription", None)
+    if sub is None:
+        return None
+    if not sub.is_active:
+        return (
+            "Your subscription has expired. Renew or switch plans to "
+            "regain access to this feature."
+        )
+    modules = sub.plan.features.get("modules") if sub.plan.features else None
+    if not modules:
+        return None
+    if module_key not in modules:
+        return (
+            f"Your {sub.plan.name} plan does not include {module_key.replace('_', ' ').title()}. "
+            "Upgrade your plan to access this feature."
+        )
+    return None
+
+
 def plan_requires(module_key: str):
     """
     Factory that returns a DRF permission class gating access to a specific
@@ -166,14 +195,10 @@ def plan_requires(module_key: str):
     Usage::
         permission_classes = [IsAuthenticated, IsStaff, plan_requires('payroll')]
 
-    Rules:
-    - Superusers bypass all plan restrictions.
-    - If the org has no subscription, access is allowed (prevents lockout
-      during onboarding before plans are seeded).
-    - If the active plan's ``features.modules`` list does NOT include
-      ``module_key``, the request is denied with HTTP 402.
-    - This applies to ALL HTTP methods (GET included) — a module not on
-      the plan is completely inaccessible, matching the sidebar gating.
+    Rules (see plan_denial): superusers bypass; no subscription is allowed; an
+    inactive subscription or a plan without the module is denied (HTTP 402 via
+    the message). Applies to ALL HTTP methods, GET included, matching the
+    sidebar gating.
     """
     class _PlanModulePermission(BasePermission):
         message = (
@@ -188,34 +213,11 @@ def plan_requires(module_key: str):
             org = _get_or_resolve_org(request)
             if not org:
                 return False
-            sub = getattr(org, "subscription", None)
-            # No subscription yet — allow (prevents lockout during onboarding
-            # before plans are seeded).
-            if sub is None:
-                return True
-            # Inactive/expired subscription — deny access to this plan-gated
-            # (paid) module. Billing/subscription endpoints are NOT plan-gated,
-            # so the user can still pay or downgrade to recover. This is the
-            # server-side enforcement of expiry; the frontend paywall mirrors it.
-            if not sub.is_active:
-                self.message = (
-                    "Your subscription has expired. Renew or switch plans to "
-                    "regain access to this feature."
-                )
+            denial = plan_denial(org, module_key)
+            if denial:
+                self.message = denial
                 return False
-            modules = sub.plan.features.get("modules") if sub.plan.features else None
-            # If the plan has no modules list at all, treat as unrestricted (legacy
-            # / development plans without explicit module config should not lock out
-            # users). Only enforce the gate when modules is a non-empty list.
-            if not modules:
-                return True
-            allowed = module_key in modules
-            if not allowed:
-                self.message = (
-                    f"Your {sub.plan.name} plan does not include {module_key.replace('_', ' ').title()}. "
-                    "Upgrade your plan to access this feature."
-                )
-            return allowed
+            return True
 
     _PlanModulePermission.__name__ = f"PlanRequires_{module_key}"
     _PlanModulePermission.__qualname__ = f"PlanRequires_{module_key}"
@@ -400,7 +402,7 @@ def requires_module(module_key: str):
     return _ModuleAccess
 
 
-# ─── Per-report access (registry reports) ────────────────────────────────────
+# ─── Per-report access (registry reports and legacy report routes) ───────────
 #
 # A report shows the same data as a normal screen, so it must need the same
 # keys as that screen: the owner's tick for the module the data belongs to,
@@ -411,40 +413,90 @@ def requires_module(module_key: str):
 _REPORT_MODULE_MIN_ROLE = {"accounting": "accountant", "tax": "accountant"}
 # Modules whose normal screens are behind a plan gate (plan_requires).
 _REPORT_MODULE_PLAN = ("accounting", "payroll", "bills", "purchases", "suppliers")
-_plan_gate_cache: dict = {}
+
+
+class _ReportAccessContext:
+    """Everything needed to judge many reports for ONE request, fetched once.
+
+    The catalog asks about every report; resolving role, ticks and plan per
+    report cost ~150-250 queries. Here it is three or four in total.
+    """
+
+    def __init__(self, request):
+        user = request.user
+        self.superuser = bool(user and user.is_authenticated and user.is_superuser)
+        self.ok = False          # active member of the resolved organisation
+        self.role_level = 0
+        self.is_admin = False
+        self.levels = {}
+        self.org = None
+        self._plan_cache = {}
+        if not user or not user.is_authenticated:
+            return
+        if self.superuser:
+            self.ok = True
+            return
+        org = _get_or_resolve_org(request)
+        if not org:
+            return
+        membership = user.memberships.filter(organisation=org, is_active=True).first()
+        if not membership:
+            return
+        from apps.tenancy.models import ModulePermission
+
+        self.org = org
+        self.ok = True
+        self.role_level = ROLE_HIERARCHY.get(membership.role, 0)
+        self.is_admin = self.role_level >= ROLE_HIERARCHY["admin"]
+        self.levels = dict(
+            ModulePermission.objects.filter(membership=membership)
+            .values_list("module", "access_level")
+        )
+
+    def plan_ok(self, module_key):
+        if module_key not in self._plan_cache:
+            self._plan_cache[module_key] = plan_denial(self.org, module_key) is None
+        return self._plan_cache[module_key]
+
+
+def _report_context(request):
+    ctx = getattr(request, "_report_access_ctx", None)
+    if ctx is None:
+        ctx = _ReportAccessContext(request)
+        try:
+            request._report_access_ctx = ctx
+        except AttributeError:  # pragma: no cover - exotic request objects
+            pass
+    return ctx
 
 
 def user_can_run_report(request, report_def) -> bool:
-    """True when this requester may run the given registry report.
+    """True when this requester may run the given report (registry or legacy route).
 
-    Superusers, owners and admins see everything (unchanged from before).
-    Everyone else needs a tick above "none" for the report's module (and any
-    extra modules), the minimum role that module's screens require, and the
-    plan module where one applies.
+    `report_def` needs `.module`, optional `.also_modules` and optional
+    `.owner_admin_only` (cost-bearing reports that the Products screen hides
+    from everyone but owners and admins).
+
+    Superusers, owners and admins see everything (they also skip plan gates, as
+    before). Everyone else needs: an active membership in the organisation, a
+    tick above "none" for the module (and any extra modules), the minimum role
+    that module's screens require, and the plan module where one applies.
     """
-    user = request.user
-    if not user or not user.is_authenticated:
+    ctx = _report_context(request)
+    if not ctx.ok:
         return False
-    if user.is_superuser:
+    if ctx.superuser or ctx.is_admin:
         return True
-    org = _get_or_resolve_org(request)
-    if not org:
+    if getattr(report_def, "owner_admin_only", False):
         return False
 
-    if has_minimum_role(user, org, "admin"):
-        return True
-
-    modules = (report_def.module,) + tuple(report_def.also_modules or ())
+    modules = (report_def.module,) + tuple(getattr(report_def, "also_modules", ()) or ())
     for module_key in modules:
-        if _effective_module_level(user, org, module_key) == "none":
+        if ctx.levels.get(module_key, "none") == "none":
             return False
         min_role = _REPORT_MODULE_MIN_ROLE.get(module_key)
-        if min_role and not has_minimum_role(user, org, min_role):
+        if min_role and ctx.role_level < ROLE_HIERARCHY[min_role]:
             return False
-        if module_key in _REPORT_MODULE_PLAN:
-            gate = _plan_gate_cache.get(module_key)
-            if gate is None:
-                gate = _plan_gate_cache[module_key] = plan_requires(module_key)()
-            if not gate.has_permission(request, None):
-                return False
+        if module_key in _REPORT_MODULE_PLAN and not ctx.plan_ok(module_key):
+            return False
     return True
