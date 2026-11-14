@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { MessageCircle, X, Send, Loader2, Bot, User, ChevronDown } from 'lucide-react'
 import DOMPurify from 'dompurify'
+import { useLocation } from 'react-router-dom'
 import { aiApi } from '@/services/api'
 
 interface Message {
@@ -84,6 +85,10 @@ function renderMarkdown(text: string): string {
 }
 
 export default function SupportChat() {
+  // On the register the bottom-right corner holds the tender buttons, so the bubble
+  // moves beside the basket (wide screens) or to the bottom-left (stacked layout).
+  const onRegister = useLocation().pathname === '/pos/register'
+  const bubbleSide = onRegister ? 'left-4 lg:left-auto lg:right-[376px]' : 'right-5'
   const [open, setOpen] = useState(false)
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -135,7 +140,7 @@ export default function SupportChat() {
       {/* Floating button */}
       <button
         onClick={() => setOpen((o) => !o)}
-        className="fixed bottom-5 right-5 z-50 w-13 h-13 rounded-full bg-brand-500 hover:bg-brand-600 text-always-white shadow-xl flex items-center justify-center transition-all duration-200 hover:scale-110"
+        className={`fixed bottom-5 ${bubbleSide} z-50 w-13 h-13 rounded-full bg-brand-500 hover:bg-brand-600 text-always-white shadow-xl flex items-center justify-center transition-all duration-200 hover:scale-110`}
         style={{ width: 52, height: 52 }}
         title="Chat with Uche"
         aria-label="Chat with Uche"
@@ -148,7 +153,7 @@ export default function SupportChat() {
 
       {/* Chat panel */}
       {open && (
-        <div className="fixed bottom-20 right-5 z-50 w-[360px] max-w-[calc(100vw-2rem)] bg-surface-800 border border-surface-700 rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-slide-up"
+        <div className={`fixed bottom-20 ${bubbleSide} z-50 w-[360px] max-w-[calc(100vw-2rem)] bg-surface-800 border border-surface-700 rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-slide-up`}
           style={{ height: 520, maxHeight: 'calc(100vh - 120px)' }}>
 
           {/* Header */}

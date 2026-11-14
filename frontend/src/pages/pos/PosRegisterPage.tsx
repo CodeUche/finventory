@@ -212,7 +212,7 @@ export default function PosRegisterPage() {
   // The sale endpoint requires it; without it every register sale was refused.
   const [warehouseId, setWarehouseId] = useState<string>('')
   useEffect(() => {
-    inventoryApi.warehouses().then(({ data }) => {
+    inventoryApi.warehouses({ silentErrors: true }).then(({ data }) => {
       const list: { id: string; is_default?: boolean }[] = data.results ?? data
       const def = list.find((w) => w.is_default) ?? list[0]
       if (def) setWarehouseId(def.id)
@@ -469,7 +469,7 @@ export default function PosRegisterPage() {
             </div>
           )}
 
-          <div className="grid flex-1 auto-rows-min grid-cols-2 gap-2.5 overflow-y-auto sm:grid-cols-3 xl:grid-cols-4">
+          <div className="grid flex-1 auto-rows-min grid-cols-2 gap-2.5 overflow-y-auto pb-20 sm:grid-cols-3 xl:grid-cols-4">
             {tiles.map((p) => (
               <button
                 key={p.id} onClick={() => add(p)}
