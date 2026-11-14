@@ -32,8 +32,12 @@ def register(rd: ReportDef) -> None:
     _REGISTRY[rd.key] = rd
 
 
+# Old keys that still work (saved links, bookmarks) but are not listed in the menu.
+_ALIASES = {"gl-tax-summary": "tax-summary"}
+
+
 def get(key: str) -> Optional[ReportDef]:
-    return _REGISTRY.get(key)
+    return _REGISTRY.get(_ALIASES.get(key, key))
 
 
 def catalog() -> list:
@@ -912,8 +916,6 @@ def _register_defaults() -> None:
                        pay_bills_report, "Supplier bill payments made in the period."))
     register(ReportDef("deposits", "Deposit Report", "General Ledger",
                        deposit_report, "Customer receipts and other income received in the period."))
-    register(ReportDef("gl-tax-summary", "Tax Summary", "General Ledger",
-                       tax_summary_report, "VAT, WHT and PAYE positions for the period."))
     register(ReportDef("gl-detail", "Transaction Report (GL Detail)", "General Ledger",
                        gl_detail, "Running-balance ledger detail per account."))
     register(ReportDef("payments", "Payments", "General Ledger",

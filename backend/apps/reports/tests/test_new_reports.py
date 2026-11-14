@@ -348,7 +348,7 @@ class CatalogTreeMatchesSpec(NewReportsBase):
         },
         "General Ledger": {
             "account-list", "cash-register", "pay-bills", "deposits",
-            "gl-tax-summary", "gl-detail", "payments", "journal-register",
+            "gl-detail", "payments", "journal-register",
         },
         "Accounts Receivable": {
             "sales-by-customer", "customers-report", "customer-receipts",
