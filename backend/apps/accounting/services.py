@@ -3182,9 +3182,16 @@ class AccountingService:
         """Post a year-end closing entry that zeroes the P&L accounts and crystallises
         the net result into Retained Earnings (3100) — IFRS/GAAP year-end close.
 
+        The year ends on the end date of the organisation's FiscalYear record for
+        `fiscal_year`. An organisation with no FiscalYear records at all is treated as
+        a calendar-year business (31 December). If its other fiscal years are NOT
+        1 January to 31 December and the requested year has no record, the close is
+        refused rather than guessed at 31 December.
+
         Non-destructive: re-running for the same year reverses the prior close first.
-        P&L account balances are computed EXCLUDING any year-end-close entries, so the
-        gross operating result is used regardless of prior closes/reversals.
+        P&L account balances are computed EXCLUDING this year's own close entries (and
+        their reversals), so the gross result is used regardless of re-closes, while
+        earlier years' closes stay in force and are not counted again.
 
         The P&L *report* reads source documents, so it is unaffected. The balance sheet
         reads the GL, so after closing its 'Current Year Earnings' line drops to zero and
@@ -3193,7 +3200,22 @@ class AccountingService:
         import uuid
         from datetime import date as _date
         zero = Decimal('0')
-        year_end = _date(int(fiscal_year), 12, 31)
+        from .models import FiscalYear
+        fy_record = FiscalYear.objects.filter(organisation=organisation, year=int(fiscal_year)).first()
+        if fy_record is not None:
+            year_end = fy_record.end_date
+        else:
+            non_calendar = [
+                fy for fy in FiscalYear.objects.filter(organisation=organisation)
+                if (fy.start_date.month, fy.start_date.day) != (1, 1)
+                or (fy.end_date.month, fy.end_date.day) != (12, 31)
+            ]
+            if non_calendar:
+                raise ValueError(
+                    f"Fiscal year {fiscal_year} is not set up. Your fiscal year does not run "
+                    f"1 January to 31 December, so create fiscal year {fiscal_year} in "
+                    f"Accounting, Periods first. The year was not closed.")
+            year_end = _date(int(fiscal_year), 12, 31)
         # Unique per-attempt source_ref (post_journal_entry dedupes by exact source_ref,
         # so re-closing must NOT reuse the same ref) + prefix match to find prior closes.
         ref_prefix = f'year-end-close-{fiscal_year}'
@@ -3213,7 +3235,8 @@ class AccountingService:
         # reversals, so re-closing (which reverses the old close) stays idempotent.
         close_ids = {
             str(i) for i in JournalEntry.objects.filter(
-                organisation=organisation, source_type='year_end_close'
+                organisation=organisation, source_type='year_end_close',
+                source_ref__startswith=ref_prefix,
             ).values_list('id', flat=True)
         }
 
@@ -3222,7 +3245,11 @@ class AccountingService:
                 journal_entry__organisation=organisation, account=acct,
                 journal_entry__status='posted',
                 journal_entry__entry_date__lte=year_end,
-            ).exclude(journal_entry__source_type='year_end_close').exclude(
+            ).exclude(id__in=JournalLine.objects.filter(
+                journal_entry__organisation=organisation,
+                journal_entry__source_type='year_end_close',
+                journal_entry__source_ref__startswith=ref_prefix,
+            ).values('id')).exclude(
                 Q(journal_entry__source_type='reversal',
                   journal_entry__source_ref__in=close_ids)
             )

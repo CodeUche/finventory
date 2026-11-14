@@ -783,3 +783,52 @@ class BalanceSheetQueryCountTests(TestCase):
         self.assertEqual(bs["current_year_earnings"], D("-200"))
         self.assertEqual(bs["total_equity"], D("400"))
         self.assertTrue(bs["balanced"])
+
+
+class CloseYearFollowsFiscalYearTests(TestCase):
+    """A7: close_year uses the FiscalYear end date and refuses to guess."""
+
+    def setUp(self):
+        self.user, self.org = _setup("cl_owner@example.com", "CL Org")
+
+    def _profit(self, amount, on, ref):
+        AccountingService.post_journal_entry(
+            self.org, f"Sales {ref}", on,
+            [(acct(self.org, "1001"), D(amount), ZERO), (acct(self.org, "4001"), ZERO, D(amount))],
+            self.user, ref=ref, source_type="manual", source_ref=ref)
+
+    def test_calendar_org_without_records_is_unchanged(self):
+        self._profit("400", date(2025, 6, 1), "a")
+        res = AccountingService.close_year(self.org, 2025, created_by=self.user)
+        self.assertEqual(res["entry"].entry_date, date(2025, 12, 31))
+        self.assertEqual(res["net_profit"], D("400"))
+
+    def test_april_march_org_without_a_record_is_refused(self):
+        from apps.accounting.models import FiscalYear
+        FiscalYear.objects.create(organisation=self.org, year=2025,
+                                  start_date=date(2025, 4, 1), end_date=date(2026, 3, 31))
+        self._profit("400", date(2025, 6, 1), "a")
+        with self.assertRaises(ValueError) as cm:
+            AccountingService.close_year(self.org, 2026, created_by=self.user)
+        self.assertIn("1 January to 31 December", str(cm.exception))
+        self.assertFalse(JournalEntry.objects.filter(organisation=self.org, source_type="year_end_close").exists())
+
+    def test_april_march_org_with_a_record_closes_at_31_march(self):
+        from apps.accounting.models import FiscalYear
+        FiscalYear.objects.create(organisation=self.org, year=2025,
+                                  start_date=date(2025, 4, 1), end_date=date(2026, 3, 31))
+        self._profit("400", date(2025, 6, 1), "a")
+        self._profit("300", date(2026, 5, 1), "b")        # next fiscal year: must stay open
+        res = AccountingService.close_year(self.org, 2025, created_by=self.user)
+        self.assertEqual(res["entry"].entry_date, date(2026, 3, 31))
+        self.assertEqual(res["net_profit"], D("400"))
+        self.assertEqual(AccountingService._ledger_balance(acct(self.org, "4001"), as_of=date(2026, 3, 31)), ZERO)
+        self.assertEqual(AccountingService._ledger_balance(acct(self.org, "4001")), D("300"))
+
+    def test_closing_two_years_in_a_row_does_not_count_the_first_year_twice(self):
+        self._profit("400", date(2025, 6, 1), "a")
+        self._profit("300", date(2026, 6, 1), "b")
+        AccountingService.close_year(self.org, 2025, created_by=self.user)
+        res = AccountingService.close_year(self.org, 2026, created_by=self.user)
+        self.assertEqual(res["net_profit"], D("300"))
+        self.assertEqual(bal(self.org, "3100"), D("700"))
