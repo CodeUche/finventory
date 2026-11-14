@@ -466,7 +466,17 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
 
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsStaff, _ModAccess_sales])
     def void(self, request, pk=None):
-        """POST /api/v1/sales/invoices/{id}/void/"""
+        """POST /api/v1/sales/invoices/{id}/void/
+
+        Destructive (reverses the GL entry), so it needs 'edit' level on the
+        sales tick, not just 'write' (POST alone counts as create).
+        """
+        if not (request.user.is_superuser or self._check_invoice_edit_permission(request)):
+            return Response(
+                {"error": "Voiding an invoice needs full edit access to Sales. "
+                          "Ask an owner or admin."},
+                status=403,
+            )
         invoice = self.get_object()
         try:
             invoice = SaleService.void_invoice(invoice, voided_by=request.user)
