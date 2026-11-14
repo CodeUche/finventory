@@ -76,6 +76,13 @@ class AccountSerializer(serializers.ModelSerializer):
         parent = attrs.get('parent')
         if parent and self.instance and parent.pk == self.instance.pk:
             raise serializers.ValidationError({'parent': 'An account cannot be its own parent.'})
+        # Deactivating an account that still carries a balance would drop it
+        # from the trial balance and balance sheet.
+        if self.instance and self.instance.is_active and attrs.get('is_active') is False:
+            from apps.accounting.services import AccountingService
+            reason = AccountingService.account_deactivation_block(self.instance)
+            if reason:
+                raise serializers.ValidationError({'is_active': reason})
         return attrs
 
     def create(self, validated_data):

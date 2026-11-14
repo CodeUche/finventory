@@ -919,8 +919,57 @@ class AccountingService:
         return credits - debits
 
     @staticmethod
+    def fiscal_year_start(organisation, as_of=None):
+        """First day of the fiscal year that contains `as_of` (today when omitted).
+
+        Uses the organisation's FiscalYear record when one covers the date,
+        otherwise the calendar year (which is also what close_year closes).
+        """
+        from datetime import date as _date
+        from django.utils import timezone
+        from .models import FiscalYear
+        as_of = as_of or timezone.now().date()
+        fy = FiscalYear.objects.filter(
+            organisation=organisation, start_date__lte=as_of, end_date__gte=as_of,
+        ).order_by('-start_date').first()
+        return fy.start_date if fy else _date(as_of.year, 1, 1)
+
+    @staticmethod
+    def account_deactivation_block(account):
+        """
+        Why this account must not be deactivated, or None when it may be.
+
+        Reports read the ledger by account, so hiding an account that still
+        carries a balance (or has postings in the open year) would silently
+        unbalance the trial balance and balance sheet. Zero-balance accounts
+        with no open-year activity can be deactivated freely.
+        """
+        from django.utils import timezone
+        balance = AccountingService._ledger_balance(account)
+        if balance != 0:
+            return f"This account still has a balance of {balance:,.2f}. Move it first."
+        today = timezone.now().date()
+        year_start = AccountingService.fiscal_year_start(account.organisation, today)
+        locked_months = {
+            (p.year, p.month) for p in FinancialPeriod.objects.filter(
+                organisation=account.organisation, is_locked=True)
+        }
+        open_lines = JournalLine.objects.filter(
+            journal_entry__organisation=account.organisation, account=account,
+            journal_entry__status='posted', journal_entry__entry_date__gte=year_start,
+        ).values_list('journal_entry__entry_date', flat=True)
+        for d in open_lines:
+            if (d.year, d.month) not in locked_months:
+                return ("This account has postings in the current open period. "
+                        "Close or lock that period first, or leave the account active.")
+        return None
+
+    @staticmethod
     def trial_balance(organisation, as_of=None):
-        accounts = Account.objects.filter(organisation=organisation, is_active=True)
+        # Every account, active or not (and even soft-deleted): hiding an account
+        # that still carries a balance would unbalance the report. Zero-balance
+        # accounts are skipped below, so inactive ones only show when they matter.
+        accounts = Account.all_objects.filter(organisation=organisation)
         result = []
         for acct in accounts:
             bal = AccountingService._ledger_balance(acct, as_of=as_of)
@@ -947,7 +996,7 @@ class AccountingService:
         plugged to a Take-On Suspense line so the statement ALWAYS presents balanced,
         per the client requirement.
         """
-        accounts = Account.objects.filter(organisation=organisation, is_active=True)
+        accounts = Account.all_objects.filter(organisation=organisation)   # see trial_balance
         assets_data, liabilities_data, equity_data = [], [], []
         total_income = Decimal('0')
         total_expense = Decimal('0')

@@ -498,3 +498,74 @@ class ExpenseEditDeleteLedgerTests(TestCase):
         res = other_client.patch(f"/api/v1/expenses/{eid}/", {"amount": "1"}, format="json")
         self.assertEqual(res.status_code, 404)
         self.assertEqual(bal(self.org, "6700"), D("5000"))
+
+
+class AccountDeactivationTests(TestCase):
+    """Item 5: deactivating an account must never unbalance the reports."""
+
+    def setUp(self):
+        from apps.accounting.tests import _auth_client
+        self.user, self.org = _setup("ad_owner@example.com", "AD Org")
+        self.client = _auth_client(self.user, self.org)
+        self.today = timezone.now().date()
+        self.rent = Account.objects.create(
+            organisation=self.org, code="6150", name="Site Rent", account_type=AccountType.EXPENSE)
+        AccountingService.post_journal_entry(
+            self.org, "Rent paid", self.today,
+            [(self.rent, D("1000"), ZERO), (acct(self.org, "1001"), ZERO, D("1000"))],
+            self.user, ref="R1", source_type="manual", source_ref="r1")
+
+    def _deactivate(self, account):
+        return self.client.patch(f"/api/v1/accounting/accounts/{account.id}/", {"is_active": False}, format="json")
+
+    def test_account_with_a_balance_cannot_be_deactivated(self):
+        res = self._deactivate(self.rent)
+        self.assertEqual(res.status_code, 400, res.content[:300])
+        self.assertIn("This account still has a balance of 1,000.00. Move it first.", str(res.data))
+        self.rent.refresh_from_db()
+        self.assertTrue(self.rent.is_active)
+
+    def test_zero_balance_unused_account_can_be_deactivated(self):
+        spare = Account.objects.create(
+            organisation=self.org, code="6160", name="Spare", account_type=AccountType.EXPENSE)
+        res = self._deactivate(spare)
+        self.assertEqual(res.status_code, 200, res.content[:300])
+        spare.refresh_from_db()
+        self.assertFalse(spare.is_active)
+
+    def test_zero_balance_with_open_period_postings_is_refused(self):
+        AccountingService.post_journal_entry(
+            self.org, "Refund", self.today,
+            [(acct(self.org, "1001"), D("1000"), ZERO), (self.rent, ZERO, D("1000"))],
+            self.user, ref="R2", source_type="manual", source_ref="r2")
+        res = self._deactivate(self.rent)
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("open period", str(res.data))
+
+    def test_zero_balance_with_postings_only_in_a_locked_month_can_be_deactivated(self):
+        AccountingService.post_journal_entry(
+            self.org, "Refund", self.today,
+            [(acct(self.org, "1001"), D("1000"), ZERO), (self.rent, ZERO, D("1000"))],
+            self.user, ref="R2", source_type="manual", source_ref="r2")
+        FinancialPeriod.objects.create(organisation=self.org, year=self.today.year,
+                                       month=self.today.month, is_locked=True)
+        self.assertEqual(self._deactivate(self.rent).status_code, 200)
+
+    def test_reports_still_balance_and_show_an_inactive_account_that_has_a_balance(self):
+        # Force the bad state directly (older data, or a path that bypasses the API).
+        Account.objects.filter(id=self.rent.id).update(is_active=False)
+        tb = AccountingService.trial_balance(self.org)
+        self.assertIn("6150", [r["code"] for r in tb])
+        debits = sum(r["balance"] for r in tb if r["type"] in ("asset", "expense", "cogs"))
+        credits = sum(r["balance"] for r in tb if r["type"] not in ("asset", "expense", "cogs"))
+        self.assertEqual(debits, credits)
+        bs = AccountingService.balance_sheet(self.org)
+        # Cash is -1000 (credit), the rent expense is 1000: equity falls by 1000.
+        self.assertEqual(bs["current_year_earnings"], D("-1000"))
+        self.assertEqual(bs["total_assets"], D("-1000"))
+        self.assertEqual(bs["total_liabilities"] + bs["total_equity"], D("-1000"))
+
+    def test_account_with_a_balance_cannot_be_deleted(self):
+        res = self.client.delete(f"/api/v1/accounting/accounts/{self.rent.id}/")
+        self.assertEqual(res.status_code, 400)
+        self.assertTrue(Account.objects.filter(id=self.rent.id).exists())

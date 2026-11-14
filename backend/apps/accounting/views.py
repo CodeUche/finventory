@@ -86,6 +86,13 @@ class AccountViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         if instance.is_system:
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("System accounts cannot be deleted")
+        # Deleting hides the account from every report, so an account that still
+        # has a balance cannot go (its history would vanish and the books would
+        # stop adding up).
+        reason = AccountingService.account_deactivation_block(instance)
+        if reason and reason.startswith("This account still has a balance"):
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({'detail': reason})
         instance.delete()
 
     @action(detail=False, methods=['get'])
