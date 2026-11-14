@@ -14,7 +14,7 @@ class Migration(migrations.Migration):
             name='vat_treatment',
             field=models.CharField(
                 choices=[('standard', 'Standard rate'), ('zero_rated', 'Zero-rated'), ('exempt', 'Exempt')],
-                default='standard', max_length=12,
+                default='standard', db_default='standard', max_length=12,
             ),
         ),
     ]

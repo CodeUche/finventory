@@ -19,7 +19,7 @@ class Supplier(TenantAwareModel):
     # as unconfirmed in the VAT worksheet.
     VAT_YES = 'yes'; VAT_NO = 'no'; VAT_UNKNOWN = 'unknown'
     VAT_REGISTERED_CHOICES = [(VAT_YES, 'Yes'), (VAT_NO, 'No'), (VAT_UNKNOWN, 'Not known')]
-    vat_registered = models.CharField(max_length=7, choices=VAT_REGISTERED_CHOICES, default=VAT_UNKNOWN)
+    vat_registered = models.CharField(max_length=7, choices=VAT_REGISTERED_CHOICES, default=VAT_UNKNOWN, db_default='unknown')
     payment_terms_days = models.PositiveSmallIntegerField(default=30)
     notes = models.TextField(blank=True)
     # Take-on opening balance at migration into Audity. Signed: positive = we owe

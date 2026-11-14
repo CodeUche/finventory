@@ -253,6 +253,22 @@ class CatalogFilteringTests(TestCase):
             self.assertEqual(self._keys(client), sorted(ALL_KEYS))
             self.assertEqual(len(self._keys(client)), 33)
 
+    def test_old_gl_tax_summary_key_is_not_listed_but_still_returns_the_tax_summary(self):
+        client = _auth_client(self.owner, self.org)
+        keys = self._keys(client)
+        self.assertNotIn("gl-tax-summary", keys)
+        self.assertIn("tax-summary", keys)
+        qs = {"date_from": "2025-10-01", "date_to": "2025-10-31"}
+        old = client.get("/api/v1/reports/r/gl-tax-summary/", qs)
+        new = client.get("/api/v1/reports/r/tax-summary/", qs)
+        self.assertEqual(old.status_code, 200, old.content[:200])
+        self.assertEqual(new.status_code, 200, new.content[:200])
+        self.assertEqual(old.json()["data"], new.json()["data"])
+        # the alias keeps the tax module gate: a reports-only member is refused on both keys
+        _, ro_client, _ = _tick_member(self.org, "cat_alias@example.com", "staff", ["reports"])
+        self.assertEqual(ro_client.get("/api/v1/reports/r/tax-summary/", qs).status_code,
+                         ro_client.get("/api/v1/reports/r/gl-tax-summary/", qs).status_code)
+
     def test_member_with_one_module_sees_reports_plus_that_module(self):
         _, client, _ = _tick_member(
             self.org, "cat_pay@example.com", "staff", ["reports", "payroll"])

@@ -9,6 +9,6 @@ class Migration(migrations.Migration):
     operations = [
         migrations.AddField(
             model_name='organisation', name='input_vat_share_percent',
-            field=models.DecimalField(decimal_places=2, default=100, max_digits=5),
+            field=models.DecimalField(decimal_places=2, default=100, db_default=100, max_digits=5),
         ),
     ]

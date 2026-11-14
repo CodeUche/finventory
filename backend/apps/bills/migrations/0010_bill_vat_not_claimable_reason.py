@@ -11,6 +11,6 @@ class Migration(migrations.Migration):
             model_name='bill', name='vat_not_claimable_reason',
             field=models.CharField(blank=True, choices=[
                 ('private_use', 'Private or non-business use'), ('entertainment', 'Entertainment and hospitality'),
-                ('motor_vehicle', 'Passenger motor vehicles'), ('other', 'Other')], default='', max_length=20),
+                ('motor_vehicle', 'Passenger motor vehicles'), ('other', 'Other')], default='', db_default='', max_length=20),
         ),
     ]

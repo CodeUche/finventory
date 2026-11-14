@@ -61,7 +61,7 @@ class Bill(TenantAwareModel):
     VAT_TREATMENT_CHOICES = [
         ('standard', 'Standard rate'), ('zero_rated', 'Zero-rated'), ('exempt', 'Exempt'),
     ]
-    vat_treatment = models.CharField(max_length=12, choices=VAT_TREATMENT_CHOICES, default='standard')
+    vat_treatment = models.CharField(max_length=12, choices=VAT_TREATMENT_CHOICES, default='standard', db_default='standard')
     # Set by the user when VAT on this bill cannot be claimed back. Blank = claimable
     # (subject to the other rules). Any value excludes the bill's VAT from input VAT.
     NOT_CLAIMABLE_CHOICES = [
@@ -70,7 +70,7 @@ class Bill(TenantAwareModel):
         ('motor_vehicle', 'Passenger motor vehicles'),
         ('other', 'Other'),
     ]
-    vat_not_claimable_reason = models.CharField(max_length=20, choices=NOT_CLAIMABLE_CHOICES, blank=True, default='')
+    vat_not_claimable_reason = models.CharField(max_length=20, choices=NOT_CLAIMABLE_CHOICES, blank=True, default='', db_default='')
     total_amount = MoneyField(default=0)
     amount_paid = MoneyField(default=0)
     amount_due = MoneyField(default=0)

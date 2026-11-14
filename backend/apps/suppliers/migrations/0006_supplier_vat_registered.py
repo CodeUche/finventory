@@ -9,6 +9,6 @@ class Migration(migrations.Migration):
     operations = [
         migrations.AddField(
             model_name='supplier', name='vat_registered',
-            field=models.CharField(choices=[('yes', 'Yes'), ('no', 'No'), ('unknown', 'Not known')], default='unknown', max_length=7),
+            field=models.CharField(choices=[('yes', 'Yes'), ('no', 'No'), ('unknown', 'Not known')], default='unknown', db_default='unknown', max_length=7),
         ),
     ]
