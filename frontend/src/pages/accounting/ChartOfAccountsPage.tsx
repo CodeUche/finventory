@@ -320,14 +320,14 @@ export default function ChartOfAccountsPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col xl:flex-row xl:items-center gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="shrink-0">
           <h1 className="text-2xl font-bold text-white whitespace-nowrap">Chart of Accounts</h1>
           <p className="text-slate-400 text-sm">
             {typeFilter === 'all' ? `${totalCount} accounts` : `${filteredAccounts.length} ${typeLabel(typeFilter)} accounts`}
           </p>
         </div>
-        <div className="xl:ml-auto flex gap-2 flex-wrap items-center">
+        <div className="flex gap-2 flex-wrap items-center justify-end">
           <button onClick={() => { bypassNextGets(); load() }} disabled={loading} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
           </button>
@@ -437,7 +437,7 @@ export default function ChartOfAccountsPage() {
                     <span className="flex items-center gap-1.5">
                       {!showCodes && a._depth > 0 && <span className="text-slate-600">└</span>}
                       {a.name}
-                      {a.is_control_account && <span title="Control account — no direct journals"><Lock size={12} className="text-amber-400" /></span>}
+                      {a.is_control_account && <span title="Control account — no direct journals"><Lock size={12} className="text-slate-400" /></span>}
                       {a.sub_type_name && <span className="text-[10px] text-slate-500 border border-surface-600 rounded px-1">{a.sub_type_name}</span>}
                     </span>
                   </td>

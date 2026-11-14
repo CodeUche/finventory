@@ -404,5 +404,27 @@ html.light .ds .btn-secondary{border-color:var(--ds-outline);background:rgba(255
 html.light .ds{--sw-off-bg:#CCCCCC;--sw-off-bd:#808080;--sw-on-bg:#1558EA;--sw-knob-off:#FFFFFF;--sw-knob-on:#FFFFFF}
 
 /* ---- wide tables scroll inside their card; trim cell padding a little so action columns fit ---- */
-.ds .overflow-x-auto :is(th, td).px-5{padding-left:.9rem;padding-right:.9rem}
+.ds .overflow-x-auto :is(th, td).px-5, .ds .overflow-x-auto :is(th, td).px-4{padding-left:.7rem;padding-right:.7rem}
 .ds .overflow-x-auto :is(td, th):last-child{white-space:nowrap}
+
+/* Chart legend labels: series colours (blue, violet) are too dim as text; swatches keep the colour. */
+.ds .recharts-legend-item-text, .ds .recharts-legend-wrapper span{color:var(--ds-ink) !important}
+
+/* Placeholder dashes ("—") and faint greys were slate-600/700: 1.5:1 on dark. */
+.ds .text-slate-600, .ds .text-slate-700{color:var(--ds-muted)}
+
+/* Disabled buttons stay readable (not faded to 50%): muted text and a dashed outline show "off". */
+.ds button:disabled:not(.btn-primary):not(.btn-danger){opacity:1 !important}
+.ds button:disabled:is([class*="border-"], .btn-secondary, .btn-ghost):not(.btn-primary){color:var(--ds-muted) !important;border-style:dashed}
+
+/* Switches, light theme: a clearer off state (dark outline, grey track, white knob with a ring). */
+html.light .ds{--sw-off-bg:#B3B3B3;--sw-off-bd:#4D4D4D;--sw-knob-off:#FFFFFF}
+html.light .ds button > span.rounded-full[class*="translate-x"]{box-shadow:0 0 0 1px rgba(0,0,0,.35),0 1px 3px rgba(0,0,0,.3)}
+
+/* ---- wide tables: the last column (actions) stays visible while the rest scrolls ---- */
+.ds .overflow-x-auto > table :is(th, td):last-child{
+  position:sticky;right:0;z-index:2;
+  box-shadow:-8px 0 8px -8px rgba(0,0,0,.45);
+}
+.ds .overflow-x-auto > table thead :is(th):last-child{background:linear-gradient(var(--ds-th-bg),var(--ds-th-bg)),var(--ds-modal-bg)}
+.ds .overflow-x-auto > table tbody td:last-child{background:linear-gradient(var(--ds-row),var(--ds-row)),var(--ds-modal-bg)}
