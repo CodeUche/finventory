@@ -658,31 +658,17 @@ class ReportService:
         date_from: Optional[date],
         date_to: Optional[date],
     ) -> dict:
-        """Output VAT (collected on sales) minus Input VAT (paid on bills)."""
-        from apps.bills.models import Bill
-        from apps.sales.models import Invoice
+        """Output VAT minus recoverable Input VAT. Delegates to the one VAT
+        calculation (apps.tax.vat.compute_vat); every VAT figure comes from there."""
+        from apps.tax.vat import compute_vat, summary_view
 
-        out_qs = Invoice.objects.filter(
-            organisation=organisation,
-            status__in=["paid", "confirmed", "partially_paid", "credit", "overdue"],
-        )
-        out_qs = _date_filter(out_qs, "issue_date", date_from, date_to)
-        output_vat = out_qs.aggregate(t=Sum("tax_amount"))["t"] or Decimal("0")
-
-        in_qs = Bill.objects.filter(
-            organisation=organisation,
-            status__in=["approved", "paid", "partially_paid"],
-        )
-        in_qs = _date_filter(in_qs, "issue_date", date_from, date_to)
-        input_vat = in_qs.aggregate(t=Sum("tax_amount"))["t"] or Decimal("0")
-
-        return {
-            "period_start": date_from,
-            "period_end": date_to,
-            "output_vat": output_vat,
-            "input_vat": input_vat,
-            "net_vat_payable": output_vat - input_vat,
-        }
+        if date_from is None or date_to is None:
+            # An open-ended range has no meaning for a VAT return: use all dates.
+            date_from = date_from or date(2000, 1, 1)
+            date_to = date_to or date(2999, 12, 31)
+        vat = summary_view(compute_vat(organisation, date_from, date_to))
+        vat["input_vat"] = vat["input_vat_recoverable"]
+        return vat
 
     # ─── Cash Flow ────────────────────────────────────────────────────────────
 

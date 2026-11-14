@@ -189,6 +189,9 @@ class Organisation(SoftDeleteModel):
     # Whether this business is registered to charge VAT. When off, no sale,
     # quote or shop order adds VAT (SaleService.default_tax_rate returns 0).
     charges_vat = models.BooleanField(default=True)
+    # Share of input VAT that relates to taxable supplies, for a business that
+    # makes both taxable and exempt supplies. 100 = all of it (every existing org).
+    input_vat_share_percent = models.DecimalField(max_digits=5, decimal_places=2, default=100)
     # Fixed-asset policy. Items costing below the threshold are expensed, not
     # capitalised (default ₦100,000). Revaluation (IAS 16) is opt-in — SME default is
     # the cost model — and needs practitioner sign-off before enabling.

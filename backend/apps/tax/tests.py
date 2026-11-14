@@ -346,10 +346,15 @@ class VATTransactionTests(TestCase):
             period_start="2025-01-01", period_end="2025-01-31",
             net_amount=Decimal("100000"), vat_amount=Decimal("7500"), vat_rate=Decimal("7.5"),
         )
-        res = self.client.get("/api/v1/tax/vat-transactions/")
+        # The list is now a live view of one period (default: current month);
+        # a hand-typed row shows up as a manual adjustment.
+        res = self.client.get(
+            "/api/v1/tax/vat-transactions/", {"period_start": "2025-01-01", "period_end": "2025-01-31"})
         self.assertEqual(res.status_code, 200)
         data = res.data.get("results") or res.data
-        self.assertGreaterEqual(len(data), 1)
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]["kind"], "manual")
+        self.assertEqual(Decimal(data[0]["vat_amount"]), Decimal("7500"))
 
     def test_sync_from_period_returns_counts(self):
         """sync_from_period should succeed and return synced_output / synced_input keys."""

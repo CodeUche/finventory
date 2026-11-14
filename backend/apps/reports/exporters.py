@@ -203,7 +203,8 @@ def flatten_for_export(data: Any):
     # 9) Tax Summary: VAT sub-dict plus WHT/PAYE scalars — same key/value treatment.
     if "vat" in data and ("wht_withheld" in data or "paye_payable" in data):
         vat = data.get("vat") or {}
-        pairs = [(f"VAT — {_prettify(k)}", v) for k, v in vat.items() if k not in SKIP_KEYS]
+        pairs = [(f"VAT — {_prettify(k)}", v) for k, v in vat.items()
+                 if k not in SKIP_KEYS and not isinstance(v, (list, dict))]
         for k in ("wht_withheld", "paye_payable"):
             if k in data:
                 pairs.append((_prettify(k), data[k]))

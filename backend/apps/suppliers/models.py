@@ -14,6 +14,12 @@ class Supplier(TenantAwareModel):
     phone = models.CharField(max_length=30, blank=True)
     address = models.TextField(blank=True)
     tax_id = models.CharField(max_length=100, blank=True)
+    # Is this supplier registered for VAT? 'unknown' (the default, nothing is
+    # backfilled) falls back to "a TIN on record means claimable", flagged
+    # as unconfirmed in the VAT worksheet.
+    VAT_YES = 'yes'; VAT_NO = 'no'; VAT_UNKNOWN = 'unknown'
+    VAT_REGISTERED_CHOICES = [(VAT_YES, 'Yes'), (VAT_NO, 'No'), (VAT_UNKNOWN, 'Not known')]
+    vat_registered = models.CharField(max_length=7, choices=VAT_REGISTERED_CHOICES, default=VAT_UNKNOWN)
     payment_terms_days = models.PositiveSmallIntegerField(default=30)
     notes = models.TextField(blank=True)
     # Take-on opening balance at migration into Audity. Signed: positive = we owe

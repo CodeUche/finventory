@@ -20,7 +20,7 @@ class SupplierSerializer(serializers.ModelSerializer):
         model = Supplier
         fields = [
             "id", "code", "name", "contact_person", "email", "phone",
-            "address", "tax_id", "payment_terms_days", "notes",
+            "address", "tax_id", "vat_registered", "payment_terms_days", "notes",
             "opening_balance", "opening_balance_date",
             "payable_account", "payable_account_code", "payable_account_name",
             "is_active", "created_at", "updated_at",

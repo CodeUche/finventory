@@ -46,6 +46,12 @@ def _get_max_team_members(org) -> int:
     return _DEFAULT_MAX_TEAM_MEMBERS
 
 
+def _audit_value(v):
+    """Audit changes are stored as JSON: Decimals become strings."""
+    from decimal import Decimal
+    return str(v) if isinstance(v, Decimal) else v
+
+
 class EmailConfigSerializer(drf_serializers.ModelSerializer):
     """Serializer for per-org SMTP configuration. Password is write-only."""
     smtp_password = drf_serializers.CharField(write_only=True, required=False, allow_blank=True)
@@ -93,7 +99,7 @@ class OrganisationViewSet(viewsets.ModelViewSet):
     # refused, and admin is an explicitly granted, high-trust role.
     ADMIN_ONLY_FIELDS = frozenset({
         "bank_account_number", "bank_name", "bank_account_name", "bank_sort_code",
-        "charges_vat",
+        "charges_vat", "input_vat_share_percent",
     })
     # `is_active` stays owner-only: no UI anywhere sends it for an organisation
     # (every frontend `is_active` write targets email config, Paystack config or a
@@ -134,7 +140,7 @@ class OrganisationViewSet(viewsets.ModelViewSet):
         if before and 200 <= response.status_code < 300:
             org.refresh_from_db()
             changes = {
-                f: {"from": old, "to": getattr(org, f, None)}
+                f: {"from": _audit_value(old), "to": _audit_value(getattr(org, f, None))}
                 for f, old in before.items()
                 if old != getattr(org, f, None)
             }

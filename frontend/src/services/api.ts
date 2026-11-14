@@ -1516,6 +1516,10 @@ export const taxApi = {
   // VAT transactions
   vatTransactions: (params?: object) => api.get('/tax/vat-transactions/', { params }),
   createVatTransaction: (data: object) => api.post('/tax/vat-transactions/', data),
+  vatWorksheet: (params: object) => api.get('/tax/vat-transactions/worksheet/', { params }),
+  vatComparison: () => api.get('/tax/vat-transactions/comparison/'),
+  setSupplierVat: (data: { supplier_id: string; vat_registered?: string; tax_id?: string }) =>
+    api.post('/tax/vat-transactions/set_supplier_vat/', data),
   syncVatFromPeriod: (data: { period_start: string; period_end: string }) =>
     api.post('/tax/vat-transactions/sync_from_period/', data),
   // Tax obligations (compliance calendar)

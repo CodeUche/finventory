@@ -3745,17 +3745,18 @@ export default function SettingsPage() {
           {isOwner && (
           <div className="rounded-xl bg-slate-800 border border-slate-700 px-5 py-4 flex items-start justify-between gap-4">
             <div>
-              <p className="text-sm font-medium text-white">This business charges VAT</p>
+              <p className="text-sm font-medium text-white">This business is registered for VAT</p>
               <p className="text-xs text-slate-400 mt-0.5">
-                Turn off if you are not registered to charge VAT (for example, under the small-business exemption).
-                Sales, quotes and the shop then add no VAT. Ask your tax adviser before changing this.
+                Turn off if you are not registered for VAT (for example, under the small-business exemption).
+                Sales, quotes and the shop then add no VAT, and VAT you pay on purchases is not counted as claimable
+                in the VAT worksheet. Ask your tax adviser before changing this.
               </p>
             </div>
             <button
               type="button"
               role="switch"
               aria-checked={organisation?.charges_vat !== false}
-              aria-label="This business charges VAT"
+              aria-label="This business is registered for VAT"
               onClick={async () => {
                 try {
                   const { data } = await orgApi.update(organisation!.id, { charges_vat: organisation?.charges_vat === false })
@@ -3766,6 +3767,33 @@ export default function SettingsPage() {
             >
               <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${organisation?.charges_vat !== false ? 'translate-x-5' : 'translate-x-0'}`} />
             </button>
+          </div>
+          )}
+
+          {/* Share of input VAT used for taxable supplies - owners/admins only */}
+          {isOwner && (
+          <div className="rounded-xl bg-slate-800 border border-slate-700 px-5 py-4 flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium text-white">Share of input VAT used for taxable sales (%)</p>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Leave at 100 unless your business also makes exempt sales. Then only this share of the VAT you pay
+                on purchases is counted as claimable in the VAT worksheet. Ask your tax adviser for the right figure.
+              </p>
+            </div>
+            <input
+              type="number" min={0} max={100} step="0.01" aria-label="Share of input VAT used for taxable sales"
+              className="input w-24 text-right"
+              defaultValue={organisation?.input_vat_share_percent ?? '100'}
+              key={organisation?.input_vat_share_percent ?? '100'}
+              onBlur={async (e) => {
+                const v = e.target.value.trim()
+                if (v === '' || v === String(organisation?.input_vat_share_percent ?? '100')) return
+                try {
+                  const { data } = await orgApi.update(organisation!.id, { input_vat_share_percent: v })
+                  updateOrganisation(data); toast.success('VAT share updated')
+                } catch { toast.error('Enter a share between 0 and 100') }
+              }}
+            />
           </div>
           )}
 

@@ -166,71 +166,21 @@ class TaxService:
     @staticmethod
     def calculate_vat_report(organisation, period_start, period_end) -> dict:
         """
-        Aggregate VAT collected on sales for a given period.
-
-        Returns VAT output (collected on sales) and VAT input (paid on purchases — future).
+        VAT for a period, for the Tax page. A thin view over the one VAT
+        calculation (apps.tax.vat.compute_vat): same numbers as the reports,
+        the Overview card and the VAT worksheet. Negative net = refund/carry-forward.
         """
-        from django.db.models import F
+        from apps.tax.vat import compute_vat, summary_view
 
-        # VAT output: sum tax_amount on confirmed/paid sales lines
-        sales_agg = SaleItem.objects.filter(
-            organisation=organisation,
-            invoice__issue_date__gte=period_start,
-            invoice__issue_date__lte=period_end,
-            invoice__status__in=["paid", "confirmed", "partially_paid", "credit"],
-        ).aggregate(
-            total_vat=Sum("tax_amount"),
-            total_gross=Sum("line_total"),       # line_total includes VAT
-            total_tax_on_lines=Sum("tax_amount"),
-        )
-        output_vat = sales_agg["total_vat"] or Decimal("0")
-        # Net sales = gross line totals minus the VAT embedded in them (M-3 fix)
-        total_gross = sales_agg["total_gross"] or Decimal("0")
-        net_sales   = total_gross - output_vat
-
-        # Deduct output VAT on sales returns in the period (C2/H-1 fix)
-        from apps.sales.models import SaleReturnItem
-        returned_vat = SaleReturnItem.objects.filter(
-            organisation=organisation,
-            sale_return__return_date__gte=period_start,
-            sale_return__return_date__lte=period_end,
-            tax_refund__isnull=False,
-        ).aggregate(total=Sum("tax_refund"))["total"] or Decimal("0")
-        output_vat = max(Decimal("0"), output_vat - returned_vat)
-
-        # VAT input: only claim on standard/zero-rated bills (exclude exempt-treatment tax classes)
-        from apps.bills.models import Bill
-        bills_qs = Bill.objects.filter(
-            organisation=organisation,
-            issue_date__gte=period_start,
-            issue_date__lte=period_end,
-            status__in=[Bill.APPROVED, Bill.PAID, Bill.PARTIALLY_PAID],
-        )
-        # If TaxClass.treatment field exists, exclude input VAT on exempt-treatment bills
-        try:
-            from apps.tax.models import TaxClass
-            exempt_bill_ids = list(
-                bills_qs.filter(tax_class__treatment='exempt').values_list('id', flat=True)
-            )
-            recoverable_bills = bills_qs.exclude(id__in=exempt_bill_ids)
-        except Exception:
-            recoverable_bills = bills_qs
-
-        input_vat = recoverable_bills.aggregate(
-            total_vat=Sum("tax_amount")
-        )["total_vat"] or Decimal("0")
-
-        net_vat_payable = output_vat - input_vat
-
-        return {
-            "period_start": period_start,
-            "period_end": period_end,
-            "vat_output": output_vat,
-            "vat_input": input_vat,
-            "vat_on_returns": returned_vat,
-            "net_vat_payable": net_vat_payable,
-            "total_net_sales": net_sales,  # net of VAT (M-3 fix)
-        }
+        vat = summary_view(compute_vat(organisation, period_start, period_end))
+        t = vat["turnover"]
+        vat.update({
+            "vat_output": vat["output_vat"],
+            "vat_input": vat["input_vat_recoverable"],
+            "vat_on_returns": vat["output_vat_returns"],
+            "total_net_sales": sum(t.values(), Decimal("0")),
+        })
+        return vat
 
     # WHT 2024 small-payer exemption thresholds (Deduction of Tax at Source Regulations 2024)
     _WHT_SMALL_PAYER_TURNOVER_LIMIT = Decimal("25000000")   # ₦25m annual turnover

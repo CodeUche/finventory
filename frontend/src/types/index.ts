@@ -70,6 +70,8 @@ export interface Organisation {
    *  Free-form strings (matches TillTenderCount.method), all four enabled by default. */
   enabled_payment_types?: string[]
   charges_vat?: boolean
+  /** Share (%) of input VAT that relates to taxable supplies; 100 unless the business also makes exempt supplies. */
+  input_vat_share_percent?: string
 }
 
 export interface ProductImage {
@@ -1337,7 +1339,11 @@ export interface VATTransaction {
   is_claimable: boolean
   source_ref: string
   notes: string
-  created_at: string
+  created_at: string | null
+  supplier_id?: string
+  confirmation?: string
+  kind?: 'sale' | 'sale_return' | 'bill' | 'purchase_return' | 'manual'
+  reason?: string
 }
 
 export interface TaxObligation {

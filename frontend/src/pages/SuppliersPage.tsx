@@ -23,6 +23,7 @@ interface Supplier {
   phone: string
   address: string
   tax_id: string
+  vat_registered?: 'yes' | 'no' | 'unknown'
   payment_terms_days: number
   notes: string
   payable_account?: string | null
@@ -38,6 +39,7 @@ const BLANK = {
   phone: '',
   address: '',
   tax_id: '',
+  vat_registered: 'unknown',
   payment_terms_days: '30',
   notes: '',
   payable_account: '',
@@ -108,6 +110,7 @@ export default function SuppliersPage() {
       phone: s.phone ?? '',
       address: s.address ?? '',
       tax_id: s.tax_id ?? '',
+      vat_registered: s.vat_registered ?? 'unknown',
       payment_terms_days: String(s.payment_terms_days ?? 30),
       notes: s.notes ?? '',
       payable_account: s.payable_account ?? '',
@@ -144,7 +147,7 @@ export default function SuppliersPage() {
     }
   }
 
-  const upd = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+  const upd = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
     setForm((f) => ({ ...f, [k]: e.target.value }))
 
   const openStatement = (s: Supplier) => {
@@ -433,6 +436,14 @@ export default function SuppliersPage() {
                 <div>
                   <label className="label">Tax ID / VAT Number</label>
                   <input className="input" value={form.tax_id} onChange={upd('tax_id')} />
+                </div>
+                <div>
+                  <label className="label">VAT registered</label>
+                  <select className="input" value={form.vat_registered} onChange={upd('vat_registered')}>
+                    <option value="yes">Yes</option>
+                    <option value="no">No</option>
+                    <option value="unknown">Not known</option>
+                  </select>
                 </div>
                 <div className="col-span-2">
                   <label className="label">Address</label>
