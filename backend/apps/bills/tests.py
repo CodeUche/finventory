@@ -223,3 +223,30 @@ class ApprovePoBillTests(TestCase):
         self.assertEqual(bill.status, Bill.APPROVED)
         self.assertEqual(AccountingService._ledger_balance(ap), before)
         self.assertEqual(JournalEntry.objects.filter(organisation=org).count(), entries)
+
+
+class BillPaymentWhtTinTests(TestCase):
+    """The WHT record made when a bill is paid must carry the supplier's TIN.
+    Supplier's TIN field is `tax_id`; the code used to read a non-existent `tin`,
+    so every auto-created WHT record had a blank TIN (and was treated as 'no TIN')."""
+
+    def test_wht_transaction_gets_supplier_tax_id(self):
+        from apps.bills.services import BillService
+        from apps.tax.models import WHTRate, WHTTransaction
+
+        user = _make_user("bill_wht_owner@example.com")
+        org = _make_org(user, "Bill WHT Org")
+        _upgrade_to_business(org)
+        supplier = Supplier.objects.create(organisation=org, name="Consultant Ltd", tax_id="55667788-0001")
+        bill = Bill.objects.create(
+            organisation=org, supplier=supplier, bill_number="BILL-WHT-1", status=Bill.APPROVED,
+            issue_date=date.today(), due_date=date.today(), subtotal=Decimal("100000"),
+            total_amount=Decimal("100000"), amount_due=Decimal("100000"), created_by=user,
+        )
+        rate = WHTRate.objects.create(
+            organisation=org, transaction_type="Consultancy", company_rate=Decimal("5.00"),
+            individual_rate=Decimal("10.00"), is_active=True,
+        )
+        BillService.record_payment(bill, Decimal("100000"), date.today(), "bank_transfer", "", "", user, wht_rate_id=rate.id)
+        txn = WHTTransaction.objects.get(organisation=org)
+        self.assertEqual(txn.tin, "55667788-0001")

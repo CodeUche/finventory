@@ -176,7 +176,7 @@ class BillService:
         # Auto-create WHT transaction if rate specified (non-blocking)
         if wht_rate_id:
             supplier_name = bill.supplier.name if bill.supplier else "Unknown Supplier"
-            tin = getattr(bill.supplier, 'tin', '') or '' if bill.supplier else ''
+            tin = (getattr(bill.supplier, 'tax_id', '') or '') if bill.supplier else ''  # Supplier's TIN field is tax_id
             from apps.tax.services import TaxService
             TaxService.auto_create_wht_transaction(
                 organisation=bill.organisation,
