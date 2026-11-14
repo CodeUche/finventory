@@ -264,7 +264,7 @@ class InventoryService:
             if quantity > 0
             else StockMovement.MovementType.ADJUSTMENT_OUT
         )
-        return InventoryService.record_movement(
+        movement = InventoryService.record_movement(
             organisation=organisation,
             product=product,
             warehouse=warehouse,
@@ -273,6 +273,12 @@ class InventoryService:
             notes=reason,
             created_by=created_by,
         )
+        # Reach the ledger (DR/CR Inventory against Shrinkage and Adjustments). Never
+        # blocks the count: a failure is listed in GL Health (see
+        # AccountingService.unposted_stock_adjustments) and can be retried there.
+        from apps.accounting.services import AccountingService, safe_post_gl
+        safe_post_gl(AccountingService.post_stock_adjustment_journal, organisation, movement, created_by)
+        return movement
 
     @staticmethod
     @transaction.atomic

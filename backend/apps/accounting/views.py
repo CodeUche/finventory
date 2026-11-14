@@ -2154,8 +2154,9 @@ class GLHealthBulkRetryView(APIView):
             ('expense', Expense.objects.filter(organisation=org, gl_post_status__in=retry_statuses)),
             ('payroll', PayrollRun.objects.filter(organisation=org, gl_post_status__in=retry_statuses)),
             ('till',    TillSession.objects.filter(organisation=org, gl_post_status__in=retry_statuses)),
+            ('stock_adjustment', AccountingService.unposted_stock_adjustments(org)),
         ]:
-            for obj in qs[:50]:  # cap per model to avoid timeout
+            for obj in list(qs)[:50]:  # cap per model to avoid timeout
                 results['attempted'] += 1
                 try:
                     success, err = AccountingService.retry_gl_post(org, model_name, str(obj.id), request.user)

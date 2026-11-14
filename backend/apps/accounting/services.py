@@ -2354,6 +2354,79 @@ class AccountingService:
 
         return entry
 
+    # Stock adjustments made before this date were never posted to the ledger and are
+    # NOT treated as failures in GL Health (they need an accountant-approved backfill).
+    STOCK_ADJUSTMENT_GL_START = date(2026, 11, 14)
+    SHRINKAGE_CODE = '5100'
+
+    @staticmethod
+    def post_stock_adjustment_journal(organisation, movement, user=None):
+        """
+        Stock count / write-off / shrinkage / found-stock adjustments reach the ledger.
+
+        Loss (adjustment_out): DR Inventory Shrinkage and Adjustments (5100, cost of
+        sales) / CR Inventory. Gain (adjustment_in): DR Inventory / CR the same account.
+        Valued at the stock's average cost (the figure the stock valuation uses).
+        Idempotent per movement; dated on the movement; period-lock aware (a locked
+        month raises, and GL Health lists the adjustment until it is posted).
+        Transfers and opening stock are not handled here: transfers move value
+        between warehouses (no effect on the ledger) and take-on posts its own entries.
+        """
+        from apps.inventory.models import StockItem
+        mtype = movement.movement_type
+        if mtype not in ('adjustment_in', 'adjustment_out') or movement.product_id is None:
+            return None
+        qty = abs(Decimal(str(movement.quantity)))
+        if mtype == 'adjustment_out':
+            si = StockItem.objects.filter(
+                organisation=organisation, product=movement.product, warehouse=movement.warehouse).first()
+            unit = Decimal(str(si.average_cost)) if si and si.average_cost and si.average_cost > 0 \
+                else Decimal(str(movement.product.cost_price or 0))
+        else:
+            unit = Decimal(str(movement.unit_cost or 0))
+        value = (qty * unit).quantize(Decimal('0.01'))
+        if value <= 0:
+            return None
+        class_defaults = AccountMappingService.get_item_class_defaults(organisation)
+        row = class_defaults.get(movement.product.product_type)
+        inv_acct = movement.product.inventory_account or (getattr(row, 'inventory_account', None) if row else None) \
+            or AccountMappingService.resolve(organisation, 'inventory_account')
+        adj_acct = AccountingService._get_or_create_account(
+            organisation, AccountingService.SHRINKAGE_CODE, 'Inventory Shrinkage and Adjustments',
+            AccountType.COST_OF_GOODS)
+        zero = Decimal('0')
+        if mtype == 'adjustment_out':
+            lines = [(adj_acct, value, zero), (inv_acct, zero, value)]
+            what = 'Stock loss'
+        else:
+            lines = [(inv_acct, value, zero), (adj_acct, zero, value)]
+            what = 'Stock gain'
+        reason = (movement.notes or '').strip()[:200]
+        return AccountingService.post_journal_entry(
+            organisation, f"{what}: {movement.product.sku} x {qty}" + (f" ({reason})" if reason else ""),
+            movement.created_at.date(), lines, user,
+            ref=f"ADJ-{str(movement.id)[:8].upper()}",
+            source_type='stock_adjustment', source_ref=str(movement.id),
+        )
+
+    @staticmethod
+    def unposted_stock_adjustments(organisation):
+        """Stock adjustment movements (since STOCK_ADJUSTMENT_GL_START) with no ledger entry."""
+        from apps.inventory.models import StockMovement
+        moves = list(
+            StockMovement.objects.filter(
+                organisation=organisation, movement_type__in=('adjustment_in', 'adjustment_out'),
+                product__isnull=False, unit_cost__gt=0,
+                created_at__date__gte=AccountingService.STOCK_ADJUSTMENT_GL_START,
+            ).select_related('product')
+        )
+        if not moves:
+            return []
+        posted = set(JournalEntry.objects.filter(
+            organisation=organisation, source_type='stock_adjustment',
+            source_ref__in=[str(m.id) for m in moves]).values_list('source_ref', flat=True))
+        return [m for m in moves if str(m.id) not in posted]
+
     @staticmethod
     def default_receiving_warehouse(organisation):
         """Where stock bought on a manual bill is received: the organisation's default
@@ -3117,6 +3190,18 @@ class AccountingService:
             PayrollRun.objects.filter(organisation=organisation),
             'payroll', 'run_number', 'created_at',
         )
+        # Stock adjustments: a count or write-off is never blocked by the ledger, so one
+        # that did not reach it has to surface here.
+        for m in AccountingService.unposted_stock_adjustments(organisation):
+            summary['failed'] = summary.get('failed', 0) + 1
+            failures.append({
+                'model': 'stock_adjustment',
+                'id': str(m.id),
+                'number': f"{m.product.sku} x {abs(m.quantity)}",
+                'error': 'Stock adjustment is not in the ledger yet (locked period or missing account).',
+                'date': str(m.created_at.date()),
+                'amount': str(abs(Decimal(str(m.quantity))) * Decimal(str(m.unit_cost or 0))),
+            })
         # Till shifts: closing is never blocked by the ledger, so an unposted
         # cash variance has to surface here or a shortfall stays invisible.
         from apps.pos.models import TillSession
@@ -3410,6 +3495,11 @@ class AccountingService:
                 AccountingService.post_payroll_journal, organisation, obj, user,
                 model_instance=obj,
             )
+        elif model_name == 'stock_adjustment':
+            from apps.inventory.models import StockMovement
+            movement = StockMovement.objects.get(id=object_id, organisation=organisation)
+            success, err = safe_post_gl(
+                AccountingService.post_stock_adjustment_journal, organisation, movement, user)
         elif model_name == 'till':
             from apps.pos.models import TillSession
             from apps.pos.till_services import TillService

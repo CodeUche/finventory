@@ -971,3 +971,106 @@ class StockedBillLineTests(TestCase):
         payload["items"][0]["product_id"] = str(foreign.id)
         res = client.post("/api/v1/bills/", payload, format="json")
         self.assertEqual(res.status_code, 400, res.content[:300])
+
+
+class StockAdjustmentGLTests(TestCase):
+    """B2: stock counts, write-offs and found stock reach the ledger."""
+
+    def setUp(self):
+        from apps.inventory.models import Product, Warehouse
+        from apps.inventory.services import InventoryService
+        self.user, self.org = _setup("sa_owner@example.com", "SA Org")
+        self.wh = Warehouse.objects.create(organisation=self.org, name="Main", is_default=True)
+        self.wh2 = Warehouse.objects.create(organisation=self.org, name="Second")
+        self.product = Product.objects.create(
+            organisation=self.org, sku="A-1", name="Gadget", product_type="physical",
+            selling_price=D("150"), cost_price=D("100"))
+        # Stock bought through a bill: 10 x 100 into Inventory (ledger 1,000).
+        from apps.bills.services import BillService
+        from apps.suppliers.models import Supplier
+        sup = Supplier.objects.create(organisation=self.org, name="Sup")
+        BillService.create_bill(
+            {"supplier": sup, "folder": None, "issue_date": timezone.now().date(),
+             "due_date": timezone.now().date(), "reference": "", "tax_amount": ZERO,
+             "notes": "", "status": "approved"},
+            [{"description": "G", "quantity": D("10"), "unit_cost": D("100"), "product_id": self.product.id}],
+            self.org, self.user)
+        self.svc = InventoryService
+
+    def _adjust(self, qty, reason="Stock count"):
+        return self.svc.adjust_stock(self.org, self.product, self.wh, D(qty), reason, self.user)
+
+    def test_loss_debits_shrinkage_and_credits_inventory(self):
+        m = self._adjust("-2", "Damaged")
+        self.assertEqual(bal(self.org, "5100"), D("200"))
+        self.assertEqual(bal(self.org, "1200"), D("800"))
+        je = JournalEntry.objects.get(organisation=self.org, source_type="stock_adjustment", source_ref=str(m.id))
+        self.assertIn("Damaged", je.description)
+        self.assertEqual(sum(l.debit for l in je.lines.all()), sum(l.credit for l in je.lines.all()))
+
+    def test_gain_debits_inventory_and_credits_the_same_account(self):
+        self._adjust("-2")
+        self._adjust("1")
+        self.assertEqual(bal(self.org, "5100"), D("100"))      # net loss 1 unit
+        self.assertEqual(bal(self.org, "1200"), D("900"))
+
+    def test_inventory_reconciliation_agrees_after_adjustments(self):
+        self._adjust("-3")
+        self._adjust("1")
+        rec = AccountingService.gl_health_reconciliations(self.org)
+        inv = next(s for s in rec["subledgers"] if s["name"] == "Inventory")
+        self.assertEqual(inv["control"], D("800"))
+        self.assertEqual(inv["subledger"], D("800"))
+        self.assertTrue(inv["reconciled"])
+
+    def test_adjustment_is_posted_once_even_if_posted_again(self):
+        m = self._adjust("-2")
+        AccountingService.post_stock_adjustment_journal(self.org, m, self.user)
+        self.assertEqual(JournalEntry.objects.filter(organisation=self.org, source_type="stock_adjustment").count(), 1)
+        self.assertEqual(bal(self.org, "5100"), D("200"))
+
+    def test_transfers_post_nothing(self):
+        before = JournalEntry.objects.filter(organisation=self.org).count()
+        self.svc.transfer_stock(self.org, self.product, self.wh, self.wh2, D("4"), "move", self.user)
+        self.assertEqual(JournalEntry.objects.filter(organisation=self.org).count(), before)
+        self.assertEqual(bal(self.org, "1200"), D("1000"))
+
+    def test_opening_stock_is_not_double_posted(self):
+        from apps.inventory.models import Product
+        p2 = Product.objects.create(organisation=self.org, sku="O-1", name="Opening", product_type="physical",
+                                    selling_price=D("20"), cost_price=D("10"))
+        AccountingService.set_item_opening_balance(
+            self.org, p2, self.wh, D("5"), date.today(), unit_cost=D("10"), created_by=self.user)
+        self.assertFalse(JournalEntry.objects.filter(organisation=self.org, source_type="stock_adjustment").exists())
+
+    def test_locked_period_does_not_block_the_count_but_shows_in_gl_health_and_retries(self):
+        today = timezone.now().date()
+        lock = FinancialPeriod.objects.create(organisation=self.org, year=today.year, month=today.month,
+                                              is_locked=True)
+        m = self._adjust("-2")                                   # the count itself goes through
+        self.assertFalse(JournalEntry.objects.filter(organisation=self.org, source_type="stock_adjustment").exists())
+        health = AccountingService.get_gl_health(self.org)
+        self.assertTrue(any(f["model"] == "stock_adjustment" and f["id"] == str(m.id) for f in health["failures"]))
+        ok, err = AccountingService.retry_gl_post(self.org, "stock_adjustment", str(m.id), self.user)
+        self.assertFalse(ok)
+        lock.is_locked = False
+        lock.save()
+        ok, err = AccountingService.retry_gl_post(self.org, "stock_adjustment", str(m.id), self.user)
+        self.assertTrue(ok, err)
+        self.assertEqual(bal(self.org, "5100"), D("200"))
+        health = AccountingService.get_gl_health(self.org)
+        self.assertFalse(any(f["model"] == "stock_adjustment" for f in health["failures"]))
+
+    def test_api_adjust_posts_the_journal(self):
+        from apps.accounting.tests import _auth_client
+        client = _auth_client(self.user, self.org)
+        res = client.post("/api/v1/inventory/movements/adjust/", {
+            "product_id": str(self.product.id), "warehouse_id": str(self.wh.id),
+            "quantity": "-1", "reason": "Shrinkage"}, format="json")
+        self.assertEqual(res.status_code, 201, res.content[:300])
+        self.assertEqual(bal(self.org, "5100"), D("100"))
+
+    def test_another_organisations_adjustments_never_appear(self):
+        other_user, other = _setup("sa2_owner@example.com", "SA Org 2")
+        self._adjust("-1")
+        self.assertEqual(AccountingService.unposted_stock_adjustments(other), [])
