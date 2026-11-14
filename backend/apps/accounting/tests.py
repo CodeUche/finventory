@@ -4826,8 +4826,10 @@ class ProductGLAccountOverrideTests(TestCase):
         )
 
     def _lines(self, invoice):
-        entry = JournalEntry.objects.get(organisation=self.org, source_type="sale", source_ref=str(invoice.id))
-        return list(entry.lines.all())
+        # Revenue and cost of sales are separate journals (sale + sale_cogs).
+        entries = JournalEntry.objects.filter(
+            organisation=self.org, source_type__in=("sale", "sale_cogs"), source_ref=str(invoice.id))
+        return [l for e in entries for l in e.lines.all()]
 
     def test_no_override_produces_identical_aggregate_lines(self):
         """Regression guard: an invoice with zero overridden items must post
@@ -5000,8 +5002,10 @@ class ItemClassGLDefaultTests(TestCase):
         )
 
     def _lines(self, invoice):
-        entry = JournalEntry.objects.get(organisation=self.org, source_type="sale", source_ref=str(invoice.id))
-        return list(entry.lines.all())
+        # Revenue and cost of sales are separate journals (sale + sale_cogs).
+        entries = JournalEntry.objects.filter(
+            organisation=self.org, source_type__in=("sale", "sale_cogs"), source_ref=str(invoice.id))
+        return [l for e in entries for l in e.lines.all()]
 
     def test_no_class_default_configured_uses_org_default(self):
         invoice = self._sale(self.physical_product)

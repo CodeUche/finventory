@@ -713,3 +713,42 @@ class PoRetryAccountingEdgeTests(PoBillRetryTests):
         self.assertEqual(bal(self.org, "1200"), D("500"))
         self.assertEqual(bal(self.org, "1400"), D("75"))           # 37.50 + 37.50, not 1037.50 or -962.50
         self.assertEqual(bal(self.org, "2001"), D("1075"))
+
+
+class BalanceSheetQueryCountTests(TestCase):
+    """A5: the reports read the ledger in one grouped query, with the same numbers."""
+
+    def setUp(self):
+        self.user, self.org = _setup("qc_owner@example.com", "QC Org")
+        for i, (code, amt) in enumerate((("4001", 700), ("6700", 200), ("5001", 100))):
+            if code == "4001":
+                lines = [(acct(self.org, "1001"), D(amt), ZERO), (acct(self.org, code), ZERO, D(amt))]
+            else:
+                lines = [(acct(self.org, code), D(amt), ZERO), (acct(self.org, "1001"), ZERO, D(amt))]
+            AccountingService.post_journal_entry(self.org, f"E{i}", date(2025 + (i % 2), 5, 5), lines,
+                                                 self.user, ref=f"E{i}", source_type="manual", source_ref=f"q{i}")
+
+    def test_grouped_balances_equal_the_per_account_balances(self):
+        accounts = list(Account.all_objects.filter(organisation=self.org))
+        got = AccountingService._ledger_balances(self.org, accounts, as_of=date(2026, 12, 31),
+                                                 prior_end=date(2025, 12, 31))
+        for a in accounts:
+            self.assertEqual(got[a.id][0], AccountingService._ledger_balance(a, as_of=date(2026, 12, 31)))
+            self.assertEqual(got[a.id][1], AccountingService._ledger_balance(a, as_of=date(2025, 12, 31)))
+
+    def test_balance_sheet_uses_a_constant_number_of_queries(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+        with CaptureQueriesContext(connection) as ctx:
+            AccountingService.balance_sheet(self.org, as_of=date(2026, 12, 31))
+        n_accounts = Account.all_objects.filter(organisation=self.org).count()
+        self.assertGreater(n_accounts, 30)
+        self.assertLess(len(ctx), 15)       # was ~1 + 2 to 3 per account
+
+    def test_numbers_are_the_expected_ones(self):
+        bs = AccountingService.balance_sheet(self.org, as_of=date(2026, 12, 31))
+        # 2025: income 700 (i=0, year 2025) and cogs 100 (i=2, 2025); 2026: expense 200 (i=1)
+        self.assertEqual(bs["prior_years_earnings"], D("600"))
+        self.assertEqual(bs["current_year_earnings"], D("-200"))
+        self.assertEqual(bs["total_equity"], D("400"))
+        self.assertTrue(bs["balanced"])

@@ -965,14 +965,46 @@ class AccountingService:
         return None
 
     @staticmethod
+    def _ledger_balances(organisation, accounts, as_of=None, prior_end=None):
+        """
+        Posted-ledger balance of EVERY given account in one grouped query, with each
+        account's normal sign applied: {account_id: (balance, prior_balance)}.
+        `prior_balance` is the same balance restricted to entries dated on/before
+        `prior_end` (zero when prior_end is None). Same source and sign rules as
+        _ledger_balance, without one query (or three) per account.
+        """
+        lines = JournalLine.objects.filter(
+            journal_entry__organisation=organisation, journal_entry__status='posted',
+        )
+        if as_of:
+            lines = lines.filter(journal_entry__entry_date__lte=as_of)
+        agg = {'d': Sum('debit'), 'c': Sum('credit')}
+        if prior_end is not None:
+            prior = Q(journal_entry__entry_date__lte=prior_end)
+            agg['pd'] = Sum('debit', filter=prior)
+            agg['pc'] = Sum('credit', filter=prior)
+        totals = {r['account_id']: r for r in lines.values('account_id').annotate(**agg)}
+        zero = Decimal('0')
+        debit_normal = (AccountType.ASSET, AccountType.EXPENSE, AccountType.COST_OF_GOODS)
+        out = {}
+        for acct in accounts:
+            r = totals.get(acct.id)
+            d, c = ((r['d'] or zero), (r['c'] or zero)) if r else (zero, zero)
+            pd_, pc_ = ((r.get('pd') or zero), (r.get('pc') or zero)) if r else (zero, zero)
+            sign = 1 if acct.account_type in debit_normal else -1
+            out[acct.id] = (sign * (d - c), sign * (pd_ - pc_))
+        return out
+
+    @staticmethod
     def trial_balance(organisation, as_of=None):
         # Every account, active or not (and even soft-deleted): hiding an account
         # that still carries a balance would unbalance the report. Zero-balance
         # accounts are skipped below, so inactive ones only show when they matter.
-        accounts = Account.all_objects.filter(organisation=organisation)
+        accounts = list(Account.all_objects.filter(organisation=organisation))
+        balances = AccountingService._ledger_balances(organisation, accounts, as_of=as_of)
         result = []
         for acct in accounts:
-            bal = AccountingService._ledger_balance(acct, as_of=as_of)
+            bal = balances[acct.id][0]
             if bal != 0:
                 result.append({
                     'code': acct.code,
@@ -1004,7 +1036,7 @@ class AccountingService:
         longer hides the problem: `balanced` is False, `ledger_out_of_balance` is
         True and `unreconciled_amount` carries the figure.
         """
-        accounts = Account.all_objects.filter(organisation=organisation)   # see trial_balance
+        accounts = list(Account.all_objects.filter(organisation=organisation))   # see trial_balance
         assets_data, liabilities_data, equity_data = [], [], []
         total_income = Decimal('0')
         total_expense = Decimal('0')
@@ -1013,9 +1045,12 @@ class AccountingService:
         from datetime import timedelta
         year_start = AccountingService.fiscal_year_start(organisation, as_of)
         prior_end = year_start - timedelta(days=1)
+        # One grouped query for every account (current and before-year-start balances).
+        balances = AccountingService._ledger_balances(
+            organisation, accounts, as_of=as_of, prior_end=prior_end)
 
         for acct in accounts:
-            bal = AccountingService._ledger_balance(acct, as_of=as_of)
+            bal, prior_bal = balances[acct.id]
             row = {'code': acct.code, 'name': acct.name, 'balance': bal}
             if acct.account_type == AccountType.ASSET:
                 if acct.code == '1100' and bal < 0:
@@ -1034,10 +1069,10 @@ class AccountingService:
                     equity_data.append(row)
             elif acct.account_type == AccountType.REVENUE:
                 total_income += bal
-                prior_income += AccountingService._ledger_balance(acct, as_of=prior_end)
+                prior_income += prior_bal
             elif acct.account_type in (AccountType.EXPENSE, AccountType.COST_OF_GOODS):
                 total_expense += bal
-                prior_expense += AccountingService._ledger_balance(acct, as_of=prior_end)
+                prior_expense += prior_bal
 
         # Roll the P&L net into equity (income − expenses), split at the fiscal-year start.
         prior_years_earnings = prior_income - prior_expense
