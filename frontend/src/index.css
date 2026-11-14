@@ -16,7 +16,7 @@
   color-scheme: dark;
   --brand-300: 210 204 255; /* #D2CCFF accent 300 */
   --brand-400: 164 153 255; /* #A499FF accent */
-  --brand-500: 68 121 238;  /* #4479EE primary 600 */
+  --brand-500: 47 99 230;   /* #2F63E6 primary (white text on it is 5:1) */
   --brand-600: 21 88 234;   /* #1558EA primary */
 }
 html.light {

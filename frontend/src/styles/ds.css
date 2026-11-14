@@ -325,3 +325,55 @@ html.light .ds{--ds-modal-bg:#FCFCF6}
 .ds .bg-brand-500\/15:not(button):not(a), .ds .bg-brand-500\/10:not(button):not(a){background-color:color-mix(in srgb,var(--ds-link) 14%,transparent)}
 .ds .border-brand-500\/30{border-color:color-mix(in srgb,var(--ds-link) 40%,transparent)}
 .ds .focus\:border-brand-500:focus{border-color:var(--ds-link)}
+
+/* ============================================================================
+   QA FIXES — one rule each, covering every screen, not page by page
+   ========================================================================== */
+
+/* Old slate cards (bg-slate-700/800/900 + their borders) never flipped to the
+   light theme: dark navy boxes with dark labels. They now follow the kit card. */
+.ds :is(.bg-slate-700, .bg-slate-800, .bg-slate-900){background-color:var(--ds-card)}
+.ds :is(.border-slate-600, .border-slate-700, .border-slate-800){border-color:var(--ds-card-bd)}
+.ds :is(.divide-slate-700, .divide-slate-800) > :not([hidden]) ~ :not([hidden]){border-color:var(--ds-card-bd)}
+
+/* Floating panels (slide-overs, drawers, chat, menus) must be SOLID. The card
+   rule above makes cards see-through (frosted), which is right for cards on the
+   page but wrong for anything that floats over the page. Backdrops (inset-0)
+   are left alone. */
+.ds :is(.fixed, .absolute):is(.bg-surface-800, .bg-surface-900, .bg-surface-950, .bg-slate-800, .bg-slate-900, .card, .card-sm):not(.inset-0){
+  background:var(--ds-modal-bg);backdrop-filter:none;-webkit-backdrop-filter:none;
+  border-color:var(--ds-card-bd);
+}
+
+/* Tinted status boxes written for the dark theme (dark red / green / yellow
+   panels with pale text) had no light version: dark translucent boxes on a
+   light page and pale text on pink. Light theme gets the kit's pale tints with
+   dark text (all pairs 7:1 or better). */
+html.light .ds :is([class*="bg-red-900"], [class*="bg-red-950"], [class*="bg-red-800"]){background-color:#FFE6E6;border-color:#FFCCCD}
+html.light .ds :is([class*="bg-green-900"], [class*="bg-green-950"], [class*="bg-emerald-900"], [class*="bg-emerald-950"]){background-color:#E8FFE6;border-color:#A2FF99}
+html.light .ds :is([class*="bg-amber-900"], [class*="bg-amber-950"], [class*="bg-yellow-900"], [class*="bg-yellow-950"]){background-color:#FFF5CC;border-color:#FEE067}
+html.light .ds :is([class*="bg-blue-900"], [class*="bg-blue-950"], [class*="bg-indigo-900"], [class*="bg-indigo-950"]){background-color:#ECF2FD;border-color:#A2BCF6}
+html.light .ds :is([class*="bg-slate-800/"], [class*="bg-slate-900/"]){background-color:rgba(255,255,255,.7);border-color:var(--ds-card-bd)}
+html.light .ds :is([class*="text-red-200"], [class*="text-red-300"], [class*="text-red-400"], [class*="text-red-500"]){color:#990003}
+html.light .ds :is([class*="text-green-200"], [class*="text-green-300"], [class*="text-green-400"], [class*="text-emerald-200"], [class*="text-emerald-300"], [class*="text-emerald-400"]){color:#0A5A0A}
+html.light .ds :is([class*="text-amber-200"], [class*="text-amber-300"], [class*="text-amber-400"], [class*="text-yellow-200"], [class*="text-yellow-300"], [class*="text-yellow-400"]){color:#665100}
+html.light .ds :is([class*="text-blue-200"], [class*="text-blue-300"], [class*="text-blue-400"], [class*="text-indigo-300"], [class*="text-indigo-400"]){color:#0D358C}
+
+/* Solid yellow / green / red badges: the kit's warning yellow and light greens
+   need DARK text (white on them is about 1.6:1). Buttons are handled above. */
+.ds :is(span, div, p, td)[class~="bg-amber-500"], .ds :is(span, div, p, td)[class~="bg-amber-400"],
+.ds :is(span, div, p, td)[class~="bg-yellow-500"], .ds :is(span, div, p, td)[class~="bg-yellow-400"],
+.ds :is(span, div, p, td)[class~="bg-orange-500"], .ds :is(span, div, p, td)[class~="bg-orange-400"]{color:#332900}
+.ds :is(span, div, p, td)[class~="bg-green-500"], .ds :is(span, div, p, td)[class~="bg-emerald-500"]{color:#053300}
+.ds :is(span, div, p, td)[class~="bg-red-500"]:not(.text-always-white){background-color:#CC0003;color:#FFFFFF}
+.ds .text-red-600, .ds .text-red-700{color:var(--ds-bad)}
+
+/* Chart legends: their labels carry an inline pale grey that only reads on dark. */
+html.light .recharts-legend-wrapper span, html.light .recharts-legend-item-text{color:#1C1B1F !important}
+
+/* The public shop is always a white page: pin its greys and white-on-colour text
+   so the app theme (dark or light) cannot recolour them. */
+.ds .shop-light .text-slate-400, .ds .shop-light .text-slate-500{color:#55545C}
+.ds .shop-light .text-slate-600, .ds .shop-light .text-slate-700{color:#333333}
+.ds .shop-light .text-slate-900, .ds .shop-light .text-slate-800{color:#111111}
+.ds .shop-light .text-white{color:#FFFFFF}

@@ -12,7 +12,7 @@
   --card-bg:rgba(255,255,255,.07); --card-bd:rgba(255,255,255,.16);
   --card-sh:inset 0 1px 0 rgba(255,255,255,.08);
   --field-bd:rgba(222,216,255,.7); --field-bg:rgba(255,255,255,.03);
-  --tab-on-bg:#E6E0FF; --tab-on-tx:#110099; --tab-off:#4B4A62; --tab-bar:#C9C4E8;
+  --tab-on-bg:#E6E0FF; --tab-on-tx:#110099; --tab-off:#A9A6C4; --tab-bar:#C9C4E8;
   /* Dark Sign In button: the designer's pale-lavender primary (same as the selected tab
      and the app's dark primary). The old navy was 1.08:1 against the dark background. */
   --btn:#E6E0FF; --btn-tx:#110099; --btn-sh:0 10px 26px rgba(164,153,255,.32);
