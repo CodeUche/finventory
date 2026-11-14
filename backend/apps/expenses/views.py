@@ -160,17 +160,78 @@ class ExpenseViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
             model_instance=expense,
         )
 
+    # What the ledger entry is built from. Anything else (description,
+    # reference, attachment, group...) can change without touching the books.
+    _LEDGER_FIELDS = ('amount', 'expense_date', 'category_id', 'payment_method', 'is_income')
+
+    @staticmethod
+    def _locked_message(date):
+        return (f"The period {date.year}-{date.month:02d} is locked, so this expense cannot be "
+                f"changed or deleted. Ask an administrator to unlock it first.")
+
     def perform_update(self, serializer):
+        from django.core.exceptions import PermissionDenied
+        from django.db import transaction
+        from apps.accounting.exceptions import PeriodLockedError
+        from apps.accounting.services import AccountingService, safe_post_gl
+
         org = self._get_organisation()
         label = serializer.validated_data.pop('category_label', None)
         instance = serializer.instance
         before = {f: getattr(instance, f, None) for f in serializer.validated_data}
-        if label is not None:
-            is_income = serializer.validated_data.get('is_income', serializer.instance.is_income)
-            category = self._resolve_category(label, is_income, org)
-            serializer.save(category=category)
-        else:
-            serializer.save()
+        ledger_before = {f: getattr(instance, f) for f in self._LEDGER_FIELDS}
+        old_date = instance.expense_date
+
+        with transaction.atomic():
+            if label is not None:
+                is_income = serializer.validated_data.get('is_income', serializer.instance.is_income)
+                category = self._resolve_category(label, is_income, org)
+                serializer.save(category=category)
+            else:
+                serializer.save()
+            expense = serializer.instance
+            ledger_changed = any(getattr(expense, f) != ledger_before[f] for f in self._LEDGER_FIELDS)
+            if ledger_changed:
+                # The old entry is reversed (kept, never edited) and the corrected
+                # expense is posted fresh, so the ledger shows the new figures and
+                # nothing of the old ones. A locked month on either date blocks it,
+                # and the save above rolls back with it.
+                user = self.request.user
+                for d in {old_date, expense.expense_date}:
+                    if AccountingService.is_period_locked(org, d, user=user):
+                        raise PermissionDenied(self._locked_message(d))
+                try:
+                    AccountingService.reverse_expense_journal(org, expense, user)
+                except PeriodLockedError:
+                    raise PermissionDenied(self._locked_message(old_date))
+                safe_post_gl(
+                    AccountingService.post_expense_journal, org, expense, user,
+                    model_instance=expense,
+                )
         after = {f: getattr(serializer.instance, f, None) for f in before}
         changes = {f: {'old': str(before[f]), 'new': str(after[f])} for f in before if str(before[f]) != str(after[f])}
+        if ledger_changed:
+            changes['ledger'] = {'old': 'reversed previous entry', 'new': 'posted corrected entry'}
         self._write_audit('update', serializer.instance, changes)
+
+    def perform_destroy(self, instance):
+        """Delete = reverse the ledger entry too. A deleted expense must not keep showing as a cost."""
+        from django.core.exceptions import PermissionDenied
+        from django.db import transaction
+        from apps.accounting.exceptions import PeriodLockedError
+        from apps.accounting.services import AccountingService
+
+        org = self._get_organisation()
+        user = self.request.user
+        if AccountingService.is_period_locked(org, instance.expense_date, user=user):
+            raise PermissionDenied(self._locked_message(instance.expense_date))
+        with transaction.atomic():
+            try:
+                AccountingService.reverse_expense_journal(org, instance, user)
+            except PeriodLockedError:
+                raise PermissionDenied(self._locked_message(instance.expense_date))
+            self._write_audit('delete', instance, {
+                'amount': str(instance.amount), 'expense_date': str(instance.expense_date),
+                'ledger': 'entry reversed',
+            })
+            instance.delete()

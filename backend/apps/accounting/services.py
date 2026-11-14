@@ -2107,8 +2107,67 @@ class AccountingService:
         )
 
     @staticmethod
+    def _expense_entries(organisation, expense):
+        """All journal entries ever posted for this expense (original + revisions), oldest first."""
+        eid = str(expense.id)
+        return list(
+            JournalEntry.objects.filter(organisation=organisation, source_type='expense', status='posted')
+            .filter(Q(source_ref=eid) | Q(source_ref__startswith=f"{eid}:v"))
+            .order_by('created_at', 'id')
+        )
+
+    @staticmethod
+    def _live_expense_entries(organisation, expense):
+        """The expense's entries that have not been reversed."""
+        entries = AccountingService._expense_entries(organisation, expense)
+        if not entries:
+            return []
+        reversed_ids = set(
+            JournalEntry.objects.filter(
+                organisation=organisation, source_type='reversal',
+                source_ref__in=[str(e.id) for e in entries],
+            ).values_list('source_ref', flat=True)
+        )
+        return [e for e in entries if str(e.id) not in reversed_ids]
+
+    @staticmethod
+    def reverse_expense_journal(organisation, expense, actor=None):
+        """
+        Take an expense out of the ledger: reverse every live entry posted for it
+        (the originals stay, immutable; a dated reversal nets them to zero).
+
+        The reversal is dated today, so today's period must be open, and so must
+        the period of the original entry (an administrator grant counts as open).
+        Raises PeriodLockedError otherwise, before anything is written. Returns
+        the reversal entries (empty when the expense never reached the ledger).
+        """
+        from django.utils import timezone
+        live = AccountingService._live_expense_entries(organisation, expense)
+        if not live:
+            return []
+        today = timezone.now().date()
+        AccountingService.assert_period_open(
+            organisation, today, actor, ref=f"EXP-{expense.id}", source='expense_reversal')
+        for entry in live:
+            AccountingService.assert_period_open(
+                organisation, entry.entry_date, actor, ref=f"EXP-{expense.id}", source='expense_reversal')
+        return [AccountingService.reverse_journal_entry(e, actor=actor) for e in live]
+
+    @staticmethod
     def post_expense_journal(organisation, expense, user=None):
-        """DR Expense account → CR Cash/Bank."""
+        """
+        DR Expense account → CR Cash/Bank.
+
+        Idempotent per expense: while a live (un-reversed) entry exists it is
+        returned untouched. After an edit reversed it, the expense is posted
+        again under a NEW source reference ("<id>:v<n>"), because the original
+        reference is taken by the entry that was reversed.
+        """
+        live = AccountingService._live_expense_entries(organisation, expense)
+        if live:
+            return live[-1]
+        history = AccountingService._expense_entries(organisation, expense)
+        source_ref = str(expense.id) if not history else f"{expense.id}:v{len(history) + 1}"
         zero = Decimal('0')
         amount = Decimal(str(expense.amount))
 
@@ -2147,7 +2206,7 @@ class AccountingService:
             lines, user,
             ref=f"EXP-{expense.id}",
             source_type='expense',
-            source_ref=str(expense.id),
+            source_ref=source_ref,
         )
 
     @staticmethod

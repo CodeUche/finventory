@@ -363,3 +363,138 @@ class CogsNotSilentlyDroppedTests(TestCase):
         self.assertEqual(inv.gl_post_status, "posted")
         self.assertEqual(bal(self.org, "4001"), D("200"))
         self.assertEqual(bal(self.org, "5001"), D("60"))
+
+
+class ExpenseEditDeleteLedgerTests(TestCase):
+    """Item 4: editing or deleting an expense must move the ledger with it."""
+
+    def setUp(self):
+        from apps.accounting.tests import _auth_client
+        self.user, self.org = _setup("ex_owner@example.com", "EX Org")
+        self.client = _auth_client(self.user, self.org)
+        self.today = timezone.now().date()
+        self.cash = AccountMappingService.resolve(self.org, "cash_account")
+        self.bank = AccountMappingService.resolve(self.org, "bank_account")
+
+    def _create(self, amount="5000", **extra):
+        payload = {"description": "Generator fuel", "amount": amount, "expense_date": str(self.today),
+                   "category_label": "Fuel", "payment_method": "cash"}
+        payload.update(extra)
+        res = self.client.post("/api/v1/expenses/", payload, format="json")
+        self.assertEqual(res.status_code, 201, res.content[:300])
+        return res.data["id"]
+
+    def _bal(self, account):
+        return AccountingService._ledger_balance(account)
+
+    def test_edit_5000_to_3000_nets_3000_in_the_ledger(self):
+        eid = self._create("5000")
+        self.assertEqual(bal(self.org, "6700"), D("5000"))
+        res = self.client.patch(f"/api/v1/expenses/{eid}/", {"amount": "3000"}, format="json")
+        self.assertEqual(res.status_code, 200, res.content[:300])
+        self.assertEqual(bal(self.org, "6700"), D("3000"))
+        self.assertEqual(self._bal(self.cash), D("-3000"))
+        from apps.expenses.models import Expense
+        self.assertEqual(Expense.objects.get(id=eid).gl_post_status, "posted")
+        # History kept: original, its reversal, and the new entry under a new reference.
+        refs = list(JournalEntry.objects.filter(organisation=self.org, source_type="expense")
+                    .values_list("source_ref", flat=True))
+        self.assertEqual(sorted(refs), sorted([eid, f"{eid}:v2"]))
+        self.assertEqual(JournalEntry.objects.filter(organisation=self.org, source_type="reversal").count(), 1)
+
+    def test_second_edit_chains_cleanly(self):
+        eid = self._create("5000")
+        self.client.patch(f"/api/v1/expenses/{eid}/", {"amount": "3000"}, format="json")
+        self.client.patch(f"/api/v1/expenses/{eid}/", {"amount": "4200"}, format="json")
+        self.assertEqual(bal(self.org, "6700"), D("4200"))
+        self.assertEqual(self._bal(self.cash), D("-4200"))
+
+    def test_payment_method_change_moves_the_credit_side(self):
+        eid = self._create("5000")
+        self.client.patch(f"/api/v1/expenses/{eid}/", {"payment_method": "bank"}, format="json")
+        self.assertEqual(self._bal(self.cash), ZERO)
+        self.assertEqual(self._bal(self.bank), D("-5000"))
+        self.assertEqual(bal(self.org, "6700"), D("5000"))
+
+    def test_changing_to_income_flips_the_ledger(self):
+        eid = self._create("5000")
+        self.client.patch(f"/api/v1/expenses/{eid}/", {"is_income": True}, format="json")
+        self.assertEqual(bal(self.org, "6700"), ZERO)
+        self.assertEqual(bal(self.org, "4001"), D("5000"))
+        self.assertEqual(self._bal(self.cash), D("5000"))
+
+    def test_description_only_edit_posts_nothing(self):
+        eid = self._create("5000")
+        before = JournalEntry.objects.filter(organisation=self.org).count()
+        res = self.client.patch(f"/api/v1/expenses/{eid}/", {"description": "Diesel"}, format="json")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(JournalEntry.objects.filter(organisation=self.org).count(), before)
+
+    def test_delete_nets_the_ledger_to_zero_and_keeps_audit_rows(self):
+        from apps.core.models import AuditLog
+        from apps.expenses.models import Expense
+        eid = self._create("5000")
+        res = self.client.delete(f"/api/v1/expenses/{eid}/")
+        self.assertEqual(res.status_code, 204)
+        self.assertEqual(bal(self.org, "6700"), ZERO)
+        self.assertEqual(self._bal(self.cash), ZERO)
+        self.assertFalse(Expense.objects.filter(id=eid).exists())
+        self.assertTrue(Expense.all_objects.filter(id=eid, is_deleted=True).exists())
+        # The original entry and its reversal are both still there.
+        self.assertEqual(JournalEntry.objects.filter(organisation=self.org, source_type="expense").count(), 1)
+        self.assertEqual(JournalEntry.objects.filter(organisation=self.org, source_type="reversal").count(), 1)
+        self.assertTrue(AuditLog.objects.filter(organisation_id=self.org.id, model_name="Expense",
+                                                object_id=eid, action="delete").exists())
+
+    def test_edit_in_a_locked_period_is_blocked_and_nothing_changes(self):
+        from apps.expenses.models import Expense
+        eid = self._create("5000")
+        FinancialPeriod.objects.create(organisation=self.org, year=self.today.year,
+                                       month=self.today.month, is_locked=True)
+        res = self.client.patch(f"/api/v1/expenses/{eid}/", {"amount": "3000"}, format="json")
+        self.assertEqual(res.status_code, 403)
+        self.assertIn("locked", str(res.data).lower())
+        self.assertEqual(Expense.objects.get(id=eid).amount, D("5000"))
+        self.assertEqual(bal(self.org, "6700"), D("5000"))
+        self.assertEqual(JournalEntry.objects.filter(organisation=self.org, source_type="reversal").count(), 0)
+
+    def test_delete_in_a_locked_period_is_blocked(self):
+        from apps.expenses.models import Expense
+        eid = self._create("5000")
+        FinancialPeriod.objects.create(organisation=self.org, year=self.today.year,
+                                       month=self.today.month, is_locked=True)
+        res = self.client.delete(f"/api/v1/expenses/{eid}/")
+        self.assertEqual(res.status_code, 403)
+        self.assertTrue(Expense.objects.filter(id=eid).exists())
+        self.assertEqual(bal(self.org, "6700"), D("5000"))
+
+    def test_moving_the_date_into_a_locked_period_is_blocked(self):
+        eid = self._create("5000")
+        FinancialPeriod.objects.create(organisation=self.org, year=2020, month=3, is_locked=True)
+        res = self.client.patch(f"/api/v1/expenses/{eid}/", {"expense_date": "2020-03-10"}, format="json")
+        self.assertEqual(res.status_code, 403)
+        self.assertEqual(bal(self.org, "6700"), D("5000"))
+
+    def test_failed_repost_is_flagged_and_retry_restores_the_cost(self):
+        from unittest.mock import patch
+        from apps.expenses.models import Expense
+        eid = self._create("5000")
+        with patch.object(AccountingService, "post_journal_entry", side_effect=RuntimeError("down")):
+            self.client.patch(f"/api/v1/expenses/{eid}/", {"amount": "3000"}, format="json")
+        self.assertEqual(Expense.objects.get(id=eid).gl_post_status, "failed")
+        self.assertEqual(bal(self.org, "6700"), ZERO)       # old entry reversed, new not yet posted
+        ok, err = AccountingService.retry_gl_post(self.org, "expense", eid, self.user)
+        self.assertTrue(ok, err)
+        self.assertEqual(bal(self.org, "6700"), D("3000"))
+        # A second retry changes nothing.
+        AccountingService.retry_gl_post(self.org, "expense", eid, self.user)
+        self.assertEqual(bal(self.org, "6700"), D("3000"))
+
+    def test_another_organisation_cannot_edit_the_expense(self):
+        from apps.accounting.tests import _auth_client
+        other_user, other = _setup("ex2_owner@example.com", "EX Org 2")
+        other_client = _auth_client(other_user, other)
+        eid = self._create("5000")
+        res = other_client.patch(f"/api/v1/expenses/{eid}/", {"amount": "1"}, format="json")
+        self.assertEqual(res.status_code, 404)
+        self.assertEqual(bal(self.org, "6700"), D("5000"))
