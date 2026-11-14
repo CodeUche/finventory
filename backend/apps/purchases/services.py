@@ -402,7 +402,7 @@ def _post_convert_journal(po, net_goods, tax, total, entry_date, user):
     )
 
 
-def _post_receipt_journal(po, batch_subtotal, batch_tax, received_by):
+def _post_receipt_journal(po, batch_subtotal, batch_tax, received_by, note=""):
     """Post: DR Inventory + (DR VAT Input if any) / CR Accounts Payable, via the
     standard account-mapping resolver — was previously hardcoded to codes "1200"/
     "2001", bypassing org-level remapping and always dropping input VAT.
@@ -432,7 +432,7 @@ def _post_receipt_journal(po, batch_subtotal, batch_tax, received_by):
     ).filter(Q(source_ref=str(po.id)) | Q(source_ref__startswith=f"{po.id}:")).count()
     return AccountingService.post_journal_entry(
         po.organisation,
-        f"Goods received {po.po_number}",
+        f"Goods received {po.po_number}{note}",
         timezone.now().date(),
         lines,
         received_by,
@@ -454,31 +454,49 @@ def retry_po_bill_journal(bill, user=None):
     posts only the batch that failed. Raises on failure (the caller wraps it
     in safe_post_gl).
     """
-    from apps.accounting.models import JournalEntry
+    from apps.accounting.models import Account, JournalEntry
     from apps.accounting.services import AccountMappingService
 
     po = bill.source_purchase_order
     total = Decimal(str(bill.total_amount or 0))
     tax = Decimal(str(bill.tax_amount or 0))
+    today = timezone.now().date()
     if po.billed_before_receipt:
+        # Idempotent on the PO, so a conversion that did post is simply returned.
         return _post_convert_journal(po, total - tax, tax, total, bill.issue_date, user)
 
-    entries = (JournalEntry.objects.filter(organisation=bill.organisation, source_type="po_receipt", status="posted")
-               .filter(Q(source_ref=str(po.id)) | Q(source_ref__startswith=f"{po.id}:"))
-               .prefetch_related("lines"))
-    inv_acct = AccountMappingService.resolve(bill.organisation, "inventory_account")
-    posted_total = posted_inventory = Decimal("0")
+    entries = list(
+        JournalEntry.objects.filter(organisation=bill.organisation, source_type="po_receipt", status="posted")
+        .filter(Q(source_ref=str(po.id)) | Q(source_ref__startswith=f"{po.id}:"))
+        .prefetch_related("lines")
+    )
+    # A receipt that has been reversed no longer counts as posted.
+    reversed_ids = set(JournalEntry.objects.filter(
+        organisation=bill.organisation, source_type="reversal",
+        source_ref__in=[str(e.id) for e in entries],
+    ).values_list("source_ref", flat=True))
+    # Input VAT lines are found by account (the mapped one, plus the two codes it has
+    # historically pointed at), NOT by "everything that is not the inventory account":
+    # a receipt can debit per-product inventory accounts as well as the mapped one.
+    vat_ids = set(Account.objects.filter(
+        organisation=bill.organisation, code__in=("1300", "1400")).values_list("id", flat=True))
+    vat_ids.add(AccountMappingService.resolve(bill.organisation, "vat_input_account").id)
+    posted_total = posted_tax = Decimal("0")
     for e in entries:
+        if str(e.id) in reversed_ids:
+            continue
         for ln in e.lines.all():
             posted_total += Decimal(str(ln.credit or 0))
-            if ln.account_id == inv_acct.id:
-                posted_inventory += Decimal(str(ln.debit or 0))
+            if ln.account_id in vat_ids:
+                posted_tax += Decimal(str(ln.debit or 0)) - Decimal(str(ln.credit or 0))
     missing_total = total - posted_total
     if missing_total <= 0:
         return None
-    missing_subtotal = Decimal(str(bill.subtotal or 0)) - posted_inventory
-    missing_tax = missing_total - missing_subtotal
-    return _post_receipt_journal(po, missing_subtotal, missing_tax, user)
+    missing_tax = max(tax - posted_tax, Decimal("0"))
+    missing_subtotal = missing_total - missing_tax
+    return _post_receipt_journal(
+        po, missing_subtotal, missing_tax, user,
+        note=f" (GL retry; dated {today.isoformat()}, the day the retry was run)")
 
 
 class PurchaseReturnService:

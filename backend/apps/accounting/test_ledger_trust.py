@@ -678,3 +678,38 @@ class ReverseJournalEntryGuardTests(TestCase):
             self.user, ref="RV2", source_type="manual", source_ref="rv2")
         rev = AccountingService.reverse_journal_entry(old, actor=self.user, entry_date=old.entry_date)
         self.assertEqual(rev.entry_date, date(2024, 2, 5))
+
+
+class PoRetryAccountingEdgeTests(PoBillRetryTests):
+    """A4: reversed receipts do not count as posted; per-product inventory accounts."""
+
+    def test_a_reversed_receipt_is_not_counted_as_posted(self):
+        self._receive(10)
+        bill = self._bill()
+        receipt = JournalEntry.objects.get(organisation=self.org, source_type="po_receipt")
+        AccountingService.reverse_journal_entry(receipt, actor=self.user)
+        self._assert_books(ZERO, ZERO, ZERO)
+        ok, err = AccountingService.retry_gl_post(self.org, "bill", str(bill.id), self.user)
+        self.assertTrue(ok, err)
+        self._assert_books(D("1000"), D("75"), D("1075"))
+        retry = JournalEntry.objects.filter(organisation=self.org, source_type="po_receipt").order_by("created_at").last()
+        self.assertIn("GL retry", retry.description)
+        self.assertIn(timezone.now().date().isoformat(), retry.description)
+
+    def test_per_product_inventory_account_does_not_confuse_the_missing_vat(self):
+        """First receipt debited a product-specific stock account, not the mapped one."""
+        other = Account.objects.create(organisation=self.org, code="1210", name="Stock - Widgets",
+                                       account_type=AccountType.ASSET)
+        self._receive(5)                                           # net 500, VAT 37.50
+        receipt = JournalEntry.objects.get(organisation=self.org, source_type="po_receipt")
+        for ln in receipt.lines.all():                             # move its stock debit to 1210
+            if ln.account.code == "1200":
+                JournalLine.objects.filter(id=ln.id).update(account=other)
+        self._receive(5, fail=True)                                # second half fails to post
+        bill = self._bill()
+        ok, err = AccountingService.retry_gl_post(self.org, "bill", str(bill.id), self.user)
+        self.assertTrue(ok, err)
+        self.assertEqual(AccountingService._ledger_balance(other), D("500"))
+        self.assertEqual(bal(self.org, "1200"), D("500"))
+        self.assertEqual(bal(self.org, "1400"), D("75"))           # 37.50 + 37.50, not 1037.50 or -962.50
+        self.assertEqual(bal(self.org, "2001"), D("1075"))
