@@ -31,6 +31,7 @@ interface BalanceSheetData {
   total_equity: string | number
   ledger_out_of_balance?: boolean
   unreconciled_amount?: string | number
+  cogs_missing_invoices?: number
 }
 
 const MONTHS = [
@@ -251,6 +252,18 @@ export default function BalanceSheetPage() {
         </div>
       ) : data ? (
         <>
+          {(data.cogs_missing_invoices ?? 0) > 0 && (
+            <div role="alert" className="flex items-center justify-between flex-wrap gap-3 p-4 rounded-xl border bg-amber-500/10 border-amber-500/30 text-amber-400">
+              <span className="flex items-center gap-3">
+                <AlertTriangle size={18} />
+                <span className="font-semibold">
+                  Cost of sales missing on {data.cogs_missing_invoices} invoice{data.cogs_missing_invoices === 1 ? '' : 's'}; profit overstated until fixed.
+                </span>
+              </span>
+              <button onClick={() => navigate('/accounting/gl-health')} className="btn-ghost text-sm">Open GL Health</button>
+            </div>
+          )}
+
           {ledgerOutOfBalance && (
             <div role="alert" className="flex items-center justify-between flex-wrap gap-3 p-4 rounded-xl border bg-red-500/10 border-red-500/30 text-red-400">
               <span className="flex items-center gap-3">
