@@ -12,8 +12,16 @@ export function shownBrandColor(hex?: string | null): string {
   return hex
 }
 
-export function withShownBrand<T extends { brand_color?: string | null } | null>(org: T): T {
+export function withShownBrand<T extends { brand_color?: string | null; brand_color_raw?: string } | null>(org: T): T {
   if (!org) return org
   const shown = shownBrandColor(org.brand_color)
-  return shown === org.brand_color ? org : ({ ...org, brand_color: shown } as T)
+  if (shown === org.brand_color) return org
+  // Remember what the server really holds, so a save that did not touch the colour can send it back unchanged.
+  return { ...org, brand_color: shown, brand_color_raw: org.brand_color_raw ?? org.brand_color ?? undefined } as T
+}
+
+/** Value to send on save: the server's own value unless the user picked a different colour. */
+export function brandColorToSave(current: string, raw?: string | null): string {
+  if (raw !== undefined && raw !== null && shownBrandColor(raw) === current) return raw
+  return current
 }

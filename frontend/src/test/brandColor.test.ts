@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { shownBrandColor, withShownBrand, DEFAULT_BRAND_COLOR } from '@/lib/brandColor'
+import { shownBrandColor, withShownBrand, brandColorToSave, DEFAULT_BRAND_COLOR } from '@/lib/brandColor'
 
 describe('document brand colour', () => {
   it('shows the designer blue for the old server default or nothing', () => {
@@ -16,5 +16,13 @@ describe('document brand colour', () => {
     expect(withShownBrand(org)).toBe(org)
     expect(withShownBrand({ id: 'o2', brand_color: '#f97316' }).brand_color).toBe(DEFAULT_BRAND_COLOR)
     expect(withShownBrand(null)).toBeNull()
+  })
+
+  it('sends the original server value back unless the colour was changed', () => {
+    const shown = withShownBrand<{ id: string; brand_color: string; brand_color_raw?: string }>({ id: 'o3', brand_color: '#f97316' })
+    expect(shown.brand_color_raw).toBe('#f97316')
+    expect(brandColorToSave(shown.brand_color!, shown.brand_color_raw)).toBe('#f97316')
+    expect(brandColorToSave('#0A6B0A', shown.brand_color_raw)).toBe('#0A6B0A')
+    expect(brandColorToSave('#0A6B0A', undefined)).toBe('#0A6B0A')
   })
 })
