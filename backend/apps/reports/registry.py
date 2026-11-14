@@ -29,6 +29,9 @@ class ReportDef:
     module: str = "reports"
     # Extra ticks that must ALL be held too (a report spanning two modules).
     also_modules: tuple = ()
+    # Cost-bearing report: owners and admins only, because the Products screen
+    # hides cost price from everyone else and a report must not reveal it.
+    owner_admin_only: bool = False
 
 
 _REGISTRY: "dict[str, ReportDef]" = {}
@@ -949,7 +952,8 @@ def _register_defaults() -> None:
     register(ReportDef("stock-report", "Stock Report", "Inventory",
                        stock_report, "Current stock levels per product and warehouse.", module="inventory"))
     register(ReportDef("stock-valuation", "Stock Valuation Report", "Inventory",
-                       stock_valuation_report, "Inventory quantities valued at cost.", module="inventory"))
+                       stock_valuation_report, "Inventory quantities valued at cost.", module="inventory",
+                       owner_admin_only=True))
 
     # ── Fixed Assets ──
     register(ReportDef("asset-register", "Asset Register", "Fixed Assets",
