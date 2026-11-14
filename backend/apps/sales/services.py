@@ -241,6 +241,14 @@ class SaleService:
         # deferred-fulfillment invoices; fulfill_invoice() posts it later.
         if not is_proforma and not defer_fulfillment:
             from apps.accounting.services import safe_post_gl
+            # Strict GL mode already refused the sale above when a mapping was
+            # missing. Otherwise the till is never blocked: say so now, and the
+            # post below flags the invoice (GL Health, retry).
+            missing = AccountingService.missing_sale_mappings(organisation)
+            if missing:
+                logger.warning(
+                    "Sale %s confirmed with unmapped GL roles %s; its journal will be flagged.",
+                    invoice.invoice_number, ", ".join(missing))
             safe_post_gl(
                 AccountingService.post_sale_journal, organisation, invoice, created_by,
                 model_instance=invoice,
@@ -845,7 +853,8 @@ class SaleService:
                 for item in invoice.items.all()
                 if item.product.product_type != "service"
             )
-            if cogs_total > zero:
+            # ...but only when the original cost of sales actually reached the ledger.
+            if cogs_total > zero and AccountingService.sale_cogs_posted(invoice.organisation, invoice):
                 cogs_acct = AccountMappingService.resolve(invoice.organisation, 'cogs_account')
                 inv_acct  = AccountMappingService.resolve(invoice.organisation, 'inventory_account')
                 lines.append((inv_acct,  cogs_total, zero))  # DR Inventory (restore)
@@ -962,6 +971,12 @@ class SaleService:
         # ── 2. Reverse the GL journal entry ────────────────────────────────────
         if gl_was_posted:
             AccountingService.reverse_journal_entry(linked_journal_entry, actor)
+            # The cost-of-sales journal is separate from the revenue one.
+            cogs_entry = JournalEntry.objects.filter(
+                organisation=invoice.organisation, source_type='sale_cogs',
+                source_ref=str(invoice.id)).first()
+            if cogs_entry is not None:
+                AccountingService.reverse_journal_entry(cogs_entry, actor)
 
         # ── 3. Restore stock ────────────────────────────────────────────────────
         if stock_was_deducted:
@@ -1189,7 +1204,7 @@ class SaleService:
                 lines.append((AccountingService.tender_asset_account(organisation, payout_tender), zero, payout))
             # Reverse COGS/Inventory for the restocked portion, so the GL Inventory
             # balance stays in step with the physical stock InventoryService already restored
-            if total_cogs_refund > zero:
+            if total_cogs_refund > zero and AccountingService.sale_cogs_posted(organisation, invoice):
                 cogs_acct = AccountMappingService.resolve(organisation, 'cogs_account')
                 inv_acct  = AccountMappingService.resolve(organisation, 'inventory_account')
                 lines.append((inv_acct,  total_cogs_refund, zero))  # DR Inventory (restore)

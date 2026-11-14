@@ -82,10 +82,27 @@ class AccountViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             .order_by('code')
         )
 
+    def update(self, request, *args, **kwargs):
+        """PUT/PATCH. When an account is deactivated, add a `warning` if it had postings this year."""
+        was_active = self.get_object().is_active
+        response = super().update(request, *args, **kwargs)
+        if was_active and request.data.get('is_active') in (False, 'false', 'False', 0, '0'):
+            warning = AccountingService.account_deactivation_warning(self.get_object())
+            if warning:
+                response.data['warning'] = warning
+        return response
+
     def perform_destroy(self, instance):
         if instance.is_system:
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("System accounts cannot be deleted")
+        # Deleting hides the account from every report, so an account that still
+        # has a balance cannot go (its history would vanish and the books would
+        # stop adding up).
+        reason = AccountingService.account_deactivation_block(instance)
+        if reason:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({'detail': reason})
         instance.delete()
 
     @action(detail=False, methods=['get'])
@@ -2137,8 +2154,9 @@ class GLHealthBulkRetryView(APIView):
             ('expense', Expense.objects.filter(organisation=org, gl_post_status__in=retry_statuses)),
             ('payroll', PayrollRun.objects.filter(organisation=org, gl_post_status__in=retry_statuses)),
             ('till',    TillSession.objects.filter(organisation=org, gl_post_status__in=retry_statuses)),
+            ('stock_adjustment', AccountingService.unposted_stock_adjustments(org)),
         ]:
-            for obj in qs[:50]:  # cap per model to avoid timeout
+            for obj in list(qs)[:50]:  # cap per model to avoid timeout
                 results['attempted'] += 1
                 try:
                     success, err = AccountingService.retry_gl_post(org, model_name, str(obj.id), request.user)

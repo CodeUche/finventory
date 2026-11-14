@@ -127,6 +127,13 @@ class BillItem(TenantAwareModel):
     # Capitalisation: when set, this line's VAT-exclusive cost is debited to Fixed
     # Assets (1500) instead of an expense account, and a FixedAsset register record is
     # created on bill approval (Phase 1 — bill-line capitalisation).
+    # Optional link to a catalogue product. A line for a stock-tracked (physical)
+    # product goes to Inventory and receives the stock when the bill is booked;
+    # lines without one (or for services) stay expensed.
+    product = models.ForeignKey(
+        'inventory.Product', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='bill_items',
+    )
     capitalise = models.BooleanField(default=False)
     asset_category = models.CharField(max_length=20, blank=True, default='')
     useful_life_years = models.PositiveIntegerField(null=True, blank=True)

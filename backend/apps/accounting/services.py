@@ -124,7 +124,7 @@ class AccountMappingService:
         'bank_account':            (['asset'],            ['1002', '10'], ['bank', 'current account']),
         'accounts_payable':        (['liability'],        ['2001', '20'], ['payable', 'creditor', 'payables']),
         'vat_output_account':      (['liability'],        ['2100', '21'], ['vat', 'output vat', 'vat payable']),
-        'vat_input_account':       (['asset'],            ['1300'],       ['vat input', 'input vat', 'recoverable']),
+        'vat_input_account':       (['asset'],            ['1400'],       ['input vat', 'vat receivable']),
         'paye_account':            (['liability'],        ['2200', '22'], ['paye', 'income tax', 'payroll tax']),
         'pension_account':         (['liability'],        ['2300', '23'], ['pension']),
         'nhf_account':             (['liability'],        ['2600', '26'], ['nhf', 'national housing', 'housing fund']),
@@ -919,11 +919,123 @@ class AccountingService:
         return credits - debits
 
     @staticmethod
+    def fiscal_year_start(organisation, as_of=None):
+        """First day of the fiscal year that contains `as_of` (today when omitted).
+
+        Uses the organisation's FiscalYear record when one covers the date,
+        otherwise the calendar year (which is also what close_year closes).
+        """
+        from datetime import date as _date
+        from django.utils import timezone
+        from .models import FiscalYear
+        as_of = as_of or timezone.now().date()
+        fy = FiscalYear.objects.filter(
+            organisation=organisation, start_date__lte=as_of, end_date__gte=as_of,
+        ).order_by('-start_date').first()
+        return fy.start_date if fy else _date(as_of.year, 1, 1)
+
+    @staticmethod
+    def account_references(account):
+        """Where this account is in use as a default, as plain phrases (empty when nowhere)."""
+        from django.db.models import Q as _Q
+        from .serializers import MAPPING_ROLES, MAPPING_ROLE_LABELS
+        found = []
+        mapping = AccountMapping.objects.filter(organisation=account.organisation).first()
+        if mapping:
+            for role in MAPPING_ROLES:
+                if getattr(mapping, f'{role}_id', None) == account.id:
+                    found.append(f"the {MAPPING_ROLE_LABELS.get(role, role)} account in GL Mapping")
+        from .models import ItemClassGLDefault
+        n = ItemClassGLDefault.objects.filter(organisation=account.organisation).filter(
+            _Q(inventory_account=account) | _Q(sales_account=account)
+            | _Q(cogs_account=account) | _Q(wages_account=account)).count()
+        if n:
+            found.append(f"an item-class default account ({n})")
+        from apps.inventory.models import Product
+        n = Product.objects.filter(organisation=account.organisation).filter(
+            _Q(inventory_account=account) | _Q(sales_account=account)
+            | _Q(cogs_account=account) | _Q(wages_account=account)).count()
+        if n:
+            found.append(f"the default account on {n} product(s)")
+        from apps.expenses.models import ExpenseCategory
+        n = ExpenseCategory.objects.filter(organisation=account.organisation, account=account).count()
+        if n:
+            found.append(f"the account of {n} expense categor{'y' if n == 1 else 'ies'}")
+        return found
+
+    @staticmethod
+    def account_deactivation_block(account):
+        """
+        Why this account must not be deactivated, or None when it may be.
+
+        Reports read the ledger by account, so hiding an account that still carries
+        a balance would silently unbalance the trial balance and balance sheet. An
+        account that new postings are still routed to (GL Mapping, product, item
+        class or expense-category default) would also start failing them.
+        """
+        balance = AccountingService._ledger_balance(account)
+        if balance != 0:
+            return f"This account still has a balance of {balance:,.2f}. Move it first."
+        refs = AccountingService.account_references(account)
+        if refs:
+            return "This account is still in use as " + "; ".join(refs) + ". Choose another account there first."
+        return None
+
+    @staticmethod
+    def account_deactivation_warning(account):
+        """A caution (not a block) for deactivating an account with postings this fiscal year."""
+        from django.utils import timezone
+        year_start = AccountingService.fiscal_year_start(account.organisation, timezone.now().date())
+        has = JournalLine.objects.filter(
+            journal_entry__organisation=account.organisation, account=account,
+            journal_entry__status='posted', journal_entry__entry_date__gte=year_start,
+        ).exists()
+        if has:
+            return ("This account had postings this year. It nets to zero, so reports stay correct, "
+                    "and its history stays visible, but it can no longer be chosen for new entries.")
+        return None
+
+    @staticmethod
+    def _ledger_balances(organisation, accounts, as_of=None, prior_end=None):
+        """
+        Posted-ledger balance of EVERY given account in one grouped query, with each
+        account's normal sign applied: {account_id: (balance, prior_balance)}.
+        `prior_balance` is the same balance restricted to entries dated on/before
+        `prior_end` (zero when prior_end is None). Same source and sign rules as
+        _ledger_balance, without one query (or three) per account.
+        """
+        lines = JournalLine.objects.filter(
+            journal_entry__organisation=organisation, journal_entry__status='posted',
+        )
+        if as_of:
+            lines = lines.filter(journal_entry__entry_date__lte=as_of)
+        agg = {'d': Sum('debit'), 'c': Sum('credit')}
+        if prior_end is not None:
+            prior = Q(journal_entry__entry_date__lte=prior_end)
+            agg['pd'] = Sum('debit', filter=prior)
+            agg['pc'] = Sum('credit', filter=prior)
+        totals = {r['account_id']: r for r in lines.values('account_id').annotate(**agg)}
+        zero = Decimal('0')
+        debit_normal = (AccountType.ASSET, AccountType.EXPENSE, AccountType.COST_OF_GOODS)
+        out = {}
+        for acct in accounts:
+            r = totals.get(acct.id)
+            d, c = ((r['d'] or zero), (r['c'] or zero)) if r else (zero, zero)
+            pd_, pc_ = ((r.get('pd') or zero), (r.get('pc') or zero)) if r else (zero, zero)
+            sign = 1 if acct.account_type in debit_normal else -1
+            out[acct.id] = (sign * (d - c), sign * (pd_ - pc_))
+        return out
+
+    @staticmethod
     def trial_balance(organisation, as_of=None):
-        accounts = Account.objects.filter(organisation=organisation, is_active=True)
+        # Every account, active or not (and even soft-deleted): hiding an account
+        # that still carries a balance would unbalance the report. Zero-balance
+        # accounts are skipped below, so inactive ones only show when they matter.
+        accounts = list(Account.all_objects.filter(organisation=organisation))
+        balances = AccountingService._ledger_balances(organisation, accounts, as_of=as_of)
         result = []
         for acct in accounts:
-            bal = AccountingService._ledger_balance(acct, as_of=as_of)
+            bal = balances[acct.id][0]
             if bal != 0:
                 result.append({
                     'code': acct.code,
@@ -941,19 +1053,35 @@ class AccountingService:
         balance whenever the trial balance does (a balanced TB mathematically implies
         Assets = Liabilities + Equity + (Revenue − Expenses)).
 
-        Current-year P&L net (revenue − expenses − COGS) is rolled into equity as a
-        computed "Current Year Earnings" line so profit not yet closed to retained
-        earnings still lands on the sheet. Any residual (rounding) difference is
-        plugged to a Take-On Suspense line so the statement ALWAYS presents balanced,
-        per the client requirement.
+        P&L net (revenue − expenses − COGS) not yet closed to retained earnings is
+        rolled into equity in two computed lines: "Current Year Earnings" (this
+        fiscal year, from its start to `as_of`) and "Prior Years Earnings (not yet
+        closed)" (everything before the fiscal-year start that close_year has not
+        crystallised). Total equity is the same either way; the split just stops
+        years of profit being presented as this year's.
+
+        A balance sheet must balance whenever the books are right, so a difference
+        here means something is wrong in the ledger. The sheet still adds up (the
+        difference is shown on its own line, "Unreconciled difference (needs
+        review)", code DIFF, never in the Take-On Suspense account 3900), but it no
+        longer hides the problem: `balanced` is False, `ledger_out_of_balance` is
+        True and `unreconciled_amount` carries the figure.
         """
-        accounts = Account.objects.filter(organisation=organisation, is_active=True)
+        accounts = list(Account.all_objects.filter(organisation=organisation))   # see trial_balance
         assets_data, liabilities_data, equity_data = [], [], []
         total_income = Decimal('0')
         total_expense = Decimal('0')
+        prior_income = Decimal('0')     # P&L balances dated before the fiscal-year start
+        prior_expense = Decimal('0')
+        from datetime import timedelta
+        year_start = AccountingService.fiscal_year_start(organisation, as_of)
+        prior_end = year_start - timedelta(days=1)
+        # One grouped query for every account (current and before-year-start balances).
+        balances = AccountingService._ledger_balances(
+            organisation, accounts, as_of=as_of, prior_end=prior_end)
 
         for acct in accounts:
-            bal = AccountingService._ledger_balance(acct, as_of=as_of)
+            bal, prior_bal = balances[acct.id]
             row = {'code': acct.code, 'name': acct.name, 'balance': bal}
             if acct.account_type == AccountType.ASSET:
                 if acct.code == '1100' and bal < 0:
@@ -972,11 +1100,21 @@ class AccountingService:
                     equity_data.append(row)
             elif acct.account_type == AccountType.REVENUE:
                 total_income += bal
+                prior_income += prior_bal
             elif acct.account_type in (AccountType.EXPENSE, AccountType.COST_OF_GOODS):
                 total_expense += bal
+                prior_expense += prior_bal
 
-        # Roll current-year P&L net into equity (income − expenses).
-        current_year_earnings = total_income - total_expense
+        # Roll the P&L net into equity (income − expenses), split at the fiscal-year start.
+        prior_years_earnings = prior_income - prior_expense
+        current_year_earnings = (total_income - total_expense) - prior_years_earnings
+        if prior_years_earnings != 0:
+            equity_data.append({
+                'code': '',
+                'name': 'Prior Years Earnings (not yet closed)',
+                'balance': prior_years_earnings,
+                'is_computed': True,
+            })
         if current_year_earnings != 0:
             equity_data.append({
                 'code': '',
@@ -989,16 +1127,18 @@ class AccountingService:
         total_liabilities = sum((r['balance'] for r in liabilities_data), Decimal('0'))
         total_equity = sum((r['balance'] for r in equity_data), Decimal('0'))
 
-        # Safety plug: with a clean double-entry ledger the difference is 0 by
-        # construction, but any residual is posted to Take-On Suspense so the sheet
-        # is never presented as "not balanced".
+        # With a clean double-entry ledger the difference is 0 by construction.
+        # Any residual is shown openly on its own line so the sheet still adds up,
+        # but it is never dressed up as a real account and never reported as balanced.
         difference = total_assets - (total_liabilities + total_equity)
-        if abs(difference) > Decimal('0.01'):
+        out_of_balance = abs(difference) > Decimal('0.01')
+        if out_of_balance:
             equity_data.append({
-                'code': '3900',
-                'name': 'Take-On Suspense (auto-balance)',
+                'code': 'DIFF',
+                'name': 'Unreconciled difference (needs review)',
                 'balance': difference,
                 'is_computed': True,
+                'is_unreconciled': True,
             })
             total_equity += difference
 
@@ -1010,7 +1150,16 @@ class AccountingService:
             'total_liabilities': total_liabilities,
             'total_equity': total_equity,
             'current_year_earnings': current_year_earnings,
-            'balanced': abs(total_assets - (total_liabilities + total_equity)) < Decimal('0.01'),
+            'prior_years_earnings': prior_years_earnings,
+            'fiscal_year_start': str(year_start),
+            # Honest: False whenever the sheet only adds up because of the
+            # unreconciled-difference line above.
+            'balanced': not out_of_balance,
+            'ledger_out_of_balance': out_of_balance,
+            'unreconciled_amount': difference if out_of_balance else Decimal('0'),
+            # Invoices whose revenue posted without their cost of sales: profit is
+            # overstated by their cost until the cogs/inventory mapping is fixed.
+            'cogs_missing_invoices': AccountingService.cogs_missing_count(organisation),
             'as_of': str(as_of) if as_of else None,
         }
 
@@ -1710,24 +1859,45 @@ class AccountingService:
 
     @staticmethod
     @transaction.atomic
-    def reverse_journal_entry(journal_entry: 'JournalEntry', actor=None) -> 'JournalEntry':
+    def reverse_journal_entry(journal_entry: 'JournalEntry', actor=None, entry_date=None) -> 'JournalEntry':
         """
         Create a reversing JournalEntry that mirrors `journal_entry`'s lines with
         debit/credit swapped, netting every account back to its pre-entry balance
         WITHOUT modifying or deleting the original entry/lines (immutable ledger).
 
-        Returns the new reversing JournalEntry.
+        entry_date: the date of the reversal; today when omitted. Pass the original
+        entry's date to take an entry out of the month it was booked in.
+        The period of the reversal date must be open (PeriodLockedError otherwise,
+        unless `actor` holds an administrator grant for it).
+
+        Idempotent: an entry that has already been reversed returns its existing
+        reversal instead of creating (or colliding with) a second one.
+
+        Returns the reversing JournalEntry.
         """
         from django.utils import timezone as _tz
+
+        existing = JournalEntry.objects.filter(
+            organisation=journal_entry.organisation, source_type='reversal',
+            source_ref=str(journal_entry.id),
+        ).first()
+        if existing:
+            return existing
 
         original_lines = list(journal_entry.lines.all())
         if not original_lines:
             raise ValueError(f"Journal entry {journal_entry.reference} has no lines to reverse.")
 
+        entry_date = entry_date or _tz.now().date()
+        AccountingService.assert_period_open(
+            journal_entry.organisation, entry_date, actor,
+            ref=journal_entry.reference, source=f'reversal/{journal_entry.id}',
+        )
+
         reversing_entry = JournalEntry.objects.create(
             organisation=journal_entry.organisation,
             description=f"Reversal of {journal_entry.reference}: {journal_entry.description}",
-            entry_date=_tz.now().date(),
+            entry_date=entry_date,
             reference='',  # auto-assigned in save()
             status='posted',
             created_by=actor,
@@ -1765,8 +1935,9 @@ class AccountingService:
 
     @staticmethod
     def post_sale_journal(organisation, invoice, user=None):
-        """DR Cash/Bank/AR → CR Revenue + VAT; DR COGS → CR Inventory."""
+        """DR Cash/Bank/AR → CR Revenue + VAT, then (own journal) DR COGS → CR Inventory."""
         from apps.sales.models import SalePayment
+        from .exceptions import GLAccountNotConfigured
         zero = Decimal('0')
         total = Decimal(str(invoice.total_amount))
         tax = Decimal(str(invoice.tax_amount or 0))
@@ -1887,15 +2058,23 @@ class AccountingService:
             vat_acct = AccountMappingService.resolve(organisation, 'vat_output_account')
             lines.append((vat_acct, zero, tax))
 
-        # COGS
+        # COGS is its OWN journal (source_type 'sale_cogs'), built here and posted
+        # after the revenue / AR / Output VAT entry. A missing cogs or inventory
+        # mapping must never hold back the money side of a sale the customer
+        # already owes: the revenue entry always posts, and the COGS part raises
+        # GLAccountNotConfigured so safe_post_gl flags the invoice (GL Health,
+        # retry). Never swallowed: swallowing it used to post revenue with no
+        # cost of sales and still report 'posted', overstating profit.
+        cogs_lines = []
+        cogs_error = None
         try:
             if not has_override:
                 cogs_total = sum(Decimal(str(i.cost_of_goods or 0)) for i in items)
                 if cogs_total > zero:
                     cogs_acct = AccountMappingService.resolve(organisation, 'cogs_account')
                     inv_acct = AccountMappingService.resolve(organisation, 'inventory_account')
-                    lines.append((cogs_acct, cogs_total, zero))
-                    lines.append((inv_acct, zero, cogs_total))
+                    cogs_lines.append((cogs_acct, cogs_total, zero))
+                    cogs_lines.append((inv_acct, zero, cogs_total))
             else:
                 cogs_acct_default = AccountMappingService.resolve(organisation, 'cogs_account')
                 inv_acct_default = AccountMappingService.resolve(organisation, 'inventory_account')
@@ -1917,18 +2096,72 @@ class AccountingService:
                     c_slot[1] += amt
                 for acct, amt in debit_buckets.values():
                     if amt != 0:
-                        lines.append((acct, amt, zero))
+                        cogs_lines.append((acct, amt, zero))
                 for acct, amt in credit_buckets.values():
                     if amt != 0:
-                        lines.append((acct, zero, amt))
-        except Exception:
-            pass
+                        cogs_lines.append((acct, zero, amt))
+        except GLAccountNotConfigured as exc:
+            cogs_error = exc
 
-        return AccountingService.post_journal_entry(
+        entry = AccountingService.post_journal_entry(
             organisation, f"Sale {invoice.invoice_number}", invoice.issue_date,
             lines, user,
             ref=invoice.invoice_number,
             source_type='sale',
+            source_ref=str(invoice.id),
+        )
+        if cogs_error is not None:
+            raise cogs_error
+        AccountingService._post_sale_cogs_entry(organisation, invoice, entry, cogs_lines, user)
+        return entry
+
+    @staticmethod
+    def sale_cogs_posted(organisation, invoice) -> bool:
+        """True when this invoice's cost of sales is in the ledger (own journal, or
+        inside a sale entry posted before the two were separated)."""
+        if JournalEntry.objects.filter(
+                organisation=organisation, source_type='sale_cogs', source_ref=str(invoice.id)).exists():
+            return True
+        return JournalLine.objects.filter(
+            journal_entry__organisation=organisation, journal_entry__source_type='sale',
+            journal_entry__source_ref=str(invoice.id), journal_entry__status='posted',
+            account__account_type=AccountType.COST_OF_GOODS,
+        ).exists()
+
+    @staticmethod
+    def cogs_missing_count(organisation) -> int:
+        """Invoices whose revenue posted but whose cost of sales could not (cogs or
+        inventory account not mapped). Profit is overstated by their cost until fixed."""
+        from apps.sales.models import Invoice
+        return Invoice.objects.filter(
+            organisation=organisation, gl_post_status__in=('not_configured', 'failed'),
+        ).filter(
+            Q(gl_post_error__contains='cogs_account') | Q(gl_post_error__contains='inventory_account')
+        ).count()
+
+    @staticmethod
+    def missing_sale_mappings(organisation, needs_cogs=True):
+        """Roles a confirmed sale needs that are not mapped (does not raise, does not auto-fill)."""
+        mapping = AccountMapping.objects.filter(organisation=organisation).first()
+        roles = ['revenue_account'] + (['cogs_account', 'inventory_account'] if needs_cogs else [])
+        return [r for r in roles if mapping is None or getattr(mapping, f'{r}_id') is None]
+
+    @staticmethod
+    def _post_sale_cogs_entry(organisation, invoice, sale_entry, cogs_lines, user):
+        """Post the cost-of-sales journal (DR COGS / CR Inventory) for an invoice. Idempotent.
+
+        An invoice whose revenue entry already carries a COGS line (posted before the
+        two were separated) is left alone, so a retry never doubles the cost."""
+        if not cogs_lines:
+            return None
+        if sale_entry is not None and sale_entry.lines.filter(
+                account__account_type=AccountType.COST_OF_GOODS).exists():
+            return None
+        return AccountingService.post_journal_entry(
+            organisation, f"Cost of sales {invoice.invoice_number}", invoice.issue_date,
+            cogs_lines, user,
+            ref=f"{invoice.invoice_number}-COGS",
+            source_type='sale_cogs',
             source_ref=str(invoice.id),
         )
 
@@ -2030,12 +2263,13 @@ class AccountingService:
         expense_acct  = AccountMappingService.resolve(organisation, 'general_expense_account')
         ap_acct       = AccountingService._resolve_party_account(
             organisation, bill.supplier, 'payable_account', 'accounts_payable', '2001')
-        input_vat_acct = AccountingService._get_or_create_account(
-            organisation, '1400', 'VAT Receivable (Input VAT)', AccountType.ASSET
-        )
+        # ONE mapping for Input VAT: the same account PO receipts, PO->bill
+        # conversions and purchase returns use. (This used to hard-code 1400
+        # while those flows used the mapped account, which could be 1300.)
+        input_vat_acct = AccountMappingService.resolve(organisation, 'vat_input_account') if vat > 0 else None
 
         # Split the net cost between capitalised lines (→ 1500) and expenses.
-        items = list(bill.items.all())
+        items = list(bill.items.select_related('product').all())
         capital_items = [it for it in items if getattr(it, 'capitalise', False)]
         all_lines_total = sum((Decimal(str(it.line_total or 0)) for it in items), zero)
         capital_lines_total = sum((Decimal(str(it.line_total or 0)) for it in capital_items), zero)
@@ -2045,24 +2279,66 @@ class AccountingService:
         if fa_acct and capital_lines_total > 0 and all_lines_total > 0:
             capital_net = (net_cost * capital_lines_total / all_lines_total).quantize(Decimal('0.01'))
             capital_net = min(capital_net, net_cost)
-        expense_net = net_cost - capital_net
+
+        # Stocked lines: a manual bill line linked to a stock-tracked (physical)
+        # product is goods bought for resale. It goes to Inventory (the product's
+        # own account, its item-class default, else the mapped inventory account),
+        # NOT to expense, and the stock is received below. A bill raised from a
+        # purchase order never does this: the PO's own receipt already booked and
+        # received the goods. Capitalised lines stay capitalised.
+        stock_items = []
+        if not bill.source_purchase_order_id:
+            stock_items = [
+                it for it in items
+                if it.product_id and it.product.product_type == 'physical'
+                and not getattr(it, 'capitalise', False)
+            ]
+        stock_buckets = {}          # inventory account id -> [account, net]
+        stock_net = zero
+        stock_item_net = {}         # item id -> net share (for the stock cost)
+        warehouse = None
+        if stock_items and all_lines_total > 0:
+            warehouse = AccountingService.default_receiving_warehouse(organisation)
+            class_defaults = AccountMappingService.get_item_class_defaults(organisation)
+            mapped_inventory = AccountMappingService.resolve(organisation, 'inventory_account')
+            for it in stock_items:
+                share = (net_cost * Decimal(str(it.line_total or 0)) / all_lines_total).quantize(Decimal('0.01'))
+                share = min(share, net_cost - capital_net - stock_net)
+                if share <= 0:
+                    continue
+                row = class_defaults.get(it.product.product_type)
+                inv_acct = it.product.inventory_account or (getattr(row, 'inventory_account', None) if row else None) \
+                    or mapped_inventory
+                slot = stock_buckets.setdefault(inv_acct.id, [inv_acct, zero])
+                slot[1] += share
+                stock_net += share
+                stock_item_net[it.id] = share
+        expense_net = net_cost - capital_net - stock_net
 
         lines = []
         if expense_net > 0:
             lines.append((expense_acct, expense_net, zero))   # DR Expense (VAT-exclusive)
+        for inv_acct, amt in stock_buckets.values():
+            lines.append((inv_acct, amt, zero))                # DR Inventory (stocked lines)
         if capital_net > 0:
             lines.append((fa_acct, capital_net, zero))         # DR Fixed Assets (capitalised)
         if vat > 0:
             lines.append((input_vat_acct, vat, zero))          # DR Input VAT Receivable
         lines.append((ap_acct, zero, total))                   # CR Accounts Payable (gross)
 
-        entry = AccountingService.post_journal_entry(
-            organisation, f"Bill approved {bill.bill_number}", bill.issue_date,
-            lines, user,
-            ref=bill.bill_number,
-            source_type='bill_approved',
-            source_ref=str(bill.id),
-        )
+        # Journal and stock receipt succeed or fail together.
+        with transaction.atomic():
+            entry = AccountingService.post_journal_entry(
+                organisation, f"Bill approved {bill.bill_number}", bill.issue_date,
+                lines, user,
+                ref=bill.bill_number,
+                source_type='bill_approved',
+                source_ref=str(bill.id),
+            )
+            for it in stock_items:
+                if it.id in stock_item_net:
+                    AccountingService._receive_bill_line_stock(
+                        organisation, bill, it, stock_item_net[it.id], warehouse, user)
 
         # Register the FixedAsset(s) for capitalised lines (idempotent; no separate JE).
         if capital_net > 0 and all_lines_total > 0:
@@ -2077,6 +2353,113 @@ class AccountingService:
                 )
 
         return entry
+
+    # Stock adjustments made before this date were never posted to the ledger and are
+    # NOT treated as failures in GL Health (they need an accountant-approved backfill).
+    STOCK_ADJUSTMENT_GL_START = date(2026, 11, 14)
+    SHRINKAGE_CODE = '5100'
+
+    @staticmethod
+    def post_stock_adjustment_journal(organisation, movement, user=None):
+        """
+        Stock count / write-off / shrinkage / found-stock adjustments reach the ledger.
+
+        Loss (adjustment_out): DR Inventory Shrinkage and Adjustments (5100, cost of
+        sales) / CR Inventory. Gain (adjustment_in): DR Inventory / CR the same account.
+        Valued at the stock's average cost (the figure the stock valuation uses).
+        Idempotent per movement; dated on the movement; period-lock aware (a locked
+        month raises, and GL Health lists the adjustment until it is posted).
+        Transfers and opening stock are not handled here: transfers move value
+        between warehouses (no effect on the ledger) and take-on posts its own entries.
+        """
+        from apps.inventory.models import StockItem
+        mtype = movement.movement_type
+        if mtype not in ('adjustment_in', 'adjustment_out') or movement.product_id is None:
+            return None
+        qty = abs(Decimal(str(movement.quantity)))
+        if mtype == 'adjustment_out':
+            si = StockItem.objects.filter(
+                organisation=organisation, product=movement.product, warehouse=movement.warehouse).first()
+            unit = Decimal(str(si.average_cost)) if si and si.average_cost and si.average_cost > 0 \
+                else Decimal(str(movement.product.cost_price or 0))
+        else:
+            unit = Decimal(str(movement.unit_cost or 0))
+        value = (qty * unit).quantize(Decimal('0.01'))
+        if value <= 0:
+            return None
+        class_defaults = AccountMappingService.get_item_class_defaults(organisation)
+        row = class_defaults.get(movement.product.product_type)
+        inv_acct = movement.product.inventory_account or (getattr(row, 'inventory_account', None) if row else None) \
+            or AccountMappingService.resolve(organisation, 'inventory_account')
+        adj_acct = AccountingService._get_or_create_account(
+            organisation, AccountingService.SHRINKAGE_CODE, 'Inventory Shrinkage and Adjustments',
+            AccountType.COST_OF_GOODS)
+        zero = Decimal('0')
+        if mtype == 'adjustment_out':
+            lines = [(adj_acct, value, zero), (inv_acct, zero, value)]
+            what = 'Stock loss'
+        else:
+            lines = [(inv_acct, value, zero), (adj_acct, zero, value)]
+            what = 'Stock gain'
+        reason = (movement.notes or '').strip()[:200]
+        return AccountingService.post_journal_entry(
+            organisation, f"{what}: {movement.product.sku} x {qty}" + (f" ({reason})" if reason else ""),
+            movement.created_at.date(), lines, user,
+            ref=f"ADJ-{str(movement.id)[:8].upper()}",
+            source_type='stock_adjustment', source_ref=str(movement.id),
+        )
+
+    @staticmethod
+    def unposted_stock_adjustments(organisation):
+        """Stock adjustment movements (since STOCK_ADJUSTMENT_GL_START) with no ledger entry."""
+        from apps.inventory.models import StockMovement
+        moves = list(
+            StockMovement.objects.filter(
+                organisation=organisation, movement_type__in=('adjustment_in', 'adjustment_out'),
+                product__isnull=False, unit_cost__gt=0,
+                created_at__date__gte=AccountingService.STOCK_ADJUSTMENT_GL_START,
+            ).select_related('product')
+        )
+        if not moves:
+            return []
+        posted = set(JournalEntry.objects.filter(
+            organisation=organisation, source_type='stock_adjustment',
+            source_ref__in=[str(m.id) for m in moves]).values_list('source_ref', flat=True))
+        return [m for m in moves if str(m.id) not in posted]
+
+    @staticmethod
+    def default_receiving_warehouse(organisation):
+        """Where stock bought on a manual bill is received: the organisation's default
+        warehouse, else its oldest active warehouse. Raises a plain error when there is none."""
+        from apps.inventory.models import Warehouse
+        qs = Warehouse.objects.filter(organisation=organisation)
+        wh = qs.filter(is_default=True).first() or qs.filter(is_active=True).order_by('created_at').first() \
+            or qs.order_by('created_at').first()
+        if wh is None:
+            raise ValueError("This bill buys stock but there is no warehouse to receive it into. "
+                             "Add a warehouse first, then retry from GL Health.")
+        return wh
+
+    @staticmethod
+    def _receive_bill_line_stock(organisation, bill, item, net_share, warehouse, user):
+        """Receive a stocked bill line into the warehouse once (idempotent per bill line)."""
+        from apps.inventory.models import StockMovement
+        from apps.inventory.services import InventoryService
+        reference = f"BILL-{bill.bill_number}"[:100]
+        note = f"Bill line {item.id}"
+        if StockMovement.objects.filter(
+                organisation=organisation, product=item.product, movement_type='purchase_in',
+                reference=reference, notes=note).exists():
+            return None
+        qty = Decimal(str(item.quantity))
+        if qty <= 0:
+            return None
+        return InventoryService.record_movement(
+            organisation=organisation, product=item.product, warehouse=warehouse,
+            quantity=qty, movement_type='purchase_in',
+            unit_cost=(net_share / qty).quantize(Decimal('0.0001')),
+            reference=reference, notes=note, created_by=user,
+        )
 
     @staticmethod
     def post_bill_payment_journal(organisation, bill, payment, user=None):
@@ -2104,8 +2487,65 @@ class AccountingService:
         )
 
     @staticmethod
+    def _expense_entries(organisation, expense):
+        """All journal entries ever posted for this expense (original + revisions), oldest first."""
+        eid = str(expense.id)
+        return list(
+            JournalEntry.objects.filter(organisation=organisation, source_type='expense', status='posted')
+            .filter(Q(source_ref=eid) | Q(source_ref__startswith=f"{eid}:v"))
+            .order_by('created_at', 'id')
+        )
+
+    @staticmethod
+    def _live_expense_entries(organisation, expense):
+        """The expense's entries that have not been reversed."""
+        entries = AccountingService._expense_entries(organisation, expense)
+        if not entries:
+            return []
+        reversed_ids = set(
+            JournalEntry.objects.filter(
+                organisation=organisation, source_type='reversal',
+                source_ref__in=[str(e.id) for e in entries],
+            ).values_list('source_ref', flat=True)
+        )
+        return [e for e in entries if str(e.id) not in reversed_ids]
+
+    @staticmethod
+    def reverse_expense_journal(organisation, expense, actor=None):
+        """
+        Take an expense out of the ledger: reverse every live entry posted for it
+        (the originals stay, immutable; a dated reversal nets them to zero).
+
+        Each reversal is dated at the ORIGINAL entry's date, so the month the cost
+        was booked in is corrected in place (fuel booked in March and edited in
+        November leaves March at the new figure and November untouched). That month
+        must be open (an administrator grant counts as open); PeriodLockedError
+        otherwise. Locks are checked for every entry before anything is written.
+        Returns the reversal entries (empty when the expense never reached the ledger).
+        """
+        live = AccountingService._live_expense_entries(organisation, expense)
+        if not live:
+            return []
+        for entry in live:
+            AccountingService.assert_period_open(
+                organisation, entry.entry_date, actor, ref=f"EXP-{expense.id}", source='expense_reversal')
+        return [AccountingService.reverse_journal_entry(e, actor=actor, entry_date=e.entry_date) for e in live]
+
+    @staticmethod
     def post_expense_journal(organisation, expense, user=None):
-        """DR Expense account → CR Cash/Bank."""
+        """
+        DR Expense account → CR Cash/Bank.
+
+        Idempotent per expense: while a live (un-reversed) entry exists it is
+        returned untouched. After an edit reversed it, the expense is posted
+        again under a NEW source reference ("<id>:v<n>"), because the original
+        reference is taken by the entry that was reversed.
+        """
+        live = AccountingService._live_expense_entries(organisation, expense)
+        if live:
+            return live[-1]
+        history = AccountingService._expense_entries(organisation, expense)
+        source_ref = str(expense.id) if not history else f"{expense.id}:v{len(history) + 1}"
         zero = Decimal('0')
         amount = Decimal(str(expense.amount))
 
@@ -2144,7 +2584,7 @@ class AccountingService:
             lines, user,
             ref=f"EXP-{expense.id}",
             source_type='expense',
-            source_ref=str(expense.id),
+            source_ref=source_ref,
         )
 
     @staticmethod
@@ -2750,6 +3190,18 @@ class AccountingService:
             PayrollRun.objects.filter(organisation=organisation),
             'payroll', 'run_number', 'created_at',
         )
+        # Stock adjustments: a count or write-off is never blocked by the ledger, so one
+        # that did not reach it has to surface here.
+        for m in AccountingService.unposted_stock_adjustments(organisation):
+            summary['failed'] = summary.get('failed', 0) + 1
+            failures.append({
+                'model': 'stock_adjustment',
+                'id': str(m.id),
+                'number': f"{m.product.sku} x {abs(m.quantity)}",
+                'error': 'Stock adjustment is not in the ledger yet (locked period or missing account).',
+                'date': str(m.created_at.date()),
+                'amount': str(abs(Decimal(str(m.quantity))) * Decimal(str(m.unit_cost or 0))),
+            })
         # Till shifts: closing is never blocked by the ledger, so an unposted
         # cash variance has to surface here or a shortfall stays invisible.
         from apps.pos.models import TillSession
@@ -2763,6 +3215,7 @@ class AccountingService:
         return {
             'summary': summary,
             'failures': failures,
+            'cogs_missing_invoices': AccountingService.cogs_missing_count(organisation),
             'reconciliations': AccountingService.gl_health_reconciliations(organisation),
         }
 
@@ -2827,13 +3280,19 @@ class AccountingService:
             # the expense account, hence the sign flip.
             _recon('Till Cash Over & Short', over_short_acct, -Decimal(str(till_variance))),
         ]
+        # The balance sheet shows any gap between assets and liabilities + equity
+        # on an "Unreconciled difference" line. A non-zero one is a ledger fault.
+        unreconciled = AccountingService.balance_sheet(organisation)['unreconciled_amount']
         return {
             'pre_plug_imbalance': suspense_balance,   # the real break the auto-plug hides
             'is_balanced': abs(suspense_balance) < Decimal('0.01'),
+            'unreconciled_difference': unreconciled,
+            'ledger_out_of_balance': unreconciled != 0,
             'subledgers': subledgers,
             'all_reconciled': (
                 all(s['reconciled'] for s in subledgers)
                 and abs(suspense_balance) < Decimal('0.01')
+                and unreconciled == 0
             ),
         }
 
@@ -2869,7 +3328,11 @@ class AccountingService:
                 'key': 'subledgers_reconciled',
                 'label': 'Subledgers tie to their control accounts',
                 'passed': bool(recon.get('all_reconciled', True)),
-                'detail': '' if not unreconciled else 'Variance in: ' + ', '.join(unreconciled),
+                'detail': ' '.join(filter(None, [
+                    ('Variance in: ' + ', '.join(unreconciled)) if unreconciled else '',
+                    f"The books are out of balance by {recon.get('unreconciled_difference')}."
+                    if recon.get('ledger_out_of_balance') else '',
+                ])),
             },
         ]
         return {'ready': all(c['passed'] for c in checks), 'checks': checks}
@@ -2880,9 +3343,16 @@ class AccountingService:
         """Post a year-end closing entry that zeroes the P&L accounts and crystallises
         the net result into Retained Earnings (3100) — IFRS/GAAP year-end close.
 
+        The year ends on the end date of the organisation's FiscalYear record for
+        `fiscal_year`. An organisation with no FiscalYear records at all is treated as
+        a calendar-year business (31 December). If its other fiscal years are NOT
+        1 January to 31 December and the requested year has no record, the close is
+        refused rather than guessed at 31 December.
+
         Non-destructive: re-running for the same year reverses the prior close first.
-        P&L account balances are computed EXCLUDING any year-end-close entries, so the
-        gross operating result is used regardless of prior closes/reversals.
+        P&L account balances are computed EXCLUDING this year's own close entries (and
+        their reversals), so the gross result is used regardless of re-closes, while
+        earlier years' closes stay in force and are not counted again.
 
         The P&L *report* reads source documents, so it is unaffected. The balance sheet
         reads the GL, so after closing its 'Current Year Earnings' line drops to zero and
@@ -2891,7 +3361,22 @@ class AccountingService:
         import uuid
         from datetime import date as _date
         zero = Decimal('0')
-        year_end = _date(int(fiscal_year), 12, 31)
+        from .models import FiscalYear
+        fy_record = FiscalYear.objects.filter(organisation=organisation, year=int(fiscal_year)).first()
+        if fy_record is not None:
+            year_end = fy_record.end_date
+        else:
+            non_calendar = [
+                fy for fy in FiscalYear.objects.filter(organisation=organisation)
+                if (fy.start_date.month, fy.start_date.day) != (1, 1)
+                or (fy.end_date.month, fy.end_date.day) != (12, 31)
+            ]
+            if non_calendar:
+                raise ValueError(
+                    f"Fiscal year {fiscal_year} is not set up. Your fiscal year does not run "
+                    f"1 January to 31 December, so create fiscal year {fiscal_year} in "
+                    f"Accounting, Periods first. The year was not closed.")
+            year_end = _date(int(fiscal_year), 12, 31)
         # Unique per-attempt source_ref (post_journal_entry dedupes by exact source_ref,
         # so re-closing must NOT reuse the same ref) + prefix match to find prior closes.
         ref_prefix = f'year-end-close-{fiscal_year}'
@@ -2911,7 +3396,8 @@ class AccountingService:
         # reversals, so re-closing (which reverses the old close) stays idempotent.
         close_ids = {
             str(i) for i in JournalEntry.objects.filter(
-                organisation=organisation, source_type='year_end_close'
+                organisation=organisation, source_type='year_end_close',
+                source_ref__startswith=ref_prefix,
             ).values_list('id', flat=True)
         }
 
@@ -2920,7 +3406,11 @@ class AccountingService:
                 journal_entry__organisation=organisation, account=acct,
                 journal_entry__status='posted',
                 journal_entry__entry_date__lte=year_end,
-            ).exclude(journal_entry__source_type='year_end_close').exclude(
+            ).exclude(id__in=JournalLine.objects.filter(
+                journal_entry__organisation=organisation,
+                journal_entry__source_type='year_end_close',
+                journal_entry__source_ref__startswith=ref_prefix,
+            ).values('id')).exclude(
                 Q(journal_entry__source_type='reversal',
                   journal_entry__source_ref__in=close_ids)
             )
@@ -2977,10 +3467,20 @@ class AccountingService:
         elif model_name == 'bill':
             from apps.bills.models import Bill
             obj = Bill.objects.get(id=object_id, organisation=organisation)
-            success, err = safe_post_gl(
-                AccountingService.post_bill_approved_journal, organisation, obj, user,
-                model_instance=obj,
-            )
+            if obj.source_purchase_order_id:
+                # A bill raised from a purchase order is booked by the PO's own
+                # journal (goods received / converted to bill). Re-posting it as a
+                # normal approved bill would debit General Expense and claim the
+                # input VAT a second time. Retry the PO journal instead.
+                from apps.purchases.services import retry_po_bill_journal
+                success, err = safe_post_gl(
+                    retry_po_bill_journal, obj, user, model_instance=obj,
+                )
+            else:
+                success, err = safe_post_gl(
+                    AccountingService.post_bill_approved_journal, organisation, obj, user,
+                    model_instance=obj,
+                )
         elif model_name == 'expense':
             from apps.expenses.models import Expense
             obj = Expense.objects.get(id=object_id, organisation=organisation)
@@ -2995,6 +3495,11 @@ class AccountingService:
                 AccountingService.post_payroll_journal, organisation, obj, user,
                 model_instance=obj,
             )
+        elif model_name == 'stock_adjustment':
+            from apps.inventory.models import StockMovement
+            movement = StockMovement.objects.get(id=object_id, organisation=organisation)
+            success, err = safe_post_gl(
+                AccountingService.post_stock_adjustment_journal, organisation, movement, user)
         elif model_name == 'till':
             from apps.pos.models import TillSession
             from apps.pos.till_services import TillService
