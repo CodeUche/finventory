@@ -110,7 +110,19 @@ class Command(BaseCommand):
                           + ("" if acct_1400 else " (does not exist, will be created)"))
         for je, amt in entries:
             self.stdout.write(f"    {je.entry_date}  {je.source_type:<20} {je.reference:<14} {amt:>14,.2f}")
+        by_month = {}
+        for je, amt in entries:
+            key = je.entry_date.strftime("%Y-%m")
+            by_month[key] = by_month.get(key, Decimal("0")) + amt
+        self.stdout.write("    By month of the original entries:")
+        for key in sorted(by_month):
+            self.stdout.write(f"        {key}  {by_month[key]:>14,.2f}")
         self.stdout.write(f"    Input VAT to reclass from 1300 to 1400: {to_move:,.2f}")
+        self.stdout.write("    Note: only VAT posted by goods-received, PO-converted-to-bill and purchase-return "
+                          "entries is moved. Any journal keyed by hand into 1300 is left alone for the accountant.")
+        months_text = ", ".join(f"{k} {by_month[k]:,.2f}" for k in sorted(by_month)) or "none"
+        if len(months_text) > 280:
+            months_text = months_text[:277] + "..."
 
         today = timezone.now().date()
         if to_move != 0:
@@ -142,7 +154,7 @@ class Command(BaseCommand):
                 AccountingService.post_journal_entry(
                     org,
                     "Reclass Input VAT from Prepaid Expenses (1300) to VAT Receivable (1400) "
-                    "- VAT Input mapping repair",
+                    f"- VAT Input mapping repair. Original months: {months_text}",
                     today, lines, system_user,
                     ref="VAT-RECLASS",
                     source_type=RECLASS_SOURCE_TYPE,

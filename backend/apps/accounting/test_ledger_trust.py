@@ -146,6 +146,15 @@ class VatInputRepairCommandTests(TestCase):
         self.assertEqual(sum(l.debit for l in reclass.lines.all()), sum(l.credit for l in reclass.lines.all()))
         self.assertIn("Reclass Input VAT", reclass.description)
 
+    def test_report_has_monthly_subtotals_and_the_hand_keyed_note_and_months_in_the_narrative(self):
+        out = self._run("--apply")
+        month = timezone.now().date().strftime("%Y-%m")
+        self.assertIn("By month of the original entries", out)
+        self.assertIn(f"{month}", out)
+        self.assertIn("left alone for the accountant", out)
+        reclass = JournalEntry.objects.get(organisation=self.org, source_type="vat_input_reclass")
+        self.assertIn(f"Original months: {month} 67.50", reclass.description)
+
     def test_apply_is_idempotent(self):
         self._run("--apply")
         count = JournalEntry.objects.filter(organisation=self.org).count()
