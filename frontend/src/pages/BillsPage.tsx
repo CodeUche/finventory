@@ -46,6 +46,8 @@ interface BillForm {
   tax_class_id: string
   notes: string
   status: string
+  vat_treatment: string
+  vat_not_claimable_reason: string
 }
 
 interface PayForm {
@@ -59,7 +61,7 @@ interface PayForm {
 const today = new Date().toISOString().split('T')[0]
 const inThirtyDays = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0]
 
-const BLANK_BILL: BillForm = { supplier: '', customVendor: '', folder: '', reference: '', issue_date: today, due_date: inThirtyDays, tax_percent: '0', tax_class_id: '', notes: '', status: 'draft' }
+const BLANK_BILL: BillForm = { supplier: '', customVendor: '', folder: '', reference: '', issue_date: today, due_date: inThirtyDays, tax_percent: '0', tax_class_id: '', notes: '', status: 'draft', vat_treatment: 'standard', vat_not_claimable_reason: '' }
 const BLANK_PAY: PayForm = { amount: '', payment_date: today, method: 'cash', reference: '', notes: '' }
 
 function agingBucket(dueDate: string): '0-30' | '31-60' | '61-90' | '90+' {
@@ -202,6 +204,8 @@ export default function BillsPage() {
       tax_class_id: '',
       notes: (b as any).notes ?? '',
       status: b.status,
+      vat_treatment: (b as any).vat_treatment ?? 'standard',
+      vat_not_claimable_reason: (b as any).vat_not_claimable_reason ?? '',
     })
     const existingItems: typeof BLANK_LINE[] = ((b as any).items ?? []).map((item: any) => ({
       description: item.description ?? '',
@@ -231,6 +235,8 @@ export default function BillsPage() {
         tax_amount: computedTaxAmount,
         notes: form.notes,
         status: form.status,
+        vat_treatment: form.vat_treatment,
+        vat_not_claimable_reason: form.vat_not_claimable_reason,
         items: lines.map((l) => ({
           description: l.description,
           quantity: parseFloat(l.quantity) || 1,
@@ -564,6 +570,29 @@ export default function BillsPage() {
                   </div>
                 </div>
               </div>
+            </div>
+
+            {/* VAT treatment: applies to the whole bill */}
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">VAT treatment<FieldTooltip text="Exempt purchases carry VAT that cannot be claimed back." /></label>
+                <select className="input" value={form.vat_treatment} onChange={(e) => setForm({ ...form, vat_treatment: e.target.value })}>
+                  <option value="standard">Standard rate</option>
+                  <option value="zero_rated">Zero-rated</option>
+                  <option value="exempt">Exempt</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">VAT cannot be claimed back?<FieldTooltip text="Choose a reason if the VAT on this bill can never be claimed back, for example private use." /></label>
+                <select className="input" value={form.vat_not_claimable_reason} onChange={(e) => setForm({ ...form, vat_not_claimable_reason: e.target.value })}>
+                  <option value="">No, claimable if the other rules are met</option>
+                  <option value="private_use">Private or non-business use</option>
+                  <option value="entertainment">Entertainment and hospitality</option>
+                  <option value="motor_vehicle">Passenger motor vehicles</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+              <p className="col-span-2 text-[11px] text-slate-500 -mt-2">VAT treatment applies to the whole bill. If a bill mixes standard-rated and exempt items, record it as separate bills so the claim is right.</p>
             </div>
 
             {/* Secondary fields — Reference/Folder/Status are metadata, not what's

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { confirmDialog } from '@/lib/dialog'
+import { confirmDialog, promptDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import {
   Building2, Calculator, ChevronDown, ChevronUp, CheckCircle, Clock,
@@ -16,6 +16,7 @@ import type {
   CapitalAllowanceClaim, DeferredTaxItem, RelatedPartyTransaction,
 } from '@/types'
 import DateInput from '@/components/DateInput'
+import VatChangeNotice from '@/components/VatChangeNotice'
 import { useAuthStore } from '@/store/authStore'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -142,6 +143,8 @@ export default function TaxPage() {
   const [syncing, setSyncing] = useState(false)
   const [vatTxFilter, setVatTxFilter] = useState<'all' | 'input' | 'output'>('all')
   const [exportingPDF, setExportingPDF] = useState(false)
+  const [vatWorksheet, setVatWorksheet] = useState<any | null>(null)
+  const [attentionToastShown, setAttentionToastShown] = useState(false)
 
   const handleExportVatPDF = async () => {
     if (!vatSyncPeriod.period_start || !vatSyncPeriod.period_end) {
@@ -269,7 +272,15 @@ export default function TaxPage() {
     // No period sent: the server shows the current month. The list is read live
     // from the one VAT calculation, so there is nothing to sync first.
     const p = period ?? (vatSyncPeriod.period_start && vatSyncPeriod.period_end ? vatSyncPeriod : undefined)
-    try { const { data } = await taxApi.vatTransactions(p); setVatTransactions(data.results ?? data) }
+    try {
+      const { data } = await taxApi.vatWorksheet(p ?? {})
+      setVatTransactions(data.rows ?? [])
+      setVatWorksheet(data)
+      if (!attentionToastShown && data.needs_attention_count > 0) {
+        setAttentionToastShown(true)
+        toast(`${data.needs_attention_count} bill${data.needs_attention_count === 1 ? '' : 's'} with VAT need attention before the VAT worksheet is complete.`, { icon: '⚠️' })
+      }
+    }
     catch { toast.error('Failed to load VAT transactions') }
     finally { setLoadingVatTx(false) }
   }
@@ -1269,6 +1280,53 @@ export default function TaxPage() {
             </div>
           </div>
 
+          {vatWorksheet && (
+            <div className="space-y-3">
+              {(vatWorksheet.warnings ?? []).map((w: string) => (
+                <p key={w} className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-200">{w}</p>
+              ))}
+              {(vatWorksheet.notes ?? []).map((n: string) => (
+                <p key={n} className="text-xs text-slate-400">{n}</p>
+              ))}
+              <p className="text-xs text-slate-500">{vatWorksheet.worksheet_note}</p>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
+                <div className="rounded-lg bg-surface-800/60 p-3"><p className="text-slate-500">Input VAT not counted</p><p className="font-mono text-white">{formatCurrency(vatWorksheet.input_vat_irrecoverable)}</p></div>
+                <div className="rounded-lg bg-surface-800/60 p-3"><p className="text-slate-500">{vatWorksheet.input_vat_awaiting_supplier_invoice_label}</p><p className="font-mono text-white">{formatCurrency(vatWorksheet.input_vat_awaiting_supplier_invoice)}</p></div>
+                {Object.entries(vatWorksheet.turnover ?? {}).map(([k, v]) => (
+                  <div key={k} className="rounded-lg bg-surface-800/60 p-3"><p className="text-slate-500">{vatWorksheet.turnover_labels?.[k] ?? k}</p><p className="font-mono text-white">{formatCurrency(String(v))}</p></div>
+                ))}
+              </div>
+              {vatWorksheet.needs_attention_count > 0 && (
+                <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3" role="region" aria-label="Needs attention">
+                  <p className="text-sm font-semibold text-amber-200">Needs attention ({vatWorksheet.needs_attention_count})</p>
+                  <p className="text-xs text-slate-400 mb-2">Bills with VAT where we do not know if the supplier is VAT registered, or no TIN is on record.</p>
+                  <ul className="space-y-2">
+                    {vatWorksheet.needs_attention.map((a: any) => (
+                      <li key={a.bill_id} className="flex flex-wrap items-center gap-2 text-xs">
+                        <span className="text-white">{a.bill_number} · {a.supplier_name} · {formatCurrency(a.vat_amount)}</span>
+                        <span className="text-slate-400">({a.reason})</span>
+                        <button className="btn-ghost text-xs" onClick={async () => { try { await taxApi.setSupplierVat({ supplier_id: a.supplier_id, vat_registered: 'yes' }); toast.success('Marked as VAT registered'); loadVatTransactions() } catch { toast.error('Could not update supplier') } }}>Mark VAT registered</button>
+                        <button className="btn-ghost text-xs" onClick={async () => { try { await taxApi.setSupplierVat({ supplier_id: a.supplier_id, vat_registered: 'no' }); toast.success('Marked as not VAT registered'); loadVatTransactions() } catch { toast.error('Could not update supplier') } }}>Mark not registered</button>
+                        <button className="btn-ghost text-xs" onClick={async () => { const tin = await promptDialog('Supplier TIN'); if (!tin) return; try { await taxApi.setSupplierVat({ supplier_id: a.supplier_id, tax_id: tin }); toast.success('TIN saved'); loadVatTransactions() } catch { toast.error('Could not update supplier') } }}>Add TIN</button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {(vatWorksheet.ignored_duplicates ?? []).length > 0 && (
+                <details className="text-xs text-slate-400">
+                  <summary className="cursor-pointer">{vatWorksheet.ignored_duplicates.length} stored row{vatWorksheet.ignored_duplicates.length === 1 ? '' : 's'} ignored as duplicates</summary>
+                  <ul className="mt-1 list-disc pl-5">
+                    {vatWorksheet.ignored_duplicates.map((d: any) => (
+                      <li key={d.id}>{d.date} · {d.direction} · {d.source_ref || '—'} · {formatCurrency(d.vat_amount)}: {d.reason}</li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+              <VatChangeNotice />
+            </div>
+          )}
+
           {/* Direction filter */}
           <div className="flex gap-1 p-1 bg-surface-800 rounded-xl w-fit">
             {(['all', 'output', 'input'] as const).map((f) => (
@@ -1294,13 +1352,13 @@ export default function TaxPage() {
                 {/* Summary row */}
                 {(() => {
                   const filtered = vatTransactions.filter((v) => vatTxFilter === 'all' || v.direction === vatTxFilter)
-                  const output = filtered.filter((v) => v.direction === 'output').reduce((s, v) => s + parseFloat(v.vat_amount), 0)
-                  const input = filtered.filter((v) => v.direction === 'input' && v.is_claimable).reduce((s, v) => s + parseFloat(v.vat_amount), 0)
+                  const output = vatWorksheet ? parseFloat(vatWorksheet.output_vat) : filtered.filter((v) => v.direction === 'output').reduce((s, v) => s + parseFloat(v.vat_amount), 0)
+                  const input = vatWorksheet ? parseFloat(vatWorksheet.input_vat_recoverable) : filtered.filter((v) => v.direction === 'input' && v.is_claimable).reduce((s, v) => s + parseFloat(v.vat_amount), 0)
                   return (
                     <div className="grid grid-cols-3 gap-4 p-4 border-b border-surface-700 bg-surface-800/50">
                       <div><p className="text-xs text-slate-500">Output VAT</p><p className="font-mono text-white font-semibold">{formatCurrency(String(output))}</p></div>
                       <div><p className="text-xs text-slate-500">Input VAT (ITC)</p><p className="font-mono text-emerald-400 font-semibold">{formatCurrency(String(input))}</p></div>
-                      <div><p className="text-xs text-slate-500">Net VAT Payable</p><p className={`font-mono font-semibold ${output - input >= 0 ? 'text-red-400' : 'text-emerald-400'}`}>{formatCurrency(String(Math.abs(output - input)))}</p></div>
+                      <div><p className="text-xs text-slate-500">Net VAT Payable</p><p className={`font-mono font-semibold ${output - input >= 0 ? 'text-red-400' : 'text-emerald-400'}`}>{formatCurrency(String(Math.abs(output - input)))}{output - input < 0 ? ' (possible refund or carry-forward)' : ''}</p></div>
                     </div>
                   )
                 })()}

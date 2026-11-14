@@ -44,6 +44,7 @@ import { useAuthStore } from '@/store/authStore'
 import { saveBlobFile } from '@/lib/saveBlobFile'
 import PeriodSelector, { type PeriodValue } from '@/components/PeriodSelector'
 import ExportBar from '@/components/ExportBar'
+import VatChangeNotice from '@/components/VatChangeNotice'
 import ReportTable from '@/components/ReportTable'
 import SalesByCustomerDrilldownModal from '@/components/SalesByCustomerDrilldownModal'
 import type { PnL, SalesSummaryPoint, ARAgingReport, VATSummary } from '@/types'
@@ -810,7 +811,7 @@ export default function ReportsPage() {
                     <VATCard label="Input VAT"      sub="Paid on bills"      value={vatSummary.input_vat} />
                     <VATCard
                       label="Net VAT Payable"
-                      sub={parseFloat(vatSummary.net_vat_payable) >= 0 ? 'Owed to FIRS' : 'VAT credit'}
+                      sub={parseFloat(vatSummary.net_vat_payable) >= 0 ? 'Working figure, payable' : 'Possible refund or carry-forward'}
                       value={vatSummary.net_vat_payable}
                       highlight={parseFloat(vatSummary.net_vat_payable) >= 0 ? 'red' : 'green'}
                     />
@@ -821,6 +822,7 @@ export default function ReportsPage() {
                       Input VAT ({formatCurrency(vatSummary.input_vat)}) = Net VAT Payable
                     </p>
                   </div>
+                  <VatChangeNotice />
                 </div>
               ) : (
                 <div className="h-40 flex items-center justify-center text-slate-500 text-sm">
