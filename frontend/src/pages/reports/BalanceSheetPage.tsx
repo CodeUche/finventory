@@ -21,7 +21,7 @@ import { useThemeAccent } from '@/hooks/useTheme'
 
 const tooltipStyle = { backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '12px', color: '#f1f5f9', fontSize: 12 }
 
-interface BSAccount { code: string; name: string; balance: string | number }
+interface BSAccount { code: string; name: string; balance: string | number; is_unreconciled?: boolean }
 interface BalanceSheetData {
   assets: BSAccount[]
   liabilities: BSAccount[]
@@ -29,6 +29,8 @@ interface BalanceSheetData {
   total_assets: string | number
   total_liabilities: string | number
   total_equity: string | number
+  ledger_out_of_balance?: boolean
+  unreconciled_amount?: string | number
 }
 
 const MONTHS = [
@@ -139,7 +141,11 @@ export default function BalanceSheetPage() {
   const totalLiab       = parseFloat(String(data?.total_liabilities ?? 0))
   const totalEquity     = parseFloat(String(data?.total_equity     ?? 0))
   const totalLiabEquity = totalLiab + totalEquity
-  const isBalanced      = data ? Math.abs(totalAssets - totalLiabEquity) < 0.01 : false
+  // The server adds an openly-labelled "Unreconciled difference" line so the sheet
+  // still adds up when the books are wrong; it flags that with ledger_out_of_balance.
+  const ledgerOutOfBalance = data?.ledger_out_of_balance === true
+  const unreconciledAmount = Math.abs(parseFloat(String(data?.unreconciled_amount ?? 0)))
+  const isBalanced      = data ? !ledgerOutOfBalance && Math.abs(totalAssets - totalLiabEquity) < 0.01 : false
 
   /**
    * Phase 4: Derived ratios and donut data — computed once whenever `data` changes.
@@ -245,7 +251,20 @@ export default function BalanceSheetPage() {
         </div>
       ) : data ? (
         <>
+          {ledgerOutOfBalance && (
+            <div role="alert" className="flex items-center justify-between flex-wrap gap-3 p-4 rounded-xl border bg-red-500/10 border-red-500/30 text-red-400">
+              <span className="flex items-center gap-3">
+                <AlertTriangle size={18} />
+                <span className="font-semibold">
+                  Your books are out of balance by {formatCurrency(String(unreconciledAmount))}. This report cannot fix that. Open GL Health.
+                </span>
+              </span>
+              <button onClick={() => navigate('/accounting/gl-health')} className="btn-ghost text-sm">Open GL Health</button>
+            </div>
+          )}
+
           {/* Balance indicator */}
+          {!ledgerOutOfBalance && (
           <div className={`flex items-center gap-3 p-4 rounded-xl border ${
             isBalanced
               ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
@@ -256,6 +275,7 @@ export default function BalanceSheetPage() {
               : <><AlertTriangle size={18} /> <span className="font-semibold">Not balanced — difference: {formatCurrency(String(Math.abs(totalAssets - totalLiabEquity)))}</span></>
             }
           </div>
+          )}
 
           {/* Phase 4: Composition donuts + financial ratios */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
@@ -501,7 +521,7 @@ function BSSection({
             {!isCollapsed && (
               <div className="divide-y divide-surface-700">
                 {visibleAccounts.map(a => {
-                  const drillable = !!(onDrill && a.code)
+                  const drillable = !!(onDrill && a.code && !a.is_unreconciled)
                   return (
                     <div
                       key={a.code || a.name}
