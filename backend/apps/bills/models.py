@@ -55,6 +55,13 @@ class Bill(TenantAwareModel):
     )
     subtotal = MoneyField(default=0)
     tax_amount = MoneyField(default=0)
+    # How the VAT on this bill is treated for the VAT worksheet. Only 'exempt'
+    # changes anything: input VAT on exempt supplies cannot be claimed back.
+    # Default 'standard' keeps every existing bill exactly as it was.
+    VAT_TREATMENT_CHOICES = [
+        ('standard', 'Standard rate'), ('zero_rated', 'Zero-rated'), ('exempt', 'Exempt'),
+    ]
+    vat_treatment = models.CharField(max_length=12, choices=VAT_TREATMENT_CHOICES, default='standard')
     total_amount = MoneyField(default=0)
     amount_paid = MoneyField(default=0)
     amount_due = MoneyField(default=0)

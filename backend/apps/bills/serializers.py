@@ -67,7 +67,7 @@ class BillSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'bill_number', 'folder', 'folder_name', 'supplier', 'supplier_name', 'status',
             'issue_date', 'due_date', 'reference', 'source_purchase_order', 'source_po_number',
-            'subtotal', 'tax_amount',
+            'subtotal', 'tax_amount', 'vat_treatment',
             'total_amount', 'amount_paid', 'amount_due', 'notes', 'attachment',
             'created_at', 'items', 'payments'
         ]
@@ -114,6 +114,7 @@ class CreateBillSerializer(serializers.Serializer):
     # max_length prevents oversized free-text fields from being stored
     reference = serializers.CharField(required=False, allow_blank=True, default='', max_length=100)
     tax_amount = serializers.DecimalField(max_digits=15, decimal_places=2, required=False, default=Decimal("0"), min_value=Decimal("0"))
+    vat_treatment = serializers.ChoiceField(choices=['standard', 'zero_rated', 'exempt'], required=False, default='standard')
     notes = serializers.CharField(required=False, allow_blank=True, default='', max_length=2000)
     status = serializers.ChoiceField(
         choices=['draft', 'received', 'approved'],
