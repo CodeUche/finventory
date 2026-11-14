@@ -163,6 +163,7 @@ class PerModuleTests(TestCase):
                 self.org, f"pm_{n}@example.com", role, ["reports", module])
             for rd in ALL_REPORTS:
                 single = rd.module in ("reports", module) and set(rd.also_modules) <= {module}
+                single = single and not rd.owner_admin_only or rd.module == "reports"
                 with self.subTest(module=module, key=rd.key):
                     res = _run(client, rd.key)
                     if single:
