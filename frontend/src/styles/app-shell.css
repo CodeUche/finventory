@@ -200,3 +200,10 @@ html.light body .app-shell.app-shell{
    (every signed-in page, including the register); auth pages keep the 16px
    fallback. The top bar is 72px high at every width, plus a 12px gap. */
 body:has(.sh-top){--toast-top:84px}
+
+/* ---- an open slide-over (invoice detail, account drawer, offboarding) ----
+   The support chat bubble would sit on its buttons, so it steps aside while one is
+   open; toasts move left of the panel so they never cover its header buttons. */
+body:has([data-drawer="open"]) [data-support-chat]{display:none}
+body:has([data-drawer="open"]){--toast-right:468px}
+@media(max-width:560px){ body:has([data-drawer="open"]){--toast-right:16px} }
