@@ -361,191 +361,229 @@ class VATTransactionViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         return qs
 
     def perform_create(self, serializer):
-        serializer.save(organisation=self._get_organisation())
+        obj = serializer.save(organisation=self._get_organisation())
+        # A hand-typed row changes the VAT figure, so it leaves an audit trail.
+        try:
+            from apps.core.models import AuditLog
+            AuditLog.log(
+                action=AuditLog.CREATE, user=self.request.user, organisation=obj.organisation,
+                model_name='VATTransaction', object_id=str(obj.id), object_repr=str(obj),
+                changes={'manual_vat_adjustment': {'old': None, 'new': f"{obj.direction} {obj.vat_amount}"}},
+                request=self.request,
+            )
+        except Exception:
+            pass
+
+    # ── Live view of the one VAT calculation ────────────────────────────────
+    # Nothing here stores a snapshot any more. The list, the worksheet and the
+    # PDF all read apps.tax.vat.compute_vat, so they cannot drift from the
+    # reports. Rows a person typed in (VATTransaction) are shown as manual
+    # adjustments and counted in the net.
+
+    @staticmethod
+    def _period(params):
+        from datetime import date as _date, datetime
+        from apps.tax.vat import month_range
+        ps, pe = params.get("period_start"), params.get("period_end")
+        try:
+            if ps and pe:
+                return datetime.strptime(ps, "%Y-%m-%d").date(), datetime.strptime(pe, "%Y-%m-%d").date()
+        except ValueError:
+            return None
+        if ps or pe:
+            return None
+        today = _date.today()
+        return month_range(today.year, today.month)
+
+    @staticmethod
+    def _row(line):
+        return {
+            "id": line["document_id"] if line["kind"] == "manual" else f"{line['kind']}:{line['document_id']}",
+            "kind": line["kind"],
+            "direction": line["direction"],
+            "period_start": line["date"],
+            "period_end": line["date"],
+            "counterparty_name": line["counterparty_name"],
+            "counterparty_tin": line["counterparty_tin"],
+            "net_amount": str(line["net_amount"]),
+            "vat_amount": str(line["vat_amount"]),
+            "vat_rate": str(line["vat_rate"]) if line["vat_rate"] is not None else "",
+            "is_claimable": line["is_claimable"] if line["direction"] == "input" else True,
+            "reason": line["reason"],
+            "source_ref": line["source_ref"],
+            "notes": line["notes"] or line["reason"],
+            "created_at": None,
+        }
+
+    def list(self, request, *args, **kwargs):
+        """GET /api/v1/tax/vat-transactions/?period_start=&period_end=&direction=
+        One live row per document (default: the current month)."""
+        from apps.tax.vat import compute_vat
+        period = self._period(request.query_params)
+        if period is None:
+            return Response({"error": "Invalid or incomplete period; send both period_start and period_end as YYYY-MM-DD."}, status=400)
+        vat = compute_vat(self._get_organisation(), *period, with_reconciliation=False, with_previous_methods=False)
+        rows = [self._row(l) for l in vat["lines"]]
+        direction = request.query_params.get("direction")
+        if direction in ("input", "output"):
+            rows = [r for r in rows if r["direction"] == direction]
+        # Same envelope the paginated list always had, so existing clients keep working.
+        return Response({"count": len(rows), "next": None, "previous": None, "results": rows})
+
+    @action(detail=False, methods=["get"])
+    def worksheet(self, request):
+        """GET /api/v1/tax/vat-transactions/worksheet/ — totals, turnover, reconciliation and rows."""
+        from apps.tax.vat import compute_vat
+        period = self._period(request.query_params)
+        if period is None:
+            return Response({"error": "Invalid or incomplete period; send both period_start and period_end as YYYY-MM-DD."}, status=400)
+        vat = compute_vat(self._get_organisation(), *period)
+        vat["rows"] = [self._row(l) for l in vat.pop("lines")]
+        return Response(vat)
 
     @action(detail=False, methods=["post"])
     def sync_from_period(self, request):
         """
         POST /api/v1/tax/vat-transactions/sync_from_period/
-        Auto-sync VAT transactions from sales invoices and bills for a given period.
+        Kept so existing clients keep working. It no longer stores anything: the
+        VAT ITC tab is a live read of the one VAT calculation. Returns the live
+        totals for the period.
         Body: { "period_start": "2025-01-01", "period_end": "2025-01-31" }
         """
-        from decimal import Decimal as _Dec
-        from django.db.models import Sum
-
+        from apps.tax.vat import compute_vat
         ser = VATReconciliationSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
-        p_start = ser.validated_data['period_start']
-        p_end = ser.validated_data['period_end']
-        org = request.organisation
-
-        created_output = created_input = 0
-
-        # Output VAT from sales
-        from apps.sales.models import Invoice, SaleItem
-        invoices = Invoice.objects.filter(
-            organisation=org,
-            issue_date__gte=p_start,
-            issue_date__lte=p_end,
-            status__in=['paid', 'confirmed', 'partially_paid', 'credit', 'overdue'],
-        ).exclude(tax_amount=0)
-
-        for inv in invoices:
-            ref = inv.invoice_number
-            if not VATTransaction.objects.filter(organisation=org, source_ref=ref, direction=VATTransaction.OUTPUT).exists():
-                VATTransaction.objects.create(
-                    organisation=org,
-                    direction=VATTransaction.OUTPUT,
-                    period_start=p_start,
-                    period_end=p_end,
-                    counterparty_name=inv.customer.name if inv.customer else '',
-                    net_amount=_Dec(str(inv.total_amount)) - _Dec(str(inv.tax_amount or 0)),
-                    vat_amount=_Dec(str(inv.tax_amount or 0)),
-                    source_ref=ref,
-                )
-                created_output += 1
-
-        # Input VAT from bills
-        from apps.bills.models import Bill
-        bills = Bill.objects.filter(
-            organisation=org,
-            issue_date__gte=p_start,
-            issue_date__lte=p_end,
-            status__in=[Bill.APPROVED, Bill.PAID, Bill.PARTIALLY_PAID],
-        ).exclude(tax_amount=0)
-
-        for bill in bills:
-            ref = str(bill.id)[:12]
-            if not VATTransaction.objects.filter(organisation=org, source_ref=ref, direction=VATTransaction.INPUT).exists():
-                VATTransaction.objects.create(
-                    organisation=org,
-                    direction=VATTransaction.INPUT,
-                    period_start=p_start,
-                    period_end=p_end,
-                    counterparty_name=bill.supplier.name if bill.supplier else '',
-                    net_amount=_Dec(str(bill.subtotal or 0)),
-                    vat_amount=_Dec(str(bill.tax_amount or 0)),
-                    source_ref=ref,
-                )
-                created_input += 1
-
+        vat = compute_vat(
+            self._get_organisation(), ser.validated_data['period_start'], ser.validated_data['period_end'],
+            with_reconciliation=False, with_previous_methods=False,
+        )
+        n_out = sum(1 for l in vat["lines"] if l["direction"] == "output")
+        n_in = sum(1 for l in vat["lines"] if l["direction"] == "input")
         return Response({
-            "synced_output": created_output,
-            "synced_input": created_input,
-            "message": f"Synced {created_output} output + {created_input} input VAT transactions.",
+            "synced_output": 0,
+            "synced_input": 0,
+            "live_output_documents": n_out,
+            "live_input_documents": n_in,
+            "output_vat": vat["output_vat"],
+            "input_vat_recoverable": vat["input_vat_recoverable"],
+            "input_vat_irrecoverable": vat["input_vat_irrecoverable"],
+            "net_vat_payable": vat["net_vat_payable"],
+            "message": "VAT figures are read live from your sales and bills; nothing needs syncing.",
         })
 
     @action(detail=False, methods=["get"])
     def export_pdf(self, request):
         """
         GET /api/v1/tax/vat-transactions/export_pdf/?period_start=YYYY-MM-DD&period_end=YYYY-MM-DD
-        Generate a VAT ITC Return PDF (Form VAT 002 equivalent).
+        VAT worksheet PDF, built from the same calculation as every VAT figure.
         """
         from datetime import date as _date
-        from decimal import Decimal as _Dec
         from django.http import HttpResponse
-        from django.db.models import Sum
 
         try:
             from reportlab.lib import colors
             from reportlab.lib.pagesizes import A4
-            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.lib.styles import getSampleStyleSheet
             from reportlab.lib.units import mm
-            from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, HRFlowable
+            from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+            from xml.sax.saxutils import escape
         except ImportError:
             return Response({"error": "ReportLab not installed."}, status=500)
 
-        p_start_str = request.query_params.get("period_start")
-        p_end_str = request.query_params.get("period_end")
-        if not p_start_str or not p_end_str:
+        if not request.query_params.get("period_start") or not request.query_params.get("period_end"):
             return Response({"error": "period_start and period_end query params required."}, status=400)
-
-        try:
-            from datetime import datetime
-            p_start = datetime.strptime(p_start_str, "%Y-%m-%d").date()
-            p_end = datetime.strptime(p_end_str, "%Y-%m-%d").date()
-        except ValueError:
+        period = self._period(request.query_params)
+        if period is None:
             return Response({"error": "Invalid date format; use YYYY-MM-DD."}, status=400)
+        p_start, p_end = period
 
+        from apps.tax.vat import compute_vat
         org = request.organisation
-        qs = VATTransaction.objects.filter(organisation=org, period_start__gte=p_start, period_end__lte=p_end)
-        output_qs = qs.filter(direction=VATTransaction.OUTPUT)
-        input_qs = qs.filter(direction=VATTransaction.INPUT)
-
-        total_output_net = output_qs.aggregate(s=Sum('net_amount'))['s'] or _Dec('0')
-        total_output_vat = output_qs.aggregate(s=Sum('vat_amount'))['s'] or _Dec('0')
-        total_input_net = input_qs.aggregate(s=Sum('net_amount'))['s'] or _Dec('0')
-        total_input_vat = input_qs.aggregate(s=Sum('vat_amount'))['s'] or _Dec('0')
-        net_payable = total_output_vat - total_input_vat
+        vat = compute_vat(org, p_start, p_end, with_reconciliation=False, with_previous_methods=False)
 
         import io
         buffer = io.BytesIO()
         doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=15*mm, bottomMargin=15*mm, leftMargin=20*mm, rightMargin=20*mm)
         styles = getSampleStyleSheet()
         story = []
-
-        # Header
-        story.append(Paragraph(f"<b>VAT RETURN — {org.name}</b>", styles['Title']))
+        story.append(Paragraph(f"<b>VAT WORKSHEET — {escape(org.name)}</b>", styles['Title']))
+        if getattr(org, "tax_id", ""):
+            story.append(Paragraph(f"TIN: {escape(org.tax_id)}", styles['Normal']))
         story.append(Paragraph(f"Period: {p_start.strftime('%d %b %Y')} to {p_end.strftime('%d %b %Y')}", styles['Normal']))
         story.append(Paragraph(f"Generated: {_date.today().strftime('%d %b %Y')}", styles['Normal']))
-        story.append(Spacer(1, 8*mm))
+        story.append(Spacer(1, 3*mm))
+        story.append(Paragraph(f"<i>{escape(vat['worksheet_note'])}</i>", styles['Normal']))
+        if not vat["vat_registered"]:
+            story.append(Paragraph(escape(vat["registration_note"]), styles['Normal']))
+        story.append(Spacer(1, 6*mm))
 
-        # Summary box
+        def m(v):
+            return f"{v:,.2f}"
+
         summary_data = [
-            ["", "Net Amount (₦)", "VAT Amount (₦)"],
-            ["Output VAT (Sales)", f"{total_output_net:,.2f}", f"{total_output_vat:,.2f}"],
-            ["Input VAT (Purchases)", f"{total_input_net:,.2f}", f"{total_input_vat:,.2f}"],
-            ["Net VAT Payable / (Reclaimable)", "", f"{net_payable:,.2f}"],
+            ["", "Amount (₦)"],
+            ["Output VAT on sales", m(vat["output_vat_on_sales"])],
+            ["Less: VAT on sales returns / credit notes", m(vat["output_vat_returns"])],
+            ["Manual output adjustments", m(vat["output_vat_manual_adjustments"])],
+            ["Output VAT", m(vat["output_vat"])],
+            ["Recoverable input VAT", m(vat["input_vat_recoverable"])],
+            ["Net VAT payable / (refund or carry-forward)", m(vat["net_vat_payable"])],
+            ["Irrecoverable input VAT (a cost, not claimed)", m(vat["input_vat_irrecoverable"])],
+            ["Taxable standard-rated sales", m(vat["turnover"]["taxable_standard"])],
+            ["Zero-rated sales", m(vat["turnover"]["zero_rated"])],
+            ["Exempt sales", m(vat["turnover"]["exempt"])],
         ]
-        summary_table = Table(summary_data, colWidths=[80*mm, 45*mm, 45*mm])
-        summary_table.setStyle(TableStyle([
+        st = Table(summary_data, colWidths=[110*mm, 55*mm])
+        st.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1e3a5f')),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#e8f0fe')),
-            ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+            ('FONTNAME', (0, 4), (-1, 4), 'Helvetica-Bold'),
+            ('FONTNAME', (0, 6), (-1, 6), 'Helvetica-Bold'),
             ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),
             ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-            ('ROWBACKGROUNDS', (0, 1), (-1, -2), [colors.white, colors.HexColor('#f5f5f5')]),
         ]))
-        story.append(summary_table)
-        story.append(Spacer(1, 8*mm))
+        story.append(st)
+        story.append(Spacer(1, 6*mm))
+        story.append(Paragraph(f"Filing reminder: due {vat['filing_due_date'].strftime('%d %b %Y')} (21st of the following month).", styles['Normal']))
+        story.append(Spacer(1, 6*mm))
 
-        def _tx_table(title, transactions):
+        def _tx_table(title, lines):
             story.append(Paragraph(f"<b>{title}</b>", styles['Heading3']))
-            if not transactions:
-                story.append(Paragraph("No transactions in this period.", styles['Normal']))
+            if not lines:
+                story.append(Paragraph("No documents in this period.", styles['Normal']))
                 story.append(Spacer(1, 4*mm))
                 return
-            rows = [["Date", "Counterparty", "Source Ref", "Net (₦)", "VAT Rate %", "VAT (₦)"]]
-            for tx in transactions:
+            rows = [["Date", "Counterparty", "TIN", "Ref", "Net (₦)", "VAT (₦)", "Claim", "Note"]]
+            for l in lines:
                 rows.append([
-                    tx.period_end.strftime('%d/%m/%Y') if tx.period_end else '',
-                    tx.counterparty_name[:30] if tx.counterparty_name else '—',
-                    tx.source_ref[:20] if tx.source_ref else '—',
-                    f"{tx.net_amount:,.2f}",
-                    f"{tx.vat_rate}%",
-                    f"{tx.vat_amount:,.2f}",
+                    l["date"] or "", escape((l["counterparty_name"] or "—")[:24]),
+                    escape((l["counterparty_tin"] or "—")[:14]), escape((l["source_ref"] or "—")[:16]),
+                    m(l["net_amount"]), m(l["vat_amount"]),
+                    ("yes" if l["is_claimable"] else "no") if l["direction"] == "input" else "",
+                    Paragraph(escape(l["reason"] or ""), styles['BodyText']),
                 ])
-            t = Table(rows, colWidths=[22*mm, 52*mm, 28*mm, 28*mm, 20*mm, 25*mm])
+            t = Table(rows, colWidths=[18*mm, 30*mm, 20*mm, 22*mm, 22*mm, 20*mm, 10*mm, 28*mm], repeatRows=1)
             t.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3b5998')),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
                 ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, -1), 8),
-                ('ALIGN', (3, 0), (-1, -1), 'RIGHT'),
-                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f9f9f9')]),
+                ('FONTSIZE', (0, 0), (-1, -1), 7),
+                ('ALIGN', (4, 0), (5, -1), 'RIGHT'),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
                 ('GRID', (0, 0), (-1, -1), 0.3, colors.HexColor('#cccccc')),
             ]))
             story.append(t)
             story.append(Spacer(1, 6*mm))
 
-        _tx_table("Output VAT Transactions (Sales)", list(output_qs.order_by('period_end')))
-        _tx_table("Input VAT Transactions (Purchases)", list(input_qs.order_by('period_end')))
+        _tx_table("Output VAT documents (sales, credit notes, adjustments)",
+                  [l for l in vat["lines"] if l["direction"] == "output"])
+        _tx_table("Input VAT documents (bills, purchase returns, adjustments)",
+                  [l for l in vat["lines"] if l["direction"] == "input"])
 
         doc.build(story)
         buffer.seek(0)
-        filename = f"VAT_Return_{p_start_str}_{p_end_str}.pdf"
+        filename = f"VAT_Worksheet_{p_start.isoformat()}_{p_end.isoformat()}.pdf"
         response = HttpResponse(buffer, content_type='application/pdf')
         response['Content-Disposition'] = f'attachment; filename="{filename}"'
         return response
