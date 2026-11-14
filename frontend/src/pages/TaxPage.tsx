@@ -145,7 +145,7 @@ export default function TaxPage() {
 
   const handleExportVatPDF = async () => {
     if (!vatSyncPeriod.period_start || !vatSyncPeriod.period_end) {
-      toast.error('Set sync period dates first, then export PDF')
+      toast.error('Choose the period first, then download the worksheet')
       return
     }
     setExportingPDF(true)
@@ -155,10 +155,10 @@ export default function TaxPage() {
       const url = URL.createObjectURL(new Blob([resp.data], { type: 'application/pdf' }))
       const a = document.createElement('a')
       a.href = url
-      a.download = `VAT_Return_${vatSyncPeriod.period_start}_${vatSyncPeriod.period_end}.pdf`
+      a.download = `VAT_Worksheet_${vatSyncPeriod.period_start}_${vatSyncPeriod.period_end}.pdf`
       a.click()
       URL.revokeObjectURL(url)
-      toast.success('VAT Return PDF downloaded')
+      toast.success('VAT worksheet downloaded')
     } catch {
       toast.error('Failed to export VAT PDF')
     } finally {
@@ -264,9 +264,12 @@ export default function TaxPage() {
     catch { /* non-critical */ }
   }
 
-  const loadVatTransactions = async () => {
+  const loadVatTransactions = async (period?: { period_start: string; period_end: string }) => {
     setLoadingVatTx(true)
-    try { const { data } = await taxApi.vatTransactions(); setVatTransactions(data.results ?? data) }
+    // No period sent: the server shows the current month. The list is read live
+    // from the one VAT calculation, so there is nothing to sync first.
+    const p = period ?? (vatSyncPeriod.period_start && vatSyncPeriod.period_end ? vatSyncPeriod : undefined)
+    try { const { data } = await taxApi.vatTransactions(p); setVatTransactions(data.results ?? data) }
     catch { toast.error('Failed to load VAT transactions') }
     finally { setLoadingVatTx(false) }
   }
@@ -519,10 +522,9 @@ export default function TaxPage() {
     if (!vatSyncPeriod.period_start || !vatSyncPeriod.period_end) { toast.error('Select both dates'); return }
     setSyncing(true)
     try {
-      const { data } = await taxApi.syncVatFromPeriod(vatSyncPeriod)
-      toast.success(`Synced: ${data.synced_output ?? 0} output, ${data.synced_input ?? 0} input records`)
-      setShowVatSyncModal(false); loadVatTransactions()
-    } catch { toast.error('Sync failed') }
+      await loadVatTransactions(vatSyncPeriod)
+      setShowVatSyncModal(false)
+    } catch { toast.error('Could not load that period') }
     finally { setSyncing(false) }
   }
 
@@ -1253,16 +1255,16 @@ export default function TaxPage() {
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="text-white font-semibold">VAT Input Tax Credit (ITC) Ledger</h2>
-              <p className="text-slate-500 text-xs mt-0.5">Track output VAT collected and input VAT paid for accurate net VAT computation</p>
+              <h2 className="text-white font-semibold">VAT worksheet (live)</h2>
+              <p className="text-slate-500 text-xs mt-0.5">Read live from your sales, credit notes and bills. A working figure: have a licensed tax practitioner review it before filing.</p>
             </div>
             <div className="flex gap-2">
               <button onClick={handleExportVatPDF} disabled={exportingPDF} className="btn-ghost flex items-center gap-1.5 text-sm disabled:opacity-50">
                 {exportingPDF ? <RefreshCw size={14} className="animate-spin" /> : <Download size={14} />}
-                Export PDF
+                Download worksheet (PDF)
               </button>
               <button onClick={() => setShowVatSyncModal(true)} className="btn-ghost flex items-center gap-1.5 text-sm">
-                <RefreshCw size={14} /> Sync from Period
+                <RefreshCw size={14} /> Choose period
               </button>
             </div>
           </div>
@@ -1284,8 +1286,8 @@ export default function TaxPage() {
               <div className="p-12 text-center">
                 <Receipt size={36} className="mx-auto text-slate-600 mb-3" />
                 <p className="text-slate-400 font-medium">No VAT transactions</p>
-                <p className="text-slate-500 text-xs mt-1">Use "Sync from Period" to pull VAT data from your sales invoices and bills</p>
-                <button onClick={() => setShowVatSyncModal(true)} className="btn-primary mt-4 inline-flex items-center gap-2 text-sm"><RefreshCw size={14} /> Sync Now</button>
+                <p className="text-slate-500 text-xs mt-1">No sales, credit notes or bills with VAT in this period. Use "Choose period" to look at another one</p>
+                <button onClick={() => setShowVatSyncModal(true)} className="btn-primary mt-4 inline-flex items-center gap-2 text-sm"><RefreshCw size={14} /> Choose period</button>
               </div>
             ) : (
               <>
@@ -1293,7 +1295,7 @@ export default function TaxPage() {
                 {(() => {
                   const filtered = vatTransactions.filter((v) => vatTxFilter === 'all' || v.direction === vatTxFilter)
                   const output = filtered.filter((v) => v.direction === 'output').reduce((s, v) => s + parseFloat(v.vat_amount), 0)
-                  const input = filtered.filter((v) => v.direction === 'input').reduce((s, v) => s + parseFloat(v.vat_amount), 0)
+                  const input = filtered.filter((v) => v.direction === 'input' && v.is_claimable).reduce((s, v) => s + parseFloat(v.vat_amount), 0)
                   return (
                     <div className="grid grid-cols-3 gap-4 p-4 border-b border-surface-700 bg-surface-800/50">
                       <div><p className="text-xs text-slate-500">Output VAT</p><p className="font-mono text-white font-semibold">{formatCurrency(String(output))}</p></div>
@@ -1305,7 +1307,7 @@ export default function TaxPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-surface-700">
-                      {['Direction', 'Counterparty', 'Period', 'Net Amount', 'VAT Rate', 'VAT Amount', 'Claimable', 'Ref'].map((h) => (
+                      {['Direction', 'Counterparty', 'TIN', 'Date', 'Net Amount', 'VAT Amount', 'Claimable', 'Ref', 'Note'].map((h) => (
                         <th key={h} className="px-4 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
                       ))}
                     </tr>
@@ -1317,9 +1319,9 @@ export default function TaxPage() {
                           <span className={v.direction === 'output' ? 'badge-orange' : 'badge-blue'}>{v.direction}</span>
                         </td>
                         <td className="px-4 py-3.5 text-white">{v.counterparty_name || '—'}</td>
-                        <td className="px-4 py-3.5 text-slate-400 text-xs">{formatDate(v.period_start)} – {formatDate(v.period_end)}</td>
+                        <td className="px-4 py-3.5 text-slate-400 text-xs font-mono">{v.counterparty_tin || '—'}</td>
+                        <td className="px-4 py-3.5 text-slate-400 text-xs">{formatDate(v.period_start)}</td>
                         <td className="px-4 py-3.5 font-mono text-white">{formatCurrency(v.net_amount)}</td>
-                        <td className="px-4 py-3.5"><span className="badge-slate">{v.vat_rate}%</span></td>
                         <td className="px-4 py-3.5 font-mono">
                           <span className={v.direction === 'output' ? 'text-amber-400' : 'text-emerald-400'}>{formatCurrency(v.vat_amount)}</span>
                         </td>
@@ -1327,6 +1329,7 @@ export default function TaxPage() {
                           {v.is_claimable ? <CheckCircle size={14} className="text-emerald-400" /> : <X size={14} className="text-slate-500" />}
                         </td>
                         <td className="px-4 py-3.5 text-slate-500 text-xs font-mono">{v.source_ref || '—'}</td>
+                        <td className="px-4 py-3.5 text-slate-400 text-xs">{v.kind === 'manual' ? 'Manual adjustment' : (v.reason || '')}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1342,10 +1345,10 @@ export default function TaxPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
           <div className="bg-surface-800 border border-surface-600 rounded-2xl p-6 w-full max-w-md shadow-2xl">
             <div className="flex items-center justify-between mb-5">
-              <h2 className="text-lg font-bold text-white">Sync VAT Transactions</h2>
+              <h2 className="text-lg font-bold text-white">Choose VAT period</h2>
               <button onClick={() => setShowVatSyncModal(false)} className="text-slate-400 hover:text-white"><X size={18} /></button>
             </div>
-            <p className="text-slate-500 text-xs mb-4">Pulls output VAT from sales invoices and input VAT from bills for the chosen period. Already-synced records are skipped.</p>
+            <p className="text-slate-500 text-xs mb-4">Shows output VAT from sales and credit notes and input VAT from bills for the chosen period. Nothing is copied or stored; the figures are always read fresh.</p>
             <div className="space-y-4">
               <div>
                 <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Period Start *</label>
@@ -1359,7 +1362,7 @@ export default function TaxPage() {
             <div className="flex gap-3 mt-6">
               <button onClick={() => setShowVatSyncModal(false)} className="btn-ghost flex-1">Cancel</button>
               <button onClick={handleSyncVat} disabled={syncing} className="btn-primary flex-1 disabled:opacity-50 flex items-center justify-center gap-2">
-                {syncing ? <><RefreshCw size={14} className="animate-spin" /> Syncing…</> : <><RefreshCw size={14} /> Sync</>}
+                {syncing ? <><RefreshCw size={14} className="animate-spin" /> Loading…</> : <><RefreshCw size={14} /> Show</>}
               </button>
             </div>
           </div>

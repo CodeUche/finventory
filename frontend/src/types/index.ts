@@ -1337,7 +1337,9 @@ export interface VATTransaction {
   is_claimable: boolean
   source_ref: string
   notes: string
-  created_at: string
+  created_at: string | null
+  kind?: 'sale' | 'sale_return' | 'bill' | 'purchase_return' | 'manual'
+  reason?: string
 }
 
 export interface TaxObligation {

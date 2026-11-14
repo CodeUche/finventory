@@ -3745,17 +3745,18 @@ export default function SettingsPage() {
           {isOwner && (
           <div className="rounded-xl bg-slate-800 border border-slate-700 px-5 py-4 flex items-start justify-between gap-4">
             <div>
-              <p className="text-sm font-medium text-white">This business charges VAT</p>
+              <p className="text-sm font-medium text-white">This business is registered for VAT</p>
               <p className="text-xs text-slate-400 mt-0.5">
-                Turn off if you are not registered to charge VAT (for example, under the small-business exemption).
-                Sales, quotes and the shop then add no VAT. Ask your tax adviser before changing this.
+                Turn off if you are not registered for VAT (for example, under the small-business exemption).
+                Sales, quotes and the shop then add no VAT, and VAT you pay on purchases is not counted as claimable
+                in the VAT worksheet. Ask your tax adviser before changing this.
               </p>
             </div>
             <button
               type="button"
               role="switch"
               aria-checked={organisation?.charges_vat !== false}
-              aria-label="This business charges VAT"
+              aria-label="This business is registered for VAT"
               onClick={async () => {
                 try {
                   const { data } = await orgApi.update(organisation!.id, { charges_vat: organisation?.charges_vat === false })
