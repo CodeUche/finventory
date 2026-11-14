@@ -516,11 +516,11 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
 
       {/* Filters */}
       <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
-        <div className="relative flex-1 max-w-sm">
+        <div className="relative flex-1 min-w-[14rem] max-w-sm">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
           <input
             className="input pl-9"
-            placeholder="Search name, email, phone…"
+            placeholder="Search customers…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -691,7 +691,7 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
                   { label: 'Credit Limit', value: formatCurrency(selected.credit_limit), color: 'text-white' },
                   { label: 'Outstanding', value: formatCurrency(selected.outstanding_balance), color: 'text-red-400' },
                   { label: 'Available', value: formatCurrency(selected.available_credit), color: 'text-emerald-400' },
-                  { label: 'Credit %', value: `${creditUtilPct(selected).toFixed(1)}%`, color: creditUtilPct(selected) > 80 ? 'text-red-400' : 'text-amber-400' },
+                  { label: 'Credit %', value: `${creditUtilPct(selected).toFixed(1)}%`, color: creditUtilPct(selected) > 80 ? 'text-red-400' : 'text-slate-200' },
                 ].map(({ label, value, color }) => (
                   <div key={label} className="bg-surface-800 rounded-xl p-4">
                     <p className="text-xs text-slate-500 mb-1">{label}</p>
@@ -1122,7 +1122,7 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
                                     <tr key={`dbt-${ei}`} className="border-b border-surface-700/40 hover:bg-surface-700/20 bg-orange-500/[0.03]">
                                       <td className="px-2 py-2.5 text-slate-400 whitespace-nowrap">{formatDate(e.date)}</td>
                                       <td className="px-2 py-2.5 font-mono text-orange-400 text-[11px] whitespace-nowrap">{d.reference || '—'}</td>
-                                      <td className="px-2 py-2.5 text-orange-400 overflow-hidden text-ellipsis whitespace-nowrap">{d.description || 'Manual Debit'}</td>
+                                      <td className="px-2 py-2.5 text-slate-300 overflow-hidden text-ellipsis whitespace-nowrap">{d.description || 'Manual Debit'}</td>
                                       <td className="px-2 py-2.5" /><td className="px-2 py-2.5" /><td className="px-2 py-2.5" /><td className="px-2 py-2.5" />
                                       <td className="px-2 py-2.5 text-orange-400 text-right whitespace-nowrap font-medium">{formatCurrency(parseFloat(d.amount))}</td>
                                       <td className="px-2 py-2.5" />

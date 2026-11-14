@@ -554,7 +554,7 @@ export default function ImportPage() {
                 <CheckCircle size={20} className="text-amber-400" />
                 <div>
                   <p className="text-xs text-slate-400">Warehouses</p>
-                  <p className="text-xl font-bold text-amber-400">{result.warehouses_created}</p>
+                  <p className="text-xl font-bold text-emerald-400">{result.warehouses_created}</p>
                 </div>
               </div>
             )}

@@ -2410,8 +2410,8 @@ export default function TaxPage() {
           {proPlan && (
             <div className="absolute inset-0 z-20 flex flex-col items-center justify-center rounded-2xl bg-surface-900/60 backdrop-blur-md">
               <div className="text-center max-w-sm px-6">
-                <div className="w-14 h-14 bg-amber-500/15 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                  <Lock size={28} className="text-amber-400" />
+                <div className="w-14 h-14 bg-brand-500/15 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                  <Lock size={28} className="text-brand-400" />
                 </div>
                 <p className="text-white font-bold text-lg">Business Plan Feature</p>
                 <p className="text-slate-400 text-sm mt-2">

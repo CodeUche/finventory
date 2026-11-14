@@ -91,7 +91,7 @@ export default function OwnerAnalyticsPage() {
               label="Margin Uplift"
               value={`${(parseFloat(data.owner_margin_pct) - parseFloat(data.company_margin_pct)).toFixed(1)}%`}
               sub="Owner margin vs company margin"
-              color="orange"
+              color="brand"
             />
           </div>
 

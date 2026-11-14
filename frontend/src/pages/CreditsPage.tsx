@@ -295,7 +295,7 @@ export default function CreditsPage() {
       {aging && aging.length > 0 && (
         <div className="card p-5">
           <div className="flex items-center gap-2 mb-4">
-            <AlertCircle size={16} className="text-amber-400" />
+            <AlertCircle size={16} className="text-brand-400" />
             <h3 className="text-sm font-semibold text-white">Aging Report</h3>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">

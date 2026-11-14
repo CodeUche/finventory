@@ -489,7 +489,7 @@ export default function EmployeesPage() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="card p-5"><p className="text-xs text-slate-400">Total Employees</p><p className="text-xl font-bold text-white mt-1">{totalEmployees}</p></div>
         <div className="card p-5"><p className="text-xs text-slate-400">Active</p><p className="text-xl font-bold text-emerald-400 mt-1">{active}</p></div>
-        <div className="card p-5"><p className="text-xs text-slate-400">On Contract</p><p className="text-xl font-bold text-orange-400 mt-1">{contracted}</p></div>
+        <div className="card p-5"><p className="text-xs text-slate-400">On Contract</p><p className="text-xl font-bold text-white mt-1">{contracted}</p></div>
         <div className="card p-5"><p className="text-xs text-slate-400">Total Monthly Gross</p><p className="text-xl font-bold text-brand-400 mt-1">{formatCurrency(String(totalGross))}</p></div>
       </div>
 

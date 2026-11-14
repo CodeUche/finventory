@@ -62,12 +62,12 @@ function formatMessageTime(iso: string): string {
  *  distinct from the brand teal used for "my" bubbles. */
 const TEAMMATE_PALETTE = [
   { text: 'text-rose-400', bg: 'bg-rose-500/20' },
-  { text: 'text-amber-400', bg: 'bg-amber-500/20' },
+  { text: 'text-sky-400', bg: 'bg-sky-500/20' },
   { text: 'text-violet-400', bg: 'bg-violet-500/20' },
   { text: 'text-cyan-400', bg: 'bg-cyan-500/20' },
   { text: 'text-lime-400', bg: 'bg-lime-500/20' },
   { text: 'text-fuchsia-400', bg: 'bg-fuchsia-500/20' },
-  { text: 'text-orange-400', bg: 'bg-orange-500/20' },
+  { text: 'text-teal-400', bg: 'bg-teal-500/20' },
   { text: 'text-indigo-400', bg: 'bg-indigo-500/20' },
 ]
 

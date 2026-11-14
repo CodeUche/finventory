@@ -358,7 +358,7 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
           <div className="flex items-center gap-1.5">
             <p className="flex-1">{organisation.name}</p>
             {FEATURES.PARTNER_CHANNEL && organisation.managing_firm_name && (
-              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-500 shrink-0 uppercase tracking-wide">CLIENT</span>
+              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-brand-500/20 text-brand-400 shrink-0 uppercase tracking-wide">CLIENT</span>
             )}
           </div>
           <p>{organisation.currency}</p>

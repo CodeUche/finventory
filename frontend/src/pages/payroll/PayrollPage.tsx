@@ -1412,7 +1412,7 @@ export default function PayrollPage() {
             <div className="p-6 border-t border-surface-700 space-y-2">
               {transferResults?.some(r => r.status === 'failed') && (
                 <button onClick={handleRetryFailed} disabled={retrying}
-                  className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-400 font-semibold text-sm hover:bg-amber-500/25 disabled:opacity-50">
+                  className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-brand-500/15 border border-brand-500/30 text-brand-400 font-semibold text-sm hover:bg-brand-500/25 disabled:opacity-50">
                   {retrying ? <Loader2 size={15} className="animate-spin" /> : <RotateCcw size={15} />}
                   Retry Failed Payments
                 </button>
@@ -1766,7 +1766,7 @@ export default function PayrollPage() {
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setApproverPickerId(null)} />
           <div className="relative bg-surface-800 border border-surface-700 rounded-2xl shadow-2xl p-6 w-full max-w-sm space-y-4 z-10">
             <div className="flex items-center justify-between">
-              <h3 className="text-white font-semibold flex items-center gap-2"><Users size={16} className="text-amber-400" /> Send for Approval</h3>
+              <h3 className="text-white font-semibold flex items-center gap-2"><Users size={16} className="text-brand-400" /> Send for Approval</h3>
               <button onClick={() => setApproverPickerId(null)} className="text-slate-500 hover:text-white"><X size={16} /></button>
             </div>
             <p className="text-sm text-slate-400">Select which admin or owner should review and approve this payroll run.</p>

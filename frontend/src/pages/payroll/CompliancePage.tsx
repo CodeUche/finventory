@@ -14,7 +14,7 @@ const TYPE_STYLE: Record<string, string> = {
   paye: 'bg-brand-500/15 text-brand-400',
   pension: 'bg-sky-500/15 text-sky-400',
   nhf: 'bg-violet-500/15 text-violet-400',
-  nsitf: 'bg-amber-500/15 text-amber-400',
+  nsitf: 'bg-indigo-500/15 text-indigo-400',
   itf: 'bg-slate-500/15 text-slate-300',
   benefit: 'bg-cyan-500/15 text-cyan-400',
 }

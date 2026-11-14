@@ -271,7 +271,7 @@ const STATUS_TEXT: Record<string, string> = {
   accepted: 'text-green-400',
   rejected: 'text-red-400',
   expired: 'text-red-400',
-  converted: 'text-amber-400',
+  converted: 'text-brand-400',
 }
 
 interface QuoteLineForm {
@@ -1042,7 +1042,7 @@ export default function QuotesPage() {
                 {parseFloat(convertedInvoice.amount_due) > 0 && (
                   <div className="flex justify-between text-sm">
                     <span className="text-slate-400">Amount Due</span>
-                    <span className="text-amber-400 font-semibold">{formatCurrency(convertedInvoice.amount_due)}</span>
+                    <span className="text-white font-semibold">{formatCurrency(convertedInvoice.amount_due)}</span>
                   </div>
                 )}
               </div>
