@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { DS_CHART } from '@/lib/chartTheme'
 import { confirmDialog } from '@/lib/dialog'
 import { useSearchParams } from 'react-router-dom'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
@@ -18,11 +19,11 @@ import { saveBlobFile } from '@/lib/saveBlobFile'
 import type { Customer } from '@/types'
 
 function creditScoreColor(score: number) {
-  if (score <= 30) return { text: 'text-red-400', ring: '#ef4444', label: 'Poor' }
+  if (score <= 30) return { text: 'text-red-400', ring: DS_CHART.bad, label: 'Poor' }
   if (score <= 50) return { text: 'text-red-400', ring: '#FF6669', label: 'Fair' }
   if (score <= 70) return { text: 'text-amber-400', ring: '#FECB01', label: 'Avg' }
   if (score <= 85) return { text: 'text-emerald-300', ring: '#6ee7b7', label: 'Good' }
-  return { text: 'text-emerald-400', ring: '#10b981', label: 'Excellent' }
+  return { text: 'text-emerald-400', ring: DS_CHART.good, label: 'Excellent' }
 }
 
 function CreditScoreWheel({ score, size = 36 }: { score?: number; size?: number }) {

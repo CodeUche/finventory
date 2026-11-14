@@ -906,7 +906,7 @@ export default function StockReportsPage() {
                     content={() => (
                       <div style={{ display: 'flex', justifyContent: 'center', gap: 20, paddingTop: 10, fontSize: 11, color: legendColor }}>
                         <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                          <span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: 2, background: '#10b981' }} />
+                          <span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: 2, background: DS_CHART.good }} />
                           On Hand
                         </span>
                         <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
@@ -921,10 +921,10 @@ export default function StockReportsPage() {
                       <Cell
                         key={i}
                         fill={
-                          entry.status === 'out_of_stock' ? '#ef4444'
+                          entry.status === 'out_of_stock' ? DS_CHART.bad
                           : entry.status === 'low'        ? DS_CHART.warn
-                          : entry.status === 'overstocked' ? '#3b82f6'
-                          : '#10b981'
+                          : entry.status === 'overstocked' ? DS_CHART.primary
+                          : DS_CHART.good
                         }
                       />
                     ))}
@@ -1364,7 +1364,7 @@ export default function StockReportsPage() {
                           formatter={(v: number) => [formatMoney(v), 'Value']}
                           cursor={{ fill: isLight ? 'rgba(28,47,92,0.08)' : 'rgba(255,255,255,0.05)' }}
                         />
-                        <Bar dataKey="value" name="Inventory Value" fill="#10b981" radius={[0, 4, 4, 0]} />
+                        <Bar dataKey="value" name="Inventory Value" fill={DS_CHART.primary} radius={[0, 4, 4, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
                   </div>

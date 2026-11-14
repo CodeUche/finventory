@@ -517,11 +517,11 @@ export default function ReportsPage() {
     const net     = parseFloat(pnl.net_profit)
 
     return [
-      { name: 'Revenue',      start: 0,       value: revenue, fill: '#10b981', label: formatCurrency(String(revenue)) },
-      { name: '– COGS',       start: gp,       value: cogs,   fill: '#ef4444', label: `(${formatCurrency(String(cogs))})` },
-      { name: 'Gross Profit', start: 0,       value: gp,      fill: '#3b82f6', label: formatCurrency(String(gp)) },
+      { name: 'Revenue',      start: 0,       value: revenue, fill: DS_CHART.good, label: formatCurrency(String(revenue)) },
+      { name: '– COGS',       start: gp,       value: cogs,   fill: DS_CHART.bad, label: `(${formatCurrency(String(cogs))})` },
+      { name: 'Gross Profit', start: 0,       value: gp,      fill: DS_CHART.primary, label: formatCurrency(String(gp)) },
       { name: '– Op Expenses',start: net,     value: opex,    fill: DS_CHART.warn, label: `(${formatCurrency(String(opex))})` },
-      { name: 'Net Profit',   start: 0,       value: net,     fill: net >= 0 ? '#10b981' : '#ef4444', label: formatCurrency(String(net)) },
+      { name: 'Net Profit',   start: 0,       value: net,     fill: net >= 0 ? DS_CHART.good : DS_CHART.bad, label: formatCurrency(String(net)) },
     ]
   }, [pnl])
 
@@ -707,7 +707,7 @@ export default function ReportsPage() {
                       itemStyle={tooltipItemStyle} formatter={(v: number) => formatCurrency(String(v))} />
                     <Legend wrapperStyle={{ fontSize: 11, paddingTop: 12, color: '#94a3b8' }} />
                     <Bar dataKey="Revenue" stackId="a" fill={accent}  radius={[0, 0, 0, 0]} />
-                    <Bar dataKey="COGS"    stackId="b" fill="#ef4444" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="COGS"    stackId="b" fill={DS_CHART.bad} radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               )}
@@ -767,8 +767,8 @@ export default function ReportsPage() {
                       <stop offset="95%" stopColor={accent}    stopOpacity={0} />
                     </linearGradient>
                     <linearGradient id="taxGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%"  stopColor="#3b82f6" stopOpacity={0.2} />
-                      <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                      <stop offset="5%"  stopColor={DS_CHART.primary} stopOpacity={0.2} />
+                      <stop offset="95%" stopColor={DS_CHART.primary} stopOpacity={0} />
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
@@ -780,7 +780,7 @@ export default function ReportsPage() {
                   <Legend wrapperStyle={{ fontSize: 12, paddingTop: 16, color: '#94a3b8' }} />
                   <Area type="monotone" dataKey="Revenue" stroke={accent} strokeWidth={2}
                     fill="url(#revGrad)" dot={false} />
-                  <Area type="monotone" dataKey="Tax" stroke="#3b82f6" strokeWidth={1.5}
+                  <Area type="monotone" dataKey="Tax" stroke={DS_CHART.primary} strokeWidth={1.5}
                     fill="url(#taxGrad)" dot={false} />
                 </AreaChart>
               </ResponsiveContainer>
@@ -1085,8 +1085,8 @@ export default function ReportsPage() {
                   <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle}
                     itemStyle={tooltipItemStyle} formatter={(v: number) => formatCurrency(String(v))} />
                   <Legend wrapperStyle={{ fontSize: 11, paddingTop: 12, color: '#94a3b8' }} />
-                  <Bar dataKey="Inflows"  fill="#10b981" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="Outflows" fill="#ef4444" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="Inflows"  fill={DS_CHART.good} radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="Outflows" fill={DS_CHART.bad} radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -1113,8 +1113,8 @@ export default function ReportsPage() {
                     tickFormatter={v => `${getCurrencySymbol()}${formatNumber(v)}`} />
                   <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle}
                     itemStyle={tooltipItemStyle} formatter={(v: number) => formatCurrency(String(v))} />
-                  <ReferenceLine y={0} stroke="#ef4444" strokeDasharray="4 2"
-                    label={{ value: 'Break-even', fill: '#ef4444', fontSize: 10, position: 'insideTopRight' }} />
+                  <ReferenceLine y={0} stroke={DS_CHART.bad} strokeDasharray="4 2"
+                    label={{ value: 'Break-even', fill: DS_CHART.bad, fontSize: 10, position: 'insideTopRight' }} />
                   <Area type="monotone" dataKey="cumulative" stroke={accent} strokeWidth={2}
                     fill="url(#cashGrad)" dot={false} name="Cumulative Net" />
                 </AreaChart>
@@ -1514,8 +1514,8 @@ export default function ReportsPage() {
                           <stop offset="95%" stopColor={accent}    stopOpacity={0} />
                         </linearGradient>
                         <linearGradient id="expExp" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%"  stopColor="#ef4444" stopOpacity={0.2} />
-                          <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
+                          <stop offset="5%"  stopColor={DS_CHART.bad} stopOpacity={0.2} />
+                          <stop offset="95%" stopColor={DS_CHART.bad} stopOpacity={0} />
                         </linearGradient>
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
@@ -1527,7 +1527,7 @@ export default function ReportsPage() {
                       <Legend wrapperStyle={{ fontSize: 11, paddingTop: 8, color: '#94a3b8' }} />
                       <Area type="monotone" dataKey="Revenue"  stroke={accent}    strokeWidth={2}
                         fill="url(#revExp)" dot={false} />
-                      <Area type="monotone" dataKey="Expenses" stroke="#ef4444" strokeWidth={1.5}
+                      <Area type="monotone" dataKey="Expenses" stroke={DS_CHART.bad} strokeWidth={1.5}
                         fill="url(#expExp)" dot={false} />
                     </AreaChart>
                   </ResponsiveContainer>

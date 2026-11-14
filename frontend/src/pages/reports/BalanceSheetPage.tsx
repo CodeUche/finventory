@@ -6,6 +6,7 @@
  *     These three numbers are what a banker or board member asks for first.
  */
 import { useEffect, useMemo, useState } from 'react'
+import { DS_CHART } from '@/lib/chartTheme'
 import { useNavigate } from 'react-router-dom'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import {
@@ -17,7 +18,6 @@ import toast from 'react-hot-toast'
 import { accountingApi, bypassNextGets } from '@/services/api'
 import AccountDrilldownDrawer from '@/components/AccountDrilldownDrawer'
 import { formatCurrency } from '@/lib/utils'
-import { useThemeAccent } from '@/hooks/useTheme'
 
 const tooltipStyle = { backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '12px', color: '#f1f5f9', fontSize: 12 }
 
@@ -75,7 +75,6 @@ function groupAccounts(accounts: BSAccount[], groups: { label: string; from: num
 
 export default function BalanceSheetPage() {
   const navigate = useNavigate()
-  const accent   = useThemeAccent()
   const now = new Date()
   const [selectedYear, setSelectedYear] = useState(now.getFullYear())
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1)
@@ -269,7 +268,7 @@ export default function BalanceSheetPage() {
                     <Pie data={assetDonut} cx="50%" cy="45%"
                       innerRadius={50} outerRadius={72} paddingAngle={3} dataKey="value">
                       {assetDonut.map((_, i) => (
-                        <Cell key={i} fill={[accent, '#3b82f6', '#a855f7'][i % 3]} />
+                        <Cell key={i} fill={[DS_CHART.primary, DS_CHART.accent, DS_CHART.secondary][i % 3]} />
                       ))}
                     </Pie>
                     <Tooltip contentStyle={tooltipStyle}
@@ -300,7 +299,7 @@ export default function BalanceSheetPage() {
                     <Pie data={structureDonut} cx="50%" cy="45%"
                       innerRadius={50} outerRadius={72} paddingAngle={3} dataKey="value">
                       {structureDonut.map((_, i) => (
-                        <Cell key={i} fill={['#ef4444', '#10b981'][i % 2]} />
+                        <Cell key={i} fill={[DS_CHART.secondary, DS_CHART.sky][i % 2]} />
                       ))}
                     </Pie>
                     <Tooltip contentStyle={tooltipStyle}

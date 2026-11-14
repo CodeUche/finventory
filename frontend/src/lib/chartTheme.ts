@@ -19,10 +19,14 @@ export const DS_CHART = {
   neutral: '#808080',    // neutral
 } as const
 
-/** Categorical series (pies, multi-bar). Blue/violet family first, like the kit. */
+/**
+ * Categorical series (pies, multi-bar, "just different things"). Blue / violet / grey
+ * only: green, red and yellow are never used here because they would read as
+ * good / bad / warning. Use DS_CHART.good / bad / warn only where a number means that.
+ */
 export const CHART_SERIES = [
-  DS_CHART.primary, DS_CHART.accent, DS_CHART.good, DS_CHART.secondary,
-  DS_CHART.sky, DS_CHART.tertiary, DS_CHART.lilac, DS_CHART.neutral,
+  DS_CHART.primary, DS_CHART.accent, DS_CHART.secondary, DS_CHART.sky,
+  DS_CHART.tertiary, DS_CHART.lilac, DS_CHART.neutral, '#1558EA',
 ] as const
 
 /** Ageing buckets, healthy to critical. */

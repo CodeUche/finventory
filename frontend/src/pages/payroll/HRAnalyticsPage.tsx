@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer,
+  ResponsiveContainer, Legend,
 } from 'recharts'
 import { BarChart3, Loader2, TrendingDown, TrendingUp, Users, Building2, AlertTriangle } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -44,7 +44,7 @@ interface ExpiringDocument {
   expiry_date: string
 }
 
-const COLORS = [...CHART_SERIES.slice(0, 5), DS_CHART.bad]
+const COLORS = [...CHART_SERIES]
 
 const tooltipStyle = {
   backgroundColor: '#161b26', border: '1px solid rgba(255,255,255,0.1)',
@@ -178,8 +178,8 @@ export default function HRAnalyticsPage() {
                     <XAxis dataKey="month" tick={{ fontSize: 10, fill: '#94a3b8' }} />
                     <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} allowDecimals={false} />
                     <Tooltip contentStyle={tooltipStyle} />
-                    <Bar dataKey="joiners" fill="#10b981" radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="leavers" fill="#ef4444" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="joiners" fill={DS_CHART.good} radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="leavers" fill={DS_CHART.bad} radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               )}
@@ -198,6 +198,7 @@ export default function HRAnalyticsPage() {
                       {deptChartData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
                     </Pie>
                     <Tooltip contentStyle={tooltipStyle} formatter={(v: number) => formatCurrency(v)} />
+                    <Legend wrapperStyle={{ fontSize: 11, paddingTop: 8 }} />
                   </PieChart>
                 </ResponsiveContainer>
               )}
@@ -232,7 +233,7 @@ export default function HRAnalyticsPage() {
                     <XAxis type="number" tick={{ fontSize: 10, fill: '#94a3b8' }} allowDecimals={false} />
                     <YAxis dataKey="name" type="category" tick={{ fontSize: 10, fill: '#94a3b8' }} width={60} />
                     <Tooltip contentStyle={tooltipStyle} />
-                    <Bar dataKey="value" fill="#6366f1" radius={[0, 4, 4, 0]} />
+                    <Bar dataKey="value" fill={DS_CHART.secondary} radius={[0, 4, 4, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               )}

@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { withShownBrand } from '@/lib/brandColor'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import type { User, AuthTokens, Organisation, AccessLevel, ModuleKey } from '@/types'
 import type { OfflineVerifierBlob } from '@/lib/offlineVerifier'
@@ -181,7 +182,7 @@ export const useAuthStore = create<AuthState>()(
           // A real-token login always ends any offline grace session — without
           // this, the api layer would keep queueing mutations after re-login.
           isOfflineSession: false,
-          organisation: org, organisations: orgs,
+          organisation: withShownBrand(org), organisations: orgs,
           orgInitialized: true,
           memberRole: null, modulePermissions: {},
           logoDataUrl: media.logoDataUrl ?? null,
@@ -228,7 +229,7 @@ export const useAuthStore = create<AuthState>()(
             mfa_enabled: blob.mfa_enabled,
           } as User,
           tokens: null,
-          organisation: firstOrg as Organisation | null,
+          organisation: withShownBrand(firstOrg as Organisation | null),
           organisations: blob.organisations as Organisation[],
           memberRole: role,
           modulePermissions: perms,
@@ -257,7 +258,7 @@ export const useAuthStore = create<AuthState>()(
         // Load the media cached for THIS org (never another org's).
         const media = readMediaCache(org?.id, get().user?.id)
         set({
-          organisation: org,
+          organisation: withShownBrand(org),
           logoDataUrl: media.logoDataUrl ?? null,
           stampDataUrl: media.stampDataUrl ?? null,
           avatarDataUrl: media.avatarDataUrl ?? null,
@@ -291,7 +292,7 @@ export const useAuthStore = create<AuthState>()(
 
       updateOrganisation: (partial) =>
         set((s) => ({
-          organisation: s.organisation ? { ...s.organisation, ...partial } : s.organisation,
+          organisation: s.organisation ? withShownBrand({ ...s.organisation, ...partial }) : s.organisation,
         })),
 
       updateTokens: (partial) =>

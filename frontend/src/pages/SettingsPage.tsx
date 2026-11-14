@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
 import { confirmDialog, promptDialog } from '@/lib/dialog'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import { ensureDocumentFonts } from '@/lib/documentFonts'
 import { User, Building2, Shield, Loader2, Camera, CreditCard, CheckCircle, Mail, Lock, Unlock, LandmarkIcon, UsersRound, UserPlus, X, ChevronDown, ChevronUp, ChevronRight, Bot, Layout, Copy, Trash2, ShieldCheck, Key, Clock, XCircle, Send, Globe, AlertTriangle, Wifi, WifiOff, RefreshCw, Activity, FileText, GitBranch, Upload, GraduationCap, Bell } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { authApi, orgApi, paymentGatewayApi, accountingApi, teamApi, urlToDataUrl, partnerApi, einvoicingApi, notificationApi } from '@/services/api'
@@ -1297,6 +1298,7 @@ export default function SettingsPage() {
   // If current tab is no longer visible (permissions changed), reset to profile
   const validTabIds = tabs.map((t) => t.id)
   const activeTab = validTabIds.includes(tab) ? tab : 'profile'
+  useEffect(() => { if (activeTab === 'invoice_templates') ensureDocumentFonts() }, [activeTab])
 
   return (
     <>

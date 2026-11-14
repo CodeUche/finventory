@@ -5,6 +5,7 @@
  *     Reveals which products are high-volume low-margin vs niche high-margin.
  */
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import { DS_CHART } from '@/lib/chartTheme'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { ChevronDown, ChevronRight, Loader2, Package, BarChart2, TrendingUp } from 'lucide-react'
 import {
@@ -204,7 +205,7 @@ export default function SalesByProductPage() {
                   formatter={(val: string) => <span style={{ color: '#94a3b8' }}>{val}</span>}
                 />
                 <Bar dataKey="Revenue"     fill={accent}    radius={[0, 4, 4, 0]} />
-                <Bar dataKey="GrossProfit" fill="#10b981"   radius={[0, 4, 4, 0]} />
+                <Bar dataKey="GrossProfit" fill={DS_CHART.good}   radius={[0, 4, 4, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -257,7 +258,7 @@ export default function SalesByProductPage() {
                     const { cx, cy, payload } = props
                     const maxUnits = Math.max(...scatterData.map(d => d.units), 1)
                     const r = Math.max(6, Math.min(18, 6 + (payload.units / maxUnits) * 12))
-                    const fill = payload.margin >= 30 ? '#10b981' : payload.margin >= 15 ? accent : '#ef4444'
+                    const fill = payload.margin >= 30 ? DS_CHART.good : payload.margin >= 15 ? accent : DS_CHART.bad
                     return <circle cx={cx} cy={cy} r={r} fill={fill} fillOpacity={0.7} stroke={fill} strokeWidth={1} />
                   }}
                 />
