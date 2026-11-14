@@ -1091,6 +1091,9 @@ class AccountingService:
             'balanced': not out_of_balance,
             'ledger_out_of_balance': out_of_balance,
             'unreconciled_amount': difference if out_of_balance else Decimal('0'),
+            # Invoices whose revenue posted without their cost of sales: profit is
+            # overstated by their cost until the cogs/inventory mapping is fixed.
+            'cogs_missing_invoices': AccountingService.cogs_missing_count(organisation),
             'as_of': str(as_of) if as_of else None,
         }
 
@@ -1866,8 +1869,9 @@ class AccountingService:
 
     @staticmethod
     def post_sale_journal(organisation, invoice, user=None):
-        """DR Cash/Bank/AR → CR Revenue + VAT; DR COGS → CR Inventory."""
+        """DR Cash/Bank/AR → CR Revenue + VAT, then (own journal) DR COGS → CR Inventory."""
         from apps.sales.models import SalePayment
+        from .exceptions import GLAccountNotConfigured
         zero = Decimal('0')
         total = Decimal(str(invoice.total_amount))
         tax = Decimal(str(invoice.tax_amount or 0))
@@ -1988,50 +1992,110 @@ class AccountingService:
             vat_acct = AccountMappingService.resolve(organisation, 'vat_output_account')
             lines.append((vat_acct, zero, tax))
 
-        # COGS. Deliberately NOT wrapped in try/except: if the COGS or Inventory
-        # account is not mapped, resolve() raises GLAccountNotConfigured and the
-        # whole journal is refused, so safe_post_gl marks the invoice
-        # not_configured (visible in GL Health, retry-able). The sale itself is
-        # unaffected. Swallowing it here used to post revenue with no cost of
-        # sales and still report 'posted', overstating profit.
-        if not has_override:
-            cogs_total = sum(Decimal(str(i.cost_of_goods or 0)) for i in items)
-            if cogs_total > zero:
-                cogs_acct = AccountMappingService.resolve(organisation, 'cogs_account')
-                inv_acct = AccountMappingService.resolve(organisation, 'inventory_account')
-                lines.append((cogs_acct, cogs_total, zero))
-                lines.append((inv_acct, zero, cogs_total))
-        else:
-            cogs_acct_default = AccountMappingService.resolve(organisation, 'cogs_account')
-            inv_acct_default = AccountMappingService.resolve(organisation, 'inventory_account')
-            debit_buckets = {}
-            credit_buckets = {}
-            for i in items:
-                amt = Decimal(str(i.cost_of_goods or 0))
-                if amt == 0:
-                    continue
-                product = i.product
-                if product.product_type == "service" and (product.wages_account_id or _class_default(product, 'wages_account')):
-                    debit_acct = product.wages_account or _class_default(product, 'wages_account')
-                else:
-                    debit_acct = product.cogs_account or _class_default(product, 'cogs_account') or cogs_acct_default
-                credit_acct = product.inventory_account or _class_default(product, 'inventory_account') or inv_acct_default
-                d_slot = debit_buckets.setdefault(debit_acct.id, [debit_acct, zero])
-                d_slot[1] += amt
-                c_slot = credit_buckets.setdefault(credit_acct.id, [credit_acct, zero])
-                c_slot[1] += amt
-            for acct, amt in debit_buckets.values():
-                if amt != 0:
-                    lines.append((acct, amt, zero))
-            for acct, amt in credit_buckets.values():
-                if amt != 0:
-                    lines.append((acct, zero, amt))
+        # COGS is its OWN journal (source_type 'sale_cogs'), built here and posted
+        # after the revenue / AR / Output VAT entry. A missing cogs or inventory
+        # mapping must never hold back the money side of a sale the customer
+        # already owes: the revenue entry always posts, and the COGS part raises
+        # GLAccountNotConfigured so safe_post_gl flags the invoice (GL Health,
+        # retry). Never swallowed: swallowing it used to post revenue with no
+        # cost of sales and still report 'posted', overstating profit.
+        cogs_lines = []
+        cogs_error = None
+        try:
+            if not has_override:
+                cogs_total = sum(Decimal(str(i.cost_of_goods or 0)) for i in items)
+                if cogs_total > zero:
+                    cogs_acct = AccountMappingService.resolve(organisation, 'cogs_account')
+                    inv_acct = AccountMappingService.resolve(organisation, 'inventory_account')
+                    cogs_lines.append((cogs_acct, cogs_total, zero))
+                    cogs_lines.append((inv_acct, zero, cogs_total))
+            else:
+                cogs_acct_default = AccountMappingService.resolve(organisation, 'cogs_account')
+                inv_acct_default = AccountMappingService.resolve(organisation, 'inventory_account')
+                debit_buckets = {}
+                credit_buckets = {}
+                for i in items:
+                    amt = Decimal(str(i.cost_of_goods or 0))
+                    if amt == 0:
+                        continue
+                    product = i.product
+                    if product.product_type == "service" and (product.wages_account_id or _class_default(product, 'wages_account')):
+                        debit_acct = product.wages_account or _class_default(product, 'wages_account')
+                    else:
+                        debit_acct = product.cogs_account or _class_default(product, 'cogs_account') or cogs_acct_default
+                    credit_acct = product.inventory_account or _class_default(product, 'inventory_account') or inv_acct_default
+                    d_slot = debit_buckets.setdefault(debit_acct.id, [debit_acct, zero])
+                    d_slot[1] += amt
+                    c_slot = credit_buckets.setdefault(credit_acct.id, [credit_acct, zero])
+                    c_slot[1] += amt
+                for acct, amt in debit_buckets.values():
+                    if amt != 0:
+                        cogs_lines.append((acct, amt, zero))
+                for acct, amt in credit_buckets.values():
+                    if amt != 0:
+                        cogs_lines.append((acct, zero, amt))
+        except GLAccountNotConfigured as exc:
+            cogs_error = exc
 
-        return AccountingService.post_journal_entry(
+        entry = AccountingService.post_journal_entry(
             organisation, f"Sale {invoice.invoice_number}", invoice.issue_date,
             lines, user,
             ref=invoice.invoice_number,
             source_type='sale',
+            source_ref=str(invoice.id),
+        )
+        if cogs_error is not None:
+            raise cogs_error
+        AccountingService._post_sale_cogs_entry(organisation, invoice, entry, cogs_lines, user)
+        return entry
+
+    @staticmethod
+    def sale_cogs_posted(organisation, invoice) -> bool:
+        """True when this invoice's cost of sales is in the ledger (own journal, or
+        inside a sale entry posted before the two were separated)."""
+        if JournalEntry.objects.filter(
+                organisation=organisation, source_type='sale_cogs', source_ref=str(invoice.id)).exists():
+            return True
+        return JournalLine.objects.filter(
+            journal_entry__organisation=organisation, journal_entry__source_type='sale',
+            journal_entry__source_ref=str(invoice.id), journal_entry__status='posted',
+            account__account_type=AccountType.COST_OF_GOODS,
+        ).exists()
+
+    @staticmethod
+    def cogs_missing_count(organisation) -> int:
+        """Invoices whose revenue posted but whose cost of sales could not (cogs or
+        inventory account not mapped). Profit is overstated by their cost until fixed."""
+        from apps.sales.models import Invoice
+        return Invoice.objects.filter(
+            organisation=organisation, gl_post_status__in=('not_configured', 'failed'),
+        ).filter(
+            Q(gl_post_error__contains='cogs_account') | Q(gl_post_error__contains='inventory_account')
+        ).count()
+
+    @staticmethod
+    def missing_sale_mappings(organisation, needs_cogs=True):
+        """Roles a confirmed sale needs that are not mapped (does not raise, does not auto-fill)."""
+        mapping = AccountMapping.objects.filter(organisation=organisation).first()
+        roles = ['revenue_account'] + (['cogs_account', 'inventory_account'] if needs_cogs else [])
+        return [r for r in roles if mapping is None or getattr(mapping, f'{r}_id') is None]
+
+    @staticmethod
+    def _post_sale_cogs_entry(organisation, invoice, sale_entry, cogs_lines, user):
+        """Post the cost-of-sales journal (DR COGS / CR Inventory) for an invoice. Idempotent.
+
+        An invoice whose revenue entry already carries a COGS line (posted before the
+        two were separated) is left alone, so a retry never doubles the cost."""
+        if not cogs_lines:
+            return None
+        if sale_entry is not None and sale_entry.lines.filter(
+                account__account_type=AccountType.COST_OF_GOODS).exists():
+            return None
+        return AccountingService.post_journal_entry(
+            organisation, f"Cost of sales {invoice.invoice_number}", invoice.issue_date,
+            cogs_lines, user,
+            ref=f"{invoice.invoice_number}-COGS",
+            source_type='sale_cogs',
             source_ref=str(invoice.id),
         )
 
@@ -2924,6 +2988,7 @@ class AccountingService:
         return {
             'summary': summary,
             'failures': failures,
+            'cogs_missing_invoices': AccountingService.cogs_missing_count(organisation),
             'reconciliations': AccountingService.gl_health_reconciliations(organisation),
         }
 

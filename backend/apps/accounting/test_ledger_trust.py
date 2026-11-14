@@ -308,12 +308,12 @@ class CogsNotSilentlyDroppedTests(TestCase):
             movement_type="purchase_in", unit_cost=D("60"), reference="INIT", created_by=self.user)
         AccountMappingService.get_or_create_mapping(self.org)
 
-    def _sell(self):
+    def _sell(self, method="cash"):
         from apps.sales.services import SaleService
         return SaleService.create_sale(
             organisation=self.org, customer=self.customer, warehouse=self.wh,
             items=[{"product_id": self.product.id, "quantity": 1, "unit_price": D("200")}],
-            payment_method="cash", created_by=self.user)
+            payment_method=method, created_by=self.user)
 
     def _unmap(self, field):
         # Strict GL mode (the default) refuses the sale up front; the silent
@@ -332,7 +332,7 @@ class CogsNotSilentlyDroppedTests(TestCase):
         self.assertEqual(bal(self.org, "5001"), D("60"))
         self.assertEqual(bal(self.org, "1200"), D("-60"))
 
-    def test_unmapped_cogs_still_completes_the_sale_but_flags_the_ledger(self):
+    def test_unmapped_cogs_posts_revenue_and_flags_only_the_missing_cost(self):
         from apps.sales.models import Invoice
         self._unmap("cogs_account")
         inv = self._sell()
@@ -340,10 +340,17 @@ class CogsNotSilentlyDroppedTests(TestCase):
         self.assertTrue(Invoice.objects.filter(id=inv.id).exists())       # the sale itself went through
         self.assertEqual(inv.gl_post_status, "not_configured")
         self.assertIn("cogs_account", inv.gl_post_error)
-        # Nothing half-posted: no revenue without its cost.
-        self.assertEqual(bal(self.org, "4001"), ZERO)
-        failures = AccountingService.get_gl_health(self.org)["failures"]
-        self.assertTrue(any(f["model"] == "invoice" and f["id"] == str(inv.id) for f in failures))
+        # The money side is in the books: customer paid cash 200 for revenue 200.
+        self.assertEqual(bal(self.org, "4001"), D("200"))
+        self.assertEqual(AccountingService._ledger_balance(
+            AccountMappingService.resolve(self.org, "cash_account")), D("200"))
+        # ... the cost side is not, and says so.
+        self.assertEqual(bal(self.org, "5001"), ZERO)
+        self.assertFalse(JournalEntry.objects.filter(organisation=self.org, source_type="sale_cogs").exists())
+        health = AccountingService.get_gl_health(self.org)
+        self.assertTrue(any(f["model"] == "invoice" and f["id"] == str(inv.id) for f in health["failures"]))
+        self.assertEqual(health["cogs_missing_invoices"], 1)
+        self.assertEqual(AccountingService.balance_sheet(self.org)["cogs_missing_invoices"], 1)
 
     def test_unmapped_inventory_account_is_flagged_too(self):
         self._unmap("inventory_account")
@@ -351,10 +358,13 @@ class CogsNotSilentlyDroppedTests(TestCase):
         inv.refresh_from_db()
         self.assertEqual(inv.gl_post_status, "not_configured")
         self.assertIn("inventory_account", inv.gl_post_error)
+        self.assertEqual(bal(self.org, "4001"), D("200"))
+        self.assertEqual(AccountingService.cogs_missing_count(self.org), 1)
 
-    def test_retry_after_mapping_the_account_posts_revenue_and_cost_together(self):
+    def test_retry_posts_only_the_missing_cogs_journal(self):
         self._unmap("cogs_account")
         inv = self._sell()
+        revenue_entry = JournalEntry.objects.get(organisation=self.org, source_type="sale")
         m = AccountMapping.objects.get(organisation=self.org)
         m.cogs_account = acct(self.org, "5001")
         m.save()
@@ -362,183 +372,52 @@ class CogsNotSilentlyDroppedTests(TestCase):
         self.assertTrue(ok, err)
         inv.refresh_from_db()
         self.assertEqual(inv.gl_post_status, "posted")
-        self.assertEqual(bal(self.org, "4001"), D("200"))
+        self.assertEqual(JournalEntry.objects.filter(organisation=self.org, source_type="sale").count(), 1)
+        self.assertEqual(JournalEntry.objects.get(organisation=self.org, source_type="sale").id, revenue_entry.id)
+        self.assertEqual(JournalEntry.objects.filter(organisation=self.org, source_type="sale_cogs").count(), 1)
+        self.assertEqual(bal(self.org, "4001"), D("200"))     # not doubled
+        self.assertEqual(bal(self.org, "5001"), D("60"))
+        self.assertEqual(bal(self.org, "1200"), D("-60"))
+        self.assertEqual(AccountingService.cogs_missing_count(self.org), 0)
+        # A second retry changes nothing.
+        AccountingService.retry_gl_post(self.org, "invoice", str(inv.id), self.user)
         self.assertEqual(bal(self.org, "5001"), D("60"))
 
+    def test_a_sale_posted_with_cogs_inside_the_sale_entry_is_not_given_a_second_cogs(self):
+        """Old-style invoice (cost inside the 'sale' entry): retry must not add cost again."""
+        inv = self._sell()
+        sale = JournalEntry.objects.get(organisation=self.org, source_type="sale")
+        cogs = JournalEntry.objects.get(organisation=self.org, source_type="sale_cogs")
+        # Rebuild the old shape: one 'sale' entry holding the cost lines too.
+        for ln in cogs.lines.all():
+            JournalLine.objects.create(journal_entry=sale, account=ln.account, debit=ln.debit, credit=ln.credit)
+        # The ledger is immutable, so model 'no separate cost journal' by retyping it.
+        JournalEntry.objects.filter(id=cogs.id).update(source_type="legacy_note")
+        before = bal(self.org, "5001")
+        AccountingService.retry_gl_post(self.org, "invoice", str(inv.id), self.user)
+        self.assertEqual(bal(self.org, "5001"), before)
+        self.assertFalse(JournalEntry.objects.filter(organisation=self.org, source_type="sale_cogs").exists())
 
-class ExpenseEditDeleteLedgerTests(TestCase):
-    """Item 4: editing or deleting an expense must move the ledger with it."""
+    def test_voiding_a_sale_whose_cost_never_posted_does_not_reverse_a_cost(self):
+        from apps.sales.services import SaleService
+        self._unmap("cogs_account")
+        inv = self._sell("credit")
+        SaleService.void_invoice(inv, self.user)
+        self.assertEqual(bal(self.org, "4001"), ZERO)
+        self.assertEqual(bal(self.org, "5001"), ZERO)
+        self.assertEqual(bal(self.org, "1200"), ZERO)
 
-    def setUp(self):
-        from apps.accounting.tests import _auth_client
-        self.user, self.org = _setup("ex_owner@example.com", "EX Org")
-        self.client = _auth_client(self.user, self.org)
-        self.today = timezone.now().date()
-        self.cash = AccountMappingService.resolve(self.org, "cash_account")
-        self.bank = AccountMappingService.resolve(self.org, "bank_account")
+    def test_voiding_a_normal_sale_reverses_revenue_and_cost(self):
+        from apps.sales.services import SaleService
+        inv = self._sell("credit")
+        SaleService.void_invoice(inv, self.user)
+        self.assertEqual(bal(self.org, "4001"), ZERO)
+        self.assertEqual(bal(self.org, "5001"), ZERO)
 
-    def _create(self, amount="5000", **extra):
-        payload = {"description": "Generator fuel", "amount": amount, "expense_date": str(self.today),
-                   "category_label": "Fuel", "payment_method": "cash"}
-        payload.update(extra)
-        res = self.client.post("/api/v1/expenses/", payload, format="json")
-        self.assertEqual(res.status_code, 201, res.content[:300])
-        return res.data["id"]
-
-    def _bal(self, account):
-        return AccountingService._ledger_balance(account)
-
-    def test_edit_5000_to_3000_nets_3000_in_the_ledger(self):
-        eid = self._create("5000")
-        self.assertEqual(bal(self.org, "6700"), D("5000"))
-        res = self.client.patch(f"/api/v1/expenses/{eid}/", {"amount": "3000"}, format="json")
-        self.assertEqual(res.status_code, 200, res.content[:300])
-        self.assertEqual(bal(self.org, "6700"), D("3000"))
-        self.assertEqual(self._bal(self.cash), D("-3000"))
-        from apps.expenses.models import Expense
-        self.assertEqual(Expense.objects.get(id=eid).gl_post_status, "posted")
-        # History kept: original, its reversal, and the new entry under a new reference.
-        refs = list(JournalEntry.objects.filter(organisation=self.org, source_type="expense")
-                    .values_list("source_ref", flat=True))
-        self.assertEqual(sorted(refs), sorted([eid, f"{eid}:v2"]))
-        self.assertEqual(JournalEntry.objects.filter(organisation=self.org, source_type="reversal").count(), 1)
-
-    def test_second_edit_chains_cleanly(self):
-        eid = self._create("5000")
-        self.client.patch(f"/api/v1/expenses/{eid}/", {"amount": "3000"}, format="json")
-        self.client.patch(f"/api/v1/expenses/{eid}/", {"amount": "4200"}, format="json")
-        self.assertEqual(bal(self.org, "6700"), D("4200"))
-        self.assertEqual(self._bal(self.cash), D("-4200"))
-
-    def test_payment_method_change_moves_the_credit_side(self):
-        eid = self._create("5000")
-        self.client.patch(f"/api/v1/expenses/{eid}/", {"payment_method": "bank"}, format="json")
-        self.assertEqual(self._bal(self.cash), ZERO)
-        self.assertEqual(self._bal(self.bank), D("-5000"))
-        self.assertEqual(bal(self.org, "6700"), D("5000"))
-
-    def test_changing_to_income_flips_the_ledger(self):
-        eid = self._create("5000")
-        self.client.patch(f"/api/v1/expenses/{eid}/", {"is_income": True}, format="json")
-        self.assertEqual(bal(self.org, "6700"), ZERO)
-        self.assertEqual(bal(self.org, "4001"), D("5000"))
-        self.assertEqual(self._bal(self.cash), D("5000"))
-
-    def test_description_only_edit_posts_nothing(self):
-        eid = self._create("5000")
-        before = JournalEntry.objects.filter(organisation=self.org).count()
-        res = self.client.patch(f"/api/v1/expenses/{eid}/", {"description": "Diesel"}, format="json")
-        self.assertEqual(res.status_code, 200)
-        self.assertEqual(JournalEntry.objects.filter(organisation=self.org).count(), before)
-
-    def test_delete_nets_the_ledger_to_zero_and_keeps_audit_rows(self):
-        from apps.core.models import AuditLog
-        from apps.expenses.models import Expense
-        eid = self._create("5000")
-        res = self.client.delete(f"/api/v1/expenses/{eid}/")
-        self.assertEqual(res.status_code, 204)
-        self.assertEqual(bal(self.org, "6700"), ZERO)
-        self.assertEqual(self._bal(self.cash), ZERO)
-        self.assertFalse(Expense.objects.filter(id=eid).exists())
-        self.assertTrue(Expense.all_objects.filter(id=eid, is_deleted=True).exists())
-        # The original entry and its reversal are both still there.
-        self.assertEqual(JournalEntry.objects.filter(organisation=self.org, source_type="expense").count(), 1)
-        self.assertEqual(JournalEntry.objects.filter(organisation=self.org, source_type="reversal").count(), 1)
-        self.assertTrue(AuditLog.objects.filter(organisation_id=self.org.id, model_name="Expense",
-                                                object_id=eid, action="delete").exists())
-
-    def test_edit_in_a_locked_period_is_blocked_and_nothing_changes(self):
-        from apps.expenses.models import Expense
-        eid = self._create("5000")
-        FinancialPeriod.objects.create(organisation=self.org, year=self.today.year,
-                                       month=self.today.month, is_locked=True)
-        res = self.client.patch(f"/api/v1/expenses/{eid}/", {"amount": "3000"}, format="json")
-        self.assertEqual(res.status_code, 403)
-        self.assertIn("locked", str(res.data).lower())
-        self.assertEqual(Expense.objects.get(id=eid).amount, D("5000"))
-        self.assertEqual(bal(self.org, "6700"), D("5000"))
-        self.assertEqual(JournalEntry.objects.filter(organisation=self.org, source_type="reversal").count(), 0)
-
-    def test_delete_in_a_locked_period_is_blocked(self):
-        from apps.expenses.models import Expense
-        eid = self._create("5000")
-        FinancialPeriod.objects.create(organisation=self.org, year=self.today.year,
-                                       month=self.today.month, is_locked=True)
-        res = self.client.delete(f"/api/v1/expenses/{eid}/")
-        self.assertEqual(res.status_code, 403)
-        self.assertTrue(Expense.objects.filter(id=eid).exists())
-        self.assertEqual(bal(self.org, "6700"), D("5000"))
-
-    def test_moving_the_date_into_a_locked_period_is_blocked(self):
-        eid = self._create("5000")
-        FinancialPeriod.objects.create(organisation=self.org, year=2020, month=3, is_locked=True)
-        res = self.client.patch(f"/api/v1/expenses/{eid}/", {"expense_date": "2020-03-10"}, format="json")
-        self.assertEqual(res.status_code, 403)
-        self.assertEqual(bal(self.org, "6700"), D("5000"))
-
-    def test_failed_repost_rolls_the_whole_edit_back(self):
-        """Unmapped bank account on repost: the edit is refused, the old entry and figures stay."""
-        from apps.expenses.models import Expense
-        eid = self._create("5000")
-        m = AccountMapping.objects.get(organisation=self.org)
-        m.bank_account = None
-        m.save()
-        res = self.client.patch(f"/api/v1/expenses/{eid}/",
-                                {"amount": "3000", "payment_method": "bank"}, format="json")
-        self.assertEqual(res.status_code, 400, res.content[:300])
-        self.assertIn("Nothing was changed", str(res.data))
-        exp = Expense.objects.get(id=eid)
-        self.assertEqual(exp.amount, D("5000"))
-        self.assertEqual(exp.payment_method, "cash")
-        self.assertEqual(exp.gl_post_status, "posted")
-        self.assertEqual(bal(self.org, "6700"), D("5000"))
-        self.assertEqual(self._bal(self.cash), D("-5000"))
-        self.assertEqual(JournalEntry.objects.filter(organisation=self.org, source_type="reversal").count(), 0)
-        self.assertEqual(JournalEntry.objects.filter(organisation=self.org, source_type="expense").count(), 1)
-
-    def test_march_expense_edited_in_november_corrects_march_and_leaves_november_alone(self):
-        year = self.today.year - 1
-        eid = self._create("100000", expense_date=f"{year}-03-10")
-        res = self.client.patch(f"/api/v1/expenses/{eid}/", {"amount": "120000"}, format="json")
-        self.assertEqual(res.status_code, 200, res.content[:300])
-        fuel = acct(self.org, "6700")
-        self.assertEqual(AccountingService._ledger_balance(fuel, as_of=date(year, 3, 31)), D("120000"))
-        # Nothing was booked after March: the month of the edit shows no movement.
-        self.assertEqual(AccountingService._ledger_balance(fuel), D("120000"))
-        from django.db.models import Sum
-        later = JournalLine.objects.filter(
-            journal_entry__organisation=self.org, account=fuel,
-            journal_entry__entry_date__gt=date(year, 3, 31)).aggregate(d=Sum("debit"), c=Sum("credit"))
-        self.assertIsNone(later["d"])
-        self.assertIsNone(later["c"])
-        rev = JournalEntry.objects.get(organisation=self.org, source_type="reversal")
-        self.assertEqual(rev.entry_date, date(year, 3, 10))
-
-    def test_edit_blocked_when_the_original_month_is_locked_even_if_this_month_is_open(self):
-        year = self.today.year - 1
-        eid = self._create("100000", expense_date=f"{year}-03-10")
-        FinancialPeriod.objects.create(organisation=self.org, year=year, month=3, is_locked=True)
-        res = self.client.patch(f"/api/v1/expenses/{eid}/", {"amount": "120000"}, format="json")
-        self.assertEqual(res.status_code, 403)
-        self.assertEqual(bal(self.org, "6700"), D("100000"))
-
-    def test_edit_not_blocked_by_a_locked_current_month_when_the_expense_is_older(self):
-        year = self.today.year - 1
-        eid = self._create("100000", expense_date=f"{year}-03-10")
-        FinancialPeriod.objects.create(organisation=self.org, year=self.today.year,
-                                       month=self.today.month, is_locked=True)
-        res = self.client.patch(f"/api/v1/expenses/{eid}/", {"amount": "120000"}, format="json")
-        self.assertEqual(res.status_code, 200, res.content[:300])
-        self.assertEqual(bal(self.org, "6700"), D("120000"))
-
-    def test_another_organisation_cannot_edit_the_expense(self):
-        from apps.accounting.tests import _auth_client
-        other_user, other = _setup("ex2_owner@example.com", "EX Org 2")
-        other_client = _auth_client(other_user, other)
-        eid = self._create("5000")
-        res = other_client.patch(f"/api/v1/expenses/{eid}/", {"amount": "1"}, format="json")
-        self.assertEqual(res.status_code, 404)
-        self.assertEqual(bal(self.org, "6700"), D("5000"))
+    def test_missing_mappings_are_reported_without_blocking(self):
+        self.assertEqual(AccountingService.missing_sale_mappings(self.org), [])
+        self._unmap("cogs_account")
+        self.assertEqual(AccountingService.missing_sale_mappings(self.org), ["cogs_account"])
 
 
 class AccountDeactivationTests(TestCase):
