@@ -13,11 +13,11 @@ The ?format param is handled by each view via _export_or_json().
 import io
 
 from django.http import HttpResponse
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.permissions import IsManagerOrSuperuser, IsStaff, requires_module
+from apps.core.permissions import IsManagerOrSuperuser, IsStaff, requires_module, user_can_run_report
 
 # The owner's per-person "Reports" tick. Without it these views checked only
 # role, so a team member refused /customers/ and /sales/invoices/ could read
@@ -32,13 +32,37 @@ from .services import ReportService
 # ─── Base ─────────────────────────────────────────────────────────────────────
 
 
+class _ReportRouteAccess(BasePermission):
+    """Per-route access on top of the Reports tick: every report view names the
+    module whose data it shows (`module`), plus optional `also_modules` and
+    `owner_admin_only`, and is judged by the same user_can_run_report used for
+    the registry reports. A view that declares no module is refused outright, so
+    a new report cannot ship open by forgetting to say what it shows."""
+
+    message = (
+        "You do not have access to this report. Ask an owner or admin to grant "
+        "the matching area in Team settings."
+    )
+
+    def has_permission(self, request, view):
+        if getattr(view, "module", None) is None:
+            return False
+        return user_can_run_report(request, view)
+
+
 class BaseDateRangeView(APIView):
     """
     Base view that resolves the period / date range from query params and
     provides a helper for optionally returning an export file instead of JSON.
+
+    Subclasses MUST set `module` (see _ReportRouteAccess). `module = "reports"`
+    marks content that is intentionally Reports-tick-only; a test pins the list.
     """
 
-    permission_classes = [IsAuthenticated, IsStaff, _ModAccess_reports]
+    permission_classes = [IsAuthenticated, IsStaff, _ModAccess_reports, _ReportRouteAccess]
+    module = None
+    also_modules = ()
+    owner_admin_only = False
 
     def get_organisation(self):
         """
@@ -108,6 +132,7 @@ class BaseDateRangeView(APIView):
 
 class SalesSummaryView(BaseDateRangeView):
     """GET /api/v1/reports/sales/ — Sales summary by period."""
+    module = "reports"
 
     _HEADERS = ["Period", "Revenue", "Tax Collected", "Discount", "Invoice Count"]
 
@@ -142,6 +167,7 @@ class SalesSummaryView(BaseDateRangeView):
 
 class TopProductsView(BaseDateRangeView):
     """GET /api/v1/reports/top-products/ — Best-selling products."""
+    module = "reports"
 
     _HEADERS = ["Product", "SKU", "Units Sold", "Revenue", "COGS", "Gross Profit"]
 
@@ -171,6 +197,7 @@ class TopProductsView(BaseDateRangeView):
 
 class TopCustomersView(BaseDateRangeView):
     """GET /api/v1/reports/top-customers/ — Top customers by revenue."""
+    module = "reports"
 
     _HEADERS = ["Customer", "Code", "Invoice Count", "Revenue"]
 
@@ -199,6 +226,7 @@ class TopCustomersView(BaseDateRangeView):
 
 class ProfitAndLossView(BaseDateRangeView):
     """GET /api/v1/reports/pnl/ — Profit & Loss statement."""
+    module = "reports"
 
     _HEADERS = ["Line Item", "Amount (₦)"]
 
@@ -237,6 +265,7 @@ class ProfitAndLossView(BaseDateRangeView):
 
 class ExpenseBreakdownView(BaseDateRangeView):
     """GET /api/v1/reports/expenses/ — Expenses by category."""
+    module = "expenses"
 
     _HEADERS = ["Category", "Total (₦)", "Count"]
 
@@ -261,6 +290,8 @@ class ExpenseBreakdownView(BaseDateRangeView):
 
 class InventoryValuationView(BaseDateRangeView):
     """GET /api/v1/reports/inventory/ — Current inventory valuation."""
+    module = "inventory"
+    owner_admin_only = True
 
     _HEADERS = ["Product", "SKU", "Warehouse", "Qty", "Unit Cost (₦)", "Total Value (₦)"]
 
@@ -288,6 +319,7 @@ class InventoryValuationView(BaseDateRangeView):
 
 class CashFlowView(BaseDateRangeView):
     """GET /api/v1/reports/cash-flow/ — Cash flow for period."""
+    module = "reports"
 
     _HEADERS = ["Line Item", "Amount (₦)"]
 
@@ -316,6 +348,7 @@ class CashFlowView(BaseDateRangeView):
 
 class ARAgingView(BaseDateRangeView):
     """GET /api/v1/reports/ar-aging/ — Accounts receivable aging buckets."""
+    module = "sales"
 
     _HEADERS = ["Invoice #", "Customer", "Amount Due (₦)", "Due Date", "Days Overdue"]
 
@@ -351,6 +384,7 @@ class ARAgingView(BaseDateRangeView):
 
 class APAgingView(BaseDateRangeView):
     """GET /api/v1/reports/ap-aging/ — Accounts payable aging buckets."""
+    module = "bills"
 
     _HEADERS = ["Bill #", "Supplier", "Amount Due (₦)", "Due Date", "Days Overdue"]
 
@@ -386,6 +420,7 @@ class APAgingView(BaseDateRangeView):
 
 class VATSummaryView(BaseDateRangeView):
     """GET /api/v1/reports/vat-summary/ — VAT output vs input summary."""
+    module = "tax"
 
     _HEADERS = ["Line Item", "Amount (₦)"]
 
@@ -418,6 +453,7 @@ class SalesByCustomerView(BaseDateRangeView):
     GET /api/v1/reports/sales-by-customer/?customer_id=<uuid>   — invoices for one customer
     GET /api/v1/reports/sales-by-customer/?customer_id=walk-in  — walk-in invoices
     """
+    module = "reports"
 
     _SUMMARY_HEADERS = ["Customer", "Code", "Invoices", "Revenue (₦)", "Paid (₦)", "Outstanding (₦)"]
     _DETAIL_HEADERS  = ["Invoice #", "Date", "Status", "Total (₦)", "Paid (₦)", "Due (₦)"]
@@ -474,6 +510,7 @@ class SalesByProductView(BaseDateRangeView):
     GET /api/v1/reports/sales-by-product/            — all products with totals
     GET /api/v1/reports/sales-by-product/?product_id=<uuid>   — sale lines for one product
     """
+    module = "reports"
 
     _SUMMARY_HEADERS = ["Product", "SKU", "Units Sold", "Revenue (₦)", "COGS (₦)", "Gross Profit (₦)"]
     _DETAIL_HEADERS  = ["Invoice #", "Date", "Customer", "Qty", "Unit Price (₦)", "Line Total (₦)"]
@@ -523,6 +560,7 @@ class SalesByProductView(BaseDateRangeView):
 
 class PaymentMethodsView(BaseDateRangeView):
     """GET /api/v1/reports/payment-methods/ — Revenue by payment method."""
+    module = "reports"
 
     _HEADERS = ["Method", "Total (₦)", "Transactions"]
 
@@ -547,6 +585,7 @@ class PaymentMethodsView(BaseDateRangeView):
 
 class CustomerBalanceView(BaseDateRangeView):
     """GET /api/v1/reports/customer-balance/ — Outstanding balance snapshot per customer."""
+    module = "customers"
 
     _HEADERS = ["Customer", "Code", "Outstanding (₦)", "Credit Limit (₦)",
                 "Available Credit (₦)", "Last Invoice", "Last Payment"]
@@ -577,6 +616,7 @@ class CustomerBalanceView(BaseDateRangeView):
 
 class PaymentsByCustomerView(BaseDateRangeView):
     """GET /api/v1/reports/payments-by-customer/ — SalePayments grouped by customer."""
+    module = "sales"
 
     _HEADERS = ["Customer", "Total Received (₦)", "Payment Count"]
 
@@ -604,6 +644,7 @@ class PaymentsByCustomerView(BaseDateRangeView):
 
 class CustomerPaymentsView(BaseDateRangeView):
     """GET /api/v1/reports/customer-payments/?customer_id=<uuid> — individual payments for one customer."""
+    module = "sales"
 
     _HEADERS = ["Date", "Amount (₦)", "Method", "Invoice #", "Reference"]
 
@@ -637,6 +678,7 @@ class CustomerPaymentsView(BaseDateRangeView):
 
 class AccountStatementView(BaseDateRangeView):
     """GET /api/v1/reports/account-statement/?account_id=<uuid> — GL statement for one account."""
+    module = "accounting"
 
     _HEADERS = ["Date", "Reference", "Description", "Debit (₦)", "Credit (₦)", "Running Balance (₦)"]
 
@@ -676,6 +718,7 @@ class AccountStatementView(BaseDateRangeView):
 
 class CustomerInvoicesView(BaseDateRangeView):
     """GET /api/v1/reports/customer-invoices/?customer_id=<uuid> — invoices for one customer."""
+    module = "sales"
 
     _HEADERS = ["Invoice #", "Date", "Status", "Total (₦)", "Paid (₦)", "Due (₦)"]
 
@@ -709,6 +752,7 @@ class CustomerInvoicesView(BaseDateRangeView):
 
 class CustomerDetailsView(BaseDateRangeView):
     """GET /api/v1/reports/customer-details/ — Master customer directory."""
+    module = "customers"
 
     _HEADERS = ["Code", "Name", "Type", "Email", "Phone",
                 "Outstanding (₦)", "Credit Limit (₦)", "Total Sales (₦)", "Total Payments (₦)"]
@@ -737,6 +781,8 @@ class CustomerDetailsView(BaseDateRangeView):
 
 class ProductDetailsView(BaseDateRangeView):
     """GET /api/v1/reports/product-details/ — Master product directory."""
+    module = "inventory"
+    owner_admin_only = True
 
     _HEADERS = ["SKU", "Name", "Category", "Cost Price (₦)", "Selling Price (₦)",
                 "Stock Qty", "Reorder Level", "Margin %"]
@@ -764,12 +810,23 @@ class ProductDetailsView(BaseDateRangeView):
 
 from . import registry as report_registry  # noqa: E402
 
+_NO_REPORT_ACCESS = (
+    "You do not have access to this report. Ask an owner or admin to grant "
+    "the matching area in Team settings."
+)
+
 
 class ReportCatalogView(BaseDateRangeView):
     """GET /reports/catalog/ — list registry-backed reports for the reports menu."""
+    module = "reports"
 
     def get(self, request):
-        return Response({"reports": report_registry.catalog()})
+        # Only list reports this person may actually run (see user_can_run_report).
+        allowed = [
+            item for item in report_registry.catalog()
+            if user_can_run_report(request, report_registry.get(item["key"]))
+        ]
+        return Response({"reports": allowed})
 
 
 class ReportDispatchView(BaseDateRangeView):
@@ -778,11 +835,14 @@ class ReportDispatchView(BaseDateRangeView):
     Accepts the standard period params plus any resolver-specific params
     (e.g. ?account_id= for gl-detail). Returns JSON.
     """
+    module = "reports"
 
     def get(self, request, key):
         rd = report_registry.get(key)
         if rd is None:
             return Response({"error": f"Unknown report: {key}"}, status=404)
+        if not user_can_run_report(request, rd):
+            return Response({"error": _NO_REPORT_ACCESS}, status=403)
         org = self.get_organisation()
         if org is None:
             return Response({"error": "Organisation not found"}, status=400)
@@ -850,6 +910,7 @@ class ReportBulkExportView(BaseDateRangeView):
     permission class the CSV importers use), rather than the read-only
     IsStaff that plain report viewing uses.
     """
+    module = "reports"
 
     permission_classes = [IsAuthenticated, IsManagerOrSuperuser, _ModAccess_reports]
 
@@ -872,7 +933,11 @@ class ReportBulkExportView(BaseDateRangeView):
         subtitle = _period_label(period, date_from, date_to)
 
         combine = bool(request.data.get("combine", True))
-        email_to = (request.data.get("email_to") or "").strip()
+        email_to = request.data.get("email_to") or ""
+        if email_to:
+            email_to, email_error = _clean_email_to(email_to)
+            if email_error:
+                return Response({"error": email_error}, status=400)
 
         # ── Run every requested report and flatten it for export ──────────────
         sheets: list[dict] = []   # {key, label, headers, rows, totals}
@@ -881,6 +946,9 @@ class ReportBulkExportView(BaseDateRangeView):
             rd = report_registry.get(key)
             if rd is None:
                 skipped.append({"key": key, "reason": "Unknown report"})
+                continue
+            if not user_can_run_report(request, rd):
+                skipped.append({"key": key, "reason": "No access"})
                 continue
             try:
                 data = rd.resolver(org, date_from, date_to)
@@ -1036,6 +1104,29 @@ class ReportBulkExportView(BaseDateRangeView):
             import logging as _log
             _log.getLogger(__name__).exception("Bulk report email send failed")
             return Response({"error": "Failed to send email. Please check your SMTP settings."}, status=422)
+
+
+def _clean_email_to(value):
+    """Return (address, None) for one valid address, else (None, plain error).
+
+    Refuses anything that could add headers or recipients: CR/LF, commas and
+    semicolons (multiple recipients), display-name forms, or over-long input.
+    """
+    from django.core.exceptions import ValidationError
+    from django.core.validators import validate_email
+
+    if not isinstance(value, str):
+        return None, "email_to must be a single email address"
+    if any(c in value for c in ("\r", "\n", "\0")):
+        return None, "email_to must be a single email address"
+    value = value.strip()
+    if len(value) > 254 or any(c in value for c in ",; <>\"'"):
+        return None, "email_to must be a single email address"
+    try:
+        validate_email(value)
+    except ValidationError:
+        return None, "email_to is not a valid email address"
+    return value, None
 
 
 def _unique_sheet_name(label: str, used: set, ext: str = "") -> str:

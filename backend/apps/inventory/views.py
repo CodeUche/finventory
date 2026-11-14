@@ -373,7 +373,7 @@ class ProductViewSet(FriendlyUniqueErrorMixin, TenantFilterMixin, viewsets.Model
         return Response(data)
 
     @action(detail=False, methods=["delete"], url_path="bulk-delete",
-            permission_classes=[IsAuthenticated, IsManagerOrSuperuser])
+            permission_classes=[IsAuthenticated, IsManagerOrSuperuser, _ModAccess_inventory])
     def bulk_delete(self, request):
         """
         DELETE /api/v1/inventory/products/bulk-delete/
@@ -867,9 +867,11 @@ class StockItemViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     pagination_class = None
 
     def get_permissions(self):
+        # The inventory tick must be part of the override: returning only the
+        # role classes here silently dropped it from class-level permissions.
         if self.action == "destroy":
-            return [IsAuthenticated(), IsManager()]
-        return [IsAuthenticated(), IsStaff()]
+            return [IsAuthenticated(), IsManager(), _ModAccess_inventory()]
+        return [IsAuthenticated(), IsStaff(), _ModAccess_inventory()]
 
     def list(self, request, *args, **kwargs):
         """
@@ -975,7 +977,7 @@ class StockMovementViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     filterset_fields = ["product", "warehouse", "movement_type"]
     ordering_fields = ["created_at"]
 
-    @action(detail=False, methods=["post"], permission_classes=[IsAuthenticated, IsManager])
+    @action(detail=False, methods=["post"], permission_classes=[IsAuthenticated, IsManager, _ModAccess_inventory])
     def adjust(self, request):
         """POST /api/v1/inventory/movements/adjust/ — Manual stock adjustment."""
         serializer = StockAdjustmentSerializer(data=request.data)
@@ -1002,7 +1004,7 @@ class StockMovementViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         except ValueError as e:
             return Response({"error": str(e)}, status=422)
 
-    @action(detail=False, methods=["post"], permission_classes=[IsAuthenticated, IsManager])
+    @action(detail=False, methods=["post"], permission_classes=[IsAuthenticated, IsManager, _ModAccess_inventory])
     def transfer(self, request):
         """
         POST /api/v1/inventory/movements/transfer/
