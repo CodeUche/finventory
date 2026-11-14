@@ -7,7 +7,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('bills', '0008_backfill_source_purchase_order'),
+        ('bills', '0010_bill_vat_not_claimable_reason'),
         ('inventory', '0018_item_class_gl_defaults_and_custom_fields'),
     ]
 
