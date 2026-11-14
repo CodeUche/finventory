@@ -990,9 +990,12 @@ class AccountingService:
         balance whenever the trial balance does (a balanced TB mathematically implies
         Assets = Liabilities + Equity + (Revenue − Expenses)).
 
-        Current-year P&L net (revenue − expenses − COGS) is rolled into equity as a
-        computed "Current Year Earnings" line so profit not yet closed to retained
-        earnings still lands on the sheet.
+        P&L net (revenue − expenses − COGS) not yet closed to retained earnings is
+        rolled into equity in two computed lines: "Current Year Earnings" (this
+        fiscal year, from its start to `as_of`) and "Prior Years Earnings (not yet
+        closed)" (everything before the fiscal-year start that close_year has not
+        crystallised). Total equity is the same either way; the split just stops
+        years of profit being presented as this year's.
 
         A balance sheet must balance whenever the books are right, so a difference
         here means something is wrong in the ledger. The sheet still adds up (the
@@ -1005,6 +1008,11 @@ class AccountingService:
         assets_data, liabilities_data, equity_data = [], [], []
         total_income = Decimal('0')
         total_expense = Decimal('0')
+        prior_income = Decimal('0')     # P&L balances dated before the fiscal-year start
+        prior_expense = Decimal('0')
+        from datetime import timedelta
+        year_start = AccountingService.fiscal_year_start(organisation, as_of)
+        prior_end = year_start - timedelta(days=1)
 
         for acct in accounts:
             bal = AccountingService._ledger_balance(acct, as_of=as_of)
@@ -1026,11 +1034,21 @@ class AccountingService:
                     equity_data.append(row)
             elif acct.account_type == AccountType.REVENUE:
                 total_income += bal
+                prior_income += AccountingService._ledger_balance(acct, as_of=prior_end)
             elif acct.account_type in (AccountType.EXPENSE, AccountType.COST_OF_GOODS):
                 total_expense += bal
+                prior_expense += AccountingService._ledger_balance(acct, as_of=prior_end)
 
-        # Roll current-year P&L net into equity (income − expenses).
-        current_year_earnings = total_income - total_expense
+        # Roll the P&L net into equity (income − expenses), split at the fiscal-year start.
+        prior_years_earnings = prior_income - prior_expense
+        current_year_earnings = (total_income - total_expense) - prior_years_earnings
+        if prior_years_earnings != 0:
+            equity_data.append({
+                'code': '',
+                'name': 'Prior Years Earnings (not yet closed)',
+                'balance': prior_years_earnings,
+                'is_computed': True,
+            })
         if current_year_earnings != 0:
             equity_data.append({
                 'code': '',
@@ -1066,6 +1084,8 @@ class AccountingService:
             'total_liabilities': total_liabilities,
             'total_equity': total_equity,
             'current_year_earnings': current_year_earnings,
+            'prior_years_earnings': prior_years_earnings,
+            'fiscal_year_start': str(year_start),
             # Honest: False whenever the sheet only adds up because of the
             # unreconciled-difference line above.
             'balanced': not out_of_balance,

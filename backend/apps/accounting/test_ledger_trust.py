@@ -644,3 +644,83 @@ class BalanceSheetPlugPresentationTests(TestCase):
         self.assertFalse(rec["all_reconciled"])
         checklist = AccountingService.period_close_checklist(self.org)
         self.assertFalse(checklist["ready"])
+
+
+class CurrentYearEarningsSplitTests(TestCase):
+    """Item 7: current year earnings must not absorb earlier, unclosed years."""
+
+    def setUp(self):
+        self.user, self.org = _setup("cy_owner@example.com", "CY Org")
+
+    def _profit(self, amount, on, ref):
+        AccountingService.post_journal_entry(
+            self.org, f"Sales {ref}", on,
+            [(acct(self.org, "1001"), D(amount), ZERO), (acct(self.org, "4001"), ZERO, D(amount))],
+            self.user, ref=ref, source_type="manual", source_ref=ref)
+
+    def _equity_line(self, bs, name):
+        return next((r for r in bs["equity"] if r["name"] == name), None)
+
+    def test_two_years_split_current_and_prior(self):
+        self._profit("400", date(2025, 6, 15), "y25")
+        self._profit("300", date(2026, 6, 15), "y26")
+        bs = AccountingService.balance_sheet(self.org, as_of=date(2026, 12, 31))
+        self.assertEqual(bs["current_year_earnings"], D("300"))
+        self.assertEqual(bs["prior_years_earnings"], D("400"))
+        self.assertEqual(self._equity_line(bs, "Current Year Earnings")["balance"], D("300"))
+        self.assertEqual(self._equity_line(bs, "Prior Years Earnings (not yet closed)")["balance"], D("400"))
+        # Total equity is what it always was (700), and the sheet still balances.
+        self.assertEqual(bs["total_equity"], D("700"))
+        self.assertEqual(bs["total_assets"], D("700"))
+        self.assertTrue(bs["balanced"])
+
+    def test_as_of_inside_the_first_year_has_no_prior(self):
+        self._profit("400", date(2025, 6, 15), "y25")
+        self._profit("300", date(2026, 6, 15), "y26")
+        bs = AccountingService.balance_sheet(self.org, as_of=date(2025, 12, 31))
+        self.assertEqual(bs["current_year_earnings"], D("400"))
+        self.assertEqual(bs["prior_years_earnings"], ZERO)
+        self.assertEqual(bs["total_equity"], D("400"))
+
+    def test_after_closing_the_prior_year_it_moves_to_retained_earnings(self):
+        self._profit("400", date(2025, 6, 15), "y25")
+        self._profit("300", date(2026, 6, 15), "y26")
+        AccountingService.close_year(self.org, 2025, created_by=self.user)
+        bs = AccountingService.balance_sheet(self.org, as_of=date(2026, 12, 31))
+        self.assertEqual(bs["current_year_earnings"], D("300"))
+        self.assertEqual(bs["prior_years_earnings"], ZERO)
+        retained = next(r for r in bs["equity"] if r["code"] == "3100")
+        self.assertEqual(retained["balance"], D("400"))
+        self.assertEqual(bs["total_equity"], D("700"))
+        self.assertTrue(bs["balanced"])
+
+    def test_non_calendar_fiscal_year_uses_its_own_start(self):
+        from apps.accounting.models import FiscalYear
+        FiscalYear.objects.create(organisation=self.org, year=2026,
+                                  start_date=date(2026, 7, 1), end_date=date(2027, 6, 30))
+        self._profit("400", date(2026, 3, 10), "pre")      # before 1 July 2026: prior year
+        self._profit("300", date(2026, 9, 10), "post")     # inside the fiscal year
+        bs = AccountingService.balance_sheet(self.org, as_of=date(2026, 12, 31))
+        self.assertEqual(bs["current_year_earnings"], D("300"))
+        self.assertEqual(bs["prior_years_earnings"], D("400"))
+        self.assertEqual(bs["fiscal_year_start"], "2026-07-01")
+
+    def test_losses_and_expenses_split_the_same_way(self):
+        AccountingService.post_journal_entry(
+            self.org, "Rent 2025", date(2025, 3, 1),
+            [(acct(self.org, "6700"), D("150"), ZERO), (acct(self.org, "1001"), ZERO, D("150"))],
+            self.user, ref="e25", source_type="manual", source_ref="e25")
+        self._profit("500", date(2026, 3, 1), "y26")
+        bs = AccountingService.balance_sheet(self.org, as_of=date(2026, 12, 31))
+        self.assertEqual(bs["prior_years_earnings"], D("-150"))
+        self.assertEqual(bs["current_year_earnings"], D("500"))
+        self.assertEqual(bs["total_equity"], D("350"))
+
+    def test_api_returns_the_new_key_next_to_the_old_one(self):
+        from apps.accounting.tests import _auth_client
+        self._profit("400", date(2025, 6, 15), "y25")
+        client = _auth_client(self.user, self.org)
+        res = client.get("/api/v1/accounting/accounts/balance_sheet/", {"as_of": "2026-12-31"})
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(Decimal(str(res.data["prior_years_earnings"])), D("400"))
+        self.assertEqual(Decimal(str(res.data["current_year_earnings"])), ZERO)
