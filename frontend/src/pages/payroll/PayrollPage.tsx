@@ -181,7 +181,7 @@ const STATUTORY_ITEMS = (pensionProvider: string, run: PayrollRun) => {
     },
     {
       key: 'pension_er', label: 'Pension (Employer 10%)', amount: run.total_pension_employer,
-      color: 'text-yellow-400',
+      color: 'text-sky-400',
       portal: pfa?.portal ?? 'https://www.pencom.gov.ng', portalLabel: pfa?.name ?? 'PENCOM',
       deadline: 'Remit alongside employee contribution within 7 days',
       bankDetails: {
@@ -893,8 +893,8 @@ export default function PayrollPage() {
                               <div><p className="text-xs text-slate-500">PAYE Tax</p><p className="text-sm font-mono text-red-400 font-semibold">{formatCurrency(r.total_paye)}</p></div>
                               <div><p className="text-xs text-slate-500">Pension (Total)</p><p className="text-sm font-mono text-orange-400 font-semibold">{formatCurrency(parseFloat(r.total_pension_employee ?? '0') + parseFloat(r.total_pension_employer ?? '0'))}</p></div>
                               <div className="border-l border-surface-600 pl-3">
-                                <p className="text-xs text-amber-400">Total Cash Outflow</p>
-                                <p className="text-sm font-mono text-amber-300 font-bold">
+                                <p className="text-xs text-slate-400">Total Cash Outflow</p>
+                                <p className="text-sm font-mono text-white font-bold">
                                   {formatCurrency(parseFloat(r.total_net ?? '0') + parseFloat(r.total_pension_employer ?? '0') + parseFloat(r.total_nhf ?? '0') + parseFloat(r.total_nsitf ?? '0'))}
                                 </p>
                               </div>
@@ -939,9 +939,9 @@ export default function PayrollPage() {
                                       <td className="py-2 pr-3 font-mono text-blue-400">{formatCurrency(p.nhf)}</td>
                                       <td className="py-2 pr-3 font-mono text-violet-400">{parseFloat(p.benefit_deductions || '0') > 0 ? formatCurrency(p.benefit_deductions ?? 0) : <span className="text-slate-600">\u2014</span>}</td>
                                       <td className="py-2 pr-3 font-mono text-rose-400">{parseFloat(p.penalty_deductions || '0') > 0 ? formatCurrency(p.penalty_deductions) : <span className="text-slate-600">—</span>}</td>
-                                      <td className="py-2 pr-3 font-mono text-amber-400">{parseFloat(p.loan_deductions || '0') > 0 ? formatCurrency(p.loan_deductions) : <span className="text-slate-600">\u2014</span>}</td>
+                                      <td className="py-2 pr-3 font-mono text-slate-200">{parseFloat(p.loan_deductions || '0') > 0 ? formatCurrency(p.loan_deductions) : <span className="text-slate-600">\u2014</span>}</td>
                                       <td className="py-2 pr-3 font-mono text-fuchsia-400">{parseFloat(p.advance_deductions || '0') > 0 ? formatCurrency(p.advance_deductions ?? 0) : <span className="text-slate-600">\u2014</span>}</td>
-                                      <td className="py-2 pr-3 font-mono text-yellow-500">{parseFloat(p.attendance_deduction || '0') > 0 ? formatCurrency(p.attendance_deduction) : <span className="text-slate-600">—</span>}</td>
+                                      <td className="py-2 pr-3 font-mono text-slate-200">{parseFloat(p.attendance_deduction || '0') > 0 ? formatCurrency(p.attendance_deduction) : <span className="text-slate-600">—</span>}</td>
                                       <td className="py-2 pr-3 font-mono text-emerald-400 font-semibold">{formatCurrency(p.net_salary)}</td>
                                       <td className="py-2 flex items-center gap-1">
                                         {TRANSFER_STATUS_ICON[p.transfer_status as keyof typeof TRANSFER_STATUS_ICON] ?? null}
@@ -1818,7 +1818,7 @@ export default function PayrollPage() {
                 </div>
                 <div className="bg-surface-700 rounded-xl p-3">
                   <p className="text-xs text-slate-400 mb-1">Monthly Taxable</p>
-                  <p className="font-mono text-amber-400 font-semibold">₦{parseFloat(selectedPayslip.taxable_income).toLocaleString('en-NG', { minimumFractionDigits: 2 })}</p>
+                  <p className="font-mono text-white font-semibold">₦{parseFloat(selectedPayslip.taxable_income).toLocaleString('en-NG', { minimumFractionDigits: 2 })}</p>
                 </div>
                 <div className="bg-surface-700 rounded-xl p-3">
                   <p className="text-xs text-slate-400 mb-1">Monthly PAYE</p>

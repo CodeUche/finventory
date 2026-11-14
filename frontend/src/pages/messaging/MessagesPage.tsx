@@ -307,7 +307,7 @@ export default function MessagesPage() {
                 onClick={() => setFilter('accountant')}
                 className={cn(
                   'flex-1 text-xs font-semibold py-1.5 rounded-md transition-colors',
-                  filter === 'accountant' ? 'bg-amber-500 text-white' : 'text-slate-400 hover:text-white'
+                  filter === 'accountant' ? 'bg-[#1558EA] text-always-white' : 'text-slate-400 hover:text-white'
                 )}
               >
                 {isPartner ? 'Clients' : 'Accountant'}
@@ -360,7 +360,7 @@ export default function MessagesPage() {
                           {displayName(other)}
                         </p>
                         {crossOrg && (
-                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 shrink-0 uppercase tracking-wide">
+                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-brand-500/20 text-brand-400 shrink-0 uppercase tracking-wide">
                             CLIENT
                           </span>
                         )}
@@ -410,7 +410,7 @@ export default function MessagesPage() {
                     {displayName(otherParticipant(selectedConv, user?.id))}
                   </p>
                   {isCrossOrgThread(selectedConv) && (
-                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 uppercase tracking-wide">
+                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-brand-500/20 text-brand-400 uppercase tracking-wide">
                       CLIENT
                     </span>
                   )}

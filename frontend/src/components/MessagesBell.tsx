@@ -163,7 +163,7 @@ export default function MessagesBell() {
                           {other?.user_email ?? 'Conversation'}
                         </p>
                         {crossOrg && (
-                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 shrink-0 uppercase tracking-wide">
+                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-brand-500/20 text-brand-400 shrink-0 uppercase tracking-wide">
                             CLIENT
                           </span>
                         )}
