@@ -32,10 +32,10 @@
 html.light .ds{
   /* ---- LIGHT (designer's screens) ---- */
   --ds-title:#111111; --ds-ink:#1C1B1F; --ds-muted:#55545C; --ds-link:#110099; --ds-danger:#990000;
-  --ds-card:rgba(252,252,246,.96); --ds-card-bd:#B9B4F2;
-  --ds-field:rgba(253,253,248,.95); --ds-field-bd:#77767F;
+  --ds-card:rgba(250,250,250,.96); --ds-card-bd:#B9B4F2;
+  --ds-field:rgba(250,250,250,.95); --ds-field-bd:#77767F;
   --ds-th-bg:#CFDAFB; --ds-th-tx:#0B3487;
-  --ds-row:#FCFCF6; --ds-row-bd:#A9B6E8; --ds-row-hover:#EEF1FD;
+  --ds-row:#FAFAFA; --ds-row-bd:#A9B6E8; --ds-row-hover:#EEF1FD;
   --ds-tile:#D2DEFA; --ds-tile-bd:#8E87E6; --ds-tile-tx:#1558EA;
   --ds-btn:#021233; --ds-btn-tx:#FFFFFF; --ds-btn-sh:0 8px 20px rgba(2,18,51,.30);
   --ds-outline:#110099; --ds-outline-tx:#110099;
@@ -113,7 +113,8 @@ html.light .ds{
 .ds .badge, .ds [class*="badge-"]{border-radius:999px;font-weight:500;padding:3px 12px;font-size:13px;border-width:1px}
 .ds .badge-green{background:var(--ds-pill-green-bg);color:var(--ds-pill-green-tx);border-color:color-mix(in srgb,var(--ds-pill-green-tx) 35%,transparent)}
 .ds .badge-red{background:var(--ds-pill-red-bg);color:var(--ds-pill-red-tx);border-color:color-mix(in srgb,var(--ds-pill-red-tx) 35%,transparent)}
-.ds .badge-yellow, .ds .badge-orange{background:var(--ds-pill-yel-bg);color:var(--ds-pill-yel-tx);border-color:color-mix(in srgb,var(--ds-pill-yel-tx) 35%,transparent)}
+.ds .badge-orange{background:color-mix(in srgb,var(--ds-link) 16%,transparent);color:var(--ds-link);border-color:color-mix(in srgb,var(--ds-link) 40%,transparent)}
+.ds .badge-yellow{background:var(--ds-pill-yel-bg);color:var(--ds-pill-yel-tx);border-color:color-mix(in srgb,var(--ds-pill-yel-tx) 35%,transparent)}
 .ds .badge-slate{background:var(--ds-pill-gry-bg);color:var(--ds-pill-gry-tx);border-color:color-mix(in srgb,var(--ds-pill-gry-tx) 35%,transparent)}
 .ds .badge-blue, .ds .badge-purple{background:var(--ds-pill-blue-bg);color:var(--ds-pill-blue-tx);border-color:color-mix(in srgb,var(--ds-pill-blue-tx) 35%,transparent)}
 
@@ -191,7 +192,7 @@ html.light .ds{
 }
 .ds .ds-modal h2{font-size:20px;font-weight:700}
 .ds{--ds-modal-bg:#1B1A2E}
-html.light .ds{--ds-modal-bg:#FCFCF6}
+html.light .ds{--ds-modal-bg:#FAFAFA}
 
 /* ---- hub pages: big tiles ---- */
 .ds-hub{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:20px}
@@ -377,3 +378,31 @@ html.light .recharts-legend-wrapper span, html.light .recharts-legend-item-text{
 .ds .shop-light .text-slate-600, .ds .shop-light .text-slate-700{color:#333333}
 .ds .shop-light .text-slate-900, .ds .shop-light .text-slate-800{color:#111111}
 .ds .shop-light .text-white{color:#FFFFFF}
+
+/* ---- filter rows: selects keep a readable width, ghost/outline buttons read as buttons ---- */
+.ds select.input{min-width:9rem}
+html.light .ds .btn-secondary, html.light .ds .btn-ghost{color:var(--ds-outline-tx)}
+html.light .ds .btn-secondary{border-color:var(--ds-outline);background:rgba(255,255,255,.55)}
+
+/* ---- switches (any button whose only child is a sliding knob) ----
+   One look everywhere: a visible track and knob in both themes, on and off. The
+   old tracks used bg-brand-500 (a pale button colour in the kit) with a white
+   knob, which left white-on-pale pills with no visible knob. */
+.ds button:has(> span.rounded-full[class*="translate-x"]){
+  background:var(--sw-off-bg) !important;border:1.5px solid var(--sw-off-bd) !important;
+}
+.ds button:has(> span.rounded-full[class*="translate-x-5"]), .ds button:has(> span.rounded-full[class*="translate-x-[1"]),
+.ds button:has(> span.rounded-full[class*="translate-x-4"]), .ds button:has(> span.rounded-full[class*="translate-x-6"]),
+.ds button:has(> span.rounded-full[class*="translate-x-[2"]){
+  background:var(--sw-on-bg) !important;border-color:var(--sw-on-bg) !important;
+}
+.ds button > span.rounded-full[class*="translate-x"]{background:var(--sw-knob-off) !important;box-shadow:0 1px 3px rgba(0,0,0,.4)}
+.ds button > span.rounded-full[class*="translate-x-5"], .ds button > span.rounded-full[class*="translate-x-[1"],
+.ds button > span.rounded-full[class*="translate-x-4"], .ds button > span.rounded-full[class*="translate-x-6"],
+.ds button > span.rounded-full[class*="translate-x-[2"]{background:var(--sw-knob-on) !important}
+.ds{--sw-off-bg:rgba(255,255,255,.16);--sw-off-bd:#A9A6C4;--sw-on-bg:#A499FF;--sw-knob-off:#E6E0FF;--sw-knob-on:#110099}
+html.light .ds{--sw-off-bg:#CCCCCC;--sw-off-bd:#808080;--sw-on-bg:#1558EA;--sw-knob-off:#FFFFFF;--sw-knob-on:#FFFFFF}
+
+/* ---- wide tables scroll inside their card; trim cell padding a little so action columns fit ---- */
+.ds .overflow-x-auto :is(th, td).px-5{padding-left:.9rem;padding-right:.9rem}
+.ds .overflow-x-auto :is(td, th):last-child{white-space:nowrap}

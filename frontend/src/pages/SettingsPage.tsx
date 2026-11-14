@@ -1523,13 +1523,13 @@ export default function SettingsPage() {
       {/* ── Financial Periods ── */}
       {activeTab === 'periods' && (
         <div className="card p-6 space-y-5 max-w-3xl">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h3 className="text-base font-semibold text-white">Financial Period Locking</h3>
               <p className="text-slate-400 text-xs mt-0.5">Lock periods to prevent new transactions from being posted to closed months</p>
             </div>
             {isOwner && (
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <button onClick={handleCloseYear} disabled={closingYear} className="btn-secondary text-sm">
                   {closingYear ? 'Closing…' : 'Close Financial Year'}
                 </button>
@@ -2162,7 +2162,7 @@ export default function SettingsPage() {
                     <p className="text-xs text-slate-500 capitalize">{inv.role} · Sent {new Date(inv.created_at).toLocaleDateString()}</p>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
-                    <span className="badge-orange">Pending</span>
+                    <span className="badge-yellow">Pending</span>
                     <button
                       onClick={() => handleCancelInvite(inv.id)}
                       disabled={cancellingInvite === inv.id}
@@ -2372,7 +2372,7 @@ export default function SettingsPage() {
             </div>
 
             <label className="flex items-center gap-3 p-3 rounded-xl border border-surface-700 cursor-pointer hover:border-brand-500/40 transition-colors">
-              <input type="checkbox" className="w-4 h-4 accent-orange-500"
+              <input type="checkbox" className="w-4 h-4 accent-brand-500"
                 checked={paystackForm.is_active}
                 onChange={(e) => setPaystackForm({ ...paystackForm, is_active: e.target.checked })} />
               <div>
@@ -2423,7 +2423,7 @@ export default function SettingsPage() {
           <div className="p-4 rounded-xl bg-surface-800 border border-surface-700">
             <p className="text-slate-400 text-sm">
               <span className="text-white font-semibold">How payment links work:</span>{' '}
-              Once configured, an orange "Send Payment Link" button appears on every invoice. Customers receive a Paystack checkout link and can pay instantly. Invoice auto-marks as paid on successful payment.
+              Once configured, a "Send Payment Link" button appears on every invoice. Customers receive a Paystack checkout link and can pay instantly. Invoice auto-marks as paid on successful payment.
             </p>
           </div>
 
@@ -2690,7 +2690,7 @@ export default function SettingsPage() {
           </div>
 
           <label className="flex items-center gap-3 p-3 rounded-xl border border-surface-700 cursor-pointer hover:border-brand-500/40 transition-colors">
-            <input type="checkbox" className="w-4 h-4 accent-orange-500"
+            <input type="checkbox" className="w-4 h-4 accent-brand-500"
               checked={emailForm.is_active}
               onChange={(e) => setEmailForm({ ...emailForm, is_active: e.target.checked })} />
             <div>
@@ -2735,7 +2735,7 @@ export default function SettingsPage() {
           </div>
 
           <label className="flex items-center gap-3 cursor-pointer">
-            <input type="checkbox" className="w-4 h-4 accent-orange-500"
+            <input type="checkbox" className="w-4 h-4 accent-brand-500"
               checked={emailForm.use_tls}
               onChange={(e) => setEmailForm({ ...emailForm, use_tls: e.target.checked })} />
             <span className="text-sm text-slate-300">Use TLS/STARTTLS (recommended)</span>
@@ -3611,6 +3611,9 @@ export default function SettingsPage() {
             </div>
             <button
               type="button"
+              role="switch"
+              aria-checked={!!organisation?.strict_gl_mode}
+              aria-label="Strict GL Mode"
               onClick={async () => {
                 const newVal = !organisation?.strict_gl_mode
                 try {
@@ -3693,6 +3696,9 @@ export default function SettingsPage() {
                   </div>
                   <button
                     type="button"
+                    role="switch"
+                    aria-checked={!!on}
+                    aria-label={row.label}
                     onClick={async () => {
                       try {
                         const { data } = await orgApi.update(organisation!.id, { [row.key]: !on })

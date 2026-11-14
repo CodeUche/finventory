@@ -967,7 +967,7 @@ export default function SalesPage() {
         </div>
       </div>
 
-      <div className="flex flex-col sm:flex-row gap-3">
+      <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
         <div className="relative flex-1 min-w-[240px] max-w-sm">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
           <input className="input pl-9" placeholder="Search invoice number…" value={search} onChange={(e) => setSearch(e.target.value)} />
@@ -1130,7 +1130,7 @@ export default function SalesPage() {
       {selected && (
         <>
           <div className="fixed inset-0 z-40 bg-black/50" onClick={closeDetail} />
-          <div className="fixed right-0 top-0 bottom-0 z-50 w-full max-w-md bg-surface-900 border-l border-surface-700 shadow-2xl flex flex-col overflow-hidden">
+          <div data-drawer="open" className="fixed right-0 top-0 bottom-0 z-50 w-full max-w-md bg-surface-900 border-l border-surface-700 shadow-2xl flex flex-col overflow-hidden">
             {/* Drawer header */}
             <div className="px-6 py-4 border-b border-surface-700">
               <div className="flex items-start justify-between gap-3">

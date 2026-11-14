@@ -52,9 +52,9 @@ export default function TablesPage() {
     <div className="p-4 sm:p-6 max-w-4xl mx-auto">
       <h1 className="text-xl font-bold text-white flex items-center gap-2 mb-4"><LayoutGrid size={20} /> Tables</h1>
       <div className="rounded-xl border border-surface-700 bg-surface-800/40 p-3 mb-5 flex flex-wrap gap-2 items-end">
-        <label className="text-xs text-slate-400">Name<input className="input mt-0.5 w-32" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label>
-        <label className="text-xs text-slate-400">Capacity<input className="input mt-0.5 w-20" value={form.capacity} onChange={(e) => setForm({ ...form, capacity: e.target.value })} inputMode="numeric" /></label>
-        <label className="text-xs text-slate-400">Section<input className="input mt-0.5 w-32" value={form.section} onChange={(e) => setForm({ ...form, section: e.target.value })} /></label>
+        <label className="flex flex-col gap-1 text-xs text-slate-400">Name<input className="input mt-0.5 w-32" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label>
+        <label className="flex flex-col gap-1 text-xs text-slate-400">Capacity<input className="input mt-0.5 w-20" value={form.capacity} onChange={(e) => setForm({ ...form, capacity: e.target.value })} inputMode="numeric" /></label>
+        <label className="flex flex-col gap-1 text-xs text-slate-400">Section<input className="input mt-0.5 w-32" value={form.section} onChange={(e) => setForm({ ...form, section: e.target.value })} /></label>
         <button onClick={add} disabled={busy} className="btn-primary flex items-center gap-1"><Plus size={15} /> Add</button>
       </div>
       {loading ? (
