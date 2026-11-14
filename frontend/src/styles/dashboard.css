@@ -228,3 +228,10 @@ html.light .ad{
   .ad-report .t,.ad-inv .n,.ad-inv .amt,.ad-stock .nm{font-size:16px}
   .ad-report .s,.ad-inv .c{font-size:14px}
 }
+
+/* Margin and concentration tiles take their colour from what the number MEANS
+   (good = green, warning = yellow, bad = red), not from their position. */
+.ad-ratio.s-good{background:var(--ad-tile-grn)} .ad-ratio.s-bad{background:var(--ad-tile-red)}
+.ad-ratio.s-neutral{background:var(--ad-tile-lav)}
+.ad-ratio.s-warn{background:rgba(254,203,1,.18)}
+html.light .ad-ratio.s-warn{background:#FFF5CC}
