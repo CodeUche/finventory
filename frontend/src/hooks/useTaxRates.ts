@@ -9,7 +9,7 @@ export function useTaxRates(): Record<string, number> {
   const [rates, setRates] = useState<Record<string, number>>({})
   useEffect(() => {
     if (!chargesVat) { setRates({}); return }
-    taxApi.classes().then(({ data }) => {
+    taxApi.classes({ silentErrors: true }).then(({ data }) => {
       const list: { id: string; rate: string }[] = data.results ?? data
       setRates(Object.fromEntries(list.map((c) => [c.id, parseFloat(c.rate) || 0])))
     }).catch(() => {})
