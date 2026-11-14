@@ -12,6 +12,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from apps.accounting.management.commands.repair_vat_input_account import Command as RepairVatCommand
+from apps.accounting.exceptions import PeriodLockedError
 from apps.accounting.models import (
     Account, AccountMapping, AccountType, FinancialPeriod, JournalEntry, JournalLine,
 )
@@ -475,20 +476,60 @@ class ExpenseEditDeleteLedgerTests(TestCase):
         self.assertEqual(res.status_code, 403)
         self.assertEqual(bal(self.org, "6700"), D("5000"))
 
-    def test_failed_repost_is_flagged_and_retry_restores_the_cost(self):
-        from unittest.mock import patch
+    def test_failed_repost_rolls_the_whole_edit_back(self):
+        """Unmapped bank account on repost: the edit is refused, the old entry and figures stay."""
         from apps.expenses.models import Expense
         eid = self._create("5000")
-        with patch.object(AccountingService, "post_journal_entry", side_effect=RuntimeError("down")):
-            self.client.patch(f"/api/v1/expenses/{eid}/", {"amount": "3000"}, format="json")
-        self.assertEqual(Expense.objects.get(id=eid).gl_post_status, "failed")
-        self.assertEqual(bal(self.org, "6700"), ZERO)       # old entry reversed, new not yet posted
-        ok, err = AccountingService.retry_gl_post(self.org, "expense", eid, self.user)
-        self.assertTrue(ok, err)
-        self.assertEqual(bal(self.org, "6700"), D("3000"))
-        # A second retry changes nothing.
-        AccountingService.retry_gl_post(self.org, "expense", eid, self.user)
-        self.assertEqual(bal(self.org, "6700"), D("3000"))
+        m = AccountMapping.objects.get(organisation=self.org)
+        m.bank_account = None
+        m.save()
+        res = self.client.patch(f"/api/v1/expenses/{eid}/",
+                                {"amount": "3000", "payment_method": "bank"}, format="json")
+        self.assertEqual(res.status_code, 400, res.content[:300])
+        self.assertIn("Nothing was changed", str(res.data))
+        exp = Expense.objects.get(id=eid)
+        self.assertEqual(exp.amount, D("5000"))
+        self.assertEqual(exp.payment_method, "cash")
+        self.assertEqual(exp.gl_post_status, "posted")
+        self.assertEqual(bal(self.org, "6700"), D("5000"))
+        self.assertEqual(self._bal(self.cash), D("-5000"))
+        self.assertEqual(JournalEntry.objects.filter(organisation=self.org, source_type="reversal").count(), 0)
+        self.assertEqual(JournalEntry.objects.filter(organisation=self.org, source_type="expense").count(), 1)
+
+    def test_march_expense_edited_in_november_corrects_march_and_leaves_november_alone(self):
+        year = self.today.year - 1
+        eid = self._create("100000", expense_date=f"{year}-03-10")
+        res = self.client.patch(f"/api/v1/expenses/{eid}/", {"amount": "120000"}, format="json")
+        self.assertEqual(res.status_code, 200, res.content[:300])
+        fuel = acct(self.org, "6700")
+        self.assertEqual(AccountingService._ledger_balance(fuel, as_of=date(year, 3, 31)), D("120000"))
+        # Nothing was booked after March: the month of the edit shows no movement.
+        self.assertEqual(AccountingService._ledger_balance(fuel), D("120000"))
+        from django.db.models import Sum
+        later = JournalLine.objects.filter(
+            journal_entry__organisation=self.org, account=fuel,
+            journal_entry__entry_date__gt=date(year, 3, 31)).aggregate(d=Sum("debit"), c=Sum("credit"))
+        self.assertIsNone(later["d"])
+        self.assertIsNone(later["c"])
+        rev = JournalEntry.objects.get(organisation=self.org, source_type="reversal")
+        self.assertEqual(rev.entry_date, date(year, 3, 10))
+
+    def test_edit_blocked_when_the_original_month_is_locked_even_if_this_month_is_open(self):
+        year = self.today.year - 1
+        eid = self._create("100000", expense_date=f"{year}-03-10")
+        FinancialPeriod.objects.create(organisation=self.org, year=year, month=3, is_locked=True)
+        res = self.client.patch(f"/api/v1/expenses/{eid}/", {"amount": "120000"}, format="json")
+        self.assertEqual(res.status_code, 403)
+        self.assertEqual(bal(self.org, "6700"), D("100000"))
+
+    def test_edit_not_blocked_by_a_locked_current_month_when_the_expense_is_older(self):
+        year = self.today.year - 1
+        eid = self._create("100000", expense_date=f"{year}-03-10")
+        FinancialPeriod.objects.create(organisation=self.org, year=self.today.year,
+                                       month=self.today.month, is_locked=True)
+        res = self.client.patch(f"/api/v1/expenses/{eid}/", {"amount": "120000"}, format="json")
+        self.assertEqual(res.status_code, 200, res.content[:300])
+        self.assertEqual(bal(self.org, "6700"), D("120000"))
 
     def test_another_organisation_cannot_edit_the_expense(self):
         from apps.accounting.tests import _auth_client
@@ -724,3 +765,37 @@ class CurrentYearEarningsSplitTests(TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertEqual(Decimal(str(res.data["prior_years_earnings"])), D("400"))
         self.assertEqual(Decimal(str(res.data["current_year_earnings"])), ZERO)
+
+
+class ReverseJournalEntryGuardTests(TestCase):
+    """reverse_journal_entry: period lock inside, and no double reversal."""
+
+    def setUp(self):
+        self.user, self.org = _setup("rv_owner@example.com", "RV Org")
+        self.today = timezone.now().date()
+        self.entry = AccountingService.post_journal_entry(
+            self.org, "Sale", self.today,
+            [(acct(self.org, "1001"), D("100"), ZERO), (acct(self.org, "4001"), ZERO, D("100"))],
+            self.user, ref="RV1", source_type="manual", source_ref="rv1")
+
+    def test_reversing_twice_returns_the_same_reversal(self):
+        first = AccountingService.reverse_journal_entry(self.entry, actor=self.user)
+        second = AccountingService.reverse_journal_entry(self.entry, actor=self.user)
+        self.assertEqual(first.id, second.id)
+        self.assertEqual(JournalEntry.objects.filter(organisation=self.org, source_type="reversal").count(), 1)
+        self.assertEqual(bal(self.org, "4001"), ZERO)
+
+    def test_reversal_into_a_locked_period_is_refused(self):
+        FinancialPeriod.objects.create(organisation=self.org, year=self.today.year,
+                                       month=self.today.month, is_locked=True)
+        with self.assertRaises(PeriodLockedError):
+            AccountingService.reverse_journal_entry(self.entry, actor=self.user)
+        self.assertEqual(JournalEntry.objects.filter(organisation=self.org, source_type="reversal").count(), 0)
+
+    def test_reversal_can_be_dated_to_the_original_entry(self):
+        old = AccountingService.post_journal_entry(
+            self.org, "Old", date(2024, 2, 5),
+            [(acct(self.org, "1001"), D("40"), ZERO), (acct(self.org, "4001"), ZERO, D("40"))],
+            self.user, ref="RV2", source_type="manual", source_ref="rv2")
+        rev = AccountingService.reverse_journal_entry(old, actor=self.user, entry_date=old.entry_date)
+        self.assertEqual(rev.entry_date, date(2024, 2, 5))

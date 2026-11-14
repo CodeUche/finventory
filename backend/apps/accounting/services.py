@@ -1790,24 +1790,45 @@ class AccountingService:
 
     @staticmethod
     @transaction.atomic
-    def reverse_journal_entry(journal_entry: 'JournalEntry', actor=None) -> 'JournalEntry':
+    def reverse_journal_entry(journal_entry: 'JournalEntry', actor=None, entry_date=None) -> 'JournalEntry':
         """
         Create a reversing JournalEntry that mirrors `journal_entry`'s lines with
         debit/credit swapped, netting every account back to its pre-entry balance
         WITHOUT modifying or deleting the original entry/lines (immutable ledger).
 
-        Returns the new reversing JournalEntry.
+        entry_date: the date of the reversal; today when omitted. Pass the original
+        entry's date to take an entry out of the month it was booked in.
+        The period of the reversal date must be open (PeriodLockedError otherwise,
+        unless `actor` holds an administrator grant for it).
+
+        Idempotent: an entry that has already been reversed returns its existing
+        reversal instead of creating (or colliding with) a second one.
+
+        Returns the reversing JournalEntry.
         """
         from django.utils import timezone as _tz
+
+        existing = JournalEntry.objects.filter(
+            organisation=journal_entry.organisation, source_type='reversal',
+            source_ref=str(journal_entry.id),
+        ).first()
+        if existing:
+            return existing
 
         original_lines = list(journal_entry.lines.all())
         if not original_lines:
             raise ValueError(f"Journal entry {journal_entry.reference} has no lines to reverse.")
 
+        entry_date = entry_date or _tz.now().date()
+        AccountingService.assert_period_open(
+            journal_entry.organisation, entry_date, actor,
+            ref=journal_entry.reference, source=f'reversal/{journal_entry.id}',
+        )
+
         reversing_entry = JournalEntry.objects.create(
             organisation=journal_entry.organisation,
             description=f"Reversal of {journal_entry.reference}: {journal_entry.description}",
-            entry_date=_tz.now().date(),
+            entry_date=entry_date,
             reference='',  # auto-assigned in save()
             status='posted',
             created_by=actor,
@@ -2216,22 +2237,20 @@ class AccountingService:
         Take an expense out of the ledger: reverse every live entry posted for it
         (the originals stay, immutable; a dated reversal nets them to zero).
 
-        The reversal is dated today, so today's period must be open, and so must
-        the period of the original entry (an administrator grant counts as open).
-        Raises PeriodLockedError otherwise, before anything is written. Returns
-        the reversal entries (empty when the expense never reached the ledger).
+        Each reversal is dated at the ORIGINAL entry's date, so the month the cost
+        was booked in is corrected in place (fuel booked in March and edited in
+        November leaves March at the new figure and November untouched). That month
+        must be open (an administrator grant counts as open); PeriodLockedError
+        otherwise. Locks are checked for every entry before anything is written.
+        Returns the reversal entries (empty when the expense never reached the ledger).
         """
-        from django.utils import timezone
         live = AccountingService._live_expense_entries(organisation, expense)
         if not live:
             return []
-        today = timezone.now().date()
-        AccountingService.assert_period_open(
-            organisation, today, actor, ref=f"EXP-{expense.id}", source='expense_reversal')
         for entry in live:
             AccountingService.assert_period_open(
                 organisation, entry.entry_date, actor, ref=f"EXP-{expense.id}", source='expense_reversal')
-        return [AccountingService.reverse_journal_entry(e, actor=actor) for e in live]
+        return [AccountingService.reverse_journal_entry(e, actor=actor, entry_date=e.entry_date) for e in live]
 
     @staticmethod
     def post_expense_journal(organisation, expense, user=None):
