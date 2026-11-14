@@ -178,7 +178,7 @@ class TaxService:
             "vat_output": vat["output_vat"],
             "vat_input": vat["input_vat_recoverable"],
             "vat_on_returns": vat["output_vat_returns"],
-            "total_net_sales": t["taxable_standard"] + t["zero_rated"] + t["exempt"] + t["unclassified_nil_rated"],
+            "total_net_sales": sum(t.values(), Decimal("0")),
         })
         return vat
 

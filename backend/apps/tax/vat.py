@@ -25,14 +25,21 @@ OUTPUT VAT
     nowhere.
 
 INPUT VAT
-  * Bills: approved, paid, partially_paid, overdue, and 'received' ONLY when the
-    bill was created from a purchase order (the ledger holds its input VAT from
-    the moment of receipt). Draft, other 'received' and voided bills are out.
+  * Bills: approved, paid, partially_paid, overdue. A bill that came from a purchase
+    order and is still only 'received' is a goods-received note, not a supplier tax
+    invoice: its VAT is shown as a memo line (awaiting supplier invoice) and is NOT
+    claimed. Draft, other 'received' and voided bills are out.
   * Counted by bill ``issue_date``.
   * Recoverable only if the business is VAT registered (Organisation.charges_vat),
-    the supplier has a TIN recorded, and the bill is not exempt. Anything else is
-    reported separately as irrecoverable input VAT (it is a cost).
-  * Purchase returns reduce input VAT in the period of the return date.
+    the bill is not exempt and not marked "not claimable" by the user, and the supplier
+    is VAT registered (Supplier.vat_registered = yes). 'no' is never claimable;
+    'unknown' falls back to "a TIN is on record" and is marked unconfirmed.
+    Anything else is reported separately as irrecoverable input VAT (a cost).
+  * The organisation's "share used for taxable supplies" % is applied to the
+    recoverable total; the rest is irrecoverable.
+  * Purchase returns reduce input VAT in the period of the return date and follow the
+    ORIGINAL bill's verdict (linked through the purchase order); with no linked bill
+    the supplier's status decides.
   * Bills carry one VAT figure and one treatment for the whole bill (no line-level
     VAT data exists on bill lines), so the decision is made per bill.
 
@@ -47,7 +54,6 @@ snapshots of documents this function already reads live, so they are ignored
 from __future__ import annotations
 
 import calendar
-from collections import defaultdict
 from datetime import date
 from decimal import Decimal
 from typing import Optional
@@ -61,9 +67,47 @@ ZERO = Decimal("0")
 OUTPUT_INVOICE_STATUSES = ["confirmed", "paid", "partially_paid", "credit", "overdue", "returned"]
 INPUT_BILL_STATUSES = ["approved", "paid", "partially_paid", "overdue"]
 WORKSHEET_NOTE = (
-    "This is a working figure produced by Audity from your sales and bills. "
-    "It must be reviewed by a licensed tax practitioner before anything is filed with FIRS."
+    "This is a working figure prepared by Audity from your sales and bills. It is not a filed "
+    "return and not tax advice. Have a licensed tax practitioner review it before you file or pay. "
+    "Input VAT is counted only where your business is VAT registered and the supplier is VAT "
+    "registered (or has a TIN on record when this is not known), and it is not counted on exempt purchases."
 )
+DUE_NOTE = ("Due to the tax authority by the 21st of the following month "
+            "(weekends and holidays may move it).")
+BILL_TREATMENT_NOTE = (
+    "VAT treatment applies to the whole bill. If a bill mixes standard-rated and exempt items, "
+    "record it as separate bills so the claim is right."
+)
+NEGATIVE_NOTE = (
+    "Your input VAT is more than your output VAT for this period. This may be a refund or a "
+    "carry-forward. Ask your tax practitioner how to treat it."
+)
+UNREGISTERED_NOTE = (
+    "Your business is not marked as registered for VAT, so no input VAT is counted. Small businesses "
+    "under the registration limits may not need to register; confirm with your practitioner."
+)
+CHARGED_BUT_OFF_NOTE = (
+    "Warning: VAT was charged on sales in this period, but your business is marked as not registered "
+    "for VAT. Check the VAT setting in Settings with your practitioner."
+)
+PRE_2026_NOTE = (
+    "This period starts before 1 January 2026. Input VAT on services and fixed assets bought before "
+    "that date may be treated differently. Confirm with your practitioner."
+)
+AWAITING_INVOICE_LABEL = "VAT on goods received, awaiting supplier invoice (not claimed yet)"
+TURNOVER_LABELS = {
+    "taxable_standard": "Taxable sales (standard rate)",
+    "zero_rated": "Zero-rated sales",
+    "exempt": "Exempt sales",
+    "not_taxable": "Not taxable (exempt or out of scope, please classify)",
+    "nil_vat_needs_class": "Nil VAT, needs a VAT class",
+}
+NOT_CLAIMABLE_LABELS = {
+    "private_use": "Private or non-business use",
+    "entertainment": "Entertainment and hospitality",
+    "motor_vehicle": "Passenger motor vehicles",
+    "other": "Other",
+}
 
 
 def _d(value) -> Decimal:
@@ -92,6 +136,19 @@ def _line(**kw) -> dict:
 
 # ─── Output side ─────────────────────────────────────────────────────────────
 
+def _bucket(rate, tax, treatment, is_taxable) -> Optional[str]:
+    """Which turnover bucket a sale line belongs to."""
+    if rate > 0 or tax > 0:
+        return "taxable_standard"
+    if treatment == "zero_rated":
+        return "zero_rated"
+    if treatment == "exempt":
+        return "exempt"
+    if is_taxable is False:
+        return "not_taxable"
+    return "nil_vat_needs_class"
+
+
 def _output_lines(organisation, date_from, date_to):
     from apps.sales.models import Invoice, SaleItem, SaleReturnItem
 
@@ -103,29 +160,21 @@ def _output_lines(organisation, date_from, date_to):
         organisation=organisation, invoice__in=inv_qs,
     ).values(
         "invoice_id", "invoice__invoice_number", "invoice__issue_date", "invoice__tax_amount",
-        "invoice__customer__name", "invoice__customer__tin",
+        "invoice__status", "invoice__customer__name", "invoice__customer__tin",
         "tax_amount", "tax_rate", "line_total",
         "product__is_taxable", "product__tax_class__treatment",
     )
 
     per_invoice = {}
-    turnover = {"standard": ZERO, "zero_rated": ZERO, "exempt": ZERO, "unclassified_nil_rated": ZERO}
+    turnover = {k: ZERO for k in TURNOVER_LABELS}
+    overdue_vat = ZERO
     for r in item_rows:
         tax = _d(r["tax_amount"])
         net = _d(r["line_total"]) - tax
         rate = _d(r["tax_rate"])
-        if rate > 0 or tax > 0:
-            turnover["standard"] += net
-        else:
-            treatment = r["product__tax_class__treatment"]
-            if treatment == "zero_rated":
-                turnover["zero_rated"] += net
-            elif treatment == "exempt":
-                turnover["exempt"] += net
-            elif r["product__is_taxable"] is False:
-                pass  # out of scope: reported nowhere
-            else:
-                turnover["unclassified_nil_rated"] += net
+        turnover[_bucket(rate, tax, r["product__tax_class__treatment"], r["product__is_taxable"])] += net
+        if r["invoice__status"] == "overdue":
+            overdue_vat += tax
         e = per_invoice.setdefault(r["invoice_id"], {
             "number": r["invoice__invoice_number"], "date": r["invoice__issue_date"],
             "header_tax": _d(r["invoice__tax_amount"]),
@@ -174,80 +223,145 @@ def _output_lines(organisation, date_from, date_to):
     ).values(
         "sale_return_id", "sale_return__return_number", "sale_return__return_date",
         "sale_return__invoice__customer__name", "sale_return__invoice__customer__tin",
-        "tax_refund", "refund_amount",
+        "tax_refund", "refund_amount", "original_item__tax_rate",
+        "original_item__product__tax_class__treatment", "original_item__product__is_taxable",
     )
     per_return = {}
     for r in ret_rows:
+        vat_back = _d(r["tax_refund"])
+        net_back = _d(r["refund_amount"]) - vat_back
+        # Turnover is net of returns, in the period of the return.
+        turnover[_bucket(_d(r["original_item__tax_rate"]), vat_back,
+                         r["original_item__product__tax_class__treatment"],
+                         r["original_item__product__is_taxable"])] -= net_back
         e = per_return.setdefault(r["sale_return_id"], {
             "number": r["sale_return__return_number"], "date": r["sale_return__return_date"],
             "customer": r["sale_return__invoice__customer__name"] or "",
             "tin": r["sale_return__invoice__customer__tin"] or "", "net": ZERO, "vat": ZERO,
         })
-        e["vat"] += _d(r["tax_refund"])
-        e["net"] += _d(r["refund_amount"]) - _d(r["tax_refund"])
+        e["vat"] += vat_back
+        e["net"] += net_back
     for rid, e in per_return.items():
         lines.append(_line(
             kind="sale_return", direction="output", document_id=str(rid), source_ref=e["number"],
             date=e["date"], counterparty_name=e["customer"], counterparty_tin=e["tin"],
             net_amount=-e["net"], vat_amount=-e["vat"], reason="Credit note / sales return",
         ))
-    return lines, turnover, mismatches
+    return lines, turnover, mismatches, overdue_vat
 
 
 # ─── Input side ──────────────────────────────────────────────────────────────
 
+def _verdict(registered, supplier, treatment, not_claimable_reason):
+    """(claimable, reason, confirmation) for one bill or return. Decided per bill."""
+    if not registered:
+        return False, "Your business is not marked as registered for VAT", "n/a"
+    if not_claimable_reason:
+        return False, "Not claimable: " + NOT_CLAIMABLE_LABELS.get(not_claimable_reason, not_claimable_reason), "user"
+    if treatment == "exempt":
+        return False, "Exempt purchase: VAT cannot be claimed back", "n/a"
+    status = getattr(supplier, "vat_registered", "unknown") if supplier else "unknown"
+    tin = ((supplier.tax_id if supplier else "") or "").strip()
+    if status == "no":
+        return False, "Supplier is not VAT registered", "confirmed"
+    if status == "yes":
+        return True, "", "confirmed"
+    if tin:
+        return True, "Supplier VAT status not confirmed; counted because a TIN is on record", "unconfirmed"
+    return False, "Supplier VAT status not known and no TIN on record", "unconfirmed"
+
+
+def _original_bill(organisation, purchase_return):
+    from apps.bills.models import Bill
+    po = purchase_return.purchase_order
+    bill = Bill.objects.filter(organisation=organisation, source_purchase_order=po).select_related("supplier").first()
+    if bill is None and po is not None:
+        bill = Bill.objects.filter(organisation=organisation, reference=po.po_number).select_related("supplier").first()
+    return bill
+
+
 def _input_lines(organisation, date_from, date_to):
-    from django.db.models import Q
     from apps.bills.models import Bill
     from apps.purchases.models import PurchaseReturn
 
     registered = bool(organisation.charges_vat)
-    bills = Bill.objects.filter(
+    base = Bill.objects.filter(
         organisation=organisation, issue_date__gte=date_from, issue_date__lte=date_to,
-    ).filter(
-        Q(status__in=INPUT_BILL_STATUSES) | Q(status=Bill.RECEIVED, source_purchase_order__isnull=False)
     ).exclude(tax_amount=0).select_related("supplier")
+    bills = base.filter(status__in=INPUT_BILL_STATUSES)
+    awaiting = base.filter(status=Bill.RECEIVED, source_purchase_order__isnull=False)
 
-    def _verdict(supplier_tin, treatment):
-        if not registered:
-            return False, "Your business is not marked as registered for VAT"
-        if not (supplier_tin or "").strip():
-            return False, "Supplier has no TIN recorded"
-        if treatment == "exempt":
-            return False, "Exempt purchase: VAT cannot be claimed back"
-        return True, ""
-
-    lines = []
+    lines, attention = [], []
     for b in bills:
-        tin = b.supplier.tax_id if b.supplier else ""
-        ok, why = _verdict(tin, b.vat_treatment)
-        lines.append(_line(
+        sup = b.supplier
+        ok, why, conf = _verdict(registered, sup, b.vat_treatment, b.vat_not_claimable_reason)
+        line = _line(
             kind="bill", direction="input", document_id=str(b.id), source_ref=b.bill_number,
-            date=b.issue_date, counterparty_name=b.supplier.name if b.supplier else "",
-            counterparty_tin=tin or "", net_amount=_d(b.subtotal), vat_amount=_d(b.tax_amount),
-            is_claimable=ok, reason=why,
-        ))
+            date=b.issue_date, counterparty_name=sup.name if sup else "",
+            counterparty_tin=(sup.tax_id if sup else "") or "", net_amount=_d(b.subtotal),
+            vat_amount=_d(b.tax_amount), is_claimable=ok, reason=why,
+        )
+        line["confirmation"] = conf
+        line["supplier_id"] = str(sup.id) if sup else ""
+        lines.append(line)
+        if registered and sup:
+            unknown = sup.vat_registered == "unknown"
+            no_tin = not (sup.tax_id or "").strip()
+            if (unknown or no_tin) and sup.vat_registered != "no":
+                attention.append({
+                    "bill_id": str(b.id), "bill_number": b.bill_number, "date": str(b.issue_date),
+                    "supplier_id": str(sup.id), "supplier_name": sup.name,
+                    "supplier_tin": sup.tax_id or "", "supplier_vat_registered": sup.vat_registered,
+                    "vat_amount": _d(b.tax_amount),
+                    "reason": ("Supplier VAT status not known" if unknown else "") +
+                              (" and " if unknown and no_tin else "") +
+                              ("no TIN on record" if no_tin else ""),
+                })
+    for b in awaiting:
+        sup = b.supplier
+        line = _line(
+            kind="bill_awaiting_invoice", direction="input", document_id=str(b.id), source_ref=b.bill_number,
+            date=b.issue_date, counterparty_name=sup.name if sup else "",
+            counterparty_tin=(sup.tax_id if sup else "") or "", net_amount=_d(b.subtotal),
+            vat_amount=_d(b.tax_amount), is_claimable=False, reason=AWAITING_INVOICE_LABEL,
+        )
+        line["confirmation"] = "n/a"
+        lines.append(line)
 
     returns = PurchaseReturn.objects.filter(
         organisation=organisation, return_date__gte=date_from, return_date__lte=date_to,
     ).exclude(tax_amount=0).select_related("supplier", "purchase_order__supplier")
     for r in returns:
-        sup = r.supplier or r.purchase_order.supplier
-        tin = sup.tax_id if sup else ""
-        ok, why = _verdict(tin, "standard")
-        lines.append(_line(
+        orig = _original_bill(organisation, r)
+        if orig is not None:
+            sup = orig.supplier
+            if orig.status in INPUT_BILL_STATUSES:
+                ok, why, conf = _verdict(registered, sup, orig.vat_treatment, orig.vat_not_claimable_reason)
+            else:
+                ok, why, conf = False, "Original bill VAT was not claimed (bill status: %s)" % orig.status, "n/a"
+            note = "Follows original bill %s" % orig.bill_number
+        else:
+            sup = r.supplier or r.purchase_order.supplier
+            ok, why, conf = _verdict(registered, sup, "standard", "")
+            note = "No linked bill; supplier status used"
+        line = _line(
             kind="purchase_return", direction="input", document_id=str(r.id), source_ref=r.return_number,
-            date=r.return_date, counterparty_name=sup.name if sup else "", counterparty_tin=tin or "",
-            net_amount=-_d(r.subtotal), vat_amount=-_d(r.tax_amount), is_claimable=ok,
-            reason=why or "Supplier debit note / purchase return",
-        ))
-    return lines
+            date=r.return_date, counterparty_name=sup.name if sup else "",
+            counterparty_tin=(sup.tax_id if sup else "") or "", net_amount=-_d(r.subtotal),
+            vat_amount=-_d(r.tax_amount), is_claimable=ok,
+            reason=(why + "; " if why else "") + note,
+        )
+        line["confirmation"] = conf
+        lines.append(line)
+    return lines, attention
 
 
 # ─── Manual adjustments ──────────────────────────────────────────────────────
 
 def _manual_adjustments(organisation, date_from, date_to):
-    """VATTransaction rows typed in by a person. Snapshots of real documents are skipped."""
+    """VATTransaction rows typed in by a person. Snapshots of real documents are
+    skipped and listed (so nothing disappears silently)."""
+    from django.db.models import Q
     from apps.bills.models import Bill
     from apps.sales.models import Invoice
     from apps.tax.models import VATTransaction
@@ -256,23 +370,36 @@ def _manual_adjustments(organisation, date_from, date_to):
         organisation=organisation, period_end__gte=date_from, period_end__lte=date_to,
     ))
     if not rows:
-        return [], 0
+        return [], []
     refs = {r.source_ref for r in rows if r.source_ref}
     known = set()
     if refs:
-        known |= set(Invoice.all_objects.filter(organisation=organisation).filter(
-            invoice_number__in=refs).values_list("invoice_number", flat=True))
-        known |= set(Invoice.all_objects.filter(organisation=organisation).filter(
-            firs_irn__in=refs).values_list("firs_irn", flat=True))
-        known |= set(Bill.all_objects.filter(organisation=organisation).filter(
-            bill_number__in=refs).values_list("bill_number", flat=True))
-        for b in Bill.all_objects.filter(organisation=organisation).values_list("id", flat=True):
-            if str(b)[:12] in refs:
-                known.add(str(b)[:12])
-    out, superseded = [], 0
+        known |= set(Invoice.all_objects.filter(organisation=organisation, invoice_number__in=refs)
+                     .values_list("invoice_number", flat=True))
+        known |= set(Invoice.all_objects.filter(organisation=organisation, firs_irn__in=refs)
+                     .values_list("firs_irn", flat=True))
+        known |= set(Bill.all_objects.filter(organisation=organisation, bill_number__in=refs)
+                     .values_list("bill_number", flat=True))
+        # Old sync rows stored the first 12 characters of the bill id: match them in SQL.
+        prefixes = {x for x in refs if len(x) == 12 and x[8] == "-"}
+        if prefixes:
+            q = Q()
+            for pf in prefixes:
+                q |= Q(id__startswith=pf)
+            known |= {str(i)[:12] for i in Bill.all_objects.filter(organisation=organisation).filter(q)
+                      .values_list("id", flat=True)}
+    out, ignored = [], []
     for r in rows:
-        if (r.source_ref and r.source_ref in known) or (r.notes or "").startswith("E-Invoice"):
-            superseded += 1
+        is_dup = bool(r.source_ref and r.source_ref in known)
+        is_einv = (r.notes or "").startswith("E-Invoice")
+        if is_dup or is_einv:
+            ignored.append({
+                "id": str(r.id), "direction": r.direction, "date": str(r.period_end),
+                "source_ref": r.source_ref, "counterparty_name": r.counterparty_name,
+                "vat_amount": _d(r.vat_amount),
+                "reason": "Same document as invoice/bill %s, which is already counted live" % r.source_ref
+                          if is_dup else "Created automatically for an e-invoice, which is already counted live",
+            })
             continue
         out.append(_line(
             kind="manual", direction=r.direction, document_id=str(r.id), source_ref=r.source_ref,
@@ -282,12 +409,13 @@ def _manual_adjustments(organisation, date_from, date_to):
             reason="Manual adjustment" + ("" if r.is_claimable or r.direction == "output" else " (not claimable)"),
             notes=r.notes or "",
         ))
-    return out, superseded
+    return out, ignored
 
 
 # ─── Ledger reconciliation ───────────────────────────────────────────────────
 
-def _ledger_reconciliation(organisation, date_from, date_to, output_vat, input_vat):
+def _ledger_reconciliation(organisation, date_from, date_to, output_vat, booked, recoverable,
+                           irrecoverable, awaiting):
     """GL movement on the Output / Input VAT accounts for the same dates. Reported, never fixed."""
     from apps.accounting.models import Account, AccountMapping, JournalEntry, JournalLine
     from apps.accounting.services import AccountMappingService
@@ -325,8 +453,21 @@ def _ledger_reconciliation(organisation, date_from, date_to, output_vat, input_v
         "gl_input_vat": gl_input,
         "gl_input_accounts": input_accounts,
         "output_difference": output_vat - gl_output,
-        "input_difference": input_vat - gl_input,
-        "note": "Reported only. The ledger is not changed by this report.",
+        "input_vat_booked_by_documents": booked,
+        "input_difference": booked - gl_input,
+        "input_split": {
+            "recoverable": recoverable,
+            "irrecoverable": irrecoverable,
+            "goods_received_awaiting_supplier_invoice": awaiting,
+        },
+        "note": (
+            "Reported only; the ledger is not changed by this worksheet. The ledger currently posts ALL bill VAT "
+            "to input VAT (including VAT that is not claimable and should be a cost) and posts VAT on goods "
+            "received straight away, before the supplier invoice. So the ledger is compared with the VAT "
+            "booked by documents (recoverable + not claimable + goods received awaiting invoice), not with "
+            "the claimable figure. Any remaining difference is a real mismatch to investigate. Once "
+            "not-claimable VAT is posted to cost, compare the ledger with the claimable figure instead."
+        ),
     }
 
 
@@ -398,27 +539,48 @@ def compute_vat(
     if date_from is None or date_to is None:
         raise ValueError("compute_vat needs both date_from and date_to")
 
-    out_lines, turnover, mismatches = _output_lines(organisation, date_from, date_to)
-    in_lines = _input_lines(organisation, date_from, date_to)
-    manual, superseded = _manual_adjustments(organisation, date_from, date_to)
+    out_lines, turnover, mismatches, overdue_vat = _output_lines(organisation, date_from, date_to)
+    in_lines, attention = _input_lines(organisation, date_from, date_to)
+    manual, ignored = _manual_adjustments(organisation, date_from, date_to)
 
     sales_vat = sum((l["vat_amount"] for l in out_lines if l["kind"] == "sale"), ZERO)
     returns_vat = -sum((l["vat_amount"] for l in out_lines if l["kind"] == "sale_return"), ZERO)
     manual_out = sum((l["vat_amount"] for l in manual if l["direction"] == "output"), ZERO)
     output_vat = sales_vat - returns_vat + manual_out
 
-    bills_vat_all = sum((l["vat_amount"] for l in in_lines if l["kind"] == "bill"), ZERO)
-    recoverable_bills = sum((l["vat_amount"] for l in in_lines if l["kind"] == "bill" and l["is_claimable"]), ZERO)
-    purchase_returns_claimable = -sum(
-        (l["vat_amount"] for l in in_lines if l["kind"] == "purchase_return" and l["is_claimable"]), ZERO)
-    purchase_returns_other = -sum(
-        (l["vat_amount"] for l in in_lines if l["kind"] == "purchase_return" and not l["is_claimable"]), ZERO)
+    bills = [l for l in in_lines if l["kind"] == "bill"]
+    bills_vat_all = sum((l["vat_amount"] for l in bills), ZERO)
+    bills_claimable = sum((l["vat_amount"] for l in bills if l["is_claimable"]), ZERO)
+    rets = [l for l in in_lines if l["kind"] == "purchase_return"]
+    rets_claimable = -sum((l["vat_amount"] for l in rets if l["is_claimable"]), ZERO)
+    rets_other = -sum((l["vat_amount"] for l in rets if not l["is_claimable"]), ZERO)
+    awaiting = sum((l["vat_amount"] for l in in_lines if l["kind"] == "bill_awaiting_invoice"), ZERO)
     manual_in = sum((l["vat_amount"] for l in manual if l["direction"] == "input" and l["is_claimable"]), ZERO)
-    recoverable_input = recoverable_bills - purchase_returns_claimable + manual_in
-    irrecoverable = (bills_vat_all - recoverable_bills) - purchase_returns_other
+
+    # Apportionment for businesses with taxable and exempt activity (100 = all of it).
+    share = _d(getattr(organisation, "input_vat_share_percent", 100))
+    claimable_before = bills_claimable - rets_claimable
+    claimable_after = round_money(claimable_before * share / Decimal("100"))
+    not_apportioned = claimable_before - claimable_after
+    recoverable_input = claimable_after + manual_in
+    irrecoverable = (bills_vat_all - bills_claimable) - rets_other + not_apportioned
 
     net = output_vat - recoverable_input
     registered = bool(organisation.charges_vat)
+
+    warnings, notes = [], []
+    if not registered:
+        notes.append(UNREGISTERED_NOTE)
+        if any(l["kind"] == "sale" and l["vat_amount"] > 0 for l in out_lines):
+            warnings.append(CHARGED_BUT_OFF_NOTE)
+    if net < 0:
+        notes.append(NEGATIVE_NOTE)
+    if share != Decimal("100"):
+        notes.append("Only %s%% of claimable input VAT is counted (your share used for taxable supplies); "
+                     "the rest is in irrecoverable input VAT." % format(share.normalize(), "f"))
+    if date_from < date(2026, 1, 1):
+        notes.append(PRE_2026_NOTE)
+    notes.append(BILL_TREATMENT_NOTE)
 
     all_lines = sorted(out_lines + in_lines + manual, key=lambda l: (str(l["date"]), l["kind"], l["source_ref"]))
     for l in all_lines:
@@ -428,30 +590,39 @@ def compute_vat(
         "period_start": date_from,
         "period_end": date_to,
         "filing_due_date": filing_due_date(date_to),
+        "due_note": DUE_NOTE,
         "vat_registered": registered,
-        "registration_note": "" if registered else
-            "This business is not marked as registered for VAT, so no input VAT is recoverable.",
+        "registration_note": "" if registered else UNREGISTERED_NOTE,
+        "warnings": warnings,
+        "notes": notes,
         "output_vat_on_sales": sales_vat,
         "output_vat_returns": returns_vat,
         "output_vat_manual_adjustments": manual_out,
+        "output_vat_on_overdue_invoices": overdue_vat,
         "output_vat": output_vat,
         "input_vat_recoverable": recoverable_input,
         "input_vat_irrecoverable": irrecoverable,
         "input_vat_manual_adjustments": manual_in,
+        "input_vat_not_apportioned": not_apportioned,
+        "input_vat_awaiting_supplier_invoice": awaiting,
+        "input_vat_awaiting_supplier_invoice_label": AWAITING_INVOICE_LABEL,
         "net_vat_payable": net,
         "position": "payable" if net > 0 else ("refund_or_carry_forward" if net < 0 else "nil"),
-        "turnover": {
-            "taxable_standard": turnover["standard"], "zero_rated": turnover["zero_rated"],
-            "exempt": turnover["exempt"], "unclassified_nil_rated": turnover["unclassified_nil_rated"],
-        },
+        "turnover": turnover,
+        "turnover_labels": TURNOVER_LABELS,
         "invoice_vat_mismatches": mismatches,
-        "superseded_snapshot_rows": superseded,
+        "superseded_snapshot_rows": len(ignored),
+        "ignored_duplicates": ignored,
+        "needs_attention": attention,
+        "needs_attention_count": len(attention),
         "lines": all_lines,
         "worksheet_note": WORKSHEET_NOTE,
+        "bill_treatment_note": BILL_TREATMENT_NOTE,
     }
     if with_reconciliation:
+        booked = bills_vat_all - (rets_claimable + rets_other) + awaiting
         result["reconciliation"] = _ledger_reconciliation(
-            organisation, date_from, date_to, output_vat, recoverable_input + irrecoverable)
+            organisation, date_from, date_to, output_vat, booked, recoverable_input, irrecoverable, awaiting)
     if with_previous_methods:
         result["previous_methods"] = _previous_methods(organisation, date_from, date_to, output_vat, recoverable_input, net)
     return result
@@ -460,3 +631,47 @@ def compute_vat(
 def summary_view(vat: dict) -> dict:
     """The compute_vat result without the per-document lines: for report endpoints."""
     return {k: v for k, v in vat.items() if k != "lines"}
+
+
+def why_it_changed(vat: dict) -> list:
+    """Plain reasons the new figure can differ from the old screens, only those that apply."""
+    why = []
+    if vat["output_vat_on_overdue_invoices"] > 0:
+        why.append("Invoices past due are now included.")
+    if vat["output_vat_returns"] > 0:
+        why.append("Credit notes are deducted in the month they are issued.")
+    if vat["input_vat_irrecoverable"] > 0:
+        why.append("Some input VAT is not counted: it needs a VAT registered business, a supplier that is VAT "
+                   "registered or has a TIN on record, and a purchase that is not exempt or marked not claimable.")
+    if vat["input_vat_awaiting_supplier_invoice"] > 0:
+        why.append("VAT on goods received but not yet invoiced by the supplier is not counted.")
+    if vat["net_vat_payable"] < 0:
+        why.append("A negative result is shown as a possible refund instead of zero.")
+    return why
+
+
+def comparison_table(organisation, today: Optional[date] = None, months: int = 12) -> list:
+    """Closed calendar months of the last `months`: what the two old screens showed
+    against the new figure. Words are 'different from', never 'owe' or 'overpaid'."""
+    today = today or date.today()
+    y, m = today.year, today.month
+    out = []
+    for _ in range(months):
+        m -= 1
+        if m == 0:
+            y, m = y - 1, 12
+        start, end = month_range(y, m)
+        vat = compute_vat(organisation, start, end, with_reconciliation=False)
+        prev = vat["previous_methods"]
+        if prev is None:
+            continue
+        reports_net, tax_net, now = prev["reports_summary"]["net_vat_payable"], prev["tax_page"]["net_vat_payable"], vat["net_vat_payable"]
+        differs = reports_net != now or tax_net != now
+        out.append({
+            "period_start": start, "period_end": end,
+            "reports_page_showed": reports_net, "tax_page_showed": tax_net, "now": now,
+            "difference_from_reports_page": now - reports_net, "difference_from_tax_page": now - tax_net,
+            "different": differs,
+            "why": why_it_changed(vat) if differs else [],
+        })
+    return out

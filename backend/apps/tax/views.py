@@ -411,6 +411,8 @@ class VATTransactionViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             "is_claimable": line["is_claimable"] if line["direction"] == "input" else True,
             "reason": line["reason"],
             "source_ref": line["source_ref"],
+            "confirmation": line.get("confirmation", ""),
+            "supplier_id": line.get("supplier_id", ""),
             "notes": line["notes"] or line["reason"],
             "created_at": None,
         }
@@ -440,6 +442,47 @@ class VATTransactionViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         vat = compute_vat(self._get_organisation(), *period)
         vat["rows"] = [self._row(l) for l in vat.pop("lines")]
         return Response(vat)
+
+    @action(detail=False, methods=["get"])
+    def comparison(self, request):
+        """GET /api/v1/tax/vat-transactions/comparison/ — closed months of the last year:
+        what the old Reports and Tax screens showed against the new figure."""
+        from apps.tax.vat import comparison_table
+        return Response({"rows": comparison_table(self._get_organisation())})
+
+    @action(detail=False, methods=["post"])
+    def set_supplier_vat(self, request):
+        """POST /api/v1/tax/vat-transactions/set_supplier_vat/
+        Quick action from the needs-attention list. Body: {supplier_id, vat_registered?, tax_id?}.
+        Same tax-module gate as the rest of this page; audited."""
+        from apps.suppliers.models import Supplier
+        org = self._get_organisation()
+        try:
+            sup = Supplier.objects.get(id=request.data.get("supplier_id"), organisation=org)
+        except Exception:
+            return Response({"error": "Supplier not found."}, status=404)
+        changes = {}
+        vr = request.data.get("vat_registered")
+        if vr is not None:
+            if vr not in ("yes", "no", "unknown"):
+                return Response({"error": "vat_registered must be yes, no or unknown."}, status=400)
+            changes["vat_registered"] = {"old": sup.vat_registered, "new": vr}
+            sup.vat_registered = vr
+        tin = request.data.get("tax_id")
+        if tin is not None:
+            tin = str(tin).strip()[:100]
+            changes["tax_id"] = {"old": sup.tax_id, "new": tin}
+            sup.tax_id = tin
+        if not changes:
+            return Response({"error": "Nothing to change."}, status=400)
+        sup.save()
+        try:
+            from apps.core.models import AuditLog
+            AuditLog.log(action=AuditLog.UPDATE, user=request.user, organisation=org, model_name='Supplier',
+                         object_id=str(sup.id), object_repr=str(sup), changes=changes, request=request)
+        except Exception:
+            pass
+        return Response({"id": str(sup.id), "vat_registered": sup.vat_registered, "tax_id": sup.tax_id})
 
     @action(detail=False, methods=["post"])
     def sync_from_period(self, request):
@@ -506,15 +549,20 @@ class VATTransactionViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=15*mm, bottomMargin=15*mm, leftMargin=20*mm, rightMargin=20*mm)
         styles = getSampleStyleSheet()
         story = []
-        story.append(Paragraph(f"<b>VAT WORKSHEET — {escape(org.name)}</b>", styles['Title']))
+        story.append(Paragraph(f"<b>VAT Worksheet</b> — {escape(org.name)}", styles['Title']))
         if getattr(org, "tax_id", ""):
             story.append(Paragraph(f"TIN: {escape(org.tax_id)}", styles['Normal']))
-        story.append(Paragraph(f"Period: {p_start.strftime('%d %b %Y')} to {p_end.strftime('%d %b %Y')}", styles['Normal']))
+        story.append(Paragraph(
+            f"Period: {p_start.strftime('%d %b %Y')} to {p_end.strftime('%d %b %Y')}. {escape(vat['due_note'])}",
+            styles['Normal']))
         story.append(Paragraph(f"Generated: {_date.today().strftime('%d %b %Y')}", styles['Normal']))
         story.append(Spacer(1, 3*mm))
         story.append(Paragraph(f"<i>{escape(vat['worksheet_note'])}</i>", styles['Normal']))
-        if not vat["vat_registered"]:
-            story.append(Paragraph(escape(vat["registration_note"]), styles['Normal']))
+        for w in vat["warnings"]:
+            story.append(Paragraph(f"<b>{escape(w)}</b>", styles['Normal']))
+        for n in vat["notes"]:
+            if n != vat["bill_treatment_note"]:
+                story.append(Paragraph(escape(n), styles['Normal']))
         story.append(Spacer(1, 6*mm))
 
         def m(v):
@@ -529,10 +577,8 @@ class VATTransactionViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             ["Recoverable input VAT", m(vat["input_vat_recoverable"])],
             ["Net VAT payable / (refund or carry-forward)", m(vat["net_vat_payable"])],
             ["Irrecoverable input VAT (a cost, not claimed)", m(vat["input_vat_irrecoverable"])],
-            ["Taxable standard-rated sales", m(vat["turnover"]["taxable_standard"])],
-            ["Zero-rated sales", m(vat["turnover"]["zero_rated"])],
-            ["Exempt sales", m(vat["turnover"]["exempt"])],
-        ]
+            [vat["input_vat_awaiting_supplier_invoice_label"], m(vat["input_vat_awaiting_supplier_invoice"])],
+        ] + [[vat["turnover_labels"][k], m(v)] for k, v in vat["turnover"].items()]
         st = Table(summary_data, colWidths=[110*mm, 55*mm])
         st.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1e3a5f')),
@@ -545,8 +591,7 @@ class VATTransactionViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         ]))
         story.append(st)
         story.append(Spacer(1, 6*mm))
-        story.append(Paragraph(f"Filing reminder: due {vat['filing_due_date'].strftime('%d %b %Y')} (21st of the following month).", styles['Normal']))
-        story.append(Spacer(1, 6*mm))
+        story.append(Spacer(1, 2*mm))
 
         def _tx_table(title, lines):
             story.append(Paragraph(f"<b>{title}</b>", styles['Heading3']))
@@ -580,6 +625,17 @@ class VATTransactionViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                   [l for l in vat["lines"] if l["direction"] == "output"])
         _tx_table("Input VAT documents (bills, purchase returns, adjustments)",
                   [l for l in vat["lines"] if l["direction"] == "input"])
+
+        if vat["needs_attention"]:
+            story.append(Paragraph(f"<b>Needs attention ({vat['needs_attention_count']})</b>", styles['Heading3']))
+            story.append(Paragraph("Bills with VAT where the supplier's VAT status is not known or no TIN is on record.", styles['Normal']))
+            for a in vat["needs_attention"]:
+                story.append(Paragraph(escape(f"{a['bill_number']} — {a['supplier_name']}: {m(a['vat_amount'])} ({a['reason']})"), styles['Normal']))
+            story.append(Spacer(1, 4*mm))
+        if vat["ignored_duplicates"]:
+            story.append(Paragraph(f"{len(vat['ignored_duplicates'])} stored row(s) ignored as duplicates of documents already counted live.", styles['Normal']))
+        story.append(Spacer(1, 4*mm))
+        story.append(Paragraph(f"<i>{escape(vat['bill_treatment_note'])}</i>", styles['Normal']))
 
         doc.build(story)
         buffer.seek(0)

@@ -219,9 +219,12 @@ class ZeroRatedAndInputTests(VatBase):
             po_number=f"PO-T-{next(_seq)}", order_date=date(2025, 10, 1), created_by=self.user,
         )
 
-    def test_po_origin_received_bill_counts(self):
+    def test_po_origin_received_bill_is_a_memo_not_a_claim(self):
         self.bill(date(2025, 10, 3), "500", status="received", source_purchase_order=self._po())
-        self.assertEqual(self.vat()["input_vat_recoverable"], D("500.00"))
+        v = self.vat()
+        self.assertEqual(v["input_vat_recoverable"], D("0"))
+        self.assertEqual(v["input_vat_awaiting_supplier_invoice"], D("500.00"))
+        self.assertEqual(v["input_vat_irrecoverable"], D("0"))
 
     def test_purchase_return_reduces_input_vat_in_period_issued(self):
         from apps.purchases.models import PurchaseReturn

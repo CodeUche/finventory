@@ -114,9 +114,9 @@ class CreateBillSerializer(serializers.Serializer):
     # max_length prevents oversized free-text fields from being stored
     reference = serializers.CharField(required=False, allow_blank=True, default='', max_length=100)
     tax_amount = serializers.DecimalField(max_digits=15, decimal_places=2, required=False, default=Decimal("0"), min_value=Decimal("0"))
-    vat_treatment = serializers.ChoiceField(choices=['standard', 'zero_rated', 'exempt'], required=False, default='standard')
+    vat_treatment = serializers.ChoiceField(choices=['standard', 'zero_rated', 'exempt'], required=False)
     vat_not_claimable_reason = serializers.ChoiceField(
-        choices=['', 'private_use', 'entertainment', 'motor_vehicle', 'other'], required=False, allow_blank=True, default='')
+        choices=['', 'private_use', 'entertainment', 'motor_vehicle', 'other'], required=False, allow_blank=True)
     notes = serializers.CharField(required=False, allow_blank=True, default='', max_length=2000)
     status = serializers.ChoiceField(
         choices=['draft', 'received', 'approved'],

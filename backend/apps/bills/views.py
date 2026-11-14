@@ -284,8 +284,9 @@ class BillViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
             'due_date': d['due_date'],
             'reference': d.get('reference', ''),
             'tax_amount': Decimal(str(d.get('tax_amount', '0'))),
-            'vat_treatment': d.get('vat_treatment', 'standard'),
-            'vat_not_claimable_reason': d.get('vat_not_claimable_reason', ''),
+            # An edit that does not mention these keeps what the bill already has.
+            'vat_treatment': d.get('vat_treatment', bill.vat_treatment),
+            'vat_not_claimable_reason': d.get('vat_not_claimable_reason', bill.vat_not_claimable_reason),
             'notes': d.get('notes', ''),
             'status': d.get('status', bill.status),
         }
