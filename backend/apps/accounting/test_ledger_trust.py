@@ -183,3 +183,106 @@ class VatInputRepairCommandTests(TestCase):
         self._run("--apply")  # --org limits it to self.org
         m.refresh_from_db()
         self.assertEqual(m.vat_input_account.code, "1300")
+
+
+class PoBillRetryTests(TestCase):
+    """Item 2: GL Health Retry on a PO-raised bill must not post a second, expense-side entry."""
+
+    def setUp(self):
+        from unittest.mock import patch
+        from apps.inventory.models import Product, Warehouse
+        from apps.purchases.models import PurchaseOrder, PurchaseOrderItem
+        from apps.suppliers.models import Supplier
+
+        self.patch = patch
+        self.user, self.org = _setup("pr_owner@example.com", "PR Org")
+        self.supplier = Supplier.objects.create(organisation=self.org, name="Acme")
+        self.wh = Warehouse.objects.create(organisation=self.org, name="Main", is_default=True)
+        self.product = Product.objects.create(
+            organisation=self.org, sku="R-1", name="Widget", product_type="physical",
+            cost_price=D("100"), selling_price=D("150"))
+        self.po = PurchaseOrder.objects.create(
+            organisation=self.org, supplier=self.supplier, warehouse=self.wh, po_number="PO-RETRY-1",
+            order_date=date.today(), status=PurchaseOrder.Status.SENT,
+            subtotal=D("1000"), tax_amount=D("75"), total_amount=D("1075"), created_by=self.user)
+        self.item = PurchaseOrderItem.objects.create(
+            organisation=self.org, purchase_order=self.po, product=self.product,
+            quantity_ordered=D("10"), unit_cost=D("100"), tax_rate=D("7.5"), line_total=D("1000"))
+
+    def _receive(self, qty, fail=False):
+        from apps.purchases.services import PurchaseService
+        self.po.refresh_from_db()
+        args = [{"item_id": str(self.item.id), "quantity_received": qty}]
+        if fail:
+            with self.patch.object(AccountingService, "post_journal_entry", side_effect=RuntimeError("ledger down")):
+                PurchaseService.receive_purchase_order(self.po, args, self.user)
+        else:
+            PurchaseService.receive_purchase_order(self.po, args, self.user)
+
+    def _bill(self):
+        from apps.bills.models import Bill
+        return Bill.objects.get(organisation=self.org, source_purchase_order=self.po)
+
+    def _assert_books(self, inventory, vat, ap_credit, expense=D("0")):
+        self.assertEqual(bal(self.org, "1200"), inventory)
+        self.assertEqual(bal(self.org, "1400"), vat)
+        self.assertEqual(bal(self.org, "2001"), ap_credit)
+        self.assertEqual(bal(self.org, "6700"), expense)
+
+    def test_retry_after_failed_receipt_posts_the_receipt_not_a_bill_journal(self):
+        self._receive(10, fail=True)
+        bill = self._bill()
+        self.assertEqual(bill.gl_post_status, "failed")
+        self.assertEqual(JournalEntry.objects.filter(organisation=self.org).exclude(source_type="").count(), 0)
+
+        ok, err = AccountingService.retry_gl_post(self.org, "bill", str(bill.id), self.user)
+        self.assertTrue(ok, err)
+        bill.refresh_from_db()
+        self.assertEqual(bill.gl_post_status, "posted")
+        self.assertFalse(JournalEntry.objects.filter(organisation=self.org, source_type="bill_approved").exists())
+        self.assertEqual(JournalEntry.objects.filter(organisation=self.org, source_type="po_receipt").count(), 1)
+        # Inventory 1,000, Input VAT 75, AP 1,075 (credit balance), General Expense untouched.
+        self._assert_books(D("1000"), D("75"), D("1075"))
+
+    def test_second_retry_changes_nothing(self):
+        self._receive(10, fail=True)
+        bill = self._bill()
+        AccountingService.retry_gl_post(self.org, "bill", str(bill.id), self.user)
+        AccountingService.retry_gl_post(self.org, "bill", str(bill.id), self.user)
+        self.assertEqual(JournalEntry.objects.filter(organisation=self.org, source_type="po_receipt").count(), 1)
+        self._assert_books(D("1000"), D("75"), D("1075"))
+
+    def test_retry_after_failed_second_partial_receipt_posts_only_that_batch(self):
+        self._receive(4)                      # net 400, VAT 30: posts fine
+        self._receive(6, fail=True)           # net 600, VAT 45: ledger down
+        bill = self._bill()
+        self.assertEqual(bill.gl_post_status, "failed")
+        self._assert_books(D("400"), D("30"), D("430"))
+        ok, err = AccountingService.retry_gl_post(self.org, "bill", str(bill.id), self.user)
+        self.assertTrue(ok, err)
+        self._assert_books(D("1000"), D("75"), D("1075"))
+        self.assertFalse(JournalEntry.objects.filter(organisation=self.org, source_type="bill_approved").exists())
+
+    def test_retry_after_failed_convert_to_bill_reposts_the_conversion_journal(self):
+        from apps.purchases.services import PurchaseService
+        with self.patch.object(AccountingService, "post_journal_entry", side_effect=RuntimeError("down")):
+            PurchaseService.convert_to_bill(self.po, self.user)
+        bill = self._bill()
+        self.assertEqual(bill.gl_post_status, "failed")
+        ok, err = AccountingService.retry_gl_post(self.org, "bill", str(bill.id), self.user)
+        self.assertTrue(ok, err)
+        self.assertEqual(JournalEntry.objects.filter(organisation=self.org, source_type="po_convert_to_bill").count(), 1)
+        self.assertFalse(JournalEntry.objects.filter(organisation=self.org, source_type="bill_approved").exists())
+        self._assert_books(D("1000"), D("75"), D("1075"))
+
+    def test_retry_of_a_normal_bill_still_posts_the_bill_journal(self):
+        from apps.bills.models import Bill
+        bill = Bill.objects.create(
+            organisation=self.org, supplier=self.supplier, bill_number="B-NORMAL", status=Bill.APPROVED,
+            issue_date=date.today(), due_date=date.today(), subtotal=D("1000"), tax_amount=D("75"),
+            total_amount=D("1075"), amount_due=D("1075"), created_by=self.user)
+        ok, err = AccountingService.retry_gl_post(self.org, "bill", str(bill.id), self.user)
+        self.assertTrue(ok, err)
+        self.assertTrue(JournalEntry.objects.filter(organisation=self.org, source_type="bill_approved").exists())
+        self.assertEqual(bal(self.org, "6700"), D("1000"))
+        self.assertEqual(bal(self.org, "1400"), D("75"))

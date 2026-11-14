@@ -2978,10 +2978,20 @@ class AccountingService:
         elif model_name == 'bill':
             from apps.bills.models import Bill
             obj = Bill.objects.get(id=object_id, organisation=organisation)
-            success, err = safe_post_gl(
-                AccountingService.post_bill_approved_journal, organisation, obj, user,
-                model_instance=obj,
-            )
+            if obj.source_purchase_order_id:
+                # A bill raised from a purchase order is booked by the PO's own
+                # journal (goods received / converted to bill). Re-posting it as a
+                # normal approved bill would debit General Expense and claim the
+                # input VAT a second time. Retry the PO journal instead.
+                from apps.purchases.services import retry_po_bill_journal
+                success, err = safe_post_gl(
+                    retry_po_bill_journal, obj, user, model_instance=obj,
+                )
+            else:
+                success, err = safe_post_gl(
+                    AccountingService.post_bill_approved_journal, organisation, obj, user,
+                    model_instance=obj,
+                )
         elif model_name == 'expense':
             from apps.expenses.models import Expense
             obj = Expense.objects.get(id=object_id, organisation=organisation)

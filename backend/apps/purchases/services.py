@@ -254,28 +254,7 @@ class PurchaseService:
         po.save(update_fields=["billed_before_receipt", "updated_at"])
 
         def _post():
-            zero = Decimal("0")
-            transit_acct = AccountMappingService.get_or_create_mapping(po.organisation).goods_in_transit_account \
-                or AccountMappingService.resolve(po.organisation, "inventory_account")
-            ap_acct = AccountingService._resolve_party_account(
-                po.organisation, po.supplier, 'payable_account', 'accounts_payable', '2001')
-            lines = [
-                (transit_acct, net_goods, zero),
-                (ap_acct, zero, total),
-            ]
-            if tax > zero:
-                vat_acct = AccountMappingService.resolve(po.organisation, "vat_input_account")
-                lines.append((vat_acct, tax, zero))
-            AccountingService.post_journal_entry(
-                po.organisation,
-                f"Bill converted from PO {po.po_number} (pre-receipt)",
-                today,
-                lines,
-                created_by,
-                ref=po.po_number,
-                source_type="po_convert_to_bill",
-                source_ref=str(po.id),
-            )
+            _post_convert_journal(po, net_goods, tax, total, today, created_by)
 
         safe_post_gl(_post, model_instance=bill)
         logger.info("PO %s converted to bill %s by %s (pre-receipt)", po.po_number, bill.bill_number, created_by)
@@ -388,41 +367,118 @@ def _upsert_bill_for_po(po: PurchaseOrder, batch_subtotal: Decimal, batch_tax: D
             line_total=batch_subtotal,
         )
 
-    # Post GL: DR Inventory + (DR VAT Input if any) / CR Accounts Payable, via the
-    # standard account-mapping resolver — was previously hardcoded to codes "1200"/
-    # "2001", bypassing org-level remapping and always dropping input VAT.
     def _post():
-        zero = Decimal("0")
-        inv_acct = AccountMappingService.resolve(po.organisation, "inventory_account")
-        ap_acct = AccountingService._resolve_party_account(
-            po.organisation, po.supplier, 'payable_account', 'accounts_payable', '2001')
-        lines = [
-            (inv_acct, batch_subtotal, zero),  # DR Inventory (net)
-            (ap_acct, zero, batch_total),       # CR Accounts Payable (gross)
-        ]
-        if batch_tax > zero:
-            vat_acct = AccountMappingService.resolve(po.organisation, "vat_input_account")
-            lines.append((vat_acct, batch_tax, zero))  # DR VAT Input (recoverable)
-        # Per-receipt ref, same reason as po_receipt_clearing above: the journal
-        # is idempotent on (source_type, source_ref), so a bare po.id posted the
-        # first partial receipt and silently dropped every later one — the bill
-        # grew while Inventory and AP in the ledger did not. The first receipt
-        # keeps the bare po.id so entries already in the ledger still match.
-        prior = JournalEntry.objects.filter(
-            organisation=po.organisation, source_type="po_receipt",
-        ).filter(Q(source_ref=str(po.id)) | Q(source_ref__startswith=f"{po.id}:")).count()
-        AccountingService.post_journal_entry(
-            po.organisation,
-            f"Goods received {po.po_number}",
-            timezone.now().date(),
-            lines,
-            received_by,
-            ref=po.po_number,
-            source_type="po_receipt",
-            source_ref=str(po.id) if prior == 0 else f"{po.id}:{prior + 1}",
-        )
+        _post_receipt_journal(po, batch_subtotal, batch_tax, received_by)
 
     safe_post_gl(_post, model_instance=bill)
+
+
+def _post_convert_journal(po, net_goods, tax, total, entry_date, user):
+    """DR goods-in-transit (or Inventory) + DR Input VAT / CR AP for a PO billed before receipt.
+    Idempotent on ("po_convert_to_bill", po.id). Shared by convert_to_bill and the GL Health retry."""
+    from apps.accounting.services import AccountingService, AccountMappingService
+
+    zero = Decimal("0")
+    transit_acct = AccountMappingService.get_or_create_mapping(po.organisation).goods_in_transit_account \
+        or AccountMappingService.resolve(po.organisation, "inventory_account")
+    ap_acct = AccountingService._resolve_party_account(
+        po.organisation, po.supplier, 'payable_account', 'accounts_payable', '2001')
+    lines = [
+        (transit_acct, net_goods, zero),
+        (ap_acct, zero, total),
+    ]
+    if tax > zero:
+        vat_acct = AccountMappingService.resolve(po.organisation, "vat_input_account")
+        lines.append((vat_acct, tax, zero))
+    return AccountingService.post_journal_entry(
+        po.organisation,
+        f"Bill converted from PO {po.po_number} (pre-receipt)",
+        entry_date,
+        lines,
+        user,
+        ref=po.po_number,
+        source_type="po_convert_to_bill",
+        source_ref=str(po.id),
+    )
+
+
+def _post_receipt_journal(po, batch_subtotal, batch_tax, received_by):
+    """Post: DR Inventory + (DR VAT Input if any) / CR Accounts Payable, via the
+    standard account-mapping resolver — was previously hardcoded to codes "1200"/
+    "2001", bypassing org-level remapping and always dropping input VAT.
+    Shared by the receipt flow and the GL Health retry."""
+    from apps.accounting.models import JournalEntry
+    from apps.accounting.services import AccountingService, AccountMappingService
+
+    zero = Decimal("0")
+    batch_total = batch_subtotal + batch_tax
+    inv_acct = AccountMappingService.resolve(po.organisation, "inventory_account")
+    ap_acct = AccountingService._resolve_party_account(
+        po.organisation, po.supplier, 'payable_account', 'accounts_payable', '2001')
+    lines = [
+        (inv_acct, batch_subtotal, zero),  # DR Inventory (net)
+        (ap_acct, zero, batch_total),       # CR Accounts Payable (gross)
+    ]
+    if batch_tax > zero:
+        vat_acct = AccountMappingService.resolve(po.organisation, "vat_input_account")
+        lines.append((vat_acct, batch_tax, zero))  # DR VAT Input (recoverable)
+    # Per-receipt ref, same reason as po_receipt_clearing above: the journal
+    # is idempotent on (source_type, source_ref), so a bare po.id posted the
+    # first partial receipt and silently dropped every later one — the bill
+    # grew while Inventory and AP in the ledger did not. The first receipt
+    # keeps the bare po.id so entries already in the ledger still match.
+    prior = JournalEntry.objects.filter(
+        organisation=po.organisation, source_type="po_receipt",
+    ).filter(Q(source_ref=str(po.id)) | Q(source_ref__startswith=f"{po.id}:")).count()
+    return AccountingService.post_journal_entry(
+        po.organisation,
+        f"Goods received {po.po_number}",
+        timezone.now().date(),
+        lines,
+        received_by,
+        ref=po.po_number,
+        source_type="po_receipt",
+        source_ref=str(po.id) if prior == 0 else f"{po.id}:{prior + 1}",
+    )
+
+
+def retry_po_bill_journal(bill, user=None):
+    """
+    GL Health "Retry" for a bill that came from a purchase order.
+
+    Such a bill's ledger entry is the PO's own (po_receipt / po_convert_to_bill),
+    never post_bill_approved_journal: posting that as well would book the cost
+    to General Expense and claim the input VAT a second time on top of
+    Inventory. Re-posts only what is still missing, so a retry after a
+    successful post is a no-op and one after a partly-posted partial receipt
+    posts only the batch that failed. Raises on failure (the caller wraps it
+    in safe_post_gl).
+    """
+    from apps.accounting.models import JournalEntry
+    from apps.accounting.services import AccountMappingService
+
+    po = bill.source_purchase_order
+    total = Decimal(str(bill.total_amount or 0))
+    tax = Decimal(str(bill.tax_amount or 0))
+    if po.billed_before_receipt:
+        return _post_convert_journal(po, total - tax, tax, total, bill.issue_date, user)
+
+    entries = (JournalEntry.objects.filter(organisation=bill.organisation, source_type="po_receipt", status="posted")
+               .filter(Q(source_ref=str(po.id)) | Q(source_ref__startswith=f"{po.id}:"))
+               .prefetch_related("lines"))
+    inv_acct = AccountMappingService.resolve(bill.organisation, "inventory_account")
+    posted_total = posted_inventory = Decimal("0")
+    for e in entries:
+        for ln in e.lines.all():
+            posted_total += Decimal(str(ln.credit or 0))
+            if ln.account_id == inv_acct.id:
+                posted_inventory += Decimal(str(ln.debit or 0))
+    missing_total = total - posted_total
+    if missing_total <= 0:
+        return None
+    missing_subtotal = Decimal(str(bill.subtotal or 0)) - posted_inventory
+    missing_tax = missing_total - missing_subtotal
+    return _post_receipt_journal(po, missing_subtotal, missing_tax, user)
 
 
 class PurchaseReturnService:
