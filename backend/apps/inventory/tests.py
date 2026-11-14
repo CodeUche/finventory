@@ -448,12 +448,13 @@ class CostingMethodTests(TestCase):
         line = invoice.items.first()
         self.assertAlmostEqual(float(line.cost_of_goods), 1000.0, places=2)
 
-        entry = JournalEntry.objects.filter(
-            organisation=self.org, source_type="sale", source_ref=str(invoice.id),
-        ).first()
-        self.assertIsNotNone(entry)
+        # Cost of sales is its own journal (sale_cogs) next to the revenue entry (sale).
+        entries = JournalEntry.objects.filter(
+            organisation=self.org, source_type__in=("sale", "sale_cogs"), source_ref=str(invoice.id),
+        )
+        self.assertTrue(entries.exists())
         cogs_debits = [
-            float(l.debit) for l in entry.lines.all()
+            float(l.debit) for e in entries for l in e.lines.all()
             if l.account.account_type in ("cogs", "expense") and l.debit > 0
         ]
         self.assertIn(1000.0, cogs_debits, msg=f"GL COGS lines: {cogs_debits}")
