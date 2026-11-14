@@ -124,7 +124,7 @@ class AccountMappingService:
         'bank_account':            (['asset'],            ['1002', '10'], ['bank', 'current account']),
         'accounts_payable':        (['liability'],        ['2001', '20'], ['payable', 'creditor', 'payables']),
         'vat_output_account':      (['liability'],        ['2100', '21'], ['vat', 'output vat', 'vat payable']),
-        'vat_input_account':       (['asset'],            ['1300'],       ['vat input', 'input vat', 'recoverable']),
+        'vat_input_account':       (['asset'],            ['1400'],       ['input vat', 'vat receivable']),
         'paye_account':            (['liability'],        ['2200', '22'], ['paye', 'income tax', 'payroll tax']),
         'pension_account':         (['liability'],        ['2300', '23'], ['pension']),
         'nhf_account':             (['liability'],        ['2600', '26'], ['nhf', 'national housing', 'housing fund']),
@@ -2030,9 +2030,10 @@ class AccountingService:
         expense_acct  = AccountMappingService.resolve(organisation, 'general_expense_account')
         ap_acct       = AccountingService._resolve_party_account(
             organisation, bill.supplier, 'payable_account', 'accounts_payable', '2001')
-        input_vat_acct = AccountingService._get_or_create_account(
-            organisation, '1400', 'VAT Receivable (Input VAT)', AccountType.ASSET
-        )
+        # ONE mapping for Input VAT: the same account PO receipts, PO->bill
+        # conversions and purchase returns use. (This used to hard-code 1400
+        # while those flows used the mapped account, which could be 1300.)
+        input_vat_acct = AccountMappingService.resolve(organisation, 'vat_input_account') if vat > 0 else None
 
         # Split the net cost between capitalised lines (→ 1500) and expenses.
         items = list(bill.items.all())
