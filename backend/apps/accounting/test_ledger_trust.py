@@ -286,3 +286,80 @@ class PoBillRetryTests(TestCase):
         self.assertTrue(JournalEntry.objects.filter(organisation=self.org, source_type="bill_approved").exists())
         self.assertEqual(bal(self.org, "6700"), D("1000"))
         self.assertEqual(bal(self.org, "1400"), D("75"))
+
+
+class CogsNotSilentlyDroppedTests(TestCase):
+    """Item 3: an unmapped COGS/Inventory account must show up as a GL failure, not a quiet 'posted'."""
+
+    def setUp(self):
+        from apps.customers.models import Customer
+        from apps.inventory.models import Product, Warehouse
+        from apps.inventory.services import InventoryService
+
+        self.user, self.org = _setup("cg_owner@example.com", "CG Org")
+        self.customer = Customer.objects.create(organisation=self.org, name="Cust", email="cg@example.com")
+        self.wh = Warehouse.objects.create(organisation=self.org, name="Main", is_default=True)
+        self.product = Product.objects.create(
+            organisation=self.org, sku="CG-1", name="Gadget", product_type="physical",
+            selling_price=D("200"), cost_price=D("60"))
+        InventoryService.record_movement(
+            organisation=self.org, product=self.product, warehouse=self.wh, quantity=D("5"),
+            movement_type="purchase_in", unit_cost=D("60"), reference="INIT", created_by=self.user)
+        AccountMappingService.get_or_create_mapping(self.org)
+
+    def _sell(self):
+        from apps.sales.services import SaleService
+        return SaleService.create_sale(
+            organisation=self.org, customer=self.customer, warehouse=self.wh,
+            items=[{"product_id": self.product.id, "quantity": 1, "unit_price": D("200")}],
+            payment_method="cash", created_by=self.user)
+
+    def _unmap(self, field):
+        # Strict GL mode (the default) refuses the sale up front; the silent
+        # drop only ever happened for organisations running without it.
+        self.org.strict_gl_mode = False
+        self.org.save(update_fields=["strict_gl_mode"])
+        m = AccountMapping.objects.get(organisation=self.org)
+        setattr(m, field, None)
+        m.save()
+
+    def test_sale_with_cogs_mapped_posts_revenue_and_cost(self):
+        inv = self._sell()
+        inv.refresh_from_db()
+        self.assertEqual(inv.gl_post_status, "posted")
+        self.assertEqual(bal(self.org, "4001"), D("200"))
+        self.assertEqual(bal(self.org, "5001"), D("60"))
+        self.assertEqual(bal(self.org, "1200"), D("-60"))
+
+    def test_unmapped_cogs_still_completes_the_sale_but_flags_the_ledger(self):
+        from apps.sales.models import Invoice
+        self._unmap("cogs_account")
+        inv = self._sell()
+        inv.refresh_from_db()
+        self.assertTrue(Invoice.objects.filter(id=inv.id).exists())       # the sale itself went through
+        self.assertEqual(inv.gl_post_status, "not_configured")
+        self.assertIn("cogs_account", inv.gl_post_error)
+        # Nothing half-posted: no revenue without its cost.
+        self.assertEqual(bal(self.org, "4001"), ZERO)
+        failures = AccountingService.get_gl_health(self.org)["failures"]
+        self.assertTrue(any(f["model"] == "invoice" and f["id"] == str(inv.id) for f in failures))
+
+    def test_unmapped_inventory_account_is_flagged_too(self):
+        self._unmap("inventory_account")
+        inv = self._sell()
+        inv.refresh_from_db()
+        self.assertEqual(inv.gl_post_status, "not_configured")
+        self.assertIn("inventory_account", inv.gl_post_error)
+
+    def test_retry_after_mapping_the_account_posts_revenue_and_cost_together(self):
+        self._unmap("cogs_account")
+        inv = self._sell()
+        m = AccountMapping.objects.get(organisation=self.org)
+        m.cogs_account = acct(self.org, "5001")
+        m.save()
+        ok, err = AccountingService.retry_gl_post(self.org, "invoice", str(inv.id), self.user)
+        self.assertTrue(ok, err)
+        inv.refresh_from_db()
+        self.assertEqual(inv.gl_post_status, "posted")
+        self.assertEqual(bal(self.org, "4001"), D("200"))
+        self.assertEqual(bal(self.org, "5001"), D("60"))

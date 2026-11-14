@@ -1887,42 +1887,44 @@ class AccountingService:
             vat_acct = AccountMappingService.resolve(organisation, 'vat_output_account')
             lines.append((vat_acct, zero, tax))
 
-        # COGS
-        try:
-            if not has_override:
-                cogs_total = sum(Decimal(str(i.cost_of_goods or 0)) for i in items)
-                if cogs_total > zero:
-                    cogs_acct = AccountMappingService.resolve(organisation, 'cogs_account')
-                    inv_acct = AccountMappingService.resolve(organisation, 'inventory_account')
-                    lines.append((cogs_acct, cogs_total, zero))
-                    lines.append((inv_acct, zero, cogs_total))
-            else:
-                cogs_acct_default = AccountMappingService.resolve(organisation, 'cogs_account')
-                inv_acct_default = AccountMappingService.resolve(organisation, 'inventory_account')
-                debit_buckets = {}
-                credit_buckets = {}
-                for i in items:
-                    amt = Decimal(str(i.cost_of_goods or 0))
-                    if amt == 0:
-                        continue
-                    product = i.product
-                    if product.product_type == "service" and (product.wages_account_id or _class_default(product, 'wages_account')):
-                        debit_acct = product.wages_account or _class_default(product, 'wages_account')
-                    else:
-                        debit_acct = product.cogs_account or _class_default(product, 'cogs_account') or cogs_acct_default
-                    credit_acct = product.inventory_account or _class_default(product, 'inventory_account') or inv_acct_default
-                    d_slot = debit_buckets.setdefault(debit_acct.id, [debit_acct, zero])
-                    d_slot[1] += amt
-                    c_slot = credit_buckets.setdefault(credit_acct.id, [credit_acct, zero])
-                    c_slot[1] += amt
-                for acct, amt in debit_buckets.values():
-                    if amt != 0:
-                        lines.append((acct, amt, zero))
-                for acct, amt in credit_buckets.values():
-                    if amt != 0:
-                        lines.append((acct, zero, amt))
-        except Exception:
-            pass
+        # COGS. Deliberately NOT wrapped in try/except: if the COGS or Inventory
+        # account is not mapped, resolve() raises GLAccountNotConfigured and the
+        # whole journal is refused, so safe_post_gl marks the invoice
+        # not_configured (visible in GL Health, retry-able). The sale itself is
+        # unaffected. Swallowing it here used to post revenue with no cost of
+        # sales and still report 'posted', overstating profit.
+        if not has_override:
+            cogs_total = sum(Decimal(str(i.cost_of_goods or 0)) for i in items)
+            if cogs_total > zero:
+                cogs_acct = AccountMappingService.resolve(organisation, 'cogs_account')
+                inv_acct = AccountMappingService.resolve(organisation, 'inventory_account')
+                lines.append((cogs_acct, cogs_total, zero))
+                lines.append((inv_acct, zero, cogs_total))
+        else:
+            cogs_acct_default = AccountMappingService.resolve(organisation, 'cogs_account')
+            inv_acct_default = AccountMappingService.resolve(organisation, 'inventory_account')
+            debit_buckets = {}
+            credit_buckets = {}
+            for i in items:
+                amt = Decimal(str(i.cost_of_goods or 0))
+                if amt == 0:
+                    continue
+                product = i.product
+                if product.product_type == "service" and (product.wages_account_id or _class_default(product, 'wages_account')):
+                    debit_acct = product.wages_account or _class_default(product, 'wages_account')
+                else:
+                    debit_acct = product.cogs_account or _class_default(product, 'cogs_account') or cogs_acct_default
+                credit_acct = product.inventory_account or _class_default(product, 'inventory_account') or inv_acct_default
+                d_slot = debit_buckets.setdefault(debit_acct.id, [debit_acct, zero])
+                d_slot[1] += amt
+                c_slot = credit_buckets.setdefault(credit_acct.id, [credit_acct, zero])
+                c_slot[1] += amt
+            for acct, amt in debit_buckets.values():
+                if amt != 0:
+                    lines.append((acct, amt, zero))
+            for acct, amt in credit_buckets.values():
+                if amt != 0:
+                    lines.append((acct, zero, amt))
 
         return AccountingService.post_journal_entry(
             organisation, f"Sale {invoice.invoice_number}", invoice.issue_date,
