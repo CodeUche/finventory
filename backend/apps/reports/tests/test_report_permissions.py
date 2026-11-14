@@ -56,8 +56,8 @@ def _run(client, key, **params):
 
 
 class RegistryDeclarationTests(TestCase):
-    def test_there_are_34_reports(self):
-        self.assertEqual(len(ALL_KEYS), 34)
+    def test_there_are_33_reports(self):
+        self.assertEqual(len(ALL_KEYS), 33)   # gl-tax-summary is now only an alias of tax-summary
 
     def test_every_key_declares_a_valid_module(self):
         for rd in ALL_REPORTS:
@@ -247,11 +247,11 @@ class CatalogFilteringTests(TestCase):
         _, client, _ = _tick_member(self.org, "cat_ro@example.com", "staff", ["reports"])
         self.assertEqual(self._keys(client), EXPECTED_REPORTS_OWNED)
 
-    def test_owner_and_admin_see_all_34(self):
+    def test_owner_and_admin_see_all_33(self):
         _, admin_client, _ = _member(self.org, "cat_admin@example.com", "admin")
         for client in (_auth_client(self.owner, self.org), admin_client):
             self.assertEqual(self._keys(client), sorted(ALL_KEYS))
-            self.assertEqual(len(self._keys(client)), 34)
+            self.assertEqual(len(self._keys(client)), 33)
 
     def test_member_with_one_module_sees_reports_plus_that_module(self):
         _, client, _ = _tick_member(

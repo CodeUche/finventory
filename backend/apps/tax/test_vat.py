@@ -295,6 +295,56 @@ class RoundingAndReconciliationTests(VatBase):
         self.assertEqual(nov["net_vat_payable"], D("-750.00"))
 
 
+class LedgerInputVatReconciliationTests(VatBase):
+    """After ledger-trust: every bill journal posts ALL its VAT to the ONE mapped Input VAT account."""
+
+    def _posted_bill(self, vat="7500", net="100000", day=date(2025, 10, 12)):
+        from apps.accounting.services import AccountingService
+        from apps.bills.models import BillItem
+        b = self.bill(day, vat, net=net)
+        BillItem.objects.create(organisation=self.org, bill=b, description="x", quantity=1,
+                                unit_cost=D(net), line_total=D(net))
+        AccountingService.post_bill_approved_journal(self.org, b, self.user)
+        return b
+
+    def test_new_org_ledger_input_vat_is_on_1400_and_matches_the_bill_vat(self):
+        self._posted_bill()
+        rec = self.vat()["reconciliation"]
+        self.assertEqual(rec["input_vat_mapped_account"]["code"], "1400")
+        self.assertEqual([a["code"] for a in rec["gl_input_accounts"]], ["1400"])
+        self.assertEqual(rec["gl_input_vat"], D("7500.00"))
+        self.assertEqual(rec["input_vat_booked_by_documents"], D("7500.00"))
+        self.assertEqual(rec["input_difference"], D("0.00"))
+        self.assertFalse(rec["input_vat_account_needs_repair"])
+        self.assertIn("ONE", rec["note"])
+
+    def test_org_still_mapped_elsewhere_reads_the_mapped_account_plus_older_1400(self):
+        from apps.accounting.models import Account, AccountType, JournalEntry, JournalLine
+        from apps.accounting.services import AccountMappingService
+        custom = Account.objects.create(organisation=self.org, code="1499", name="Old Input VAT",
+                                        account_type=AccountType.ASSET)
+        mapping = AccountMappingService.get_or_create_mapping(self.org)
+        mapping.vat_input_account = custom
+        mapping.save()
+        self._posted_bill(vat="7500", day=date(2025, 10, 12))               # posts to the mapped 1499
+        # a bill journal booked before this release: 1400 whatever the mapping said
+        old = JournalEntry.objects.create(organisation=self.org, entry_date=date(2025, 10, 5),
+                                          status=JournalEntry.POSTED, description="old bill", created_by=self.user)
+        a1400 = Account.objects.get(organisation=self.org, code="1400")
+        ap = Account.objects.get(organisation=self.org, code="2001")
+        JournalLine.objects.create(journal_entry=old, account=a1400, debit=D("750.00"), credit=D("0"))
+        JournalLine.objects.create(journal_entry=old, account=ap, debit=D("0"), credit=D("750.00"))
+        self.bill(date(2025, 10, 5), "750", net="10000")                     # the document behind the old journal
+        rec = self.vat()["reconciliation"]
+        by_code = {a["code"]: a["movement"] for a in rec["gl_input_accounts"]}
+        self.assertEqual(by_code, {"1499": D("7500.00"), "1400": D("750.00")})
+        self.assertEqual(rec["gl_input_vat"], D("8250.00"))
+        self.assertEqual(rec["input_vat_booked_by_documents"], D("8250.00"))
+        self.assertEqual(rec["input_difference"], D("0.00"))
+        self.assertTrue(rec["input_vat_account_needs_repair"])
+        self.assertEqual(rec["input_vat_mapped_account"]["code"], "1499")
+
+
 class ManualAdjustmentAndSnapshotTests(VatBase):
     def test_snapshot_rows_are_ignored_and_manual_rows_counted(self):
         inv, _ = self.invoice(date(2025, 10, 3), [("100000", "7.5", self.p_std)])

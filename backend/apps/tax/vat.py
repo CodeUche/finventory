@@ -422,7 +422,13 @@ def _ledger_reconciliation(organisation, date_from, date_to, output_vat, booked,
 
     mapping = AccountMapping.objects.filter(organisation=organisation).first()
     out_acct = getattr(mapping, "vat_output_account", None) or AccountMappingService.suggest(organisation, "vat_output_account")
+    # Every flow now posts Input VAT to the ONE mapped vat_input_account (1400 for new organisations).
+    # An older organisation keeps its mapping until the repair_vat_input_account command is run, and
+    # bill journals booked before this release went to 1400 whatever the mapping said, so 1400 is still
+    # read as the "older" home when the mapping points somewhere else.
     mapped_in = getattr(mapping, "vat_input_account", None)
+    if mapped_in is None:
+        mapped_in = AccountMappingService.suggest(organisation, "vat_input_account")
     by_code = Account.objects.filter(organisation=organisation, code="1400", is_deleted=False).first()
 
     def _movement(acct, sign):
@@ -445,7 +451,8 @@ def _ledger_reconciliation(organisation, date_from, date_to, output_vat, booked,
         seen.add(acct.id)
         mv = _movement(acct, 1)
         input_accounts.append({"code": acct.code, "name": acct.name, "movement": mv,
-                               "role": "mapped vat_input_account" if acct == mapped_in else "bill journal (1400)"})
+                               "role": ("mapped vat_input_account (where all bill VAT is posted)" if acct == mapped_in
+                                        else "1400 (bill journals booked before the single Input VAT account)")})
         gl_input += mv
     return {
         "gl_output_vat": gl_output,
@@ -455,14 +462,19 @@ def _ledger_reconciliation(organisation, date_from, date_to, output_vat, booked,
         "output_difference": output_vat - gl_output,
         "input_vat_booked_by_documents": booked,
         "input_difference": booked - gl_input,
+        "input_vat_mapped_account": {"code": mapped_in.code, "name": mapped_in.name} if mapped_in else None,
+        "input_vat_account_needs_repair": bool(mapped_in and by_code and mapped_in.id != by_code.id),
         "input_split": {
             "recoverable": recoverable,
             "irrecoverable": irrecoverable,
             "goods_received_awaiting_supplier_invoice": awaiting,
         },
         "note": (
-            "Reported only; the ledger is not changed by this worksheet. The ledger currently posts ALL bill VAT "
-            "to input VAT (including VAT that is not claimable and should be a cost) and posts VAT on goods "
+            "Reported only; the ledger is not changed by this worksheet. Every flow now posts Input VAT to the ONE "
+            "mapped Input VAT account (1400 for new organisations; an older organisation stays on its mapping "
+            "until the repair_vat_input_account command is run, and while the mapping is not 1400 older bill "
+            "journals on 1400 are added in). The ledger still posts ALL bill VAT "
+            "to that account (including VAT that is not claimable and should be a cost) and posts VAT on goods "
             "received straight away, before the supplier invoice. So the ledger is compared with the VAT "
             "booked by documents (recoverable + not claimable + goods received awaiting invoice), not with "
             "the claimable figure. Any remaining difference is a real mismatch to investigate. Once "
