@@ -205,5 +205,4 @@ body:has(.sh-top){--toast-top:84px}
    The support chat bubble would sit on its buttons, so it steps aside while one is
    open; toasts move left of the panel so they never cover its header buttons. */
 body:has([data-drawer="open"]) [data-support-chat]{display:none}
-body:has([data-drawer="open"]){--toast-right:468px}
-@media(max-width:560px){ body:has([data-drawer="open"]){--toast-right:16px} }
+/* the toast offset itself is measured per drawer in src/lib/drawerToastOffset.ts */

@@ -11,6 +11,7 @@ import { initAnalytics } from './lib/analytics'
 import { checkForUpdates } from './lib/updater'
 import { retryPendingWipe, migrateLegacySavedData } from './lib/localDataGuard'
 import './styles/fonts.css'
+import { startDrawerToastOffset } from '@/lib/drawerToastOffset'
 import './index.css'
 import './styles/ds.css'
 
@@ -128,6 +129,7 @@ if ('serviceWorker' in navigator) {
 
 // If an earlier sign-out could not finish clearing saved data (blocked, or the
 // app was closed mid-wipe), finish it now. Until it succeeds nothing saved is readable.
+startDrawerToastOffset()
 void retryPendingWipe()
 // Older builds saved data without an owner; re-key it to the recorded owner or delete it (once).
 void migrateLegacySavedData()
@@ -152,8 +154,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
               borderRadius: '12px',
               fontSize: '14px',
             },
-            success: { iconTheme: { primary: '#22c55e', secondary: '#f8fafc' } },
-            error: { iconTheme: { primary: '#ef4444', secondary: '#f8fafc' } },
+            success: { iconTheme: { primary: '#13CC00', secondary: '#04122F' } },
+            error: { iconTheme: { primary: '#FF3336', secondary: '#04122F' } },
           }}
         />
       </NotificationsProvider>
