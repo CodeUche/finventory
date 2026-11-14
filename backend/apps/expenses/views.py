@@ -173,7 +173,8 @@ class ExpenseViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
         from django.core.exceptions import PermissionDenied
         from django.db import transaction
         from apps.accounting.exceptions import PeriodLockedError
-        from apps.accounting.services import AccountingService, safe_post_gl
+        from apps.accounting.exceptions import GLAccountNotConfigured
+        from apps.accounting.services import AccountingService
 
         org = self._get_organisation()
         label = serializer.validated_data.pop('category_label', None)
@@ -200,14 +201,27 @@ class ExpenseViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
                 for d in {old_date, expense.expense_date}:
                     if AccountingService.is_period_locked(org, d, user=user):
                         raise PermissionDenied(self._locked_message(d))
+                # Reverse the old entry and post the corrected one as ONE unit with
+                # the save above. If the new entry cannot be posted, the whole edit
+                # rolls back: the old entry and the old figures stay exactly as they
+                # were, rather than leaving the cost missing from the books.
                 try:
                     AccountingService.reverse_expense_journal(org, expense, user)
+                    AccountingService.post_expense_journal(org, expense, user)
                 except PeriodLockedError:
                     raise PermissionDenied(self._locked_message(old_date))
-                safe_post_gl(
-                    AccountingService.post_expense_journal, org, expense, user,
-                    model_instance=expense,
-                )
+                except GLAccountNotConfigured as exc:
+                    raise serializers.ValidationError(
+                        f"This change could not be recorded in your books because the "
+                        f"{exc.role.replace('_', ' ')} is not set up (Settings, GL Mapping). "
+                        f"Nothing was changed.")
+                except Exception:
+                    raise serializers.ValidationError(
+                        "This change could not be recorded in your books, so nothing was changed. "
+                        "Please try again or contact support.")
+                expense.gl_post_status = 'posted'
+                expense.gl_post_error = ''
+                expense.save(update_fields=['gl_post_status', 'gl_post_error'])
         after = {f: getattr(serializer.instance, f, None) for f in before}
         changes = {f: {'old': str(before[f]), 'new': str(after[f])} for f in before if str(before[f]) != str(after[f])}
         if ledger_changed:
@@ -230,6 +244,10 @@ class ExpenseViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
                 AccountingService.reverse_expense_journal(org, instance, user)
             except PeriodLockedError:
                 raise PermissionDenied(self._locked_message(instance.expense_date))
+            except Exception:
+                raise serializers.ValidationError(
+                    "This expense could not be taken out of your books, so it was not deleted. "
+                    "Please try again or contact support.")
             self._write_audit('delete', instance, {
                 'amount': str(instance.amount), 'expense_date': str(instance.expense_date),
                 'ledger': 'entry reversed',
