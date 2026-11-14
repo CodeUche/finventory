@@ -56,7 +56,7 @@ class OrganisationSerializer(serializers.ModelSerializer):
             "onboarding_completed",
             "strict_gl_mode", "business_type",
             "fixed_asset_capitalisation_threshold", "fixed_asset_revaluation_enabled",
-            "capital_allowance_nta2025_enabled", "enabled_payment_types", "charges_vat",
+            "capital_allowance_nta2025_enabled", "enabled_payment_types", "charges_vat", "input_vat_share_percent",
             "managing_firm_name", "managing_firm_logo",
             "parent_org", "entity_group_name", "child_entity_count",
         ]
@@ -74,6 +74,11 @@ class OrganisationSerializer(serializers.ModelSerializer):
             "bank_account_name": {"max_length": 200, "required": False, "allow_blank": True},
             "bank_sort_code": {"max_length": 20, "required": False, "allow_blank": True},
         }
+
+    def validate_input_vat_share_percent(self, value):
+        if value < 0 or value > 100:
+            raise serializers.ValidationError("Enter a share between 0 and 100.")
+        return value
 
     def validate_name(self, value):
         value = value.strip()

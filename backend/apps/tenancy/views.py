@@ -93,7 +93,7 @@ class OrganisationViewSet(viewsets.ModelViewSet):
     # refused, and admin is an explicitly granted, high-trust role.
     ADMIN_ONLY_FIELDS = frozenset({
         "bank_account_number", "bank_name", "bank_account_name", "bank_sort_code",
-        "charges_vat",
+        "charges_vat", "input_vat_share_percent",
     })
     # `is_active` stays owner-only: no UI anywhere sends it for an organisation
     # (every frontend `is_active` write targets email config, Paystack config or a

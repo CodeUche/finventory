@@ -162,6 +162,7 @@ class BillViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
             'reference': d.get('reference', ''),
             'tax_amount': Decimal(str(d.get('tax_amount', '0'))),
             'vat_treatment': d.get('vat_treatment', 'standard'),
+            'vat_not_claimable_reason': d.get('vat_not_claimable_reason', ''),
             'notes': d.get('notes', ''),
             'status': d.get('status', 'draft'),
         }
@@ -207,10 +208,12 @@ class BillViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        allowed = {'folder', 'status', 'notes', 'reference', 'issue_date', 'due_date', 'tax_amount', 'vat_treatment'}
+        allowed = {'folder', 'status', 'notes', 'reference', 'issue_date', 'due_date', 'tax_amount', 'vat_treatment', 'vat_not_claimable_reason'}
         data = {k: v for k, v in request.data.items() if k in allowed}
         if 'vat_treatment' in data and data['vat_treatment'] not in ('standard', 'zero_rated', 'exempt'):
             return Response({'error': 'vat_treatment must be standard, zero_rated or exempt.'}, status=status.HTTP_400_BAD_REQUEST)
+        if data.get('vat_not_claimable_reason', '') not in ('', 'private_use', 'entertainment', 'motor_vehicle', 'other'):
+            return Response({'error': 'Unknown not-claimable reason.'}, status=status.HTTP_400_BAD_REQUEST)
         org = self._get_organisation()
         if 'folder' in data:
             if data['folder']:
@@ -282,6 +285,7 @@ class BillViewSet(ExportMixin, TenantFilterMixin, viewsets.ModelViewSet):
             'reference': d.get('reference', ''),
             'tax_amount': Decimal(str(d.get('tax_amount', '0'))),
             'vat_treatment': d.get('vat_treatment', 'standard'),
+            'vat_not_claimable_reason': d.get('vat_not_claimable_reason', ''),
             'notes': d.get('notes', ''),
             'status': d.get('status', bill.status),
         }
