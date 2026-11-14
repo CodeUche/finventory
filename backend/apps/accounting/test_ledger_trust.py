@@ -569,3 +569,78 @@ class AccountDeactivationTests(TestCase):
         res = self.client.delete(f"/api/v1/accounting/accounts/{self.rent.id}/")
         self.assertEqual(res.status_code, 400)
         self.assertTrue(Account.objects.filter(id=self.rent.id).exists())
+
+
+def _force_unbalanced_entry(org, user, debit_account, credit_account, debit, credit):
+    """Write an unbalanced posted entry the way bad legacy data could: bypass
+    post_journal_entry (which refuses it) by creating a draft and flipping it."""
+    je = JournalEntry.objects.create(
+        organisation=org, description="Legacy bad entry", entry_date=timezone.now().date(),
+        status="draft", created_by=user)
+    JournalLine.objects.create(journal_entry=je, account=debit_account, debit=debit, credit=ZERO)
+    JournalLine.objects.create(journal_entry=je, account=credit_account, debit=ZERO, credit=credit)
+    JournalEntry.objects.filter(id=je.id).update(status="posted")
+    return je
+
+
+class BalanceSheetPlugPresentationTests(TestCase):
+    """Item 6: a balance sheet that only adds up because of a plug must say so."""
+
+    def setUp(self):
+        self.user, self.org = _setup("pl_owner@example.com", "PL Org")
+
+    def test_clean_ledger_reports_balanced_with_no_plug(self):
+        AccountingService.post_journal_entry(
+            self.org, "Sale", timezone.now().date(),
+            [(acct(self.org, "1001"), D("500"), ZERO), (acct(self.org, "4001"), ZERO, D("500"))],
+            self.user, ref="S1", source_type="manual", source_ref="s1")
+        bs = AccountingService.balance_sheet(self.org)
+        self.assertTrue(bs["balanced"])
+        self.assertFalse(bs["ledger_out_of_balance"])
+        self.assertEqual(bs["unreconciled_amount"], ZERO)
+        self.assertEqual([r for r in bs["equity"] if r.get("is_unreconciled")], [])
+
+    def test_out_of_balance_ledger_is_shown_openly_not_as_take_on_suspense(self):
+        # DR cash 1,000 / CR revenue 900: the books are 100 out.
+        _force_unbalanced_entry(self.org, self.user, acct(self.org, "1001"), acct(self.org, "4001"),
+                                D("1000"), D("900"))
+        bs = AccountingService.balance_sheet(self.org)
+        self.assertFalse(bs["balanced"])
+        self.assertTrue(bs["ledger_out_of_balance"])
+        self.assertEqual(bs["unreconciled_amount"], D("100"))
+        plug = [r for r in bs["equity"] if r.get("is_unreconciled")]
+        self.assertEqual(len(plug), 1)
+        self.assertEqual(plug[0]["code"], "DIFF")
+        self.assertEqual(plug[0]["name"], "Unreconciled difference (needs review)")
+        self.assertEqual(plug[0]["balance"], D("100"))
+        # Never disguised as the real opening-balance account.
+        self.assertEqual([r for r in bs["equity"] if r.get("code") == "3900" and r.get("is_computed")], [])
+        # The sheet still adds up, so the frontend keeps working.
+        self.assertEqual(bs["total_assets"], bs["total_liabilities"] + bs["total_equity"])
+        for key in ("assets", "liabilities", "equity", "total_assets", "total_liabilities",
+                    "total_equity", "current_year_earnings", "as_of"):
+            self.assertIn(key, bs)
+
+    def test_api_exposes_the_new_fields(self):
+        from apps.accounting.tests import _auth_client
+        _force_unbalanced_entry(self.org, self.user, acct(self.org, "1001"), acct(self.org, "4001"),
+                                D("1000"), D("900"))
+        client = _auth_client(self.user, self.org)
+        res = client.get("/api/v1/accounting/accounts/balance_sheet/")
+        self.assertEqual(res.status_code, 200)
+        self.assertIs(res.data["ledger_out_of_balance"], True)
+        self.assertEqual(Decimal(str(res.data["unreconciled_amount"])), D("100"))
+        self.assertIs(res.data["balanced"], False)
+
+    def test_gl_health_alerts_on_a_non_zero_plug(self):
+        clean = AccountingService.get_gl_health(self.org)["reconciliations"]
+        self.assertFalse(clean["ledger_out_of_balance"])
+        self.assertTrue(clean["all_reconciled"])
+        _force_unbalanced_entry(self.org, self.user, acct(self.org, "1001"), acct(self.org, "4001"),
+                                D("1000"), D("900"))
+        rec = AccountingService.get_gl_health(self.org)["reconciliations"]
+        self.assertTrue(rec["ledger_out_of_balance"])
+        self.assertEqual(rec["unreconciled_difference"], D("100"))
+        self.assertFalse(rec["all_reconciled"])
+        checklist = AccountingService.period_close_checklist(self.org)
+        self.assertFalse(checklist["ready"])

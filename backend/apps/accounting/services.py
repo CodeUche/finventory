@@ -992,9 +992,14 @@ class AccountingService:
 
         Current-year P&L net (revenue − expenses − COGS) is rolled into equity as a
         computed "Current Year Earnings" line so profit not yet closed to retained
-        earnings still lands on the sheet. Any residual (rounding) difference is
-        plugged to a Take-On Suspense line so the statement ALWAYS presents balanced,
-        per the client requirement.
+        earnings still lands on the sheet.
+
+        A balance sheet must balance whenever the books are right, so a difference
+        here means something is wrong in the ledger. The sheet still adds up (the
+        difference is shown on its own line, "Unreconciled difference (needs
+        review)", code DIFF, never in the Take-On Suspense account 3900), but it no
+        longer hides the problem: `balanced` is False, `ledger_out_of_balance` is
+        True and `unreconciled_amount` carries the figure.
         """
         accounts = Account.all_objects.filter(organisation=organisation)   # see trial_balance
         assets_data, liabilities_data, equity_data = [], [], []
@@ -1038,16 +1043,18 @@ class AccountingService:
         total_liabilities = sum((r['balance'] for r in liabilities_data), Decimal('0'))
         total_equity = sum((r['balance'] for r in equity_data), Decimal('0'))
 
-        # Safety plug: with a clean double-entry ledger the difference is 0 by
-        # construction, but any residual is posted to Take-On Suspense so the sheet
-        # is never presented as "not balanced".
+        # With a clean double-entry ledger the difference is 0 by construction.
+        # Any residual is shown openly on its own line so the sheet still adds up,
+        # but it is never dressed up as a real account and never reported as balanced.
         difference = total_assets - (total_liabilities + total_equity)
-        if abs(difference) > Decimal('0.01'):
+        out_of_balance = abs(difference) > Decimal('0.01')
+        if out_of_balance:
             equity_data.append({
-                'code': '3900',
-                'name': 'Take-On Suspense (auto-balance)',
+                'code': 'DIFF',
+                'name': 'Unreconciled difference (needs review)',
                 'balance': difference,
                 'is_computed': True,
+                'is_unreconciled': True,
             })
             total_equity += difference
 
@@ -1059,7 +1066,11 @@ class AccountingService:
             'total_liabilities': total_liabilities,
             'total_equity': total_equity,
             'current_year_earnings': current_year_earnings,
-            'balanced': abs(total_assets - (total_liabilities + total_equity)) < Decimal('0.01'),
+            # Honest: False whenever the sheet only adds up because of the
+            # unreconciled-difference line above.
+            'balanced': not out_of_balance,
+            'ledger_out_of_balance': out_of_balance,
+            'unreconciled_amount': difference if out_of_balance else Decimal('0'),
             'as_of': str(as_of) if as_of else None,
         }
 
@@ -2938,13 +2949,19 @@ class AccountingService:
             # the expense account, hence the sign flip.
             _recon('Till Cash Over & Short', over_short_acct, -Decimal(str(till_variance))),
         ]
+        # The balance sheet shows any gap between assets and liabilities + equity
+        # on an "Unreconciled difference" line. A non-zero one is a ledger fault.
+        unreconciled = AccountingService.balance_sheet(organisation)['unreconciled_amount']
         return {
             'pre_plug_imbalance': suspense_balance,   # the real break the auto-plug hides
             'is_balanced': abs(suspense_balance) < Decimal('0.01'),
+            'unreconciled_difference': unreconciled,
+            'ledger_out_of_balance': unreconciled != 0,
             'subledgers': subledgers,
             'all_reconciled': (
                 all(s['reconciled'] for s in subledgers)
                 and abs(suspense_balance) < Decimal('0.01')
+                and unreconciled == 0
             ),
         }
 
@@ -2980,7 +2997,11 @@ class AccountingService:
                 'key': 'subledgers_reconciled',
                 'label': 'Subledgers tie to their control accounts',
                 'passed': bool(recon.get('all_reconciled', True)),
-                'detail': '' if not unreconciled else 'Variance in: ' + ', '.join(unreconciled),
+                'detail': ' '.join(filter(None, [
+                    ('Variance in: ' + ', '.join(unreconciled)) if unreconciled else '',
+                    f"The books are out of balance by {recon.get('unreconciled_difference')}."
+                    if recon.get('ledger_out_of_balance') else '',
+                ])),
             },
         ]
         return {'ready': all(c['passed'] for c in checks), 'checks': checks}
