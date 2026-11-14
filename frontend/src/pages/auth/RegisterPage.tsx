@@ -122,7 +122,7 @@ export default function RegisterPage() {
   const update = (field: string) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm((f) => ({ ...f, [field]: e.target.value }))
 
-  const strengthColor = pwStrength <= 1 ? '#ef4444' : pwStrength <= 3 ? '#FECB01' : '#34C98A'
+  const strengthColor = pwStrength <= 1 ? '#FF3336' : pwStrength <= 3 ? '#FECB01' : '#13CC00'
 
   // ── Check-your-email screen ──────────────────────────────────────────────────
   if (registered) {
@@ -215,7 +215,7 @@ export default function RegisterPage() {
                 {PW_CRITERIA.map((c, i) => (
                   <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
                     {pwMet[i]
-                      ? <CheckCircle2 size={13} style={{ color: '#34C98A', flex: 'none' }} />
+                      ? <CheckCircle2 size={13} style={{ color: 'var(--ok, #13CC00)', flex: 'none' }} />
                       : <XCircle size={13} style={{ color: 'var(--muted)', flex: 'none', opacity: .6 }} />}
                     <span style={{ fontSize: 12, color: pwMet[i] ? '#34C98A' : 'var(--muted)' }}>{c.label}</span>
                   </div>
@@ -236,7 +236,7 @@ export default function RegisterPage() {
               aria-label="Confirm password"
             />
             {form.password_confirm.length > 0 && form.password !== form.password_confirm && (
-              <p style={{ fontSize: 12, color: '#ef4444', marginTop: 6 }}>Passwords do not match</p>
+              <p style={{ fontSize: 12, color: 'var(--err, #FF6669)', marginTop: 6 }}>Passwords do not match</p>
             )}
           </div>
 

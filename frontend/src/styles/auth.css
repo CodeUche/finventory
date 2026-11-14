@@ -19,7 +19,7 @@
   --toggle-bd:rgba(222,216,255,.7);
   --soft-bg:rgba(255,255,255,.05); --soft-bd:rgba(255,255,255,.12);
   --brand-name:#FFFFFF; --brand-tag:#E4E1F5;
-  --focus:#A499FF;
+  --focus:#A499FF; --ok:#13CC00; --err:#FF6669;
 
   position:relative; min-height:100vh; overflow-x:hidden;
   font-family:'Roboto',system-ui,sans-serif; color:var(--ink);
@@ -41,7 +41,7 @@ html.light .audity-auth{
   --toggle-bd:#7C86C4;
   --soft-bg:rgba(255,255,255,.45); --soft-bd:rgba(0,0,0,.1);
   --brand-name:#1C1B1F; --brand-tag:#2E2D33;
-  --focus:#110099;
+  --focus:#110099; --ok:#0A6B0A; --err:#990003;
 }
 @keyframes au-fade{from{opacity:0}to{opacity:1}}
 @keyframes au-rise{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
