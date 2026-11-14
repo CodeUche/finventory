@@ -93,6 +93,11 @@ resource "aws_rds_cluster" "main" {
   skip_final_snapshot       = false
   final_snapshot_identifier = "${var.project}-aurora-final"
 
+  # Refuse any delete of this cluster (console, CLI or a terraform replace) until
+  # someone deliberately sets this back to false in a reviewed commit. Applies in
+  # place; it does not restart or replace the cluster.
+  deletion_protection = true
+
   serverlessv2_scaling_configuration {
     min_capacity = var.aurora_min_acu
     max_capacity = var.aurora_max_acu
