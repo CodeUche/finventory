@@ -453,23 +453,54 @@ class AccountDeactivationTests(TestCase):
         spare.refresh_from_db()
         self.assertFalse(spare.is_active)
 
-    def test_zero_balance_with_open_period_postings_is_refused(self):
+    def _net_to_zero(self):
         AccountingService.post_journal_entry(
             self.org, "Refund", self.today,
             [(acct(self.org, "1001"), D("1000"), ZERO), (self.rent, ZERO, D("1000"))],
             self.user, ref="R2", source_type="manual", source_ref="r2")
+
+    def test_zero_balance_with_postings_this_year_is_allowed_with_a_warning(self):
+        self._net_to_zero()
+        res = self._deactivate(self.rent)
+        self.assertEqual(res.status_code, 200, res.content[:300])
+        self.assertIn("postings this year", res.data["warning"])
+        self.rent.refresh_from_db()
+        self.assertFalse(self.rent.is_active)
+
+    def test_no_warning_when_there_were_no_postings_this_year(self):
+        spare = Account.objects.create(
+            organisation=self.org, code="6160", name="Spare", account_type=AccountType.EXPENSE)
+        res = self._deactivate(spare)
+        self.assertEqual(res.status_code, 200)
+        self.assertNotIn("warning", res.data)
+
+    def test_account_used_in_gl_mapping_cannot_be_deactivated(self):
+        self._net_to_zero()
+        m = AccountMapping.objects.get(organisation=self.org)
+        m.bank_charges_account = self.rent
+        m.save()
         res = self._deactivate(self.rent)
         self.assertEqual(res.status_code, 400)
-        self.assertIn("open period", str(res.data))
+        self.assertIn("Bank Charges account in GL Mapping", str(res.data))
+        self.rent.refresh_from_db()
+        self.assertTrue(self.rent.is_active)
 
-    def test_zero_balance_with_postings_only_in_a_locked_month_can_be_deactivated(self):
-        AccountingService.post_journal_entry(
-            self.org, "Refund", self.today,
-            [(acct(self.org, "1001"), D("1000"), ZERO), (self.rent, ZERO, D("1000"))],
-            self.user, ref="R2", source_type="manual", source_ref="r2")
-        FinancialPeriod.objects.create(organisation=self.org, year=self.today.year,
-                                       month=self.today.month, is_locked=True)
-        self.assertEqual(self._deactivate(self.rent).status_code, 200)
+    def test_account_that_is_a_product_default_cannot_be_deactivated(self):
+        from apps.inventory.models import Product
+        self._net_to_zero()
+        Product.objects.create(organisation=self.org, sku="AD-1", name="Thing", product_type="physical",
+                               selling_price=D("5"), cost_price=D("3"), cogs_account=self.rent)
+        res = self._deactivate(self.rent)
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("1 product(s)", str(res.data))
+
+    def test_account_that_is_an_expense_category_default_cannot_be_deactivated(self):
+        from apps.expenses.models import ExpenseCategory
+        self._net_to_zero()
+        ExpenseCategory.objects.create(organisation=self.org, name="Site costs", account=self.rent)
+        res = self._deactivate(self.rent)
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("expense categor", str(res.data))
 
     def test_reports_still_balance_and_show_an_inactive_account_that_has_a_balance(self):
         # Force the bad state directly (older data, or a path that bypasses the API).

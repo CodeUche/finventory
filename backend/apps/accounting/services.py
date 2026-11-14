@@ -935,33 +935,64 @@ class AccountingService:
         return fy.start_date if fy else _date(as_of.year, 1, 1)
 
     @staticmethod
+    def account_references(account):
+        """Where this account is in use as a default, as plain phrases (empty when nowhere)."""
+        from django.db.models import Q as _Q
+        from .serializers import MAPPING_ROLES, MAPPING_ROLE_LABELS
+        found = []
+        mapping = AccountMapping.objects.filter(organisation=account.organisation).first()
+        if mapping:
+            for role in MAPPING_ROLES:
+                if getattr(mapping, f'{role}_id', None) == account.id:
+                    found.append(f"the {MAPPING_ROLE_LABELS.get(role, role)} account in GL Mapping")
+        from .models import ItemClassGLDefault
+        n = ItemClassGLDefault.objects.filter(organisation=account.organisation).filter(
+            _Q(inventory_account=account) | _Q(sales_account=account)
+            | _Q(cogs_account=account) | _Q(wages_account=account)).count()
+        if n:
+            found.append(f"an item-class default account ({n})")
+        from apps.inventory.models import Product
+        n = Product.objects.filter(organisation=account.organisation).filter(
+            _Q(inventory_account=account) | _Q(sales_account=account)
+            | _Q(cogs_account=account) | _Q(wages_account=account)).count()
+        if n:
+            found.append(f"the default account on {n} product(s)")
+        from apps.expenses.models import ExpenseCategory
+        n = ExpenseCategory.objects.filter(organisation=account.organisation, account=account).count()
+        if n:
+            found.append(f"the account of {n} expense categor{'y' if n == 1 else 'ies'}")
+        return found
+
+    @staticmethod
     def account_deactivation_block(account):
         """
         Why this account must not be deactivated, or None when it may be.
 
-        Reports read the ledger by account, so hiding an account that still
-        carries a balance (or has postings in the open year) would silently
-        unbalance the trial balance and balance sheet. Zero-balance accounts
-        with no open-year activity can be deactivated freely.
+        Reports read the ledger by account, so hiding an account that still carries
+        a balance would silently unbalance the trial balance and balance sheet. An
+        account that new postings are still routed to (GL Mapping, product, item
+        class or expense-category default) would also start failing them.
         """
-        from django.utils import timezone
         balance = AccountingService._ledger_balance(account)
         if balance != 0:
             return f"This account still has a balance of {balance:,.2f}. Move it first."
-        today = timezone.now().date()
-        year_start = AccountingService.fiscal_year_start(account.organisation, today)
-        locked_months = {
-            (p.year, p.month) for p in FinancialPeriod.objects.filter(
-                organisation=account.organisation, is_locked=True)
-        }
-        open_lines = JournalLine.objects.filter(
+        refs = AccountingService.account_references(account)
+        if refs:
+            return "This account is still in use as " + "; ".join(refs) + ". Choose another account there first."
+        return None
+
+    @staticmethod
+    def account_deactivation_warning(account):
+        """A caution (not a block) for deactivating an account with postings this fiscal year."""
+        from django.utils import timezone
+        year_start = AccountingService.fiscal_year_start(account.organisation, timezone.now().date())
+        has = JournalLine.objects.filter(
             journal_entry__organisation=account.organisation, account=account,
             journal_entry__status='posted', journal_entry__entry_date__gte=year_start,
-        ).values_list('journal_entry__entry_date', flat=True)
-        for d in open_lines:
-            if (d.year, d.month) not in locked_months:
-                return ("This account has postings in the current open period. "
-                        "Close or lock that period first, or leave the account active.")
+        ).exists()
+        if has:
+            return ("This account had postings this year. It nets to zero, so reports stay correct, "
+                    "and its history stays visible, but it can no longer be chosen for new entries.")
         return None
 
     @staticmethod
