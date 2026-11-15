@@ -749,6 +749,8 @@ api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
     // real request failed and set it back, and the amber banner plus the
     // "Connection failed" toast blinked roughly every 850ms for as long as the
     // outage lasted. Traced 2026-09-20 on /tenancy/.../my_membership/.
+    // The leading semicolon guards against the line above being read as a call.
+    // eslint-disable-next-line no-extra-semi
     ;(config as ExtConfig)._fromCache = true
     const cacheUrl = (config.url ?? '') + (config.params ? '?' + new URLSearchParams(config.params as Record<string, string>).toString() : '')
     config.adapter = async (): Promise<AxiosResponse> => {
