@@ -25,8 +25,8 @@ export const DS_CHART = {
  * good / bad / warning. Use DS_CHART.good / bad / warn only where a number means that.
  */
 export const CHART_SERIES = [
-  DS_CHART.primary, DS_CHART.accent, DS_CHART.secondary, DS_CHART.sky,
-  DS_CHART.tertiary, DS_CHART.lilac, DS_CHART.neutral, '#4933FF', '#565DDC', '#2C35D3',
+  DS_CHART.primary, DS_CHART.accent, '#2C35D3', DS_CHART.sky, DS_CHART.tertiary,
+  DS_CHART.neutral, '#565DDC', DS_CHART.secondary, DS_CHART.lilac, '#4933FF',
 ] as const
 
 /** Ageing buckets, healthy to critical. */
