@@ -426,5 +426,10 @@ html.light .ds button > span.rounded-full[class*="translate-x"]{box-shadow:0 0 0
   position:sticky;right:0;z-index:2;
   box-shadow:-8px 0 8px -8px rgba(0,0,0,.45);
 }
-.ds .overflow-x-auto > table thead :is(th):last-child{background:linear-gradient(var(--ds-th-bg),var(--ds-th-bg)),var(--ds-modal-bg)}
-.ds .overflow-x-auto > table tbody td:last-child{background:linear-gradient(var(--ds-row),var(--ds-row)),var(--ds-modal-bg)}
+/* Solid versions of the table colours so the sticky cell matches its row at rest and on hover
+   (a see-through cell would show the scrolled content behind it). */
+.ds{--tb-head:#3E478A;--tb-row:#1D1C30;--tb-hover:#26284A}
+html.light .ds{--tb-head:#CFDAFB;--tb-row:#FAFAFA;--tb-hover:#EEF1FD}
+.ds .overflow-x-auto > table thead th:last-child{background:var(--tb-head)}
+.ds .overflow-x-auto > table tbody td:last-child{background:var(--tb-row)}
+.ds .overflow-x-auto > table tbody tr:hover td:last-child{background:var(--tb-hover)}
