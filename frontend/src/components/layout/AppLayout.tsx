@@ -431,7 +431,7 @@ export default function AppLayout() {
           </div>
         )}
         {/* The till fills the whole content area and scrolls inside itself. */}
-        <main className={isRegister ? 'flex flex-1 min-h-0 flex-col overflow-hidden animate-fade-in' : 'flex-1 overflow-y-auto p-4 lg:p-6 animate-fade-in'}>
+        <main className={isRegister ? 'flex flex-1 min-h-0 flex-col overflow-hidden animate-fade-in' : 'flex-1 overflow-y-auto p-4 lg:p-6 pb-24 lg:pb-24 animate-fade-in'}>
           {/* Gate: hold child pages until org context is resolved so their
               initial fetches never fire with a null X-Organisation-ID header.
               This prevents the "Failed to load xyz" flash for superusers who
