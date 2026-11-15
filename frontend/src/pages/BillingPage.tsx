@@ -60,12 +60,12 @@ const MODULE_ROWS: ModuleRow[] = [
 ]
 
 const STATUS_COLORS: Record<string, string> = {
-  active: 'text-green-400 bg-green-400/10',
-  trialing: 'text-brand-400 bg-brand-500/10',
-  past_due: 'text-amber-400 bg-amber-400/10',
-  canceled: 'text-red-400 bg-red-400/10',
-  unpaid: 'text-red-400 bg-red-400/10',
-  incomplete: 'text-slate-400 bg-slate-400/10',
+  active: 'text-green-400 bg-[var(--ds-modal-bg)] border border-surface-600',
+  trialing: 'text-brand-300 bg-[var(--ds-modal-bg)] border border-brand-500/40',
+  past_due: 'text-amber-400 bg-[var(--ds-modal-bg)] border border-surface-600',
+  canceled: 'text-red-400 bg-[var(--ds-modal-bg)] border border-surface-600',
+  unpaid: 'text-red-400 bg-[var(--ds-modal-bg)] border border-surface-600',
+  incomplete: 'text-slate-400 bg-[var(--ds-modal-bg)] border border-surface-600',
 }
 
 function fmt(amount: string) {
@@ -396,7 +396,7 @@ export default function BillingPage() {
                   if (currentPlan) handleSubscribe(currentPlan)
                 }}
                 disabled={subscribing !== null}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold bg-[#E6E0FF] hover:bg-[#D2CCFF] text-[#110099] transition-colors disabled:opacity-50"
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold bg-brand-500 hover:bg-brand-600 text-white transition-colors disabled:opacity-50"
               >
                 {subscribing !== null ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
                 Renew Plan
@@ -782,13 +782,13 @@ function PartnerChannelSection({
             <div className="flex items-center gap-1 bg-surface-800 border border-surface-700 rounded-xl p-1">
               <button
                 onClick={() => setPartnerInterval('monthly')}
-                className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-colors ${partnerInterval === 'monthly' ? 'bg-[#E6E0FF] text-[#110099]' : 'text-slate-400 hover:text-white'}`}
+                className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-colors ${partnerInterval === 'monthly' ? 'bg-brand-500 text-white' : 'text-slate-400 hover:text-white'}`}
               >
                 Monthly
               </button>
               <button
                 onClick={() => setPartnerInterval('annual')}
-                className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold transition-colors ${partnerInterval === 'annual' ? 'bg-[#E6E0FF] text-[#110099]' : 'text-slate-400 hover:text-white'}`}
+                className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold transition-colors ${partnerInterval === 'annual' ? 'bg-brand-500 text-white' : 'text-slate-400 hover:text-white'}`}
               >
                 Annual
                 <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${partnerInterval === 'annual' ? 'bg-white/20 text-white' : 'bg-green-500/20 text-green-400'}`}>
@@ -877,8 +877,8 @@ function PartnerChannelSection({
                       isCurrent
                         ? 'bg-green-500/10 text-green-400 cursor-default disabled:!opacity-100'
                         : tier.slug === 'partner-pro'
-                        ? 'bg-[#E6E0FF] hover:bg-[#D2CCFF] text-[#110099] disabled:opacity-50'
-                        : 'bg-[#E6E0FF] hover:bg-[#D2CCFF] text-[#110099] disabled:opacity-50'
+                        ? 'bg-brand-500 hover:bg-brand-600 text-white disabled:opacity-50'
+                        : 'bg-brand-500 hover:bg-brand-600 text-white disabled:opacity-50'
                     }`}
                   >
                     {isSubscribing ? (
@@ -923,7 +923,7 @@ function PlanModuleList({ slug }: { slug: string }) {
             <Icon size={13} className={included ? 'text-slate-400 shrink-0' : 'text-slate-700 shrink-0'} />
             <span className={`text-xs ${included ? 'text-slate-300' : 'text-slate-600'}`}>{row.label}</span>
             {badge && (
-              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-brand-500/15 text-brand-300 ml-auto shrink-0">{badge}</span>
+              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-[var(--ds-modal-bg)] border border-brand-500/40 text-brand-300 ml-auto shrink-0">{badge}</span>
             )}
             {/* Tooltip */}
             <span className="pointer-events-none absolute left-0 bottom-full mb-1.5 w-56 rounded-xl bg-surface-800 border border-surface-600 px-3 py-2 text-xs text-slate-300 leading-relaxed opacity-0 group-hover/mod:opacity-100 transition-opacity duration-150 z-[9999] shadow-xl">
