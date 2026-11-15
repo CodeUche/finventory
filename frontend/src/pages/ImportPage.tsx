@@ -550,8 +550,8 @@ export default function ImportPage() {
               </div>
             </div>
             {result.warehouses_created !== undefined && (
-              <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 flex items-center gap-3">
-                <CheckCircle size={20} className="text-amber-400" />
+              <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 flex items-center gap-3">
+                <CheckCircle size={20} className="text-emerald-400" />
                 <div>
                   <p className="text-xs text-slate-400">Warehouses</p>
                   <p className="text-xl font-bold text-emerald-400">{result.warehouses_created}</p>

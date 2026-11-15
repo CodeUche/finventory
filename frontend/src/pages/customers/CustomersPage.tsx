@@ -744,14 +744,14 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
                 >
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 rounded-lg bg-orange-500/15 flex items-center justify-center">
-                      <MinusCircle size={15} className="text-orange-400" />
+                      <MinusCircle size={15} className="text-brand-400" />
                     </div>
                     <div className="text-left">
                       <p className="text-sm font-medium text-white">Issue Debit Note</p>
                       <p className="text-[10px] text-slate-500">Raise a charge against this account</p>
                     </div>
                   </div>
-                  <ChevronRight size={14} className="text-slate-500 group-hover:text-orange-400 transition-colors" />
+                  <ChevronRight size={14} className="text-slate-500 group-hover:text-brand-400 transition-colors" />
                 </button>
                 <button
                   onClick={() => setBalanceParty(selected)}
@@ -946,12 +946,12 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
                           {(statementData.debits ?? []).map((d: any) => (
                             <div key={d.id} className="flex justify-between items-start gap-2">
                               <span className="text-[11px] text-slate-400 truncate">{d.description || d.reference || 'Manual Debit'}</span>
-                              <span className="text-[11px] font-semibold text-orange-400 whitespace-nowrap">{formatCurrency(d.amount)}</span>
+                              <span className="text-[11px] font-semibold text-white whitespace-nowrap">{formatCurrency(d.amount)}</span>
                             </div>
                           ))}
                           <div className="flex justify-between items-center border-t border-surface-700 pt-1.5 mt-1">
                             <span className="text-[11px] text-slate-300 font-semibold">Total</span>
-                            <span className="text-[11px] font-bold text-orange-400">{formatCurrency(statementData.summary.total_debits ?? '0')}</span>
+                            <span className="text-[11px] font-bold text-white">{formatCurrency(statementData.summary.total_debits ?? '0')}</span>
                           </div>
                         </>
                       )}
@@ -1121,10 +1121,10 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
                                   return (
                                     <tr key={`dbt-${ei}`} className="border-b border-surface-700/40 hover:bg-surface-700/20 bg-orange-500/[0.03]">
                                       <td className="px-2 py-2.5 text-slate-400 whitespace-nowrap">{formatDate(e.date)}</td>
-                                      <td className="px-2 py-2.5 font-mono text-orange-400 text-[11px] whitespace-nowrap">{d.reference || '—'}</td>
+                                      <td className="px-2 py-2.5 font-mono text-white text-[11px] whitespace-nowrap">{d.reference || '—'}</td>
                                       <td className="px-2 py-2.5 text-slate-300 overflow-hidden text-ellipsis whitespace-nowrap">{d.description || 'Manual Debit'}</td>
                                       <td className="px-2 py-2.5" /><td className="px-2 py-2.5" /><td className="px-2 py-2.5" /><td className="px-2 py-2.5" />
-                                      <td className="px-2 py-2.5 text-orange-400 text-right whitespace-nowrap font-medium">{formatCurrency(parseFloat(d.amount))}</td>
+                                      <td className="px-2 py-2.5 text-white text-right whitespace-nowrap font-medium">{formatCurrency(parseFloat(d.amount))}</td>
                                       <td className="px-2 py-2.5" />
                                       <td className={`px-2 py-2.5 text-right font-semibold whitespace-nowrap ${balance > 0 ? 'text-amber-400' : 'text-green-400'}`}>{formatCurrency(balance)}</td>
                                     </tr>

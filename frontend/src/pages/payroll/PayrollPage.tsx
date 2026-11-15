@@ -170,7 +170,7 @@ const STATUTORY_ITEMS = (pensionProvider: string, run: PayrollRun) => {
     },
     {
       key: 'pension_emp', label: 'Pension (Employee 8%)', amount: run.total_pension_employee,
-      color: 'text-orange-400',
+      color: 'text-brand-400',
       portal: pfa?.portal ?? 'https://www.pencom.gov.ng', portalLabel: pfa?.name ?? 'PENCOM',
       deadline: 'Remit within 7 days of salary payment',
       bankDetails: {
@@ -740,7 +740,7 @@ export default function PayrollPage() {
               </div>
               <div className="card p-4">
                 <p className="text-xs text-slate-400">Pension (Emp)</p>
-                <p className="text-xl font-bold text-orange-400 mt-1">{formatCurrency(latestRun.total_pension_employee)}</p>
+                <p className="text-xl font-bold text-white mt-1">{formatCurrency(latestRun.total_pension_employee)}</p>
               </div>
               <div className="card p-4">
                 <p className="text-xs text-slate-400">Total Net Pay</p>
@@ -891,7 +891,7 @@ export default function PayrollPage() {
                             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4 p-3 bg-surface-800/50 rounded-xl border border-surface-700">
                               <div><p className="text-xs text-slate-500">Salaries (Net)</p><p className="text-sm font-mono text-white font-semibold">{formatCurrency(r.total_net)}</p></div>
                               <div><p className="text-xs text-slate-500">PAYE Tax</p><p className="text-sm font-mono text-red-400 font-semibold">{formatCurrency(r.total_paye)}</p></div>
-                              <div><p className="text-xs text-slate-500">Pension (Total)</p><p className="text-sm font-mono text-orange-400 font-semibold">{formatCurrency(parseFloat(r.total_pension_employee ?? '0') + parseFloat(r.total_pension_employer ?? '0'))}</p></div>
+                              <div><p className="text-xs text-slate-500">Pension (Total)</p><p className="text-sm font-mono text-white font-semibold">{formatCurrency(parseFloat(r.total_pension_employee ?? '0') + parseFloat(r.total_pension_employer ?? '0'))}</p></div>
                               <div className="border-l border-surface-600 pl-3">
                                 <p className="text-xs text-slate-400">Total Cash Outflow</p>
                                 <p className="text-sm font-mono text-white font-bold">
@@ -935,7 +935,7 @@ export default function PayrollPage() {
                                           ? p.tax_authority_name.replace(/ (State )?Internal Revenue Service|State Board of Internal Revenue/i, '')
                                           : <span className="text-amber-500" title="No state of residence set \u2014 PAYE cannot be routed">Unassigned</span>}
                                       </td>
-                                      <td className="py-2 pr-3 font-mono text-orange-400">{formatCurrency(p.employee_pension)}</td>
+                                      <td className="py-2 pr-3 font-mono text-white">{formatCurrency(p.employee_pension)}</td>
                                       <td className="py-2 pr-3 font-mono text-blue-400">{formatCurrency(p.nhf)}</td>
                                       <td className="py-2 pr-3 font-mono text-violet-400">{parseFloat(p.benefit_deductions || '0') > 0 ? formatCurrency(p.benefit_deductions ?? 0) : <span className="text-slate-600">\u2014</span>}</td>
                                       <td className="py-2 pr-3 font-mono text-rose-400">{parseFloat(p.penalty_deductions || '0') > 0 ? formatCurrency(p.penalty_deductions) : <span className="text-slate-600">—</span>}</td>
