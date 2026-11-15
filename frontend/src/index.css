@@ -209,7 +209,7 @@ html.light .input {
 }
 
 html.light .input::placeholder {
-  color: #94a3b8;
+  color: #5F5E66; /* 5.9:1 on white, 5.3:1 on the kit's #FAFAFA */
 }
 
 html.light .btn-secondary {
