@@ -506,3 +506,84 @@ body[data-popup-open] [data-support-chat]{display:none !important}
 /* Bubble: a little see-through while idle so a row action behind it stays visible. */
 button[data-support-chat]{opacity:.92}
 button[data-support-chat]:hover, button[data-support-chat]:focus-visible{opacity:1}
+
+/* ============================================================================
+   POP-UPS — the designer's pattern for every pop-up (Pop Up 5, 10, 58, 111, 121)
+   ========================================================================== */
+
+/* Colours: cream card in light, solid pink Delete, navy outline for Cancel. */
+.ds{--ds-del-bg:#6B2A33;--ds-del-tx:#FFD3D6}
+html.light .ds{--ds-del-bg:#FFCCCC;--ds-del-tx:#990000;--ds-modal-bg:#FFFEF8}
+
+/* The dim cover must sit over the sidebar and top bar too. A card with a blur filter becomes the
+   "screen" for any pop-up written inside it (so the cover stopped at the card's edge), and a focused
+   card is lifted above the page. Cards that hold a pop-up lose both. */
+.ds :is(.card, .card-sm, .stat-card, .ds-stat, .ds-proc-panel):has(.fixed.inset-0){
+  backdrop-filter:none;-webkit-backdrop-filter:none;
+}
+.ds .card:focus-within:has(.fixed.inset-0){position:static;z-index:auto}
+
+/* Room above and below every centred pop-up (toasts sit in the top band), and the pop-up never grows
+   past the screen: its middle scrolls inside the window. */
+.ds .fixed.inset-0.items-center:not([data-drawer]){padding:4rem 1rem}
+.ds .fixed.inset-0.items-center > :is(.card, .card-sm, .bg-surface-800, .bg-surface-900, .ds-modal):not(.absolute){
+  max-height:calc(100vh - 8rem);max-height:calc(100dvh - 8rem);overflow-y:auto;overscroll-behavior:contain;
+}
+/* When a pop-up is taller than the window, its title row and button row stay in view. */
+.ds [data-kit-scrolls] [data-kit-header]{
+  position:sticky;top:calc(-1 * var(--kit-pad-top, 0px));z-index:3;background:var(--ds-modal-bg);padding-bottom:.5rem;
+  box-shadow:0 calc(-1 * var(--kit-pad-top, 0px)) 0 var(--ds-modal-bg), 0 1px 0 var(--ds-card-bd);
+}
+.ds [data-kit-scrolls] [data-kit-footer]{
+  position:sticky;bottom:calc(-1 * var(--kit-pad-bottom, 0px));z-index:3;background:var(--ds-modal-bg);padding-top:.75rem;
+  box-shadow:0 var(--kit-pad-bottom, 0px) 0 var(--ds-modal-bg), 0 -1px 0 var(--ds-card-bd);
+}
+
+/* Field labels in a pop-up: bold, link/navy, sentence case (not small uppercase grey). */
+.ds .fixed.inset-0 label:is(.label, .block, .text-xs, .text-sm):not(:has(input[type="checkbox"], input[type="radio"], input[type="file"])),
+.ds .fixed.inset-0 .label,
+.ds .fixed.inset-0 label.block > span:first-child:is(.text-xs, .text-sm){
+  color:var(--ds-link);font-size:15px;font-weight:700;text-transform:none;letter-spacing:normal;
+}
+.ds .fixed.inset-0 :is(label.label, .label, label.block){margin-bottom:.375rem}
+
+/* Cancel: always the outlined button (never a text link, never the old grey button). */
+.ds .fixed.inset-0 button[data-kit-role="cancel"]{
+  display:inline-flex;align-items:center;justify-content:center;gap:.5rem;min-height:40px;padding:.5rem 1.25rem;
+  background:transparent;color:var(--ds-outline-tx);border:1.5px solid var(--ds-outline);border-radius:8px;
+  font-size:14px;font-weight:600;box-shadow:none;text-decoration:none;
+}
+.ds .fixed.inset-0 button[data-kit-role="cancel"]:hover:not(:disabled){background:color-mix(in srgb,var(--ds-outline) 12%,transparent);color:var(--ds-outline-tx)}
+.ds .fixed.inset-0 button[data-kit-role="cancel"]:disabled{opacity:.55;border-style:dashed}
+
+/* Delete / confirm-delete: the solid pink button (instead of a red outline). */
+.ds .ds-btn-delete,
+.ds .fixed.fixed.inset-0.inset-0 button:is(.btn-danger, .bg-red-600, .bg-red-500):not(.btn-primary):not(.btn-secondary):not(.btn-ghost){
+  display:inline-flex;align-items:center;justify-content:center;gap:.5rem;min-height:40px;padding:.5rem 1.25rem;
+  background:var(--ds-del-bg);color:var(--ds-del-tx);border:1.5px solid transparent;border-radius:8px;
+  font-size:14px;font-weight:600;box-shadow:none;cursor:pointer;
+}
+.ds .ds-btn-delete:hover:not(:disabled),
+.ds .fixed.fixed.inset-0.inset-0 button:is(.btn-danger, .bg-red-600, .bg-red-500):not(.btn-primary):not(.btn-secondary):not(.btn-ghost):hover:not(:disabled){
+  background:var(--ds-del-bg);filter:brightness(.95);color:var(--ds-del-tx);
+}
+.ds .ds-btn-delete:disabled{opacity:.6;cursor:not-allowed}
+.ds .ds-btn-delete:focus-visible{outline:2px solid var(--ds-link);outline-offset:2px}
+.ds .fixed.fixed.inset-0.inset-0 button:is(.bg-red-600, .bg-red-500) :is(.text-white, .text-always-white){color:inherit !important}
+
+/* The one confirm / delete pop-up (lib/dialog.tsx). */
+.ds .ds-dialog{
+  position:relative;width:100%;max-width:30rem;padding:2rem 2rem 1.75rem;text-align:center;
+  background:var(--ds-modal-bg);border:1.5px solid var(--ds-link);border-radius:16px;
+  box-shadow:0 20px 60px rgba(0,0,0,.35);max-height:calc(100dvh - 8rem);overflow-y:auto;
+}
+.ds .ds-dialog-x{
+  position:absolute;top:.75rem;right:.75rem;display:flex;align-items:center;justify-content:center;
+  width:36px;height:36px;border-radius:999px;background:transparent;border:0;color:var(--ds-title);cursor:pointer;
+}
+.ds .ds-dialog-x:hover{background:color-mix(in srgb,var(--ds-link) 12%,transparent)}
+.ds .ds-dialog-title{font-size:20px;font-weight:700;line-height:1.3;color:var(--ds-title);margin:0;padding:0 1.75rem}
+.ds .ds-dialog-text{margin:.75rem 0 0;font-size:15px;line-height:1.5;color:var(--ds-ink);white-space:pre-line}
+.ds .ds-dialog .input{margin-top:1rem;text-align:left}
+.ds .ds-dialog-actions{display:flex;gap:.75rem;margin-top:1.5rem}
+.ds .ds-dialog-actions > button{flex:1 1 0;min-height:44px}
