@@ -8,6 +8,7 @@
  *  • Valuation tab: donut (category breakdown) + horizontal bar (top 10 by value).
  *    Shows inventory concentration risk and capital allocation.
  */
+import { useChartKit } from '@/lib/chartKit'
 import { asList } from '@/lib/asList'
 import { useState, useEffect, useMemo } from 'react'
 import {
@@ -31,7 +32,6 @@ import { saveBlobFile } from '@/lib/saveBlobFile'
 import { CHART_SERIES, DS_CHART } from '@/lib/chartTheme'
 
 // Chart style constants — dark mode defaults (index.css overrides for light mode)
-const axisTickStyle = { fill: '#94a3b8', fontSize: 11 }
 const CHART_COLORS = [...CHART_SERIES]
 const trunc = (s: string, n = 16) => s?.length > n ? s.slice(0, n) + '…' : (s ?? '—')
 
@@ -542,24 +542,9 @@ async function exportValuationExcel(report: ValuationReport) {
 export default function StockReportsPage() {
   const { organisation } = useAuthStore()
 
-  // ── Theme detection ──────────────────────────────────────────────────────────
-  const [isLight, setIsLight] = useState(() =>
-    typeof document !== 'undefined' && document.documentElement.classList.contains('light')
-  )
-  useEffect(() => {
-    const h = (e: Event) => setIsLight((e as CustomEvent).detail === 'light')
-    window.addEventListener('themechange', h)
-    return () => window.removeEventListener('themechange', h)
-  }, [])
-
-  // Chart styles derived from theme
-  const tooltipStyle = isLight
-    ? { backgroundColor: '#0f2347', border: '1px solid #1C2F5C', borderRadius: '12px', color: '#f1f5f9', fontSize: 12 }
-    : { backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '12px', color: '#f1f5f9', fontSize: 12 }
-  const chartGrid   = isLight ? '#cbd5e1' : '#334155'
-  // Reorder level bar: white-ish in dark mode, deep navy in light mode
-  const reorderFill  = isLight ? '#1e3a5f' : '#cbd5e1'
-  const legendColor  = isLight ? '#334155' : '#94a3b8'
+  // Chart colours come from the shared chart kit (same in dark and light).
+  const { light: isLight, tooltipStyle, tooltipLabelStyle, tooltipItemStyle, axisTickStyle, grid: chartGrid, cursor, legendColor } = useChartKit()
+  const reorderFill  = isLight ? '#1e3a5f' : '#A9A6C4'
   // ─────────────────────────────────────────────────────────────────────────────
 
   const [tab, setTab] = useState<ReportTab>('availability')
@@ -898,10 +883,10 @@ export default function StockReportsPage() {
                   <YAxis type="category" dataKey="name" tick={axisTickStyle}
                     axisLine={false} tickLine={false} width={100} />
                   <Tooltip
+                    cursor={cursor}
                     contentStyle={tooltipStyle}
-                    labelStyle={{ color: '#94a3b8' }}
-                    itemStyle={{ color: '#f1f5f9' }}
-                    cursor={{ fill: isLight ? 'rgba(28,47,92,0.08)' : 'rgba(255,255,255,0.05)' }}
+                    labelStyle={tooltipLabelStyle}
+                    itemStyle={tooltipItemStyle}
                   />
                   <Legend
                     content={() => (
@@ -1085,12 +1070,11 @@ export default function StockReportsPage() {
                   <XAxis type="number" tick={axisTickStyle} axisLine={false} tickLine={false} />
                   <YAxis type="category" dataKey="name" tick={axisTickStyle}
                     axisLine={false} tickLine={false} width={100} />
-                  <Tooltip
+                  <Tooltip cursor={cursor}
                     contentStyle={tooltipStyle}
-                    labelStyle={{ color: '#94a3b8' }}
-                    itemStyle={{ color: '#f1f5f9' }}
+                    labelStyle={tooltipLabelStyle}
+                    itemStyle={tooltipItemStyle}
                     formatter={(v: number) => [`${v.toLocaleString()} units`, 'Used']}
-                    cursor={{ fill: isLight ? 'rgba(28,47,92,0.08)' : 'rgba(255,255,255,0.07)' }}
                   />
                   <Bar dataKey="units" name="Units Used" fill={DS_CHART.primary} radius={[0, 4, 4, 0]} />
                 </BarChart>
@@ -1333,7 +1317,7 @@ export default function StockReportsPage() {
                           ))}
                         </Pie>
                         <Tooltip contentStyle={tooltipStyle}
-                          labelStyle={{ color: '#94a3b8' }} itemStyle={{ color: '#f1f5f9' }}
+                          labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle}
                           formatter={(v: number) => formatMoney(v)} />
                         <Legend
                           wrapperStyle={{ fontSize: 10, paddingTop: 6, color: legendColor }}
@@ -1360,10 +1344,9 @@ export default function StockReportsPage() {
                           tickFormatter={v => formatMoney(v)} />
                         <YAxis type="category" dataKey="name" tick={axisTickStyle}
                           axisLine={false} tickLine={false} width={100} />
-                        <Tooltip contentStyle={tooltipStyle}
-                          labelStyle={{ color: '#94a3b8' }} itemStyle={{ color: '#f1f5f9' }}
+                        <Tooltip cursor={cursor} contentStyle={tooltipStyle}
+                          labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle}
                           formatter={(v: number) => [formatMoney(v), 'Value']}
-                          cursor={{ fill: isLight ? 'rgba(28,47,92,0.08)' : 'rgba(255,255,255,0.05)' }}
                         />
                         <Bar dataKey="value" name="Inventory Value" fill={DS_CHART.primary} radius={[0, 4, 4, 0]} />
                       </BarChart>

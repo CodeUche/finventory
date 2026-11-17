@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useChartKit } from '@/lib/chartKit'
 import {
   BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Legend,
@@ -46,11 +47,6 @@ interface ExpiringDocument {
 
 const COLORS = [...CHART_SERIES]
 
-const tooltipStyle = {
-  backgroundColor: '#161b26', border: '1px solid rgba(255,255,255,0.1)',
-  borderRadius: 8, fontSize: 12,
-}
-
 function StatTile({ label, value, icon: Icon, tone = 'default' }: {
   label: string; value: string | number; icon: React.ElementType; tone?: 'default' | 'up' | 'down'
 }) {
@@ -69,6 +65,7 @@ function StatTile({ label, value, icon: Icon, tone = 'default' }: {
 }
 
 export default function HRAnalyticsPage() {
+  const { tooltipStyle, tooltipLabelStyle, tooltipItemStyle, axisTickStyle, grid, cursor, legendColor } = useChartKit()
   const [loading, setLoading] = useState(true)
   const [selectedYear, setSelectedYear] = useState<number | null>(null)
   const year = selectedYear ?? CURRENT_YEAR
@@ -174,12 +171,13 @@ export default function HRAnalyticsPage() {
               ) : (
                 <ResponsiveContainer width="100%" height={240}>
                   <BarChart data={monthlyTrend}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                    <XAxis dataKey="month" tick={{ fontSize: 10, fill: '#94a3b8' }} />
-                    <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} allowDecimals={false} />
-                    <Tooltip contentStyle={tooltipStyle} />
-                    <Bar dataKey="joiners" fill={DS_CHART.good} radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="leavers" fill={DS_CHART.bad} radius={[4, 4, 0, 0]} />
+                    <CartesianGrid strokeDasharray="3 3" stroke={grid} />
+                    <XAxis dataKey="month" tick={{ ...axisTickStyle, fontSize: 10 }} />
+                    <YAxis tick={{ ...axisTickStyle, fontSize: 10 }} allowDecimals={false} />
+                    <Tooltip cursor={cursor} contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
+                    <Legend wrapperStyle={{ fontSize: 11, paddingTop: 8 }} formatter={(v: string) => <span style={{ color: legendColor }}>{v}</span>} />
+                    <Bar dataKey="joiners" name="Joiners" fill={DS_CHART.good} radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="leavers" name="Leavers" fill={DS_CHART.bad} radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               )}
@@ -197,8 +195,8 @@ export default function HRAnalyticsPage() {
                     <Pie data={deptChartData} cx="50%" cy="45%" innerRadius={55} outerRadius={90} paddingAngle={3} dataKey="gross">
                       {deptChartData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
                     </Pie>
-                    <Tooltip contentStyle={tooltipStyle} formatter={(v: number) => formatCurrency(v)} />
-                    <Legend wrapperStyle={{ fontSize: 11, paddingTop: 8 }} />
+                    <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} formatter={(v: number) => formatCurrency(v)} />
+                    <Legend wrapperStyle={{ fontSize: 11, paddingTop: 8 }} formatter={(v: string) => <span style={{ color: legendColor }}>{v}</span>} />
                   </PieChart>
                 </ResponsiveContainer>
               )}
@@ -229,10 +227,10 @@ export default function HRAnalyticsPage() {
               ) : (
                 <ResponsiveContainer width="100%" height={200}>
                   <BarChart data={tenureChartData} layout="vertical">
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                    <XAxis type="number" tick={{ fontSize: 10, fill: '#94a3b8' }} allowDecimals={false} />
-                    <YAxis dataKey="name" type="category" tick={{ fontSize: 10, fill: '#94a3b8' }} width={60} />
-                    <Tooltip contentStyle={tooltipStyle} />
+                    <CartesianGrid strokeDasharray="3 3" stroke={grid} />
+                    <XAxis type="number" tick={{ ...axisTickStyle, fontSize: 10 }} allowDecimals={false} />
+                    <YAxis dataKey="name" type="category" tick={{ ...axisTickStyle, fontSize: 10 }} width={60} />
+                    <Tooltip cursor={cursor} contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
                     <Bar dataKey="value" fill={DS_CHART.secondary} radius={[0, 4, 4, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
