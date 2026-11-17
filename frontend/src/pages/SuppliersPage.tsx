@@ -530,7 +530,7 @@ export default function SuppliersPage() {
               ) : stmtError ? (
                 <div role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 p-5 text-center space-y-3">
                   <p className="text-sm text-red-400">We could not load this statement. Check your connection and try again.</p>
-                  <button type="button" onClick={() => loadStatement(selected.id)} className="btn-secondary text-xs">Retry</button>
+                  <div className="flex justify-center"><button type="button" onClick={() => loadStatement(selected.id)} className="btn-secondary text-xs">Retry</button></div>
                 </div>
               ) : !statementData ? null : (
                 <>

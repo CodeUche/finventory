@@ -466,7 +466,7 @@ export default function ChartOfAccountsPage() {
                   <td className="px-5 py-3.5">{a.is_system ? <span className="badge-blue">System</span> : <span className="text-slate-600">—</span>}</td>
                   <td className="px-5 py-3.5" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center gap-2">
-                      <button onClick={() => openEdit(a)} className="p-1.5 text-slate-500 hover:text-white hover:bg-surface-600 rounded-lg transition-colors"><Edit2 size={14} /></button>
+                      <button onClick={() => openEdit(a)} title="Edit account" aria-label={`Edit ${a.name}`} className="p-1.5 text-slate-500 hover:text-white hover:bg-surface-600 rounded-lg transition-colors"><Edit2 size={14} /></button>
                       <button
                         onClick={() => handleDelete(a)}
                         disabled={a.is_system}
