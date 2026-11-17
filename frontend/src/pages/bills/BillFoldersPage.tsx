@@ -1,3 +1,4 @@
+import DateInput from '@/components/DateInput'
 import { useEffect, useState, useCallback } from 'react'
 import { useIsMounted } from '@/hooks/useIsMounted'
 import { confirmDialog } from '@/lib/dialog'
@@ -325,7 +326,7 @@ export default function BillFoldersPage() {
               </div>
               <div>
                 <label className="label">Folder Date</label>
-                <input type="date" className="input" value={folderForm.folder_date} onChange={(e) => setFolderForm((f) => ({ ...f, folder_date: e.target.value }))} />
+                <DateInput className="w-full" value={folderForm.folder_date} onChange={(iso) => setFolderForm((f) => ({ ...f, folder_date: iso }))} />
               </div>
               {currentFolder && (
                 <p className="text-xs text-slate-500 flex items-center gap-1.5">

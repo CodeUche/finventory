@@ -1,3 +1,4 @@
+import DateInput from '@/components/DateInput'
 import { useEffect, useState } from 'react'
 import { X, Loader2, CheckCircle2, AlertTriangle, Banknote, ClipboardCheck } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -187,10 +188,10 @@ export default function OffboardingDrawer({
             </div>
             <div>
               <label className="text-xs text-slate-400 mb-1 block">Last working day</label>
-              <input
-                type="date" className="input"
+              <DateInput
+                className="w-full"
                 value={newCase.last_working_day}
-                onChange={(e) => setNewCase({ ...newCase, last_working_day: e.target.value })}
+                onChange={(iso) => setNewCase({ ...newCase, last_working_day: iso })}
               />
             </div>
             <div>

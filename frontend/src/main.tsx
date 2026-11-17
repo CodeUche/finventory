@@ -6,6 +6,8 @@ import App from './App'
 import { NotificationsProvider } from './contexts/NotificationsContext'
 import { initTheme } from './hooks/useTheme'
 import { DialogHost } from '@/lib/dialog'
+import { SelectEnhancer } from '@/components/KitSelect'
+import { installGlobalEscape } from '@/lib/escapeStack'
 import { useAuthStore } from './store/authStore'
 import { initAnalytics } from './lib/analytics'
 import { checkForUpdates } from './lib/updater'
@@ -130,6 +132,7 @@ if ('serviceWorker' in navigator) {
 // If an earlier sign-out could not finish clearing saved data (blocked, or the
 // app was closed mid-wipe), finish it now. Until it succeeds nothing saved is readable.
 startDrawerToastOffset()
+installGlobalEscape()
 void retryPendingWipe()
 // Older builds saved data without an owner; re-key it to the recorded owner or delete it (once).
 void migrateLegacySavedData()
@@ -140,6 +143,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       <NotificationsProvider>
         <App />
         <DialogHost />
+        <SelectEnhancer />
         <Toaster
           position="top-right"
           // Sits just under the top bar when one is on screen (the offset is set

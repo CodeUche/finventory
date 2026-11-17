@@ -509,11 +509,11 @@ export default function SuppliersPage() {
               <div className="flex flex-wrap items-end gap-3">
                 <div>
                   <label className="label">From</label>
-                  <input type="date" className="input" value={stmtFrom} onChange={(e) => setStmtFrom(e.target.value)} />
+                  <DateInput className="w-full" value={stmtFrom} onChange={setStmtFrom} />
                 </div>
                 <div>
                   <label className="label">To</label>
-                  <input type="date" className="input" value={stmtTo} onChange={(e) => setStmtTo(e.target.value)} />
+                  <DateInput className="w-full" value={stmtTo} onChange={setStmtTo} />
                 </div>
                 <button onClick={() => loadStatement(selected.id)} className="btn-primary" disabled={loadingStmt}>
                   {loadingStmt ? <Loader2 size={16} className="animate-spin" /> : 'Apply'}

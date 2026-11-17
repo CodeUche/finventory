@@ -1,3 +1,4 @@
+import DateInput from '@/components/DateInput'
 import { useState, useRef, useEffect, useMemo } from 'react'
 import { confirmDialog, promptDialog } from '@/lib/dialog'
 import { useNavigate, useSearchParams } from 'react-router-dom'
@@ -1725,11 +1726,10 @@ export default function SettingsPage() {
 
                   <label className="block">
                     <span className="text-xs text-slate-400">Year Start Date</span>
-                    <input
-                      type="date"
+                    <DateInput
                       value={fyForm.start_date}
-                      onChange={(e) => setFyForm((f) => ({ ...f, start_date: e.target.value }))}
-                      className="input w-full mt-1"
+                      onChange={(iso) => setFyForm((f) => ({ ...f, start_date: iso }))}
+                      className="w-full mt-1"
                     />
                   </label>
 

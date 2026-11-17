@@ -433,3 +433,70 @@ html.light .ds{--tb-head:#CFDAFB;--tb-row:#FAFAFA;--tb-hover:#EEF1FD}
 .ds .overflow-x-auto > table thead th:last-child{background:var(--tb-head)}
 .ds .overflow-x-auto > table tbody td:last-child{background:var(--tb-row)}
 .ds .overflow-x-auto > table tbody tr:hover td:last-child{background:var(--tb-hover)}
+
+/* ============================================================================
+   KIT CONTROLS — dropdowns, dates, ticks (one look for every screen)
+   ========================================================================== */
+
+/* ---- the closed dropdown: the kit chevron instead of the operating system's ----
+   The open list is drawn by components/KitSelect.tsx. On touch phones the native picker
+   opens, so its option colours are set too (dark and light). */
+.ds{
+  --ds-chevron:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23E6E0FF' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  --ds-pop-bg:#1B1A2E; --ds-pop-hover:rgba(164,153,255,.18); --ds-pop-bd:#A499FF;
+}
+html.light .ds{
+  --ds-chevron:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%231C1B1F' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  --ds-pop-bg:#FFFFFF; --ds-pop-hover:#E6EBFB; --ds-pop-bd:#110099;
+}
+.ds select:not([multiple]):not([size]){
+  -webkit-appearance:none;-moz-appearance:none;appearance:none;
+  background-image:var(--ds-chevron);background-repeat:no-repeat;
+  background-position:right .75rem center;background-size:16px 16px;
+  padding-right:2.25rem;cursor:pointer;text-overflow:ellipsis;
+}
+.ds select:disabled{cursor:not-allowed}
+.ds select option, .ds select optgroup{background-color:var(--ds-pop-bg);color:var(--ds-ink)}
+.ds select:focus-visible{outline:2px solid var(--ds-link);outline-offset:2px}
+
+/* ---- the open list ---- */
+.kit-select-panel{
+  position:fixed;z-index:10050;display:flex;flex-direction:column;overflow:hidden;
+  background:var(--ds-pop-bg);color:var(--ds-ink);
+  border:1.5px solid var(--ds-pop-bd);border-radius:10px;
+  box-shadow:0 14px 40px rgba(0,0,0,.35);font-family:'Roboto',system-ui,sans-serif;font-size:15px;
+}
+.kit-select-search{
+  display:flex;align-items:center;gap:8px;padding:8px 12px;flex:none;
+  border-bottom:1px solid var(--ds-card-bd);color:var(--ds-muted);
+}
+.kit-select-search input{
+  flex:1;min-width:0;background:transparent;border:0;outline:0;color:var(--ds-ink);font-size:15px;
+}
+.kit-select-search input::placeholder{color:var(--ds-muted)}
+.kit-select-list{overflow-y:auto;padding:4px;outline:none;flex:1;min-height:0}
+.kit-select-option{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:8px 10px;border-radius:6px;cursor:pointer;color:var(--ds-ink);
+}
+.kit-select-option[data-active="true"]{background:var(--ds-pop-hover)}
+.kit-select-option[aria-selected="true"]{font-weight:600;color:var(--ds-link)}
+.kit-select-option[aria-disabled="true"]{opacity:.45;cursor:not-allowed}
+.kit-select-option-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kit-select-group{padding:8px 10px 4px;font-size:12px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:var(--ds-muted)}
+.kit-select-empty{padding:12px;text-align:center;color:var(--ds-muted)}
+
+/* ---- native date / time boxes: kit colours, readable calendar icon ---- */
+.ds input[type="date"], .ds input[type="time"], .ds input[type="month"], .ds input[type="datetime-local"]{color-scheme:dark;min-height:2.5rem}
+html.light .ds input[type="date"], html.light .ds input[type="time"],
+html.light .ds input[type="month"], html.light .ds input[type="datetime-local"]{color-scheme:light}
+.ds input[type="date"]::-webkit-calendar-picker-indicator,
+.ds input[type="time"]::-webkit-calendar-picker-indicator,
+.ds input[type="month"]::-webkit-calendar-picker-indicator,
+.ds input[type="datetime-local"]::-webkit-calendar-picker-indicator{cursor:pointer;opacity:.85}
+.ds input[type="date"]::-webkit-calendar-picker-indicator:hover{opacity:1}
+
+/* ---- ticks and round buttons: the kit colour, never the browser's bright blue ---- */
+.ds input[type="checkbox"], .ds input[type="radio"]{accent-color:var(--ds-link)}
+.ds input[type="checkbox"]:focus-visible, .ds input[type="radio"]:focus-visible{outline:2px solid var(--ds-link);outline-offset:2px}
+.ds input[type="range"]{accent-color:var(--ds-link)}
