@@ -379,7 +379,8 @@ class CorsPreflightAllowedHeadersTests(TestCase):
         with override_settings(CORS_ALLOWED_ORIGINS=self.ALLOWED_ORIGINS,
                                CORS_ALLOW_ALL_ORIGINS=False):
             resp = self._preflight("http://localhost:5174", "x-file-name,content-type")
-        allowed = {h.strip().lower() for h in resp["Access-Control-Allow-Headers"].split(",")}
+        header = resp["Access-Control-Allow-Headers"]
+        allowed = {h.strip().lower() for h in header.split(",")}
         self.assertIn("x-file-name", allowed)
 
 

@@ -17,7 +17,12 @@ from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.permissions import IsManagerOrSuperuser, IsStaff, requires_module, user_can_run_report
+from apps.core.permissions import (
+    IsManagerOrSuperuser,
+    IsStaff,
+    requires_module,
+    user_can_run_report,
+)
 
 # The owner's per-person "Reports" tick. Without it these views checked only
 # role, so a team member refused /customers/ and /sales/invoices/ could read
@@ -59,7 +64,12 @@ class BaseDateRangeView(APIView):
     marks content that is intentionally Reports-tick-only; a test pins the list.
     """
 
-    permission_classes = [IsAuthenticated, IsStaff, _ModAccess_reports, _ReportRouteAccess]
+    permission_classes = [
+        IsAuthenticated,
+        IsStaff,
+        _ModAccess_reports,
+        _ReportRouteAccess,
+    ]
     module = None
     also_modules = ()
     owner_admin_only = False

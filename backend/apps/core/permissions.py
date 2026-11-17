@@ -352,7 +352,9 @@ def _effective_module_level(user, org, module_key: str) -> str:
     membership = user.memberships.filter(organisation=org, is_active=True).first()
     if not membership:
         return "none"
-    perm = ModulePermission.objects.filter(membership=membership, module=module_key).first()
+    perm = ModulePermission.objects.filter(
+        membership=membership, module=module_key
+    ).first()
     return perm.access_level if perm else "none"
 
 
@@ -490,7 +492,9 @@ def user_can_run_report(request, report_def) -> bool:
     if getattr(report_def, "owner_admin_only", False):
         return False
 
-    modules = (report_def.module,) + tuple(getattr(report_def, "also_modules", ()) or ())
+    modules = (report_def.module,) + tuple(
+        getattr(report_def, "also_modules", ()) or ()
+    )
     for module_key in modules:
         if ctx.levels.get(module_key, "none") == "none":
             return False

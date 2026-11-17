@@ -131,7 +131,11 @@ class QuoteViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                 {'error': f"Could not convert this quote: {type(e).__name__}: {e}"}, status=400
             )
 
-    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsStaff, _PlanQuotes, _ModAccess_quotes])
+    @action(
+        detail=True,
+        methods=['post'],
+        permission_classes=[IsAuthenticated, IsStaff, _PlanQuotes, _ModAccess_quotes],
+    )
     def send_email(self, request, pk=None):
         """POST /api/v1/quotes/{id}/send_email/ — send quote to customer by email."""
         quote = self.get_object()

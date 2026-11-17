@@ -46,7 +46,9 @@ def _tick_member(org, email, role, modules, level="view"):
     """A member with a tick for every module in `modules` (all at `level`)."""
     user, client, membership = _member(org, email, role)
     for m in modules:
-        ModulePermission.objects.create(membership=membership, module=m, access_level=level)
+        ModulePermission.objects.create(
+            membership=membership, module=m, access_level=level
+        )
     return user, client, membership
 
 
@@ -93,7 +95,9 @@ class ReportsOnlyMemberTests(TestCase):
         self.owner_client = _auth_client(self.owner, self.org)
 
     def _check(self, role):
-        _, client, _ = _tick_member(self.org, f"rp_{role}_only@example.com", role, ["reports"])
+        _, client, _ = _tick_member(
+            self.org, f"rp_{role}_only@example.com", role, ["reports"]
+        )
         for rd in ALL_REPORTS:
             with self.subTest(role=role, key=rd.key):
                 res = _run(client, rd.key)
@@ -125,7 +129,9 @@ class ReportsOnlyMemberTests(TestCase):
 
     def test_forbidden_response_is_plain_and_leaks_nothing(self):
         _employee(self.org, basic="987654")
-        _, client, _ = _tick_member(self.org, "rp_leak@example.com", "staff", ["reports"])
+        _, client, _ = _tick_member(
+            self.org, "rp_leak@example.com", "staff", ["reports"]
+        )
         res = _run(client, "employee-list")
         self.assertEqual(res.status_code, 403)
         body = res.content.decode()
@@ -141,11 +147,17 @@ class ReportsOnlyMemberTests(TestCase):
         self.assertEqual(_run(client, "payroll-report").status_code, 403)
 
     def test_export_formats_share_the_same_gate(self):
-        _, client, _ = _tick_member(self.org, "rp_fmt@example.com", "staff", ["reports"])
+        _, client, _ = _tick_member(
+            self.org, "rp_fmt@example.com", "staff", ["reports"]
+        )
         for fmt in ("excel", "pdf"):
             with self.subTest(fmt=fmt):
-                self.assertEqual(_run(client, "employee-list", format=fmt).status_code, 403)
-                self.assertEqual(_run(client, "profit-loss", format=fmt).status_code, 200)
+                self.assertEqual(
+                    _run(client, "employee-list", format=fmt).status_code, 403
+                )
+                self.assertEqual(
+                    _run(client, "profit-loss", format=fmt).status_code, 200
+                )
 
 
 class PerModuleTests(TestCase):
@@ -162,7 +174,9 @@ class PerModuleTests(TestCase):
             _, client, _ = _tick_member(
                 self.org, f"pm_{n}@example.com", role, ["reports", module])
             for rd in ALL_REPORTS:
-                single = rd.module in ("reports", module) and set(rd.also_modules) <= {module}
+                single = rd.module in ("reports", module) and set(rd.also_modules) <= {
+                    module
+                }
                 single = single and not rd.owner_admin_only or rd.module == "reports"
                 with self.subTest(module=module, key=rd.key):
                     res = _run(client, rd.key)
@@ -172,8 +186,12 @@ class PerModuleTests(TestCase):
                         self.assertEqual(res.status_code, 403)
 
     def test_payments_needs_both_bills_and_expenses(self):
-        _, only_bills, _ = _tick_member(self.org, "pm_b@example.com", "staff", ["reports", "bills"])
-        _, only_exp, _ = _tick_member(self.org, "pm_e@example.com", "staff", ["reports", "expenses"])
+        _, only_bills, _ = _tick_member(
+            self.org, "pm_b@example.com", "staff", ["reports", "bills"]
+        )
+        _, only_exp, _ = _tick_member(
+            self.org, "pm_e@example.com", "staff", ["reports", "expenses"]
+        )
         _, both, _ = _tick_member(
             self.org, "pm_be@example.com", "staff", ["reports", "bills", "expenses"])
         self.assertEqual(_run(only_bills, "payments").status_code, 403)
@@ -181,7 +199,9 @@ class PerModuleTests(TestCase):
         self.assertEqual(_run(both, "payments").status_code, 200)
 
     def test_module_tick_alone_without_reports_tick_is_still_refused(self):
-        _, client, _ = _tick_member(self.org, "pm_noreports@example.com", "staff", ["payroll"])
+        _, client, _ = _tick_member(
+            self.org, "pm_noreports@example.com", "staff", ["payroll"]
+        )
         self.assertEqual(_run(client, "employee-list").status_code, 403)
 
     def test_view_level_tick_is_enough_to_read(self):
@@ -193,7 +213,12 @@ class PerModuleTests(TestCase):
         """Normal accounting screens are IsAccountant; the report must not be looser."""
         for module in sorted(ACCOUNTANT_MODULES):
             _, client, _ = _tick_member(
-                self.org, f"pm_role_{module}@example.com", "staff", ["reports", module], "edit")
+                self.org,
+                f"pm_role_{module}@example.com",
+                "staff",
+                ["reports", module],
+                "edit",
+            )
             for rd in ALL_REPORTS:
                 if rd.module == module:
                     with self.subTest(module=module, key=rd.key):
@@ -224,12 +249,16 @@ class PayrollPlanGateTests(TestCase):
         SubscriptionService.upgrade_plan(org, plan)
         org.refresh_from_db()
 
-        _, client, _ = _tick_member(org, "pg_staff@example.com", "staff", ["reports", "payroll"])
+        _, client, _ = _tick_member(
+            org, "pg_staff@example.com", "staff", ["reports", "payroll"]
+        )
         self.assertEqual(_run(client, "employee-list").status_code, 403)
         # Reports-owned reports are unaffected by the payroll plan gate.
         self.assertEqual(_run(client, "profit-loss").status_code, 200)
         # Owners keep seeing everything.
-        self.assertEqual(_run(_auth_client(owner, org), "employee-list").status_code, 200)
+        self.assertEqual(
+            _run(_auth_client(owner, org), "employee-list").status_code, 200
+        )
 
 
 class CatalogFilteringTests(TestCase):
@@ -244,7 +273,9 @@ class CatalogFilteringTests(TestCase):
         return sorted(r["key"] for r in res.json()["reports"])
 
     def test_reports_only_member_sees_only_reports_owned_keys(self):
-        _, client, _ = _tick_member(self.org, "cat_ro@example.com", "staff", ["reports"])
+        _, client, _ = _tick_member(
+            self.org, "cat_ro@example.com", "staff", ["reports"]
+        )
         self.assertEqual(self._keys(client), EXPECTED_REPORTS_OWNED)
 
     def test_owner_and_admin_see_all_34(self):
@@ -256,11 +287,15 @@ class CatalogFilteringTests(TestCase):
     def test_member_with_one_module_sees_reports_plus_that_module(self):
         _, client, _ = _tick_member(
             self.org, "cat_pay@example.com", "staff", ["reports", "payroll"])
-        expected = sorted(rd.key for rd in ALL_REPORTS if rd.module in ("reports", "payroll"))
+        expected = sorted(
+            rd.key for rd in ALL_REPORTS if rd.module in ("reports", "payroll")
+        )
         self.assertEqual(self._keys(client), expected)
 
     def test_no_reports_tick_gets_403(self):
-        _, client, _ = _tick_member(self.org, "cat_none@example.com", "staff", ["payroll"])
+        _, client, _ = _tick_member(
+            self.org, "cat_none@example.com", "staff", ["payroll"]
+        )
         self.assertEqual(client.get("/api/v1/reports/catalog/").status_code, 403)
 
 
@@ -307,15 +342,22 @@ class BulkExportTests(TestCase):
             return Response({"message": "sent", "skipped": skipped})
 
         with mock.patch.object(ReportBulkExportView, "_email_file", fake_email):
-            res = self._post(self.client, ["profit-loss", "employee-list", "payroll-report"],
-                             email_to="someone@example.com")
+            res = self._post(
+                self.client,
+                ["profit-loss", "employee-list", "payroll-report"],
+                email_to="someone@example.com",
+            )
         self.assertEqual(res.status_code, 200)
         self.assertEqual(self._sheet_titles(captured["bytes"]), ["Profit & Loss"])
         self.assertEqual(
-            sorted(s["key"] for s in captured["skipped"]), ["employee-list", "payroll-report"])
+            sorted(s["key"] for s in captured["skipped"]),
+            ["employee-list", "payroll-report"],
+        )
 
     def test_owner_bulk_export_contains_the_sheets(self):
-        res = self._post(_auth_client(self.owner, self.org), ["profit-loss", "employee-list"])
+        res = self._post(
+            _auth_client(self.owner, self.org), ["profit-loss", "employee-list"]
+        )
         self.assertEqual(res.status_code, 200)
         self.assertEqual(len(self._sheet_titles(res.content)), 2)
 
@@ -333,10 +375,14 @@ class TenantIsolationTests(TestCase):
         b_owner = _make_user("ti_b@example.com")
         org_a = _make_org(a_owner, "Tenant A")
         org_b = _make_org(b_owner, "Tenant B")
-        _, client_a, _ = _tick_member(org_a, "ti_member@example.com", "staff", ["reports"])
+        _, client_a, _ = _tick_member(
+            org_a, "ti_member@example.com", "staff", ["reports"]
+        )
         auth = client_a._credentials["HTTP_AUTHORIZATION"]
         # Same credentials, but pointed at org B.
-        client_a.credentials(HTTP_AUTHORIZATION=auth, HTTP_X_ORGANISATION_ID=str(org_b.id))
+        client_a.credentials(
+            HTTP_AUTHORIZATION=auth, HTTP_X_ORGANISATION_ID=str(org_b.id)
+        )
         self.assertEqual(_run(client_a, "profit-loss").status_code, 403)
         self.assertEqual(client_a.get("/api/v1/reports/catalog/").status_code, 403)
         # Even org A's OWNER cannot use org B's id.

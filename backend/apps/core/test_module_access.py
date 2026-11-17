@@ -262,9 +262,15 @@ class ReportsModuleAccessTests(TestCase):
                 self.assertEqual(client.get(url).status_code, 200, url)
 
     def test_reports_plus_customers_tick_can_read_the_customer_master(self):
-        _, client, membership = _member(self.org, "rep_cust@example.com", "staff", "reports", "view")
-        ModulePermission.objects.create(membership=membership, module="customers", access_level="view")
-        self.assertEqual(client.get("/api/v1/reports/customer-details/").status_code, 200)
+        _, client, membership = _member(
+            self.org, "rep_cust@example.com", "staff", "reports", "view"
+        )
+        ModulePermission.objects.create(
+            membership=membership, module="customers", access_level="view"
+        )
+        self.assertEqual(
+            client.get("/api/v1/reports/customer-details/").status_code, 200
+        )
 
     def test_owner_is_unaffected(self):
         for url in self.REPORTS:

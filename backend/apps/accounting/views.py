@@ -1026,7 +1026,16 @@ class FinancialPeriodViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             period = FinancialPeriod.objects.get(organisation=org, year=year, month=month)
         return Response(FinancialPeriodSerializer(period).data, status=status.HTTP_200_OK)
 
-    @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated, IsAccountant, _PlanAccounting, _ModAccess_accounting])
+    @action(
+        detail=True,
+        methods=['get'],
+        permission_classes=[
+            IsAuthenticated,
+            IsAccountant,
+            _PlanAccounting,
+            _ModAccess_accounting,
+        ],
+    )
     def close_checklist(self, request, pk=None):
         """Month-end readiness checklist for this period (gates the lock)."""
         period = self.get_object()
