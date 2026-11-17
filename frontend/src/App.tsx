@@ -1,5 +1,6 @@
 import React from 'react'
-import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
+import toast from 'react-hot-toast'
 import { useAuthStore } from '@/store/authStore'
 import { trackPageview } from '@/lib/analytics'
 import type { ModuleKey } from '@/types'
@@ -196,6 +197,49 @@ function OwnerOnlyRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+// Plain names for the "no access" note.
+const MODULE_NAMES: Partial<Record<ModuleKey, string>> = {
+  sales: 'Sales', purchases: 'Purchases', bills: 'Bills', expenses: 'Income & Expenses',
+  inventory: 'Inventory', customers: 'Customers', suppliers: 'Suppliers', payroll: 'HR and Payroll',
+  reports: 'Reports', accounting: 'Accounting', tax: 'Tax', budget: 'Budgets', quotes: 'Quotes',
+  recurring: 'Recurring Invoices', settings: 'Settings', audit_log: 'the Audit Log',
+  owner_analytics: 'Owner Analytics', team: 'Team',
+}
+
+/**
+ * Sends the person to the dashboard AND tells them why, once, in plain words,
+ * instead of a silent redirect that looks like a bug.
+ */
+function DeniedRedirect({ what }: { what: string }) {
+  React.useEffect(() => {
+    toast(`You don't have access to ${what}. Ask an owner or admin.`, { id: 'no-access' })
+  }, [what])
+  return <Navigate to="/dashboard" replace />
+}
+
+/** Only owners, admins and superusers; anyone else goes to the dashboard with a note. */
+function AdminOnlyRoute({ what, children }: { what: string; children: React.ReactNode }) {
+  const { user, memberRole } = useAuthStore()
+  if (!user) return <Navigate to="/login" replace />
+  if (memberRole === null && !user.is_superuser) return <MembershipLoading />
+  if (!isConfirmedOwnerOrAdmin(user, memberRole)) return <DeniedRedirect what={what} />
+  return <>{children}</>
+}
+
+/** Small "Page not found" screen inside the app shell (sidebar and top bar stay). */
+function NotFoundPage() {
+  const navigate = useNavigate()
+  return (
+    <div className="flex min-h-[60vh] items-center justify-center p-6">
+      <div role="alert" className="w-full max-w-md text-center" style={{ background: 'var(--ds-card)', border: '1.5px solid var(--ds-card-bd)', borderRadius: 16, padding: 32, color: 'var(--ds-ink)' }}>
+        <h1 style={{ color: 'var(--ds-title)', fontSize: 22, fontWeight: 700, marginBottom: 8 }}>Page not found</h1>
+        <p style={{ fontSize: 14, marginBottom: 20 }}>We could not find that page. It may have moved, or the address may have a typo.</p>
+        <button type="button" className="btn-primary" onClick={() => navigate('/dashboard')}>Go to dashboard</button>
+      </div>
+    </div>
+  )
+}
+
 /**
  * Redirects sub-accounts to /dashboard if they have 'none' access on a module.
  * Owners, admins, and superusers always pass through.
@@ -206,7 +250,7 @@ function ModuleRoute({ module, children }: { module: ModuleKey; children: React.
   // Wait for membership to load — show spinner instead of redirecting prematurely
   if (memberRole === null) return <MembershipLoading />
   const level = modulePermissions[module] ?? 'none'
-  if (level === 'none') return <Navigate to="/dashboard" replace />
+  if (level === 'none') return <DeniedRedirect what={MODULE_NAMES[module] ?? 'that page'} />
   return <>{children}</>
 }
 
@@ -219,7 +263,7 @@ function WriteModuleRoute({ module, children }: { module: ModuleKey; children: R
   if (isConfirmedOwnerOrAdmin(user, memberRole)) return <>{children}</>
   if (memberRole === null) return <MembershipLoading />
   const level = modulePermissions[module] ?? 'none'
-  if (level === 'none' || level === 'view') return <Navigate to="/dashboard" replace />
+  if (level === 'none' || level === 'view') return <DeniedRedirect what={MODULE_NAMES[module] ?? 'that page'} />
   return <>{children}</>
 }
 
@@ -296,7 +340,7 @@ export default function App() {
         <Route path="sales/returns" element={<ModuleRoute module="sales"><DsPage><SalesReturnsPage /></DsPage></ModuleRoute>} />
         <Route path="sales/new" element={<WriteModuleRoute module="sales"><DsPage><NewSalePage /></DsPage></WriteModuleRoute>} />
         <Route path="sales/invoices/new" element={<WriteModuleRoute module="sales"><DsPage><NewInvoicePage /></DsPage></WriteModuleRoute>} />
-        <Route path="sales/invoices/:id/edit" element={<WriteModuleRoute module="sales"><EditInvoicePage /></WriteModuleRoute>} />
+        <Route path="sales/invoices/:id/edit" element={<WriteModuleRoute module="sales"><DsPage><EditInvoicePage /></DsPage></WriteModuleRoute>} />
         <Route path="locations" element={<ModuleRoute module="sales"><DsPage><LocationsPage /></DsPage></ModuleRoute>} />
         <Route path="quotes"    element={<ModuleRoute module="quotes"><DsPage><QuotesPage /></DsPage></ModuleRoute>} />
         <Route path="recurring" element={<ModuleRoute module="recurring"><DsPage><RecurringInvoicesPage /></DsPage></ModuleRoute>} />
@@ -320,6 +364,7 @@ export default function App() {
         <Route path="pos/tables"      element={<ModuleRoute module="sales"><TablesPage /></ModuleRoute>} />
         <Route path="pos/kitchen"     element={<ModuleRoute module="sales"><KitchenPage /></ModuleRoute>} />
         <Route path="accounting/coa"             element={<ModuleRoute module="accounting"><DsPage><ChartOfAccountsPage /></DsPage></ModuleRoute>} />
+        <Route path="accounting/chart-of-accounts" element={<Navigate to="/accounting/coa" replace />} />
         <Route path="accounting/beginning-balances" element={<ModuleRoute module="accounting"><DsPage><BeginningBalancesPage /></DsPage></ModuleRoute>} />
         <Route path="accounting/journal"          element={<ModuleRoute module="accounting"><DsPage><JournalPage /></DsPage></ModuleRoute>} />
         <Route path="accounting/general-ledger"   element={<ModuleRoute module="accounting"><GeneralLedgerPage /></ModuleRoute>} />
@@ -356,7 +401,7 @@ export default function App() {
 
         {/* Compliance */}
         <Route path="tax"       element={<ModuleRoute module="tax"><TaxPage /></ModuleRoute>} />
-        <Route path="audit-log" element={<AuditLogPage />} />
+        <Route path="audit-log" element={<AdminOnlyRoute what="the Audit Log"><AuditLogPage /></AdminOnlyRoute>} />
         <Route path="helpdesk" element={<TicketsPage />} />
         <Route path="messages" element={<MessagesPage />} />
         <Route path="payments/transfers" element={<ModuleRoute module="sales"><DsPage><TransferConfirmationsPage /></DsPage></ModuleRoute>} />
@@ -380,8 +425,8 @@ export default function App() {
         {/* Platform Admin — superuser only */}
         <Route path="platform-admin" element={<SuperuserRoute><PlatformAdminPage /></SuperuserRoute>} />
 
-        {/* Catch-all: redirect unknown paths to dashboard */}
-        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        {/* Catch-all: a small "Page not found" screen inside the app shell */}
+        <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>
     </React.Suspense>

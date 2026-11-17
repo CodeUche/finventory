@@ -21,6 +21,7 @@ import type { ModuleKey } from '@/types'
 import '@/styles/app-shell.css'
 import { useCanSeeNavItem } from '@/lib/navAccess'
 import { HUB_FOR_GROUP } from '@/pages/hubs/hubConfig'
+import MiniFlyout from './MiniFlyout'
 import { DesignerIcon, type DesignerIconName } from '@/assets/designer-icons'
 
 /** Wraps a designer icon so it can sit in the nav data like a lucide icon. */
@@ -210,6 +211,18 @@ const REPORTS_FIXED_LINKS: { name: string; href: string; icon: React.ElementType
   { name: 'Sales by Product', href: '/reports/sales-by-product', icon: ShoppingCart, module: 'reports' },
 ]
 
+// True on desktop widths (where the sidebar can fold into an icon rail).
+function useIsDesktop() {
+  const [yes, setYes] = useState(() => typeof window !== 'undefined' && window.matchMedia('(min-width:1024px)').matches)
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width:1024px)')
+    const on = () => setYes(mq.matches)
+    mq.addEventListener('change', on)
+    return () => mq.removeEventListener('change', on)
+  }, [])
+  return yes
+}
+
 interface SidebarProps {
   open: boolean
   onClose: () => void
@@ -334,7 +347,22 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
     if (activeGroup) setReportGroupsOpen((prev) => (prev[activeGroup] ? prev : { ...prev, [activeGroup]: true }))
   }, [activeReportKey, reportsGrouped.length])
 
-  const rowClass = (isActive: boolean) => cn('sh-row', isActive && 'sh-row-on')
+  // Only the best (longest) matching link is highlighted, so /budgets/periods does not
+  // also light up /budgets, and /reports/stock does not also light up /reports.
+  const bestHref = [
+    ...navGroups.flatMap((g) => g.items.map((i) => i.href.split('#')[0])),
+    ...REPORTS_FIXED_LINKS.map((i) => i.href),
+    ...Object.values(HUB_FOR_GROUP).map((h) => `/hub/${h.slug}`),
+  ]
+    .filter((h) => pathname === h || pathname.startsWith(h + '/'))
+    .sort((a, b) => b.length - a.length)[0]
+  const isBest = (href: string) => href.split('#')[0] === bestHref
+  const rowClass = (isActive: boolean, href?: string) =>
+    cn('sh-row', isActive && (href === undefined || isBest(href)) && 'sh-row-on')
+
+  // Collapsed rail on desktop: each group becomes one icon with a pop-out list.
+  const isDesktop = useIsDesktop()
+  const railMode = mini && isDesktop
 
   return (
     <aside
@@ -385,7 +413,7 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
                 to={item.href}
                 title={item.name}
                 end={item.href === '/sales'}
-                className={({ isActive }) => rowClass(isActive)}
+                className={({ isActive }) => rowClass(isActive, item.href)}
               >
                 <item.icon size={20} className="sh-ico shrink-0" />
                 <span className="sh-label">{item.name}</span>
@@ -421,6 +449,21 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
           }
 
           const GroupIcon = GROUP_ICONS[group.label] ?? LayoutGrid
+          if (railMode) {
+            const hub = HUB_FOR_GROUP[group.label]
+            return (
+              <MiniFlyout
+                key={gi}
+                icon={GroupIcon}
+                label={GROUP_TITLES[group.label] ?? group.label}
+                active={visibleItems.some((i) => isBest(i.href))}
+                items={[
+                  ...(hub ? [{ name: 'Overview', to: `/hub/${hub.slug}`, icon: LayoutGrid, active: isBest(`/hub/${hub.slug}`) }] : []),
+                  ...visibleItems.map((i) => ({ name: i.name, to: i.href, icon: i.icon, active: isBest(i.href) })),
+                ]}
+              />
+            )
+          }
           return (
             <div key={gi}>
               <button
@@ -441,7 +484,7 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
                     <NavLink
                       to={`/hub/${HUB_FOR_GROUP[group.label].slug}`}
                       title={`${GROUP_TITLES[group.label] ?? group.label} overview`}
-                      className={({ isActive }) => rowClass(isActive)}
+                      className={({ isActive }) => rowClass(isActive, `/hub/${HUB_FOR_GROUP[group.label!].slug}`)}
                     >
                       <LayoutGrid size={20} className="sh-ico shrink-0" />
                       <span className="sh-label">Overview</span>
@@ -458,6 +501,14 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
             pages, then a fetched, collapsible category tree mirroring
             AllReportsPage.tsx's "General Reports" hub (/reports/all), same
             two-level pattern as the SETTINGS sub-nav below. */}
+        {!billingOnly && canSeeItem('reports') && railMode && (
+          <MiniFlyout
+            icon={ICON.reports}
+            label="General Reports"
+            active={pathname.startsWith('/reports')}
+            items={REPORTS_FIXED_LINKS.filter((i) => canSeeItem(i.module)).map((i) => ({ name: i.name, to: i.href, icon: i.icon, active: isBest(i.href) }))}
+          />
+        )}
         {!billingOnly && canSeeItem('reports') && (
           <div className="sh-mini-hide">
             <button
@@ -481,7 +532,7 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
                       to={item.href}
                       end={item.href === '/reports/all'}
                       title={item.name}
-                      className={({ isActive }) => rowClass(isActive)}
+                      className={({ isActive }) => rowClass(isActive, item.href)}
                     >
                       <item.icon size={18} className="sh-ico shrink-0" />
                       <span className="sh-label">{item.name}</span>
@@ -533,6 +584,14 @@ export default function Sidebar({ open, onClose, billingOnly = false }: SidebarP
         )}
 
         {/* Settings sub-nav — collapsible with sub-groups */}
+        {!billingOnly && railMode && (
+          <MiniFlyout
+            icon={ICON.settings}
+            label="Settings"
+            active={pathname === '/settings'}
+            items={visibleSettingsTabs.map((t) => ({ name: t.label, to: `/settings?tab=${t.id}`, icon: t.icon, active: pathname === '/settings' && activeSettingsTab === t.id }))}
+          />
+        )}
         {!billingOnly && (
           <div className="sh-mini-hide">
             {/* Top-level SETTINGS toggle */}

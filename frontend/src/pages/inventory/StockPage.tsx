@@ -499,9 +499,9 @@ export default function StockPage() {
                 <tr><td colSpan={9} className="px-5 py-12 text-center">
                   <Boxes size={32} className="mx-auto mb-2 text-slate-600" />
                   <p className="text-slate-500 mb-3">
-                    {filter === 'low' ? 'No low stock items' : 'No stock data yet'}
+                    {search.trim() ? 'No stock matches your search' : filter === 'low' ? 'No low stock items' : 'No stock data yet'}
                   </p>
-                  {filter === 'all' && (
+                  {filter === 'all' && !search.trim() && (
                     <button onClick={openAdjust} className="btn-primary inline-flex items-center gap-2 text-sm">
                       <Plus size={14} />
                       Add Opening Stock
