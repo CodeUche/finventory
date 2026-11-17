@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Search, ChevronRight } from 'lucide-react'
 import { navGroups } from '@/components/layout/Sidebar'
+import { useEscapeLayer } from '@/lib/escapeStack'
 
 interface Cmd { name: string; href: string; group: string; icon: React.ElementType }
 
@@ -43,13 +44,14 @@ export default function CommandPalette() {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault()
         setOpen((o) => !o)
-      } else if (e.key === 'Escape') {
-        setOpen(false)
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
+
+  // Escape closes the palette (one app-wide Escape handler, newest layer first).
+  useEscapeLayer(open, () => setOpen(false))
 
   useEffect(() => {
     if (open) { setQuery(''); setActive(0); setTimeout(() => inputRef.current?.focus(), 30) }
@@ -67,7 +69,7 @@ export default function CommandPalette() {
   }
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-start justify-center pt-[15vh] bg-black/60"
+    <div className="fixed inset-0 z-[100] flex items-start justify-center pt-[15vh] bg-black/60 backdrop-blur-sm"
       onClick={() => setOpen(false)}>
       <div className="w-full max-w-lg mx-4 bg-surface-900 border border-surface-700 rounded-xl shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}>
