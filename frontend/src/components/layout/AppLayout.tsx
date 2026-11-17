@@ -355,11 +355,10 @@ export default function AppLayout() {
             <span>
               You&apos;re offline.{' '}
               {cacheAge
-                ? <>Showing cached data from <strong>{cacheAge}</strong>. </>
-                : 'Cached data will appear as you navigate. '}
-              New entries are queued and sync automatically when reconnected —
-              but accountant access, billing and organisation settings need a
-              live connection and will not go through yet.
+                ? <>Showing the last saved copy from <strong>{cacheAge}</strong>, so figures may be out of date. </>
+                : 'Showing the last saved copy, so figures may be out of date. '}
+              Your changes are kept and sent automatically when you are back online; accountant access,
+              billing and organisation settings need a live connection.
             </span>
           </div>
         )}

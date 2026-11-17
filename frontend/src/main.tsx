@@ -1,7 +1,7 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
-import { Toaster } from 'react-hot-toast'
+import ToastHost from '@/components/ToastHost'
 import App from './App'
 import { NotificationsProvider } from './contexts/NotificationsContext'
 import { initTheme } from './hooks/useTheme'
@@ -144,24 +144,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <App />
         <DialogHost />
         <SelectEnhancer />
-        <Toaster
-          position="top-right"
-          // Sits just under the top bar when one is on screen (the offset is set
-          // in app-shell.css); on login/auth pages there is no bar, so 16px.
-          // 9999 keeps pop-ups from covering messages.
-          containerStyle={{ top: 'var(--toast-top, 16px)', right: 'var(--toast-right, 16px)', zIndex: 9999 }}
-          toastOptions={{
-            style: {
-              background: '#13244B',
-              color: '#f8fafc',
-              border: '1px solid #1E2F56',
-              borderRadius: '12px',
-              fontSize: '14px',
-            },
-            success: { iconTheme: { primary: '#13CC00', secondary: '#04122F' } },
-            error: { iconTheme: { primary: '#FF3336', secondary: '#04122F' } },
-          }}
-        />
+        <ToastHost />
       </NotificationsProvider>
     </BrowserRouter>
   </React.StrictMode>,

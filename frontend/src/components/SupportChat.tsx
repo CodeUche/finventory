@@ -3,6 +3,8 @@ import { MessageCircle, X, Send, Loader2, Bot, User, ChevronDown } from 'lucide-
 import DOMPurify from 'dompurify'
 import { useLocation } from 'react-router-dom'
 import { aiApi } from '@/services/api'
+import { useEscapeLayer } from '@/lib/escapeStack'
+import { isPopupOpen, subscribePopupOpen } from '@/lib/drawerToastOffset'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -88,8 +90,12 @@ export default function SupportChat() {
   // On the register the bottom-right corner holds the tender buttons, so the bubble
   // moves beside the basket (wide screens) or to the bottom-left (stacked layout).
   const onRegister = useLocation().pathname === '/pos/register'
-  const bubbleSide = onRegister ? 'left-4 lg:left-auto lg:right-[376px]' : 'right-5'
+  const bubbleSide = onRegister ? 'left-4 lg:left-auto lg:right-[376px]' : 'right-4'
   const [open, setOpen] = useState(false)
+  // While a pop-up is open the whole chat (bubble and panel) is hidden by CSS; Escape then belongs to the pop-up.
+  const [popupOpen, setPopupOpen] = useState(isPopupOpen())
+  useEffect(() => subscribePopupOpen(setPopupOpen), [])
+  useEscapeLayer(open && !popupOpen, () => setOpen(false))
   const [messages, setMessages] = useState<Message[]>([
     {
       role: 'assistant',
@@ -140,12 +146,12 @@ export default function SupportChat() {
       {/* Floating button */}
       <button
         onClick={() => setOpen((o) => !o)}
-        className={`fixed bottom-5 ${bubbleSide} z-50 w-13 h-13 rounded-full bg-brand-500 hover:bg-brand-600 text-always-white shadow-xl flex items-center justify-center transition-all duration-200 hover:scale-110`}
-        style={{ width: 52, height: 52 }}
+        className={`fixed bottom-4 ${bubbleSide} z-40 rounded-full bg-brand-500 hover:bg-brand-600 text-always-white shadow-xl flex items-center justify-center transition-all duration-200 hover:scale-110`}
+        style={{ width: 44, height: 44 }}
         title="Chat with Uche" data-support-chat
         aria-label="Chat with Uche"
       >
-        {open ? <X size={22} className="text-always-white" /> : <MessageCircle size={22} className="text-always-white" />}
+        {open ? <X size={20} className="text-always-white" /> : <MessageCircle size={20} className="text-always-white" />}
         {!open && messages.length > 1 && (
           <span className="absolute -top-1 -right-1 w-4 h-4 bg-emerald-400 rounded-full border-2 border-surface-950" />
         )}
@@ -153,7 +159,7 @@ export default function SupportChat() {
 
       {/* Chat panel */}
       {open && (
-        <div data-support-chat className={`fixed bottom-20 ${bubbleSide} z-50 w-[360px] max-w-[calc(100vw-2rem)] bg-surface-800 border border-surface-700 rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-slide-up`}
+        <div data-support-chat className={`fixed bottom-[68px] ${bubbleSide} z-40 w-[360px] max-w-[calc(100vw-2rem)] bg-surface-800 border border-surface-700 rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-slide-up`}
           style={{ height: 520, maxHeight: 'calc(100vh - 120px)' }}>
 
           {/* Header */}

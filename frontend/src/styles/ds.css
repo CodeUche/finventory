@@ -254,11 +254,6 @@ html.light .ds{--ds-modal-bg:#FAFAFA}
 .ds .card:focus-within{position:relative;z-index:30}
 .ds .absolute.bg-surface-800{background-color:var(--ds-modal-bg)}
 
-.ds .ds-offline-note{
-  margin-bottom:16px;padding:10px 14px;border-radius:8px;font-size:13px;
-  border:1.5px solid var(--ds-warn);color:var(--ds-warn);background:color-mix(in srgb,var(--ds-warn) 10%,transparent);
-}
-
 /* ============================================================================
    GLOBAL COVERAGE — maps the app's old one-off class strings onto the kit.
    Nothing here is page specific. When the designer's exact screens arrive,
@@ -500,3 +495,14 @@ html.light .ds input[type="month"], html.light .ds input[type="datetime-local"]{
 .ds input[type="checkbox"], .ds input[type="radio"]{accent-color:var(--ds-link)}
 .ds input[type="checkbox"]:focus-visible, .ds input[type="radio"]:focus-visible{outline:2px solid var(--ds-link);outline-offset:2px}
 .ds input[type="range"]{accent-color:var(--ds-link)}
+
+/* ============================================================================
+   OVERLAYS — keep floating helpers off pop-ups
+   ========================================================================== */
+
+/* While a pop-up or slide-over is open the support chat (bubble and panel) steps out of the way,
+   so it can never sit over a pop-up's footer buttons. */
+body[data-popup-open] [data-support-chat]{display:none !important}
+/* Bubble: a little see-through while idle so a row action behind it stays visible. */
+button[data-support-chat]{opacity:.92}
+button[data-support-chat]:hover, button[data-support-chat]:focus-visible{opacity:1}

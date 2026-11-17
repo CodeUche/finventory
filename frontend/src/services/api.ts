@@ -102,19 +102,8 @@ function _flipOffline() {
   window.dispatchEvent(new Event('offline'))
   _notifyConnectivity()
   _startProbe()  // begin polling so we know when connectivity is restored
-  // Announce the transition here rather than at a call site: several paths flip
-  // the app offline (a GET falling back to cache returns early, a mutation goes
-  // to the queue, a bare failure rejects), so announcing per call site meant
-  // whether the user was told depended on which path happened to flip first.
-  // Once per transition, one toast slot, and the amber banner carries the state
-  // from then on. Suppressed in an offline grace session, where the blue
-  // "sign in to sync" banner already explains things.
-  if (!useAuthStore.getState().isOfflineSession) {
-    toast.error('Connection lost — showing saved data until you are back online.', {
-      id: 'offline-network-err',
-      duration: 6000,
-    })
-  }
+  // No toast here: the offline banner at the top of the page already says it, and stays until the
+  // connection is back. A second message used to pop up over the page's buttons.
 }
 
 let _confirming = false

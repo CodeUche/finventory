@@ -63,7 +63,19 @@ export function findTopOverlay(doc: Document = document): HTMLElement | null {
     const z = zOf(el)
     if (z >= bestZ) { best = el; bestZ = z } // later in the page wins a tie
   }
+  // Something opened INSIDE the top cover (a dropdown's click-catcher in a pop-up) is above it,
+  // whatever its z-index says.
+  while (best) {
+    const inner: HTMLElement[] = all.filter((el) => el !== best && best!.contains(el))
+    if (!inner.length) break
+    best = inner[inner.length - 1]
+  }
   return best
+}
+
+/** True for a cover with real content (a pop-up), false for an empty click-catcher. */
+export function hasContent(el: HTMLElement): boolean {
+  return el.childElementCount > 0 || (el.textContent ?? '').trim().length > 0
 }
 
 const CLOSE_TEXT = /^(cancel|close|dismiss)$/i
@@ -94,7 +106,11 @@ export function findCloser(overlay: HTMLElement): HTMLElement | null {
   if (labelled) return labelled
   const texty = buttons.find((b) => CLOSE_TEXT.test((b.textContent ?? '').trim()))
   if (texty) return texty
-  return overlay.querySelector<HTMLElement>(':scope > .absolute.inset-0')
+  const backdrop = overlay.querySelector<HTMLElement>(':scope > .absolute.inset-0')
+  if (backdrop) return backdrop
+  // An empty cover is a click-catcher behind an open dropdown: clicking it closes the dropdown.
+  if (!hasContent(overlay)) return overlay
+  return null
 }
 
 /**
