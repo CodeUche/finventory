@@ -140,10 +140,12 @@ export type LucideProps = Omit<IconProps, 'weight'> & {
 
 export type LucideIcon = ComponentType<LucideProps>
 
-function mk(Cmp: Icon) {
+// `marker` keeps lucide's class name on the icons code looks for by name (the close "X"), so the
+// app-wide Escape handler can find a pop-up's close button.
+function mk(Cmp: Icon, marker?: string) {
   const Wrapped = forwardRef<SVGSVGElement, LucideProps>(
-    ({ strokeWidth: _sw, absoluteStrokeWidth: _asw, weight, ...rest }, ref) => (
-      <Cmp ref={ref} weight={weight ?? 'regular'} {...rest} />
+    ({ strokeWidth: _sw, absoluteStrokeWidth: _asw, weight, className, ...rest }, ref) => (
+      <Cmp ref={ref} weight={weight ?? 'regular'} className={marker ? `${marker} ${className ?? ''}`.trim() : className} {...rest} />
     ),
   )
   return Wrapped
@@ -278,6 +280,6 @@ export const Wallet = mk(_Wallet)
 export const Warehouse = mk(_Warehouse)
 export const Wifi = mk(_WifiHigh)
 export const WifiOff = mk(_WifiSlash)
-export const X = mk(_X)
+export const X = mk(_X, 'lucide lucide-x')
 export const XCircle = mk(_XCircle)
 export const Zap = mk(_Lightning)
