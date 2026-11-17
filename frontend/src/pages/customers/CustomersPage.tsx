@@ -1,3 +1,4 @@
+import { isCustomerStatement } from '@/lib/statementShape'
 import { useEffect, useState } from 'react'
 import { DS_CHART } from '@/lib/chartTheme'
 import { confirmDialog } from '@/lib/dialog'
@@ -114,6 +115,7 @@ export default function CustomersPage() {
   // Statement
   const [showStatement, setShowStatement] = useState(false)
   const [statementData, setStatementData] = useState<any>(null)
+  const [stmtError, setStmtError] = useState(false)
   const [stmtFrom, setStmtFrom] = useState(() => {
     const d = new Date(); d.setDate(1); return d.toISOString().split('T')[0]
   })
@@ -226,10 +228,12 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
 
   const loadStatement = async (cId: string) => {
     setLoadingStmt(true)
+    setStmtError(false)
     try {
       const { data } = await customerApi.statement(cId, { date_from: stmtFrom, date_to: stmtTo })
+      if (!isCustomerStatement(data)) { setStatementData(null); setStmtError(true); return }
       setStatementData(data)
-    } catch { toast.error('Failed to load statement') }
+    } catch { setStatementData(null); setStmtError(true) }
     finally { setLoadingStmt(false) }
   }
 
@@ -484,6 +488,7 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
   const openStatement = (c: Customer) => {
     setSelected(c)
     setStatementData(null)
+    setStmtError(false)
     setShowStatement(true)
     loadStatement(c.id)
   }
@@ -894,6 +899,11 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
                 <div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => (
                   <div key={i} className="h-10 bg-surface-800 rounded-lg animate-pulse" />
                 ))}</div>
+              ) : stmtError ? (
+                <div role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 p-5 text-center space-y-3">
+                  <p className="text-sm text-red-400">We could not load this statement. Check your connection and try again.</p>
+                  <button type="button" onClick={() => loadStatement(selected.id)} className="btn-secondary text-xs">Retry</button>
+                </div>
               ) : !statementData ? null : (
                 <>
                   {/* Summary KPIs — row 1 */}

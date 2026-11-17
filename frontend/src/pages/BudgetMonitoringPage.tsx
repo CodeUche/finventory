@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { asList } from '@/lib/asList'
 import { Link } from 'react-router-dom'
 import { ArrowLeft, ArrowUpDown, BarChart3, Loader2, RefreshCw } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -32,7 +33,7 @@ export default function BudgetMonitoringPage() {
       const params: Record<string, string> = { status: statusFilter }
       if (budgetType) params.budget_type = budgetType
       const { data } = await budgetApi.monitoring(params)
-      setRows(data)
+      setRows(asList<BudgetMonitoringRow>(data))
     } catch { toast.error('Failed to load budget monitoring data') }
     finally { setLoading(false) }
   }

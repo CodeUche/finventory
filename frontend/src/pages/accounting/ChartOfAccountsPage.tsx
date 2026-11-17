@@ -1,3 +1,4 @@
+import { resolveAccountGroup } from '@/lib/coaGroup'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
@@ -119,6 +120,15 @@ export default function ChartOfAccountsPage() {
     [taxonomy, form.account_group],
   )
 
+  // If the types finished loading after the pop-up opened, fill in the saved type now.
+  useEffect(() => {
+    if (!showModal || !editId || form.account_group || taxonomy.length === 0) return
+    const acct = accounts.find((a) => a.id === editId)
+    if (!acct) return
+    const g = resolveAccountGroup(taxonomy, acct)
+    if (g) setForm((f) => (f.account_group ? f : { ...f, account_group: g }))
+  }, [showModal, editId, taxonomy, accounts, form.account_group])
+
   const handleSeed = async () => {
     if (!(await confirmDialog('Seed default Chart of Accounts? This will add standard Nigerian accounting accounts.'))) return
     setSeeding(true)
@@ -144,7 +154,7 @@ export default function ChartOfAccountsPage() {
     setOrigOpening({ bal, date })
     setForm({
       code: a.code, name: a.name, account_type: a.account_type,
-      account_group: a.account_group ?? '', sub_type: a.sub_type ?? '',
+      account_group: resolveAccountGroup(taxonomy, a), sub_type: a.sub_type ?? '',
       parent: a.parent ?? '', description: a.description,
       normal_balance: (a.normal_balance || (['asset', 'expense', 'cogs'].includes(a.account_type) ? 'debit' : 'credit')) as 'debit' | 'credit',
       is_active: a.is_active, allow_posting: a.allow_posting ?? true,

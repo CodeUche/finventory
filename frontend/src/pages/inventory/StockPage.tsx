@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { asList } from '@/lib/asList'
 import { confirmDialog } from '@/lib/dialog'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { useSearchParams, useNavigate } from 'react-router-dom'
@@ -82,7 +83,7 @@ export default function StockPage() {
     try {
       const params = whId === 'all' ? undefined : { warehouse: whId }
       const stockRes = await inventoryApi.stock(params)
-      const data: StockItem[] = stockRes.data.results ?? stockRes.data
+      const data: StockItem[] = asList<StockItem>(stockRes.data)
       setItems(data)
     } catch (err: any) {
       // A network/offline failure is already communicated by the amber offline

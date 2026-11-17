@@ -1,5 +1,5 @@
 import React from 'react'
-import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
 import { trackPageview } from '@/lib/analytics'
 import type { ModuleKey } from '@/types'
@@ -14,6 +14,7 @@ import DashboardPage from '@/pages/dashboard/DashboardPage'
 // on slow connections, harmless for the Tauri desktop build (local disk).
 const SubAccountLoginPage = React.lazy(() => import('@/pages/auth/SubAccountLoginPage'))
 import DsPage from '@/components/DsPage'
+import RouteErrorBoundary from '@/components/RouteErrorBoundary'
 const HubPage = React.lazy(() => import('@/pages/hubs/HubPage'))
 const RegisterPage = React.lazy(() => import('@/pages/auth/RegisterPage'))
 const OnboardingPage = React.lazy(() => import('@/pages/auth/OnboardingPage'))
@@ -106,58 +107,10 @@ function RouteLoading() {
   )
 }
 
-// Inner class-based boundary — must be a class to use getDerivedStateFromError
-class ErrorBoundaryInner extends React.Component<
-  { children: React.ReactNode; resetKey: string; navigate: (path: string) => void },
-  { hasError: boolean; message: string }
-> {
-  constructor(props: { children: React.ReactNode; resetKey: string; navigate: (path: string) => void }) {
-    super(props)
-    this.state = { hasError: false, message: '' }
-  }
-  static getDerivedStateFromError(err: Error) {
-    return { hasError: true, message: err?.message ?? 'Unknown error' }
-  }
-  componentDidUpdate(prev: { resetKey: string }) {
-    // Reset error state whenever the route changes so a stale crash doesn't
-    // keep the error screen visible on subsequent navigations
-    if (prev.resetKey !== this.props.resetKey && this.state.hasError) {
-      this.setState({ hasError: false, message: '' })
-    }
-  }
-  render() {
-    if (this.state.hasError) {
-      // Use inline styles so the error card is always visible regardless of theme
-      return (
-        <div style={{ minHeight: '100vh', background: '#020617', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
-          <div style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '16px', padding: '32px', maxWidth: '400px', width: '100%', textAlign: 'center' }}>
-            <p style={{ color: '#f8fafc', fontSize: '18px', fontWeight: 700, marginBottom: '8px' }}>Something went wrong</p>
-            <p style={{ color: '#94a3b8', fontSize: '12px', fontFamily: 'monospace', wordBreak: 'break-all', marginBottom: '20px' }}>{this.state.message}</p>
-            <button
-              style={{ background: '#122C63', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 24px', cursor: 'pointer', fontWeight: 600, fontSize: '14px' }}
-              onClick={() => {
-                this.setState({ hasError: false, message: '' })
-                // Use React Router navigate so Tauri never does a full-page reload
-                // (window.location.replace('/') triggers main.tsx logout() on restart)
-                this.props.navigate('/dashboard')
-              }}
-            >
-              Go to Dashboard
-            </button>
-          </div>
-        </div>
-      )
-    }
-    return this.props.children
-  }
-}
-
-// Wrapper that supplies the current route path and navigate fn as props.
-// navigate is passed explicitly because class components cannot use hooks.
+// Last-resort boundary around the whole app (full screen). A second one sits
+// around the page area inside AppLayout so the sidebar and top bar stay visible.
 function ErrorBoundary({ children }: { children: React.ReactNode }) {
-  const location = useLocation()
-  const navigate = useNavigate()
-  return <ErrorBoundaryInner resetKey={location.pathname} navigate={navigate}>{children}</ErrorBoundaryInner>
+  return <RouteErrorBoundary fullScreen>{children}</RouteErrorBoundary>
 }
 
 /**

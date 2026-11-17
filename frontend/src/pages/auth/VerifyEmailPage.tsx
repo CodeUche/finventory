@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import AudityLogo from '@/components/AudityLogo'
+import AuthShell from '@/components/auth/AuthShell'
 import { useSearchParams, useNavigate, Link } from 'react-router-dom'
 import { CheckCircle2, XCircle, Loader2, Mail } from 'lucide-react'
 import { authApi } from '@/services/api'
@@ -47,75 +47,66 @@ export default function VerifyEmailPage() {
     }
   }
 
+  const title = state === 'loading' ? 'Verifying your email'
+    : state === 'success' ? 'Email verified'
+    : 'Verification failed'
+  const subtitle = state === 'loading' ? 'Just a moment.'
+    : state === 'success' ? 'Taking you to sign in.'
+    : errorMsg
+
   return (
-    <div className="min-h-screen bg-surface-950 flex items-center justify-center p-6">
-      <div className="w-full max-w-md">
-        <AudityLogo className="h-10 w-auto mb-8" />
-
-        <div className="card text-center space-y-5">
-          {state === 'loading' && (
-            <>
-              <Loader2 size={40} className="animate-spin text-brand-400 mx-auto" />
-              <p className="text-white font-semibold text-lg">Verifying your email…</p>
-              <p className="text-slate-400 text-sm">Just a moment.</p>
-            </>
-          )}
-
-          {state === 'success' && (
-            <>
-              <div className="w-16 h-16 bg-green-500/15 rounded-full flex items-center justify-center mx-auto">
-                <CheckCircle2 size={32} className="text-green-400" />
-              </div>
-              <p className="text-white font-bold text-xl">Email verified!</p>
-              <p className="text-slate-400 text-sm">Redirecting you to your workspace…</p>
-            </>
-          )}
-
-          {state === 'error' && (
-            <>
-              <div className="w-16 h-16 bg-red-500/15 rounded-full flex items-center justify-center mx-auto">
-                <XCircle size={32} className="text-red-400" />
-              </div>
-              <p className="text-white font-bold text-xl">Verification failed</p>
-              <p className="text-slate-400 text-sm">{errorMsg}</p>
-
-              {errorCode === 'token_expired' && (
-                <div className="space-y-3">
-                  <div>
-                    <label className="label text-left">Enter your email to get a new link</label>
-                    <input
-                      type="email"
-                      className="input"
-                      placeholder="you@company.com"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                    />
-                  </div>
-                  {resent ? (
-                    <div className="flex items-center justify-center gap-2 text-green-400 text-sm">
-                      <Mail size={16} />
-                      New verification email sent! Check your inbox.
-                    </div>
-                  ) : (
-                    <button
-                      onClick={handleResend}
-                      disabled={resending || !email}
-                      className="btn-primary w-full justify-center py-2.5"
-                    >
-                      {resending ? <Loader2 size={16} className="animate-spin mr-2" /> : null}
-                      {resending ? 'Sending…' : 'Send new verification link'}
-                    </button>
-                  )}
-                </div>
-              )}
-
-              <Link to="/login" className="block text-sm text-brand-400 hover:text-brand-300 font-medium">
-                ← Back to sign in
-              </Link>
-            </>
-          )}
+    <AuthShell title={title} subtitle={subtitle}>
+      {state === 'loading' && (
+        <div style={{ display: 'flex', justifyContent: 'center', margin: '4px 0 8px', color: 'var(--link)' }}>
+          <Loader2 size={40} className="animate-spin" />
         </div>
-      </div>
-    </div>
+      )}
+
+      {state === 'success' && (
+        <>
+          <div style={{ display: 'flex', justifyContent: 'center', margin: '4px 0 18px', color: 'var(--link)' }}>
+            <CheckCircle2 size={44} />
+          </div>
+          <Link to="/login" className="au-btn" style={{ textDecoration: 'none' }}>Go to Sign in</Link>
+        </>
+      )}
+
+      {state === 'error' && (
+        <>
+          <div style={{ display: 'flex', justifyContent: 'center', margin: '4px 0 18px', color: 'var(--link)' }}>
+            <XCircle size={44} />
+          </div>
+
+          {errorCode === 'token_expired' && (
+            <>
+              <div className="au-field">
+                <label>Enter your email to get a new link</label>
+                <input
+                  type="email"
+                  className="au-input"
+                  placeholder="you@company.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                />
+              </div>
+              {resent ? (
+                <p style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, color: 'var(--link)', fontSize: 14 }}>
+                  <Mail size={16} /> New verification email sent. Check your inbox.
+                </p>
+              ) : (
+                <button type="button" onClick={handleResend} disabled={resending || !email} className="au-btn">
+                  {resending ? <Loader2 size={16} className="animate-spin" /> : null}
+                  {resending ? 'Sending...' : 'Send new verification link'}
+                </button>
+              )}
+            </>
+          )}
+
+          <p className="au-foot">
+            <Link to="/login" className="au-link">Back to sign in</Link>
+          </p>
+        </>
+      )}
+    </AuthShell>
   )
 }

@@ -1,3 +1,4 @@
+import { glHealthNote } from '@/lib/glHealthMessage'
 import { useEffect, useState, useCallback } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { RefreshCw, CheckCircle, XCircle, AlertTriangle, Clock, RotateCcw } from 'lucide-react'
@@ -40,11 +41,11 @@ interface GLHealth {
   reconciliations?: GLReconciliations
 }
 
-const STATUS_META: Record<string, { label: string; icon: React.ElementType; color: string; bg: string; border: string }> = {
-  posted:        { label: 'Posted',        icon: CheckCircle,   color: 'text-green-500',  bg: 'bg-green-500/15',  border: 'border-green-500/30' },
-  failed:        { label: 'Failed',        icon: XCircle,       color: 'text-red-500',    bg: 'bg-red-500/15',    border: 'border-red-500/30' },
-  not_configured:{ label: 'Not Configured',icon: AlertTriangle, color: 'text-amber-500',  bg: 'bg-amber-500/15',  border: 'border-amber-500/30' },
-  pending:       { label: 'Pending',       icon: Clock,         color: 'text-slate-500',  bg: 'bg-surface-800',   border: 'border-surface-600' },
+const STATUS_META: Record<string, { label: string; icon: React.ElementType; tone: string }> = {
+  posted:        { label: 'Posted',        icon: CheckCircle,   tone: 'var(--ds-good)' },
+  failed:        { label: 'Failed',        icon: XCircle,       tone: 'var(--ds-bad)' },
+  not_configured:{ label: 'Not Configured',icon: AlertTriangle, tone: 'var(--ds-warn)' },
+  pending:       { label: 'Pending',       icon: Clock,         tone: 'var(--ds-muted)' },
 }
 
 const MODEL_LABELS: Record<string, string> = {
@@ -142,12 +143,12 @@ export default function GLHealthPage() {
           const Icon = meta.icon
           const count = summary[key as keyof GLSummary] ?? 0
           return (
-            <div key={key} className={`rounded-xl p-4 ${meta.bg} border ${meta.border}`}>
+            <div key={key} className="rounded-xl p-4" style={{ background: 'var(--ds-card)', border: '1.5px solid var(--ds-card-bd)' }}>
               <div className="flex items-center gap-2 mb-1">
-                <Icon size={16} className={meta.color} />
-                <span className="text-xs font-medium text-slate-500">{meta.label}</span>
+                <Icon size={16} style={{ color: meta.tone }} />
+                <span className="text-xs font-medium" style={{ color: 'var(--ds-muted)' }}>{meta.label}</span>
               </div>
-              <p className={`text-2xl font-bold ${meta.color}`}>{count}</p>
+              <p className="text-2xl font-bold" style={{ color: meta.tone }}>{count}</p>
             </div>
           )
         })}
@@ -266,13 +267,18 @@ export default function GLHealthPage() {
             </table>
           </div>
         </div>
-      ) : !loading && (
-        <div className="rounded-xl bg-surface-800 border border-surface-700 p-8 text-center">
-          <CheckCircle size={40} className="text-green-400 mx-auto mb-3" />
-          <p className="font-medium text-slate-700 dark:text-white">All GL entries posted successfully</p>
-          <p className="text-slate-500 text-sm mt-1">No failed or misconfigured postings</p>
-        </div>
-      )}
+      ) : !loading && (() => {
+        const note = glHealthNote(summary, data?.reconciliations)
+        const Icon = note.tone === 'good' ? CheckCircle : note.tone === 'warn' ? Clock : AlertTriangle
+        const colour = note.tone === 'good' ? 'var(--ds-good)' : note.tone === 'warn' ? 'var(--ds-warn)' : 'var(--ds-bad)'
+        return (
+          <div className="rounded-xl p-8 text-center" style={{ background: 'var(--ds-card)', border: '1.5px solid var(--ds-card-bd)' }}>
+            <Icon size={40} className="mx-auto mb-3" style={{ color: colour }} />
+            <p className="font-medium" style={{ color: 'var(--ds-title)' }}>{note.title}</p>
+            <p className="text-sm mt-1" style={{ color: 'var(--ds-muted)' }}>{note.text}</p>
+          </div>
+        )
+      })()}
     </div>
   )
 }

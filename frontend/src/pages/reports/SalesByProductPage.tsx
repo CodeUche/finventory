@@ -4,6 +4,7 @@
  *  2. Margin scatter chart — revenue (X) vs gross margin % (Y), bubble size = units sold.
  *     Reveals which products are high-volume low-margin vs niche high-margin.
  */
+import { asList } from '@/lib/asList'
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { DS_CHART } from '@/lib/chartTheme'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
@@ -61,7 +62,7 @@ export default function SalesByProductPage() {
     setLoading(true)
     try {
       const resp = await reportApi.salesByProduct(params)
-      setRows(resp.data)
+      setRows(asList<SalesByProductRow>(resp.data))
       setExpandedId(null)
     } catch {
       setRows([])

@@ -8,6 +8,7 @@
  *  • Valuation tab: donut (category breakdown) + horizontal bar (top 10 by value).
  *    Shows inventory concentration risk and capital allocation.
  */
+import { asList } from '@/lib/asList'
 import { useState, useEffect, useMemo } from 'react'
 import {
   ClipboardCheck, BarChart2, ArrowLeftRight, AlertTriangle,
@@ -627,15 +628,15 @@ export default function StockReportsPage() {
 
       if (tab === 'availability') {
         const { data } = await stockReportApi.availability(params)
-        setAvailability(data)
+        setAvailability(asList<AvailabilityRow>(data))
       } else if (tab === 'usage') {
         const { data } = await stockReportApi.usage(params)
-        setUsage(data.summary ?? data)
-        setUsageTransactions(data.transactions ?? [])
+        setUsage(asList<UsageRow>(data.summary ?? data))
+        setUsageTransactions(asList<UsageTransaction>(data.transactions))
         setShowUsageTx(false)
       } else if (tab === 'transfers') {
         const { data } = await stockReportApi.transfers(params)
-        setTransfers(data)
+        setTransfers(asList<TransferRow>(data))
       } else {
         if (!cardProduct) { toast.error('Select a product first'); setLoading(false); return }
         const { data } = await stockReportApi.stockCard({ ...params, product_id: cardProduct })

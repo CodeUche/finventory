@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { asList } from '@/lib/asList'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
 import { ChevronDown, ChevronRight, Loader2, Users } from 'lucide-react'
 import { reportApi } from '@/services/api'
@@ -35,7 +36,7 @@ export default function SalesByCustomerPage() {
     setLoading(true)
     try {
       const resp = await reportApi.salesByCustomer(params)
-      setRows(resp.data)
+      setRows(asList<SalesByCustomerRow>(resp.data))
       setExpandedId(null)
     } catch {
       setRows([])
