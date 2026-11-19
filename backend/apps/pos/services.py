@@ -151,15 +151,30 @@ class POSOrderService:
     }
 
     @staticmethod
+    def _tender_category(method):
+        """Map a raw tender method to one of three GL buckets: "cash", "bank"
+        (card/transfer/cheque -- real money that landed somewhere other than
+        the till), or "credit" (on-account -- no money moved at all; the
+        customer owes it). Used to be a binary cash-or-bank choice, which
+        quietly filed a "credit" tender under Bank -- recording money as
+        received in the bank when none had moved."""
+        inv_method = POSOrderService._METHOD_MAP.get(method or "cash", "cash")
+        if inv_method == "cash":
+            return "cash"
+        if inv_method == "credit":
+            return "credit"
+        return "bank"
+
+    @staticmethod
     def _tender_slice(tenders, skip, take):
         """Walk `tenders` in order, skipping the first `skip` already consumed
         by an earlier posting (e.g. the food bill), then returning up to
-        `take` worth of (cash_or_bank, amount) pairs for the next posting.
-        Used so a later amount (service charge, tip) lands on whichever
-        tender actually covered it, not a hardcoded account -- a card-paid
-        order used to debit Cash for the tip/service charge regardless,
-        overstating the till and understating the bank/card account by the
-        same amount."""
+        `take` worth of (category, amount) pairs for the next posting, where
+        category is "cash", "bank" or "credit" (see _tender_category). Used
+        so a later amount (service charge, tip) lands on whichever tender
+        actually covered it, not a hardcoded account -- a card-paid order
+        used to debit Cash for the tip/service charge regardless, overstating
+        the till and understating the bank/card account by the same amount."""
         result = []
         remaining_skip = Decimal(str(skip))
         remaining_take = Decimal(str(take))
@@ -175,8 +190,7 @@ class POSOrderService:
                 remaining_skip = ZERO
             take_here = min(amt, remaining_take)
             if take_here > 0:
-                inv_method = POSOrderService._METHOD_MAP.get(t.get("method", "cash"), "cash")
-                result.append(("cash" if inv_method == "cash" else "bank", take_here))
+                result.append((POSOrderService._tender_category(t.get("method")), take_here))
                 remaining_take -= take_here
         return result
 
@@ -235,9 +249,10 @@ class POSOrderService:
         if svc > 0 or tip > 0:
             # The food bill (up to total_due) was already debited across the
             # tenders in _settle_invoice; svc+tip is the next slice of the
-            # same tenders, split cash/bank by whichever tender actually
-            # covered it -- not hardcoded to Cash, or a card-paid tip would
-            # overstate the till and understate the bank/card account.
+            # same tenders, split cash/bank/credit by whichever tender
+            # actually covered it -- not hardcoded to Cash, or a card-paid
+            # tip would overstate the till and understate the bank/card
+            # account.
             total_tendered = sum((Decimal(str(t.get("amount") or 0)) for t in tenders), ZERO)
             already_applied = min(total_tendered, total_due)
             tender_split = POSOrderService._tender_slice(tenders, already_applied, svc + tip)
@@ -247,15 +262,32 @@ class POSOrderService:
             # Any shortfall (service charge/tip tendered less than charged, or no
             # tenders at all) still needs a debit to balance the entry -- fall
             # back to cash for whatever the tenders didn't cover, same as the
-            # till would actually be short by that much.
+            # till would actually be short by that much. This is a real gap
+            # (someone under-entered what the customer actually paid), so it
+            # is logged, not just silently absorbed into Cash.
             covered = sum(by_account.values(), ZERO)
-            if covered < svc + tip:
-                by_account["cash"] = by_account.get("cash", ZERO) + (svc + tip - covered)
+            shortfall = svc + tip - covered
+            if shortfall > 0:
+                by_account["cash"] = by_account.get("cash", ZERO) + shortfall
+                logger.warning(
+                    "POS order %s: tip/service-charge tendered short by %s; booked to cash. "
+                    "svc=%s tip=%s tendered=%s (org=%s)",
+                    order.order_number, shortfall, svc, tip, total_tendered, organisation.id,
+                )
 
             def _post_extras():
                 cash = AccountMappingService.resolve(organisation, "cash_account")
                 bank = AccountMappingService.resolve(organisation, "bank_account")
-                lines = [((cash if kind == "cash" else bank), amt, ZERO) for kind, amt in by_account.items()]
+                # "credit" (on-account): no money moved, so it is not Cash or
+                # Bank -- it is now owed by the customer, same as the
+                # unapplied portion of the food bill already sits on
+                # Accounts Receivable. Debiting Bank here would have recorded
+                # money that never arrived.
+                accounts = {
+                    "cash": cash, "bank": bank,
+                    "credit": AccountMappingService.resolve(organisation, "accounts_receivable"),
+                }
+                lines = [(accounts[kind], amt, ZERO) for kind, amt in by_account.items()]
                 if svc > 0:
                     revenue = AccountMappingService.resolve(organisation, "revenue_account")
                     lines.append((revenue, ZERO, svc))
@@ -277,24 +309,34 @@ class POSOrderService:
     def _settle_invoice(organisation, invoice, tenders, order, created_by):
         """Post a per-tender receipt — DR each tender's own cash/bank account, CR AR —
         and record the payments, relieving AR exactly (change on overpayment is not
-        posted). Always balanced: Σ tender debits == AR credit == amount applied."""
+        posted). Always balanced: Σ tender debits == AR credit == amount applied.
+
+        A "credit" (on-account) tender is not a receipt at all -- no cash or
+        bank money moved, so it contributes nothing here and is excluded from
+        `applied`. The amount simply stays on the invoice's own
+        Accounts Receivable balance (invoice.amount_due already reflects
+        total_due minus whatever was genuinely applied), exactly like an
+        ordinary partially-paid or credit sale elsewhere in the app. It used
+        to be folded into `applied` and debited to Bank as if it had been
+        received, recording money that never arrived."""
         from apps.sales.models import SalePayment, Invoice as _Invoice
         from apps.accounting.services import AccountingService, AccountMappingService, safe_post_gl
 
         total_due = Decimal(str(invoice.total_amount))
-        total_tendered = sum((Decimal(str(t.get("amount") or 0)) for t in tenders), ZERO)
+        real_tenders = [t for t in tenders if POSOrderService._tender_category(t.get("method")) != "credit"]
+        total_tendered = sum((Decimal(str(t.get("amount") or 0)) for t in real_tenders), ZERO)
         applied = min(total_tendered, total_due)
         if applied <= 0:
             return
 
-        ar = AccountMappingService.resolve(organisation, "accounts_receivable")
         cash = AccountMappingService.resolve(organisation, "cash_account")
         bank = AccountMappingService.resolve(organisation, "bank_account")
+        ar = AccountMappingService.resolve(organisation, "accounts_receivable")
 
         remaining = applied
         receipt_lines = []
         payment_rows = []
-        for t in tenders:
+        for t in real_tenders:
             if remaining <= 0:
                 break
             amt = min(Decimal(str(t.get("amount") or 0)), remaining)

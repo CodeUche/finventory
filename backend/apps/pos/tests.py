@@ -173,6 +173,85 @@ class POSModuleTests(TestCase):
         self.assertFalse(extras.lines.filter(account=cash).exists())
         self.assertTrue(extras.lines.filter(account=bank, debit=Decimal("100.00")).exists())
 
+    def test_credit_tender_is_not_booked_as_a_bank_receipt(self):
+        """A 'credit'/on-account tender used to be folded into the receipt and
+        debited to Bank as if real money had arrived. No money moves for a
+        credit tender -- the amount must stay on the invoice's own AR balance
+        (amount_due), with no cash/bank line and no SalePayment recorded."""
+        from apps.accounting.services import AccountMappingService
+        from apps.sales.models import Invoice, SalePayment
+        order = POSOrder.objects.get(id=self._create_order(qty=2).data["id"])  # 2000, no tax
+        res = self.client.post(f"/api/v1/pos/orders/{order.id}/finalize/", {
+            "tenders": [{"amount": "2000", "method": "credit"}]
+        }, format="json")
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+
+        inv = Invoice.objects.get(id=POSOrder.objects.get(id=order.id).invoice_id)
+        self.assertEqual(inv.amount_paid, Decimal("0.00"))
+        self.assertEqual(inv.amount_due, Decimal("2000.00"))
+        self.assertEqual(inv.status, Invoice.Status.CONFIRMED)  # unpaid, nothing received yet
+        self.assertFalse(SalePayment.objects.filter(organisation=self.org, invoice=inv).exists())
+        self.assertFalse(
+            JournalEntry.objects.filter(organisation=self.org, source_type="pos_receipt").exists(),
+            "no receipt should post when nothing was actually received",
+        )
+
+    def test_mixed_cash_and_credit_tender_only_banks_the_cash_part(self):
+        """Half the bill tendered cash, half kept on credit: the cash half is a
+        real receipt (DR Cash, CR AR); the credit half is excluded entirely
+        and simply stays as the invoice's own outstanding balance."""
+        from apps.accounting.services import AccountMappingService
+        from apps.sales.models import Invoice
+        order = POSOrder.objects.get(id=self._create_order(qty=2).data["id"])  # 2000
+        res = self.client.post(f"/api/v1/pos/orders/{order.id}/finalize/", {
+            "tenders": [{"amount": "1000", "method": "cash"}, {"amount": "1000", "method": "credit"}]
+        }, format="json")
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+
+        inv = Invoice.objects.get(id=POSOrder.objects.get(id=order.id).invoice_id)
+        self.assertEqual(inv.amount_paid, Decimal("1000.00"))
+        self.assertEqual(inv.amount_due, Decimal("1000.00"))
+        self.assertEqual(inv.status, Invoice.Status.PARTIALLY_PAID)
+        cash = AccountMappingService.resolve(self.org, "cash_account")
+        bank = AccountMappingService.resolve(self.org, "bank_account")
+        receipt = JournalEntry.objects.get(organisation=self.org, source_type="pos_receipt")
+        self.assertTrue(receipt.lines.filter(account=cash, debit=Decimal("1000.00")).exists())
+        self.assertFalse(receipt.lines.filter(account=bank).exists())
+
+    def test_credit_tendered_tip_debits_receivable_not_bank(self):
+        """The food bill is paid cash; the tip is explicitly put on the
+        customer's account rather than paid. The tip/service-charge entry
+        must debit Accounts Receivable for that portion, not Bank -- no money
+        moved, so Bank would have been wrong."""
+        from apps.accounting.services import AccountMappingService
+        order = POSOrder.objects.get(id=self._create_order(qty=2).data["id"])  # 2000
+        order.tip_amount = Decimal("100")
+        order.save(update_fields=["tip_amount"])
+        res = self.client.post(f"/api/v1/pos/orders/{order.id}/finalize/", {
+            "tenders": [{"amount": "2000", "method": "cash"}, {"amount": "100", "method": "credit"}]
+        }, format="json")
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+
+        extras = JournalEntry.objects.get(organisation=self.org, source_type="pos_service_tip")
+        bank = AccountMappingService.resolve(self.org, "bank_account")
+        ar = AccountMappingService.resolve(self.org, "accounts_receivable")
+        self.assertFalse(extras.lines.filter(account=bank).exists())
+        self.assertTrue(extras.lines.filter(account=ar, debit=Decimal("100.00")).exists())
+
+    def test_under_tendered_tip_falls_back_to_cash_and_is_logged(self):
+        """An under-tendered tip/service charge still falls back to Cash (the
+        accounting outcome is unchanged), but it must now be visible, not
+        silent -- a warning is logged naming the order and the shortfall."""
+        order = POSOrder.objects.get(id=self._create_order(qty=2).data["id"])  # 2000
+        order.tip_amount = Decimal("100")
+        order.save(update_fields=["tip_amount"])
+        with self.assertLogs("apps.pos.services", level="WARNING") as cm:
+            res = self.client.post(f"/api/v1/pos/orders/{order.id}/finalize/", {
+                "tenders": [{"amount": "2000", "method": "cash"}]  # nothing tendered for the tip
+            }, format="json")
+        self.assertEqual(res.status_code, 201, msg=str(res.data))
+        self.assertTrue(any(order.order_number in line and "100" in line for line in cm.output))
+
     def test_pickup_order_without_table_finalizes(self):
         """The POS module works for non-hospitality sectors: a pickup/counter order
         with no table finalises into a paid sale + GL just the same."""
