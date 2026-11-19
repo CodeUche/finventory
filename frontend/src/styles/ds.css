@@ -513,9 +513,9 @@ button[data-support-chat]:hover, button[data-support-chat]:focus-visible{opacity
    POP-UPS — the designer's pattern for every pop-up (Pop Up 5, 10, 58, 111, 121)
    ========================================================================== */
 
-/* Colours: cream card in light, solid pink Delete, navy outline for Cancel. */
+/* Colours: ivory card (#FFFFF8) in light, solid pink Delete, navy outline for Cancel. */
 .ds{--ds-del-bg:#6B2A33;--ds-del-tx:#FFD3D6}
-html.light .ds{--ds-del-bg:#FFCCCC;--ds-del-tx:#990000;--ds-modal-bg:#FFFEF8}
+html.light .ds{--ds-del-bg:#FFCCCC;--ds-del-tx:#990000;--ds-modal-bg:#FFFFF8}
 
 /* The dim cover must sit over the sidebar and top bar too. A card with a blur filter becomes the
    "screen" for any pop-up written inside it (so the cover stopped at the card's edge), and a focused
