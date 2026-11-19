@@ -12,4 +12,4 @@ Editing this file before a release is the difference between a user seeing
 
 ---
 
-When someone else signs in on the same computer or phone, they no longer see the previous person's saved data, name or menu. Saved business information on the device is now cleared when you sign out and is kept separately for each person. Anything you had not yet sent while offline stays safe for you and sends when you are back online. After this update, open the app once with a connection so your offline copy refills.
+Who can see what has been tightened. Reports now follow the same permissions as the screens they come from, so a team member sees only the reports their role allows, and stock pages and actions need the Inventory permission. Voiding an invoice now needs full edit access to Sales. Cashiers who can make sales can still load the product and warehouse lists at the till. Changes saved offline in a web browser now send when you are back online. Owners: please review your team's permissions in Settings, Team.
