@@ -126,8 +126,8 @@ export default function NotificationBell() {
                           className="flex items-start gap-3 px-4 py-3 border-b border-surface-700/60 hover:bg-surface-700/30 transition-colors cursor-pointer"
                           onClick={() => go('/settings?tab=access')}
                         >
-                          <div className="w-7 h-7 rounded-lg bg-amber-500/10 flex items-center justify-center shrink-0 mt-0.5">
-                            <ShieldCheck size={13} className="text-amber-400" />
+                          <div className="w-7 h-7 rounded-lg bg-brand-500/15 flex items-center justify-center shrink-0 mt-0.5">
+                            <ShieldCheck size={13} className="text-brand-400" />
                           </div>
                           <div className="flex-1 min-w-0">
                             <p className="text-xs font-medium text-white truncate">
@@ -204,8 +204,8 @@ export default function NotificationBell() {
                           className="flex items-start gap-3 px-4 py-3 border-b border-surface-700/60 hover:bg-surface-700/30 transition-colors cursor-pointer"
                           onClick={() => go('/customers')}
                         >
-                          <div className="w-7 h-7 rounded-lg bg-amber-500/10 flex items-center justify-center shrink-0 mt-0.5">
-                            <Users size={13} className="text-amber-400" />
+                          <div className="w-7 h-7 rounded-lg bg-brand-500/15 flex items-center justify-center shrink-0 mt-0.5">
+                            <Users size={13} className="text-brand-400" />
                           </div>
                           <div className="flex-1 min-w-0">
                             <p className="text-xs font-medium text-white truncate">{c.customer_name}</p>
@@ -286,8 +286,8 @@ export default function NotificationBell() {
                           key={alert.id}
                           className="flex items-start gap-3 px-4 py-3 border-b border-surface-700/60 hover:bg-surface-700/30 transition-colors"
                         >
-                          <div className="w-7 h-7 rounded-lg bg-yellow-500/10 flex items-center justify-center shrink-0 mt-0.5">
-                            <Package size={13} className="text-yellow-400" />
+                          <div className="w-7 h-7 rounded-lg bg-brand-500/15 flex items-center justify-center shrink-0 mt-0.5">
+                            <Package size={13} className="text-brand-400" />
                           </div>
                           <div className="flex-1 min-w-0">
                             <p className="text-xs font-medium text-white truncate">{alert.product_name}</p>
@@ -403,8 +403,8 @@ export default function NotificationBell() {
                           key={b.id}
                           className="flex items-start gap-3 px-4 py-3 border-b border-surface-700/60 hover:bg-surface-700/30 transition-colors"
                         >
-                          <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${b.is_expired ? 'bg-red-500/10' : 'bg-amber-500/10'}`}>
-                            <CalendarClock size={13} className={b.is_expired ? 'text-red-400' : 'text-amber-400'} />
+                          <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${b.is_expired ? 'bg-red-500/10' : 'bg-brand-500/15'}`}>
+                            <CalendarClock size={13} className={b.is_expired ? 'text-red-400' : 'text-brand-400'} />
                           </div>
                           <div className="flex-1 min-w-0">
                             <p className="text-xs font-medium text-white truncate">{b.product_name}</p>
