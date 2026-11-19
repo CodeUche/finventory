@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Search, ChevronRight } from 'lucide-react'
 import { navGroups } from '@/components/layout/Sidebar'
 import { useEscapeLayer } from '@/lib/escapeStack'
+import { useCanSeeNavItem } from '@/lib/navAccess'
 
 interface Cmd { name: string; href: string; group: string; icon: React.ElementType }
 
@@ -19,16 +20,24 @@ export default function CommandPalette() {
   const [active, setActive] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
   const navigate = useNavigate()
+  // Same visibility rules as the sidebar, so the palette never lists pages the person cannot open
+  // (for example the Partner pages for a non-partner).
+  const { canSeeItem } = useCanSeeNavItem()
+  const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent)
+  const shortcutHint = isMac ? '⌘K' : 'Ctrl+K'
 
   const commands = useMemo<Cmd[]>(() => {
     const out: Cmd[] = []
     for (const g of navGroups) {
       for (const it of g.items) {
+        if (!canSeeItem(it.module, it.ownerOnly, it.partnerOnly, it.businessType)) continue
         out.push({ name: it.name, href: it.href, group: g.label ?? 'General', icon: it.icon })
       }
     }
     return out
-  }, [])
+    // canSeeItem is rebuilt every render; the list only needs to change when who is signed in changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canSeeItem])
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -80,7 +89,7 @@ export default function CommandPalette() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onListKey}
-            placeholder="Search pages… (⌘K)"
+            placeholder={`Search pages… (${shortcutHint})`}
             className="flex-1 bg-transparent text-sm text-white outline-none placeholder:text-slate-500"
           />
           <kbd className="text-[10px] text-slate-500 border border-surface-600 rounded px-1.5 py-0.5">ESC</kbd>
