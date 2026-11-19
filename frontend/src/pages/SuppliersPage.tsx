@@ -540,7 +540,7 @@ export default function SuppliersPage() {
                       { label: 'Total Billed', value: formatCurrency(statementData.summary.total_billed), color: 'text-red-400', sub: `${statementData.bills.length} bill${statementData.bills.length !== 1 ? 's' : ''}` },
                       { label: 'VAT', value: formatCurrency(statementData.summary.total_tax ?? '0'), color: 'text-blue-400', sub: 'Input VAT on bills' },
                       { label: 'Total Paid', value: formatCurrency(statementData.summary.total_paid), color: 'text-green-400', sub: `${statementData.payments.length} payment${statementData.payments.length !== 1 ? 's' : ''}` },
-                      { label: 'Outstanding', value: formatCurrency(statementData.summary.outstanding_balance), color: parseFloat(statementData.summary.outstanding_balance) > 0 ? 'text-amber-400' : 'text-green-400', sub: parseFloat(statementData.summary.outstanding_balance) > 0 ? 'Owed to supplier' : 'Settled' },
+                      { label: 'Outstanding', value: formatCurrency(statementData.summary.outstanding_balance), color: parseFloat(statementData.summary.outstanding_balance) > 0 ? 'text-brand-400' : 'text-green-400', sub: parseFloat(statementData.summary.outstanding_balance) > 0 ? 'Owed to supplier' : 'Settled' },
                     ].map((k) => (
                       <div key={k.label} className="rounded-xl border border-surface-700 bg-surface-900/40 p-3">
                         <p className="text-[11px] uppercase tracking-wide text-slate-500">{k.label}</p>

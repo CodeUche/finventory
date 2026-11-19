@@ -886,7 +886,7 @@ export default function PayrollPage() {
                       </tr>
                       {expandedRun === r.id && (
                         <tr key={`${r.id}-detail`} className="bg-surface-900/50">
-                          <td colSpan={8} className="px-6 py-4">
+                          <td colSpan={8} className="px-6 py-4 max-w-0">
                             {/* Cash outflow breakdown */}
                             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4 p-3 bg-surface-800/50 rounded-xl border border-surface-700">
                               <div><p className="text-xs text-slate-500">Salaries (Net)</p><p className="text-sm font-mono text-white font-semibold">{formatCurrency(r.total_net)}</p></div>
@@ -918,7 +918,7 @@ export default function PayrollPage() {
                                       </td>
                                       <td className="py-2 pr-3 font-mono whitespace-nowrap">
                                         {p.proration_factor && parseFloat(p.proration_factor) < 1 ? (
-                                          <span className="text-sky-400" title="Prorated \u2014 joined or left during this period">
+                                          <span className="text-sky-400" title="Prorated — joined or left during this period">
                                             {parseFloat(p.proration_factor).toFixed(2)}
                                           </span>
                                         ) : (
@@ -928,19 +928,19 @@ export default function PayrollPage() {
                                       <td className="py-2 pr-3 font-mono text-white">{formatCurrency(p.gross_salary)}</td>
                                       <td className="py-2 pr-3 font-mono text-emerald-400">{parseFloat(p.bonus_amount || '0') > 0 ? formatCurrency(p.bonus_amount) : <span className="text-slate-600">—</span>}</td>
                                       <td className="py-2 pr-3 font-mono text-teal-400">{parseFloat(p.overtime_amount || '0') > 0 ? formatCurrency(p.overtime_amount) : <span className="text-slate-600">—</span>}</td>
-                                      <td className="py-2 pr-3 font-mono text-cyan-400">{parseFloat(p.adjustment_amount || '0') !== 0 ? formatCurrency(p.adjustment_amount ?? 0) : <span className="text-slate-600">\u2014</span>}</td>
+                                      <td className="py-2 pr-3 font-mono text-cyan-400">{parseFloat(p.adjustment_amount || '0') !== 0 ? formatCurrency(p.adjustment_amount ?? 0) : <span className="text-slate-600">—</span>}</td>
                                       <td className="py-2 pr-3 font-mono text-red-400">{formatCurrency(p.paye_tax)}</td>
                                       <td className="py-2 pr-3 text-slate-400 whitespace-nowrap">
                                         {p.tax_authority_name
                                           ? p.tax_authority_name.replace(/ (State )?Internal Revenue Service|State Board of Internal Revenue/i, '')
-                                          : <span className="text-amber-500" title="No state of residence set \u2014 PAYE cannot be routed">Unassigned</span>}
+                                          : <span className="text-amber-500" title="No state of residence set — PAYE cannot be routed">Unassigned</span>}
                                       </td>
                                       <td className="py-2 pr-3 font-mono text-white">{formatCurrency(p.employee_pension)}</td>
                                       <td className="py-2 pr-3 font-mono text-blue-400">{formatCurrency(p.nhf)}</td>
-                                      <td className="py-2 pr-3 font-mono text-violet-400">{parseFloat(p.benefit_deductions || '0') > 0 ? formatCurrency(p.benefit_deductions ?? 0) : <span className="text-slate-600">\u2014</span>}</td>
+                                      <td className="py-2 pr-3 font-mono text-violet-400">{parseFloat(p.benefit_deductions || '0') > 0 ? formatCurrency(p.benefit_deductions ?? 0) : <span className="text-slate-600">—</span>}</td>
                                       <td className="py-2 pr-3 font-mono text-rose-400">{parseFloat(p.penalty_deductions || '0') > 0 ? formatCurrency(p.penalty_deductions) : <span className="text-slate-600">—</span>}</td>
-                                      <td className="py-2 pr-3 font-mono text-slate-200">{parseFloat(p.loan_deductions || '0') > 0 ? formatCurrency(p.loan_deductions) : <span className="text-slate-600">\u2014</span>}</td>
-                                      <td className="py-2 pr-3 font-mono text-fuchsia-400">{parseFloat(p.advance_deductions || '0') > 0 ? formatCurrency(p.advance_deductions ?? 0) : <span className="text-slate-600">\u2014</span>}</td>
+                                      <td className="py-2 pr-3 font-mono text-slate-200">{parseFloat(p.loan_deductions || '0') > 0 ? formatCurrency(p.loan_deductions) : <span className="text-slate-600">—</span>}</td>
+                                      <td className="py-2 pr-3 font-mono text-fuchsia-400">{parseFloat(p.advance_deductions || '0') > 0 ? formatCurrency(p.advance_deductions ?? 0) : <span className="text-slate-600">—</span>}</td>
                                       <td className="py-2 pr-3 font-mono text-slate-200">{parseFloat(p.attendance_deduction || '0') > 0 ? formatCurrency(p.attendance_deduction) : <span className="text-slate-600">—</span>}</td>
                                       <td className="py-2 pr-3 font-mono text-emerald-400 font-semibold">{formatCurrency(p.net_salary)}</td>
                                       <td className="py-2 flex items-center gap-1">
@@ -1578,7 +1578,7 @@ export default function PayrollPage() {
                 const varianceAbs = Math.abs(parseFloat(r.variance))
                 const tone = r.variance_direction === 'exact' || varianceAbs < 100
                   ? 'text-emerald-400'
-                  : r.variance_direction === 'under-withheld' ? 'text-red-400' : 'text-amber-400'
+                  : r.variance_direction === 'under-withheld' ? 'text-red-400' : 'text-brand-400'
                 return (
                   <div key={r.employee_id} className="card p-4 space-y-2">
                     <div className="flex items-center justify-between">
