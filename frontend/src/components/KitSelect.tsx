@@ -289,6 +289,14 @@ export function SelectEnhancer() {
     }
   }, [])
 
+  // Tell screen readers the control has a list and whether it is open.
+  useEffect(() => {
+    if (!target) return
+    target.setAttribute('aria-haspopup', 'listbox')
+    target.setAttribute('aria-expanded', 'true')
+    return () => { target.setAttribute('aria-expanded', 'false') }
+  }, [target])
+
   // If the control disappears (page change, pop-up closed) while open, drop the list.
   useEffect(() => {
     if (!target) return
