@@ -12,4 +12,4 @@ Editing this file before a release is the difference between a user seeing
 
 ---
 
-Who can see what has been tightened. Reports now follow the same permissions as the screens they come from, so a team member sees only the reports their role allows, and stock pages and actions need the Inventory permission. Voiding an invoice now needs full edit access to Sales. Cashiers who can make sales can still load the product and warehouse lists at the till. Changes saved offline in a web browser now send when you are back online. Owners: please review your team's permissions in Settings, Team.
+A return kept on the customer's account, instead of paid back, now correctly shows up as credit on their balance. A restaurant tip or service charge paid by card is now recorded correctly instead of always being counted as cash.
