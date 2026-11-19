@@ -1,3 +1,4 @@
+import { isSupplierStatement } from '@/lib/statementShape'
 import { useEffect, useState } from 'react'
 import { useIsMounted } from '@/hooks/useIsMounted'
 import { confirmDialog } from '@/lib/dialog'
@@ -72,6 +73,7 @@ export default function SuppliersPage() {
   const [showStatement, setShowStatement] = useState(false)
   const [selected, setSelected] = useState<Supplier | null>(null)
   const [statementData, setStatementData] = useState<any>(null)
+  const [stmtError, setStmtError] = useState(false)
   const [loadingStmt, setLoadingStmt] = useState(false)
   const today = new Date().toISOString().split('T')[0]
   const [stmtFrom, setStmtFrom] = useState(`${today.slice(0, 8)}01`)
@@ -152,16 +154,19 @@ export default function SuppliersPage() {
   const openStatement = (s: Supplier) => {
     setSelected(s)
     setStatementData(null)
+    setStmtError(false)
     setShowStatement(true)
     loadStatement(s.id)
   }
 
   const loadStatement = async (id: string, from = stmtFrom, to = stmtTo) => {
     setLoadingStmt(true)
+    setStmtError(false)
     try {
       const { data } = await supplierApi.statement(id, { date_from: from, date_to: to })
+      if (!isSupplierStatement(data)) { setStatementData(null); setStmtError(true); return }
       setStatementData(data)
-    } catch { toast.error('Failed to load statement') }
+    } catch { setStatementData(null); setStmtError(true) }
     finally { setLoadingStmt(false) }
   }
 
@@ -522,6 +527,11 @@ export default function SuppliersPage() {
 
               {loadingStmt ? (
                 <div className="py-12 text-center"><Loader2 size={24} className="animate-spin mx-auto text-slate-500" /></div>
+              ) : stmtError ? (
+                <div role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 p-5 text-center space-y-3">
+                  <p className="text-sm text-red-400">We could not load this statement. Check your connection and try again.</p>
+                  <div className="flex justify-center"><button type="button" onClick={() => loadStatement(selected.id)} className="btn-secondary text-xs">Retry</button></div>
+                </div>
               ) : !statementData ? null : (
                 <>
                   <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
@@ -530,7 +540,7 @@ export default function SuppliersPage() {
                       { label: 'Total Billed', value: formatCurrency(statementData.summary.total_billed), color: 'text-red-400', sub: `${statementData.bills.length} bill${statementData.bills.length !== 1 ? 's' : ''}` },
                       { label: 'VAT', value: formatCurrency(statementData.summary.total_tax ?? '0'), color: 'text-blue-400', sub: 'Input VAT on bills' },
                       { label: 'Total Paid', value: formatCurrency(statementData.summary.total_paid), color: 'text-green-400', sub: `${statementData.payments.length} payment${statementData.payments.length !== 1 ? 's' : ''}` },
-                      { label: 'Outstanding', value: formatCurrency(statementData.summary.outstanding_balance), color: parseFloat(statementData.summary.outstanding_balance) > 0 ? 'text-amber-400' : 'text-green-400', sub: parseFloat(statementData.summary.outstanding_balance) > 0 ? 'Owed to supplier' : 'Settled' },
+                      { label: 'Outstanding', value: formatCurrency(statementData.summary.outstanding_balance), color: parseFloat(statementData.summary.outstanding_balance) > 0 ? 'text-brand-400' : 'text-green-400', sub: parseFloat(statementData.summary.outstanding_balance) > 0 ? 'Owed to supplier' : 'Settled' },
                     ].map((k) => (
                       <div key={k.label} className="rounded-xl border border-surface-700 bg-surface-900/40 p-3">
                         <p className="text-[11px] uppercase tracking-wide text-slate-500">{k.label}</p>

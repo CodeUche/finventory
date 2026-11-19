@@ -5,6 +5,7 @@
  *  3. Financial ratios strip — Working Capital, Current Ratio, D/E Ratio.
  *     These three numbers are what a banker or board member asks for first.
  */
+import { useChartKit } from '@/lib/chartKit'
 import { useEffect, useMemo, useState } from 'react'
 import { DS_CHART } from '@/lib/chartTheme'
 import { useNavigate } from 'react-router-dom'
@@ -19,7 +20,6 @@ import { accountingApi, bypassNextGets } from '@/services/api'
 import AccountDrilldownDrawer from '@/components/AccountDrilldownDrawer'
 import { formatCurrency } from '@/lib/utils'
 
-const tooltipStyle = { backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '12px', color: '#f1f5f9', fontSize: 12 }
 
 interface BSAccount { code: string; name: string; balance: string | number }
 interface BalanceSheetData {
@@ -74,6 +74,7 @@ function groupAccounts(accounts: BSAccount[], groups: { label: string; from: num
 }
 
 export default function BalanceSheetPage() {
+  const { tooltipStyle, tooltipLabelStyle, tooltipItemStyle, legendColor } = useChartKit()
   const navigate = useNavigate()
   const now = new Date()
   const [selectedYear, setSelectedYear] = useState(now.getFullYear())
@@ -272,11 +273,11 @@ export default function BalanceSheetPage() {
                       ))}
                     </Pie>
                     <Tooltip contentStyle={tooltipStyle}
-                      labelStyle={{ color: '#94a3b8' }} itemStyle={{ color: '#f1f5f9' }}
+                      labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle}
                       formatter={(v: number) => formatCurrency(String(v))} />
                     <Legend
                       wrapperStyle={{ fontSize: 10, paddingTop: 4 }}
-                      formatter={(v: string) => <span style={{ color: '#94a3b8' }}>{v}</span>}
+                      formatter={(v: string) => <span style={{ color: legendColor }}>{v}</span>}
                     />
                   </PieChart>
                 </ResponsiveContainer>
@@ -303,11 +304,11 @@ export default function BalanceSheetPage() {
                       ))}
                     </Pie>
                     <Tooltip contentStyle={tooltipStyle}
-                      labelStyle={{ color: '#94a3b8' }} itemStyle={{ color: '#f1f5f9' }}
+                      labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle}
                       formatter={(v: number) => formatCurrency(String(v))} />
                     <Legend
                       wrapperStyle={{ fontSize: 10, paddingTop: 4 }}
-                      formatter={(v: string) => <span style={{ color: '#94a3b8' }}>{v}</span>}
+                      formatter={(v: string) => <span style={{ color: legendColor }}>{v}</span>}
                     />
                   </PieChart>
                 </ResponsiveContainer>

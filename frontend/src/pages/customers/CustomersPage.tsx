@@ -1,3 +1,4 @@
+import { isCustomerStatement } from '@/lib/statementShape'
 import { useEffect, useState } from 'react'
 import { DS_CHART } from '@/lib/chartTheme'
 import { confirmDialog } from '@/lib/dialog'
@@ -114,6 +115,7 @@ export default function CustomersPage() {
   // Statement
   const [showStatement, setShowStatement] = useState(false)
   const [statementData, setStatementData] = useState<any>(null)
+  const [stmtError, setStmtError] = useState(false)
   const [stmtFrom, setStmtFrom] = useState(() => {
     const d = new Date(); d.setDate(1); return d.toISOString().split('T')[0]
   })
@@ -226,10 +228,12 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
 
   const loadStatement = async (cId: string) => {
     setLoadingStmt(true)
+    setStmtError(false)
     try {
       const { data } = await customerApi.statement(cId, { date_from: stmtFrom, date_to: stmtTo })
+      if (!isCustomerStatement(data)) { setStatementData(null); setStmtError(true); return }
       setStatementData(data)
-    } catch { toast.error('Failed to load statement') }
+    } catch { setStatementData(null); setStmtError(true) }
     finally { setLoadingStmt(false) }
   }
 
@@ -484,6 +488,7 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
   const openStatement = (c: Customer) => {
     setSelected(c)
     setStatementData(null)
+    setStmtError(false)
     setShowStatement(true)
     loadStatement(c.id)
   }
@@ -894,6 +899,11 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
                 <div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => (
                   <div key={i} className="h-10 bg-surface-800 rounded-lg animate-pulse" />
                 ))}</div>
+              ) : stmtError ? (
+                <div role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 p-5 text-center space-y-3">
+                  <p className="text-sm text-red-400">We could not load this statement. Check your connection and try again.</p>
+                  <div className="flex justify-center"><button type="button" onClick={() => loadStatement(selected.id)} className="btn-secondary text-xs">Retry</button></div>
+                </div>
               ) : !statementData ? null : (
                 <>
                   {/* Summary KPIs — row 1 */}
@@ -904,7 +914,7 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
                       { label: 'Discounts Given', value: formatCurrency(statementData.summary.total_discounts ?? '0'), color: 'text-green-400', sub: 'Savings on invoices' },
                       { label: 'VAT Charged', value: formatCurrency(statementData.summary.total_tax ?? '0'), color: 'text-blue-400', sub: 'Tax on invoices' },
                       { label: 'Total Paid', value: formatCurrency(statementData.summary.total_paid), color: 'text-green-400', sub: `${statementData.payments.length} payment${statementData.payments.length !== 1 ? 's' : ''}` },
-                      { label: 'Balance Due', value: formatCurrency(statementData.summary.balance_due), color: parseFloat(statementData.summary.balance_due) > 0 ? 'text-amber-400' : 'text-green-400', sub: parseFloat(statementData.summary.balance_due) > 0 ? 'Outstanding' : 'Settled' },
+                      { label: 'Balance Due', value: formatCurrency(statementData.summary.balance_due), color: parseFloat(statementData.summary.balance_due) > 0 ? 'text-brand-400' : 'text-green-400', sub: parseFloat(statementData.summary.balance_due) > 0 ? 'Outstanding' : 'Settled' },
                     ].map(({ label, value, color, sub }) => (
                       <div key={label} className="bg-surface-800 rounded-xl p-3 text-center">
                         <p className="text-[10px] text-slate-500 mb-1 leading-tight">{label}</p>
@@ -1034,7 +1044,7 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
                             <tbody>
                               <tr className="border-b border-surface-700/40 bg-surface-800/40">
                                 <td colSpan={9} className="px-2 py-2 font-semibold text-slate-400 text-right text-[11px]">Balance Brought Forward</td>
-                                <td className={`px-2 py-2 text-right font-semibold whitespace-nowrap ${balance > 0 ? 'text-amber-400' : 'text-green-400'}`}>{formatCurrency(balance)}</td>
+                                <td className={`px-2 py-2 text-right font-semibold whitespace-nowrap ${balance > 0 ? 'text-brand-400' : 'text-green-400'}`}>{formatCurrency(balance)}</td>
                               </tr>
                               {events.map((e, ei) => {
                                 if (e.type === 'invoice') {
@@ -1065,7 +1075,7 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
                                           <td className="px-2 py-2.5 text-slate-400 text-[11px] overflow-hidden text-ellipsis whitespace-nowrap">{inv.sold_by || '—'}</td>
                                           <td className="px-2 py-2.5 text-red-400 text-right whitespace-nowrap font-medium">{formatCurrency(parseFloat(item.line_total))}</td>
                                           <td className="px-2 py-2.5" />
-                                          <td className={`px-2 py-2.5 text-right font-semibold whitespace-nowrap ${balance > 0 ? 'text-amber-400' : 'text-green-400'}`}>{formatCurrency(balance)}</td>
+                                          <td className={`px-2 py-2.5 text-right font-semibold whitespace-nowrap ${balance > 0 ? 'text-brand-400' : 'text-green-400'}`}>{formatCurrency(balance)}</td>
                                         </tr>
                                       )
                                     }
@@ -1080,7 +1090,7 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
                                         <td className="px-2 py-2.5 text-slate-400 text-[11px] overflow-hidden text-ellipsis whitespace-nowrap">{inv.sold_by || '—'}</td>
                                         <td className="px-2 py-2.5 text-red-400 text-right whitespace-nowrap font-medium">{formatCurrency(parseFloat(inv.total_amount))}</td>
                                         <td className="px-2 py-2.5" />
-                                        <td className={`px-2 py-2.5 text-right font-semibold whitespace-nowrap ${balance > 0 ? 'text-amber-400' : 'text-green-400'}`}>{formatCurrency(balance)}</td>
+                                        <td className={`px-2 py-2.5 text-right font-semibold whitespace-nowrap ${balance > 0 ? 'text-brand-400' : 'text-green-400'}`}>{formatCurrency(balance)}</td>
                                       </tr>
                                     )
                                   }
@@ -1098,7 +1108,7 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
                                       <td className="px-2 py-2.5" />
                                       <td className="px-2 py-2.5" />
                                       <td className="px-2 py-2.5 text-green-400 text-right whitespace-nowrap font-medium">{formatCurrency(parseFloat(p.amount))}</td>
-                                      <td className={`px-2 py-2.5 text-right font-semibold whitespace-nowrap ${balance > 0 ? 'text-amber-400' : 'text-green-400'}`}>{formatCurrency(balance)}</td>
+                                      <td className={`px-2 py-2.5 text-right font-semibold whitespace-nowrap ${balance > 0 ? 'text-brand-400' : 'text-green-400'}`}>{formatCurrency(balance)}</td>
                                     </tr>
                                   )
                                 } else if (e.type === 'return') {
@@ -1112,7 +1122,7 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
                                       <td className="px-2 py-2.5" /><td className="px-2 py-2.5" /><td className="px-2 py-2.5" /><td className="px-2 py-2.5" />
                                       <td className="px-2 py-2.5" />
                                       <td className="px-2 py-2.5 text-blue-400 text-right whitespace-nowrap font-medium">{formatCurrency(parseFloat(r.amount))}</td>
-                                      <td className={`px-2 py-2.5 text-right font-semibold whitespace-nowrap ${balance > 0 ? 'text-amber-400' : 'text-green-400'}`}>{formatCurrency(balance)}</td>
+                                      <td className={`px-2 py-2.5 text-right font-semibold whitespace-nowrap ${balance > 0 ? 'text-brand-400' : 'text-green-400'}`}>{formatCurrency(balance)}</td>
                                     </tr>
                                   )
                                 } else {
@@ -1126,7 +1136,7 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
                                       <td className="px-2 py-2.5" /><td className="px-2 py-2.5" /><td className="px-2 py-2.5" /><td className="px-2 py-2.5" />
                                       <td className="px-2 py-2.5 text-white text-right whitespace-nowrap font-medium">{formatCurrency(parseFloat(d.amount))}</td>
                                       <td className="px-2 py-2.5" />
-                                      <td className={`px-2 py-2.5 text-right font-semibold whitespace-nowrap ${balance > 0 ? 'text-amber-400' : 'text-green-400'}`}>{formatCurrency(balance)}</td>
+                                      <td className={`px-2 py-2.5 text-right font-semibold whitespace-nowrap ${balance > 0 ? 'text-brand-400' : 'text-green-400'}`}>{formatCurrency(balance)}</td>
                                     </tr>
                                   )
                                 }
@@ -1136,7 +1146,7 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
                                 <td colSpan={7} className="px-2 py-3 font-bold text-slate-300 text-right text-xs">Grand Total</td>
                                 <td className="px-2 py-3 text-right font-bold text-red-400">{formatCurrency(parseFloat(statementData.summary.total_charged ?? statementData.summary.total_invoiced))}</td>
                                 <td className="px-2 py-3 text-right font-bold text-green-400">{formatCurrency(parseFloat(statementData.summary.total_paid))}</td>
-                                <td className={`px-2 py-3 text-right font-bold ${parseFloat(statementData.summary.balance_due) > 0 ? 'text-amber-400' : 'text-green-400'}`}>{formatCurrency(parseFloat(statementData.summary.balance_due))}</td>
+                                <td className={`px-2 py-3 text-right font-bold ${parseFloat(statementData.summary.balance_due) > 0 ? 'text-brand-400' : 'text-green-400'}`}>{formatCurrency(parseFloat(statementData.summary.balance_due))}</td>
                               </tr>
                             </tbody>
                           </table>

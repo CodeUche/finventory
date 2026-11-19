@@ -547,7 +547,7 @@ export default function EmployeesPage() {
                           >
                             <LogOut size={14} />
                           </button>
-                          <button onClick={() => handleDeactivate(e)} className="text-xs px-2.5 py-1 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors">Deactivate</button>
+                          <button onClick={() => handleDeactivate(e)} className="text-xs px-1 py-1 bg-transparent text-red-400 hover:underline transition-colors">Deactivate</button>
                         </>
                       )}
                       <button onClick={() => handleDelete(e)} className="p-1.5 text-slate-600 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors" title="Delete employee permanently"><Trash2 size={14} /></button>

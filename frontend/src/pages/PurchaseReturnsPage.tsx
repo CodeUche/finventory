@@ -174,9 +174,7 @@ export default function PurchaseReturnsPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-            <RotateCcw size={22} className="text-brand-400" /> Purchase Returns
-          </h1>
+          <h1 className="text-2xl font-bold text-white">Purchase Returns</h1>
           <p className="text-slate-400 text-sm">({total}) Purchase Returns</p>
         </div>
       </div>

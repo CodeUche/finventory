@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import RouteErrorBoundary from '@/components/RouteErrorBoundary'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import Sidebar from './Sidebar'
 import TopBar from './TopBar'
@@ -452,7 +453,7 @@ export default function AppLayout() {
               </button>
             </div>
           ) : (orgListLoaded || organisation?.id) ? (
-            <Outlet />
+            <RouteErrorBoundary><Outlet /></RouteErrorBoundary>
           ) : (
             <div className="flex-1 flex items-center justify-center py-32">
               <div className="w-7 h-7 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />

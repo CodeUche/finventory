@@ -8,7 +8,7 @@ const ROUTE_LABELS: Record<string, string> = {
   '/dashboard':                   'Dashboard',
   '/inventory/products':          'Products',
   '/inventory/stock':             'Stock Levels',
-  '/inventory/warehouses':        'Locations',
+  '/inventory/warehouses':        'Warehouses',
   '/inventory/batches':           'Batches & Lots',
   '/sales':                       'Invoices',
   '/sales/new':                   'New Sale',
@@ -16,7 +16,7 @@ const ROUTE_LABELS: Record<string, string> = {
   '/quotes':                      'Quotes',
   '/recurring':                   'Recurring Invoices',
   '/purchases':                   'Purchase Orders',
-  '/bills':                       'Bills (AP)',
+  '/bills':                       'Bills',
   '/bills/folders':               'Bill Folders',
   '/suppliers':                   'Suppliers',
   '/customers':                   'Customers',
@@ -30,6 +30,10 @@ const ROUTE_LABELS: Record<string, string> = {
   '/payroll/runs':                'Payroll Runs',
   '/expenses':                    'Income & Expenses',
   '/budgets':                     'Budgets',
+  '/budgets/monitoring':          'Budget Monitoring',
+  '/budgets/periods':             'Budget Periods',
+  '/budgets/allocations':         'Budget Allocations',
+  '/purchases/returns':           'Purchase Returns',
   '/reports':                     'Reports',
   '/reports/balance-sheet':       'Balance Sheet',
   '/owner-analytics':             'Owner Analytics',
@@ -60,8 +64,13 @@ const SECTION_MAP: Record<string, string> = {
   bills:      'Procurement',
   purchases:  'Procurement',
   suppliers:  'Procurement',
-  budgets:    'Cash Flow',
   expenses:   'Cash Flow',
+}
+
+// Pages that sit under a sidebar group whose name is not their first path segment:
+// the budget pages are listed under Accounting & Finance in the sidebar.
+const PAGE_PARENTS: Record<string, Crumb[]> = {
+  budgets: [{ label: 'Accounting', href: '/hub/accounting' }],
 }
 
 // Where each section crumb leads: the hub page of that sidebar group.
@@ -94,6 +103,14 @@ function buildCrumbs(pathname: string): Crumb[] {
   const segments = pathname.replace(/^\//, '').split('/')
   const firstSeg = segments[0]
   const section = SECTION_MAP[firstSeg]
+
+  const parents = PAGE_PARENTS[firstSeg]
+  if (parents) {
+    crumbs.push(...parents)
+    if (segments.length > 1) crumbs.push({ label: ROUTE_LABELS['/' + firstSeg] ?? firstSeg, href: '/' + firstSeg })
+    crumbs.push({ label: pageLabel ?? ROUTE_LABELS['/' + firstSeg] ?? firstSeg, href: pathname })
+    return crumbs
+  }
 
   if (section) {
     // Add section crumb only when there's a sub-page (e.g. /inventory/stock)

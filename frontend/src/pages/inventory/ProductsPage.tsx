@@ -1025,7 +1025,7 @@ This will permanently delete ${n} product${n !== 1 ? 's' : ''} from your catalog
           <p className="text-slate-400 text-sm">{total} SKUs in catalogue</p>
         </div>
         <div className="flex items-center gap-2 sm:ml-auto">
-          <button onClick={handleRefresh} disabled={refreshing} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh">
+          <button onClick={handleRefresh} disabled={refreshing} className="btn-ghost p-2 text-slate-400 hover:text-white" title="Refresh" aria-label="Refresh">
             <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
           </button>
           {products.length > 0 && (
@@ -1063,8 +1063,8 @@ This will permanently delete ${n} product${n !== 1 ? 's' : ''} from your catalog
                   </div>
                 )}
               </div>
-              <button onClick={confirmDeleteAll} disabled={deletingAll} className="btn-ghost p-2 text-red-400 hover:text-red-300 hover:bg-red-500/10" title="Delete all products">
-                <Trash2 size={16} />
+              <button onClick={confirmDeleteAll} disabled={deletingAll} className="btn-secondary flex items-center gap-1.5 px-3 py-2 text-sm text-red-400 hover:text-red-300" title="Delete all products">
+                <Trash2 size={16} /> Delete All Products
               </button>
             </>
           )}

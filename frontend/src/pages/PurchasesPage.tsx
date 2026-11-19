@@ -592,8 +592,8 @@ export default function PurchasesPage() {
                         {(o.status === 'received' || o.status === 'partially_received') && (
                           <button
                             onClick={() => openReturnModal(o)}
-                            className="text-slate-400 hover:text-amber-400 transition-colors"
-                            title="Return goods to supplier"
+                            className="text-slate-400 hover:text-brand-400 transition-colors"
+                            title="Return goods to supplier" aria-label="Return goods to supplier"
                           >
                             <RotateCcw size={14} />
                           </button>

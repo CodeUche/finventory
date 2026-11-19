@@ -333,7 +333,7 @@ export default function BillsPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-white">Bills (Accounts Payable)</h1>
+          <h1 className="text-2xl font-bold text-white">Bills</h1>
           <p className="text-slate-400 text-sm">({total}) Total Bills</p>
         </div>
         <div className="flex items-center gap-2 sm:ml-auto">
@@ -431,7 +431,7 @@ export default function BillsPage() {
                 </tr>
               ) : paged.map((b) => (
                 <tr key={b.id} className="table-row">
-                  <td className="px-4 py-3.5 font-mono text-brand-400">{b.bill_number}</td>
+                  <td className="px-4 py-3.5 font-mono text-brand-400 whitespace-nowrap">{b.bill_number}</td>
                   <td className="px-4 py-3.5 text-slate-300">
                     {b.supplier_name}
                     {(b as any).folder_name && (
@@ -453,7 +453,7 @@ export default function BillsPage() {
                   <td className="px-4 py-3.5 text-white font-semibold">{formatCurrency(b.total_amount)}</td>
                   <td className="px-4 py-3.5 text-emerald-400">{formatCurrency(b.amount_paid)}</td>
                   <td className="px-4 py-3.5 text-red-400">{formatCurrency(b.amount_due)}</td>
-                  <td className="px-4 py-3.5"><span className={STATUS_BADGE[b.status] ?? 'badge-slate'}>{b.status.replace('_', ' ')}</span></td>
+                  <td className="px-4 py-3.5"><span className={`${STATUS_BADGE[b.status] ?? 'badge-slate'} whitespace-nowrap`}>{b.status.replace('_', ' ')}</span></td>
                   <td className="px-4 py-3.5">
                     <div className="flex items-center gap-1.5">
                       {(b.status === 'draft' || b.status === 'received') && (

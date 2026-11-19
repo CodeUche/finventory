@@ -177,8 +177,9 @@ export default function BillFoldersPage() {
         </div>
       </div>
 
-      {/* Breadcrumb */}
-      <nav aria-label="Breadcrumb" className="ds-proc-crumb">
+      {/* Folder trail: only inside a folder. At the top level the top bar already shows the path (it used to show twice). */}
+      {currentFolder && (
+      <nav aria-label="Folder trail" className="ds-proc-crumb">
         <button onClick={() => navigate('/bills')} className="flex items-center gap-1">
           <ArrowLeft size={13} aria-hidden="true" /> Bills
         </button>
@@ -199,6 +200,7 @@ export default function BillFoldersPage() {
           </span>
         )}
       </nav>
+      )}
 
       {loading ? (
         <div className="py-16 text-center"><Loader2 size={28} className="animate-spin mx-auto text-brand-400" /></div>

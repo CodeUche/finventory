@@ -1,5 +1,6 @@
 import React from 'react'
 import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
+import toast from 'react-hot-toast'
 import { useAuthStore } from '@/store/authStore'
 import { trackPageview } from '@/lib/analytics'
 import type { ModuleKey } from '@/types'
@@ -14,6 +15,7 @@ import DashboardPage from '@/pages/dashboard/DashboardPage'
 // on slow connections, harmless for the Tauri desktop build (local disk).
 const SubAccountLoginPage = React.lazy(() => import('@/pages/auth/SubAccountLoginPage'))
 import DsPage from '@/components/DsPage'
+import RouteErrorBoundary from '@/components/RouteErrorBoundary'
 const HubPage = React.lazy(() => import('@/pages/hubs/HubPage'))
 const RegisterPage = React.lazy(() => import('@/pages/auth/RegisterPage'))
 const OnboardingPage = React.lazy(() => import('@/pages/auth/OnboardingPage'))
@@ -106,58 +108,10 @@ function RouteLoading() {
   )
 }
 
-// Inner class-based boundary — must be a class to use getDerivedStateFromError
-class ErrorBoundaryInner extends React.Component<
-  { children: React.ReactNode; resetKey: string; navigate: (path: string) => void },
-  { hasError: boolean; message: string }
-> {
-  constructor(props: { children: React.ReactNode; resetKey: string; navigate: (path: string) => void }) {
-    super(props)
-    this.state = { hasError: false, message: '' }
-  }
-  static getDerivedStateFromError(err: Error) {
-    return { hasError: true, message: err?.message ?? 'Unknown error' }
-  }
-  componentDidUpdate(prev: { resetKey: string }) {
-    // Reset error state whenever the route changes so a stale crash doesn't
-    // keep the error screen visible on subsequent navigations
-    if (prev.resetKey !== this.props.resetKey && this.state.hasError) {
-      this.setState({ hasError: false, message: '' })
-    }
-  }
-  render() {
-    if (this.state.hasError) {
-      // Use inline styles so the error card is always visible regardless of theme
-      return (
-        <div style={{ minHeight: '100vh', background: '#020617', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
-          <div style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '16px', padding: '32px', maxWidth: '400px', width: '100%', textAlign: 'center' }}>
-            <p style={{ color: '#f8fafc', fontSize: '18px', fontWeight: 700, marginBottom: '8px' }}>Something went wrong</p>
-            <p style={{ color: '#94a3b8', fontSize: '12px', fontFamily: 'monospace', wordBreak: 'break-all', marginBottom: '20px' }}>{this.state.message}</p>
-            <button
-              style={{ background: '#122C63', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 24px', cursor: 'pointer', fontWeight: 600, fontSize: '14px' }}
-              onClick={() => {
-                this.setState({ hasError: false, message: '' })
-                // Use React Router navigate so Tauri never does a full-page reload
-                // (window.location.replace('/') triggers main.tsx logout() on restart)
-                this.props.navigate('/dashboard')
-              }}
-            >
-              Go to Dashboard
-            </button>
-          </div>
-        </div>
-      )
-    }
-    return this.props.children
-  }
-}
-
-// Wrapper that supplies the current route path and navigate fn as props.
-// navigate is passed explicitly because class components cannot use hooks.
+// Last-resort boundary around the whole app (full screen). A second one sits
+// around the page area inside AppLayout so the sidebar and top bar stay visible.
 function ErrorBoundary({ children }: { children: React.ReactNode }) {
-  const location = useLocation()
-  const navigate = useNavigate()
-  return <ErrorBoundaryInner resetKey={location.pathname} navigate={navigate}>{children}</ErrorBoundaryInner>
+  return <RouteErrorBoundary fullScreen>{children}</RouteErrorBoundary>
 }
 
 /**
@@ -243,6 +197,49 @@ function OwnerOnlyRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+// Plain names for the "no access" note.
+const MODULE_NAMES: Partial<Record<ModuleKey, string>> = {
+  sales: 'Sales', purchases: 'Purchases', bills: 'Bills', expenses: 'Income & Expenses',
+  inventory: 'Inventory', customers: 'Customers', suppliers: 'Suppliers', payroll: 'HR and Payroll',
+  reports: 'Reports', accounting: 'Accounting', tax: 'Tax', budget: 'Budgets', quotes: 'Quotes',
+  recurring: 'Recurring Invoices', settings: 'Settings', audit_log: 'the Audit Log',
+  owner_analytics: 'Owner Analytics', team: 'Team',
+}
+
+/**
+ * Sends the person to the dashboard AND tells them why, once, in plain words,
+ * instead of a silent redirect that looks like a bug.
+ */
+function DeniedRedirect({ what }: { what: string }) {
+  React.useEffect(() => {
+    toast(`You don't have access to ${what}. Ask an owner or admin.`, { id: 'no-access' })
+  }, [what])
+  return <Navigate to="/dashboard" replace />
+}
+
+/** Only owners, admins and superusers; anyone else goes to the dashboard with a note. */
+function AdminOnlyRoute({ what, children }: { what: string; children: React.ReactNode }) {
+  const { user, memberRole } = useAuthStore()
+  if (!user) return <Navigate to="/login" replace />
+  if (memberRole === null && !user.is_superuser) return <MembershipLoading />
+  if (!isConfirmedOwnerOrAdmin(user, memberRole)) return <DeniedRedirect what={what} />
+  return <>{children}</>
+}
+
+/** Small "Page not found" screen inside the app shell (sidebar and top bar stay). */
+function NotFoundPage() {
+  const navigate = useNavigate()
+  return (
+    <div className="flex min-h-[60vh] items-center justify-center p-6">
+      <div role="alert" className="w-full max-w-md text-center" style={{ background: 'var(--ds-card)', border: '1.5px solid var(--ds-card-bd)', borderRadius: 16, padding: 32, color: 'var(--ds-ink)' }}>
+        <h1 style={{ color: 'var(--ds-title)', fontSize: 22, fontWeight: 700, marginBottom: 8 }}>Page not found</h1>
+        <p style={{ fontSize: 14, marginBottom: 20 }}>We could not find that page. It may have moved, or the address may have a typo.</p>
+        <button type="button" className="btn-primary" onClick={() => navigate('/dashboard')}>Go to dashboard</button>
+      </div>
+    </div>
+  )
+}
+
 /**
  * Redirects sub-accounts to /dashboard if they have 'none' access on a module.
  * Owners, admins, and superusers always pass through.
@@ -253,7 +250,7 @@ function ModuleRoute({ module, children }: { module: ModuleKey; children: React.
   // Wait for membership to load — show spinner instead of redirecting prematurely
   if (memberRole === null) return <MembershipLoading />
   const level = modulePermissions[module] ?? 'none'
-  if (level === 'none') return <Navigate to="/dashboard" replace />
+  if (level === 'none') return <DeniedRedirect what={MODULE_NAMES[module] ?? 'that page'} />
   return <>{children}</>
 }
 
@@ -266,7 +263,7 @@ function WriteModuleRoute({ module, children }: { module: ModuleKey; children: R
   if (isConfirmedOwnerOrAdmin(user, memberRole)) return <>{children}</>
   if (memberRole === null) return <MembershipLoading />
   const level = modulePermissions[module] ?? 'none'
-  if (level === 'none' || level === 'view') return <Navigate to="/dashboard" replace />
+  if (level === 'none' || level === 'view') return <DeniedRedirect what={MODULE_NAMES[module] ?? 'that page'} />
   return <>{children}</>
 }
 
@@ -343,7 +340,7 @@ export default function App() {
         <Route path="sales/returns" element={<ModuleRoute module="sales"><DsPage><SalesReturnsPage /></DsPage></ModuleRoute>} />
         <Route path="sales/new" element={<WriteModuleRoute module="sales"><DsPage><NewSalePage /></DsPage></WriteModuleRoute>} />
         <Route path="sales/invoices/new" element={<WriteModuleRoute module="sales"><DsPage><NewInvoicePage /></DsPage></WriteModuleRoute>} />
-        <Route path="sales/invoices/:id/edit" element={<WriteModuleRoute module="sales"><EditInvoicePage /></WriteModuleRoute>} />
+        <Route path="sales/invoices/:id/edit" element={<WriteModuleRoute module="sales"><DsPage><EditInvoicePage /></DsPage></WriteModuleRoute>} />
         <Route path="locations" element={<ModuleRoute module="sales"><DsPage><LocationsPage /></DsPage></ModuleRoute>} />
         <Route path="quotes"    element={<ModuleRoute module="quotes"><DsPage><QuotesPage /></DsPage></ModuleRoute>} />
         <Route path="recurring" element={<ModuleRoute module="recurring"><DsPage><RecurringInvoicesPage /></DsPage></ModuleRoute>} />
@@ -367,6 +364,7 @@ export default function App() {
         <Route path="pos/tables"      element={<ModuleRoute module="sales"><TablesPage /></ModuleRoute>} />
         <Route path="pos/kitchen"     element={<ModuleRoute module="sales"><KitchenPage /></ModuleRoute>} />
         <Route path="accounting/coa"             element={<ModuleRoute module="accounting"><DsPage><ChartOfAccountsPage /></DsPage></ModuleRoute>} />
+        <Route path="accounting/chart-of-accounts" element={<Navigate to="/accounting/coa" replace />} />
         <Route path="accounting/beginning-balances" element={<ModuleRoute module="accounting"><DsPage><BeginningBalancesPage /></DsPage></ModuleRoute>} />
         <Route path="accounting/journal"          element={<ModuleRoute module="accounting"><DsPage><JournalPage /></DsPage></ModuleRoute>} />
         <Route path="accounting/general-ledger"   element={<ModuleRoute module="accounting"><GeneralLedgerPage /></ModuleRoute>} />
@@ -403,7 +401,7 @@ export default function App() {
 
         {/* Compliance */}
         <Route path="tax"       element={<ModuleRoute module="tax"><TaxPage /></ModuleRoute>} />
-        <Route path="audit-log" element={<AuditLogPage />} />
+        <Route path="audit-log" element={<AdminOnlyRoute what="the Audit Log"><AuditLogPage /></AdminOnlyRoute>} />
         <Route path="helpdesk" element={<TicketsPage />} />
         <Route path="messages" element={<MessagesPage />} />
         <Route path="payments/transfers" element={<ModuleRoute module="sales"><DsPage><TransferConfirmationsPage /></DsPage></ModuleRoute>} />
@@ -427,8 +425,8 @@ export default function App() {
         {/* Platform Admin — superuser only */}
         <Route path="platform-admin" element={<SuperuserRoute><PlatformAdminPage /></SuperuserRoute>} />
 
-        {/* Catch-all: redirect unknown paths to dashboard */}
-        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        {/* Catch-all: a small "Page not found" screen inside the app shell */}
+        <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>
     </React.Suspense>

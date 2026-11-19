@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  AlertTriangle, CheckCircle2, Download, FileText, Loader2, ShieldCheck, X,
+  AlertTriangle, CheckCircle2, Download, FileText, Loader2, X,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -154,10 +154,7 @@ export default function CompliancePage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-start gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-            <ShieldCheck className="w-6 h-6 text-brand-400" />
-            Statutory &amp; benefit obligations
-          </h1>
+          <h1 className="text-2xl font-bold text-white">Statutory &amp; benefit obligations</h1>
           <p className="text-sm text-slate-400 mt-0.5">
             {summary?.next_due_date
               ? `Next deadline ${formatDate(summary.next_due_date)} — ${summary.next_due_recipient ?? ''}`
@@ -176,7 +173,7 @@ export default function CompliancePage() {
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="card p-4">
           <p className="text-[10px] uppercase tracking-wider text-slate-400">Outstanding</p>
-          <p className="text-xl font-bold text-amber-400 mt-1 font-mono">
+          <p className="text-xl font-bold text-brand-400 mt-1 font-mono">
             {formatCurrency(summary?.outstanding ?? 0)}
           </p>
           <p className="text-[11px] text-slate-500 font-mono mt-0.5">
@@ -376,7 +373,7 @@ export default function CompliancePage() {
             <div className="p-4 border-b border-white/10 flex items-center gap-3">
               <FileText className="w-5 h-5 text-brand-400" />
               <div>
-                <h2 className="font-semibold text-white capitalize">{scheduleType} filing schedule</h2>
+                <h2 className="font-semibold text-white">{(scheduleType && ({ nsitf: 'NSITF', nhf: 'NHF', itf: 'ITF', paye: 'PAYE' } as Record<string, string>)[scheduleType.toLowerCase()]) ?? (scheduleType ? scheduleType.charAt(0).toUpperCase() + scheduleType.slice(1) : '')} filing schedule</h2>
                 <p className="text-xs text-slate-400">
                   One group per recipient — a PFA or State IRS will not accept a blended file.
                 </p>

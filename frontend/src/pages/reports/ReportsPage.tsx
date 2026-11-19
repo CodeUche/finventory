@@ -20,10 +20,10 @@
  * All charts use Recharts (already in project).  Zero new dependencies.
  */
 
+import { useChartKit } from '@/lib/chartKit'
 import { useEffect, useMemo, useState, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
-import { useThemeAccent } from '@/hooks/useTheme'
 import {
   AreaChart, Area,
   BarChart, Bar,
@@ -71,20 +71,7 @@ const STATIC_COLORS = [...CHART_SERIES]
 /** Aging bucket colours: healthy → critical */
 const AGING_COLORS = [...AGING_SERIES]
 
-// Chart styles — defined as module-level defaults (dark mode).
-// Light mode tooltip override lives in index.css via the recharts-tooltip-wrapper rule.
-const tooltipStyle = {
-  backgroundColor: '#1e293b',
-  border:          '1px solid #334155',
-  borderRadius:    '12px',
-  color:           '#f1f5f9',
-  fontSize:        12,
-}
-const tooltipLabelStyle  = { color: '#94a3b8' }
-const tooltipItemStyle   = { color: '#f1f5f9' }
-// Use a light-grey fill so axis ticks are readable on the dark card background.
-// In light mode, index.css remaps via .recharts-cartesian-axis-tick-value.
-const axisTickStyle      = { fill: '#94a3b8', fontSize: 11 }
+// Chart text, grid, tooltip and hover colours come from useChartKit() (lib/chartKit.ts).
 
 // ─── Local type helpers ───────────────────────────────────────────────────────
 
@@ -176,7 +163,7 @@ const TAB_REDIRECT: Record<string, TabId> = {
 
 export default function ReportsPage() {
   const { organisation } = useAuthStore()
-  const accent           = useThemeAccent()
+  const { accent, tooltipStyle, tooltipLabelStyle, tooltipItemStyle, axisTickStyle, grid, cursor, legendColor, labelColor } = useChartKit()
   /** Full palette with brand accent at position 0 */
   const colors           = STATIC_COLORS
 
@@ -699,13 +686,13 @@ export default function ReportsPage() {
                     }))}
                     margin={{ top: 5, right: 10, left: 0, bottom: 5 }}
                   >
-                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                    <CartesianGrid strokeDasharray="3 3" stroke={grid} />
                     <XAxis dataKey="period" tick={axisTickStyle} axisLine={false} tickLine={false} />
                     <YAxis tick={axisTickStyle} axisLine={false} tickLine={false}
                       tickFormatter={v => `${getCurrencySymbol()}${formatNumber(v)}`} />
-                    <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle}
+                    <Tooltip cursor={cursor} contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle}
                       itemStyle={tooltipItemStyle} formatter={(v: number) => formatCurrency(String(v))} />
-                    <Legend wrapperStyle={{ fontSize: 11, paddingTop: 12, color: '#94a3b8' }} />
+                    <Legend wrapperStyle={{ fontSize: 11, paddingTop: 12, color: legendColor }} />
                     <Bar dataKey="Revenue" stackId="a" fill={accent}  radius={[0, 0, 0, 0]} />
                     <Bar dataKey="COGS"    stackId="b" fill={DS_CHART.secondary} radius={[4, 4, 0, 0]} />
                   </BarChart>
@@ -738,7 +725,7 @@ export default function ReportsPage() {
                       itemStyle={tooltipItemStyle} formatter={(v: number) => formatCurrency(String(v))} />
                     <Legend
                       wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
-                      formatter={(value: string) => <span style={{ color: '#94a3b8' }}>{value}</span>}
+                      formatter={(value: string) => <span style={{ color: legendColor }}>{value}</span>}
                     />
                   </PieChart>
                 </ResponsiveContainer>
@@ -771,13 +758,13 @@ export default function ReportsPage() {
                       <stop offset="95%" stopColor={DS_CHART.primary} stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                  <CartesianGrid strokeDasharray="3 3" stroke={grid} />
                   <XAxis dataKey="period" tick={axisTickStyle} axisLine={false} tickLine={false} />
                   <YAxis tick={axisTickStyle} axisLine={false} tickLine={false}
                     tickFormatter={v => `${getCurrencySymbol()}${formatNumber(v)}`} />
                   <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle}
                     itemStyle={tooltipItemStyle} formatter={(v: number) => formatCurrency(String(v))} />
-                  <Legend wrapperStyle={{ fontSize: 12, paddingTop: 16, color: '#94a3b8' }} />
+                  <Legend wrapperStyle={{ fontSize: 12, paddingTop: 16, color: legendColor }} />
                   <Area type="monotone" dataKey="Revenue" stroke={accent} strokeWidth={2}
                     fill="url(#revGrad)" dot={false} />
                   <Area type="monotone" dataKey="Tax" stroke={DS_CHART.primary} strokeWidth={1.5}
@@ -968,11 +955,11 @@ export default function ReportsPage() {
                   ReferenceLine shows the break-even at 0.
                 */}
                 <ComposedChart data={waterfallData} margin={{ top: 10, right: 20, left: 10, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                  <CartesianGrid strokeDasharray="3 3" stroke={grid} />
                   <XAxis dataKey="name" tick={axisTickStyle} axisLine={false} tickLine={false} />
                   <YAxis tick={axisTickStyle} axisLine={false} tickLine={false}
                     tickFormatter={v => `${getCurrencySymbol()}${formatNumber(v)}`} />
-                  <Tooltip
+                  <Tooltip cursor={cursor}
                     contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle}
                     itemStyle={tooltipItemStyle}
                     formatter={(v: number, name: string) =>
@@ -987,7 +974,7 @@ export default function ReportsPage() {
                       <Cell key={i} fill={entry.fill} />
                     ))}
                   </Bar>
-                  <ReferenceLine y={0} stroke="#64748b" strokeDasharray="4 2" />
+                  <ReferenceLine y={0} stroke={labelColor} strokeDasharray="4 2" />
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
@@ -1078,13 +1065,13 @@ export default function ReportsPage() {
               </div>
               <ResponsiveContainer width="100%" height={260}>
                 <BarChart data={cashFlowTrendData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                  <CartesianGrid strokeDasharray="3 3" stroke={grid} />
                   <XAxis dataKey="period" tick={axisTickStyle} axisLine={false} tickLine={false} />
                   <YAxis tick={axisTickStyle} axisLine={false} tickLine={false}
                     tickFormatter={v => `${getCurrencySymbol()}${formatNumber(v)}`} />
-                  <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle}
+                  <Tooltip cursor={cursor} contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle}
                     itemStyle={tooltipItemStyle} formatter={(v: number) => formatCurrency(String(v))} />
-                  <Legend wrapperStyle={{ fontSize: 11, paddingTop: 12, color: '#94a3b8' }} />
+                  <Legend wrapperStyle={{ fontSize: 11, paddingTop: 12, color: legendColor }} />
                   <Bar dataKey="Inflows"  fill={DS_CHART.good} radius={[4, 4, 0, 0]} />
                   <Bar dataKey="Outflows" fill={DS_CHART.bad} radius={[4, 4, 0, 0]} />
                 </BarChart>
@@ -1107,14 +1094,14 @@ export default function ReportsPage() {
                       <stop offset="95%" stopColor={accent} stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                  <CartesianGrid strokeDasharray="3 3" stroke={grid} />
                   <XAxis dataKey="period" tick={axisTickStyle} axisLine={false} tickLine={false} />
                   <YAxis tick={axisTickStyle} axisLine={false} tickLine={false}
                     tickFormatter={v => `${getCurrencySymbol()}${formatNumber(v)}`} />
                   <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle}
                     itemStyle={tooltipItemStyle} formatter={(v: number) => formatCurrency(String(v))} />
                   <ReferenceLine y={0} stroke={DS_CHART.bad} strokeDasharray="4 2"
-                    label={{ value: 'Break-even', fill: DS_CHART.bad, fontSize: 10, position: 'insideTopRight' }} />
+                    label={{ value: 'Break-even', fill: DS_CHART.bad, fontSize: 10, position: 'insideTopRight', dy: -14 }} />
                   <Area type="monotone" dataKey="cumulative" stroke={accent} strokeWidth={2}
                     fill="url(#cashGrad)" dot={false} name="Cumulative Net" />
                 </AreaChart>
@@ -1164,7 +1151,7 @@ export default function ReportsPage() {
                       <stop offset="95%" stopColor={accent} stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                  <CartesianGrid strokeDasharray="3 3" stroke={grid} />
                   <XAxis dataKey="period" tick={axisTickStyle} axisLine={false} tickLine={false} />
                   <YAxis tick={axisTickStyle} axisLine={false} tickLine={false}
                     tickFormatter={v => `${getCurrencySymbol()}${formatNumber(v)}`} />
@@ -1204,12 +1191,12 @@ export default function ReportsPage() {
                     }))}
                     margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
                   >
-                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                    <CartesianGrid strokeDasharray="3 3" stroke={grid} />
                     <XAxis type="number" tick={axisTickStyle} axisLine={false} tickLine={false}
                       tickFormatter={v => `${getCurrencySymbol()}${formatNumber(v)}`} />
                     <YAxis type="category" dataKey="name" tick={axisTickStyle}
                       axisLine={false} tickLine={false} width={90} />
-                    <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle}
+                    <Tooltip cursor={cursor} contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle}
                       itemStyle={tooltipItemStyle} formatter={(v: number) => formatCurrency(String(v))} />
                     <Bar
                       dataKey="Revenue" fill={accent} radius={[0, 4, 4, 0]}
@@ -1262,7 +1249,7 @@ export default function ReportsPage() {
                         itemStyle={tooltipItemStyle} formatter={(v: number) => formatCurrency(String(v))} />
                       <Legend
                         wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
-                        formatter={(value: string) => <span style={{ color: '#94a3b8' }}>{value}</span>}
+                        formatter={(value: string) => <span style={{ color: legendColor }}>{value}</span>}
                       />
                     </PieChart>
                   </ResponsiveContainer>
@@ -1357,7 +1344,7 @@ export default function ReportsPage() {
             {/* AR Aging donut */}
             <div className="card p-5">
               <div className="flex items-center gap-2 mb-4">
-                <Clock size={18} className="text-amber-400" />
+                <Clock size={18} style={{ color: 'var(--ds-link)' }} />
                 <h2 className="text-base font-semibold text-white">Accounts Receivable Aging</h2>
               </div>
               {loading ? (
@@ -1383,7 +1370,7 @@ export default function ReportsPage() {
                       itemStyle={tooltipItemStyle} formatter={(v: number) => formatCurrency(String(v))} />
                     <Legend
                       wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
-                      formatter={(value: string) => <span style={{ color: '#94a3b8' }}>{value}</span>}
+                      formatter={(value: string) => <span style={{ color: legendColor }}>{value}</span>}
                     />
                   </PieChart>
                 </ResponsiveContainer>
@@ -1419,7 +1406,7 @@ export default function ReportsPage() {
                       itemStyle={tooltipItemStyle} formatter={(v: number) => formatCurrency(String(v))} />
                     <Legend
                       wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
-                      formatter={(value: string) => <span style={{ color: '#94a3b8' }}>{value}</span>}
+                      formatter={(value: string) => <span style={{ color: legendColor }}>{value}</span>}
                     />
                   </PieChart>
                 </ResponsiveContainer>
@@ -1428,7 +1415,7 @@ export default function ReportsPage() {
           </div>
 
           {/* AR detailed aging card with progress bars + overdue list */}
-          <AgingCard title="AR Aging Detail" aging={arAging} loading={loading} iconColor="text-amber-400" />
+          <AgingCard title="AR Aging Detail" aging={arAging} loading={loading} iconColor="text-brand-400" />
 
           {/* AP detailed aging card */}
           <AgingCard title="AP Aging Detail" aging={apAging} loading={loading} iconColor="text-red-400" payable />
@@ -1474,7 +1461,7 @@ export default function ReportsPage() {
                       itemStyle={tooltipItemStyle} formatter={(v: number) => formatCurrency(String(v))} />
                     <Legend
                       wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
-                      formatter={(value: string) => <span style={{ color: '#94a3b8' }}>{value}</span>}
+                      formatter={(value: string) => <span style={{ color: legendColor }}>{value}</span>}
                     />
                   </PieChart>
                 </ResponsiveContainer>
@@ -1518,13 +1505,13 @@ export default function ReportsPage() {
                           <stop offset="95%" stopColor={DS_CHART.bad} stopOpacity={0} />
                         </linearGradient>
                       </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                      <CartesianGrid strokeDasharray="3 3" stroke={grid} />
                       <XAxis dataKey="period" tick={axisTickStyle} axisLine={false} tickLine={false} />
                       <YAxis tick={axisTickStyle} axisLine={false} tickLine={false}
                         tickFormatter={v => `${getCurrencySymbol()}${formatNumber(v)}`} />
                       <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle}
                         itemStyle={tooltipItemStyle} formatter={(v: number) => formatCurrency(String(v))} />
-                      <Legend wrapperStyle={{ fontSize: 11, paddingTop: 8, color: '#94a3b8' }} />
+                      <Legend wrapperStyle={{ fontSize: 11, paddingTop: 8, color: legendColor }} />
                       <Area type="monotone" dataKey="Revenue"  stroke={accent}    strokeWidth={2}
                         fill="url(#revExp)" dot={false} />
                       <Area type="monotone" dataKey="Expenses" stroke={DS_CHART.bad} strokeWidth={1.5}
@@ -1787,11 +1774,11 @@ function AgingCard({
   loading: boolean; iconColor: string; payable?: boolean
 }) {
   const BUCKETS = [
-    { label: 'Current (not due)',   key: 'current', color: 'text-green-400 bg-green-500/10' },
-    { label: '1–30 days overdue',   key: '1_30',    color: 'text-yellow-400 bg-yellow-500/10' },
-    { label: '31–60 days overdue',  key: '31_60',   color: 'text-orange-400 bg-orange-500/10' },
-    { label: '61–90 days overdue',  key: '61_90',   color: 'text-red-400 bg-red-500/10' },
-    { label: '90+ days overdue',    key: 'over_90', color: 'text-red-600 bg-red-600/10' },
+    { label: 'Current (not due)',   key: 'current' },
+    { label: '1–30 days overdue',   key: '1_30' },
+    { label: '31–60 days overdue',  key: '31_60' },
+    { label: '61–90 days overdue',  key: '61_90' },
+    { label: '90+ days overdue',    key: 'over_90' },
   ] as const
 
   return (
@@ -1805,7 +1792,9 @@ function AgingCard({
           <p className="text-xs text-slate-500">
             As of {formatDate(aging.as_of)} · Total: <span className="text-white font-semibold">{formatCurrency(aging.total_outstanding)}</span>
           </p>
-          {BUCKETS.map(({ label, key, color }) => {
+          {BUCKETS.map(({ label, key }, bi) => {
+            // Same colours as the donut above; only the two oldest buckets read as red text.
+            const bucketColor = AGING_SERIES[bi]
             const amount = (aging.buckets as unknown as Record<string, string | number>)[key] ?? 0
             const total  = parseFloat(aging.total_outstanding) || 1
             const pct    = Math.round((parseFloat(String(amount)) / total) * 100)
@@ -1813,10 +1802,10 @@ function AgingCard({
               <div key={key}>
                 <div className="flex justify-between text-xs mb-1">
                   <span className="text-slate-400">{label}</span>
-                  <span className={`font-semibold ${color.split(' ')[0]}`}>{formatCurrency(String(amount))}</span>
+                  <span className="font-semibold" style={{ color: bi >= 3 ? 'var(--ds-bad)' : 'var(--ds-ink)' }}>{formatCurrency(String(amount))}</span>
                 </div>
                 <div className="h-1.5 bg-surface-700 rounded-full">
-                  <div className={`h-full rounded-full ${color.split(' ')[1]}`} style={{ width: `${pct}%` }} />
+                  <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: bucketColor }} />
                 </div>
               </div>
             )

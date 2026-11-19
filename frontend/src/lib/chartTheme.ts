@@ -29,8 +29,11 @@ export const CHART_SERIES = [
   DS_CHART.neutral, '#565DDC', DS_CHART.secondary, DS_CHART.lilac, '#4933FF',
 ] as const
 
-/** Ageing buckets, healthy to critical. */
-export const AGING_SERIES = [DS_CHART.good, DS_CHART.warn, '#FF6669', DS_CHART.bad, DS_CHART.badDeep] as const
+/**
+ * Ageing buckets, newest to oldest: a graded kit scale (blue, violet, then the kit reds for
+ * the overdue ones). No yellow or gold: an ageing slice is not a warning on its own.
+ */
+export const AGING_SERIES = [DS_CHART.sky, DS_CHART.primary, DS_CHART.tertiary, DS_CHART.bad, DS_CHART.badDeep] as const
 
 /** Tooltip box for dark and light pages (kit surface/outline colours). */
 export const chartTooltip = (light: boolean) => ({

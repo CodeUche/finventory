@@ -292,7 +292,14 @@ export default function CreditsPage() {
       </div>
 
       {/* Aging report */}
-      {aging && aging.length > 0 && (
+      {aging && aging.length > 0 && aging.every((b) => !b.count && !parseFloat(String(b.total) || '0')) && (
+        <div className="card px-5 py-3 flex items-center gap-2">
+          <AlertCircle size={16} className="text-brand-400" />
+          <h3 className="text-sm font-semibold text-white">Aging Report</h3>
+          <span className="text-sm text-slate-400">Nothing outstanding to age right now.</span>
+        </div>
+      )}
+      {aging && aging.length > 0 && !aging.every((b) => !b.count && !parseFloat(String(b.total) || '0')) && (
         <div className="card p-5">
           <div className="flex items-center gap-2 mb-4">
             <AlertCircle size={16} className="text-brand-400" />
@@ -410,7 +417,7 @@ export default function CreditsPage() {
                                 </td>
                                 <td className="px-5 py-3.5 text-slate-300">{formatCurrency(t.balance_after)}</td>
                                 <td className="px-5 py-3.5 text-slate-400">{t.due_date ? formatDate(t.due_date) : '—'}</td>
-                                <td className="px-5 py-3.5 text-slate-400 max-w-xs truncate">{t.description || '—'}</td>
+                                <td className="px-5 py-3.5 text-slate-400 min-w-[14rem] max-w-sm" title={t.description || undefined}>{t.description || '—'}</td>
                               </tr>
                             ))}
                           </Fragment>

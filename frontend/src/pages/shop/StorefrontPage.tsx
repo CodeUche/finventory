@@ -27,6 +27,10 @@ const money = (currency: string, value: number | string) => {
   return `${symbol}${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
+// The shop is always a light page, whatever theme the app is in. The app's global field
+// style makes inputs dark in the dark theme, so the shop sets its own light fill and text.
+const SHOP_FIELD = { backgroundColor: '#FFFFFF', color: '#111111', borderColor: '#A9A9B0' } as const
+
 export default function StorefrontPage() {
   const { slug = '', table } = useParams()
   const [params] = useSearchParams()
@@ -331,12 +335,12 @@ export default function StorefrontPage() {
               {lines.length > 0 && (
                 <div className="space-y-2 py-4">
                   <input
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm placeholder:text-slate-400" style={SHOP_FIELD}
                     placeholder="Your name" value={form.customer_name}
                     onChange={(e) => setForm({ ...form, customer_name: e.target.value })}
                   />
                   <input
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm placeholder:text-slate-400" style={SHOP_FIELD}
                     placeholder="Phone number" inputMode="tel" value={form.customer_phone}
                     onChange={(e) => setForm({ ...form, customer_phone: e.target.value })}
                   />
@@ -357,14 +361,14 @@ export default function StorefrontPage() {
                   )}
                   {form.fulfilment === 'delivery' && (
                     <textarea
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm placeholder:text-slate-400" style={SHOP_FIELD}
                       rows={2} placeholder="Where should we deliver?"
                       value={form.delivery_address}
                       onChange={(e) => setForm({ ...form, delivery_address: e.target.value })}
                     />
                   )}
                   <input
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm placeholder:text-slate-400" style={SHOP_FIELD}
                     placeholder="Anything we should know? (optional)" value={form.note}
                     onChange={(e) => setForm({ ...form, note: e.target.value })}
                   />
