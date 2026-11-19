@@ -99,6 +99,8 @@ html.light .ds{
    Anything inside an element with class ds-paper (a print or invoice preview that has its own
    white paper and inline colours) is left alone by these table rules. */
 .ds table:not(.ds-paper *){border-collapse:separate;border-spacing:0;width:100%}
+/* A header with no alignment class lines up with its column (the browser default is centred); any text-left/right/center class still wins. */
+:where(.ds th){text-align:start}
 .ds thead tr:not(.ds-paper *){background:var(--ds-th-bg);border:0}
 .ds thead th:not(.ds-paper *), .ds th:not(.ds-paper *){
   background:var(--ds-th-bg);color:var(--ds-th-tx) !important;font-weight:700;font-size:13px;text-transform:uppercase;letter-spacing:.02em;

@@ -72,7 +72,7 @@ export default defineConfig(({ mode }) => {
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
-      // App-wide icon set: route lucide-react imports to our Phosphor duotone
+      // App-wide icon set: route lucide-react imports to our Phosphor regular
       // shim so every existing `import { X } from 'lucide-react'` renders the
       // new icons with zero per-file changes.
       'lucide-react': path.resolve(__dirname, './src/lib/lucide-shim.tsx'),
