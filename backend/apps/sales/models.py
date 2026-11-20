@@ -135,6 +135,17 @@ class Invoice(TenantAwareModel):
     # purposes, into the revenue credit line of post_sale_journal (not split out
     # to a dedicated shipping-income account yet).
     shipping_amount = MoneyField(default=0)
+    # VAT charged on the delivery charge (follows the goods' rate — see
+    # apps.sales.rules.DELIVERY_VAT_FOLLOWS_GOODS). Already inside tax_amount
+    # and total_amount; kept separately so documents can show it.
+    shipping_tax_amount = MoneyField(default=0)
+    # Signed whole-invoice adjustment (negative = discount, positive =
+    # surcharge), spread across the lines before VAT. Already reflected in
+    # every line_total and in total_amount.
+    adjustment_amount = MoneyField(default=0)
+    # WHT rate the customer deducts at, if any. WHT is recorded once per
+    # payment received (not on the invoice total), so later payments need it.
+    wht_rate_id = models.UUIDField(null=True, blank=True)
     total_amount = MoneyField()
     credit_applied = MoneyField(default=0)  # Store credit redeemed on this invoice
     amount_paid = MoneyField()
@@ -273,6 +284,9 @@ class SaleItem(TenantAwareModel):
     tax_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     tax_amount = MoneyField()
     line_total = MoneyField(help_text="After discount and tax")
+    adjustment_amount = MoneyField(
+        default=0, help_text="This line's share of the whole-invoice +/- adjustment (before VAT)"
+    )
     cost_of_goods = MoneyField(help_text="Cost at time of sale for COGS tracking")
 
     # Chosen modifier options, snapshotted at sale time — see POSOrderItem.
@@ -317,6 +331,10 @@ class SalePayment(TenantAwareModel):
         related_name="payments",
     )
     notes = models.TextField(blank=True)
+    # True when this payment was folded into the invoice's own sale journal at
+    # creation (DR Cash sits inside that entry). False for every later receipt,
+    # which has its own journal. A void/refund needs to know which.
+    in_sale_journal = models.BooleanField(default=False)
 
     class Meta(TenantAwareModel.Meta):
         pass

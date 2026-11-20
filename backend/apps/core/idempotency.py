@@ -22,6 +22,8 @@ Keys expire after 24 hours. If no header is sent, idempotency is skipped.
 """
 
 import json
+
+from django.core.serializers.json import DjangoJSONEncoder
 import logging
 from datetime import timedelta
 
@@ -93,7 +95,7 @@ class IdempotencyMixin:
         try:
             from apps.core.models import IdempotencyRecord
             expires_at = timezone.now() + timedelta(hours=_TTL_HOURS)
-            body = json.dumps(response.data)
+            body = json.dumps(response.data, cls=DjangoJSONEncoder)
             IdempotencyRecord.objects.update_or_create(
                 user_id=user_id,
                 key=scoped_key,

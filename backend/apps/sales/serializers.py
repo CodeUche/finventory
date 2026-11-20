@@ -57,10 +57,10 @@ class SaleItemSerializer(serializers.ModelSerializer):
         fields = [
             "id", "product", "product_name", "product_sku",
             "batch", "quantity", "quantity_returned", "unit_price",
-            "discount_percent", "discount_amount",
+            "discount_percent", "discount_amount", "adjustment_amount",
             "tax_rate", "tax_amount", "line_total", "cost_of_goods", "modifiers",
         ]
-        read_only_fields = ["id", "quantity_returned", "discount_amount", "tax_amount", "line_total", "cost_of_goods"]
+        read_only_fields = ["id", "quantity_returned", "discount_amount", "adjustment_amount", "tax_amount", "line_total", "cost_of_goods"]
 
 
 class SalePaymentSerializer(serializers.ModelSerializer):
@@ -83,7 +83,8 @@ class InvoiceSerializer(serializers.ModelSerializer):
             "id", "invoice_number", "folder", "folder_name", "customer", "customer_name",
             "status", "payment_method", "issue_date", "due_date", "warehouse",
             "location", "location_name",
-            "subtotal", "discount_amount", "tax_amount", "shipping_amount", "total_amount",
+            "subtotal", "discount_amount", "tax_amount", "shipping_amount", "shipping_tax_amount",
+            "adjustment_amount", "total_amount",
             "credit_applied", "amount_paid", "amount_due", "notes", "sold_by",
             "is_deferred", "fulfilled_at",
             "items", "payments", "created_at",
@@ -94,7 +95,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             "id", "invoice_number", "subtotal", "discount_amount",
-            "tax_amount", "shipping_amount", "total_amount", "credit_applied", "amount_paid", "amount_due", "created_at",
+            "tax_amount", "shipping_amount", "shipping_tax_amount", "adjustment_amount", "total_amount", "credit_applied", "amount_paid", "amount_due", "created_at",
             "is_deferred", "fulfilled_at",
             "firs_status", "firs_irn", "firs_invoice_number", "firs_csid", "firs_qr_code",
         ]
@@ -151,6 +152,11 @@ class CreateSaleSerializer(serializers.Serializer):
                 {"due_date": "Due date cannot be before the issue date."}
             )
         return attrs
+    # Signed whole-invoice adjustment: negative = discount, positive = surcharge.
+    # Spread across the lines BEFORE VAT (so VAT moves with it).
+    adjustment_amount = serializers.DecimalField(
+        max_digits=15, decimal_places=4, required=False, default=Decimal("0"),
+    )
     amount_paid = serializers.DecimalField(max_digits=15, decimal_places=4, required=False, default=Decimal("0"), min_value=Decimal("0"))
     amount_tendered = serializers.DecimalField(max_digits=15, decimal_places=4, required=False, allow_null=True)
     credit_applied = serializers.DecimalField(max_digits=15, decimal_places=4, required=False, default=Decimal("0"), min_value=Decimal("0"))
