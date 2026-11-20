@@ -237,14 +237,15 @@ class WalkInTests(Base):
         self.assertEqual(Invoice.objects.filter(organisation=self.org).count(), 0)
         self.assertEqual(self.on_hand(), D("100"))   # rolled back, no stock left
 
-    def test_walk_in_with_amount_paid_left_out_is_paid_in_full(self):
-        """No customer and no amount_paid: nobody can owe the balance, so the
-        sale is treated as paid in full (the till sends no amount_paid)."""
+    def test_walk_in_with_amount_paid_left_out_keeps_the_old_meaning(self):
+        """A client that does not send amount_paid at all (not the page, which
+        always sends it) keeps the old behaviour: saved, nothing paid yet. The
+        walk-in rule applies to what the client says it was paid."""
         payload = self.payload(customer_id=None)
         del payload["amount_paid"]
         res = self.api.post(URL, payload, format="json")
         self.assertEqual(res.status_code, 201, res.data)
-        self.assertEqual((res.data["status"], Decimal(str(res.data["amount_due"]))), ("paid", D("0")))
+        self.assertEqual(res.data["status"], "confirmed")
 
     def test_walk_in_cannot_use_store_credit(self):
         res = self.walk_in(credit_applied="100.00")

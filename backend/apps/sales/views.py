@@ -182,13 +182,6 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
             )
             sold_by = raw_sold_by if (raw_sold_by and can_override) else ""
 
-            # A walk-in sale that does not say how much was paid was paid in
-            # full: there is no customer to carry a balance. (A named customer
-            # who omits amount_paid is still recorded as paying nothing today.)
-            amount_paid = d.get("amount_paid")
-            if customer is None and "amount_paid" not in request.data:
-                amount_paid = None
-
             invoice = SaleService.create_sale(
                 organisation=request.organisation,
                 created_by=request.user,
@@ -201,7 +194,7 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
                 issue_date=d.get("issue_date"),
                 due_date=d.get("due_date"),
                 is_proforma=d.get("is_proforma", False),
-                amount_paid=amount_paid,
+                amount_paid=d.get("amount_paid"),
                 amount_tendered=d.get("amount_tendered"),
                 credit_applied=d.get("credit_applied"),
                 location=location,
@@ -209,7 +202,10 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
                 defer_fulfillment=d.get("defer_fulfillment", False),
                 shipping_amount=d.get("shipping_amount"),
                 adjustment_amount=d.get("adjustment_amount"),
-                strict_walk_in=True,
+                # The page always states what was paid. When it does, a walk-in
+                # sale must be paid in full (nobody to chase for the rest). A client
+                # that omits amount_paid keeps the old 'nothing paid yet' meaning.
+                strict_walk_in="amount_paid" in request.data,
                 put_balance_on_customer=True,
                 charge_delivery_vat=True,
             )
