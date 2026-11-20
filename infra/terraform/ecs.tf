@@ -168,6 +168,28 @@ locals {
     [for k, v in aws_secretsmanager_secret_version.db_cache : { name = k, valueFrom = aws_secretsmanager_secret.db_cache[k].arn }],
   )
 
+  # api/worker/beat (never migrate — migrations genuinely need the owner
+  # role for DDL) must connect on the RLS-restricted audity_app role, not
+  # the Aurora master user. APP_DATABASE_URL's secret VALUE is rotated
+  # entirely out-of-band via `aws secretsmanager put-secret-value` (see
+  # secrets.tf's aws_secretsmanager_secret_version.static_app comment) —
+  # its version resource was deliberately removed from Terraform state on
+  # 2026-09-06 so a forgotten `-var app_database_url=...` could never
+  # DESTROY the live secret value. The unintended side effect: the same
+  # removal also drops this key from common_secrets' for_each above
+  # (which only sees version resources Terraform still tracks), so
+  # api/worker/beat silently stopped being handed this secret at all from
+  # that point on and have fallen back to DATABASE_URL (the owner role,
+  # RLS bypassed) ever since. This reference is static — it names the
+  # secret CONTAINER (aws_secretsmanager_secret.static_app, always
+  # present once bootstrapped, never removed from state) directly, so it
+  # no longer depends on the version resource existing in state and can't
+  # be silently dropped by a future apply the same way again.
+  app_role_secrets = concat(
+    local.common_secrets,
+    [{ name = "APP_DATABASE_URL", valueFrom = aws_secretsmanager_secret.static_app["APP_DATABASE_URL"].arn }],
+  )
+
   image = "${aws_ecr_repository.backend.repository_url}:${var.image_tag}"
 }
 
@@ -248,7 +270,7 @@ resource "aws_ecs_task_definition" "api" {
     command      = ["sh", "-c", "(python manage.py collectstatic --no-input --clear 2>/dev/null || true) && if [ -n \"$DJANGO_SUPERUSER_EMAIL\" ] && [ -n \"$DJANGO_SUPERUSER_PASSWORD\" ]; then python manage.py createsuperuser --no-input --email \"$DJANGO_SUPERUSER_EMAIL\" 2>/dev/null || true; fi && gunicorn config.wsgi:application --bind 0.0.0.0:${var.container_port} --workers 2 --worker-class sync --worker-tmp-dir /dev/shm --access-logfile - --error-logfile - --log-level info --timeout 120 --keep-alive 75"]
     portMappings = [{ containerPort = var.container_port, protocol = "tcp" }]
     environment  = local.common_environment
-    secrets      = local.common_secrets
+    secrets      = local.app_role_secrets
     logConfiguration = {
       logDriver = "awslogs"
       options = {
@@ -332,7 +354,7 @@ resource "aws_ecs_task_definition" "worker" {
     essential   = true
     command     = ["sh", "-c", "celery -A config.celery worker --loglevel=info --concurrency=2"]
     environment = local.common_environment
-    secrets     = local.common_secrets
+    secrets     = local.app_role_secrets
     logConfiguration = {
       logDriver = "awslogs"
       options = {
@@ -379,7 +401,7 @@ resource "aws_ecs_task_definition" "beat" {
     essential   = true
     command     = ["sh", "-c", "celery -A config.celery beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler"]
     environment = local.common_environment
-    secrets     = local.common_secrets
+    secrets     = local.app_role_secrets
     logConfiguration = {
       logDriver = "awslogs"
       options = {
