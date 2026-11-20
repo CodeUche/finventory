@@ -121,7 +121,7 @@ export default function EditInvoicePage() {
 
   const removeFromCart = (id: string) => setCart((prev) => prev.filter((c) => c.product.id !== id))
 
-  // VAT preview — mirrors NewInvoicePage's calc exactly (exclusive tax only;
+  // VAT preview — mirrors the New sale & invoice page's calc exactly (exclusive tax only;
   // matches what the backend's _process_line_item actually posts on save) so
   // editing an invoice shows the same figures creating one would have.
   const [taxRates, setTaxRates] = useState<Record<string, number>>({})

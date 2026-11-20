@@ -159,11 +159,11 @@ export default function BillFoldersPage() {
           )}
           <div>
             <h1 className="text-2xl font-bold text-white">Bill Folders</h1>
-            <p className="text-slate-400 text-sm">Organise bills into folders for easy access.</p>
+            <p className="text-slate-400 text-sm">Organize bills into folders for easy access.</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={openCreateFolder} className="btn-secondary flex items-center gap-2">
+          <button onClick={openCreateFolder} className={`${currentFolderId ? "btn-secondary" : "btn-primary"} flex items-center gap-2`}>
             <FolderPlus size={15} /> Create New Folder
           </button>
           {currentFolderId && (

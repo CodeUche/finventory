@@ -12,7 +12,7 @@ const ROUTE_LABELS: Record<string, string> = {
   '/inventory/warehouses':        'Warehouses',
   '/inventory/batches':           'Batches & Lots',
   '/sales':                       'Invoices',
-  '/sales/new':                   'New Sale',
+  '/sales/new':                   'New sale & invoice',
   '/pos/till':                    'Till',
   '/quotes':                      'Quotes',
   '/recurring':                   'Recurring Invoices',
@@ -20,7 +20,7 @@ const ROUTE_LABELS: Record<string, string> = {
   '/bills':                       'Bills',
   '/bills/folders':               'Bill Folders',
   '/suppliers':                   'Suppliers',
-  '/customers':                   'Customers',
+  '/customers':                   'Customers & Receipts',
   '/credits':                     'Credits',
   '/accounting/coa':              'Chart of Accounts',
   '/accounting/journal':          'Journal Entries',
@@ -93,6 +93,12 @@ const SECTION_HUB: Record<string, string> = {
   hr:         '/hub/hr',
 }
 
+// Per-route middle crumbs where the designer's trail differs from the section name:
+// "Home > Sales & Invoices > New sale & invoice" (the section crumb would otherwise say just "Sales").
+const PATH_PARENTS: Record<string, Crumb[]> = {
+  '/sales/new': [{ label: 'Sales & Invoices', href: '/sales' }],
+}
+
 interface Crumb {
   label: string
   href: string
@@ -110,6 +116,13 @@ function buildCrumbs(pathname: string): Crumb[] {
   if (hubMatch) {
     const hub = hubBySlug(hubMatch[1])
     if (hub) crumbs.push({ label: hub.title, href: pathname })
+    return crumbs
+  }
+
+  // A route with its own designer-drawn middle crumb
+  const pathParents = PATH_PARENTS[pathname]
+  if (pathParents && ROUTE_LABELS[pathname]) {
+    crumbs.push(...pathParents, { label: ROUTE_LABELS[pathname], href: pathname })
     return crumbs
   }
 

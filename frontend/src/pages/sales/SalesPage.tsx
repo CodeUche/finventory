@@ -24,6 +24,10 @@ import { usePagination } from '@/hooks/usePagination'
 import Pagination from '@/components/Pagination'
 
 const STATUS_OPTIONS = ['', 'paid', 'proforma', 'confirmed', 'partially_paid', 'credit', 'overdue', 'returned', 'voided']
+function countByStatus(list: Invoice[]) {
+  const n = (st: string) => list.filter((i) => i.status === st).length
+  return { total: list.length, paid: n('paid'), partially_paid: n('partially_paid'), credit: n('credit') }
+}
 const RETURN_REASONS = [
   { value: 'defective',       label: 'Defective / Damaged' },
   { value: 'wrong_item',      label: 'Wrong Item Delivered' },
@@ -504,6 +508,9 @@ export default function SalesPage() {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('')
+  // How many invoices have each status (for the summary pills). Counted from the same list endpoint,
+  // without the status filter, so the pills stay right while one is selected.
+  const [statusCounts, setStatusCounts] = useState<{ total: number; paid: number; partially_paid: number; credit: number } | null>(null)
   const [sortBy, setSortBy] = useState('-issue_date,-created_at')
   const [selected, setSelected] = useState<Invoice | null>(null)
   const [detail, setDetail] = useState<Invoice | null>(null)
@@ -583,7 +590,15 @@ export default function SalesPage() {
     setLoading(true)
     try {
       const { data } = await salesApi.invoices({ search, status: status || undefined, ordering: sortBy, page_size: 5000, ...activeDateParams })
-      setInvoices(data.results ?? data)
+      const list: Invoice[] = data.results ?? data
+      setInvoices(list)
+      if (!status) setStatusCounts(countByStatus(list))
+      else {
+        // A status is selected, so the list above is only that status. Fetch the unfiltered list to count.
+        salesApi.invoices({ search, ordering: sortBy, page_size: 5000, ...activeDateParams })
+          .then(({ data: all }) => { if (mounted.current) setStatusCounts(countByStatus(all.results ?? all)) })
+          .catch(() => { /* keep the last counts */ })
+      }
     } catch { { if (mounted.current) toast.error('Failed to load invoices') } }
     finally { setLoading(false) }
   }
@@ -967,6 +982,30 @@ export default function SalesPage() {
         </div>
       </div>
 
+      {/* Summary pills (designer): click one to filter the list by that status */}
+      {statusCounts && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3" role="group" aria-label="Invoice summary">
+          {([
+            { key: '', label: 'Total invoices', n: statusCounts.total },
+            { key: 'paid', label: 'Paid', n: statusCounts.paid },
+            { key: 'partially_paid', label: 'Partially paid', n: statusCounts.partially_paid },
+            { key: 'credit', label: 'Credit', n: statusCounts.credit },
+          ] as const).map((p) => (
+            <button
+              key={p.label}
+              type="button"
+              onClick={() => setStatus(p.key)}
+              aria-pressed={status === p.key}
+              data-clickable="true"
+              data-active={status === p.key}
+              className="ds-proc-tile text-center font-semibold"
+            >
+              {p.label} ({p.n})
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
         <div className="relative flex-1 min-w-[240px] max-w-sm">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
@@ -1111,7 +1150,7 @@ export default function SalesPage() {
                             className="btn-ghost p-1.5 text-slate-400 hover:text-red-500"
                             title="Delete invoice (reverses GL & stock)"
                           >
-                            <AlertTriangle size={14} />
+                            <Trash2 size={14} />
                           </button>
                         )}
                       </div>
