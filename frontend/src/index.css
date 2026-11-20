@@ -391,6 +391,8 @@ html.light select option { color: #0f172a; background-color: #ffffff; }
 
 /* mono / code text */
 html.light .font-mono { color: #1e293b; }
+/* Designer kit: amounts/codes use Roboto with equal-width digits, not a monospace face. */
+.font-mono { font-variant-numeric: tabular-nums; }
 
 /* Badge backgrounds need higher contrast in light mode too */
 html.light .badge-red    { background-color: #fee2e2; color: #991b1b; border-color: #fca5a5; }
