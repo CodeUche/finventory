@@ -286,7 +286,7 @@ describe('CSP-safe styling (desktop blocks <style> elements)', () => {
       const blocks = html.match(/<style[\s\S]*?<\/style>/g) ?? []
       expect(blocks.length, t.value).toBe(1)
       expect(blocks[0], t.value).toMatch(/^<style>@page[^}]*}<\/style>$/)
-      expect(html, t.value).toMatch(/<body style="[^"]*monospace[^"]*"/)
+      expect(html, t.value).toMatch(/<body style="[^"]*font-family:[^"]*Roboto[^"]*"/)
       expect(html, t.value).toMatch(/<body style="[^"]*width: 80mm/)
       expect(html, t.value).toMatch(/<img class="logo[^>]*style="[^"]*max-width/)
       expect(html, t.value).toMatch(/class="rule" style="[^"]*border-top/)
