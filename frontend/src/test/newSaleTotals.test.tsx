@@ -165,12 +165,14 @@ describe('New sale & invoice totals and request body', () => {
     expect(b.adjustment_amount).toBeUndefined()
   }, 20000)
 
-  it('a customer invoice on credit starts on Fulfill later; a walk-in cash sale on Fulfill now', async () => {
+  it('always starts on Fulfill now, so a credit sale to a customer still moves stock as before', async () => {
     await setup([noVat])
-    expect(screen.getByRole('radio', { name: /Fulfill now/ })).toBeChecked()
     await pickCustomer()
     fireEvent.click(screen.getByRole('button', { name: 'Credit · pay later' }))
-    expect(screen.getByRole('radio', { name: /Fulfill later/ })).toBeChecked()
+    expect(screen.getByRole('radio', { name: /Fulfill now/ })).toBeChecked()
+    fireEvent.click(screen.getByRole('button', { name: 'Complete sale' }))
+    await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1))
+    expect(createMock.mock.calls[0][0].defer_fulfillment).toBeUndefined()
   }, 20000)
 
   it('Create invoice needs a customer', async () => {

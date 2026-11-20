@@ -700,10 +700,10 @@ html.light .ds{
 .ds input[type="radio"].ds-radio:checked{box-shadow:inset 0 0 0 4px var(--ds-tile),inset 0 0 0 11px var(--ds-outline)}
 
 .ds .ds-lines-wrap{overflow-x:auto}
-.ds .ds-lines{min-width:780px}
+.ds .ds-lines{min-width:620px}
 .ds .ds-lines-row{
   display:grid;gap:8px;align-items:start;
-  grid-template-columns:minmax(190px,2.4fr) 78px minmax(100px,1fr) 72px 104px minmax(100px,1fr) 32px;
+  grid-template-columns:minmax(150px,2fr) 64px minmax(90px,1fr) 60px 76px minmax(90px,1fr) 32px;
 }
 .ds .ds-lines-head{
   padding:10px 8px;border-radius:6px;background:var(--ds-th-bg);color:var(--ds-th-tx);

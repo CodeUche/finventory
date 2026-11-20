@@ -302,11 +302,11 @@ export default function NewSalePage() {
   // ── Fulfilment, notes, who sold ────────────────────────────────────────────
   // Default is "Fulfill now": that is what every till sale has always done. An invoice that
   // should wait for delivery picks "Fulfill later".
-  // DERIVED - not designer-approved: until the person picks, a customer invoice on credit starts
-  // on "Fulfill later" and everything else (a walk-in or any paid sale) starts on "Fulfill now",
-  // so a till sale never skips the stock and ledger posting it has always done.
+  // Starts on "Fulfill now" for every case. A credit sale with a customer used to deduct stock and post
+  // to the ledger at once; starting it on "Fulfill later" silently changed that (checked on staging),
+  // so an invoice that should wait for delivery needs one click on "Fulfill later".
   const [fulfilChoice, setFulfilChoice] = useState<'now' | 'later' | null>(null)
-  const fulfil: 'now' | 'later' = fulfilChoice ?? (selectedCustomer && !payNow ? 'later' : 'now')
+  const fulfil: 'now' | 'later' = fulfilChoice ?? 'now'
   const setFulfil = (v: 'now' | 'later') => setFulfilChoice(v)
   const [notes, setNotes] = useState('')
   const [soldBy, setSoldBy] = useState(currentUserName)
@@ -1032,7 +1032,7 @@ export default function NewSalePage() {
               {submitting === 'sale' ? 'Processing…' : 'Complete sale'}
             </button>
             <p className="ds-ready-note">Record a sale using your payment and fulfillment choices. Walk-ins welcome.</p>
-            {saleBlock && saleBlock !== hint && <p className="text-sm ds-line-warn" role="status">{saleBlock}</p>}
+            {!locked && saleBlock && saleBlock !== hint && <p className="text-sm ds-line-warn" role="status">{saleBlock}</p>}
             <hr className="border-surface-700" />
             <div className="grid grid-cols-2 gap-3">
               <button type="button" className="btn-secondary justify-center" disabled={locked || busy} onClick={holdBasket}>

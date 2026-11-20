@@ -45,7 +45,7 @@ const ROUTE_LABELS: Record<string, string> = {
 
   // ── Parent segment labels (used to build crumb trail) ────────────────────
   'inventory':   'Inventory',
-  'sales':       'Sales',
+  'sales':       'Sales & Invoices',
   'accounting':  'Accounting',
   'payroll':     'Payroll',
   'reports':     'Reports',
