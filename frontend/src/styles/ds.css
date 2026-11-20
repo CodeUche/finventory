@@ -670,3 +670,63 @@ html.light .ds{
 @media (min-width:1024px) and (min-height:1100px){
   .ds .ds-pay-sticky{position:sticky;bottom:12px;z-index:5}
 }
+
+/* ============================================================================
+   New sale & invoice page (designer: "New sale & new invoice").
+   Toggle buttons, radio cards, the items table band and the big total.
+   Dark and small-screen looks are derived from the kit tokens above.
+   ========================================================================== */
+.ds .ds-opt{
+  border:1.5px solid var(--ds-outline);color:var(--ds-outline-tx);background:transparent;border-radius:8px;
+  padding:9px 14px;font-size:15px;font-weight:500;text-align:center;cursor:pointer;
+  transition:background-color .12s,color .12s,border-color .12s;
+}
+.ds .ds-opt:hover:not(:disabled){background:color-mix(in srgb,var(--ds-link) 10%,transparent)}
+.ds .ds-opt[aria-pressed="true"]{background:var(--ds-btn);color:var(--ds-btn-tx);border-color:var(--ds-btn)}
+.ds .ds-opt:focus-visible{outline:2px solid var(--ds-link);outline-offset:2px}
+.ds .ds-opt:disabled{opacity:.5;cursor:not-allowed}
+
+.ds .ds-radio-card{
+  display:flex;align-items:flex-start;gap:12px;padding:12px;border-radius:8px;cursor:pointer;
+  background:var(--ds-row);border:1.5px solid var(--ds-row-bd);
+}
+.ds .ds-radio-card:hover{background:var(--ds-row-hover)}
+.ds .ds-radio-card:has(input:checked){background:var(--ds-tile);border-color:var(--ds-tile-bd)}
+.ds .ds-radio-card:has(input:focus-visible){outline:2px solid var(--ds-link);outline-offset:2px}
+.ds input[type="radio"].ds-radio{
+  -webkit-appearance:none;-moz-appearance:none;appearance:none;flex:none;width:22px;height:22px;margin:1px 0 0;border-radius:50%;
+  border:2px solid var(--ds-outline);background:transparent;cursor:pointer;
+}
+.ds input[type="radio"].ds-radio:checked{box-shadow:inset 0 0 0 4px var(--ds-tile),inset 0 0 0 11px var(--ds-outline)}
+
+.ds .ds-lines-wrap{overflow-x:auto}
+.ds .ds-lines{min-width:620px}
+.ds .ds-lines-row{
+  display:grid;gap:8px;align-items:start;
+  grid-template-columns:minmax(150px,2fr) 64px minmax(90px,1fr) 60px 76px minmax(90px,1fr) 32px;
+}
+.ds .ds-lines-head{
+  padding:10px 8px;border-radius:6px;background:var(--ds-th-bg);color:var(--ds-th-tx);
+  font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;align-items:center;
+}
+.ds .ds-amount{
+  display:flex;align-items:center;justify-content:flex-end;min-height:42px;padding:0 12px;border-radius:8px;
+  border:1.5px solid var(--ds-row-bd);background:var(--ds-row);color:var(--ds-title);font-size:15px;
+}
+.ds .ds-grand{color:var(--ds-tile-tx);font-size:26px;font-weight:700;line-height:1.1}
+.ds .ds-sum-row{display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:15px;color:var(--ds-ink)}
+.ds .ds-sum-note{font-size:13px;color:var(--ds-link)}
+.ds .ds-ready-note{font-size:13px;color:var(--ds-muted)}
+.ds .ds-link-btn{color:var(--ds-link);font-weight:500;background:none;border:0;padding:0;cursor:pointer}
+.ds .ds-link-btn:hover{text-decoration:underline}
+.ds .ds-created{
+  display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:12px 16px;border-radius:10px;font-size:15px;color:var(--ds-ink);
+  background:color-mix(in srgb,var(--ds-good) 12%,transparent);border:1.5px solid color-mix(in srgb,var(--ds-good) 45%,transparent);
+}
+
+/* DERIVED - not designer-approved: 44px touch targets on phones and small tablets for this page. */
+@media (max-width:1023px){
+  .ds .ds-opt, .ds .ds-radio-card, .ds .ds-link-btn{min-height:44px}
+  .ds .ds-lines-row .input, .ds .ds-amount{min-height:44px}
+  .ds .ds-icon-btn{min-width:44px;min-height:44px}
+}

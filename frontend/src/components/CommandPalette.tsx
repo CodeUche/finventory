@@ -7,6 +7,9 @@ import { useCanSeeNavItem } from '@/lib/navAccess'
 
 interface Cmd { name: string; href: string; group: string; icon: React.ElementType }
 
+// The old names people still type. The page was one of two (New Sale, New Invoice) before it was merged.
+const ALIASES: Record<string, string> = { '/sales/new': 'new sale new invoice invoice pos checkout' }
+
 /**
  * ⌘K / Ctrl+K command palette. Flattens the sidebar nav into a searchable,
  * keyboard-driven launcher — essential once the accountant-first nav gets deep.
@@ -43,7 +46,7 @@ export default function CommandPalette() {
     const q = query.trim().toLowerCase()
     if (!q) return commands.slice(0, 20)
     return commands
-      .filter((c) => c.name.toLowerCase().includes(q) || c.group.toLowerCase().includes(q))
+      .filter((c) => c.name.toLowerCase().includes(q) || c.group.toLowerCase().includes(q) || (ALIASES[c.href] ?? '').includes(q))
       .slice(0, 20)
   }, [query, commands])
 

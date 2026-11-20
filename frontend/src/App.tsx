@@ -31,7 +31,6 @@ const BatchesPage = React.lazy(() => import('@/pages/inventory/BatchesPage'))
 const SalesPage = React.lazy(() => import('@/pages/sales/SalesPage'))
 const SalesReturnsPage = React.lazy(() => import('@/pages/sales/SalesReturnsPage'))
 const NewSalePage = React.lazy(() => import('@/pages/sales/NewSalePage'))
-const NewInvoicePage = React.lazy(() => import('@/pages/sales/NewInvoicePage'))
 const EditInvoicePage = React.lazy(() => import('@/pages/sales/EditInvoicePage'))
 const ImportPage = React.lazy(() => import('@/pages/ImportPage'))
 const QuotesPage = React.lazy(() => import('@/pages/QuotesPage'))
@@ -339,7 +338,8 @@ export default function App() {
         <Route path="sales"     element={<ModuleRoute module="sales"><DsPage><SalesPage /></DsPage></ModuleRoute>} />
         <Route path="sales/returns" element={<ModuleRoute module="sales"><DsPage><SalesReturnsPage /></DsPage></ModuleRoute>} />
         <Route path="sales/new" element={<WriteModuleRoute module="sales"><DsPage><NewSalePage /></DsPage></WriteModuleRoute>} />
-        <Route path="sales/invoices/new" element={<WriteModuleRoute module="sales"><DsPage><NewInvoicePage /></DsPage></WriteModuleRoute>} />
+        {/* The old New Invoice address now opens the merged New sale & invoice page. */}
+        <Route path="sales/invoices/new" element={<Navigate to="/sales/new" replace />} />
         <Route path="sales/invoices/:id/edit" element={<WriteModuleRoute module="sales"><DsPage><EditInvoicePage /></DsPage></WriteModuleRoute>} />
         <Route path="locations" element={<ModuleRoute module="sales"><DsPage><LocationsPage /></DsPage></ModuleRoute>} />
         <Route path="quotes"    element={<ModuleRoute module="quotes"><DsPage><QuotesPage /></DsPage></ModuleRoute>} />
