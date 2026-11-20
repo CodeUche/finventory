@@ -332,6 +332,58 @@ class DesktopCorsOriginTests(TestCase):
         self.assertIn(f'"{self.WINDOWS_DESKTOP_ORIGIN}"', ecs_tf.read_text(encoding="utf-8"))
 
 
+class CorsPreflightAllowedHeadersTests(TestCase):
+    """A browser preflight must be told every custom header the app sends.
+
+    The browser build replays offline-saved changes with X-Offline-Retry. When
+    that header was missing from CORS_ALLOW_HEADERS the preflight was refused
+    and offline saves made in a web browser never reached the server.
+    """
+
+    ALLOWED_ORIGINS = [
+        "http://tauri.localhost",
+        "tauri://localhost",
+        "http://localhost:5174",
+        "http://localhost:4174",
+    ]
+
+    def _preflight(self, origin, headers):
+        return self.client.options(
+            "/api/v1/auth/login/",
+            HTTP_ORIGIN=origin,
+            HTTP_ACCESS_CONTROL_REQUEST_METHOD="POST",
+            HTTP_ACCESS_CONTROL_REQUEST_HEADERS=headers,
+        )
+
+    def test_preflight_allows_offline_retry_and_tenant_headers(self):
+        from django.test import override_settings
+
+        with override_settings(CORS_ALLOWED_ORIGINS=self.ALLOWED_ORIGINS,
+                               CORS_ALLOW_ALL_ORIGINS=False):
+            for origin in self.ALLOWED_ORIGINS:
+                resp = self._preflight(
+                    origin, "x-offline-retry,x-organisation-id,authorization"
+                )
+                self.assertEqual(resp.status_code, 200, origin)
+                self.assertEqual(resp["Access-Control-Allow-Origin"], origin)
+                allowed = {
+                    h.strip().lower()
+                    for h in resp["Access-Control-Allow-Headers"].split(",")
+                }
+                for header in ("x-offline-retry", "x-organisation-id", "authorization"):
+                    self.assertIn(header, allowed, f"{header} for {origin}")
+
+    def test_preflight_allows_settlement_upload_file_name_header(self):
+        from django.test import override_settings
+
+        with override_settings(CORS_ALLOWED_ORIGINS=self.ALLOWED_ORIGINS,
+                               CORS_ALLOW_ALL_ORIGINS=False):
+            resp = self._preflight("http://localhost:5174", "x-file-name,content-type")
+        header = resp["Access-Control-Allow-Headers"]
+        allowed = {h.strip().lower() for h in header.split(",")}
+        self.assertIn("x-file-name", allowed)
+
+
 class ExemptibleUserRateThrottleTests(TestCase):
     """
     The E2E smoke account skips the global per-user rate limit, and nothing else

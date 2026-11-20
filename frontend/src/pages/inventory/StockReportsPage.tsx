@@ -30,6 +30,8 @@ import autoTable from 'jspdf-autotable'
 import jsPDF from 'jspdf'
 import { saveBlobFile } from '@/lib/saveBlobFile'
 import { CHART_SERIES, DS_CHART } from '@/lib/chartTheme'
+import NoAccessNote from '@/components/NoAccessNote'
+import { useReportAccess } from '@/hooks/useReportAccess'
 
 // Chart style constants — dark mode defaults (index.css overrides for light mode)
 const CHART_COLORS = [...CHART_SERIES]
@@ -563,6 +565,9 @@ export default function StockReportsPage() {
   const [editVals, setEditVals] = useState<{ min: string; max: string; qty_per_pack: string }>({ min: '', max: '', qty_per_pack: '' })
   const [saving, setSaving] = useState(false)
 
+  // Inventory value shows cost: owners and admins only (the Products screen hides cost from everyone else).
+  const reportAccess = useReportAccess()
+
   // Valuation state (auto-loaded, no date range)
   const [valuation, setValuation] = useState<ValuationReport | null>(null)
   const [valuationLoading, setValuationLoading] = useState(false)
@@ -587,14 +592,14 @@ export default function StockReportsPage() {
   }, [])
 
   useEffect(() => {
-    if (tab !== 'valuation') return
+    if (tab !== 'valuation' || !reportAccess.inventoryValuation) return
     // Always reload on tab switch so data stays fresh
     setValuationLoading(true)
     reportApi.inventory()
       .then(({ data }) => setValuation(data as ValuationReport))
       .catch(() => toast.error('Failed to load inventory valuation'))
       .finally(() => setValuationLoading(false))
-  }, [tab])
+  }, [tab, reportAccess.inventoryValuation])
 
   const toISO = (dd: string) => {
     if (!dd) return ''
@@ -1272,7 +1277,8 @@ export default function StockReportsPage() {
       )}
 
       {/* ── Inventory Valuation ── */}
-      {tab === 'valuation' && (
+      {tab === 'valuation' && !reportAccess.inventoryValuation && <NoAccessNote />}
+      {tab === 'valuation' && reportAccess.inventoryValuation && (
         <div className="space-y-4">
           {valuationLoading ? (
             <div className="card text-center py-12">

@@ -151,6 +151,36 @@ class POSOrderService:
     }
 
     @staticmethod
+    def _tender_slice(tenders, skip, take):
+        """Walk `tenders` in order, skipping the first `skip` already consumed
+        by an earlier posting (e.g. the food bill), then returning up to
+        `take` worth of (cash_or_bank, amount) pairs for the next posting.
+        Used so a later amount (service charge, tip) lands on whichever
+        tender actually covered it, not a hardcoded account -- a card-paid
+        order used to debit Cash for the tip/service charge regardless,
+        overstating the till and understating the bank/card account by the
+        same amount."""
+        result = []
+        remaining_skip = Decimal(str(skip))
+        remaining_take = Decimal(str(take))
+        for t in tenders:
+            if remaining_take <= 0:
+                break
+            amt = Decimal(str(t.get("amount") or 0))
+            if remaining_skip > 0:
+                if amt <= remaining_skip:
+                    remaining_skip -= amt
+                    continue
+                amt -= remaining_skip
+                remaining_skip = ZERO
+            take_here = min(amt, remaining_take)
+            if take_here > 0:
+                inv_method = POSOrderService._METHOD_MAP.get(t.get("method", "cash"), "cash")
+                result.append(("cash" if inv_method == "cash" else "bank", take_here))
+                remaining_take -= take_here
+        return result
+
+    @staticmethod
     @transaction.atomic
     def finalize_order(organisation, order, tenders=None, created_by=None):
         """Finalise: create a fully-paid Invoice from the order items (standard sale →
@@ -203,9 +233,29 @@ class POSOrderService:
         svc = Decimal(str(order.service_charge or 0))
         tip = Decimal(str(order.tip_amount or 0))
         if svc > 0 or tip > 0:
+            # The food bill (up to total_due) was already debited across the
+            # tenders in _settle_invoice; svc+tip is the next slice of the
+            # same tenders, split cash/bank by whichever tender actually
+            # covered it -- not hardcoded to Cash, or a card-paid tip would
+            # overstate the till and understate the bank/card account.
+            total_tendered = sum((Decimal(str(t.get("amount") or 0)) for t in tenders), ZERO)
+            already_applied = min(total_tendered, total_due)
+            tender_split = POSOrderService._tender_slice(tenders, already_applied, svc + tip)
+            by_account = {}
+            for kind, amt in tender_split:
+                by_account[kind] = by_account.get(kind, ZERO) + amt
+            # Any shortfall (service charge/tip tendered less than charged, or no
+            # tenders at all) still needs a debit to balance the entry -- fall
+            # back to cash for whatever the tenders didn't cover, same as the
+            # till would actually be short by that much.
+            covered = sum(by_account.values(), ZERO)
+            if covered < svc + tip:
+                by_account["cash"] = by_account.get("cash", ZERO) + (svc + tip - covered)
+
             def _post_extras():
                 cash = AccountMappingService.resolve(organisation, "cash_account")
-                lines = [(cash, svc + tip, ZERO)]
+                bank = AccountMappingService.resolve(organisation, "bank_account")
+                lines = [((cash if kind == "cash" else bank), amt, ZERO) for kind, amt in by_account.items()]
                 if svc > 0:
                     revenue = AccountMappingService.resolve(organisation, "revenue_account")
                     lines.append((revenue, ZERO, svc))

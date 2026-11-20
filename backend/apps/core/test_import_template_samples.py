@@ -23,7 +23,7 @@ learn the format, so it is the contract these tests hold:
 from decimal import Decimal
 
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
 
@@ -102,6 +102,10 @@ class TemplateRoundTripTests(TestCase):
         self.assertEqual(res.status_code, 200, msg=f"{entity}: {res.data}")
         return res.data
 
+    # The endpoint is only strict under DEBUG or a "testing" settings module.
+    # Pin DEBUG so the test also holds when run under another settings module
+    # (for example the staging container on Postgres), where it used to get 200.
+    @override_settings(DEBUG=True)
     def test_a_short_sample_row_is_loud_instead_of_silently_padded(self):
         """
         Silent padding is what hid the products bug for months: the endpoint

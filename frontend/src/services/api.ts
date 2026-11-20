@@ -819,6 +819,8 @@ api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
     // real request failed and set it back, and the amber banner plus the
     // "Connection failed" toast blinked roughly every 850ms for as long as the
     // outage lasted. Traced 2026-09-20 on /tenancy/.../my_membership/.
+    // The leading semicolon guards against the line above being read as a call.
+    // eslint-disable-next-line no-extra-semi
     ;(config as ExtConfig)._fromCache = true
     const cacheUrl = (config.url ?? '') + (config.params ? '?' + new URLSearchParams(config.params as Record<string, string>).toString() : '')
     config.adapter = async (): Promise<AxiosResponse> => {
@@ -1529,22 +1531,22 @@ export const reportApi = {
   sales: (params: object) => api.get('/reports/sales/', { params }),
   topProducts: (params: object) => api.get('/reports/top-products/', { params }),
   topCustomers: (params: object) => api.get('/reports/top-customers/', { params }),
-  inventory: (params?: object) => api.get('/reports/inventory/', { params }),
+  inventory: (params?: object) => api.get('/reports/inventory/', { params, silentErrors: true }),
   cashFlow: (params: object) => api.get('/reports/cash-flow/', { params }),
-  expenses: (params: object) => api.get('/reports/expenses/', { params }),
-  arAging: (params?: object) => api.get('/reports/ar-aging/', { params }),
-  apAging: (params?: object) => api.get('/reports/ap-aging/', { params }),
-  vatSummary: (params: object) => api.get('/reports/vat-summary/', { params }),
+  expenses: (params: object) => api.get('/reports/expenses/', { params, silentErrors: true }),
+  arAging: (params?: object) => api.get('/reports/ar-aging/', { params, silentErrors: true }),
+  apAging: (params?: object) => api.get('/reports/ap-aging/', { params, silentErrors: true }),
+  vatSummary: (params: object) => api.get('/reports/vat-summary/', { params, silentErrors: true }),
   salesByCustomer: (params?: object) => api.get('/reports/sales-by-customer/', { params }),
   salesByProduct: (params?: object) => api.get('/reports/sales-by-product/', { params }),
   paymentMethods: (params?: object) => api.get('/reports/payment-methods/', { params }),
-  customerBalance: (params?: object) => api.get('/reports/customer-balance/', { params }),
-  paymentsByCustomer: (params?: object) => api.get('/reports/payments-by-customer/', { params }),
-  customerPayments: (params: object) => api.get('/reports/customer-payments/', { params }),
-  accountStatement: (params: object) => api.get('/reports/account-statement/', { params }),
-  customerDetails: (params?: object) => api.get('/reports/customer-details/', { params }),
-  productDetails: (params?: object) => api.get('/reports/product-details/', { params }),
-  customerInvoices: (params: object) => api.get('/reports/customer-invoices/', { params }),
+  customerBalance: (params?: object) => api.get('/reports/customer-balance/', { params, silentErrors: true }),
+  paymentsByCustomer: (params?: object) => api.get('/reports/payments-by-customer/', { params, silentErrors: true }),
+  customerPayments: (params: object) => api.get('/reports/customer-payments/', { params, silentErrors: true }),
+  accountStatement: (params: object) => api.get('/reports/account-statement/', { params, silentErrors: true }),
+  customerDetails: (params?: object) => api.get('/reports/customer-details/', { params, silentErrors: true }),
+  productDetails: (params?: object) => api.get('/reports/product-details/', { params, silentErrors: true }),
+  customerInvoices: (params: object) => api.get('/reports/customer-invoices/', { params, silentErrors: true }),
 
   /**
    * Download a report as Excel or PDF.

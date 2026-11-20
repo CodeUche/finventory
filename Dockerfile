@@ -9,10 +9,23 @@ FROM python:3.13-slim AS builder
 WORKDIR /app
 
 # Install build dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+#
+# The optional "extra_ca" secret lets a build machine behind TLS-intercepting
+# middleware (e.g. local antivirus) trust its own root CA for pip's PyPI
+# fetches below, without baking that CA into the image or the repo. Nothing
+# changes for a normal build: no secret is passed, so this is a no-op, and
+# PIP_CERT just points at the same standard CA bundle pip would trust anyway.
+RUN --mount=type=secret,id=extra_ca,required=false \
+    apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libpq-dev \
+    ca-certificates \
+    && if [ -s /run/secrets/extra_ca ]; then \
+         cp /run/secrets/extra_ca /usr/local/share/ca-certificates/extra-ca.crt \
+         && update-ca-certificates; \
+       fi \
     && rm -rf /var/lib/apt/lists/*
+ENV PIP_CERT=/etc/ssl/certs/ca-certificates.crt
 
 # Install Python dependencies into a prefix dir for clean copying
 # Copy the whole requirements/ folder so -r base.txt resolves correctly
@@ -31,8 +44,18 @@ WORKDIR /app
 # the Railway Postgres server's major version) so the db-backup-cron service's
 # `pg_dump` command exists in PATH — pg_dump must match the server's major
 # version or dumps can fail/be incomplete.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+#
+# The optional "extra_ca" secret lets a build machine behind TLS-intercepting
+# middleware (e.g. local antivirus) trust its own root CA for the curl fetch
+# below, without baking that CA into the image or the repo. Nothing changes
+# for a normal build: no secret is passed, so this is a no-op.
+RUN --mount=type=secret,id=extra_ca,required=false \
+    apt-get update && apt-get install -y --no-install-recommends \
     libpq5 curl ca-certificates gnupg lsb-release \
+    && if [ -s /run/secrets/extra_ca ]; then \
+         cp /run/secrets/extra_ca /usr/local/share/ca-certificates/extra-ca.crt \
+         && update-ca-certificates; \
+       fi \
     && install -d /usr/share/postgresql-common/pgdg \
     && curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc --fail https://www.postgresql.org/media/keys/ACCC4CF8.asc \
     && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
