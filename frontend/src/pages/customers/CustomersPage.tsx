@@ -502,10 +502,10 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
 
   return (
     <div className="space-y-6">
-      {/* Header */}
+      {/* Header (the designer's "Customers & Receipts": title, Client Type, All / Outstanding Balance tabs, score keys) */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-white">Customers</h1>
+          <h1 className="text-2xl font-bold text-white">Customers &amp; Receipts</h1>
           <p className="text-slate-400 text-sm">{customers.length} customer{customers.length !== 1 ? 's' : ''}</p>
         </div>
         <div className="sm:ml-auto flex items-center gap-2">
@@ -521,6 +521,12 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
 
       {/* Filters */}
       <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
+        <select className="input max-w-xs" aria-label="Client type" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
+          <option value="">Client Type</option>
+          {CUSTOMER_TYPES.map((t) => (
+            <option key={t} value={t}>{t}</option>
+          ))}
+        </select>
         <div className="relative flex-1 min-w-[14rem] max-w-sm">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
           <input
@@ -530,20 +536,6 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        <select className="input max-w-xs" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
-          <option value="">All types</option>
-          {CUSTOMER_TYPES.map((t) => (
-            <option key={t} value={t}>{t}</option>
-          ))}
-        </select>
-        <select
-          className="input max-w-xs"
-          value={outstandingOnly ? 'outstanding' : ''}
-          onChange={(e) => setOutstandingOnly(e.target.value === 'outstanding')}
-        >
-          <option value="">All customers</option>
-          <option value="outstanding">Outstanding balance only</option>
-        </select>
         <SortSelect
           value={sortBy}
           onChange={setSortBy}
@@ -556,6 +548,25 @@ const [stmtMaximized, setStmtMaximized] = useState(false)
             { label: 'Oldest first', value: 'created_at' },
           ]}
         />
+      </div>
+
+      <div className="ds-tabs" role="tablist" aria-label="Customer list" style={{ marginBottom: 0 }}>
+        <button role="tab" aria-selected={!outstandingOnly} className="ds-tab" onClick={() => setOutstandingOnly(false)}>All</button>
+        <button role="tab" aria-selected={outstandingOnly} className="ds-tab" onClick={() => setOutstandingOnly(true)}>Outstanding Balance</button>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm" aria-label="Score keys">
+        <span className="font-semibold text-slate-300 uppercase tracking-wide text-xs">Score keys</span>
+        {[
+          { label: 'Very Good', color: 'var(--ds-good)' },
+          { label: 'Fair', color: 'var(--ds-warn)' },
+          { label: 'Poor', color: 'var(--ds-bad)' },
+        ].map((k) => (
+          <span key={k.label} className="inline-flex items-center gap-1.5 text-slate-300">
+            <span aria-hidden="true" style={{ width: 12, height: 12, borderRadius: 999, background: k.color, display: 'inline-block' }} />
+            {k.label}
+          </span>
+        ))}
       </div>
 
       {/* Table */}
