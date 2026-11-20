@@ -589,3 +589,83 @@ html.light .ds{--ds-del-bg:#FFCCCC;--ds-del-tx:#990000;--ds-modal-bg:#FFFFF8}
 .ds .ds-dialog .input{margin-top:1rem;text-align:left}
 .ds .ds-dialog-actions{display:flex;gap:.75rem;margin-top:1.5rem}
 .ds .ds-dialog-actions > button{flex:1 1 0;min-height:44px}
+
+/* ============================================================================
+   NEW SALE TIDY — new class names only; they use the kit tokens above.
+   Used by pages/sales/NewSalePage.tsx and components/FieldTooltip.tsx.
+   ========================================================================== */
+.ds{
+  --ds-tick-img:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23110099' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m3.5 8.5 3 3 6-7'/%3E%3C/svg%3E");
+}
+html.light .ds{
+  --ds-tick-img:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23FFFFFF' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m3.5 8.5 3 3 6-7'/%3E%3C/svg%3E");
+}
+
+/* Round icon button: back arrow, quantity - and +, remove. */
+.ds .ds-icon-btn{
+  display:inline-flex;align-items:center;justify-content:center;flex:none;width:32px;height:32px;padding:0;
+  background:transparent;border:1.5px solid transparent;border-radius:8px;color:var(--ds-link);cursor:pointer;
+  transition:background .12s,border-color .12s;
+}
+.ds .ds-icon-btn:hover:not(:disabled){background:color-mix(in srgb,var(--ds-link) 12%,transparent);color:var(--ds-link)}
+.ds .ds-icon-btn:focus-visible{outline:2px solid var(--ds-link);outline-offset:2px}
+.ds .ds-icon-btn[data-outline="true"]{border-color:var(--ds-outline)}
+.ds .ds-icon-btn[data-tone="bad"]{color:var(--ds-bad)}
+.ds .ds-icon-btn[data-tone="bad"]:hover:not(:disabled){background:color-mix(in srgb,var(--ds-bad) 12%,transparent);color:var(--ds-bad)}
+
+/* Coloured text lines: kit tokens in both themes (the old blue / green utilities were off-kit in light). */
+.ds .ds-line-warn{color:var(--ds-warn)}
+.ds .ds-line-info{color:var(--ds-link)}
+.ds .ds-line-good{color:var(--ds-good)}
+.ds .ds-line-bad{color:var(--ds-bad)}
+
+/* Notice strip (till warning). */
+.ds .ds-strip{
+  display:flex;align-items:flex-start;gap:10px;padding:10px 14px;border-radius:10px;font-size:14px;color:var(--ds-ink);
+  background:color-mix(in srgb,var(--ds-warn) 14%,transparent);border:1.5px solid color-mix(in srgb,var(--ds-warn) 55%,transparent);
+}
+.ds .ds-strip svg{color:var(--ds-warn)}
+.ds .ds-strip a, .ds .ds-strip button{color:var(--ds-link);text-decoration:underline}
+
+/* Held-basket list. */
+.ds .ds-held{border:1.5px solid var(--ds-row-bd);border-radius:12px;overflow:hidden;background:var(--ds-row)}
+.ds .ds-held-row{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--ds-row-bd)}
+.ds .ds-held-row:last-child{border-bottom:0}
+.ds .ds-held-row:hover{background:var(--ds-row-hover)}
+
+/* Tick box. */
+.ds input[type="checkbox"].ds-check{
+  -webkit-appearance:none;-moz-appearance:none;appearance:none;flex:none;width:20px;height:20px;margin:0;
+  border:1.5px solid var(--ds-field-bd);border-radius:6px;background:var(--ds-field);cursor:pointer;
+  background-position:center;background-repeat:no-repeat;background-size:14px 14px;transition:background-color .12s,border-color .12s;
+}
+.ds input[type="checkbox"].ds-check:checked{background-color:var(--ds-link);border-color:var(--ds-link);background-image:var(--ds-tick-img)}
+.ds input[type="checkbox"].ds-check:focus-visible{outline:2px solid var(--ds-link);outline-offset:2px}
+.ds input[type="checkbox"].ds-check:disabled{opacity:.55;cursor:not-allowed}
+.ds .ds-check-card{
+  display:flex;align-items:flex-start;gap:12px;padding:12px;border-radius:10px;cursor:pointer;user-select:none;
+  background:color-mix(in srgb,var(--ds-good) 10%,transparent);border:1.5px solid color-mix(in srgb,var(--ds-good) 40%,transparent);
+}
+.ds .ds-check-card:hover{background:color-mix(in srgb,var(--ds-good) 16%,transparent)}
+
+/* Field tooltip bubble: solid kit pop-up colours (the old surface colours were see-through or off-kit). */
+.ds .ds-tip-bubble{
+  background:var(--ds-pop-bg);border:1.5px solid var(--ds-pop-bd);color:var(--ds-ink);
+  font-size:12px;line-height:1.5;text-transform:none;letter-spacing:0;font-weight:400;
+  box-shadow:0 12px 32px rgba(0,0,0,.30);
+}
+.ds .ds-tip-arrow{border-color:transparent;border-top-color:var(--ds-pop-bd)}
+
+/* Search icon sits at the start of the field (left, or right in a right-to-left language). */
+.ds .ds-field-icon{position:absolute;inset-inline-start:12px;top:50%;transform:translateY(-50%);color:var(--ds-muted);pointer-events:none}
+.ds .input.ds-has-icon{padding-inline-start:40px}
+
+/* Pay panel: summary + Confirm in one solid kit panel; on wide screens it stays in view while the rest of the column scrolls. */
+.ds .ds-pay-sticky{
+  display:flex;flex-direction:column;gap:12px;padding:16px;border-radius:12px;
+  background:var(--ds-modal-bg);border:1.5px solid var(--ds-card-bd);box-shadow:0 8px 24px rgba(0,0,0,.18);
+}
+.ds .ds-pay-sticky > .card{background:transparent;border:0;box-shadow:none;padding:0;backdrop-filter:none;-webkit-backdrop-filter:none}
+@media (min-width:1024px){
+  .ds .ds-pay-sticky{position:sticky;bottom:12px;z-index:5}
+}
