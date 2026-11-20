@@ -1,5 +1,6 @@
 import { Link, useLocation } from 'react-router-dom'
 import { ChevronRight, Home } from 'lucide-react'
+import { hubBySlug } from '@/pages/hubs/hubConfig'
 
 // Maps every known path segment or full path to a readable label.
 // Checked longest-match first so "/accounting/coa" beats "/accounting".
@@ -95,6 +96,14 @@ function buildCrumbs(pathname: string): Crumb[] {
 
   // Dashboard itself needs no further crumbs
   if (pathname === '/dashboard' || pathname === '/') return crumbs
+
+  // Hub landing pages: Home > <hub name> (the designer's "Home > Sales & POS")
+  const hubMatch = pathname.match(/^\/hub\/([^/]+)$/)
+  if (hubMatch) {
+    const hub = hubBySlug(hubMatch[1])
+    if (hub) crumbs.push({ label: hub.title, href: pathname })
+    return crumbs
+  }
 
   // Try full-path label first
   const pageLabel = ROUTE_LABELS[pathname]

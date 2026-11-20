@@ -33,7 +33,7 @@ test('a customer reaches the shop without logging in', async ({ page }) => {
 
 test('the shop shows no Audity staff navigation', async ({ page }) => {
   await openShop(page)
-  for (const item of ['Accounting & Finance', 'General Reports', 'Dashboard', 'Sign out']) {
+  for (const item of ['Accounting', 'General Reports', 'Dashboard', 'Sign Out']) {
     await expect(page.getByText(item, { exact: true })).toHaveCount(0)
   }
 })

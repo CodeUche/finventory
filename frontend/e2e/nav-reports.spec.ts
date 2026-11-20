@@ -47,18 +47,18 @@ async function login(page: Page) {
   }
   await expect(page).toHaveURL(/\/dashboard/, { timeout: 45_000 })
   // The sidebar hides module-gated items until membership + plan modules load.
-  await expect(page.getByText('Accounting & Finance', { exact: true }))
+  await expect(page.getByText('Accounting', { exact: true }))
     .toBeVisible({ timeout: 45_000 })
 }
 
 // ── Nav restructure ──────────────────────────────────────────────────────────
 
-test('sidebar shows the restructured groups (Cashflow is its own group)', async ({ page }) => {
+test('sidebar shows the restructured groups (Income & Expenses is its own group)', async ({ page }) => {
   const { errors } = guardAgainstCrashes(page)
   await login(page)
 
   // Cashflow is now a top-level group holding Income & Expense.
-  await expect(page.getByText('Cashflow', { exact: true })).toBeVisible()
+  await expect(page.getByText('Income & Expenses', { exact: true })).toBeVisible()
 
   // Billing & Plans expanded into three entries.
   await expect(page.getByText('Billing & Plans', { exact: true })).toBeVisible()
@@ -79,7 +79,7 @@ test('Owner Analytics appears exactly once in the sidebar', async ({ page }) => 
   await assertNoCrash(page, errors)
 })
 
-test('Cashflow → Income & Expense opens the cashbook', async ({ page }) => {
+test('Income & Expenses → Income & Expense opens the cashbook', async ({ page }) => {
   const { errors } = guardAgainstCrashes(page)
   await login(page)
   await page.goto('/expenses')
