@@ -723,3 +723,10 @@ html.light .ds{
   display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:12px 16px;border-radius:10px;font-size:15px;color:var(--ds-ink);
   background:color-mix(in srgb,var(--ds-good) 12%,transparent);border:1.5px solid color-mix(in srgb,var(--ds-good) 45%,transparent);
 }
+
+/* DERIVED - not designer-approved: 44px touch targets on phones and small tablets for this page. */
+@media (max-width:1023px){
+  .ds .ds-opt, .ds .ds-radio-card, .ds .ds-link-btn{min-height:44px}
+  .ds .ds-lines-row .input, .ds .ds-amount{min-height:44px}
+  .ds .ds-icon-btn{min-width:44px;min-height:44px}
+}

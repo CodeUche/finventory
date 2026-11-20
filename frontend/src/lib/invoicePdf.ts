@@ -1,4 +1,6 @@
 import type { Invoice } from '@/types'
+import { urlToDataUrl } from '@/services/api'
+import { formatDate } from '@/lib/utils'
 
 export interface PdfPreview { url: string; filename: string }
 

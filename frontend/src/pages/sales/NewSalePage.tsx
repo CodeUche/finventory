@@ -58,7 +58,8 @@ interface HeldItem {
   discount_percent: number
   vat?: { on: boolean; taxClass: string | null; manualRate: string }
 }
-interface HeldBasket { id: string; label: string; at: string; cart: HeldItem[] }
+interface HeldBasket { id: string; label: string; at: string; cart: HeldItem[]; customer?: Customer | null }
+const OLD_BASKET_MS = 7 * 86400000
 
 const today = new Date().toISOString().split('T')[0]
 const inThirtyDays = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0]
@@ -176,7 +177,10 @@ export default function NewSalePage() {
 
   const [adjustment, setAdjustment] = useState('')
   const [delivery, setDelivery] = useState('')
-  const adjustmentNum = parseFloat(stripCommas(adjustment.replace(/\s/g, ''))) || 0
+  // Signed number: "-500" or "+200". null means what was typed is not a number.
+  const adjustmentClean = stripCommas(adjustment.replace(/\s/g, '')).replace('+', '')
+  const adjustmentParsed: number | null = adjustmentClean === '' ? 0 : (/^-?\d*\.?\d+$|^-?\d+\.$/.test(adjustmentClean) ? Number(adjustmentClean) : null)
+  const adjustmentNum = adjustmentParsed ?? 0
   const deliveryNum = parseFloat(stripCommas(delivery)) || 0
   const grandTotal = saleTotals(filled.map(toSaleLine), deliveryNum, adjustmentNum).total
   // What a sale (no delivery) would come to — same figure the old New Sale showed.
@@ -248,6 +252,31 @@ export default function NewSalePage() {
     } finally { setScanning(false) }
   }
 
+  // DERIVED - not designer-approved: a keyboard-style scanner works without clicking the box.
+  // When no field has the focus, a quick burst of keys ending in Enter is read as a scan.
+  const scanBuf = useRef({ text: '', last: 0 })
+  const handleScanRef = useRef(handleScan)
+  handleScanRef.current = handleScan
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null
+      const editable = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)
+      if (editable || e.ctrlKey || e.metaKey || e.altKey) return
+      const now = Date.now()
+      const b = scanBuf.current
+      if (now - b.last > 80) b.text = ''
+      b.last = now
+      if (e.key === 'Enter') {
+        if (b.text.length >= 3) { e.preventDefault(); const code = b.text; b.text = ''; void handleScanRef.current(code) }
+        b.text = ''
+      } else if (e.key.length === 1) {
+        b.text += e.key
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   // ── Payment ────────────────────────────────────────────────────────────────
   const [payNow, setPayNow] = useState(true)
   const [paymentMethod, setPaymentMethod] = useState('cash')
@@ -265,14 +294,20 @@ export default function NewSalePage() {
 
   // No till open: cash taken now cannot be counted at end of shift.
   const [tillOpen, setTillOpen] = useState<boolean | null>(null)
+  const [tillChecked, setTillChecked] = useState(false)
   useEffect(() => {
-    tillApi.current().then(({ data }) => setTillOpen(!!data.open)).catch(() => setTillOpen(null))
+    tillApi.current().then(({ data }) => setTillOpen(!!data.open)).catch(() => setTillOpen(null)).finally(() => setTillChecked(true))
   }, [])
 
   // ── Fulfilment, notes, who sold ────────────────────────────────────────────
   // Default is "Fulfill now": that is what every till sale has always done. An invoice that
   // should wait for delivery picks "Fulfill later".
-  const [fulfil, setFulfil] = useState<'now' | 'later'>('now')
+  // DERIVED - not designer-approved: until the person picks, a customer invoice on credit starts
+  // on "Fulfill later" and everything else (a walk-in or any paid sale) starts on "Fulfill now",
+  // so a till sale never skips the stock and ledger posting it has always done.
+  const [fulfilChoice, setFulfilChoice] = useState<'now' | 'later' | null>(null)
+  const fulfil: 'now' | 'later' = fulfilChoice ?? (selectedCustomer && !payNow ? 'later' : 'now')
+  const setFulfil = (v: 'now' | 'later') => setFulfilChoice(v)
   const [notes, setNotes] = useState('')
   const [soldBy, setSoldBy] = useState(currentUserName)
   useEffect(() => { if (!soldBy && currentUserName) setSoldBy(currentUserName) }, [currentUserName, soldBy])
@@ -311,7 +346,7 @@ export default function NewSalePage() {
     return `held-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   }
   const holdBasket = () => {
-    if (filled.length === 0) { toast.error('Nothing to hold'); return }
+    if (filled.length === 0) { say('Nothing to hold.'); return }
     const label = selectedCustomer?.name || `${filled.length} item${filled.length === 1 ? '' : 's'}`
     const cart: HeldItem[] = filled.map((l) => ({
       product: l.product as Product,
@@ -320,27 +355,36 @@ export default function NewSalePage() {
       discount_percent: Math.min(100, Math.max(0, parseFloat(l.disc) || 0)),
       vat: { on: l.vatOn, taxClass: l.taxClass, manualRate: l.manualRate },
     }))
-    persistHeld([...held, { id: basketId(), label, at: new Date().toISOString(), cart }])
+    persistHeld([...held, { id: basketId(), label, at: new Date().toISOString(), cart, customer: selectedCustomer }])
     setLines([blankLine()])
-    toast.success('Basket held')
+    setSelectedCustomer(null); setCustomerQuery('')
+    say('Basket held.', 'ok')
     searchRef.current?.focus()
   }
   const resumeBasket = (id: string) => {
     const basket = held.find((b) => b.id === id)
     if (!basket) return
-    if (filled.length > 0) { toast.error('Finish or hold the current basket first'); return }
+    if (filled.length > 0) { say('Finish or hold the current basket first.'); return }
     setLines(basket.cart.map((c) => {
       const base = lineFromProduct(++lineKey, c.product, String(c.quantity), normalizeAmountStr(String(c.unit_price)), String(c.discount_percent))
       return c.vat ? { ...base, vatOn: c.vat.on, taxClass: c.vat.taxClass, manualRate: c.vat.manualRate } : base
     }))
+    if (basket.customer) setSelectedCustomer(basket.customer)
     persistHeld(held.filter((b) => b.id !== id))
     setShowHeld(false)
-    toast.success('Basket resumed')
+    say('Basket resumed.', 'ok')
   }
   const discardBasket = (id: string) => persistHeld(held.filter((b) => b.id !== id))
 
   // ── Submit ─────────────────────────────────────────────────────────────────
   const [submitting, setSubmitting] = useState<Mode | null>(null)
+  // DERIVED - not designer-approved: plain messages shown on the page (read out by screen
+  // readers) instead of only in a toast that disappears.
+  const [notice, setNotice] = useState('')
+  const say = (msg: string, kind: 'ok' | 'error' = 'error') => {
+    setNotice(msg)
+    if (kind === 'ok') toast.success(msg); else toast.error(msg)
+  }
   // Synchronous guard: the disabled state lands a render late, and a double click once
   // created two paid invoices.
   const submittingRef = useRef(false)
@@ -400,18 +444,22 @@ export default function NewSalePage() {
   const blocker = (mode: Mode): string | null => {
     if (filled.length === 0) return 'Add at least one item to continue.'
     if (!selectedWarehouse) return 'Select a warehouse first.'
-    if (filled.some((l) => (parseFloat(stripCommas(l.price)) || 0) <= 0)) return 'Every item needs a price greater than zero.'
-    if (filled.some((l) => (parseFloat(l.qty) || 0) <= 0)) return 'Every item needs a quantity greater than zero.'
+    if (filled.some((l) => (parseFloat(l.qty) || 0) <= 0)) return 'Quantity must be more than 0.'
+    if (filled.some((l) => (parseFloat(stripCommas(l.price)) || 0) <= 0)) return 'Price must be more than 0.'
+    if (filled.some((l) => (parseFloat(l.disc) || 0) > 100)) return 'Discount cannot be more than 100%.'
+    if (adjustmentParsed === null) return 'Enter a number, like -500 or 200.'
+    if (adjustmentNum < 0 && -adjustmentNum > itemsTotal + deliveryNum) return 'Adjustment is bigger than the total.'
     if (grandTotal <= 0) return 'The total must be more than zero.'
     if (mode !== 'proforma' && !ENABLE_DEFERRED_PAYMENT_COMBOS) {
       if (fulfil === 'later' && payNow) return 'Paying before delivery is switched off. Choose Fulfill now, or Credit · pay later.'
       if (fulfil === 'later' && !payNow) return 'Credit with Fulfill later is switched off. Choose Fulfill now.'
       if (payNow && tenderedNum > 0 && tenderedNum < effectiveBalanceDue) return 'Part payment is switched off. Enter the full amount.'
     }
-    if (mode !== 'proforma' && !payNow && !selectedCustomer) return 'Credit needs a named customer. Select one, or record payment now.'
+    if (mode !== 'proforma' && !payNow && !selectedCustomer) return 'Pick a customer to sell on credit.'
+    if (mode !== 'proforma' && payNow && paymentMethod !== 'cash' && tenderedNum > effectiveBalanceDue + 0.004) return 'Amount is more than the total.'
     if (mode === 'invoice') {
-      if (!selectedCustomer) return 'For an invoice, also select a customer.'
-      if (dueDate && issueDate && dueDate < issueDate) return 'The due date cannot be before the issue date.'
+      if (!selectedCustomer) return 'Pick a customer to create an invoice.'
+      if (dueDate && issueDate && dueDate < issueDate) return 'Due date cannot be before the issue date.'
     }
     if (mode === 'sale') {
       if (deliveryNum > 0) return 'Delivery is for invoices only. Clear it, or choose Create invoice.'
@@ -439,7 +487,7 @@ export default function NewSalePage() {
 
   const handleSubmit = async (mode: Mode) => {
     const why = blocker(mode)
-    if (why) { toast.error(why); return }
+    if (why) { say(why); return }
     if (submittingRef.current) return
     submittingRef.current = true
     setSubmitting(mode)
@@ -468,12 +516,13 @@ export default function NewSalePage() {
         setCreated(made)
         return
       }
-      toast.success(mode === 'proforma' ? 'Proforma invoice created!' : 'Sale recorded!')
+      toast.success(mode === 'proforma' ? 'Proforma saved. No stock moved and no payment taken.' : 'Sale recorded!')
       // Hand the customer their receipt before leaving the screen. Skipped for a proforma,
       // which is a quote and not proof of payment.
       if (mode === 'sale' && made?.id && autoPrint) {
         const tendered = tenderedNum
-        printReceipt({
+        // The sale is already saved. If printing fails, say so; never undo or hide the sale.
+        void Promise.resolve().then(() => printReceipt({
           ...receiptDefaults,
           invoiceNumber: made.invoice_number ?? '',
           date: formatDate(made.issue_date ?? new Date().toISOString()),
@@ -501,11 +550,11 @@ export default function NewSalePage() {
           change: tendered ? Math.max(0, tendered - (parseFloat(made.total_amount) || grandTotal)) : undefined,
           firsIrn: made.firs_irn,
           qrCodeBase64: made.firs_qr_code,
-        })
+        })).catch(() => toast.error('Receipt could not print. Sale is saved. Reprint from Sales.'))
       }
       navigate('/sales')
     } catch (err: unknown) {
-      toast.error(errorMessage(err, mode === 'invoice' ? 'Failed to create invoice' : 'Failed to record sale'))
+      say(errorMessage(err, mode === 'invoice' ? 'Failed to create invoice' : 'Failed to record sale'))
     } finally {
       submittingRef.current = false
       setSubmitting(null)
@@ -666,6 +715,7 @@ export default function NewSalePage() {
               </div>
             </div>
             <p className="text-sm text-slate-400">Required for an invoice or credit. Leave blank for a walk-in sale.</p>
+            {!payNow && !selectedCustomer && <p className="text-sm ds-line-bad" role="alert">Pick a customer to sell on credit.</p>}
 
             {locations.length > 0 && (
               <div className="md:max-w-[50%]">
@@ -686,6 +736,9 @@ export default function NewSalePage() {
               <div>
                 <label className="label mb-1 block">Due date</label>
                 <DateInput value={dueDate} onChange={setDueDate} disabled={locked} />
+                {dueDate && issueDate && dueDate < issueDate && (
+                  <p className="text-xs ds-line-bad mt-1" role="alert">Due date cannot be before the issue date.</p>
+                )}
               </div>
               <div className="sm:col-span-2 md:col-span-1">
                 <p className="text-sm font-medium ds-line-info">For invoices</p>
@@ -774,6 +827,15 @@ export default function NewSalePage() {
                 })}
               </div>
             </div>
+            <div aria-live="polite">
+              {filled.map((l, i) => {
+                const msgs: string[] = []
+                if ((parseFloat(l.qty) || 0) <= 0) msgs.push('Quantity must be more than 0.')
+                if ((parseFloat(stripCommas(l.price)) || 0) <= 0) msgs.push('Price must be more than 0.')
+                if ((parseFloat(l.disc) || 0) > 100) msgs.push('Discount cannot be more than 100%.')
+                return msgs.length ? <p key={l.key} className="text-sm ds-line-bad">Line {i + 1}: {msgs.join(' ')}</p> : null
+              })}
+            </div>
             <button type="button" className="ds-link-btn flex items-center gap-1" onClick={addBlankLine} disabled={locked}>
               <Plus size={14} /> Add line
             </button>
@@ -801,6 +863,12 @@ export default function NewSalePage() {
                 </button>
               ))}
             </div>
+            {payNow && tenderedNum > 0 && tenderedNum < effectiveBalanceDue - 0.004 && (
+              <p className="text-sm ds-line-warn" role="status">{formatCurrency(effectiveBalanceDue - tenderedNum)} still owed</p>
+            )}
+            {payNow && paymentMethod !== 'cash' && tenderedNum > effectiveBalanceDue + 0.004 && (
+              <p className="text-sm ds-line-bad" role="alert">Amount is more than the total.</p>
+            )}
             {payNow && <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto] gap-4 items-end">
               <div>
                 <label className="label mb-1 block" htmlFor="ns-tendered">Amount received / tendered (₦)</label>
@@ -826,6 +894,7 @@ export default function NewSalePage() {
               </label>
             )}
 
+            {tillOpen === null && tillChecked && <p className="text-sm text-slate-400" role="status">Till status unknown.</p>}
             {tillOpen === false && (
               <div className="ds-strip items-center" role="status">
                 <AlertTriangle size={18} className="shrink-0" />
@@ -846,6 +915,7 @@ export default function NewSalePage() {
                 <label className="label mb-1 block" htmlFor="ns-note">Notes (optional)</label>
                 <textarea id="ns-note" className="input resize-none" rows={5} maxLength={2000} disabled={locked}
                   placeholder="Add a note for this transaction…" value={notes} onChange={(e) => setNotes(e.target.value)} />
+                {notes.length >= 2000 && <p className="text-xs ds-line-warn mt-1" role="status">Notes can be up to 2000 characters.</p>}
               </div>
               <div>
                 <label className="label mb-1 block" htmlFor="ns-soldby">Issued / sold by</label>
@@ -886,6 +956,16 @@ export default function NewSalePage() {
                 value={adjustment} onChange={(e) => setAdjustment(e.target.value.replace(/[^0-9.,+\-−]/g, '').replace('−', '-'))} />
             </div>
             <p className="ds-sum-note">Use − for a discount, + for an extra charge.</p>
+            {adjustmentParsed === null && <p className="text-sm ds-line-bad" role="alert">Enter a number, like -500 or 200.</p>}
+            {adjustmentParsed !== null && adjustmentNum < 0 && -adjustmentNum > itemsTotal + deliveryNum && (
+              <p className="text-sm ds-line-bad" role="alert">Adjustment is bigger than the total.</p>
+            )}
+            {adjustmentParsed !== null && adjustmentNum !== 0 && (
+              <div className="ds-sum-row text-slate-400">
+                <span>Adjustment applied</span>
+                <span className="text-white" data-testid="adjustment-signed">{adjustmentNum < 0 ? '-' : '+'}{formatCurrency(Math.abs(adjustmentNum))}</span>
+              </div>
+            )}
             <div className="ds-sum-row">
               <label htmlFor="ns-delivery" className="text-slate-400">
                 Delivery / shipping (₦)
@@ -967,15 +1047,17 @@ export default function NewSalePage() {
             <p className="ds-ready-note">Not ready? Save your items without recording a payment or moving stock.</p>
             {held.length > 0 && (
               <div>
-                <button type="button" className="ds-link-btn text-sm" onClick={() => setShowHeld((v) => !v)}>
-                  Resume a held basket ({held.length})
+                <button type="button" className="ds-link-btn text-sm" aria-expanded={showHeld} onClick={() => setShowHeld((v) => !v)}>
+                  Held ({held.length})
                 </button>
                 {showHeld && (
                   <div className="mt-2 ds-held">
                     {held.map((b) => (
                       <div key={b.id} className="ds-held-row">
                         <span className="text-sm flex-1 truncate">{b.label}</span>
-                        <span className="text-xs text-slate-400">{formatDate(b.at)}</span>
+                        <span className="text-xs text-slate-400">
+                          {formatDate(b.at)}{Date.now() - new Date(b.at).getTime() > OLD_BASKET_MS ? ' · old' : ''}
+                        </span>
                         <button type="button" className="ds-link-btn text-sm" onClick={() => resumeBasket(b.id)}>Resume</button>
                         <button type="button" className="ds-icon-btn" data-tone="bad" aria-label="Discard held basket" title="Discard"
                           onClick={async () => {
@@ -989,20 +1071,22 @@ export default function NewSalePage() {
                 )}
               </div>
             )}
+            <p className="text-sm min-h-[1.25rem]" role="status" aria-live="polite">{notice}</p>
           </section>
 
           {/* Email / Export PDF */}
           <section className="card p-4">
             <div className="grid grid-cols-2 gap-3">
               <button type="button" className="btn-ghost justify-center gap-2" disabled={!created || emailing} onClick={emailInvoice}
-                title={created ? 'Email this invoice' : 'Available once the invoice is created'}>
+                title={created ? 'Email this invoice' : 'Available after you create an invoice.'}>
                 {emailing ? <Loader2 size={16} className="animate-spin" /> : <Mail size={16} />} Email
               </button>
               <button type="button" className="btn-secondary justify-center gap-2" disabled={!created || exporting} onClick={exportPdf}
-                title={created ? 'Save this invoice as a PDF' : 'Available once the invoice is created'}>
+                title={created ? 'Save this invoice as a PDF' : 'Available after you create an invoice.'}>
                 {exporting ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />} Export PDF
               </button>
             </div>
+            {!created && <p className="ds-ready-note">Available after you create an invoice.</p>}
           </section>
         </div>
       </div>
