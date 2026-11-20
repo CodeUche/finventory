@@ -953,9 +953,14 @@ class ESSIsolationTests(TestCase):
             HTTP_X_ORGANISATION_ID=str(self.other_org.id),
         )
         res = client.get("/api/v1/me/payslips/")
-        self.assertEqual(res.status_code, 200)
-        ids = {str(row["employee"]) for row in res.data}
-        self.assertEqual(ids, {str(self.alice.id)})
+        # Without row-level security (SQLite tests) the header is ignored and the
+        # caller sees only their own payslips (200). With RLS on (production
+        # Postgres) the forged org hides the employee row and the request is
+        # refused (403). Either way no other org data may come back.
+        self.assertIn(res.status_code, (200, 403))
+        if res.status_code == 200:
+            ids = {str(row["employee"]) for row in res.data}
+            self.assertEqual(ids, {str(self.alice.id)})
 
     def test_user_without_an_employee_record_is_refused(self):
         stranger = _make_user("stranger@ess.test")

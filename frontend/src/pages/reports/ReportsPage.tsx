@@ -44,6 +44,8 @@ import { useAuthStore } from '@/store/authStore'
 import { saveBlobFile } from '@/lib/saveBlobFile'
 import PeriodSelector, { type PeriodValue } from '@/components/PeriodSelector'
 import ExportBar from '@/components/ExportBar'
+import NoAccessNote from '@/components/NoAccessNote'
+import { useReportAccess } from '@/hooks/useReportAccess'
 import ReportTable from '@/components/ReportTable'
 import SalesByCustomerDrilldownModal from '@/components/SalesByCustomerDrilldownModal'
 import { CHART_SERIES, AGING_SERIES, DS_CHART } from '@/lib/chartTheme'
@@ -161,6 +163,11 @@ const TAB_REDIRECT: Record<string, TabId> = {
   tax:       'overview',  // tax summary surfaced in Overview now
 }
 
+/** A request the member may not make is never sent (no error toast, no fake zero). */
+function skipUnless<T>(ok: boolean, call: () => Promise<T>): Promise<T> {
+  return ok ? call() : Promise.reject(new Error('no access'))
+}
+
 export default function ReportsPage() {
   const { organisation } = useAuthStore()
   const { accent, tooltipStyle, tooltipLabelStyle, tooltipItemStyle, axisTickStyle, grid, cursor, legendColor, labelColor } = useChartKit()
@@ -168,6 +175,8 @@ export default function ReportsPage() {
   const colors           = STATIC_COLORS
 
   const [searchParams, setSearchParams] = useSearchParams()
+  // Which legacy report routes this person may call; a forbidden one is never requested.
+  const access = useReportAccess()
 
   /**
    * Read initial tab from ?tab= URL param so dashboard shortcut cards work.
@@ -380,13 +389,13 @@ export default function ReportsPage() {
           reportApi.sales({ ...params, group_by }),
           reportApi.topProducts({ ...params, limit: 10 }),
           reportApi.topCustomers({ ...params, limit: 10 }),
-          reportApi.expenses(params),
-          reportApi.arAging(),
-          reportApi.apAging(),
+          skipUnless(access.expenseBreakdown, () => reportApi.expenses(params)),
+          skipUnless(access.arAging, () => reportApi.arAging()),
+          skipUnless(access.apAging, () => reportApi.apAging()),
           reportApi.cashFlow(params),
-          reportApi.vatSummary(params),
+          skipUnless(access.vatSummary, () => reportApi.vatSummary(params)),
           reportApi.paymentMethods(params),
-          reportApi.inventory(),
+          skipUnless(access.inventoryValuation, () => reportApi.inventory()),
         ])
 
       if (pnlRes.status   === 'fulfilled') setPnl(pnlRes.value.data)
@@ -412,10 +421,10 @@ export default function ReportsPage() {
     setCgLoading(true)
     try {
       const [balRes, custRes, prodRes, payRes] = await Promise.allSettled([
-        reportApi.customerBalance(),
-        reportApi.customerDetails(),
-        reportApi.productDetails(),
-        reportApi.paymentsByCustomer(periodToParams(period)),
+        skipUnless(access.customerBalance, () => reportApi.customerBalance()),
+        skipUnless(access.customerDetails, () => reportApi.customerDetails()),
+        skipUnless(access.productDetails, () => reportApi.productDetails()),
+        skipUnless(access.paymentsByCustomer, () => reportApi.paymentsByCustomer(periodToParams(period))),
       ])
       if (balRes.status  === 'fulfilled') setCustomerBalance(balRes.value.data.results ?? balRes.value.data)
       if (custRes.status === 'fulfilled') setCustomerDetails(custRes.value.data.results ?? custRes.value.data)
@@ -428,7 +437,7 @@ export default function ReportsPage() {
   useEffect(() => {
     if (tab === 'customer_gl') {
       loadCustomerGl()
-      if (accounts.length === 0) {
+      if (accounts.length === 0 && access.accountStatement) {
         accountingApi.accounts().then(res => {
           setAccounts(res.data.results ?? res.data)
         }).catch(() => toast.error('Failed to load accounts'))
@@ -437,7 +446,7 @@ export default function ReportsPage() {
   }, [tab])
 
   const loadStatement = async () => {
-    if (!selectedAccount) return
+    if (!selectedAccount || !access.accountStatement) return
     setStatementLoading(true)
     try {
       const params = { account_id: selectedAccount, ...periodToParams(statementPeriod) }
@@ -1321,6 +1330,7 @@ export default function ReportsPage() {
       ══════════════════════════════════════════════════════════════════════════ */}
       {tab === 'aging' && (
         <div className="space-y-5">
+          {!(access.arAging && access.apAging) && <NoAccessNote />}
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-semibold text-white">AR / AP Aging Analysis</h2>
             {/* DSO / DPO derived metrics shown as badges */}
@@ -1426,7 +1436,8 @@ export default function ReportsPage() {
           TAB: EXPENSES  (Phase 2F)
           — Category donut, expense vs revenue trend area, ratio reference line
       ══════════════════════════════════════════════════════════════════════════ */}
-      {tab === 'expenses' && (
+      {tab === 'expenses' && !access.expenseBreakdown && <NoAccessNote />}
+      {tab === 'expenses' && access.expenseBreakdown && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-semibold text-white">Expense Analysis</h2>
@@ -1582,8 +1593,10 @@ export default function ReportsPage() {
       ══════════════════════════════════════════════════════════════════════════ */}
       {tab === 'customer_gl' && (
         <div className="space-y-6">
+          {!(access.customerBalance && access.customerDetails && access.productDetails && access.paymentsByCustomer && access.accountStatement) && <NoAccessNote />}
 
           {/* 1. Customer Balance */}
+          {access.customerBalance && (
           <div>
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-lg font-semibold text-white">Customer Balance</h2>
@@ -1608,8 +1621,10 @@ export default function ReportsPage() {
               paginate
             />
           </div>
+          )}
 
           {/* 2. Customer Details (master directory) */}
+          {access.customerDetails && (
           <div>
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-lg font-semibold text-white">Customer Directory</h2>
@@ -1628,8 +1643,10 @@ export default function ReportsPage() {
               paginate
             />
           </div>
+          )}
 
           {/* 3. Product Details (master directory) */}
+          {access.productDetails && (
           <div>
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-lg font-semibold text-white">Product Directory</h2>
@@ -1649,8 +1666,10 @@ export default function ReportsPage() {
               paginate
             />
           </div>
+          )}
 
           {/* 4. Payments by Customer — click row to expand drill-down */}
+          {access.paymentsByCustomer && (
           <div>
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-lg font-semibold text-white">Payments by Customer</h2>
@@ -1691,8 +1710,10 @@ export default function ReportsPage() {
               )}
             </div>
           </div>
+          )}
 
           {/* 5. Account Statement (GL) */}
+          {access.accountStatement && (
           <div>
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-lg font-semibold text-white">Account Statement (GL)</h2>
@@ -1750,6 +1771,8 @@ export default function ReportsPage() {
               </>
             )}
           </div>
+          )}
+
         </div>
       )}
     </div>

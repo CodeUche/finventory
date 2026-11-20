@@ -15,6 +15,8 @@ import { reportApi } from '@/services/api'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { saveBlobFile } from '@/lib/saveBlobFile'
 import DateInput from '@/components/DateInput'
+import NoAccessNote from '@/components/NoAccessNote'
+import { useReportAccess } from '@/hooks/useReportAccess'
 
 interface Props {
   open: boolean
@@ -51,12 +53,14 @@ export default function SalesByCustomerDrilldownModal({ open, onClose, customerI
   // In-modal filters
   const [dateFrom, setDateFrom] = useState(defaultDateFrom())
   const [dateTo, setDateTo] = useState(defaultDateTo())
+  // Invoice lines are Sales data: needs the sales tick as well as Reports.
+  const access = useReportAccess()
   const [search, setSearch] = useState('')
   const [minAmount, setMinAmount] = useState('')
   const [maxAmount, setMaxAmount] = useState('')
 
   const load = async () => {
-    if (!customerId) return
+    if (!customerId || !access.customerInvoices) return
     setLoading(true)
     try {
       const res = await reportApi.customerInvoices({
@@ -178,7 +182,9 @@ export default function SalesByCustomerDrilldownModal({ open, onClose, customerI
 
         {/* Body */}
         <div className="overflow-auto flex-1">
-          {loading ? (
+          {!access.customerInvoices ? (
+            <NoAccessNote className="py-16" />
+          ) : loading ? (
             <div className="py-16 text-center"><Loader2 size={24} className="animate-spin mx-auto text-brand-400" /></div>
           ) : filtered.length === 0 ? (
             <div className="py-16 text-center">
