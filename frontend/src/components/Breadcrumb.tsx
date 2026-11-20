@@ -27,6 +27,12 @@ const ROUTE_LABELS: Record<string, string> = {
   '/accounting/general-ledger':   'General Ledger',
   '/accounting/assets':           'Fixed Assets',
   '/accounting/reconciliation':   'Bank Reconciliation',
+  '/hr/employees':                'Employees',
+  '/hr/org-chart':                'Org. Chart',
+  '/hr/leave':                    'Leave',
+  '/hr/runs':                     'Payroll Run',
+  '/hr/compliance':               'Compliance & Remittance',
+  '/hr/analytics':                'HR Analytics',
   '/payroll/employees':           'Employees',
   '/payroll/runs':                'Payroll Runs',
   '/expenses':                    'Income & Expenses',
@@ -61,6 +67,7 @@ const SECTION_MAP: Record<string, string> = {
   sales:      'Sales',
   accounting: 'Accounting',
   payroll:    'Payroll',
+  hr:         'HR',
   reports:    'Reports',
   bills:      'Procurement',
   purchases:  'Procurement',
@@ -83,6 +90,7 @@ const SECTION_HUB: Record<string, string> = {
   purchases:  '/hub/procurement',
   suppliers:  '/hub/procurement',
   payroll:    '/hub/hr',
+  hr:         '/hub/hr',
 }
 
 interface Crumb {

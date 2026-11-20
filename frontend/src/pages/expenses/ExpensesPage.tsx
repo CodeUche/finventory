@@ -571,7 +571,7 @@ export default function ExpensesPage() {
                 <select
                   value={periodFilter}
                   onChange={(e) => setPeriodFilter(e.target.value)}
-                  className="input text-sm py-2 min-w-[130px]"
+                  className="input !w-auto text-sm py-2 min-w-[130px]"
                 >
                   <option value="1">Today</option>
                   <option value="7">Last 7 days</option>

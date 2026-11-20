@@ -1,16 +1,17 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
-import { LayoutGrid, Plus, Trash2, Loader2 } from 'lucide-react'
+import { Plus, Trash2, Loader2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { posApi } from '@/services/api'
 import { confirmDialog } from '@/lib/dialog'
 
 interface Table { id: string; name: string; capacity: number; section: string; status: string; is_active: boolean }
 
+// Kit badge colours (see .badge-* in styles/ds.css)
 const STATUS_BADGE: Record<string, string> = {
-  available: 'bg-green-500/15 text-green-400 border-green-500/30',
-  occupied: 'bg-red-500/15 text-red-400 border-red-500/30',
-  reserved: 'bg-amber-500/15 text-amber-400 border-amber-500/30',
+  available: 'badge-green',
+  occupied: 'badge-red',
+  reserved: 'badge-yellow',
 }
 
 export default function TablesPage() {
@@ -49,33 +50,38 @@ export default function TablesPage() {
   }
 
   return (
-    <div className="p-4 sm:p-6 max-w-4xl mx-auto">
-      <h1 className="text-xl font-bold text-white flex items-center gap-2 mb-4"><LayoutGrid size={20} /> Tables</h1>
-      <div className="rounded-xl border border-surface-700 bg-surface-800/40 p-3 mb-5 flex flex-wrap gap-2 items-end">
-        <label className="flex flex-col gap-1 text-xs text-slate-400">Name<input className="input mt-0.5 w-32" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label>
-        <label className="flex flex-col gap-1 text-xs text-slate-400">Capacity<input className="input mt-0.5 w-20" value={form.capacity} onChange={(e) => setForm({ ...form, capacity: e.target.value })} inputMode="numeric" /></label>
-        <label className="flex flex-col gap-1 text-xs text-slate-400">Section<input className="input mt-0.5 w-32" value={form.section} onChange={(e) => setForm({ ...form, section: e.target.value })} /></label>
-        <button onClick={add} disabled={busy} className="btn-primary flex items-center gap-1"><Plus size={15} /> Add</button>
+    <div className="ds">
+      <header className="ds-head">
+        <div>
+          <h1>Tables</h1>
+          <p>{tables.length} {tables.length === 1 ? 'table' : 'tables'}</p>
+        </div>
+      </header>
+      <div className="card p-4 mb-5 flex flex-wrap gap-3 items-end">
+        <label className="label flex flex-col gap-1">Name<input className="input w-40" placeholder="e.g. Table 1" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label>
+        <label className="label flex flex-col gap-1">Seats<input className="input w-24" placeholder="4" value={form.capacity} onChange={(e) => setForm({ ...form, capacity: e.target.value })} inputMode="numeric" /></label>
+        <label className="label flex flex-col gap-1">Section<input className="input w-40" placeholder="e.g. Patio" value={form.section} onChange={(e) => setForm({ ...form, section: e.target.value })} /></label>
+        <button onClick={add} disabled={busy} className="btn-primary flex items-center gap-1"><Plus size={15} /> Add table</button>
       </div>
       {loading ? (
         <div className="flex justify-center py-16 text-slate-400"><Loader2 className="animate-spin" /></div>
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
           {tables.map((t) => (
-            <div key={t.id} className="rounded-xl border border-surface-700 bg-surface-800/40 p-3">
+            <div key={t.id} className="card p-4">
               <div className="flex items-start justify-between">
                 <div>
-                  <div className="text-sm font-semibold text-white">{t.name}</div>
-                  <div className="text-[11px] text-slate-500">{t.capacity} seats{t.section ? ` · ${t.section}` : ''}</div>
+                  <div className="text-base font-semibold text-white">{t.name}</div>
+                  <div className="text-xs text-slate-500">{t.capacity} seats{t.section ? ` · ${t.section}` : ''}</div>
                 </div>
-                <button onClick={() => remove(t)} className="text-slate-500 hover:text-red-400"><Trash2 size={14} /></button>
+                <button onClick={() => remove(t)} aria-label={`Delete ${t.name}`} className="ds-icon-btn" data-tone="bad"><Trash2 size={16} /></button>
               </div>
-              <button onClick={() => cycleStatus(t)} className={`mt-2 w-full text-[11px] px-2 py-1 rounded border ${STATUS_BADGE[t.status] ?? ''}`}>
+              <button onClick={() => cycleStatus(t)} className={`badge ${STATUS_BADGE[t.status] ?? 'badge-slate'} mt-3 w-full justify-center capitalize`}>
                 {t.status}
               </button>
             </div>
           ))}
-          {tables.length === 0 && <div className="col-span-full text-center text-slate-500 text-sm py-10">No tables yet.</div>}
+          {tables.length === 0 && <div className="col-span-full text-center text-slate-500 text-sm py-10">No tables yet. Add your first table above.</div>}
         </div>
       )}
     </div>
