@@ -114,7 +114,7 @@ export default function ForgotPasswordPage() {
             <input type="text" value={code} inputMode="numeric"
               onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
               placeholder="123456" maxLength={6} required autoFocus className="au-input"
-              style={{ textAlign: 'center', fontSize: 20, letterSpacing: '.3em', fontFamily: "'Roboto Mono', monospace" }} />
+              style={{ textAlign: 'center', fontSize: 20, letterSpacing: '.3em', fontVariantNumeric: 'tabular-nums' }} />
           </div>
 
           <div className="au-field">
