@@ -62,7 +62,8 @@ export default {
       },
       fontFamily: {
         sans: ['Roboto', 'system-ui', 'sans-serif'],
-        mono: ['Roboto Mono', 'ui-monospace', 'monospace'],
+        // Designer kit: no monospace face. `font-mono` now means Roboto + tabular numbers (see index.css).
+        mono: ['Roboto', 'system-ui', 'sans-serif'],
       },
       boxShadow: {
         // Theme-aware brand glow via --brand-500.
