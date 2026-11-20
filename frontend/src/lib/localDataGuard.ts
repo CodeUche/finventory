@@ -190,6 +190,22 @@ export function deleteDatabaseByName(name: string): Promise<boolean> {
   })
 }
 
+/**
+ * The service worker keeps every /api/v1/ answer in Cache Storage under a key made from the web address
+ * only (see vite.config.ts), so it cannot tell one person or business from another. Delete it whenever
+ * the person or the business changes. The app's own saved copy (offlineCache) is keyed by business and
+ * user, so a signed-in user still reads their own data offline after a reload.
+ * Resolves true when nothing is left (or there is no Cache Storage); never rejects.
+ */
+export async function clearApiCache(): Promise<boolean> {
+  try {
+    if (typeof caches === 'undefined') return true
+    const names = await caches.keys()
+    await Promise.all(names.filter((n) => n === 'api-cache' || n.startsWith('api-cache')).map((n) => caches.delete(n)))
+    return true
+  } catch { return false }
+}
+
 async function doWipe(): Promise<boolean> {
   // Each store already bounds its own clear and fallback; this outer limit is
   // the last guard so a hung step counts as a failure (the wipe stays owed).
@@ -197,6 +213,7 @@ async function doWipe(): Promise<boolean> {
   const results = await Promise.all([
     withTimeout(import('@/lib/offlineCache').then(({ offlineCache }) => offlineCache.clearAll()), outer, false),
     withTimeout(import('@/lib/localStore').then(({ localStore }) => localStore.clearAll()), outer, false),
+    withTimeout(clearApiCache(), outer, false),
   ])
   return results.every((r) => r === true)
 }

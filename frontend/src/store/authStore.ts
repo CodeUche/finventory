@@ -255,6 +255,12 @@ export const useAuthStore = create<AuthState>()(
       },
 
       setOrganisation: (org) => {
+        // Switching to a different business: the service worker's saved answers are not kept per
+        // business, so drop them before the next page asks.
+        const prevOrgId = get().organisation?.id
+        if (prevOrgId && org?.id && prevOrgId !== org.id) {
+          import('@/lib/localDataGuard').then(({ clearApiCache }) => clearApiCache()).catch(() => {})
+        }
         // Load the media cached for THIS org (never another org's).
         const media = readMediaCache(org?.id, get().user?.id)
         set({

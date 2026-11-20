@@ -20,7 +20,7 @@ import AmountInput from '@/components/AmountInput'
 import DateInput from '@/components/DateInput'
 import { useNotifications } from '@/contexts/NotificationsContext'
 import { useAuthStore } from '@/store/authStore'
-import { heldBasketsKey } from '@/lib/localUserData'
+import { heldBasketsKey, slimCustomer, slimProduct } from '@/lib/localUserData'
 import { alertDialog, confirmDialog, promptDialog } from '@/lib/dialog'
 import { buildInvoicePDF } from '@/lib/invoicePdf'
 import { saveBlobFile } from '@/lib/saveBlobFile'
@@ -332,8 +332,19 @@ export default function NewSalePage() {
 
   // ── Held baskets ───────────────────────────────────────────────────────────
   const HELD_KEY = heldBasketsKey(organisation?.id, user?.id)
+  // Baskets saved by an earlier version carry whole product and customer records (with cost price).
+  // They are cut down as they are read, and the cut-down copy is written back.
   const [held, setHeld] = useState<HeldBasket[]>(() => {
-    try { return JSON.parse(localStorage.getItem(HELD_KEY) || '[]') } catch { return [] }
+    try {
+      const raw = JSON.parse(localStorage.getItem(HELD_KEY) || '[]') as HeldBasket[]
+      const slim = raw.map((b) => ({
+        ...b,
+        cart: b.cart.map((c) => ({ ...c, product: slimProduct(c.product) })),
+        customer: b.customer ? slimCustomer(b.customer) : null,
+      }))
+      if (raw.length) { try { localStorage.setItem(HELD_KEY, JSON.stringify(slim)) } catch { /* non-fatal */ } }
+      return slim
+    } catch { return [] }
   })
   const [showHeld, setShowHeld] = useState(false)
   const persistHeld = (next: HeldBasket[]) => {
@@ -349,13 +360,13 @@ export default function NewSalePage() {
     if (filled.length === 0) { say('Nothing to hold.'); return }
     const label = selectedCustomer?.name || `${filled.length} item${filled.length === 1 ? '' : 's'}`
     const cart: HeldItem[] = filled.map((l) => ({
-      product: l.product as Product,
+      product: slimProduct(l.product as Product),
       quantity: parseFloat(l.qty) || 1,
       unit_price: parseFloat(stripCommas(l.price)) || 0,
       discount_percent: Math.min(100, Math.max(0, parseFloat(l.disc) || 0)),
       vat: { on: l.vatOn, taxClass: l.taxClass, manualRate: l.manualRate },
     }))
-    persistHeld([...held, { id: basketId(), label, at: new Date().toISOString(), cart, customer: selectedCustomer }])
+    persistHeld([...held, { id: basketId(), label, at: new Date().toISOString(), cart, customer: selectedCustomer ? slimCustomer(selectedCustomer) : null }])
     setLines([blankLine()])
     setSelectedCustomer(null); setCustomerQuery('')
     say('Basket held.', 'ok')
@@ -369,7 +380,11 @@ export default function NewSalePage() {
       const base = lineFromProduct(++lineKey, c.product, String(c.quantity), normalizeAmountStr(String(c.unit_price)), String(c.discount_percent))
       return c.vat ? { ...base, vatOn: c.vat.on, taxClass: c.vat.taxClass, manualRate: c.vat.manualRate } : base
     }))
-    if (basket.customer) setSelectedCustomer(basket.customer)
+    if (basket.customer) {
+      setSelectedCustomer(basket.customer)
+      // Only the name is kept on disk; credit and balances are read fresh.
+      try { customerApi.get(basket.customer.id).then(({ data }) => setSelectedCustomer(data)).catch(() => {}) } catch { /* keep the cut-down copy */ }
+    }
     persistHeld(held.filter((b) => b.id !== id))
     setShowHeld(false)
     say('Basket resumed.', 'ok')

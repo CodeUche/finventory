@@ -23,7 +23,7 @@ import { formatCurrency, formatDate } from '@/lib/utils'
 import { useTaxRates } from '@/hooks/useTaxRates'
 import { productTaxRate, saleTotals, saleTaxIncluded, type SaleLineInput } from '@/lib/saleMath'
 import { useAuthStore } from '@/store/authStore'
-import { registerHeldKey } from '@/lib/localUserData'
+import { registerHeldKey, stripProductSecrets } from '@/lib/localUserData'
 import { confirmDialog } from '@/lib/dialog'
 import { setLeaveGuard } from '@/lib/leaveGuard'
 import type { Product } from '@/types'
@@ -259,7 +259,9 @@ export default function PosRegisterPage() {
   })
   const saveHeld = (next: HeldBasket[]) => {
     setHeld(next)
-    try { localStorage.setItem(HELD_KEY, JSON.stringify(next)) } catch { /* quota */ }
+    // Cost price and ledger accounts are never kept in a held basket.
+    const safe = next.map((b) => ({ ...b, lines: b.lines.map((l) => ({ ...l, product: stripProductSecrets(l.product) })) }))
+    try { localStorage.setItem(HELD_KEY, JSON.stringify(safe)) } catch { /* quota */ }
   }
   const newId = () => {
     try {

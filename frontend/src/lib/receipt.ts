@@ -297,8 +297,15 @@ export function toMonoDataUrl(src: string, maxWidth = 480): Promise<string | nul
 
 // ── Shared blocks ────────────────────────────────────────────────────────────
 /** The logo is the first thing on the slip. No logo means no element at all, so no empty gap. */
+/** Only a plain base64 png/jpeg/webp picture may go into an <img src>. Anything else (a quote, a script,
+ *  an svg) would be written into the page as it is, so it is dropped. */
+export const safeLogoDataUrl = (u: string | null | undefined): string =>
+  u && /^data:image\/(png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/.test(u) ? u : ''
+export const safeBase64 = (u: string | null | undefined): string =>
+  u && /^[A-Za-z0-9+/=]+$/.test(u) ? u : ''
+
 const logoImg = (d: ReceiptData, cls = '') =>
-  d.logoDataUrl ? `<img class="logo ${cls}" src="${d.logoDataUrl}" alt="">` : ''
+  safeLogoDataUrl(d.logoDataUrl) ? `<img class="logo ${cls}" src="${safeLogoDataUrl(d.logoDataUrl)}" alt="">` : ''
 
 const addressBlock = (d: ReceiptData) =>
   addressLines(d.address).map((l) => `<div class="c small">${escape(l)}</div>`).join('')
@@ -364,7 +371,7 @@ const paymentsBlock = (d: ReceiptData) => {
 
 const firsBlock = (d: ReceiptData) => [
   d.firsIrn ? `<div class="rule"></div><div class="c small">FIRS IRN: ${escape(d.firsIrn)}</div>` : '',
-  d.qrCodeBase64 ? `<img class="qr" src="data:image/png;base64,${d.qrCodeBase64}" alt="">` : '',
+  safeBase64(d.qrCodeBase64) ? `<img class="qr" src="data:image/png;base64,${safeBase64(d.qrCodeBase64)}" alt="">` : '',
 ].join('')
 
 /** "YOU SAVED 500" — only when the sale really carries a discount. */
@@ -504,7 +511,7 @@ function tplSalesReceipt(d: ReceiptData): string {
 
   return `
   ${logoImg(d, 'xl')}
-  <div class="c b ${d.logoDataUrl ? '' : 'lg'}">${escape(d.merchant)}</div>
+  <div class="c b ${safeLogoDataUrl(d.logoDataUrl) ? '' : 'lg'}">${escape(d.merchant)}</div>
   ${addressBlock(d)}
   ${contactBlock(d)}
   <div class="rule"></div>
