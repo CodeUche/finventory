@@ -63,13 +63,13 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
     export_filename = 'invoices'
     export_fields = [
         ('Invoice #', 'invoice_number'),
-        ('Date', 'invoice_date'),
+        ('Date', 'issue_date'),
         ('Due Date', 'due_date'),
         ('Customer', lambda o: o.customer.name if o.customer else 'Walk-in'),
         ('Status', 'status'),
         ('Subtotal', 'subtotal'),
         ('Tax', 'tax_amount'),
-        ('Total', 'total'),
+        ('Total', 'total_amount'),
         ('Amount Due', 'amount_due'),
         ('Payment Method', 'payment_method'),
     ]
@@ -201,6 +201,13 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
                 wht_rate_id=d.get("wht_rate_id"),
                 defer_fulfillment=d.get("defer_fulfillment", False),
                 shipping_amount=d.get("shipping_amount"),
+                adjustment_amount=d.get("adjustment_amount"),
+                # The page always states what was paid. When it does, a walk-in
+                # sale must be paid in full (nobody to chase for the rest). A client
+                # that omits amount_paid keeps the old 'nothing paid yet' meaning.
+                strict_walk_in="amount_paid" in request.data,
+                put_balance_on_customer=True,
+                charge_delivery_vat=True,
             )
             try:
                 from apps.core.models import AuditLog as _AL
@@ -534,55 +541,15 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
         permission_classes=[IsAuthenticated, IsStaff, _ModAccess_sales],
     )
     def confirm_proforma(self, request, pk=None):
-        """POST /api/v1/sales/invoices/{id}/confirm_proforma/ — convert proforma to confirmed invoice."""
+        """POST /api/v1/sales/invoices/{id}/confirm_proforma/ — convert proforma to confirmed invoice.
+
+        Posts exactly what a new sale would (stock out unless fulfilment is
+        deferred, the sale journal, the customer's debt) in one transaction."""
         try:
-            from django.db import transaction as _tx
-            from apps.inventory.services import InventoryService
-            from apps.inventory.models import StockMovement
-            from apps.core.utils import round_money
-            with _tx.atomic():
-                # Re-read with row lock to prevent concurrent double-confirmation
-                invoice = Invoice.objects.select_for_update().get(
-                    pk=self.get_object().pk,
-                    organisation=request.organisation,
-                )
-                if invoice.status != Invoice.Status.PROFORMA:
-                    return Response({"error": "Only proforma invoices can be confirmed this way"}, status=422)
-                for item in invoice.items.all():
-                    if item.product.product_type == "combo":
-                        cost_per_unit = InventoryService.consume_combo_components(
-                            organisation=invoice.organisation,
-                            combo_product=item.product,
-                            warehouse=invoice.warehouse,
-                            quantity=item.quantity,
-                            reference=invoice.invoice_number,
-                            created_by=request.user,
-                        )
-                        if item.quantity:
-                            item.cost_of_goods = round_money(item.quantity * cost_per_unit)
-                            item.save(update_fields=["cost_of_goods", "updated_at"])
-                    elif item.product.product_type != "service":
-                        movement = InventoryService.record_movement(
-                            organisation=invoice.organisation,
-                            product=item.product,
-                            warehouse=invoice.warehouse,
-                            movement_type=StockMovement.MovementType.SALE_OUT,
-                            quantity=-item.quantity,
-                            unit_cost=item.cost_of_goods / item.quantity if item.quantity else item.product.cost_price,
-                            reference=invoice.invoice_number,
-                            created_by=request.user,
-                            batch=item.batch,
-                            use_costing_engine=True,
-                        )
-                        # Confirming is where a proforma's stock actually leaves,
-                        # so restate the provisional cost from what the ledger
-                        # consumed — the GL posts off cost_of_goods later.
-                        if item.quantity:
-                            item.cost_of_goods = round_money(item.quantity * movement.unit_cost)
-                            item.save(update_fields=["cost_of_goods", "updated_at"])
-                invoice.status = Invoice.Status.CONFIRMED
-                invoice.save(update_fields=["status"])
+            invoice = SaleService.confirm_proforma(self.get_object(), actor=request.user)
             return Response(InvoiceSerializer(invoice).data)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=422)
         except Exception as e:
             logger.exception("Error confirming proforma")
             return Response(
