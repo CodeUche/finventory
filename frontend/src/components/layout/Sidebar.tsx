@@ -81,7 +81,7 @@ export const navGroups: { label: string | null; alwaysGroup?: boolean; items: { 
       { name: 'Sales Returns', href: '/sales/returns', icon: RotateCcw, module: 'sales' },
       { name: 'Recurring Invoices', href: '/recurring', icon: RefreshCw, module: 'recurring' },
       { name: 'Register (Till)', href: '/pos/register', icon: ShoppingCart, module: 'sales' },
-      { name: 'New Sale / Invoice', href: '/sales/new', icon: Receipt, module: 'sales' },
+      { name: 'New sale & invoice', href: '/sales/new', icon: Receipt, module: 'sales' },
       { name: 'POS Orders', href: '/pos/restaurant', icon: ClipboardList, module: 'sales' },
       { name: 'Till / Cash-up', href: '/pos/till', icon: Wallet, module: 'sales' },
       { name: 'Tables', href: '/pos/tables', icon: LayoutGrid, module: 'sales', businessType: 'restaurant' },

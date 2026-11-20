@@ -61,7 +61,9 @@ export interface SaleTotals extends SaleLineAmounts {
   total: number
 }
 
-export function saleTotals(lines: SaleLineInput[], shipping = 0): SaleTotals {
+/** `adjustment` is the "Total adjustment" box: minus for a discount, plus for an
+ *  extra charge. It is added to the total after VAT and shipping, never taxed. */
+export function saleTotals(lines: SaleLineInput[], shipping = 0, adjustment = 0): SaleTotals {
   const sum = lines.map(saleLine).reduce(
     (acc, l) => ({
       subtotal: acc.subtotal + l.subtotal,
@@ -76,7 +78,7 @@ export function saleTotals(lines: SaleLineInput[], shipping = 0): SaleTotals {
     discount: roundMoney(sum.discount),
     tax: roundMoney(sum.tax),
     lineTotal: roundMoney(sum.lineTotal),
-    total: roundMoney(sum.lineTotal + (shipping || 0)),
+    total: roundMoney(sum.lineTotal + (shipping || 0) + (adjustment || 0)),
   }
 }
 
