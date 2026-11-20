@@ -23,6 +23,7 @@ const HR_URL = process.env.E2E_HR_URL || 'http://127.0.0.1:3000'
 const HR_OWNER_STATE = './e2e/.auth/hr-owner.json'
 const HR_EMPLOYEE_STATE = './e2e/.auth/hr-employee.json'
 // POS receipt click-through — same isolated-stack pattern as bank-recon.
+const P2_URL = process.env.P2_URL || 'http://localhost:5195'
 const RECEIPTS_URL = process.env.E2E_RECEIPTS_URL || 'http://127.0.0.1:5183'
 
 // Browser E2E against the running dev app (Vite :3000 proxies /api → Django :8000).
@@ -53,7 +54,7 @@ export default defineConfig({
       // against the WRONG stack, where they fail on missing seed data and look
       // like product regressions — which is exactly how a real bank-recon
       // "failure" was chased before it turned out to be the wrong database.
-      testIgnore: /(auth|payments)\.setup\.ts|payments\.spec\.ts|bank-reconciliation\.spec\.ts|receipts\.spec\.ts|today\..*\.spec\.ts|hr\.setup\.ts|hr\.spec\.ts|hr\.ess\.spec\.ts/,
+      testIgnore: /(auth|payments)\.setup\.ts|p2\.setup\.ts|p2\..*\.spec\.ts|payments\.spec\.ts|bank-reconciliation\.spec\.ts|receipts\.spec\.ts|today\..*\.spec\.ts|hr\.setup\.ts|hr\.spec\.ts|hr\.ess\.spec\.ts/,
       dependencies: ['setup'],
       use: { storageState: STORAGE_STATE },
     },
@@ -101,6 +102,18 @@ export default defineConfig({
       name: 'receipts',
       testMatch: /receipts\.spec\.ts/,
       use: { baseURL: RECEIPTS_URL },
+    },
+
+
+    // Design phase 2 (New sale & invoice + restyled screens). Runs against the
+    // STAGING API with a build served on its own port; see e2e/p2/support.ts.
+    //   P2_URL=http://localhost:5195 npx playwright test --project=p2
+    { name: 'p2-setup', testMatch: /p2\.setup\.ts/, use: { baseURL: P2_URL, serviceWorkers: 'block' } },
+    {
+      name: 'p2',
+      testMatch: /p2\..*\.spec\.ts/,
+      dependencies: ['p2-setup'],
+      use: { storageState: './e2e/.auth/p2.json', baseURL: P2_URL, serviceWorkers: 'block' },
     },
 
     // HR. hr.setup.ts already existed and defined both personas, but no
