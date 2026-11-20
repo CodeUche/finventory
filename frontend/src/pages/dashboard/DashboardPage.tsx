@@ -28,6 +28,7 @@ import {
 import AIChatModal from '@/components/AIChatModal'
 import ReportsAccessNotice from '@/components/ReportsAccessNotice'
 import { useModuleAccess } from '@/hooks/useModuleAccess'
+import { useReportAccess } from '@/hooks/useReportAccess'
 import { useAuthStore } from '@/store/authStore'
 import { DesignerIcon } from '@/assets/designer-icons'
 import '@/styles/dashboard.css'
@@ -267,6 +268,8 @@ export default function DashboardPage() {
 }
 
 function DashboardContent({ canReports, canSales, canInventory }: { canReports: boolean; canSales: boolean; canInventory: boolean }) {
+  // AR/AP ageing show customer and supplier balances: they need the sales / bills tick as well as Reports.
+  const reportAccess = useReportAccess()
   const navigate = useNavigate()
 
   const [period, setPeriod] = useState<PeriodKey>('ytd')
@@ -321,8 +324,8 @@ function DashboardContent({ canReports, canSales, canInventory }: { canReports: 
         gate(canReports, () => reportApi.pnl({ date_from: dateFrom, date_to: dateTo })),
         gate(canReports, () => reportApi.sales({ date_from: dateFrom, date_to: dateTo, group_by: 'day' })),
         gate(canReports, () => reportApi.sales({ date_from: priorFrom, date_to: priorTo, group_by: 'day' })),
-        gate(canReports, () => reportApi.arAging()),
-        gate(canReports, () => reportApi.apAging()),
+        gate(canReports && reportAccess.arAging, () => reportApi.arAging()),
+        gate(canReports && reportAccess.apAging, () => reportApi.apAging()),
         gate(canReports, () => reportApi.topCustomers({ date_from: dateFrom, date_to: dateTo, limit: 10 })),
         gate(canInventory, () => inventoryApi.stock()),
         gate(canSales, () => salesApi.invoices({ status: 'overdue', page_size: 5 })),
@@ -391,7 +394,7 @@ function DashboardContent({ canReports, canSales, canInventory }: { canReports: 
     }, 60_000)
 
     return () => clearInterval(interval)
-  }, [dateFrom, dateTo, _refreshTick, canReports, canSales, canInventory])
+  }, [dateFrom, dateTo, _refreshTick, canReports, canSales, canInventory, reportAccess.arAging, reportAccess.apAging])
 
   // Fetch FIRS compliance stats once on mount (non-blocking)
   // Only members who can see sales ask for it; others would get a refused request.

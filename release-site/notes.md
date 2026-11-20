@@ -12,4 +12,4 @@ Editing this file before a release is the difference between a user seeing
 
 ---
 
-When someone else signs in on the same computer or phone, they no longer see the previous person's saved data, name or menu. Saved business information on the device is now cleared when you sign out and is kept separately for each person. Anything you had not yet sent while offline stays safe for you and sends when you are back online. After this update, open the app once with a connection so your offline copy refills.
+A return kept on the customer's account, instead of paid back, now correctly shows up as credit on their balance. A restaurant tip or service charge paid by card is now recorded correctly instead of always being counted as cash.

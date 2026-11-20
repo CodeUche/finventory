@@ -473,6 +473,12 @@ CORS_ALLOW_HEADERS = [
     "x-requested-with",
     "x-organisation-id",   # required for tenant resolution
     "x-bypass-cache",      # messaging polling opt-out — see api.ts
+    # The browser build replays changes saved offline with this header. If it
+    # is not listed, the browser refuses the replay before it leaves the
+    # device, and offline saves made in a web browser never reach the server.
+    "x-offline-retry",
+    # Sent when a settlement CSV is uploaded, so the server knows the file name.
+    "x-file-name",
 ]
 
 # Trusted origins for CSRF — mirrors CORS list so packaged apps can POST

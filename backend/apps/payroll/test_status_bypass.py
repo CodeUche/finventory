@@ -43,6 +43,16 @@ def _add_member(org, email, role):
     return user, _auth_client(user, org)
 
 
+def _grant_hr(org, user):
+    """Explicit HR tick: loan create/approve/reject now honour it (only owners and
+    admins bypass the per-person ticks)."""
+    from apps.tenancy.models import ModulePermission
+    ModulePermission.objects.create(
+        membership=Membership.objects.get(user=user, organisation=org),
+        module="payroll", access_level="edit",
+    )
+
+
 class RemittanceStatusBypassTests(TestCase):
     def setUp(self):
         self.owner = _make_user("remit_owner@example.com")
@@ -212,6 +222,7 @@ class LoanApprovalWorkflowTests(TestCase):
         self.mgr_user, self.mgr_client = _add_member(
             self.org, "loanflow_mgr@example.com", "manager",
         )
+        _grant_hr(self.org, self.mgr_user)
         self.employee = Employee.objects.create(
             organisation=self.org, employee_id="LE-1",
             first_name="Ada", last_name="Staff", email="loanflow_staff@example.com",
@@ -305,7 +316,10 @@ class LoanApprovalWorkflowTests(TestCase):
 
     def test_another_manager_can_approve_it(self):
         """Self-approval is blocked, not manager approval generally."""
-        _, other_mgr_client = _add_member(self.org, "loanflow_mgr2@example.com", "manager")
+        other_mgr, other_mgr_client = _add_member(
+            self.org, "loanflow_mgr2@example.com", "manager"
+        )
+        _grant_hr(self.org, other_mgr)
         loan = self._make_pending_loan(self.mgr_employee)
         res = other_mgr_client.post(f"/api/v1/payroll/loans/{loan.id}/approve/", {}, format="json")
         self.assertIn(res.status_code, (200, 201), res.content[:300])

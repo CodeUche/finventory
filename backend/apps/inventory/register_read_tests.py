@@ -21,7 +21,9 @@ class RegisterReadAccessTests(TestCase):
         self.owner = _make_user("rr_owner@example.com")
         self.org = _make_org(self.owner, "Register Org")
         self.owner_client = _auth_client(self.owner, self.org)
-        self.wh = Warehouse.objects.create(organisation=self.org, name="Main", is_default=True)
+        self.wh = Warehouse.objects.create(
+            organisation=self.org, name="Main", is_default=True
+        )
         self.product = Product.objects.create(
             organisation=self.org, sku="RR-1", name="Zobo",
             cost_price=Decimal("300"), selling_price=Decimal("700"),
@@ -59,28 +61,58 @@ class RegisterReadAccessTests(TestCase):
         for url in ("/api/v1/inventory/products/", "/api/v1/inventory/products/?slim=1",
                     f"/api/v1/inventory/products/{self.product.id}/"):
             body = client.get(url).json()
-            rows = body.get("results", body) if isinstance(body, dict) and "results" in body else [body] if isinstance(body, dict) else body
+            rows = (
+                body.get("results", body)
+                if isinstance(body, dict) and "results" in body
+                else [body] if isinstance(body, dict) else body
+            )
             for r in rows:
                 self.assertNotIn("cost_price", r)
                 self.assertNotIn("owner_cost_price", r)
 
     def test_cashier_cannot_create_change_or_delete_products(self):
         client = self._cashier(level="edit")  # even full sales access
-        res = client.post("/api/v1/inventory/products/", {
-            "sku": "X", "name": "X", "selling_price": "1", "cost_price": "1"}, format="json")
+        res = client.post(
+            "/api/v1/inventory/products/",
+            {"sku": "X", "name": "X", "selling_price": "1", "cost_price": "1"},
+            format="json",
+        )
         self.assertEqual(res.status_code, 403)
-        self.assertEqual(client.patch(f"/api/v1/inventory/products/{self.product.id}/",
-                                      {"name": "Hacked"}, format="json").status_code, 403)
-        self.assertEqual(client.delete(f"/api/v1/inventory/products/{self.product.id}/").status_code, 403)
+        self.assertEqual(
+            client.patch(
+                f"/api/v1/inventory/products/{self.product.id}/",
+                {"name": "Hacked"},
+                format="json",
+            ).status_code,
+            403,
+        )
+        self.assertEqual(
+            client.delete(f"/api/v1/inventory/products/{self.product.id}/").status_code,
+            403,
+        )
         self.product.refresh_from_db()
         self.assertEqual(self.product.name, "Zobo")
 
     def test_cashier_cannot_create_change_or_delete_warehouses(self):
         client = self._cashier(level="edit")
-        self.assertEqual(client.post("/api/v1/inventory/warehouses/", {"name": "New"}, format="json").status_code, 403)
-        self.assertEqual(client.patch(f"/api/v1/inventory/warehouses/{self.wh.id}/",
-                                      {"name": "Hacked"}, format="json").status_code, 403)
-        self.assertEqual(client.delete(f"/api/v1/inventory/warehouses/{self.wh.id}/").status_code, 403)
+        self.assertEqual(
+            client.post(
+                "/api/v1/inventory/warehouses/", {"name": "New"}, format="json"
+            ).status_code,
+            403,
+        )
+        self.assertEqual(
+            client.patch(
+                f"/api/v1/inventory/warehouses/{self.wh.id}/",
+                {"name": "Hacked"},
+                format="json",
+            ).status_code,
+            403,
+        )
+        self.assertEqual(
+            client.delete(f"/api/v1/inventory/warehouses/{self.wh.id}/").status_code,
+            403,
+        )
 
     # NOTE: /inventory/stock/ is not listed: StockItemViewSet.get_permissions already
     # lets any staff member read it (it skips the inventory tick). Pre-existing.
@@ -101,24 +133,40 @@ class RegisterReadAccessTests(TestCase):
         client = self._cashier()
         res = client.get(f"/api/v1/inventory/products/{self.other_product.id}/")
         self.assertEqual(res.status_code, 404)
-        skus = [r["sku"] for r in client.get("/api/v1/inventory/products/").json().get("results", [])]
+        skus = [
+            r["sku"]
+            for r in client.get("/api/v1/inventory/products/").json().get("results", [])
+        ]
         self.assertNotIn("OT-1", skus)
-        names = [r["name"] for r in client.get("/api/v1/inventory/warehouses/").json().get("results", [])]
+        names = [
+            r["name"]
+            for r in client.get("/api/v1/inventory/warehouses/")
+            .json()
+            .get("results", [])
+        ]
         self.assertNotIn("Their Store", names)
 
     def test_sales_view_only_or_no_tick_still_blocked(self):
         # Viewing sales is not ringing sales: the register door stays shut.
         self.assertEqual(self._cashier(level="view", email="rr_v@example.com")
                          .get("/api/v1/inventory/products/").status_code, 403)
-        self.assertEqual(self._cashier(level="write", module="purchases", email="rr_p@example.com")
-                         .get("/api/v1/inventory/warehouses/").status_code, 403)
+        self.assertEqual(
+            self._cashier(level="write", module="purchases", email="rr_p@example.com")
+            .get("/api/v1/inventory/warehouses/")
+            .status_code,
+            403,
+        )
 
     def test_unauthenticated_is_refused(self):
         from rest_framework.test import APIClient
-        self.assertIn(APIClient().get("/api/v1/inventory/products/").status_code, (401, 403))
+        self.assertIn(
+            APIClient().get("/api/v1/inventory/products/").status_code, (401, 403)
+        )
 
     def test_owner_and_inventory_ticked_staff_unchanged(self):
-        self.assertEqual(self.owner_client.get("/api/v1/inventory/warehouses/").status_code, 200)
+        self.assertEqual(
+            self.owner_client.get("/api/v1/inventory/warehouses/").status_code, 200
+        )
         inv = _member(self.org, "rr_inv@example.com", "staff", "inventory", "view")[1]
         self.assertEqual(inv.get("/api/v1/inventory/products/").status_code, 200)
         # Staff role + inventory tick still cannot list warehouses (manager rule).
