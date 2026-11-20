@@ -13,6 +13,7 @@ import { MemoryRouter } from 'react-router-dom'
 import NewSalePage from '@/pages/sales/NewSalePage'
 import { useAuthStore } from '@/store/authStore'
 import { saleTotals } from '@/lib/saleMath'
+import { alertDialog } from '@/lib/dialog'
 
 const createMock = vi.fn()
 let sellable: unknown[] = []
@@ -35,6 +36,11 @@ vi.mock('@/services/api', () => ({
 vi.mock('@/contexts/NotificationsContext', () => ({ useNotifications: () => ({ refetch: vi.fn() }) }))
 vi.mock('@/hooks/useReceiptDefaults', () => ({ useReceiptDefaults: () => ({ merchant: 'Test Shop' }) }))
 vi.mock('@/lib/receipt', () => ({ printReceipt: vi.fn(), formatReceiptTime: () => '' }))
+vi.mock('@/lib/dialog', () => ({
+  alertDialog: vi.fn(() => Promise.resolve(true)),
+  confirmDialog: vi.fn(() => Promise.resolve(true)),
+  promptDialog: vi.fn(() => Promise.resolve(null)),
+}))
 vi.mock('react-hot-toast', () => ({ default: Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn() }) }))
 
 type P = Record<string, unknown>
@@ -263,6 +269,43 @@ describe('New sale & invoice totals and request body', () => {
     await waitFor(() => expect(grand()).toBe('₦3,000.00'))
     expect(screen.getByLabelText('Quantity, line 1')).toHaveValue(3)
     expect(screen.getByText('Ada Stores')).toBeTruthy()
+  }, 20000)
+
+  it('a held basket on disk has no cost price and no customer money fields', async () => {
+    await setup([product('k', '1000.00', { cost_price: '650.00', owner_cost_price: '640.00', inventory_account: 'acc-secret' })])
+    await pickCustomer()
+    fireEvent.click(screen.getByRole('button', { name: 'Hold basket' }))
+    const key = Object.keys(localStorage).find((k) => k.startsWith('audity-held-baskets-')) as string
+    const raw = localStorage.getItem(key) as string
+    expect(raw).toContain('Item k')
+    expect(raw).toContain('Ada Stores')
+    expect(raw).not.toMatch(/650|640|acc-secret/)
+  }, 20000)
+
+  it('shows the server plain message when the sale is refused (422)', async () => {
+    await setup([noVat])
+    createMock.mockRejectedValue({ response: { status: 422, data: { error: 'A walk-in sale must be paid in full.' } } })
+    fireEvent.click(screen.getByRole('button', { name: 'Complete sale' }))
+    await waitFor(() => expect(screen.getByText('A walk-in sale must be paid in full.', { selector: 'p' })).toBeTruthy())
+  }, 20000)
+
+  it('no mismatch pop-up when the saved total equals the screen total (adjustment live on the server)', async () => {
+    await setup([vatEx])
+    vi.mocked(alertDialog).mockClear()
+    fireEvent.change(screen.getByLabelText(/Total adjustment/), { target: { value: '-100' } })
+    createMock.mockResolvedValue({ data: { id: 'x1', invoice_number: 'INV-1', total_amount: '1512.5000' }, statusText: 'Created' })
+    fireEvent.click(screen.getByRole('button', { name: 'Complete sale' }))
+    await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1))
+    await new Promise((r) => setTimeout(r, 150))
+    expect(alertDialog).not.toHaveBeenCalled()
+  }, 20000)
+
+  it('a mismatch pop-up still fires if the server total differs', async () => {
+    await setup([vatEx])
+    vi.mocked(alertDialog).mockClear()
+    createMock.mockResolvedValue({ data: { id: 'x2', invoice_number: 'INV-2', total_amount: '1700.0000' }, statusText: 'Created' })
+    fireEvent.click(screen.getByRole('button', { name: 'Complete sale' }))
+    await waitFor(() => expect(alertDialog).toHaveBeenCalledTimes(1))
   }, 20000)
 
   it('a blank page greys the four buttons and Email / Export PDF', async () => {
