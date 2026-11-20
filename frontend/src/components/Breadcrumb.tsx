@@ -1,5 +1,6 @@
 import { Link, useLocation } from 'react-router-dom'
 import { ChevronRight, Home } from 'lucide-react'
+import { hubBySlug } from '@/pages/hubs/hubConfig'
 
 // Maps every known path segment or full path to a readable label.
 // Checked longest-match first so "/accounting/coa" beats "/accounting".
@@ -26,6 +27,12 @@ const ROUTE_LABELS: Record<string, string> = {
   '/accounting/general-ledger':   'General Ledger',
   '/accounting/assets':           'Fixed Assets',
   '/accounting/reconciliation':   'Bank Reconciliation',
+  '/hr/employees':                'Employees',
+  '/hr/org-chart':                'Org. Chart',
+  '/hr/leave':                    'Leave',
+  '/hr/runs':                     'Payroll Run',
+  '/hr/compliance':               'Compliance & Remittance',
+  '/hr/analytics':                'HR Analytics',
   '/payroll/employees':           'Employees',
   '/payroll/runs':                'Payroll Runs',
   '/expenses':                    'Income & Expenses',
@@ -60,6 +67,7 @@ const SECTION_MAP: Record<string, string> = {
   sales:      'Sales',
   accounting: 'Accounting',
   payroll:    'Payroll',
+  hr:         'HR',
   reports:    'Reports',
   bills:      'Procurement',
   purchases:  'Procurement',
@@ -82,6 +90,7 @@ const SECTION_HUB: Record<string, string> = {
   purchases:  '/hub/procurement',
   suppliers:  '/hub/procurement',
   payroll:    '/hub/hr',
+  hr:         '/hub/hr',
 }
 
 interface Crumb {
@@ -95,6 +104,14 @@ function buildCrumbs(pathname: string): Crumb[] {
 
   // Dashboard itself needs no further crumbs
   if (pathname === '/dashboard' || pathname === '/') return crumbs
+
+  // Hub landing pages: Home > <hub name> (the designer's "Home > Sales & POS")
+  const hubMatch = pathname.match(/^\/hub\/([^/]+)$/)
+  if (hubMatch) {
+    const hub = hubBySlug(hubMatch[1])
+    if (hub) crumbs.push({ label: hub.title, href: pathname })
+    return crumbs
+  }
 
   // Try full-path label first
   const pageLabel = ROUTE_LABELS[pathname]

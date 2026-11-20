@@ -1,0 +1,14 @@
+/* Hub pages (Sales & POS, Accounting, HR, ...) as the designer drew them: a glass panel holding
+   three plain text tiles per row. Page-specific; the shared kit tile rules in ds.css stay as they are. */
+.ds-hubpage .ds-head{margin-bottom:28px}
+.ds-hub.ds-hub-panel{
+  grid-template-columns:repeat(3,minmax(0,1fr));gap:36px 32px;padding:32px;
+  background:color-mix(in srgb,var(--ds-card) 55%,transparent);border:1.5px solid var(--ds-card-bd);border-radius:12px;
+  box-shadow:var(--ds-shadow);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+}
+.ds-hub-panel .ds-hub-tile{
+  min-height:160px;padding:20px 16px;font-size:24px;font-weight:500;line-height:1.3;border-color:var(--ds-card-bd);
+}
+.ds-hub-panel .ds-hub-tile:first-child,.ds-hub-panel .ds-hub-tile:hover,.ds-hub-panel .ds-hub-tile:focus-visible{border-color:var(--ds-link);border-width:2px}
+@media(max-width:1100px){.ds-hub.ds-hub-panel{gap:24px 20px;padding:24px}.ds-hub-panel .ds-hub-tile{font-size:20px;min-height:130px}}
+@media(max-width:640px){.ds-hub.ds-hub-panel{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;padding:14px}.ds-hub-panel .ds-hub-tile{font-size:16px;min-height:100px}}
