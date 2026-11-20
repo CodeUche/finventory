@@ -401,7 +401,7 @@ export default function NewSalePage() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center gap-4">
-        <button onClick={() => navigate('/sales')} className="text-slate-400 hover:text-white transition-colors">
+        <button onClick={() => navigate('/sales')} aria-label="Back to sales" className="ds-icon-btn">
           <ArrowLeft size={20} />
         </button>
         <div>
@@ -410,20 +410,21 @@ export default function NewSalePage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-[1fr_380px] gap-6">
+      {tillOpen === false && (
+        <div className="ds-strip">
+          <AlertTriangle size={15} className="shrink-0 mt-0.5" />
+          <span>
+            No till is open, so cash taken now won't appear in an end-of-day count.{' '}
+            <button onClick={() => navigate('/pos/till')} className="underline">
+              Open a till
+            </button>.
+          </span>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_340px] xl:grid-cols-[minmax(0,1fr)_380px] gap-6">
         {/* ── Left: Product search + Cart ── */}
         <div className="space-y-4">
-          {tillOpen === false && (
-            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200/90 flex gap-2.5 items-start">
-              <AlertTriangle size={15} className="shrink-0 mt-0.5" />
-              <span>
-                No till is open, so cash taken now won't appear in an end-of-day count.{' '}
-                <button onClick={() => navigate('/pos/till')} className="underline hover:text-white">
-                  Open a till
-                </button>.
-              </span>
-            </div>
-          )}
           {/* Product search */}
           <div className="card p-4">
             <div className="flex items-center gap-2 mb-3">
@@ -434,14 +435,14 @@ export default function NewSalePage() {
               <div className="ml-auto flex items-center gap-2">
                 <button
                   type="button" onClick={toggleAutoPrint}
-                  className={`btn-ghost px-2.5 py-1 text-[11px] ${autoPrint ? 'text-brand-400' : 'text-slate-500'}`}
+                  className={`btn-ghost px-2.5 py-1 text-xs ${autoPrint ? 'text-brand-400' : 'text-slate-500'}`}
                   title={autoPrint ? 'A receipt prints after each sale' : 'No receipt is printed'}
                 >
                   Receipt {autoPrint ? 'on' : 'off'}
                 </button>
                 <button
                   type="button" onClick={holdBasket}
-                  className="btn-ghost px-2.5 py-1 text-[11px]"
+                  className="btn-ghost px-2.5 py-1 text-xs"
                   title="Park this basket and serve the next customer"
                 >
                   Hold basket
@@ -449,7 +450,7 @@ export default function NewSalePage() {
                 {held.length > 0 && (
                   <button
                     type="button" onClick={() => setShowHeld((v) => !v)}
-                    className="btn-ghost px-2.5 py-1 text-[11px] text-brand-400"
+                    className="btn-ghost px-2.5 py-1 text-xs text-brand-400"
                   >
                     Resume ({held.length})
                   </button>
@@ -458,20 +459,21 @@ export default function NewSalePage() {
             </div>
 
             {showHeld && held.length > 0 && (
-              <div className="mb-3 rounded-xl border border-surface-600 divide-y divide-surface-700">
+              <div className="mb-3 ds-held">
                 {held.map((b) => (
-                  <div key={b.id} className="flex items-center gap-2 px-3 py-2">
+                  <div key={b.id} className="ds-held-row">
                     <span className="text-sm text-white flex-1 truncate">{b.label}</span>
-                    <span className="text-[11px] text-slate-500">{formatDate(b.at)}</span>
+                    <span className="text-xs text-slate-500">{formatDate(b.at)}</span>
                     <button
                       onClick={() => { resumeBasket(b.id); setShowHeld(false) }}
-                      className="btn-ghost px-2 py-1 text-[11px] text-brand-400"
+                      className="btn-ghost px-2 py-1 text-xs text-brand-400"
                     >
                       Resume
                     </button>
                     <button
                       onClick={() => discardBasket(b.id)}
-                      className="btn-ghost p-1 text-slate-500 hover:text-red-400"
+                      className="ds-icon-btn" data-tone="bad"
+                      aria-label="Discard held basket"
                       title="Discard"
                     >
                       <X size={13} />
@@ -482,10 +484,10 @@ export default function NewSalePage() {
             )}
 
             <div className="relative" ref={searchWrapRef}>
-              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+              <Search size={16} className="ds-field-icon" />
               <input
                 ref={searchRef}
-                className="input pl-9"
+                className="input ds-has-icon"
                 placeholder="Scan barcode, or type a name / SKU…"
                 value={productQuery}
                 onChange={(e) => setProductQuery(e.target.value)}
@@ -515,7 +517,7 @@ export default function NewSalePage() {
                         <p className="text-xs text-slate-400">
                           {p.sku} · {p.unit_of_measure} · Stock: {p.total_stock}
                           {(p as any).quantity_incoming > 0 && (
-                            <span className="ml-1 text-blue-400"> · +{(p as any).quantity_incoming} incoming</span>
+                            <span className="ml-1 ds-line-info"> · +{(p as any).quantity_incoming} incoming</span>
                           )}
                         </p>
                       </div>
@@ -556,7 +558,8 @@ export default function NewSalePage() {
                       </div>
                       <button
                         onClick={() => removeFromCart(item.product.id)}
-                        className="text-slate-600 hover:text-red-400 transition-colors flex-shrink-0"
+                        className="ds-icon-btn" data-tone="bad"
+                        aria-label={`Remove ${item.product.name}`}
                       >
                         <Trash2 size={14} />
                       </button>
@@ -569,9 +572,10 @@ export default function NewSalePage() {
                         <div className="flex items-center gap-1">
                           <button
                             onClick={() => updateQty(item.product.id, -1)}
-                            className="w-7 h-7 rounded-lg bg-surface-700 hover:bg-surface-600 flex items-center justify-center transition-colors flex-shrink-0"
+                            className="ds-icon-btn" data-outline="true"
+                            aria-label="Decrease quantity"
                           >
-                            <Minus size={12} className="text-slate-300" />
+                            <Minus size={14} />
                           </button>
                           <input
                             type="number"
@@ -584,9 +588,10 @@ export default function NewSalePage() {
                           />
                           <button
                             onClick={() => updateQty(item.product.id, 1)}
-                            className="w-7 h-7 rounded-lg bg-surface-700 hover:bg-surface-600 flex items-center justify-center transition-colors flex-shrink-0"
+                            className="ds-icon-btn" data-outline="true"
+                            aria-label="Increase quantity"
                           >
-                            <Plus size={12} className="text-slate-300" />
+                            <Plus size={14} />
                           </button>
                         </div>
                       </div>
@@ -644,9 +649,9 @@ export default function NewSalePage() {
               <FieldTooltip text="The warehouse stock will be deducted from." />
             </p>
             {warehouses.length === 0 ? (
-              <p className="text-xs text-amber-400">
+              <p className="text-xs ds-line-warn">
                 No warehouses found.{' '}
-                <a href="/inventory/warehouses" className="underline hover:text-amber-300">Add one first →</a>
+                <a href="/inventory/warehouses" className="underline">Add one first →</a>
               </p>
             ) : (
               <select
@@ -694,22 +699,23 @@ export default function NewSalePage() {
                 <div>
                   <p className="text-sm font-semibold text-white">{selectedCustomer.name}</p>
                   <p className="text-xs text-slate-400">{selectedCustomer.customer_type} · {selectedCustomer.phone}</p>
-                  <p className="text-xs text-emerald-400 mt-0.5">
+                  <p className="text-xs ds-line-good mt-0.5">
                     Credit: {formatCurrency(selectedCustomer.available_credit)}
                   </p>
                 </div>
                 <button
                   onClick={() => { setSelectedCustomer(null); setCustomerQuery('') }}
-                  className="text-slate-500 hover:text-red-400"
+                  className="ds-icon-btn" data-tone="bad"
+                  aria-label="Remove customer"
                 >
                   <X size={16} />
                 </button>
               </div>
             ) : (
               <div className="relative">
-                <User size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                <User size={16} className="ds-field-icon" />
                 <input
-                  className="input pl-9"
+                  className="input ds-has-icon"
                   placeholder="Search customer…"
                   value={customerQuery}
                   onChange={(e) => setCustomerQuery(e.target.value)}
@@ -773,105 +779,21 @@ export default function NewSalePage() {
 
             {/* Store credit checkbox — shown only when customer has credit */}
             {selectedCustomer && customerStoreCredit > 0 && !isNaN(customerStoreCredit) && (
-              <label className="flex items-start gap-3 cursor-pointer select-none bg-emerald-500/5 border border-emerald-500/20 rounded-xl p-3 hover:bg-emerald-500/10 transition-colors">
+              <label className="ds-check-card">
                 <input
                   type="checkbox"
                   checked={applyCredit}
                   onChange={(e) => setApplyCredit(e.target.checked)}
-                  className="mt-0.5 accent-emerald-500"
+                  className="ds-check"
                 />
                 <div>
-                  <p className="text-sm font-medium text-emerald-300">Apply Store Credit</p>
+                  <p className="text-sm font-medium ds-line-good">Apply Store Credit</p>
                   <p className="text-xs text-slate-400 mt-0.5">
                     {formatCurrency(customerStoreCredit)} available · deducts {formatCurrency(Math.min(customerStoreCredit, grandTotal))} from balance
                   </p>
                 </div>
               </label>
             )}
-          </div>
-
-          {/* Order summary */}
-          <div className="card p-4 space-y-3">
-            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-              Order Summary
-            </p>
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between text-slate-400">
-                <span>Subtotal</span>
-                <span>{formatCurrency(subtotal)}</span>
-              </div>
-              {discountTotal > 0 && (
-                <div className="flex justify-between text-amber-400">
-                  <span>Discount</span>
-                  <span>− {formatCurrency(discountTotal)}</span>
-                </div>
-              )}
-              <div className="border-t border-surface-700 pt-2 text-base">
-                <EditableTotal
-                  total={lineItemsTotal}
-                  valueClass="text-white font-semibold"
-                  lines={cart.map((c) => ({ quantity: c.quantity, unitPrice: c.unit_price, discountPercent: c.discount_percent }))}
-                  onApply={(prices) => setCart((prev) => prev.map((c, i) => ({ ...c, unit_price: prices[i] })))}
-                />
-              </div>
-              {taxTotal > 0 && (
-                <div className="flex justify-between text-blue-400">
-                  <span>VAT</span>
-                  <span>+ {formatCurrency(taxTotal)}</span>
-                </div>
-              )}
-              {taxIncluded > 0 && (
-                <div className="flex justify-between text-slate-500 text-xs">
-                  <span>VAT included in prices</span>
-                  <span>{formatCurrency(taxIncluded)}</span>
-                </div>
-              )}
-              {taxTotal > 0 && (
-                <div className="flex justify-between text-white font-semibold text-base border-t border-surface-700 pt-2">
-                  <span>Grand Total</span>
-                  <span>{formatCurrency(grandTotal)}</span>
-                </div>
-              )}
-              {creditApplied > 0 && (
-                <>
-                  <div className="flex justify-between text-emerald-400">
-                    <span>Store Credit Applied</span>
-                    <span>− {formatCurrency(creditApplied)}</span>
-                  </div>
-                  <div className="border-t border-surface-700 pt-2 flex justify-between text-white font-bold text-base">
-                    <span>Balance Due</span>
-                    <span className="text-brand-400">{formatCurrency(effectiveBalanceDue)}</span>
-                  </div>
-                </>
-              )}
-              {/* Tendered / change / balance — only when a tendered amount is entered */}
-              {paymentMethod !== 'credit' && tenderedNum > 0 && (
-                <>
-                  <div className="border-t border-surface-700/60 pt-2 flex justify-between text-sm text-slate-400">
-                    <span>Tendered</span>
-                    <span className="text-white">{formatCurrency(tenderedNum)}</span>
-                  </div>
-                  {changeGiven > 0 && (
-                    <div className="flex justify-between text-sm font-semibold">
-                      <span className="text-emerald-400">Change to Return</span>
-                      <span className="text-emerald-400">{formatCurrency(changeGiven)}</span>
-                    </div>
-                  )}
-                  {balanceDue > 0 && (
-                    <div className="flex justify-between text-sm font-semibold">
-                      <span className="text-red-400">Balance Still Owed</span>
-                      <span className="text-red-400">{formatCurrency(balanceDue)}</span>
-                    </div>
-                  )}
-                  {changeGiven === 0 && balanceDue === 0 && (
-                    <div className="flex justify-between text-sm font-semibold">
-                      <span className="text-emerald-400">Exact Amount</span>
-                      <span className="text-emerald-400">✓ Paid in full</span>
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
           </div>
 
           {/* Sold By */}
@@ -899,22 +821,107 @@ export default function NewSalePage() {
             />
           </div>
 
-          {/* Submit */}
-          <div className="space-y-2">
-            <button
-              onClick={() => handleSubmit(false)}
-              disabled={submitting || cart.length === 0}
-              className="btn-primary w-full py-3.5 text-base disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {submitting ? 'Processing…' : `Confirm Sale · ${formatCurrency(effectiveBalanceDue)}`}
-            </button>
-            <button
-              onClick={() => handleSubmit(true)}
-              disabled={submitting || cart.length === 0}
-              className="w-full py-2.5 rounded-xl border border-slate-600 text-slate-300 hover:bg-surface-700 text-sm font-medium transition-colors disabled:opacity-50"
-            >
-              Save as Proforma Invoice
-            </button>
+          {/* Order summary + Confirm: stays in view on wide screens */}
+          <div className="ds-pay-sticky">
+            <div className="card p-4 space-y-3">
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                Order Summary
+              </p>
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between text-slate-400">
+                  <span>Subtotal</span>
+                  <span>{formatCurrency(subtotal)}</span>
+                </div>
+                {discountTotal > 0 && (
+                  <div className="flex justify-between ds-line-warn">
+                    <span>Discount</span>
+                    <span>− {formatCurrency(discountTotal)}</span>
+                  </div>
+                )}
+                <div className="border-t border-surface-700 pt-2 text-base">
+                  <EditableTotal
+                    total={lineItemsTotal}
+                    valueClass="text-white font-semibold"
+                    lines={cart.map((c) => ({ quantity: c.quantity, unitPrice: c.unit_price, discountPercent: c.discount_percent }))}
+                    onApply={(prices) => setCart((prev) => prev.map((c, i) => ({ ...c, unit_price: prices[i] })))}
+                  />
+                </div>
+                {taxTotal > 0 && (
+                  <div className="flex justify-between ds-line-info">
+                    <span>VAT</span>
+                    <span>+ {formatCurrency(taxTotal)}</span>
+                  </div>
+                )}
+                {taxIncluded > 0 && (
+                  <div className="flex justify-between text-slate-500 text-xs">
+                    <span>VAT included in prices</span>
+                    <span>{formatCurrency(taxIncluded)}</span>
+                  </div>
+                )}
+                {taxTotal > 0 && (
+                  <div className="flex justify-between text-white font-semibold text-base border-t border-surface-700 pt-2">
+                    <span>Grand Total</span>
+                    <span>{formatCurrency(grandTotal)}</span>
+                  </div>
+                )}
+                {creditApplied > 0 && (
+                  <>
+                    <div className="flex justify-between ds-line-good">
+                      <span>Store Credit Applied</span>
+                      <span>− {formatCurrency(creditApplied)}</span>
+                    </div>
+                    <div className="border-t border-surface-700 pt-2 flex justify-between text-white font-bold text-base">
+                      <span>Balance Due</span>
+                      <span className="text-brand-400">{formatCurrency(effectiveBalanceDue)}</span>
+                    </div>
+                  </>
+                )}
+                {/* Tendered / change / balance — only when a tendered amount is entered */}
+                {paymentMethod !== 'credit' && tenderedNum > 0 && (
+                  <>
+                    <div className="border-t border-surface-700/60 pt-2 flex justify-between text-sm text-slate-400">
+                      <span>Tendered</span>
+                      <span className="text-white">{formatCurrency(tenderedNum)}</span>
+                    </div>
+                    {changeGiven > 0 && (
+                      <div className="flex justify-between text-sm font-semibold">
+                        <span className="ds-line-good">Change to Return</span>
+                        <span className="ds-line-good">{formatCurrency(changeGiven)}</span>
+                      </div>
+                    )}
+                    {balanceDue > 0 && (
+                      <div className="flex justify-between text-sm font-semibold">
+                        <span className="ds-line-bad">Balance Still Owed</span>
+                        <span className="ds-line-bad">{formatCurrency(balanceDue)}</span>
+                      </div>
+                    )}
+                    {changeGiven === 0 && balanceDue === 0 && (
+                      <div className="flex justify-between text-sm font-semibold">
+                        <span className="ds-line-good">Exact Amount</span>
+                        <span className="ds-line-good">✓ Paid in full</span>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <button
+                onClick={() => handleSubmit(false)}
+                disabled={submitting || cart.length === 0}
+                className="btn-primary w-full justify-center py-3.5 text-base disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {submitting ? 'Processing…' : `Confirm Sale · ${formatCurrency(effectiveBalanceDue)}`}
+              </button>
+              <button
+                onClick={() => handleSubmit(true)}
+                disabled={submitting || cart.length === 0}
+                className="btn-secondary w-full justify-center py-2.5 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Save as Proforma Invoice
+              </button>
+            </div>
           </div>
         </div>
       </div>
