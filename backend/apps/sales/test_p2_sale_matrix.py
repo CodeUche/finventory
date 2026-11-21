@@ -19,7 +19,7 @@ See ``TotalAdjustmentPending`` at the bottom, which is skipped until it does.
 """
 
 from decimal import Decimal
-from unittest import expectedFailure, skipUnless
+from unittest import skipUnless
 
 from django.test import TestCase
 from rest_framework.test import APIClient
@@ -204,7 +204,8 @@ class SavedValuesByPaymentMethod(Base):
         'nothing paid'. A screen that forgets to send it saves a cash sale as
         confirmed / owed (DR receivable, not DR cash). The merged page must always send it."""
         body = {"warehouse_id": str(self.wh.id), "payment_method": "cash",
-                "items": [self.line(qty="1")]}
+                "items": [self.line(qty="1")],
+                "allow_unpaid_walk_in": True}   # a walk-in is otherwise refused (manager+ flag)
         res = self.api.post(URL, body, format="json")
         self.assertEqual(res.status_code, 201)
         inv = Invoice.objects.get(id=res.data["id"])
@@ -310,18 +311,24 @@ class StockAndFulfilment(Base):
         self.no_journal(inv)
         self.assertFalse(SalePayment.objects.filter(invoice=inv).exists())
 
-    def test_fulfil_later_holds_stock_and_ledger_until_fulfilled(self):
+    def test_fulfil_later_holds_stock_and_revenue_until_fulfilled(self):
+        """Accountant-approved rules: VAT is due on invoice/receipt, so it is booked when the
+        invoice is raised (with the cash and the held sale in Customer Deposits); stock, revenue
+        and COGS wait for delivery."""
         inv = self.sell([self.line(qty="2")], "cash", defer_fulfillment=True)
         self.assertTrue(inv.is_deferred)
         self.assertIsNone(inv.fulfilled_at)
         self.assertEqual(self.on_hand(), D("10"))
-        self.no_journal(inv)
+        self.no_journal(inv)                       # no revenue / COGS entry yet
+        raised = JournalEntry.objects.get(organisation=self.org, source_type="sale_deferred",
+                                          source_ref=str(inv.id))
+        self.assertIn(self.role("vat_output_account").id, {l.account_id for l in raised.lines.all()})
         res = self.api.post(f"{URL}{inv.id}/fulfill/")
         self.assertEqual(res.status_code, 200, res.data)
         inv.refresh_from_db()
         self.assertIsNotNone(inv.fulfilled_at)
         self.assertEqual(self.on_hand(), D("8"))
-        self.assertIn(self.role("vat_output_account").id, self.journal(inv))
+        self.assertIn(self.role("revenue_account").id, self.journal(inv))
 
     def test_fulfil_twice_is_refused_and_does_not_deduct_twice(self):
         inv = self.sell([self.line(qty="2")], "cash", defer_fulfillment=True)
@@ -347,7 +354,8 @@ class StockAndFulfilment(Base):
             "vat_output_account", "cogs_account")}
 
     def test_void_of_a_plain_unpaid_sale_puts_stock_back_and_nets_the_ledger_to_zero(self):
-        inv = self.sell([self.line(qty="2")], "cash", amount_paid="0")      # 2000 + 150 VAT
+        inv = self.sell([self.line(qty="2")], "cash", amount_paid="0",
+                        customer_id=str(self.cust.id))      # 2000 + 150 VAT (a walk-in cannot owe)
         self.assertEqual((inv.status, inv.amount_due), ("confirmed", D("2150")))
         self.assertEqual(self.on_hand(), D("8"))
         net = self._net_after_void(inv)
@@ -361,17 +369,17 @@ class StockAndFulfilment(Base):
     # voided and stock is restored, but the ledger keeps the sale (receivable, revenue, VAT).
     # Worked example below: 3 x 1000 less 10% (2700) + 202.50 VAT = 2902.50. Reversal posts
     # CR AR 2902.50 but DR Revenue 3000 + DR VAT 202.50 = 3202.50 -> off by the 300 discount.
-    # expectedFailure flips to an error the day it is fixed, which is the cue to delete the marker.
-    @expectedFailure
+    # FIXED in the sales ledger rebuild: void now mirrors the original entries exactly.
     def test_void_with_a_discount_nets_the_ledger_to_zero(self):
-        inv = self.sell([self.line(qty="3", disc="10")], "cash", amount_paid="0")
+        inv = self.sell([self.line(qty="3", disc="10")], "cash", amount_paid="0",
+                        customer_id=str(self.cust.id))
         net = self._net_after_void(inv)
         self.assertEqual({k: v for k, v in net.items() if v != 0}, {})
 
-    @expectedFailure
     def test_void_with_delivery_nets_the_ledger_to_zero(self):
-        # total 1575 = 1000 + 75 VAT + 500 delivery; reversal uses subtotal 1000 only.
-        inv = self.sell([self.line(qty="1")], "cash", amount_paid="0", shipping_amount="500.00")
+        # total 1575 = 1000 + 75 VAT + 500 delivery
+        inv = self.sell([self.line(qty="1")], "cash", amount_paid="0", shipping_amount="500.00",
+                        customer_id=str(self.cust.id))
         net = self._net_after_void(inv)
         self.assertEqual({k: v for k, v in net.items() if v != 0}, {})
 
@@ -439,6 +447,7 @@ class TenantIsolation(Base):
         free = Product.objects.create(organisation=self.org_b, sku="BF2", name="B item",
                                       product_type="service", cost_price=0, selling_price=100)
         res = self.api_b.post(URL, {"warehouse_id": str(self.wh_b.id), "payment_method": "cash",
+                                    "amount_paid": "100",
                                     "items": [{"product_id": str(free.id), "quantity": "1"}]},
                               format="json")
         self.assertEqual(res.status_code, 201, res.data)
@@ -458,16 +467,16 @@ except Exception:  # pragma: no cover
 @skipUnless(_HAS_ADJ, "total adjustment field not on this branch yet")
 class TotalAdjustmentPending(Base):
     """Switches on by itself once the backend branch adds the field.
-    Expected values (hand-computed), field name assumed `total_adjustment`:
-      +  adjustment +100 on 1075            -> total 1175, VAT unchanged 75, revenue 1100
-      -  adjustment -75  on 1075            -> total 1000, VAT unchanged 75, revenue 925
-    VAT must NOT be recomputed on the adjustment (confirm with tax expert), and the
-    journal must still balance."""
+    Settled rule (tax expert, Nigeria Tax Act 2025): the adjustment is spread over the
+    lines BEFORE VAT, so VAT moves with it. Hand-computed on one 1,000 line at 7.5%:
+      +  adjustment +100 -> net 1100, VAT 82.50, total 1182.50
+      -  adjustment  -75 -> net  925, VAT 69.38 (69.375 rounded), total 994.38
+    and the journal must still balance."""
 
     def test_positive_and_negative(self):
-        pos = self.sell([self.line(qty="1")], "cash", total_adjustment="100.00")
-        self.assertEqual((pos.total_amount, pos.tax_amount), (D("1175"), D("75")))
-        neg = self.sell([self.line(qty="1")], "cash", total_adjustment="-75.00")
-        self.assertEqual((neg.total_amount, neg.tax_amount), (D("1000"), D("75")))
+        pos = self.sell([self.line(qty="1")], "cash", adjustment_amount="100.00")
+        self.assertEqual((pos.total_amount, pos.tax_amount), (D("1182.50"), D("82.50")))
+        neg = self.sell([self.line(qty="1")], "cash", adjustment_amount="-75.00")
+        self.assertEqual((neg.total_amount, neg.tax_amount), (D("994.38"), D("69.38")))
         self.journal(pos)
         self.journal(neg)

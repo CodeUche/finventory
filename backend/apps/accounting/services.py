@@ -1769,6 +1769,8 @@ class AccountingService:
         rules live in apps.sales.ledger; this is the retained entry point for the
         GL-retry path. Raises on failure."""
         from apps.sales import ledger
+        if invoice.status == 'voided':
+            raise ValueError("This invoice is voided; a voided invoice is never posted to the ledger.")
         if invoice.is_deferred and invoice.fulfilled_at is None:
             mode, entry_date = 'deferred', invoice.issue_date
         elif invoice.is_deferred and ledger.is_new_style_deferred(invoice):
@@ -1790,7 +1792,8 @@ class AccountingService:
         """
         if method == 'cash':
             return AccountMappingService.resolve(organisation, 'cash_account')
-        if method in ('bank_transfer', 'pos', 'card', 'transfer'):
+        # a cheque is banked, not kept in the drawer
+        if method in ('bank_transfer', 'pos', 'card', 'transfer', 'cheque'):
             return AccountMappingService.resolve(organisation, 'bank_account')
         return AccountMappingService.resolve(organisation, 'cash_account')
 
@@ -2817,6 +2820,8 @@ class AccountingService:
         if model_name == 'invoice':
             from apps.sales.models import Invoice
             obj = Invoice.objects.get(id=object_id, organisation=organisation)
+            if obj.status == Invoice.Status.VOIDED:
+                return False, "This invoice is voided; nothing to post."
             success, err = safe_post_gl(
                 AccountingService.post_sale_journal, organisation, obj, user,
                 model_instance=obj,

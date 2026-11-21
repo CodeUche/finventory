@@ -73,6 +73,7 @@ class TestTenantIsolation:
     ):
         """Create an invoice in org-1, verify org-2 cannot retrieve it."""
         create_resp = auth_client.post("/api/v1/sales/invoices/", {
+            "allow_unpaid_walk_in": True,   # a walk-in sale recorded unpaid on purpose (manager flag)
             "warehouse_id": str(warehouse.id),
             "payment_method": "cash",
             "items": [{"product_id": str(stocked_product.id), "quantity": "1"}],

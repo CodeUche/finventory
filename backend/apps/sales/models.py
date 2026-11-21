@@ -146,6 +146,11 @@ class Invoice(TenantAwareModel):
     # WHT rate the customer deducts at, if any. WHT is recorded once per
     # payment received (not on the invoice total), so later payments need it.
     wht_rate_id = models.UUIDField(null=True, blank=True)
+    # The VAT-timing rule in force when the invoice was raised ("invoice" or
+    # "delivery"; see apps.sales.rules). Read at delivery / void / retry so
+    # flipping the setting mid-flight cannot double-book or drop VAT. Null on
+    # older invoices = follow the current setting.
+    vat_timing = models.CharField(max_length=10, null=True, blank=True)
     total_amount = MoneyField()
     credit_applied = MoneyField(default=0)  # Store credit redeemed on this invoice
     amount_paid = MoneyField()
