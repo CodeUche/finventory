@@ -558,7 +558,7 @@ class TotalsTests(Base):
         self.assertEqual((inv.issue_date, inv.due_date), (date(2099, 1, 10), date(2099, 2, 9)))
         res = self.post(payment_method="credit", amount_paid="0", issue_date="2099-01-10", due_date="2099-01-09")
         self.assertEqual(res.status_code, 400)
-        self.assertIn("due_date", res.data["error"])
+        self.assertIn("due date", res.data["error"].lower())
 
     def test_due_date_may_be_left_out_or_null(self):
         self.assertIsNone(self.ok(due_date=None).due_date)

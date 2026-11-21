@@ -10,6 +10,7 @@ All report endpoints are GET-only and accept:
 The ?format param is handled by each view via _export_or_json().
 """
 
+from django.utils import timezone
 import io
 
 from django.http import HttpResponse
@@ -367,9 +368,9 @@ class ARAgingView(BaseDateRangeView):
 
         as_of_str = request.query_params.get("as_of")
         try:
-            as_of = datetime.strptime(as_of_str, "%Y-%m-%d").date() if as_of_str else date.today()
+            as_of = datetime.strptime(as_of_str, "%Y-%m-%d").date() if as_of_str else timezone.localdate()
         except ValueError:
-            as_of = date.today()
+            as_of = timezone.localdate()
 
         data = ReportService.ar_aging(self.get_organisation(), as_of)
 
@@ -403,9 +404,9 @@ class APAgingView(BaseDateRangeView):
 
         as_of_str = request.query_params.get("as_of")
         try:
-            as_of = datetime.strptime(as_of_str, "%Y-%m-%d").date() if as_of_str else date.today()
+            as_of = datetime.strptime(as_of_str, "%Y-%m-%d").date() if as_of_str else timezone.localdate()
         except ValueError:
-            as_of = date.today()
+            as_of = timezone.localdate()
 
         data = ReportService.ap_aging(self.get_organisation(), as_of)
 

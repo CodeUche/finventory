@@ -58,6 +58,10 @@ class QuoteService:
     def convert_to_invoice(quote, user):
         if quote.status == Quote.CONVERTED:
             raise ValueError("Quote already converted")
+        if quote.customer_id is None:
+            # A walk-in quote has nobody to owe the money, and converting it used to
+            # book a full bank payment that never happened.
+            raise ValueError("Add a customer to this quote before converting it to an invoice.")
         from apps.sales.services import SaleService
         # Build items list for SaleService
         items = []
@@ -71,8 +75,8 @@ class QuoteService:
                 # changed since.
                 'tax_rate': qi.tax_rate,
             })
-        # Use credit if there's a named customer, bank_transfer otherwise
-        payment_method = 'credit' if quote.customer else 'bank_transfer'
+        # A named customer owes the quote on credit (no payment is recorded)
+        payment_method = 'credit'
         invoice = SaleService.create_sale(
             organisation=quote.organisation,
             created_by=user,
