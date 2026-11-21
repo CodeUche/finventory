@@ -12,4 +12,4 @@ Editing this file before a release is the difference between a user seeing
 
 ---
 
-A return kept on the customer's account, instead of paid back, now correctly shows up as credit on their balance. A restaurant tip or service charge paid by card is now recorded correctly instead of always being counted as cash.
+Audity has a fresh look: new fonts and colours throughout, a reorganised menu and home pages, and a new combined "New sale & invoice" page where you add items once and then create an invoice or complete a sale. Totals, VAT, deposits and refunds are now recorded more accurately, a total adjustment box lets you add a discount or extra charge, and voiding or editing an invoice now keeps your books in step.
