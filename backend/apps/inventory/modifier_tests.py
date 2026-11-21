@@ -304,6 +304,7 @@ class InvoiceModifierTests(ModifierTestBase):
     def test_the_sale_endpoint_prices_modifiers(self):
         res = self.client.post("/api/v1/sales/invoices/", {
             "warehouse_id": str(self.warehouse.id), "payment_method": "cash",
+            "amount_paid": "999999",   # the till always states what was paid (clamped to the total)
             "items": [{
                 "product_id": str(self.jollof.id), "quantity": "1", "unit_price": "2500",
                 "modifiers": [str(self.large.id), str(self.chicken.id)],

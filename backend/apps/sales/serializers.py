@@ -161,6 +161,9 @@ class CreateSaleSerializer(serializers.Serializer):
     amount_tendered = serializers.DecimalField(max_digits=15, decimal_places=4, required=False, allow_null=True)
     credit_applied = serializers.DecimalField(max_digits=15, decimal_places=4, required=False, default=Decimal("0"), min_value=Decimal("0"))
     wht_rate_id = serializers.UUIDField(required=False, allow_null=True)
+    # A manager or above may deliberately record a walk-in sale as unpaid
+    # (an integration that invoices first); everyone else must be paid in full.
+    allow_unpaid_walk_in = serializers.BooleanField(required=False, default=False, write_only=True)
 
 
 class RecordPaymentSerializer(serializers.Serializer):

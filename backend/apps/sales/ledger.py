@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 Z = Decimal("0")
 
 SALE_SOURCES = ("sale", "sale_deferred")
-PAYMENT_SOURCES = ("sale_receipt", "sale_deposit", "sale_refund", "credit_payment")
+PAYMENT_SOURCES = ("sale_receipt", "sale_deposit", "sale_refund", "credit_payment", "gateway_payment")
 
 
 # ── accounts ────────────────────────────────────────────────────────────────
@@ -48,14 +48,17 @@ def deposits_account(organisation):
     customers' store credit. Created if an older organisation lacks it."""
     from apps.accounting.models import Account, AccountType, normal_balance_for_type
 
-    acct = Account.objects.filter(organisation=organisation, code="2050").first()
-    if acct:
-        return acct
-    return Account.objects.create(
-        organisation=organisation, code="2050", name="Customer Deposits",
-        account_type=AccountType.LIABILITY, account_group="Liability",
-        normal_balance=normal_balance_for_type(AccountType.LIABILITY), is_system=True,
+    # get_or_create rides the unique (organisation, code) constraint: two first
+    # sales at the same moment cannot make two 2050 accounts.
+    acct, _ = Account.objects.get_or_create(
+        organisation=organisation, code="2050",
+        defaults=dict(
+            name="Customer Deposits",
+            account_type=AccountType.LIABILITY, account_group="Liability",
+            normal_balance=normal_balance_for_type(AccountType.LIABILITY), is_system=True,
+        ),
     )
+    return acct
 
 
 def _ar(organisation, invoice):
@@ -79,23 +82,62 @@ def _payment_ids(invoice):
     return [str(pk) for pk in SalePayment.objects.filter(invoice=invoice).values_list("id", flat=True)]
 
 
-def invoice_entries(invoice):
-    """Every journal entry that belongs to this invoice."""
+def _old_credit_receipt_refs(invoice):
+    """Receipts for credit invoices taken before payments carried their own
+    entry: the credit service posted them under CRPAY-<credit transaction id>,
+    and described them "Credit payment – <invoice number>"."""
+    if not invoice.customer_id:
+        return []
+    from apps.credits.models import CreditTransaction
+    ids = CreditTransaction.objects.filter(
+        organisation=invoice.organisation, customer_id=invoice.customer_id,
+        transaction_type=CreditTransaction.TransactionType.CREDIT,
+        description=f"Credit payment \u2013 {invoice.invoice_number}",
+    ).values_list("id", flat=True)
+    return [f"CRPAY-{pk}" for pk in ids]
+
+
+def invoice_entries(invoice, live_only=False):
+    """Every journal entry that belongs to this invoice, including receipts
+    posted the old way (CRPAY-* credit receipts, gateway_payment entries) and
+    re-posted sale entries (source_ref "<id>:rN"). live_only drops entries that
+    already have a reversal."""
     from django.db.models import Q
     from apps.accounting.models import JournalEntry
 
-    return list(JournalEntry.objects.filter(
-        Q(source_type__in=SALE_SOURCES, source_ref=str(invoice.id))
-        | Q(source_type__in=PAYMENT_SOURCES, source_ref__in=_payment_ids(invoice)),
-        organisation=invoice.organisation,
-    ).order_by("created_at"))
+    q = (
+        Q(source_type__in=SALE_SOURCES, source_ref__startswith=str(invoice.id))
+        | Q(source_type__in=PAYMENT_SOURCES, source_ref__in=_payment_ids(invoice))
+    )
+    old = _old_credit_receipt_refs(invoice)
+    if old:
+        q |= Q(source_type="credit_payment", source_ref__in=old)
+    entries = list(JournalEntry.objects.filter(q, organisation=invoice.organisation).order_by("created_at"))
+    if live_only and entries:
+        reversed_ids = set(JournalEntry.objects.filter(
+            organisation=invoice.organisation, source_type="reversal",
+            source_ref__in=[str(e.id) for e in entries],
+        ).values_list("source_ref", flat=True))
+        entries = [e for e in entries if str(e.id) not in reversed_ids]
+    return entries
 
 
 def has_entry(invoice, source_type):
     from apps.accounting.models import JournalEntry
     return JournalEntry.objects.filter(
-        organisation=invoice.organisation, source_type=source_type, source_ref=str(invoice.id),
+        organisation=invoice.organisation, source_type=source_type,
+        source_ref__startswith=str(invoice.id),
     ).exists()
+
+
+def vat_now(invoice):
+    """True when this invoice's VAT is booked when it is raised / paid (rather
+    than at delivery). Reads the stamp put on the invoice when it was raised;
+    an older, unstamped invoice follows the current setting."""
+    stamp = getattr(invoice, "vat_timing", None)
+    if stamp in (rules.VAT_TIMING_INVOICE, rules.VAT_TIMING_DELIVERY):
+        return stamp == rules.VAT_TIMING_INVOICE
+    return rules.vat_due_at_invoice()
 
 
 def is_new_style_deferred(invoice):
@@ -265,7 +307,7 @@ def _items(invoice):
 
 # ── postings ────────────────────────────────────────────────────────────────
 
-def post_sale_entry(organisation, invoice, user=None, mode="full", entry_date=None):
+def post_sale_entry(organisation, invoice, user=None, mode="full", entry_date=None, revision=0):
     """
     mode "full"        the sale is delivered now (or an old fulfil-later invoice
                        being delivered): the whole sale in one entry.
@@ -274,21 +316,22 @@ def post_sale_entry(organisation, invoice, user=None, mode="full", entry_date=No
     """
     from apps.accounting.services import AccountingService
 
+    source_ref = str(invoice.id) + (f":r{revision}" if revision else "")
     total = Decimal(str(invoice.total_amount))
     tax = Decimal(str(invoice.tax_amount or 0))
     credit_used = Decimal(str(invoice.credit_applied or 0))
     items = _items(invoice)
-    vat_now = rules.vat_due_at_invoice()
+    vat_timing_now = vat_now(invoice)
     deposits = deposits_account(organisation)
     lines = []
 
     if mode == "fulfilment":
-        lines.append((deposits, total - (tax if vat_now else Z), Z))
-        lines += _credit_side(organisation, invoice, items, with_vat=not vat_now, vat_amount=tax)
+        lines.append((deposits, total - (tax if vat_timing_now else Z), Z))
+        lines += _credit_side(organisation, invoice, items, with_vat=not vat_timing_now, vat_amount=tax)
         lines += _cogs_lines(organisation, items)
         date = entry_date or invoice.issue_date
         return _post(organisation, f"Delivery {invoice.invoice_number}", date, lines, user,
-                     invoice.invoice_number, "sale", str(invoice.id))
+                     invoice.invoice_number, "sale", source_ref)
 
     prior_gross, prior_net, prior_vat = prior_deposits(invoice)
 
@@ -309,15 +352,15 @@ def post_sale_entry(organisation, invoice, user=None, mode="full", entry_date=No
         lines.append((_ar(organisation, invoice), ar_amount, Z))
 
     if mode == "deferred":
-        held = total - (tax if vat_now else Z) - prior_net
+        held = total - (tax if vat_timing_now else Z) - prior_net
         lines.append((deposits, Z, held))
-        if vat_now and tax - prior_vat > Z:
+        if vat_timing_now and tax - prior_vat > Z:
             from apps.accounting.services import AccountMappingService
             lines.append((AccountMappingService.resolve(organisation, "vat_output_account"),
                           Z, tax - prior_vat))
         return _post(organisation, f"Sale (to be delivered) {invoice.invoice_number}",
                      entry_date or invoice.issue_date, lines, user,
-                     invoice.invoice_number, "sale_deferred", str(invoice.id))
+                     invoice.invoice_number, "sale_deferred", source_ref)
 
     # mode == "full"
     if prior_net > Z:
@@ -325,7 +368,7 @@ def post_sale_entry(organisation, invoice, user=None, mode="full", entry_date=No
     lines += _credit_side(organisation, invoice, items, with_vat=True, vat_amount=tax - prior_vat)
     lines += _cogs_lines(organisation, items)
     return _post(organisation, f"Sale {invoice.invoice_number}", entry_date or invoice.issue_date,
-                 lines, user, invoice.invoice_number, "sale", str(invoice.id))
+                 lines, user, invoice.invoice_number, "sale", source_ref)
 
 
 def post_receipt_entry(organisation, invoice, payment, user=None, entry_date=None):
@@ -339,7 +382,7 @@ def post_receipt_entry(organisation, invoice, payment, user=None, entry_date=Non
     if invoice.status == Invoice.Status.PROFORMA:
         total = Decimal(str(invoice.total_amount))
         tax = Decimal(str(invoice.tax_amount or 0))
-        vat_part = round_money(amount * tax / total) if (rules.vat_due_at_invoice() and total > Z) else Z
+        vat_part = round_money(amount * tax / total) if (vat_now(invoice) and total > Z) else Z
         lines = [(tender, amount, Z), (deposits_account(organisation), Z, amount - vat_part)]
         if vat_part > Z:
             lines.append((AccountMappingService.resolve(organisation, "vat_output_account"), Z, vat_part))
@@ -377,7 +420,7 @@ def void_invoice_entry(invoice, actor):
     from django.utils import timezone
 
     lines = []
-    for entry in invoice_entries(invoice):
+    for entry in invoice_entries(invoice, live_only=True):
         for ln in entry.lines.select_related("account").all():
             lines.append((ln.account, Decimal(str(ln.credit)), Decimal(str(ln.debit))))
     if not lines:
@@ -386,3 +429,34 @@ def void_invoice_entry(invoice, actor):
         invoice.organisation, f"Void invoice {invoice.invoice_number}", timezone.now().date(),
         lines, actor, f"VOID-{invoice.invoice_number}", "invoice_void", str(invoice.id),
     )
+
+
+EDIT_REFUSAL = "Void this invoice and issue a new one to change amounts."
+
+
+def repost_sale_entry(invoice, actor):
+    """An edit changed the invoice's money: reverse the live sale entry and post
+    it again at the invoice's current values, dated as the original. Refuses (and
+    the caller's transaction rolls back) when the period is locked or the
+    invoice has already been delivered (two entries to untangle)."""
+    from apps.accounting.services import AccountingService
+    from apps.accounting.models import JournalEntry
+
+    live = [e for e in invoice_entries(invoice, live_only=True) if e.source_type in SALE_SOURCES]
+    if not live:
+        return None
+    if len(live) > 1:
+        raise ValueError(EDIT_REFUSAL)
+    old = live[0]
+    AccountingService.assert_period_open(
+        invoice.organisation, old.entry_date, actor,
+        ref=invoice.invoice_number, source=f"sale/{invoice.id}",
+    )
+    AccountingService.reverse_journal_entry(old, actor)
+    revision = JournalEntry.objects.filter(
+        organisation=invoice.organisation, source_type__in=SALE_SOURCES,
+        source_ref__startswith=str(invoice.id),
+    ).count()
+    mode = "deferred" if old.source_type == "sale_deferred" else "full"
+    return post_sale_entry(invoice.organisation, invoice, actor, mode=mode,
+                           entry_date=old.entry_date, revision=revision)

@@ -197,9 +197,9 @@ class PaymentMethodTests(Base):
         inv = Invoice.objects.get(id=res.data["id"])
         self.assertEqual((inv.status, inv.amount_paid, inv.amount_due), ("confirmed", D("0"), D("2000")))
 
-    def test_cheque_and_mixed_are_still_accepted_values(self):
-        for method in ("cheque", "mixed"):
-            self.assertEqual(self.post(payment_method=method).status_code, 201, method)
+    def test_cheque_is_accepted_and_mixed_must_be_split_into_real_payments(self):
+        self.assertEqual(self.post(payment_method="cheque").status_code, 201)
+        self.assertEqual(self.post(payment_method="mixed").status_code, 422)
 
     def test_unknown_payment_method_rejected(self):
         res = self.post(payment_method="bitcoin")
@@ -237,15 +237,13 @@ class WalkInTests(Base):
         self.assertEqual(Invoice.objects.filter(organisation=self.org).count(), 0)
         self.assertEqual(self.on_hand(), D("100"))   # rolled back, no stock left
 
-    def test_walk_in_with_amount_paid_left_out_keeps_the_old_meaning(self):
-        """A client that does not send amount_paid at all (not the page, which
-        always sends it) keeps the old behaviour: saved, nothing paid yet. The
-        walk-in rule applies to what the client says it was paid."""
+    def test_walk_in_with_amount_paid_left_out_is_refused(self):
+        """No amount_paid at all counts as nothing paid: a walk-in must always be
+        paid in full (only a manager's explicit allow_unpaid_walk_in overrides)."""
         payload = self.payload(customer_id=None)
         del payload["amount_paid"]
         res = self.api.post(URL, payload, format="json")
-        self.assertEqual(res.status_code, 201, res.data)
-        self.assertEqual(res.data["status"], "confirmed")
+        self.assertEqual(res.status_code, 422, res.data)
 
     def test_walk_in_cannot_use_store_credit(self):
         res = self.walk_in(credit_applied="100.00")

@@ -16,7 +16,7 @@ import logging
 from decimal import Decimal
 
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import F, Sum
 from django.utils import timezone
 
 from apps.core.utils import round_money
@@ -97,7 +97,13 @@ class SaleService:
         """
         from django.utils import timezone as tz
         from apps.accounting.services import AccountingService, check_strict_gl_mode
-        from . import ledger
+        from . import ledger, rules
+
+        if payment_method == Invoice.PaymentMethod.MIXED:
+            raise ValueError(
+                "Mixed is not a payment method on its own. Record each part as a separate payment "
+                "(cash, transfer or card)."
+            )
 
         issue_date = issue_date or tz.now().date()
         shipping = round_money(Decimal(str(shipping_amount))) if shipping_amount else Decimal("0")
@@ -115,9 +121,15 @@ class SaleService:
         if credit_applied and credit_applied > Decimal("0") and not is_proforma:
             if not customer:
                 raise ValueError("A customer must be selected to apply store credit.")
-            if credit_applied > customer.store_credit:
+            # Lock the customer row and read the balance AFTER the lock: the
+            # copy the caller holds may be stale, and two sales spending the same
+            # credit at once must queue up, not both pass the check.
+            from apps.customers.models import Customer as CustomerModel
+            locked = CustomerModel.objects.select_for_update().get(
+                pk=customer.pk, organisation=organisation)
+            if credit_applied > locked.store_credit:
                 raise ValueError(
-                    f"Cannot apply {credit_applied} — customer only has {customer.store_credit} store credit."
+                    f"Cannot apply {credit_applied} — customer only has {locked.store_credit} store credit."
                 )
             credit_to_apply = credit_applied
 
@@ -151,6 +163,7 @@ class SaleService:
             amount_due=Decimal("0"),
             is_deferred=defer_fulfillment,
             wht_rate_id=wht_rate_id,
+            vat_timing=rules.vat_timing(),
         )
 
         totals = SaleService._build_lines(
@@ -222,8 +235,8 @@ class SaleService:
         # Deduct store credit from customer balance (atomic with the transaction)
         if credit_to_apply > Decimal("0") and customer:
             from apps.customers.models import Customer as CustomerModel
-            CustomerModel.objects.filter(pk=customer.pk).update(
-                store_credit=customer.store_credit - credit_to_apply
+            CustomerModel.objects.filter(pk=customer.pk, organisation=organisation).update(
+                store_credit=F("store_credit") - credit_to_apply
             )
 
         # Auto-record cash payment for non-credit, non-proforma sales
@@ -289,6 +302,22 @@ class SaleService:
         return invoice
 
     @staticmethod
+    def _money_signature(invoice):
+        """Everything about an invoice that moves money: its lines (product,
+        quantity, price, discount, VAT, adjustment) and its totals. Two equal
+        signatures mean an edit changed nothing the ledger cares about."""
+        lines = sorted(
+            (str(i.product_id), Decimal(str(i.quantity)), Decimal(str(i.unit_price)),
+             Decimal(str(i.discount_percent)), Decimal(str(i.tax_rate)),
+             Decimal(str(i.adjustment_amount)), Decimal(str(i.line_total)))
+            for i in invoice.items.all()
+        )
+        return (
+            lines, Decimal(str(invoice.shipping_amount or 0)), Decimal(str(invoice.adjustment_amount or 0)),
+            Decimal(str(invoice.total_amount or 0)), Decimal(str(invoice.tax_amount or 0)),
+        )
+
+    @staticmethod
     def _post_sale_entry(invoice, actor, **kwargs):
         """Post the sale entry. Every failure raises (and the surrounding
         transaction rolls the sale back) EXCEPT one that is already a visible,
@@ -330,6 +359,36 @@ class SaleService:
             tin=(getattr(customer, 'tax_id', '') or '') if customer else '',
             source_ref=invoice.invoice_number,
         )
+
+    @staticmethod
+    def _reverse_wht(invoice):
+        """Withdraw the WHT records _record_wht made for this invoice (void /
+        delete): tax records must not keep a withholding credit for a sale that no
+        longer stands. Records already remitted are left and logged for a person."""
+        from django.db.models import Q
+        from apps.tax.models import WHTTransaction
+        base = f"Auto-created from sale {invoice.invoice_number}"
+        qs = WHTTransaction.objects.filter(
+            organisation=invoice.organisation, transaction_type=WHTTransaction.SALE,
+        ).filter(Q(notes=base) | Q(notes__startswith=base + ". "))
+        for rec in qs:
+            if rec.status == WHTTransaction.WITHHELD:
+                rec.delete()          # soft delete: drops out of every WHT report
+            else:
+                logger.warning("WHT record %s for %s is already remitted; not withdrawn",
+                               rec.id, invoice.invoice_number)
+
+    @staticmethod
+    def _close_payment_requests(invoice):
+        """A voided / deleted invoice must not stay payable: cancel its open
+        checkout links and one-time transfer accounts."""
+        from apps.payments.models import PaymentLink, VirtualAccount
+        PaymentLink.objects.filter(
+            organisation=invoice.organisation, invoice=invoice, status=PaymentLink.PENDING,
+        ).update(status=PaymentLink.CANCELLED)
+        VirtualAccount.objects.filter(
+            organisation=invoice.organisation, invoice=invoice, status=VirtualAccount.PENDING,
+        ).update(status=VirtualAccount.CANCELLED)
 
     @staticmethod
     def _allocate_adjustment(priced: list, adjustment) -> list:
@@ -616,6 +675,7 @@ class SaleService:
         complex accounting state; owners should create a manual correcting entry if needed.
         """
         from apps.accounting.services import AccountingService
+        from . import ledger
 
         EDITABLE_STATUSES = {
             Invoice.Status.DRAFT, Invoice.Status.PROFORMA,
@@ -628,6 +688,25 @@ class SaleService:
             )
 
         effective_warehouse = warehouse or invoice.warehouse
+
+        # An invoice that already has its sale in the ledger: what can be edited
+        # safely is limited, and an edit of its money re-posts the entry below.
+        posted = any(e.source_type in ledger.SALE_SOURCES for e in ledger.invoice_entries(invoice, live_only=True))
+        if posted:
+            if invoice.is_deferred and invoice.fulfilled_at is not None:
+                raise ValueError(ledger.EDIT_REFUSAL)
+            if customer is not None and customer.pk != invoice.customer_id:
+                raise ValueError(
+                    "The customer cannot be changed once the invoice is posted. "
+                    "Void this invoice and issue a new one."
+                )
+            if payment_method is not None and payment_method != invoice.payment_method:
+                raise ValueError(
+                    "The payment method cannot be changed once the invoice is posted. "
+                    "Void this invoice and issue a new one."
+                )
+        old_signature = SaleService._money_signature(invoice)
+        old_due = Decimal(str(invoice.amount_due or 0))
 
         # Reverse old stock movements for physical products (not for draft/proforma)
         # (a fulfil-later invoice not yet delivered never moved any stock either)
@@ -696,7 +775,41 @@ class SaleService:
         invoice.adjustment_amount = totals["adjustment"]
         invoice.total_amount = total
         amount_paid = invoice.amount_paid or Decimal("0")
-        invoice.amount_due = max(total - Decimal(str(invoice.credit_applied or 0)) - amount_paid, Decimal("0"))
+        credit_used = Decimal(str(invoice.credit_applied or 0))
+        raw_due = total - credit_used - amount_paid
+        invoice.amount_due = max(raw_due, Decimal("0"))
+
+        if posted and SaleService._money_signature(invoice) != old_signature:
+            # The edit changed money on an invoice already in the ledger: undo its
+            # entry and post it again at the new figures, fix the customer's
+            # balance, all in this one transaction (any failure rolls the edit back).
+            if raw_due < 0:
+                raise ValueError(
+                    f"The new total is lower than the {amount_paid + credit_used} already paid or credited. "
+                    "Refund the payment first, or void this invoice and issue a new one."
+                )
+            if invoice.amount_due == 0 and invoice.status in (
+                Invoice.Status.CONFIRMED, Invoice.Status.PARTIALLY_PAID,
+                Invoice.Status.CREDIT, Invoice.Status.OVERDUE,
+            ):
+                invoice.status = Invoice.Status.PAID
+            invoice.save()
+            ledger.repost_sale_entry(invoice, updated_by)
+            delta = invoice.amount_due - old_due
+            if invoice.customer_id and delta != 0 and SaleService._debt_on_customer_account(invoice):
+                from apps.credits.services import CreditService
+                if delta > 0:
+                    CreditService.record_credit_debit(
+                        organisation=invoice.organisation, customer=invoice.customer, amount=delta,
+                        invoice=invoice, due_date=invoice.due_date, recorded_by=updated_by,
+                        description=f"Invoice edited – {invoice.invoice_number}",
+                    )
+                else:
+                    CreditService.record_payment(
+                        organisation=invoice.organisation, customer=invoice.customer, amount=-delta,
+                        recorded_by=updated_by, description=f"Invoice edited – {invoice.invoice_number}",
+                        post_gl=False,
+                    )
 
         invoice.save()
         logger.info(
@@ -999,13 +1112,19 @@ class SaleService:
         and the customer's debt when a balance is left. Deposits already taken
         against the proforma are settled in that entry (VAT is never booked twice).
         """
-        from . import ledger
+        from apps.accounting.services import AccountingService
 
         invoice = Invoice.objects.select_for_update().get(pk=invoice.pk)
         if invoice.status != Invoice.Status.PROFORMA:
             raise ValueError("Only proforma invoices can be confirmed this way")
 
-        issue_date = invoice.issue_date
+        # The sale happens today: stock moves and the entry is dated now, not on
+        # the proforma's date. A locked period fails here, before any stock moves.
+        issue_date = timezone.now().date()
+        AccountingService.assert_period_open(
+            invoice.organisation, issue_date, actor,
+            ref=invoice.invoice_number, source=f"sale/{invoice.id}",
+        )
         if not invoice.is_deferred:
             for item in invoice.items.select_related("product", "batch").all():
                 if item.product.product_type == "combo":
@@ -1122,6 +1241,8 @@ class SaleService:
         # Reverse every journal entry the invoice owns. Raises on failure --
         # the void then rolls back as a whole instead of committing half.
         ledger.void_invoice_entry(invoice, voided_by)
+        SaleService._reverse_wht(invoice)
+        SaleService._close_payment_requests(invoice)
 
         # Pay back what was taken.
         for p in list(invoice.payments.filter(amount__gt=0)):
@@ -1146,9 +1267,12 @@ class SaleService:
             credit_used = Decimal(str(invoice.credit_applied or 0))
             if credit_used > 0:
                 from apps.customers.models import Customer as CustomerModel
-                CustomerModel.objects.filter(pk=invoice.customer_id).update(
-                    store_credit=invoice.customer.store_credit + credit_used
-                )
+                # lock, then add to the row's own value (never a Python-held copy)
+                CustomerModel.objects.select_for_update().get(
+                    pk=invoice.customer_id, organisation=invoice.organisation)
+                CustomerModel.objects.filter(
+                    pk=invoice.customer_id, organisation=invoice.organisation,
+                ).update(store_credit=F("store_credit") + credit_used)
 
         invoice.status = Invoice.Status.VOIDED
         invoice.save(update_fields=["status", "updated_at"])
@@ -1253,6 +1377,8 @@ class SaleService:
         # ── 2. Reverse the GL journal entry ────────────────────────────────────
         from . import ledger
         ledger.reverse_invoice_entries(invoice, actor)
+        SaleService._reverse_wht(invoice)
+        SaleService._close_payment_requests(invoice)
 
         # ── 3. Restore stock ────────────────────────────────────────────────────
         if stock_was_deducted:
@@ -1349,6 +1475,10 @@ class SaleService:
         """
         from django.utils import timezone as tz
 
+        if invoice.status in (
+            Invoice.Status.VOIDED, Invoice.Status.DRAFT, Invoice.Status.PROFORMA, Invoice.Status.RETURNED,
+        ):
+            raise ValueError(f"A {invoice.get_status_display().lower()} invoice cannot have a return.")
         if invoice.is_deferred and invoice.fulfilled_at is None:
             raise ValueError(
                 "This invoice has not been delivered yet, so there is nothing to return. "
@@ -1434,7 +1564,10 @@ class SaleService:
                 )
                 total_cogs_refund += round_money(unit_cost * qty)
 
-        all_items = list(invoice.items.all())
+        # fresh rows, not invoice.items: the view prefetches the lines, and that cached copy
+        # still shows quantity_returned as it was BEFORE this return, so a full return never
+        # flipped the invoice to 'returned'
+        all_items = list(SaleItem.objects.filter(invoice=invoice))
         total_sold     = sum(Decimal(str(i.quantity))           for i in all_items)
         total_returned = sum(Decimal(str(i.quantity_returned or 0)) for i in all_items)
         if total_sold > 0 and total_returned >= total_sold:
