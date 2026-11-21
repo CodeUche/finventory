@@ -34,7 +34,7 @@ from rest_framework.response import Response
 logger = logging.getLogger(__name__)
 
 _TTL_HOURS = 24
-_CLAIM_SECONDS = 60          # how long an unfinished request holds its key
+_CLAIM_SECONDS = 300         # how long an unfinished request holds its key (released on completion/failure)
 _MAX_KEY_LEN = 128
 
 
@@ -66,7 +66,7 @@ class IdempotencyMixin:
       * the same key with a DIFFERENT body: 409 (a key is for one request only);
       * with claim=True the key is reserved before any work starts, so a second
         copy arriving while the first is still running gets 409 instead of
-        making a second sale. The reservation lasts 60 seconds; the view calls
+        making a second sale. The reservation lasts 5 minutes; the view calls
         release_idempotency() when the attempt fails so a corrected retry with the
         same key can go through, and save_idempotency() stores the result on success.
 

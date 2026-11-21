@@ -635,7 +635,12 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
         Posts exactly what a new sale would (stock out unless fulfilment is
         deferred, the sale journal, the customer's debt) in one transaction."""
         try:
-            invoice = SaleService.confirm_proforma(self.get_object(), actor=request.user)
+            can_override = request.user.is_superuser or has_minimum_role(
+                request.user, request.organisation, "manager")
+            invoice = SaleService.confirm_proforma(
+                self.get_object(), actor=request.user,
+                allow_unpaid_walk_in=bool(request.data.get("allow_unpaid_walk_in")) and can_override,
+            )
             return Response(InvoiceSerializer(invoice).data)
         except ValueError as e:
             return Response({"error": str(e)}, status=422)
@@ -863,12 +868,13 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
         except smtplib.SMTPAuthenticationError:
             return Response({"error": "SMTP authentication failed. Check your username and password in Settings → Email."}, status=422)
         except smtplib.SMTPConnectError as e:
-            return Response({"error": f"Could not connect to SMTP server ({email_cfg.smtp_host}:{email_cfg.smtp_port}). Check host and port settings."}, status=422)
+            return Response({"error": "Could not connect to the email server. Check the host and port in Settings → Email."}, status=422)
         except OSError as e:
             err_str = str(e)
             if '10054' in err_str or 'forcibly closed' in err_str.lower():
                 return Response({"error": "SMTP connection was reset by the server. Try switching between STARTTLS (port 587) and SSL (port 465) in Settings → Email."}, status=422)
-            return Response({"error": f"Network error sending email: {err_str}"}, status=422)
+            logger.warning("Invoice email network error: %s", err_str)
+            return Response({"error": "Network error while sending the email. Try again, or check the email settings."}, status=422)
         except Exception:
             logger.exception("Email send failed")
             return Response({"error": "Failed to send email. Please check your SMTP settings."}, status=422)
@@ -1386,7 +1392,7 @@ class RecurringInvoiceViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             return Response({'error': detail or 'Could not generate invoice'}, status=400)
         except Exception as e:
             logger.exception("generate_now failed")
-            return Response({'error': f"[{type(e).__name__}] {e}"}, status=400)
+            return _error_response(e, "generate this invoice", 400)
 
 
 

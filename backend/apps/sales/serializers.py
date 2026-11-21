@@ -107,7 +107,9 @@ class CreateSaleSerializer(serializers.Serializer):
     class ItemInputSerializer(serializers.Serializer):
         product_id = serializers.UUIDField()
         quantity = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0.01"))
-        unit_price = serializers.DecimalField(max_digits=15, decimal_places=4, required=False)
+        unit_price = serializers.DecimalField(
+            max_digits=15, decimal_places=4, required=False, min_value=Decimal("0"),
+        )
         discount_percent = serializers.DecimalField(
             max_digits=5, decimal_places=2, default=0, min_value=Decimal("0"), max_value=Decimal("100")
         )

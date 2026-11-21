@@ -459,6 +459,8 @@ class SaleService:
             tax_basis.append((p["after_discount"] + share, p["tax_rate"]))
 
         shipping_tax = SaleService._delivery_tax(shipping, tax_basis) if charge_delivery_vat else Decimal("0")
+        if lines_total + shipping + shipping_tax < 0:
+            raise ValueError("The invoice total cannot be negative.")
         # Sum the lines, not subtotal − discount + tax: a VAT-inclusive line's
         # tax is already inside its price (line_total == after-discount), so
         # adding total_tax on top charged that VAT twice — a 1,075 shelf price
@@ -575,7 +577,11 @@ class SaleService:
         quantity = priced["quantity"]
         batch = priced["batch"]
         after_adjustment = priced["after_discount"] + adjustment
+        if priced["unit_price"] < 0 or after_adjustment < 0:
+            raise ValueError(f"'{product.name}' would have a negative amount. Prices and discounts cannot go below zero.")
         tax_amount, line_total = SaleService.apply_tax(product, after_adjustment, priced["tax_rate"])
+        if line_total < 0:
+            raise ValueError(f"'{product.name}' would have a negative total.")
 
         # Deduct stock only for physical/digital products (services have no inventory)
         # skip_stock=True for proforma / fulfil-later invoices (stock not leaving yet)
@@ -676,6 +682,11 @@ class SaleService:
         """
         from apps.accounting.services import AccountingService
         from . import ledger
+
+        # Lock the row and work from what is stored NOW: the caller's copy may be
+        # from before a payment landed or a void happened, and saving it would
+        # overwrite them. Status is judged after the lock.
+        invoice = Invoice.objects.select_for_update().get(pk=invoice.pk, organisation=invoice.organisation)
 
         EDITABLE_STATUSES = {
             Invoice.Status.DRAFT, Invoice.Status.PROFORMA,
@@ -1105,7 +1116,7 @@ class SaleService:
 
     @staticmethod
     @transaction.atomic
-    def confirm_proforma(invoice: Invoice, actor) -> Invoice:
+    def confirm_proforma(invoice: Invoice, actor, allow_unpaid_walk_in: bool = False) -> Invoice:
         """
         Turn a proforma into a real invoice, posting exactly what create_sale
         would have: stock out (unless fulfilment is deferred), the sale entry,
@@ -1117,6 +1128,16 @@ class SaleService:
         invoice = Invoice.objects.select_for_update().get(pk=invoice.pk)
         if invoice.status != Invoice.Status.PROFORMA:
             raise ValueError("Only proforma invoices can be confirmed this way")
+
+        # A walk-in has nobody to carry a balance: it must be fully paid (by deposit)
+        # to be confirmed, unless a manager says otherwise with the explicit flag.
+        still_owed = (invoice.total_amount - Decimal(str(invoice.credit_applied or 0))
+                      - (invoice.amount_paid or Decimal("0")))
+        if invoice.customer_id is None and still_owed > Decimal("0.01") and not allow_unpaid_walk_in:
+            raise ValueError(
+                "A walk-in sale must be paid in full. Take the payment first, pick a customer "
+                "to leave a balance unpaid, or have a manager confirm it as unpaid."
+            )
 
         # The sale happens today: stock moves and the entry is dated now, not on
         # the proforma's date. A locked period fails here, before any stock moves.
@@ -1475,6 +1496,8 @@ class SaleService:
         """
         from django.utils import timezone as tz
 
+        # lock + re-read so a void or another return that just happened is seen
+        invoice = Invoice.objects.select_for_update().get(pk=invoice.pk, organisation=organisation)
         if invoice.status in (
             Invoice.Status.VOIDED, Invoice.Status.DRAFT, Invoice.Status.PROFORMA, Invoice.Status.RETURNED,
         ):
