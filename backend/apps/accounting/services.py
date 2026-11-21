@@ -1,5 +1,7 @@
 import logging
 from datetime import date
+
+from django.utils import timezone as _tzmod
 from decimal import Decimal
 from django.db import transaction
 from django.db.models import F, Q, Sum
@@ -2232,7 +2234,7 @@ class AccountingService:
         return AccountingService.post_journal_entry(
             organisation,
             f"Payroll paid {payroll_run.period_year}-{payroll_run.period_month:02d}",
-            pay_date or _date.today(),
+            pay_date or _tzmod.localdate(),
             [(payable, net, zero),
              (AccountMappingService.resolve(organisation, 'bank_account'), zero, net)],
             user, ref=f"PAYPAID-{payroll_run.id}",
@@ -2339,7 +2341,7 @@ class AccountingService:
         return AccountingService.post_journal_entry(
             organisation,
             f"Remittance {remittance.get_remittance_type_display()} - {label}",
-            remittance.remittance_date or date.today(),
+            remittance.remittance_date or _tzmod.localdate(),
             [
                 (liability_acct, amount, Decimal('0')),
                 (bank_acct, Decimal('0'), amount),
@@ -2388,7 +2390,7 @@ class AccountingService:
         return AccountingService.post_journal_entry(
             organisation,
             f"Salary advance - {advance.employee}",
-            (advance.disbursed_at.date() if advance.disbursed_at else date.today()),
+            (advance.disbursed_at.date() if advance.disbursed_at else _tzmod.localdate()),
             lines, user,
             ref=f"ADV-{advance.id}",
             source_type='salary_advance',

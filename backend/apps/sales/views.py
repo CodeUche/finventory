@@ -898,7 +898,7 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
             parsed = date.fromisoformat(new_due_date)
         except ValueError:
             return Response({"error": "Invalid date format. Use YYYY-MM-DD."}, status=422)
-        if parsed <= date.today():
+        if parsed <= timezone.localdate():
             return Response({"error": "New due date must be in the future."}, status=422)
 
         old_date = invoice.due_date

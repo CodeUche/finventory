@@ -1243,6 +1243,11 @@ class SaleService:
             invoice.status not in (Invoice.Status.DRAFT, Invoice.Status.PROFORMA) and not undelivered
         )
 
+        # Same lock order as create_sale: the customer row first, then stock
+        if invoice.customer_id:
+            from apps.customers.models import Customer as _Cust
+            _Cust.objects.select_for_update().get(pk=invoice.customer_id, organisation=invoice.organisation)
+
         # Reverse stock deductions (skip service items) -- only if stock left
         if stock_left:
             for item in invoice.items.all():
