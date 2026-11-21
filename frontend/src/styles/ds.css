@@ -700,10 +700,10 @@ html.light .ds{
 .ds input[type="radio"].ds-radio:checked{box-shadow:inset 0 0 0 4px var(--ds-tile),inset 0 0 0 11px var(--ds-outline)}
 
 .ds .ds-lines-wrap{overflow-x:auto}
-.ds .ds-lines{min-width:620px}
+.ds .ds-lines{min-width:550px}
 .ds .ds-lines-row{
-  display:grid;gap:8px;align-items:start;
-  grid-template-columns:minmax(150px,2fr) 64px minmax(90px,1fr) 60px 76px minmax(90px,1fr) 32px;
+  display:grid;gap:6px;align-items:start;
+  grid-template-columns:minmax(130px,2fr) 56px minmax(84px,1fr) 52px 70px minmax(84px,1fr) 32px;
 }
 .ds .ds-lines-head{
   padding:10px 8px;border-radius:6px;background:var(--ds-th-bg);color:var(--ds-th-tx);
@@ -729,4 +729,11 @@ html.light .ds{
   .ds .ds-opt, .ds .ds-radio-card, .ds .ds-link-btn{min-height:44px}
   .ds .ds-lines-row .input, .ds .ds-amount{min-height:44px}
   .ds .ds-icon-btn{min-width:44px;min-height:44px}
+}
+
+/* Items table: narrow inputs so the six columns and the bin fit; a phone-size bin is a full touch target. */
+.ds .ds-lines-row .input{padding-left:8px;padding-right:8px}
+@media (max-width:1023px){
+  .ds .ds-lines-row{grid-template-columns:minmax(130px,2fr) 56px minmax(84px,1fr) 52px 70px minmax(84px,1fr) 44px}
+  .ds .ds-lines{min-width:562px}
 }

@@ -181,6 +181,27 @@ describe('New sale & invoice totals and request body', () => {
     expect(createMock.mock.calls[0][0].defer_fulfillment).toBeUndefined()
   }, 20000)
 
+  it('invoice with delivery 500 and adjustment -100: the page total is the total the server saves', async () => {
+    await setup([vatEx])
+    await pickCustomer()
+    fireEvent.click(screen.getByRole('button', { name: 'Credit · pay later' }))
+    fireEvent.change(screen.getByLabelText(/Delivery \/ shipping/), { target: { value: '500' } })
+    fireEvent.change(screen.getByLabelText(/Total adjustment/), { target: { value: '-100' } })
+    expect(grand()).toBe('₦2,005.00')
+    fireEvent.click(screen.getByRole('button', { name: 'Create invoice' }))
+    await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1))
+    expect(createMock.mock.calls[0][0]).toMatchObject({ adjustment_amount: '-100.00', shipping_amount: '500.0000' })
+  }, 20000)
+
+  it('a plus adjustment on a walk-in cash sale is paid in full (server rule: walk-ins pay in full)', async () => {
+    await setup([vatEx])
+    fireEvent.change(screen.getByLabelText(/Total adjustment/), { target: { value: '+100' } })
+    expect(grand()).toBe('₦1,720.00')
+    fireEvent.click(screen.getByRole('button', { name: 'Complete sale' }))
+    await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1))
+    expect(createMock.mock.calls[0][0]).toMatchObject({ adjustment_amount: '100.00', amount_paid: '1720.00' })
+  }, 20000)
+
   it('Create invoice needs a customer', async () => {
     await setup([noVat])
     expect(screen.getByRole('button', { name: 'Create invoice' })).toBeDisabled()
@@ -191,13 +212,15 @@ describe('New sale & invoice totals and request body', () => {
   it('Total adjustment is signed, changes the grand total and is sent as adjustment_amount', async () => {
     await setup([vatEx])
     fireEvent.change(screen.getByLabelText(/Total adjustment/), { target: { value: '-100' } })
-    expect(grand()).toBe('₦1,512.50')
+    expect(grand()).toBe('₦1,505.00')
     expect(screen.getByTestId('adjustment-signed').textContent).toBe('-₦100.00')
     fireEvent.click(screen.getByRole('button', { name: 'Complete sale' }))
     await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1))
     const b = createMock.mock.calls[0][0]
     expect(b.adjustment_amount).toBe('-100.00')
-    expect(b.amount_paid).toBe('1512.50')
+    expect(b.amount_paid).toBe('1505.00')
+    // the summary VAT is the VAT on the adjusted price: 1,400 x 7.5% = 105
+    expect(row('VAT')).toBe('+ ₦105.00')
   }, 20000)
 
   it('an adjustment bigger than the total, or not a number, is refused with a plain message', async () => {
@@ -289,11 +312,27 @@ describe('New sale & invoice totals and request body', () => {
     await waitFor(() => expect(screen.getByText('A walk-in sale must be paid in full.', { selector: 'p' })).toBeTruthy())
   }, 20000)
 
+  it('409 and 429 show a plain message, with or without a body from the server', async () => {
+    await setup([noVat])
+    createMock.mockRejectedValue({ response: { status: 409, data: { error: 'This sale was already recorded.' } } })
+    fireEvent.click(screen.getByRole('button', { name: 'Complete sale' }))
+    await waitFor(() => expect(screen.getByText('This sale was already recorded.', { selector: 'p' })).toBeTruthy())
+    createMock.mockRejectedValue({ response: { status: 429, data: { detail: 'Request was throttled. Expected available in 30 seconds.' } } })
+    fireEvent.click(screen.getByRole('button', { name: 'Complete sale' }))
+    await waitFor(() => expect(screen.getByText(/Request was throttled/, { selector: 'p' })).toBeTruthy())
+    createMock.mockRejectedValue({ response: { status: 429, data: '' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Complete sale' }))
+    await waitFor(() => expect(screen.getByText('Too many requests just now. Wait a moment and try again.', { selector: 'p' })).toBeTruthy())
+    createMock.mockRejectedValue({ response: { status: 409, data: '' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Complete sale' }))
+    await waitFor(() => expect(screen.getByText(/already saved or has changed/, { selector: 'p' })).toBeTruthy())
+  }, 20000)
+
   it('no mismatch pop-up when the saved total equals the screen total (adjustment live on the server)', async () => {
     await setup([vatEx])
     vi.mocked(alertDialog).mockClear()
     fireEvent.change(screen.getByLabelText(/Total adjustment/), { target: { value: '-100' } })
-    createMock.mockResolvedValue({ data: { id: 'x1', invoice_number: 'INV-1', total_amount: '1512.5000' }, statusText: 'Created' })
+    createMock.mockResolvedValue({ data: { id: 'x1', invoice_number: 'INV-1', total_amount: '1505.0000' }, statusText: 'Created' })
     fireEvent.click(screen.getByRole('button', { name: 'Complete sale' }))
     await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1))
     await new Promise((r) => setTimeout(r, 150))
@@ -325,9 +364,9 @@ describe('saleTotals with a signed adjustment', () => {
     expect(saleTotals([line]).total).toBe(1612.5)
     expect(saleTotals([line], 0, 0).total).toBe(1612.5)
   })
-  it('a minus adjustment is a discount, a plus one an extra charge, added after VAT and delivery', () => {
-    expect(saleTotals([line], 500, -100).total).toBe(2012.5)
-    expect(saleTotals([line], 0, 250.25).total).toBe(1862.75)
+  it('an adjustment is spread over the lines before VAT, delivery stays outside', () => {
+    expect(saleTotals([line], 500, -100).total).toBe(2005)
+    expect(saleTotals([line], 0, 250.25).total).toBe(1881.52)
   })
   it('adds up to the kobo with awkward figures', () => {
     expect(saleTotals([{ unitPrice: 0.1, quantity: 3 }], 0.2, -0.05).total).toBe(0.45)

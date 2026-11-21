@@ -10,7 +10,7 @@
  *
  * Only ONE layer closes per key press. Nothing closes while a save is running.
  */
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import { hasMutationInFlight } from '@/services/api'
 
 interface Layer { id: number; close: () => void }
@@ -30,7 +30,8 @@ export function registerEscapeLayer(close: () => void): () => void {
 /** While `active` is true, Escape calls `close` (when this is the top-most layer). */
 export function useEscapeLayer(active: boolean, close: () => void): void {
   const ref = useRef(close)
-  ref.current = close
+  // Written after each render (not during it) so the layer always calls the newest `close`.
+  useLayoutEffect(() => { ref.current = close })
   useEffect(() => {
     if (!active) return
     return registerEscapeLayer(() => ref.current())

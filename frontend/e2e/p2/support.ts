@@ -153,9 +153,14 @@ export const NS = {
   search: 'input[placeholder^="Scan barcode"]',
   dropdownItem: 'div.absolute.top-full button',
   customer: 'input[placeholder="Search customer…"]',
-  confirm: /Confirm Sale/,
-  proforma: 'Save as Proforma Invoice',
-  hold: /Hold basket/,
+  confirm: /^Complete sale$/,
+  invoice: /^Create invoice$/,
+  proforma: /^Save as proforma$/,
+  hold: /^Hold basket$/,
+  grand: '[data-testid="grand-total"]',
+  qty: (n = 1) => `Quantity, line ${n}`,
+  price: (n = 1) => `Unit price, line ${n}`,
+  disc: (n = 1) => `Discount percent, line ${n}`,
 }
 
 export async function gotoNewSale(page: Page) {
@@ -187,18 +192,17 @@ export async function pickCustomer(page: Page, query: string) {
 }
 
 /**
- * What the cashier is told to collect. The "Grand Total" row only shows when
- * there is VAT, so the primary button ("Confirm Sale · N") is the one figure
- * that is always there. Any other label reads that row from the summary.
+ * What the cashier is told to collect: the Grand total in the Order summary. Any other label
+ * ("Item discounts", "VAT", ...) reads that row of the summary.
  */
 export async function money(page: Page, label: string): Promise<number> {
   const num = (t: string) => parseFloat(t.replace(/[^0-9.\-]/g, ''))
   if (label === 'Grand Total') {
-    const btn = page.getByRole('button', { name: NS.confirm })
-    await expect(btn).toBeEnabled()
-    return num((await btn.innerText()).split('·').pop() || '')
+    const g = page.locator(NS.grand)
+    await expect(g).toBeVisible()
+    return num(await g.innerText())
   }
-  const row = page.locator(`xpath=//span[normalize-space()="${label}"]/following-sibling::span[1]`).first()
+  const row = page.locator('section[aria-labelledby="ns-summary"]').locator(`xpath=.//span[normalize-space()="${label}"]/following-sibling::span[1]`).first()
   return num(await row.innerText())
 }
 
