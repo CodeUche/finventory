@@ -70,6 +70,58 @@ def _error_response(exc, what, status_code=422):
     )
 
 
+_FIELD_LABELS = {
+    "unit_price": "unit price", "quantity": "quantity", "discount_percent": "discount",
+    "tax_rate": "tax rate", "product_id": "product", "warehouse_id": "warehouse",
+    "customer_id": "customer", "payment_method": "payment method", "amount_paid": "amount paid",
+    "shipping_amount": "delivery charge", "adjustment_amount": "adjustment", "due_date": "due date",
+    "issue_date": "issue date", "items": "items",
+}
+
+
+def _plain_detail(field, detail):
+    """One DRF validation error in plain words (codes first, then DRF's own text)."""
+    code = getattr(detail, "code", "")
+    label = _FIELD_LABELS.get(field, str(field).replace("_", " "))
+    if field == "unit_price" and code == "min_value":
+        return "The unit price cannot be negative."
+    if field == "quantity" and code in ("min_value", "invalid"):
+        return "The quantity must be greater than zero."
+    if field in ("discount_percent", "tax_rate") and code in ("min_value", "max_value"):
+        return f"The {label} must be between 0 and 100."
+    if code in ("required", "null"):
+        return f"The {label} is required."
+    text = str(detail).replace(chr(39), "")
+    if code in ("invalid", "does_not_exist") and text.lower().startswith(("a valid", "not a valid", "enter a valid", "must be a valid", "invalid pk", "\"")):
+        return f"The {label} is not valid."
+    return f"{label.capitalize()}: {str(detail).replace(chr(39), '')}"
+
+
+def _plain_validation_errors(errors, field="", line=None):
+    """Flatten DRF serializer errors (nested dicts / per-line lists) into plain
+    sentences; the line number is added when a sale has several lines."""
+    out = []
+    if isinstance(errors, dict):
+        for key, val in errors.items():
+            out += _plain_validation_errors(val, key, line)
+    elif isinstance(errors, list):
+        if errors and all(isinstance(e, (dict, list)) for e in errors if e) and field in ("items", ""):
+            for idx, e in enumerate(errors, start=1):
+                if e:
+                    out += _plain_validation_errors(e, field, idx if len(errors) > 1 else None)
+        else:
+            for e in errors:
+                if isinstance(e, (dict, list)):
+                    out += _plain_validation_errors(e, field, line)
+                else:
+                    msg = _plain_detail(field, e)
+                    out.append(f"Line {line}: {msg}" if line else msg)
+    else:
+        msg = _plain_detail(field, errors)
+        out.append(f"Line {line}: {msg}" if line else msg)
+    return out
+
+
 def _create_audit_changes(invoice):
     """What the audit log records when an invoice is raised: the number plus every
     discretionary money decision (adjustment, discounts, price overrides)."""
@@ -219,17 +271,8 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
 
         serializer = CreateSaleSerializer(data=request.data)
         if not serializer.is_valid():
-            # Flatten DRF validation errors into a single readable string
-            errors = serializer.errors
-            messages = []
-            for field, errs in errors.items():
-                if isinstance(errs, list):
-                    messages.append(f"{field}: {'; '.join(str(e) for e in errs)}")
-                elif isinstance(errs, dict):
-                    for sub, sub_errs in errs.items():
-                        messages.append(f"{field}.{sub}: {'; '.join(str(e) for e in sub_errs)}")
-                else:
-                    messages.append(str(errs))
+            # Plain words, one sentence per problem
+            messages = _plain_validation_errors(serializer.errors)
             return Response({"error": " | ".join(messages)}, status=400)
 
         d = serializer.validated_data
@@ -429,12 +472,7 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
         # the same bounds as a new sale: quantity > 0, discount 0-100, tax rate >= 0, <= 200 lines
         item_ser = CreateSaleSerializer.ItemInputSerializer(data=items, many=True, min_length=1, max_length=200)
         if not item_ser.is_valid():
-            flat = []
-            for idx, err in enumerate(item_ser.errors if isinstance(item_ser.errors, list) else [item_ser.errors]):
-                if isinstance(err, dict):
-                    flat += [f"line {idx + 1} {k}: {'; '.join(str(x) for x in v)}" for k, v in err.items()]
-                else:
-                    flat.append(str(err))
+            flat = _plain_validation_errors(item_ser.errors, "items")
             return Response({"error": " | ".join(flat) or "Invalid line items."}, status=422)
         items = item_ser.validated_data
 
