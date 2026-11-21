@@ -7,7 +7,7 @@
  * Both still post through salesApi.create and ALL the money maths still goes through
  * lib/saleMath, so a total is exactly what it was on either old screen.
  */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AlertTriangle, Grid3x3, Loader2, Mail, Plus, Search, Trash2, Upload, X } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -15,7 +15,7 @@ import { customerApi, inventoryApi, locationApi, salesApi, savedMessage, taxApi,
 import { printReceipt, formatReceiptTime } from '@/lib/receipt'
 import { useReceiptDefaults } from '@/hooks/useReceiptDefaults'
 import { formatCurrency, formatDate, normalizeAmountStr, stripCommas } from '@/lib/utils'
-import { saleLine, saleTotals, type SaleLineInput } from '@/lib/saleMath'
+import { saleBreakdown, saleLine, type SaleLineInput } from '@/lib/saleMath'
 import AmountInput from '@/components/AmountInput'
 import DateInput from '@/components/DateInput'
 import { useNotifications } from '@/contexts/NotificationsContext'
@@ -169,12 +169,6 @@ export default function NewSalePage() {
     taxRate: lineRate(l),
     inclusive: l.product?.tax_type === 'inclusive',
   })
-  const amounts = filled.map((l) => saleLine(toSaleLine(l)))
-  const subtotal = amounts.reduce((s, a) => s + a.subtotal, 0)
-  const discountTotal = amounts.reduce((s, a) => s + a.discount, 0)
-  const taxTotal = amounts.reduce((s, a, i) => s + (filled[i].product?.tax_type === 'inclusive' ? 0 : a.tax), 0)
-  const taxIncluded = amounts.reduce((s, a, i) => s + (filled[i].product?.tax_type === 'inclusive' ? a.tax : 0), 0)
-
   const [adjustment, setAdjustment] = useState('')
   const [delivery, setDelivery] = useState('')
   // Signed number: "-500" or "+200". null means what was typed is not a number.
@@ -182,9 +176,15 @@ export default function NewSalePage() {
   const adjustmentParsed: number | null = adjustmentClean === '' ? 0 : (/^-?\d*\.?\d+$|^-?\d+\.$/.test(adjustmentClean) ? Number(adjustmentClean) : null)
   const adjustmentNum = adjustmentParsed ?? 0
   const deliveryNum = parseFloat(stripCommas(delivery)) || 0
-  const grandTotal = saleTotals(filled.map(toSaleLine), deliveryNum, adjustmentNum).total
-  // What a sale (no delivery) would come to — same figure the old New Sale showed.
-  const itemsTotal = saleTotals(filled.map(toSaleLine)).total
+  // Every figure comes from one breakdown that follows the server step by step: the adjustment is spread
+  // over the lines before VAT, so VAT, Item discounts and the total all move with it.
+  const breakdown = saleBreakdown(filled.map(toSaleLine), deliveryNum, adjustmentNum)
+  const amounts = breakdown.lines
+  const subtotal = breakdown.subtotal
+  const discountTotal = breakdown.discount
+  const taxTotal = amounts.reduce((s, a, i) => s + (filled[i].product?.tax_type === 'inclusive' ? 0 : a.tax), 0)
+  const taxIncluded = amounts.reduce((s, a, i) => s + (filled[i].product?.tax_type === 'inclusive' ? a.tax : 0), 0)
+  const grandTotal = breakdown.total
 
   // ── Product search / scan box ──────────────────────────────────────────────
   const [productQuery, setProductQuery] = useState('')
@@ -256,7 +256,7 @@ export default function NewSalePage() {
   // When no field has the focus, a quick burst of keys ending in Enter is read as a scan.
   const scanBuf = useRef({ text: '', last: 0 })
   const handleScanRef = useRef(handleScan)
-  handleScanRef.current = handleScan
+  useLayoutEffect(() => { handleScanRef.current = handleScan })
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null
@@ -463,7 +463,9 @@ export default function NewSalePage() {
     if (filled.some((l) => (parseFloat(stripCommas(l.price)) || 0) <= 0)) return 'Price must be more than 0.'
     if (filled.some((l) => (parseFloat(l.disc) || 0) > 100)) return 'Discount cannot be more than 100%.'
     if (adjustmentParsed === null) return 'Enter a number, like -500 or 200.'
-    if (adjustmentNum < 0 && -adjustmentNum > itemsTotal + deliveryNum) return 'Adjustment is bigger than the total.'
+    if (breakdown.adjustmentError === 'bigger-than-invoice') return 'Adjustment is bigger than the total.'
+    if (breakdown.adjustmentError === 'line-below-zero') return 'That adjustment would take a line below zero. Reduce it.'
+    if (breakdown.adjustmentError === 'no-value') return 'An adjustment needs items with a value to spread it across.'
     if (grandTotal <= 0) return 'The total must be more than zero.'
     if (mode !== 'proforma' && !ENABLE_DEFERRED_PAYMENT_COMBOS) {
       if (fulfil === 'later' && payNow) return 'Paying before delivery is switched off. Choose Fulfill now, or Credit · pay later.'
@@ -484,7 +486,7 @@ export default function NewSalePage() {
   }
 
   const errorMessage = (err: unknown, fallback: string): string => {
-    const e = err as { response?: { data?: unknown } }
+    const e = err as { response?: { data?: unknown; status?: number } }
     const data = e?.response?.data as Record<string, unknown> | undefined
     if (typeof data?.error === 'string') return data.error
     const nested = data?.error as { message?: string } | undefined
@@ -497,6 +499,10 @@ export default function NewSalePage() {
       }
     }
     if (!e?.response) return 'Network error — check your connection'
+    // No readable body: say what the status means in plain words.
+    const status = (e.response as { status?: number }).status
+    if (status === 409) return 'This sale was already saved or has changed. Check Sales before trying again.'
+    if (status === 429) return 'Too many requests just now. Wait a moment and try again.'
     return fallback
   }
 
@@ -665,7 +671,7 @@ export default function NewSalePage() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_340px] xl:grid-cols-[minmax(0,1fr)_380px] gap-6 items-start">
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_340px] 2xl:grid-cols-[minmax(0,1fr)_380px] gap-6 items-start">
         {/* ── Left column ── */}
         <div className="space-y-6 min-w-0">
           {/* Customer & details */}
@@ -972,7 +978,7 @@ export default function NewSalePage() {
             </div>
             <p className="ds-sum-note">Use − for a discount, + for an extra charge.</p>
             {adjustmentParsed === null && <p className="text-sm ds-line-bad" role="alert">Enter a number, like -500 or 200.</p>}
-            {adjustmentParsed !== null && adjustmentNum < 0 && -adjustmentNum > itemsTotal + deliveryNum && (
+            {adjustmentParsed !== null && breakdown.adjustmentError === 'bigger-than-invoice' && (
               <p className="text-sm ds-line-bad" role="alert">Adjustment is bigger than the total.</p>
             )}
             {adjustmentParsed !== null && adjustmentNum !== 0 && (

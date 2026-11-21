@@ -5,7 +5,7 @@
  * up as one test going red on one side only.
  */
 import { describe, it, expect } from 'vitest'
-import { saleLine, saleTotals, roundMoney } from '../lib/saleMath'
+import { saleLine, saleTotals, saleBreakdown, allocateAdjustment, roundMoney } from '../lib/saleMath'
 
 const VAT = 7.5
 
@@ -86,24 +86,60 @@ describe('screen arithmetic vs hand-worked server values', () => {
 // Hand work, lines 10,000 + 5,000, adjustment -1,500, VAT 7.5%:
 //   net 15,000 - 1,500 = 13,500 ; VAT 13,500 x 7.5% = 1,012.50 ; total 14,512.50
 // The page shows 14,625.00 today (15,000 + 1,125 VAT - 1,500).
-// `it.fails` keeps the suite green while the bug is open and turns RED the day it is fixed;
-// delete the `.fails` then.
+// Fixed: saleMath now spreads the adjustment before VAT like the server, so these are plain tests.
 describe('total adjustment is taxed like a discount (server rule)', () => {
   const lines = [
     { unitPrice: 10000, quantity: 1, taxRate: VAT },
     { unitPrice: 5000, quantity: 1, taxRate: VAT },
   ]
-  it.fails('-1,500 on 10,000 + 5,000: VAT 1,012.50, total 14,512.50', () => {
+  it('-1,500 on 10,000 + 5,000: VAT 1,012.50, total 14,512.50', () => {
     const t = saleTotals(lines, 0, -1500)
     expect(t.tax).toBe(1012.5)
     expect(t.total).toBe(14512.5)
   })
-  it.fails('-100 on 1,000: VAT 67.50, total 967.50', () => {
+  it('-100 on 1,000: VAT 67.50, total 967.50', () => {
     const t = saleTotals([{ unitPrice: 1000, quantity: 1, taxRate: VAT }], 0, -100)
     expect(t.total).toBe(967.5)
   })
-  it.fails('+100 on 1,000: VAT 82.50, total 1,182.50', () => {
+  it('+100 on 1,000: VAT 82.50, total 1,182.50', () => {
     const t = saleTotals([{ unitPrice: 1000, quantity: 1, taxRate: VAT }], 0, 100)
+    expect(t.tax).toBe(82.5)
     expect(t.total).toBe(1182.5)
+  })
+  it('an odd split, -100.01 over three equal lines: the last line takes the remainder', () => {
+    const l = { unitPrice: 1000, quantity: 1, taxRate: VAT }
+    const t = saleTotals([l, l, l], 0, -100.01)
+    expect(t.tax).toBe(217.5)
+    expect(t.total).toBe(3117.49)
+  })
+  it('a VAT-inclusive line: the discount comes off the price that holds the VAT', () => {
+    const t = saleTotals([{ unitPrice: 1075, quantity: 1, taxRate: VAT, inclusive: true }], 0, -100)
+    expect(t.tax).toBe(68.02)
+    expect(t.total).toBe(975)
+  })
+  it('mixed rates: each line takes its own share, VAT only on the taxed one', () => {
+    const t = saleTotals([{ unitPrice: 1000, quantity: 1, taxRate: VAT }, { unitPrice: 1000, quantity: 1 }], 0, -200)
+    expect(t.tax).toBe(67.5)
+    expect(t.total).toBe(1867.5)
+  })
+  it('a per-line discount first, then the share is by the after-discount value', () => {
+    const t = saleTotals([{ unitPrice: 1000, quantity: 1, discountPercent: 50, taxRate: VAT }, { unitPrice: 500, quantity: 1, taxRate: VAT }], 0, -100)
+    // after-discount 500 + 500; shares -50 / -50; net 900; VAT 67.50
+    expect(t.total).toBe(967.5)
+  })
+  it('delivery stays outside VAT and outside the adjustment', () => {
+    const t = saleTotals([{ unitPrice: 1000, quantity: 1, taxRate: VAT }], 500, -100)
+    expect(t.tax).toBe(67.5)
+    expect(t.total).toBe(1467.5)
+  })
+  it('an adjustment larger than the invoice is refused, and the total stays as it was', () => {
+    const b = saleBreakdown([{ unitPrice: 1000, quantity: 1, taxRate: VAT }], 0, -1500)
+    expect(b.adjustmentError).toBe('bigger-than-invoice')
+    expect(b.total).toBe(1075)
+  })
+  it('half a kobo rounds away from zero, and the shares always add up to the adjustment', () => {
+    expect(allocateAdjustment([1, 1], 0.01).shares).toEqual([0.01, 0])
+    const s = allocateAdjustment([333.33, 333.33, 333.34], -100.01).shares
+    expect(Math.round(s.reduce((a, b) => a + b, 0) * 100)).toBe(-10001)
   })
 })

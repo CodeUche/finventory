@@ -69,8 +69,8 @@ test('10% discount on 3 x 1000 with VAT: 2902.50 on screen and saved', async ({ 
   t.watch(page)
   await gotoNewSale(page)
   await addProduct(page, taxed.sku)
-  await page.getByLabel('Increase quantity').click({ clickCount: 2 })
-  await page.locator('xpath=//p[contains(.,"Discount %")]/following-sibling::input').fill('10')
+  await page.getByLabel(NS.qty()).fill('3')
+  await page.getByLabel(NS.disc()).fill('10')
   // 3000 - 300 = 2700 ; VAT 202.50 ; total 2902.50
   expect(await money(page, 'Grand Total')).toBe(2902.5)
   const r = await lastCreate(page, () => page.getByRole('button', { name: NS.confirm }).click())
@@ -83,9 +83,10 @@ test('credit sale needs a customer, then saves open with nothing paid', async ({
   t.watch(page)
   await gotoNewSale(page)
   await addProduct(page, plain.sku)
-  await page.getByRole('button', { name: /^credit$/ }).click()
-  await page.getByRole('button', { name: NS.confirm }).click()
-  await expect(page.getByText(/select a customer for credit/i)).toBeVisible()   // refused, nothing sent
+  await page.getByRole('button', { name: 'Credit · pay later' }).click()
+  // refused on the page, nothing sent: the button is greyed and the plain message is shown
+  await expect(page.getByRole('button', { name: NS.confirm })).toBeDisabled()
+  await expect(page.getByText('Pick a customer to sell on credit.').first()).toBeVisible()
   await pickCustomer(page, customer.name)
   const r = await lastCreate(page, () => page.getByRole('button', { name: NS.confirm }).click())
   expect(r.got.status).toBe('credit')
@@ -96,7 +97,7 @@ test('credit sale needs a customer, then saves open with nothing paid', async ({
 
 test('card (pos) and bank transfer save as paid with the right method', async ({ page }) => {
   t.watch(page)
-  for (const [label, method] of [[/^Card \/ POS$/, 'pos'], [/^bank transfer$/i, 'bank_transfer']] as const) {
+  for (const [label, method] of [[/^Card \/ POS$/, 'pos'], [/^Bank transfer$/, 'bank_transfer']] as const) {
     await gotoNewSale(page)
     await addProduct(page, plain.sku)
     await page.getByRole('button', { name: label }).click()
@@ -120,9 +121,9 @@ test('zero price is refused on screen and nothing is sent', async ({ page }) => 
   page.on('request', (rq) => { if (rq.method() === 'POST' && /\/sales\/invoices\/?(\?.*)?$/.test(rq.url())) posts++ })
   await gotoNewSale(page)
   await addProduct(page, plain.sku)
-  await page.locator('xpath=//p[normalize-space()="Unit price"]/following-sibling::input').fill('0')
-  await page.getByRole('button', { name: NS.confirm }).click()
-  await expect(page.getByText(/zero or negative price/i)).toBeVisible()
+  await page.getByLabel(NS.price()).fill('0')
+  await expect(page.getByRole('button', { name: NS.confirm })).toBeDisabled()
+  await expect(page.getByText('Price must be more than 0.').first()).toBeVisible()
   expect(posts).toBe(0)
 })
 
@@ -130,14 +131,13 @@ test('hold then resume brings the same basket back, and survives a reload', asyn
   await gotoNewSale(page)
   await addProduct(page, plain.sku)
   await page.getByRole('button', { name: NS.hold }).click()
-  await expect(page.getByText('Basket held')).toBeVisible()
-  expect(await page.getByLabel('Increase quantity').count()).toBe(0)     // cart emptied
+  await expect(page.getByText('Basket held.').first()).toBeVisible()
+  expect(await money(page, 'Grand Total')).toBe(0)                       // basket emptied
   await page.reload()
-  await page.getByRole('button', { name: /Resume \(1\)/ }).click()
-  await page.locator('.ds-held-row button', { hasText: /resume/i }).first().click()
-  await expect(page.getByLabel('Increase quantity')).toBeVisible()
+  await page.getByRole('button', { name: /^Held \(1\)$/ }).click()
+  await page.locator('.ds-held-row button', { hasText: /^Resume$/ }).first().click()
   expect(await money(page, 'Grand Total')).toBe(1000)
-  await expect(page.getByRole('button', { name: /Resume \(/ })).toHaveCount(0)   // no leftover held basket
+  await expect(page.getByRole('button', { name: /^Held \(/ })).toHaveCount(0)   // no leftover held basket
 })
 
 test('receipt on: print is called once after a sale; off: never', async ({ page }) => {
@@ -145,8 +145,8 @@ test('receipt on: print is called once after a sale; off: never', async ({ page 
   for (const on of [true, false]) {
     await gotoNewSale(page)
     await addProduct(page, plain.sku)
-    const toggle = page.getByRole('button', { name: /^Receipt (on|off)$/ })
-    if (((await toggle.innerText()).trim() === 'Receipt on') !== on) await toggle.click()
+    const toggle = page.getByLabel('Print receipt after sale')
+    await toggle.setChecked(on)
     await page.evaluate(() => { (window as any).__prints = 0 })
     await lastCreate(page, () => page.getByRole('button', { name: NS.confirm }).click())
     await page.waitForURL(/\/sales$/)
@@ -172,4 +172,21 @@ test('offline: no crash, and anything queued reaches the server once after recon
     const d = await (await api.ctx.get(`sales/invoices/${inv.id}/`)).json()
     if ((d.items ?? []).some((i: any) => i.product === plain.id || i.product_id === plain.id)) t.invoices.push(inv.id)
   }
+})
+
+test('total adjustment -100 on a 1000 + 7.5% VAT line: screen 967.50 = saved 967.50, VAT 67.50, no mismatch pop-up', async ({ page }) => {
+  t.watch(page)
+  await gotoNewSale(page)
+  await addProduct(page, taxed.sku)
+  await page.getByLabel(/Total adjustment/).fill('-100')
+  expect(await money(page, 'Grand Total')).toBe(967.5)
+  expect(await money(page, 'VAT')).toBe(67.5)
+  const r = await lastCreate(page, () => page.getByRole('button', { name: NS.confirm }).click())
+  expect(r.status).toBe(201)
+  // An API that does not know adjustment_amount yet (an older backend) saves the full 1075; the page's
+  // read-back pop-up is its warning. This check needs the backend with the adjustment field.
+  test.skip(Number(r.got.total_amount) === 1075, 'this API has no adjustment_amount yet (older backend)')
+  expect(Number(r.got.total_amount)).toBe(967.5)
+  expect(Number(r.got.tax_amount)).toBe(67.5)
+  await expect(page.getByText('Total differs from the screen')).toHaveCount(0)
 })

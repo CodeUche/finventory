@@ -8,7 +8,7 @@
  * into. The fuller screen at /sales/new stays for owners raising an invoice.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   AlertTriangle, ArrowLeft, Banknote, CreditCard, Landmark, Loader2, LogOut, Minus, Plus,
@@ -374,9 +374,9 @@ export default function PosRegisterPage() {
   // The register now sits beside the side menu. A click on any menu or top-bar link while a sale
   // is half rung asks first (this app uses a plain router, so a route blocker is not available).
   const okToLeaveRef = useRef(okToLeave)
-  okToLeaveRef.current = okToLeave
+  useLayoutEffect(() => { okToLeaveRef.current = okToLeave })
   const hasItemsRef = useRef(false)
-  hasItemsRef.current = lines.length > 0
+  useLayoutEffect(() => { hasItemsRef.current = lines.length > 0 })
   // The command palette (Ctrl+K) asks the same question; a refresh or tab close gets the browser's own prompt.
   useEffect(() => {
     setLeaveGuard(() => (hasItemsRef.current ? okToLeaveRef.current() : Promise.resolve(true)))
