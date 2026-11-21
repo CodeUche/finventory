@@ -1710,7 +1710,7 @@ class AccountingService:
 
     @staticmethod
     @transaction.atomic
-    def reverse_journal_entry(journal_entry: 'JournalEntry', actor=None) -> 'JournalEntry':
+    def reverse_journal_entry(journal_entry: 'JournalEntry', actor=None, entry_date=None) -> 'JournalEntry':
         """
         Create a reversing JournalEntry that mirrors `journal_entry`'s lines with
         debit/credit swapped, netting every account back to its pre-entry balance
@@ -1727,7 +1727,9 @@ class AccountingService:
         reversing_entry = JournalEntry.objects.create(
             organisation=journal_entry.organisation,
             description=f"Reversal of {journal_entry.reference}: {journal_entry.description}",
-            entry_date=_tz.now().date(),
+            # today (business-local) unless the caller says otherwise, e.g. an edit that
+            # re-posts an earlier period's entry reverses it in that same period
+            entry_date=entry_date or _tz.localdate(),
             reference='',  # auto-assigned in save()
             status='posted',
             created_by=actor,
@@ -1815,7 +1817,7 @@ class AccountingService:
         return AccountingService.post_journal_entry(
             organisation,
             description=f"Payment received – {invoice.invoice_number}{label}",
-            entry_date=timezone.now().date(),
+            entry_date=timezone.localdate(),
             lines=[(asset, amt, zero), (ar_acct, zero, amt)],
             created_by=None,
             ref=invoice.invoice_number,
@@ -1846,7 +1848,7 @@ class AccountingService:
             (asset_acct, amt, zero),  # DR Cash/Bank per tender
             (ar_acct, zero, amt),     # CR Accounts Receivable
         ]
-        ref_date = date or timezone.now().date()
+        ref_date = date or timezone.localdate()
         if not source_ref:
             import uuid
             source_ref = f"CRPAY-{uuid.uuid4().hex}"
@@ -2546,7 +2548,7 @@ class AccountingService:
             ]
 
         return AccountingService.post_journal_entry(
-            organisation, desc, tz.now().date(), lines, user,
+            organisation, desc, tz.localdate(), lines, user,
             ref=ref, source_type='deferred_tax', source_ref=str(deferred_item.id),
         )
 
@@ -3268,7 +3270,7 @@ class CapitalisationService:
         zero = Decimal('0')
         if asset.disposal_date:
             return None
-        disposal_date = AccountingService._coerce_date(disposal_date) if disposal_date else _tz.now().date()
+        disposal_date = AccountingService._coerce_date(disposal_date) if disposal_date else _tz.localdate()
         proceeds = Decimal(str(proceeds or 0))
         gross = Decimal(str(asset.purchase_cost or 0))
         accum = Decimal(str(asset.accumulated_depreciation or 0))
@@ -3322,7 +3324,7 @@ class CapitalisationService:
         from django.utils import timezone as _tz
         from .models import AssetTransfer
         transfer_date = (AccountingService._coerce_date(transfer_date)
-                         if transfer_date else _tz.now().date())
+                         if transfer_date else _tz.localdate())
         xfer = AssetTransfer.objects.create(
             organisation=organisation, asset=asset, transfer_date=transfer_date,
             from_location=asset.location, to_location=to_location,
@@ -3364,7 +3366,7 @@ class CapitalisationService:
         from .models import AssetRevaluation, DepreciationEntry
         zero = Decimal('0')
         revaluation_date = (AccountingService._coerce_date(revaluation_date)
-                            if revaluation_date else _tz.now().date())
+                            if revaluation_date else _tz.localdate())
         new_value = Decimal(str(new_value))
         gross = Decimal(str(asset.purchase_cost or 0))
         accum = Decimal(str(asset.accumulated_depreciation or 0))

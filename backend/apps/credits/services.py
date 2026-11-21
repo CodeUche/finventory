@@ -79,7 +79,7 @@ class CreditService:
             from django.utils import timezone
             AccountingService.post_credit_payment_journal(
                 organisation, customer, amount, recorded_by,
-                txn.description, timezone.now().date(), method=method,
+                txn.description, timezone.localdate(), method=method,
                 source_ref=f"CRPAY-{txn.id}",
             )
         except _SkipGL:
@@ -116,7 +116,7 @@ class CreditService:
         """
         from apps.customers.models import Customer
 
-        today = timezone.now().date()
+        today = timezone.localdate()
         customers = Customer.objects.filter(
             organisation=organisation,
             outstanding_balance__gt=0,
