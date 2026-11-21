@@ -103,7 +103,7 @@ def _within_daily_email_cap(org) -> bool:
     from django.conf import settings
     from django.core.cache import cache
     cap = int(getattr(settings, "INVOICE_EMAIL_DAILY_CAP_PER_ORG", 200))
-    key = f"invoice-email-cap:{org.id}:{timezone.now().date().isoformat()}"
+    key = f"invoice-email-cap:{org.id}:{timezone.localdate().isoformat()}"
     try:
         cache.add(key, 0, 60 * 60 * 25)
         return cache.incr(key) <= cap
@@ -163,7 +163,7 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
         # Auto-mark overdue invoices on every list fetch
         try:
             from django.utils import timezone as tz
-            today = tz.now().date()
+            today = tz.localdate()
             Invoice.objects.filter(
                 organisation=org,
                 due_date__lt=today,
@@ -941,7 +941,7 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
             return Response({"error": "Owner or admin access required"}, status=403)
 
         period = request.query_params.get("period", "month")
-        today = timezone.now().date()
+        today = timezone.localdate()
         if period == "today":
             date_from = today
         elif period == "week":
@@ -1039,7 +1039,7 @@ class InvoiceViewSet(IdempotencyMixin, ExportMixin, TenantFilterMixin, viewsets.
         org = self._get_organisation()
         period = request.query_params.get("period", "month")
 
-        today = timezone.now().date()
+        today = timezone.localdate()
         if period == "today":
             date_from = today
         elif period == "week":
@@ -1375,7 +1375,7 @@ class RecurringInvoiceViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                     delta = relativedelta(years=1)
                 else:
                     delta = relativedelta(months=1)
-                ri.next_run_date = (ri.next_run_date or tz.now().date()) + delta
+                ri.next_run_date = (ri.next_run_date or tz.localdate()) + delta
                 if hasattr(ri, 'occurrences_count'):
                     ri.occurrences_count = (ri.occurrences_count or 0) + 1
                 ri.save()
@@ -1417,7 +1417,7 @@ class LocationViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         org = self._get_organisation()
         period = request.query_params.get("period", "month")
 
-        today = timezone.now().date()
+        today = timezone.localdate()
         if period == "today":
             date_from = today
         elif period == "week":

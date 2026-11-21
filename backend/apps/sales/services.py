@@ -105,7 +105,7 @@ class SaleService:
                 "(cash, transfer or card)."
             )
 
-        issue_date = issue_date or tz.now().date()
+        issue_date = issue_date or tz.localdate()
         shipping = round_money(Decimal(str(shipping_amount))) if shipping_amount else Decimal("0")
         if shipping < 0:
             raise ValueError("Shipping amount cannot be negative.")
@@ -923,7 +923,7 @@ class SaleService:
             # The books: raises, rolling this payment back with it.
             ledger.post_receipt_entry(
                 invoice.organisation, invoice, payment, received_by,
-                entry_date=timezone.now().date(),
+                entry_date=timezone.localdate(),
             )
 
             # Outbox event for the paid integrations marketplace (Track C) —
@@ -958,7 +958,7 @@ class SaleService:
                 )
 
             # WHT is deducted when each payment is made.
-            SaleService._record_wht(invoice, amount, timezone.now().date())
+            SaleService._record_wht(invoice, amount, timezone.localdate())
 
         return payment
 
@@ -1047,7 +1047,7 @@ class SaleService:
         if invoice.status in (Invoice.Status.VOIDED, Invoice.Status.PROFORMA, Invoice.Status.DRAFT):
             raise ValueError(f"A {invoice.status} invoice cannot be fulfilled.")
 
-        delivery_date = timezone.now().date()
+        delivery_date = timezone.localdate()
         AccountingService.assert_period_open(
             invoice.organisation, delivery_date, actor,
             ref=invoice.invoice_number, source=f"sale/{invoice.id}",
@@ -1141,7 +1141,7 @@ class SaleService:
 
         # The sale happens today: stock moves and the entry is dated now, not on
         # the proforma's date. A locked period fails here, before any stock moves.
-        issue_date = timezone.now().date()
+        issue_date = timezone.localdate()
         AccountingService.assert_period_open(
             invoice.organisation, issue_date, actor,
             ref=invoice.invoice_number, source=f"sale/{invoice.id}",
@@ -1507,7 +1507,7 @@ class SaleService:
                 "This invoice has not been delivered yet, so there is nothing to return. "
                 "Void it instead; any payment taken is refunded."
             )
-        return_date = return_date or tz.now().date()
+        return_date = return_date or tz.localdate()
 
         total_refund = Decimal("0")
         total_tax_refund = Decimal("0")

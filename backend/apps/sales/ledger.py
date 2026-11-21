@@ -426,7 +426,7 @@ def void_invoice_entry(invoice, actor):
     if not lines:
         return None
     return _post(
-        invoice.organisation, f"Void invoice {invoice.invoice_number}", timezone.now().date(),
+        invoice.organisation, f"Void invoice {invoice.invoice_number}", timezone.localdate(),
         lines, actor, f"VOID-{invoice.invoice_number}", "invoice_void", str(invoice.id),
     )
 
@@ -452,7 +452,9 @@ def repost_sale_entry(invoice, actor):
         invoice.organisation, old.entry_date, actor,
         ref=invoice.invoice_number, source=f"sale/{invoice.id}",
     )
-    AccountingService.reverse_journal_entry(old, actor)
+    # the reversal belongs to the SAME period as the entry it undoes (the new entry is
+    # posted there too), so each period ends at the right figures
+    AccountingService.reverse_journal_entry(old, actor, entry_date=old.entry_date)
     revision = JournalEntry.objects.filter(
         organisation=invoice.organisation, source_type__in=SALE_SOURCES,
         source_ref__startswith=str(invoice.id),
