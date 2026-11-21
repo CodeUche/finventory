@@ -19,7 +19,7 @@ See ``TotalAdjustmentPending`` at the bottom, which is skipped until it does.
 """
 
 from decimal import Decimal
-from unittest import expectedFailure, skipUnless
+from unittest import skipUnless
 
 from django.test import TestCase
 from rest_framework.test import APIClient
@@ -121,6 +121,19 @@ class Base(TestCase):
             out[ln.account_id] = (dr + D(str(ln.debit)), cr + D(str(ln.credit)))
         self.assertEqual(sum(v[0] for v in out.values()), sum(v[1] for v in out.values()),
                          "journal does not balance")
+        return out
+
+    def acct(self, code):
+        return Account.objects.get(organisation=self.org, code=code)
+
+    def entry_by_type(self, invoice, source_type):
+        """{account_id: (debit, credit)} of the one entry of this type the invoice owns."""
+        entry = JournalEntry.objects.get(
+            organisation=self.org, source_type=source_type, source_ref=str(invoice.id))
+        out = {}
+        for ln in entry.lines.all():
+            dr, cr = out.get(ln.account_id, (D(0), D(0)))
+            out[ln.account_id] = (dr + D(str(ln.debit)), cr + D(str(ln.credit)))
         return out
 
     def no_journal(self, invoice):
@@ -311,17 +324,32 @@ class StockAndFulfilment(Base):
         self.assertFalse(SalePayment.objects.filter(invoice=inv).exists())
 
     def test_fulfil_later_holds_stock_and_ledger_until_fulfilled(self):
+        # Paid now, delivered later. Hand work (2 x 1000, VAT 7.5%): goods 2000, VAT 150, total 2150.
+        # At payment the money is a deposit: DR Cash 2150 / CR Customer Deposits 2000 / CR VAT 150
+        # (VAT is due on receipt of money). No revenue, no COGS, no stock movement yet.
+        # At delivery: DR Deposits 2000 / CR Revenue 2000, and COGS 2 x 600 = 1200 / CR Inventory 1200.
         inv = self.sell([self.line(qty="2")], "cash", defer_fulfillment=True)
         self.assertTrue(inv.is_deferred)
         self.assertIsNone(inv.fulfilled_at)
         self.assertEqual(self.on_hand(), D("10"))
-        self.no_journal(inv)
+        self.no_journal(inv)                      # the delivery ("sale") entry does not exist yet
+        dep = self.entry_by_type(inv, "sale_deferred")
+        self.assertEqual(dep, {
+            self.role("cash_account").id: (D("2150"), D("0")),
+            self.acct("2050").id: (D("0"), D("2000")),
+            self.role("vat_output_account").id: (D("0"), D("150")),
+        })
         res = self.api.post(f"{URL}{inv.id}/fulfill/")
         self.assertEqual(res.status_code, 200, res.data)
         inv.refresh_from_db()
         self.assertIsNotNone(inv.fulfilled_at)
         self.assertEqual(self.on_hand(), D("8"))
-        self.assertIn(self.role("vat_output_account").id, self.journal(inv))
+        self.assertEqual(self.journal(inv), {
+            self.acct("2050").id: (D("2000"), D("0")),
+            self.role("revenue_account").id: (D("0"), D("2000")),
+            self.role("cogs_account").id: (D("1200"), D("0")),
+            self.role("inventory_account").id: (D("0"), D("1200")),
+        })
 
     def test_fulfil_twice_is_refused_and_does_not_deduct_twice(self):
         inv = self.sell([self.line(qty="2")], "cash", defer_fulfillment=True)
@@ -347,31 +375,25 @@ class StockAndFulfilment(Base):
             "vat_output_account", "cogs_account")}
 
     def test_void_of_a_plain_unpaid_sale_puts_stock_back_and_nets_the_ledger_to_zero(self):
-        inv = self.sell([self.line(qty="2")], "cash", amount_paid="0")      # 2000 + 150 VAT
+        inv = self.sell([self.line(qty="2")], "cash", amount_paid="0", customer_id=str(self.cust.id))      # 2000 + 150 VAT; a named customer, a walk-in must pay in full
         self.assertEqual((inv.status, inv.amount_due), ("confirmed", D("2150")))
         self.assertEqual(self.on_hand(), D("8"))
         net = self._net_after_void(inv)
         self.assertEqual(self.on_hand(), D("10"))
         self.assertEqual({k: v for k, v in net.items() if v != 0}, {})
 
-    # BUG FOUND BY QA (design phase 2 baseline). SaleService.void_invoice reverses revenue
-    # with invoice.subtotal (BEFORE discount) and ignores delivery, so for a sale with a
-    # discount or a delivery charge the reversing journal does not balance, post_journal_entry
-    # rejects it, and the surrounding `except Exception` only logs it. Result: invoice shows
-    # voided and stock is restored, but the ledger keeps the sale (receivable, revenue, VAT).
-    # Worked example below: 3 x 1000 less 10% (2700) + 202.50 VAT = 2902.50. Reversal posts
-    # CR AR 2902.50 but DR Revenue 3000 + DR VAT 202.50 = 3202.50 -> off by the 300 discount.
-    # expectedFailure flips to an error the day it is fixed, which is the cue to delete the marker.
-    @expectedFailure
+    # Regression guards for a bug the phase-2 baseline found: void_invoice used to reverse revenue with the
+    # pre-discount subtotal and ignore delivery, so the reversing journal did not balance and the ledger kept
+    # the sale. Fixed on the backend branch; these two were expectedFailure until then.
+    # Worked example: 3 x 1000 less 10% (2700) + 202.50 VAT = 2902.50, reversal must mirror it exactly.
     def test_void_with_a_discount_nets_the_ledger_to_zero(self):
-        inv = self.sell([self.line(qty="3", disc="10")], "cash", amount_paid="0")
+        inv = self.sell([self.line(qty="3", disc="10")], "cash", amount_paid="0", customer_id=str(self.cust.id))
         net = self._net_after_void(inv)
         self.assertEqual({k: v for k, v in net.items() if v != 0}, {})
 
-    @expectedFailure
     def test_void_with_delivery_nets_the_ledger_to_zero(self):
         # total 1575 = 1000 + 75 VAT + 500 delivery; reversal uses subtotal 1000 only.
-        inv = self.sell([self.line(qty="1")], "cash", amount_paid="0", shipping_amount="500.00")
+        inv = self.sell([self.line(qty="1")], "cash", amount_paid="0", shipping_amount="500.00", customer_id=str(self.cust.id))
         net = self._net_after_void(inv)
         self.assertEqual({k: v for k, v in net.items() if v != 0}, {})
 
@@ -457,17 +479,27 @@ except Exception:  # pragma: no cover
 
 @skipUnless(_HAS_ADJ, "total adjustment field not on this branch yet")
 class TotalAdjustmentPending(Base):
-    """Switches on by itself once the backend branch adds the field.
-    Expected values (hand-computed), field name assumed `total_adjustment`:
-      +  adjustment +100 on 1075            -> total 1175, VAT unchanged 75, revenue 1100
-      -  adjustment -75  on 1075            -> total 1000, VAT unchanged 75, revenue 925
-    VAT must NOT be recomputed on the adjustment (confirm with tax expert), and the
-    journal must still balance."""
+    """"Total adjustment" is spread over the lines BEFORE VAT, like a discount (senior accountant's rule,
+    SaleService._allocate_adjustment). Hand work, VAT 7.5%, half-up to the kobo:
+      +100 on one 1,000 line : net 1,100, VAT 82.50, total 1,182.50
+      -75  on one 1,000 line : net 925, VAT 69.375 -> 69.38, total 994.38
+      -1,500 on 10,000 + 5,000: net 13,500, VAT 1,012.50, total 14,512.50 (cash DR 14,512.50, revenue CR 13,500)
+    (An earlier draft of this test assumed the adjustment is added after VAT and is never taxed; that is
+    not the rule, and it is the rule the page's own arithmetic must follow too.)"""
 
     def test_positive_and_negative(self):
-        pos = self.sell([self.line(qty="1")], "cash", total_adjustment="100.00")
-        self.assertEqual((pos.total_amount, pos.tax_amount), (D("1175"), D("75")))
-        neg = self.sell([self.line(qty="1")], "cash", total_adjustment="-75.00")
-        self.assertEqual((neg.total_amount, neg.tax_amount), (D("1000"), D("75")))
-        self.journal(pos)
-        self.journal(neg)
+        pos = self.sell([self.line(qty="1")], "cash", adjustment_amount="100.00")
+        self.assertEqual((pos.total_amount, pos.tax_amount), (D("1182.50"), D("82.50")))
+        neg = self.sell([self.line(qty="1")], "cash", adjustment_amount="-75.00")
+        self.assertEqual((neg.total_amount, neg.tax_amount), (D("994.38"), D("69.38")))
+        self.assertEqual(self.journal(pos)[self.role("revenue_account").id], (D("0"), D("1100")))
+        self.assertEqual(self.journal(neg)[self.role("revenue_account").id], (D("0"), D("925")))
+
+    def test_minus_1500_across_two_lines(self):
+        inv = self.sell([self.line(qty="1", price="10000"), self.line(qty="1", price="5000")],
+                        "cash", adjustment_amount="-1500.00")
+        self.assertEqual((inv.tax_amount, inv.total_amount), (D("1012.50"), D("14512.50")))
+        j = self.journal(inv)
+        self.assertEqual(j[self.role("cash_account").id], (D("14512.50"), D("0")))
+        self.assertEqual(j[self.role("revenue_account").id], (D("0"), D("13500")))
+        self.assertEqual(j[self.role("vat_output_account").id], (D("0"), D("1012.50")))

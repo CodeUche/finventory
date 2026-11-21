@@ -77,3 +77,33 @@ describe('screen arithmetic vs hand-worked server values', () => {
     })
   })
 })
+
+// REPRODUCER (found by the design-phase-2 merge gate on a Postgres stack, 2026-11-20).
+// The server spreads "Total adjustment" over the lines BEFORE VAT (SaleService._allocate_adjustment,
+// apps/sales/services.py) and the senior accountant's rule says the same: an adjustment lowers
+// (or raises) the price VAT is charged on. saleMath.ts adds it AFTER VAT instead, so the page
+// shows a different total than the server saves and the "Total differs from the screen" pop-up fires.
+// Hand work, lines 10,000 + 5,000, adjustment -1,500, VAT 7.5%:
+//   net 15,000 - 1,500 = 13,500 ; VAT 13,500 x 7.5% = 1,012.50 ; total 14,512.50
+// The page shows 14,625.00 today (15,000 + 1,125 VAT - 1,500).
+// `it.fails` keeps the suite green while the bug is open and turns RED the day it is fixed;
+// delete the `.fails` then.
+describe('total adjustment is taxed like a discount (server rule)', () => {
+  const lines = [
+    { unitPrice: 10000, quantity: 1, taxRate: VAT },
+    { unitPrice: 5000, quantity: 1, taxRate: VAT },
+  ]
+  it.fails('-1,500 on 10,000 + 5,000: VAT 1,012.50, total 14,512.50', () => {
+    const t = saleTotals(lines, 0, -1500)
+    expect(t.tax).toBe(1012.5)
+    expect(t.total).toBe(14512.5)
+  })
+  it.fails('-100 on 1,000: VAT 67.50, total 967.50', () => {
+    const t = saleTotals([{ unitPrice: 1000, quantity: 1, taxRate: VAT }], 0, -100)
+    expect(t.total).toBe(967.5)
+  })
+  it.fails('+100 on 1,000: VAT 82.50, total 1,182.50', () => {
+    const t = saleTotals([{ unitPrice: 1000, quantity: 1, taxRate: VAT }], 0, 100)
+    expect(t.total).toBe(1182.5)
+  })
+})
